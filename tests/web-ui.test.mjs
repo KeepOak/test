@@ -499,6 +499,8 @@ const SHARED_WITH_FRENCH = new Set([
   "15 minutes", "Telegram", "Kit", "Note", "Instructions", "Notifications", "{n} conversation", "{n} conversations", "Photo",
   // Pets French names the same, and the keyboard's Ctrl key.
   "Fennec", "Capybara", "Koala", "Hamster", "Ctrl",
+  // The local index names its mail sources by their own brand names (RES-718).
+  "Gmail", "Outlook",
   // Seasons is the learning place's own name, kept in French as in German and Spanish ("Rouvrez Seasons").
   "Seasons",
 ]);

@@ -508,9 +508,11 @@ The free fallback reads a public results page rather than an interface meant for
 
 `searchEndpoint` still sets the address the free fallback uses, so anything already set up keeps working.
 
+The window can pick the service too, under Settings › Advanced › Web search (`GET`/`POST /api/web-search`, owner only). Once the owner picks one there, that pick wins over the launch settings file; until then the file decides. Without a `keySecret`, a paid service looks for its usual secret name (`BRAVE_SEARCH_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY` or `SERPER_API_KEY`), and the row says whether that secret is saved.
+
 ### Pinned skills and memory retention
 
-Above the composer, **Pinned skill** keeps one enabled skill's full instructions in every turn of that conversation until unpinned (`GET|POST /api/sessions/:id/skill`). `POST /api/memory/hygiene {olderThanDays, action: "preview"|"archive"|"purge"}` reports or removes facts not updated within the period; archived facts are listed by `GET /api/memory/archive` and restored with `POST /api/memory/archive/:id/restore`.
+Above the composer, **Pinned skill** keeps one enabled skill's full instructions in every turn of that conversation until unpinned (`GET|POST /api/sessions/:id/skill`). `POST /api/memory/hygiene {olderThanDays, action: "preview"|"archive"|"purge"}` reports or removes facts not updated within the period; archived facts are listed by `GET /api/memory/archive` and restored with `POST /api/memory/archive/:id/restore`. Settings › Advanced › **Archive facts unused for** (90 days, 180 days or never; never is where Branch starts) sets aside by itself, once a day, the facts nobody changed or drew on for that long (`GET`/`POST /api/memory/auto-archive { afterDays: 90 | 180 | null }`, owner only): each goes into the archive with a note, keeps its versions and can be restored.
 
 ## Browser tools
 
@@ -10077,6 +10079,27 @@ through your network rules.
 | Microsoft | `outlook.search`, `outlook.read`, `outlook.draft`, `outlook.events`, `teams.summary` | Your own Microsoft Entra app (public client, redirect `http://127.0.0.1`). Scopes: `Mail.Read` (or `Mail.ReadWrite` with drafts), `Calendars.Read`, `OnlineMeetings.Read`, `OnlineMeetingTranscript.Read.All` — the last may need your organisation's admin to agree. `teams.summary` fetches a meeting's newest transcript for the model to summarise. |
 | Searching the email inbox | `mail.search`, `mail.attachments`, `mail.save_attachment` | The email channel's mailbox (server, user, and the saved password's name). Search by sender, subject, words, dates or unread, with plain-ASCII words; open a message and its attached files; save one into the workspace's `mail-attachments` folder, never over an existing file. Nothing is marked read or sent. |
 | A public address for webhooks | — | Starts *your* tunnel program — `cloudflared`, `tailscale funnel` (without `--bg`, so nothing stays configured) or `ngrok` — pointed at a small door on this computer that only passes `/webhooks/chat/…`, `/webhooks/whatsapp/…`, `/hooks/…` and `POST /api/triggers/<id>/fire`, with any key, cookie or origin removed. The window is never on the internet. Lockdown refuses to start it; locking or closing Branch stops it. |
+
+**A local index of mail and calendars (RES-718).** Settings › Advanced › "A local index of mail and calendars" keeps a
+copy of your inbox (the email channel's, over IMAP), Gmail, Outlook and your Google and Outlook calendars on this
+computer, so `index.search` (behind `index.read`, which only looks, on this computer) answers "find the email about the
+lease" without asking each server. It **ships on** ("when needed"), 90 days back: a capped index of your own mail on
+your own disk is none of the off-reasons, and it runs only for sources already connected and switched on. Switch it off
+in the same row, and delete what it holds there.
+
+While on:
+- Every half hour (or at **Update now**) it brings each source up to date, only through that part's own connector. The
+  part's own switch, its sign-in and Lockdown still decide, and a source that is switched off or signed out has its rows
+  dropped at the next run.
+- It keeps 30, 90 or 365 days back (events up to 60 days ahead too), at most 200 new items a source a run and 20,000
+  rows in all. For each item it keeps the sender, the subject, the date and at most 2,000 characters of text.
+- A message it already holds is never fetched again.
+- **Delete the index** removes every row after a yes. Your mail and calendars themselves are not touched.
+- The rows are a cache that can be rebuilt, so no backup carries them. The switch itself waits for your yes on a restore.
+
+Messages from chat apps are not copied here; they are already in Branch's own history. Routes: `GET/POST
+/api/local-index` (`{ mode?, days? }`), `POST /api/local-index/update` and `POST /api/local-index/delete`, each change the
+owner's only.
 
 Each connector hands its text to the model marked as somebody else's words: information, never instructions. A task started
 by a chat message gets none of these tools, so somebody you have paired cannot read your mail, hear your day, or

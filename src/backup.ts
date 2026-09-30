@@ -130,6 +130,8 @@ export const signInPrefixes: readonly string[] = ["remote-agent:"];
 export const thisComputerSettings: readonly string[] = [
   "folder_trust", "folder_trust_mode", "folder-trust-real", "folder-trust-copies", "remote-agent-pairing", "remote-computers",
   "secret-commands", "keychain-entries", "reach-remote-trunks-keys",
+  // RES-718: when the local index of mail and calendars last ran and what each source said; the index itself is no backup table.
+  "local-index-state",
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
   // no backup carries, so the account stays with it.
   "gitlab-account",
@@ -234,6 +236,8 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   // switch, the chats a relay may bring, the USB rules that start a task, and the git sources the assistant shares to.
   "desktop-control", "approval_reviewer", "loop_guard", "security-check", ...safetyParts.map(safetyKey), ...reachParts.map(reachKey),
   "reach-relay-chats", "reach-usb-rules", "reach-agent-git-sources",
+  // RES-718: the local index reads all the owner's mail and calendars onto this disk, so a file cannot switch it on by itself.
+  "local-index",
   // RES-719: the GitLab switch reaches a server, so a file cannot switch it on by itself.
   "gitlab-connection",
   // NAS 23e7382: which chat accounts count as the owner for `/platform`, read before the sender list is.
@@ -267,7 +271,11 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   "knowledge", "live-scoring", "local-models", "mcp-connections", "mcp-sharing", "media", "memory-consolidation",
   "memory-retrieval", "metering", "model-profiles", "models", "orchestration", "page-notes", "page-notes:list",
   "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults", "codex-models",
-  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages"];
+  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages",
+  // wire-greyed: setting unused facts aside runs by itself once a day.
+  "memory-auto-archive",
+  // wire-greyed: where web searches go and the name of the secret sent with them.
+  "web-search"];
 /** One row per automatic job: a loop, a heartbeat, a standing order or a procedure runs its words by itself (as a schedule does, Q168 C). */
 const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "autonomy-loop:", "autonomy-heartbeat:", "autonomy-order:", "autonomy-procedure:",
   // NAS f30facf: each outside service the assistant may call, by its address.

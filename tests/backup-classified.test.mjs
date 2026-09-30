@@ -108,6 +108,7 @@ const reviewedComputedKeys = new Set([
   "src/openapi-tools.ts: savedKey",
   "src/orchestration-modes.ts: this.key",
   "src/people/groups.ts: tuplesKey",
+  "src/personal/local-index.ts: localIndexKey", // RES-718: "local-index" waits for the owner's yes (it reads all their mail onto this disk)
   "src/personal/settings.ts: personalKey",
   "src/personal/settings.ts: key",
   "src/person-about.ts: aboutKey",

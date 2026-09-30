@@ -22,6 +22,7 @@ import { newConversationMode } from "../chat/chips.js"; // the mode a new conver
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
 import { gsel } from "../core/gsel.js";
 import { say } from "../core/words.js";
+import { syncModalBackground } from "../core/modal-background.js";
 
 /* The wizard's steps: each one's short name in the engine's record, and its name on the rail. */
 const WIZARD = ["welcome", "models", "trunks"];
@@ -148,6 +149,8 @@ function draw() {
     app().appendChild(el);
   } else el.classList.add("ob-still12");
   el.setAttribute("aria-label", t("window.setup.label")); // named on every draw, so a language picked here renames it
+  el.setAttribute("aria-modal", "true");
+  syncModalBackground();
   /* A choice within a step redraws the step in place: the moving picture, where the page is scrolled and the control the
      person just pressed all stay as they were, so a click never looks like the screen starting over. Only a new step
      starts at its heading. */
@@ -263,6 +266,7 @@ async function close() {
   if (!(await leaveTrunks(o))) return; // Trunks picked and not yet made are made on leaving, as Continue does
   progress(o, { skipped: true });
   $(".ob9")?.remove();
+  syncModalBackground();
   S.ob = null;
   origin.setup = false;
 }

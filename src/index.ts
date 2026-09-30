@@ -43,6 +43,7 @@ import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
 import { MemoryRetrieval } from "./memory-retrieval.js";
+import { autoArchiveTick } from "./memory-auto-archive.js"; // wire-greyed
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
 import { MemoryTidy, registerMemoryTidy, shipTidyProcedure } from "./memory-tidy.js";
@@ -180,10 +181,13 @@ import { ContractBook, contractGuard, contractPreflight } from "./self-developme
 import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
 import { registerSdkKit } from "./sdk-kit.js"; // bucket 21
+import { LocalIndex, perSourceRun, registerLocalIndex } from "./personal/local-index.js"; // RES-718
+import { ownerOnlyTools } from "./personal/guard.js"; // RES-718
 import { GitLabConnection } from "./gitlab-connection.js"; // RES-719
 import { gitlabLaunch } from "./gitlab-switch.js"; // RES-719
 import { registerGitLab } from "./integrations/gitlab.js"; // RES-719
 import { WebPages, registerWebPages } from "./web-pages.js"; // w911 (A0743, A1452) hook
+import { savedSearchChoice } from "./web-search-choice.js"; // wire-greyed: web search picked in the window
 import { PluginCatalog } from "./plugin-catalog.js";
 import { AddOns } from "./add-ons/index.js"; // bucket-15: add-ons other people wrote
 import { SkillRevisions, registerSkillSync } from "./skill-revisions.js";
@@ -842,6 +846,8 @@ export async function createBranch(options: {
       reason: "Searching the web needed it", outcome: "handed over" });
     return value;
   };
+  // wire-greyed: the service picked in Settings › Advanced › Web search wins over the launch settings file's.
+  web.searchChoice = () => savedSearchChoice(store, runtime.owner);
   // Batch 19 (wave 7): the model services the owner added from the catalog are built again from
   // what was written down, with each key taken out of the locker, so they survive a restart.
   await restoreConnections({
@@ -1409,6 +1415,8 @@ ${result.output || "(it said nothing)"}`;
   rings.gardener = gardener;
   rings.problems = sourceRequests;
   scheduler.onTick.add(async (now) => { rings.tick(now); });
+  // wire-greyed: facts unused for the owner's chosen days set aside by themselves, once a day (off: "never").
+  scheduler.onTick.add(async (now) => { autoArchiveTick(store, memory.retrieval, runtime.owner, now.getTime()); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
   scheduler.onTick.add(async (now) => {
@@ -1570,6 +1578,18 @@ ${result.output || "(it said nothing)"}`;
   listFromCards(registry, personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
     () => void personal());
   releaseOnLock.push(async () => { await personalBuilt?.close(); }); // locking Branch stops the tunnel and forgets spoken answers
+  // RES-718: the owner's mail and calendars copied into a local index, only through the parts' own connectors (ships off, (e)).
+  const signedIn = (service: "google" | "microsoft") => async () => (await personal().signIns[service].status()).signedIn;
+  const localIndex = new LocalIndex({ store, owner: runtime.owner, sources: [
+    { id: "inbox", part: "mail-search", ready: async () => Boolean(personal().mail.settings().host && personal().mail.settings().user),
+      fetch: (days, known) => personal().mail.forIndex(new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10), perSourceRun, known) },
+    { id: "gmail", part: "google", ready: signedIn("google"), fetch: (days, known) => personal().google.mailForIndex(days, perSourceRun, known) },
+    { id: "outlook", part: "microsoft", ready: signedIn("microsoft"), fetch: (days) => personal().microsoft.mailForIndex(days, perSourceRun) },
+    { id: "google-calendar", part: "google", ready: signedIn("google"), fetch: (days) => personal().google.eventsForIndex(days, 250) },
+    { id: "outlook-calendar", part: "microsoft", ready: signedIn("microsoft"), fetch: (days) => personal().microsoft.eventsForIndex(days, 250) },
+  ] });
+  registerLocalIndex(ownerOnlyTools(registry, store, (what) => store.profiles.requireOwner(what)), localIndex);
+  scheduler.onTick.add(async (now) => { void localIndex.run(now.getTime()).catch(() => undefined); });
   // ── end R17-C ──
   // ── mac7/wake-mic: the word that starts a turn, actually listening. Ships off, like everything else. ──
   // It runs only while the switch is on, a word is chosen, and this computer can really listen, and
@@ -1740,6 +1760,8 @@ ${result.output || "(it said nothing)"}`;
     get personal(): Personal { return personal(); },
     /** Where Branch listens, for the personal part's webhook door; handed on when that part is built. */
     set localAddress(address: string) { localAddress = address; if (personalBuilt) personalBuilt.tunnel.localAddress = address; },
+    /** RES-718: the local index of the owner's mail and calendars. */
+    localIndex,
     /** r17-i: other computers, Trunks across computers, background apps, videos, relay, send and pause, sharing, USB, notes, arena. */
     reachParts,
     /** mac7/r17-g: tool scripts, WebAssembly add-ons, codes, the emergency stop, scans, the activity chain. */
