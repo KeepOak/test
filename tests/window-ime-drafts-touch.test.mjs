@@ -110,7 +110,8 @@ test("on a phone, text boxes are at least 16px and the message box's buttons at 
   assert.equal(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), true, "the phone reports a coarse pointer");
   const px = (selector, prop) => page.locator(selector).first().evaluate((el, prop) => parseFloat(getComputedStyle(el)[prop]), prop);
   assert.ok(await px("#prompt", "fontSize") >= 16, "the message box is at least 16px");
-  const send = await page.locator("#send").boundingBox();
+  // Read in one step: the composer may be drawn again between finding Send and measuring it, which left no box.
+  const send = await page.locator("#send").first().evaluate((el) => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; });
   assert.ok(send.width >= 44 && send.height >= 44, `Send is at least 44px (${send.width}×${send.height})`);
   await page.keyboard.press("Control+k");
   await page.locator("#pal-in").waitFor({ state: "visible" });
