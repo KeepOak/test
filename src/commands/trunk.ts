@@ -9,6 +9,8 @@ import type { Call, Reply } from "./handlers.js";
 const say = (text: string, client?: Reply["client"]): Reply => (client ? { text, client } : { text });
 
 export async function trunkCommand(call: Call): Promise<Reply> {
+  // Chat routing verifies the live owner account and narrows permissions in its own runner.
+  if (call.surface === "chat") return say("Send /trunk from your own direct chat through the chat router.");
   // Integrator (R17-A): Trunks are the owner's, like /account; a household profile is refused outright.
   call.host.requireOwner("/trunk");
   const trunks = trunksFor(call.host.runtime);
