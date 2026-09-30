@@ -4378,6 +4378,20 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         }
         // ---- end phase2/shell ----
         // ---- R17-C: files, voice, devices and personal connectors under /api/personal (src/personal/api.ts). ----
+        if (path.startsWith("/api/personal/oura/")) {
+          const guard = () => {
+            if (throughDoor(request) || app.sessionLock.shut() || request.headers["x-branch-origin"] !== "window")
+              throw new HttpError(403, "Use private wearable data in the unlocked owner's app window");
+          };
+          guard(); app.personal.oura.guard(); let answer: unknown;
+          if (path === "/api/personal/oura/status" && request.method === "GET") answer = await app.personal.oura.status(guard);
+          else if (path === "/api/personal/oura/configure" && request.method === "POST") answer = await app.personal.oura.configure(await readBody(request, 4000), guard);
+          else if (path === "/api/personal/oura/start" && request.method === "POST") answer = await app.personal.oura.start(guard);
+          else if (path === "/api/personal/oura/disable" && request.method === "POST") answer = await app.personal.oura.disable(guard);
+          else if (path === "/api/personal/oura/read" && request.method === "POST") answer = await app.personal.oura.read(await readBody(request, 4000), guard);
+          else throw new HttpError(404, "Unknown Oura action");
+          send(response, 200, answer); return;
+        }
         if (handlesPersonalPath(path)) {
           app.store.profiles.requireOwner("Your personal connectors");
           const answer = await personalApi({ personal: app.personal, runtime: app.runtime, method: request.method ?? "GET",
