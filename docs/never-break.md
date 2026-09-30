@@ -136,8 +136,13 @@ permissions and the owner's rules are the only defence against them:
 - `find . -delete`, `git clean` and wildcards in a workspace that contains the data folder are
   refused, which is stricter than needed; a sweeping `cd ~ && rm -rf …` is read, other ways of
   changing folder (`pushd` in a script file, `Set-Location` through a variable) are not;
-- `/gateway/health` answers without a key (only on this computer); it shows process ids, versions
-  and the gateway's recent notes.
+- `/gateway/health` answers without a key (only on this computer); it shows process ids, versions,
+  the gateway's recent notes,
+  and query-time resource measurements for the gateway process (the resident Electron broker in
+  desktop mode). Memory values are bytes; CPU values are cumulative microseconds since process
+  start, rather than sampled percentages. The engine worker and shell processes are explicitly
+  excluded. These measurements add no sampler or timer and make no idle-footprint or hibernation
+  claim. Single-binary deployment and safe idle hibernation remain separate work.
 
 On the undo side: the gate is only as good as the record. `branch update --yes` and the app's own
 Update button both write one; an update applied any other way (a copy unpacked by hand, a package

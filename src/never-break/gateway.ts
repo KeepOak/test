@@ -13,6 +13,7 @@ import { clearWatch, readWatch, repairSwap, watchVerdict, type UpdateWatch } fro
 import { runAsNode } from "../child-env.js";
 import { previewRequest } from "./gateway-preview.js";
 import { quitPath, quitRequest } from "../install/quit.js";
+import { gatewayResources } from "./gateway-resources.js";
 
 /**
  * The gateway: a small process that keeps Branch's public address open and keeps one worker — the
@@ -136,7 +137,7 @@ export class Gateway {
     const worker = this.worker;
     return { ok: worker?.state === "ready", gateway: { pid: process.pid, version: this.codeVersion, contract: gatewayContract.speaks },
       worker: { state: worker?.state ?? "stopped", pid: worker?.child.pid ?? null, version: worker?.ready?.version ?? null },
-      restarts: this.restarts, slowedDown: this.tripped, notes: this.notes.slice(-10) };
+      restarts: this.restarts, slowedDown: this.tripped, notes: this.notes.slice(-10), resources: gatewayResources() };
   }
 
   /* ---------- the worker ---------- */
