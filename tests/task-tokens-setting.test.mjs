@@ -1,4 +1,8 @@
-/** selfdev: how many tokens one task may use is the owner's own knob (limits.maxTaskTokens), not a fixed 200,000. */
+/**
+ * selfdev: how many tokens one task may use is the owner's own knob (limits.maxTaskTokens), not a fixed 200,000. Auto is
+ * 200,000 while a key billed per token answers (this scripted connection), and no limit on a sign-in
+ * (tests/task-no-limit.test.mjs).
+ */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -24,7 +28,7 @@ test("a task's token allowance follows the owner's knob, and the built-in figure
     execute: async (_input, context) => { seen.push(context.budget.limits.maxTokens); return "seen"; } });
   const owner = app.runtime.owner;
   assert.equal(readKnobs(app.store, owner, "limits").maxTaskTokens, null);
-  assert.equal(taskBudget(app.store, owner).maxTokens, 200000);
+  assert.equal(taskBudget(app.store, owner).billed.maxTokens, 200000);
   await app.runtime.run({ prompt: "look" });
   saveKnobs(app.store, owner, "limits", { maxTaskTokens: 1_500_000, maxModelRounds: 200 });
   assert.equal(taskBudget(app.store, owner).maxTokens, 1_500_000);

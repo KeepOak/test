@@ -59,6 +59,9 @@ const pluginFile = (reply) => `export default {
 
 test("a plugin switched on is callable in the very next turn; updated, the next turn runs the new code; switched off, it is gone", async (t) => {
   const pid = process.pid, { app, api, turn, offered, dataDir } = await engine(t);
+  // RES-251: a hand-placed plugin runs walled as shipped (tests/add-ons-review.test.mjs); this is about the next turn seeing a plugin, so the owner
+  // lets plugins run inside Branch, as a Linux build machine without bubblewrap could not start the wall.
+  app.addOns.save({ wallEveryPlugin: false, confirmLoosening: true });
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   await writeFile(join(dataDir, "plugins", "weather.mjs"), pluginFile("sunny"));
   const before = await turn("What is the weather?", [say("I cannot tell.")]);
@@ -82,6 +85,9 @@ test("a plugin switched on is callable in the very next turn; updated, the next 
 
 test("a plugin switched on while a task works is usable in that task's next round", async (t) => {
   const { app, api, turn, dataDir } = await engine(t);
+  // RES-251: a hand-placed plugin runs walled as shipped (tests/add-ons-review.test.mjs); this is about the next round seeing a plugin, so the owner
+  // lets plugins run inside Branch, as a Linux build machine without bubblewrap could not start the wall.
+  app.addOns.save({ wallEveryPlugin: false, confirmLoosening: true });
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   // A permission no tool had when the task started: the plugin declares its own.
   await writeFile(join(dataDir, "plugins", "weather.mjs"), pluginFile("sunny").replaceAll('"files.read"', '"weather.read"'));

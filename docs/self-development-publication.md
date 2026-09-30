@@ -1,0 +1,13 @@
+# Publishing source changes during an outage
+
+Once an owner-authorized source-change request has passed its existing source contract and publication permissions, Branch commits the named files locally. It then saves an outgoing publication in its local database before trying GitHub. An outage does not discard the commit or require another commit.
+
+The saved publication pins the workspace, contract, commit, remote address, destination repository, branch, base and draft-PR details. It contains no GitHub authentication token. Each attempt reads the current credentials through the existing Git or GitHub connection. Transport errors are reduced to safe status messages before being saved.
+
+The inbox's Needs attention view shows waiting, sending and blocked publications. Waiting entries display the next retry time. Cancel stops future attempts; it does not remove a branch or PR that already reached GitHub. A blocked entry has a **Retry this saved change** button. That explicit owner action rechecks the source and current permissions before another attempt. Published and cancelled entries cannot be retried.
+
+Temporary connection errors, rate limits and server outages receive at most six automatic attempts, with exponential delays starting at 15 seconds and capped at 15 minutes. Branch resumes pending entries after restarting. A claim left by an interrupted process expires after ten minutes before another process may reconcile it. Authentication and permission failures, changed contracts, changed heads and changed destinations stop automatic publication. The original source project must still be selected, so a different project's permissions or credentials cannot be used for a retry.
+
+Before sending, Branch reads the remote branch. If the saved commit is already there, it does not push it again. A different remote commit blocks publication. A create-only Git lease prevents overwriting a branch created between that check and the push. Before creating a draft PR, it looks for an existing PR with the exact repository, head branch, base and commit, including closed PRs. A failed or ambiguous lookup never counts as absence. This handles a push or create that succeeded remotely but lost its response. PR creation remains a draft proposal; the queue never merges, changes branch protection or overwrites an existing remote branch.
+
+The existing source contract, short-lived-key restrictions, network rules and publication permission gate still apply. Switching off publication, changing the selected project or changing the local source can block a pending entry. Review the entry and select its original unchanged source project before using Retry. If the source or contract has changed, cancel the old intent and authorize a new proposal.
