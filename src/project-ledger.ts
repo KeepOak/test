@@ -20,19 +20,22 @@ export interface ProjectCost {
   unpricedRuns: number;
 }
 
-interface Row { project: string; run_id: string; input: number; output: number }
+interface Row { project: string; run_id: string; input: number; output: number; cached: number; cacheWrite: number; cacheWrite1h: number }
 
 /** Every task's project, tokens and model, since a moment. */
 function rows(store: Store, owner: string, since: string): Row[] {
   return store.sqlite.prepare(
     `SELECT t.project AS project, t.id AS run_id,
        COALESCE(u.reported_input, 0) + COALESCE(u.estimated_input, 0) AS input,
-       COALESCE(u.reported_output, 0) + COALESCE(u.estimated_output, 0) AS output
+       COALESCE(u.reported_output, 0) + COALESCE(u.estimated_output, 0) AS output,
+       COALESCE(u.reported_cached_input, 0) AS cached, COALESCE(u.reported_cache_write, 0) AS cache_write,
+       COALESCE(u.reported_cache_write_hour, 0) AS cache_write_hour
      FROM tasks t LEFT JOIN usage u ON u.run_id = t.id
      WHERE t.owner = ? AND t.created_at >= ? ORDER BY t.created_at`,
   ).all(owner, since).map((row) => ({
     project: String(row.project ?? "default"), run_id: String(row.run_id),
     input: Number(row.input ?? 0), output: Number(row.output ?? 0),
+    cached: Number(row.cached ?? 0), cacheWrite: Number(row.cache_write ?? 0), cacheWrite1h: Number(row.cache_write_hour ?? 0),
   }));
 }
 
@@ -60,7 +63,7 @@ export function costByProject(store: Store, owner: string, sinceDays = 30): Proj
     entry.tokens.input += row.input;
     entry.tokens.output += row.output;
     const model = modelOf(store, row.run_id);
-    const estimate = model ? estimateCost(model, { input: row.input, output: row.output }, overrides) : null;
+    const estimate = model ? estimateCost(model, { input: row.input, output: row.output, cached: row.cached, cacheWrite: row.cacheWrite, cacheWrite1h: row.cacheWrite1h }, overrides) : null;
     if (estimate?.amount === null || estimate === null) entry.unpricedRuns += 1;
     else entry.cost += estimate.amount;
     totals.set(row.project, entry);
