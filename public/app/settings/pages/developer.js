@@ -1,4 +1,4 @@
-import { controlRow } from "../row-kit.js";
+import { settingsRow, switchRow, segmentedRow, linkRow } from "../row-kit.js";
 /* Settings › Developer, 1:1 with the prototype (only shown at the Technical level). The local address is the one this
    window is talking to; Copy puts it on the clipboard. A switch shows the engine's own value and is live only where a
    route changes it (WIRES); a three-way feature switch reads as on unless its mode is "off", turns on as "when-needed"
@@ -11,13 +11,13 @@ import { controlRow } from "../row-kit.js";
    lets the owner pick its operations (../openapi-pick.js). The Playground's Open runs one tool by hand through the engine's
    own approval gate (../playground.js). */
 import { esc, render } from "../../core/dom.js";
-import { api } from "../../core/api.js";
+import { api, token } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
-import { id15, sw15, btn15, code15, sec15 } from "../rows15.js";
+import { id15, btn15, code15, sec15 } from "../rows15.js";
 import { developer17 } from "../p17-more.js";
-import { level as level17 } from "../../core/state.js";
+import { level as level17, E, S, activeId } from "../../core/state.js";
 import { initPlayground } from "../playground.js";
 import { initOpenApiPick } from "../openapi-pick.js";
 import { say } from "../../core/words.js";
@@ -42,7 +42,17 @@ const SHOWN = {
   "f15-tools-that-join-over-a-websocket": () => onMode(part("client-tools")),
 };
 const value = (id) => (WIRES[id]?.[0] ?? SHOWN[id])?.() ?? false;
-const sw = (title, sub) => sw15(title, sub, value(id15(title)));
+const locked = () => ["locked", "locked-b17"].some(name => document.getElementById("app")?.classList.contains(name));
+const owner = () => E.profiles?.isOwner === true && S.signedIn && !locked();
+let scopeEpoch = 0, pendingChange = false;
+const snapshot = () => ({profile:E.profiles, id:activeId(), credential:token.get(), epoch:scopeEpoch});
+const valid = state => state.epoch === scopeEpoch && owner() && E.profiles === state.profile && activeId() === state.id && token.get() === state.credential;
+const sw = (title, sub) => switchRow({title:say(title), description:say(sub), id:id15(title), checked:owner() && value(id15(title)), attributes:`data-sw="set"${owner() ? "" : ' disabled data-why="knobs-owner-only"'}`});
+async function freshOwner(state) {
+  if (!valid(state)) throw new Error(t("settings.catalogue.changed"));
+  const profiles = await api("profiles");
+  if (!valid(state) || !profiles.isOwner || (profiles.active?.id ?? null) !== state.id) throw new Error(t("settings.catalogue.changed"));
+}
 
 /* The terminal's status line (the comfort card "display", statusLine): Default is the engine's null (the line as it has
    always been), Minimal is the model and the room used. My script stays greyed: Branch builds the line from its own
@@ -51,47 +61,53 @@ const MINIMAL = ["model", "context"];
 function statusRow() {
   const items = D.comfort?.values?.display?.statusLine, title = t("comfort.field.statusLine");
   const cur = !D.comfort ? null : items == null ? "default" : JSON.stringify(items) === JSON.stringify(MINIMAL) ? "minimal" : null;
-  const opt = (v, words) => `<button type="button" aria-pressed="${cur === v}" data-act="dv-status" data-v="${v}">${esc(words)}</button>`;
-  return `${controlRow(`<b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("default", t("voice.default"))}${opt("minimal", t("window.settings.developer.minimal"))}<button type="button" aria-pressed="false" data-act="dv-status-script" data-why="f15-status-line-script">${esc(t("window.settings.developer.my-script"))}</button></span></span><small>${esc(t("window.settings.developer.status-line-where"))}</small>`)}`;
+  return segmentedRow({title, description:t("settings.developer.status-help"), options:[["default",t("voice.default")],["minimal",t("window.settings.developer.minimal")],["script",t("window.settings.developer.my-script")]], current:owner() ? cur : null, optionAction:v => v === "script" ? "dv-status-script" : "dv-status", attributes:v => `${v === "script" ? 'data-why="f15-status-line-script"' : ""}${owner() ? "" : " disabled"}`});
 }
 async function setStatusLine(v) {
-  try { await api("comfort", { card: "display", values: { statusLine: v === "minimal" ? MINIMAL : null } }); } catch (error) { toast(error.message); }
-  await loadAll();
+  const state = snapshot(); if (!valid(state) || pendingChange || !["default", "minimal"].includes(v)) return;
+  pendingChange = true;
+  try { await freshOwner(state); await api("comfort", { card: "display", values: { statusLine: v === "minimal" ? MINIMAL : null } }); } catch (error) { if (valid(state)) toast(error.message); }
+  finally { pendingChange = false; }
+  if (valid(state)) await loadAll();
 }
 
 export function draw() {
   let html = `<h1>${t("settings.card.developer")}</h1><p class=\"lede\">${t("settingsGrown.bucket.advanced.dev.line")}</p>`;
   html += `<div class=\"sec\"><h2>${t("window.settings.developer.local-address")}</h2>`;
-  html += `${controlRow(`<b>${esc(location.host)}</b><span class="right"><button class="btn sm" type="button" data-act="dv-copy">${t("asks.examples.copy")}</button></span><small>${t("window.settings.developer.only-this-computer-can-reach-it")}</small>`)}`;
-  html += `<div class=\"ctl\"><b>${t("window.settings.developer.session-key")}</b><span class=\"right\"><span data-css=\"font:12px var(--mono);color:var(--ink-3)\">&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;</span><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"session-key\">${t("window.settings.developer.make-a-new-one")}</button></span><small>${t("window.settings.developer.never-shown-in-full-here")}</small></div>`;
+  html += linkRow({title:location.host, description:t("settings.developer.address-help"), label:t("asks.examples.copy"), action:"dv-copy"});
+  html += settingsRow({title:t("window.settings.developer.session-key"), description:t("settings.developer.key-help"), control:`<span aria-hidden="true">••••••••••••</span><button class="btn sm" type="button" data-act="soon" data-why="session-key">${esc(t("window.settings.developer.make-a-new-one"))}</button>`});
   html += "</div>";
   html += `<div class=\"sec\"><h2>${t("settings.advanced.code.title")}</h2>`;
-  html += `${controlRow(`<b>${t("window.settings.developer.use-language-servers")}</b><input class="sw" type="checkbox" id="dv-ls" ${value("dv-ls") ? "checked" : ""} aria-label="${t("window.settings.developer.use-language-servers")}" data-sw="set"><small>${t("window.settings.developer.programs-you-already-installed-one-per")}</small>`)}`;
-  html += `${controlRow(`<b>${t("window.settings.developer.use-a-debugger")}</b><input class="sw" type="checkbox" id="dv-dbg" ${value("dv-dbg") ? "checked" : ""} aria-label="${t("window.settings.developer.use-a-debugger")}" data-sw="set"><small>${t("window.settings.developer.nothing-downloads-and-nothing-runs-until")}</small>`)}`;
+  html += switchRow({title:t("window.settings.developer.use-language-servers"), description:t("settings.developer.language-help"), id:"dv-ls", checked:owner() && value("dv-ls"), attributes:`data-sw="set"${owner() ? "" : " disabled"}`});
+  html += switchRow({title:t("window.settings.developer.use-a-debugger"), description:t("settings.developer.debug-help"), id:"dv-dbg", checked:owner() && value("dv-dbg"), attributes:`data-sw="set"${owner() ? "" : " disabled"}`});
   html += "</div>";
   html += sec15(t("window.settings.developer.tools-technical"),
     btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), t("window.settings.openapi.row"), t("delight.bg.choose"), "openapi-pick")
     + sw("Tool scripts and WebAssembly", "Sandboxed JavaScript and .wasm add-ons.")
-    + sw("Tools that join over a WebSocket", `ws://${location.host}/api/interop/client-tools/ws`)
-    + sw15("Load tools only when needed", "Thousands of tools at the cost of dozens.", true) // state: always, every round (src/tool-loading.ts)
+    + sw("Tools that join over a WebSocket", t("settings.developer.client-tools-help"))
+    + switchRow({title:say("Load tools only when needed"), description:t("settings.developer.lazy-tools-help"), id:id15("Load tools only when needed"), checked:true, attributes:'data-sw="set"'}) // always on, no write route
     + btn15(t("window.settings.developer.playground"), t("window.settings.developer.try-any-tool-through-a-form"), t("ov.open"), "playground-open"));
   html += sec15(t("window.settings.developer.automations-technical"),
     sw("Flow search", "Tries four versions of a flow on examples and keeps the best.")
     + code15(t("window.settings.developer.loop-a-prompt"), t("window.settings.developer.or-heartbeat-for-the-check-in"), "/loop 10m check the build"));
   html += sec15(t("window.settings.developer.system"),
     sw("Portable mode", "Data beside the program, for a USB stick.")
-    + sw("Send metrics with OpenTelemetry", D.tracing?.endpoint ?? "")
     + statusRow()
-    + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
-    + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
+    + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby"));
+  html += sec15(t("settings.developer.diagnostics"),
+    sw("Send metrics with OpenTelemetry", t("settings.developer.metrics-help"))
+    + sw("Is Branch keeping up", t("settings.developer.loop-help"))
     + sw("Save task trajectories", "Every step as JSON Lines, for analysis."));
   return html + developer17(level17());
 }
 
 async function loadAll() {
+  const state = snapshot();
+  if (!valid(state)) { Object.keys(D).forEach(key => { D[key] = null; }); render(); return; }
   const [ls, dbg, interop, counters, loop, comfort, tracing] = await Promise.all(
     ["developer/language-servers", "developer/debug-adapters", "interop", "usage/counters", "event-loop", "comfort", "tracing/settings"]
-      .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
+      .map((path) => api(path).catch((error) => { if (valid(state)) toast(error.message); return null; })));
+  if (!valid(state)) return;
   Object.assign(D, { ls, dbg, interop, counters: counters?.counters ?? null, loop: loop?.settings ?? null, comfort, tracing: tracing?.settings ?? null });
   render();
 }
@@ -101,6 +117,8 @@ async function copyAddress() {
 }
 
 export function init() {
+  const app = document.getElementById("app");
+  if (app) new MutationObserver(() => { if (locked()) { scopeEpoch++; Object.keys(D).forEach(key => { D[key] = null; }); } }).observe(app, {attributes:true, attributeFilter:["class"]});
   on("dv-copy", () => copyAddress());
   on("dv-status", (el) => setStatusLine(el.dataset.v));
   initPlayground();
@@ -108,9 +126,18 @@ export function init() {
   markLive(["dv-copy", "dv-status", "sw:dv-ls", "sw:dv-dbg", "sw:f15-flow-search", "sw:f15-send-metrics-with-opentelemetry", "sw:f15-is-branch-keeping-up"]);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];
-    if (!wire) return;
-    try { await wire[1](e.target.checked); } catch (error) { toast(error.message); }
-    await loadAll();
+    const state = snapshot(); if (!wire || !valid(state)) return;
+    if (pendingChange) { render(); return; }
+    const wanted = e.target.checked; pendingChange = true; e.target.disabled = true;
+    try {
+      await freshOwner(state);
+      const path = e.target.id === "dv-ls" ? "developer/language-servers" : e.target.id === "dv-dbg" ? "developer/debug-adapters" : null;
+      if (path) { const fresh = await api(path); if (!valid(state)) return; D[e.target.id === "dv-ls" ? "ls" : "dbg"] = fresh; }
+      if (!valid(state)) return;
+      await wire[1](wanted);
+    } catch (error) { if (valid(state)) toast(error.message); }
+    finally { pendingChange = false; if (e.target.isConnected) e.target.disabled = false; }
+    if (valid(state)) await loadAll();
   });
   loadAll();
 }

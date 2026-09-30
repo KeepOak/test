@@ -10479,5 +10479,15 @@
   "settings.models.company-empty": "No companies match this search. Your selections are unchanged.",
   "settings.models.company-unlisted": "Saved company no longer listed by OpenRouter. Uncheck it to remove it.",
   "settings.models.company-changed": "OpenRouter routing changed while this choice was being saved. Review the current selection and choose again.",
-  "settings.models.company-help": "Limits which companies may serve an OpenRouter model; it does not choose the model itself. Choose up to 16. Each checkbox saves immediately. With none selected, any company may serve the model. Searching only filters this list. Choosing Cheapest or Fastest clears the list and uses that routing preference instead."
+  "settings.models.company-help": "Limits which companies may serve an OpenRouter model; it does not choose the model itself. Choose up to 16. Each checkbox saves immediately. With none selected, any company may serve the model. Searching only filters this list. Choosing Cheapest or Fastest clears the list and uses that routing preference instead.",
+  "settings.developer.diagnostics": "Diagnostics and task records",
+  "settings.developer.address-help": "Copies the host and port used by this window. This does not change the listener or its access rules; the active address can be local or remote depending on how this window was opened.",
+  "settings.developer.key-help": "The session key is deliberately masked and is never included in this page's markup. Creating a new key from this row is unavailable; the disabled action does not rotate or reveal a key.",
+  "settings.developer.language-help": "Allows configured language-server programs to provide code diagnostics and navigation when a task needs them. Programs must already be installed and configured; this switch does not download or start a server by itself.",
+  "settings.developer.debug-help": "Allows a task to use a configured, already-installed debug adapter. Starting the program still goes through the normal execution approval; this switch does not install an adapter or launch a debugging session.",
+  "settings.developer.status-help": "Changes the terminal status line. Default restores the built-in layout; Minimal shows the model and context. My script is unavailable because this status line does not run user scripts.",
+  "settings.developer.client-tools-help": "Shows whether tools may join through the client-tools WebSocket. Changing this setting from this row remains unavailable pending its safety review; displaying the switch does not connect an external program.",
+  "settings.developer.lazy-tools-help": "Tool definitions are loaded when the task needs them instead of sending every definition with each request. This behavior is always enabled; the displayed switch has no write action.",
+  "settings.developer.metrics-help": "Uses the configured trace exporter for task-counter sends. Turning this switch on selects When needed; it does not configure a destination or send counters immediately. Sending still requires trace export to be enabled.",
+  "settings.developer.loop-help": "Measures how late the engine's event-loop work starts and how busy it is. Turning this switch on selects When needed, so measurement happens when requested. Continuous watching requires On rather than this row's When needed choice."
 }
