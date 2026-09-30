@@ -19,6 +19,7 @@ import { attachedChips, pickFiles, readyUploads, filesSent, hasFiles, moveFiles 
 import { newConversationMode } from "../chat/chips.js";
 import { simplePart } from "./simple.js";
 import { t } from "../../i18n.js";
+import { initHistoryIdeas } from "./history-ideas.js";
 
 const H = { sid: undefined, messages: [], sending: false, mark: "", seeing: false, left: null, picked: null, row: null, carried: null };
 const BUSY = ["running", "queued", "waiting", "needs_input"];
@@ -104,6 +105,7 @@ function panel() {
   const words = esc(t("window.chat.composer.message-to", { name: nameNow() }));
   return `<section class="hm19 glass" aria-label="${t("window.home.label", { name: esc(nameNow()) })}">
     <header class="hm19-h">${faceHere(30)}<b class="grow">${esc(nameNow())}</b>
+      ${ownerHere() ? '<button class="btn ghost" type="button" data-act="history-ideas">Ideas</button>' : ""}
       <button class="icon-btn" type="button" data-act="home19-new" aria-label="${t("comfort.field.newConversation")}" data-tip="${t("comfort.field.newConversation")}"${homeTrunk() ? " disabled" : ""}>${ic("plus", "s")}</button>
       <button class="icon-btn" type="button" data-act="home19-full" aria-label="${t("window.home.full")}" data-tip="${t("window.home.full")}">${ic("panel", "s")}</button>
       <button class="icon-btn" type="button" data-act="home19" aria-label="${t("window.home.close")}">${ic("x", "s")}</button></header>
@@ -221,6 +223,7 @@ function toggle() {
 }
 
 export function initHome() {
+  initHistoryIdeas();
   markLive(["home19-attach", "home19", "home19-new", "home19-full", "home19-see", "home19-drop", "home19-uncarry", "sw:home19-prompt"]);
   on("home19", () => toggle());
   on("home19-full", () => fullPage());

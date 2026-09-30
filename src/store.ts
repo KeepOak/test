@@ -618,6 +618,34 @@ export class Store {
       .all(owner)
       .map((row) => this.toRun(row));
   }
+  /** Ideas reads explicit titles only: never prompts, outputs, messages, or temporary/borrowed chats. */
+  ideaHistory(owner: string): { id: string; sessionId: string; title: string; status: string; createdAt: string }[] {
+    const rows = this.db.prepare(`SELECT t.id, t.session_id, t.status, t.created_at,
+      COALESCE(c.title, (SELECT json_extract(e.data, '$.title') FROM events e
+        WHERE e.run_id=t.id AND e.kind='run.titled' ORDER BY e.rowid DESC LIMIT 1)) AS title
+      FROM tasks t JOIN sessions s ON s.id=t.session_id
+      LEFT JOIN conversation_marks c ON c.session_id=s.id AND c.owner=t.owner
+      WHERE t.owner=? AND s.owner=t.owner AND s.temporary=0
+        AND c.deleted_at IS NULL AND c.archived_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM tasks other JOIN events e ON e.run_id=other.id
+          WHERE other.session_id=s.id AND e.kind='run.started' AND (
+            json_extract(e.data,'$.personProfileId') IS NOT NULL
+            OR json_extract(e.data,'$.shortLivedKey') IS NOT NULL
+            OR json_extract(e.data,'$.lentTo') IS NOT NULL))
+        AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run_id=t.id AND e.kind='run.aside')
+        AND EXISTS (SELECT 1 FROM events e WHERE e.run_id=t.id AND e.kind='run.started'
+          AND json_extract(e.data,'$.source')='owner'
+          AND json_extract(e.data,'$.parentRunId') IS NULL
+          AND json_extract(e.data,'$.personProfileId') IS NULL
+          AND json_extract(e.data,'$.shortLivedKey') IS NULL
+          AND json_extract(e.data,'$.lentTo') IS NULL
+          AND json_extract(e.data,'$.originFrom') IS NULL)
+      ORDER BY t.created_at DESC, t.rowid DESC LIMIT 100`).all(owner);
+    return rows.filter((r) => typeof r.title === "string" && r.title.trim()).map((r) => ({
+      id: String(r.id), sessionId: String(r.session_id), title: String(r.title),
+      status: String(r.status), createdAt: String(r.created_at),
+    }));
+  }
   /** models-ui: this person's task ids started since then, newest first, at most `limit` (Settings › Data & usage, by Trunk). */
   taskIdsSince(owner: string, since: string, limit: number): string[] {
     return this.db.prepare("SELECT id FROM tasks WHERE owner=? AND created_at >= ? ORDER BY created_at DESC LIMIT ?")
