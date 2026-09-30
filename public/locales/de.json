@@ -10597,5 +10597,7 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "window.schedule-gateway.unwatched": "Geplante Aufgaben hängen davon ab, dass diese Engine weiterläuft. Diese Engine läuft nicht über das Gateway.",
+  "window.schedule-gateway.unknown": "Die Gateway-Überwachung konnte für diese geplanten Aufgaben nicht bestätigt werden."
 }

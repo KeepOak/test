@@ -10597,5 +10597,7 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "window.schedule-gateway.unwatched": "Scheduled work depends on this engine staying running. This engine is not running through the gateway.",
+  "window.schedule-gateway.unknown": "Gateway supervision could not be confirmed for these schedules."
 }

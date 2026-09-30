@@ -10597,5 +10597,7 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "window.schedule-gateway.unwatched": "Les tâches planifiées dépendent du maintien de ce moteur en marche. Ce moteur ne passe pas par la passerelle.",
+  "window.schedule-gateway.unknown": "La supervision de la passerelle n’a pas pu être confirmée pour ces tâches planifiées."
 }

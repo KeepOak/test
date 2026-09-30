@@ -10597,5 +10597,7 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "window.schedule-gateway.unwatched": "Las tareas programadas dependen de que este motor siga funcionando. Este motor no se ejecuta a través de la puerta de enlace.",
+  "window.schedule-gateway.unknown": "No se pudo confirmar la supervisión de la puerta de enlace para estas tareas programadas."
 }
