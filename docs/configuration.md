@@ -5745,13 +5745,14 @@ question and only runs after you say yes, and the result is shown exactly as the
 Below that, one question can be put to two models using the evaluation route where that is
 configured.
 
-**On a phone.** `/manifest.webmanifest` and `/service-worker.js` make the page installable. The
-worker keeps the app's own files (stylesheets, scripts, icons, the English words) so it opens
-quickly and shows the app rather than a browser error when the connection drops. Nothing under
-`/api/`, `/v1/` or `/webhooks/` is ever cached: your assistant is live or it is nothing, and an
-unreachable computer puts a plain banner on the screen. The worker is never registered inside the
-desktop app or when the page is opened with `?desktop=1`, and the desktop app never offers to
-install itself.
+**On a phone.** The redesigned window serves `/manifest.webmanifest` and its icons, but it
+does not register a service worker or promise an offline shell. Opening it needs a reachable
+Branch computer. If the connection drops while the window is open, live requests fail and the
+window shows its connection banner; it does not cache assistant requests or replay changes.
+The legacy `/service-worker.js` URL now only retires its own previously installed registration
+and deletes the exact historical Branch shell caches. It creates no cache or registration and
+preserves unrelated workers and caches. Retirement takes effect when the browser next checks
+that worker for an update; it cannot clear an old installation which never reconnects.
 
 **Languages.** Labels go through `t(key)` in `/i18n.js`, reading `/locales/en.json`. The rail, the
 sections, the owner menu, the message box and the screens described above are covered; the older
@@ -5763,9 +5764,10 @@ and kept in this browser, not in the workspace. Dates and numbers are written wi
 chosen language.
 
 The files `/web-ui.js`, `/web-ui.css`, `/markdown.js`, `/i18n.js`, `/inspector.js`, `/live-run.js`,
-`/conversation-facts.js`, `/playground.js`, `/service-worker.js`, `/manifest.webmanifest`,
+`/conversation-facts.js`, `/playground.js`, `/manifest.webmanifest`,
 `/locales/en.json`, `/locales/fr.json` and the app icons are served from the same local allowlist
-as the rest of the interface.
+as the rest of the interface. `/service-worker.js` is a compatibility retirement response rather
+than a static app asset.
 
 ## Knowledge bases (batch 24, wave 7)
 
@@ -6850,19 +6852,18 @@ Mac and on Linux: each switch with its explanation, on Linux the session type, a
 a Mac an **Open System Settings** button that opens that one page only when you press it (in the app
 through its own link opener, which accepts only these four pages). On Windows the card is not shown.
 
-## Commands nobody has ruled on (batch 26, wave 8)
+## Commands nobody has ruled on (batch 26, wave 8; changed 2026-09-30)
 
-A command on this computer is the one thing that can do absolutely anything, including things none
-of Branch's own tools offer. Until now, a command that no rule mentioned was simply run. It is now
-put to you instead, whatever preset you are on, and answering yes writes a standing rule for that
-command — so it is one question the first time and nothing afterwards.
+A command that no rule mentions runs for your own tasks, as OpenClaw's host commands and Hermes Agent's terminal do
+for their owner. The commands on Hermes Agent's dangerous-command list (a recursive delete, a force push, `git reset
+--hard`, formatting a disk, shutting down, piping a download into a shell, and the rest) are still put to you, under
+every mode including Full access, while "Checking commands" in Settings › Safety extras is on (it ships on).
 
-**What changes for you.** If you have been using Branch already, the first time it wants to run each
-kind of command you will see one extra question, naming the command. Say "yes, always" and you will
-not be asked about that one again. Nothing else changed: a file, a web page or a message that no
-rule mentions is still simply allowed, exactly as before. If you would rather have the old behaviour
-back, set `unmatchedCommands` to `allow` on the approval settings; the rules you already have are
-untouched either way.
+**What changes for you.** An install that was on "No approvals" with commands set to ask is moved to allow once;
+any other preset keeps asking before commands through its own lines. A household person's task, a short-lived key's,
+a chat message's and a schedule's still ask before every command nobody has ruled on. If you would rather be asked,
+set `unmatchedCommands` to `ask` on the approval settings; saying "yes, always" to a command then writes a standing
+rule for it, and the rules you already have are untouched either way.
 
 ## What each person here may do (batch 26, wave 8)
 
@@ -7671,6 +7672,43 @@ fingerprint of the picture rather than the picture — nothing that was on scree
 A password manager showing on screen stops it outright, as it stops any other picture of the screen.
 
 Tools: `monitors.screen.create`, `monitors.screen.check`. File: `src/screen-watch.ts`.
+
+Set `readText: true` when creating a screen watch to explain changed pictures with local OCR text
+differences. This is optional and off by default. It requires Tesseract on PATH with its English
+language data; Branch does not install or download it. This optional existing executable avoids
+adding a bundled OCR runtime or sending screen content to a provider. The image is passed through
+stdin, with a 15-second cap and bounded input/output. The existing private-window capture refusal
+and screen-control switches still apply, and known secrets are scrubbed before comparison.
+
+At most 4,096 recognized characters per watch are held as a memory-only baseline. Screenshots and
+baselines are not saved by OCR. A restart or evicted baseline means the next look establishes a new
+baseline; it cannot reconstruct earlier words. When pixels change, the summary includes up to six
+removed and six added text lines, capped at 1,600 characters. These summaries can be retained in
+the resulting conversation or delivered to the chat selected by `notifyVia`, so enable this only
+for a region whose words you want in those notifications. OCR errors fail the look without
+advancing its fingerprint; unchanged OCR text is reported honestly rather than invented as a
+text change. OCR recognizes printed text imperfectly and does not infer what a page means.
+
+### Local OCR of workspace pictures and scans
+
+`documents.ocr` reads a workspace-relative PNG/JPEG or explicitly selected scanned-PDF pages locally.
+It uses the same bounded Tesseract adapter as screen watches. PDF pages additionally need installed
+Poppler `pdftoppm`; neither executable is installed automatically. Executables are resolved only
+from absolute directories on the owner's startup PATH, never from a task argument or working folder.
+
+This is an owner-only `files.read` tool, held to the task's workspace/project, file rules, hidden and
+secret filename checks, and symlink/hardlink refusals. No renderer endpoint accepts arbitrary paths.
+PNG/JPEG inputs are capped at 8 MiB and 4 megapixels; PDFs at 24 MiB. Choose `firstPage` (default 1)
+and `pageCount` (default 1, maximum 5). PDF pages render one at a time at a maximum 2048-pixel long
+side; a page outside the document is an error. Private temporary input/raster files are removed
+on success, error and cancellation. A job has a 90-second overall cap, each child 15 seconds, and
+only one local document OCR job runs at a time.
+
+Recognized text is capped at 4096 characters per page, scrubbed for known secrets and passed through
+the existing file-content instruction filter. Results identify the selected page numbers and remain
+untrusted document content; OCR does not execute their instructions or index the file. Returned text
+can be retained in the tool's conversation, as with other file reads. Password-protected or damaged
+PDFs, unsupported pictures, missing executables and cancelled work fail explicitly.
 
 ## Asking a specialist one question (batch 22, wave 8)
 

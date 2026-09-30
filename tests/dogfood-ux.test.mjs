@@ -98,6 +98,10 @@ test("D26: What's new on a build between releases lists the newest release it al
   assert.equal(notesFor("0.20.0", file).items[0].title, "New", "a release's own notes");
   assert.equal(notesFor("0.20.0-dev.1790479535-gabc", file).version, "0.19.3", "a dev build before 0.20.0 contains 0.19.3");
   assert.equal(notesFor("0.20.1", file).version, "0.20.0");
+  // PLAT-044: the exact installed build is kept beside whose notes are shown.
+  assert.equal(notesFor("0.20.0-dev.1790479535-gabc", file).installedVersion, "0.20.0-dev.1790479535-gabc");
+  assert.equal(notesFor("0.20.1", file).installedVersion, "0.20.1");
+  assert.equal(notesFor("0.20.0", file).installedVersion, "0.20.0");
   assert.deepEqual(notesFor("0.0.1", file).items, [], "older than every release: none");
   assert.ok(notesFor("0.19.4-dev.1-gabc").items.length > 0, "the shipped file answers a dev build");
 });

@@ -39,7 +39,24 @@ const ServerRequestSchema = z.object({
   server: McpTransportSchema,
   why: z.string().trim().min(1).max(300),
 }).strict();
-export const InstallRequestSchema = z.union([PackageRequestSchema, ServerRequestSchema]);
+/**
+ * Owner report (2026-09-30): a plain union answered every slip with only "The request is not valid.", so the model sent
+ * the same call again. Told apart by `kind`, a wrong field is named. A few spellings models use are read as meant: no
+ * `kind` when `ecosystem` or `server` says which, "pypi" or "NPM", and a server with only a command or an address.
+ */
+function readAsMeant(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const value = { ...(input as Record<string, unknown>) };
+  if (value.kind === undefined) value.kind = value.server !== undefined ? "mcp" : value.ecosystem !== undefined ? "package" : undefined;
+  if (typeof value.ecosystem === "string") value.ecosystem = { npm: "npm", pypi: "PyPI" }[value.ecosystem.trim().toLowerCase()] ?? value.ecosystem;
+  const server = value.server;
+  if (server && typeof server === "object" && !Array.isArray(server) && (server as { transport?: unknown }).transport === undefined) {
+    const shape = server as Record<string, unknown>;
+    value.server = typeof shape.command === "string" ? { transport: "stdio", ...shape } : typeof shape.url === "string" ? { transport: "http", ...shape } : shape;
+  }
+  return value;
+}
+export const InstallRequestSchema = z.preprocess(readAsMeant, z.discriminatedUnion("kind", [PackageRequestSchema, ServerRequestSchema]));
 export type InstallAsk = z.infer<typeof InstallRequestSchema>;
 
 export type Requester = "assistant" | "chat" | "owner" | "other";
