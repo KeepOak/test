@@ -32,3 +32,19 @@ test("one repair for a malformed answer, then a plain refusal; a provider failur
   assert.equal(calls, 1);
   await assert.rejects(adaptAnswer({ adapter: "json", signature, inputs: { answer: 5 } }, fixed.ask), "inputs are checked against their declared types");
 });
+
+test("nested objects, object arrays, optional and nullable fields are checked at every depth, in JSON and XML", async () => {
+  const nested = { name: "order", instructions: "Read the order.", inputs: { text: { type: "string" } },
+    outputs: { customer: { type: "object", fields: { name: { type: "string" }, email: { type: "string", nullable: true } } },
+      items: { type: "object[]", fields: { sku: { type: "string" }, qty: { type: "integer" } } }, note: { type: "string", optional: true } } };
+  const json = asking('{"customer": {"name": "Ada", "email": null}, "items": [{"sku": "A1", "qty": 2}]}');
+  assert.deepEqual((await adaptAnswer({ adapter: "json", signature: nested, inputs: { text: "x" } }, json.ask)).value,
+    { customer: { name: "Ada", email: null }, items: [{ sku: "A1", qty: 2 }] });
+  const extra = asking('{"customer": {"name": "Ada", "email": null, "admin": true}, "items": []}', '{"customer": {"name": "Ada", "email": null, "admin": true}, "items": []}');
+  assert.equal((await adaptAnswer({ adapter: "json", signature: nested, inputs: { text: "x" } }, extra.ask)).status, "refused", "an undeclared nested field is refused");
+  const dup = asking('{"customer": {"name": "Ada", "name": "Eve", "email": null}, "items": []}', '{"customer": {"name": "Ada", "email": null}, "items": []}');
+  assert.equal((await adaptAnswer({ adapter: "json", signature: nested, inputs: { text: "x" } }, dup.ask)).reasked, true, "a duplicate key needs the repair");
+  const xml = asking("<customer><name>Ada</name><email>ada@example.com</email></customer><items><item><sku>A1</sku><qty>2</qty></item></items><note>Soon</note>");
+  assert.deepEqual((await adaptAnswer({ adapter: "xml", signature: nested, inputs: { text: "x" } }, xml.ask)).value,
+    { customer: { name: "Ada", email: "ada@example.com" }, items: [{ sku: "A1", qty: 2 }], note: "Soon" });
+});

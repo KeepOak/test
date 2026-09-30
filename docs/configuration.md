@@ -8455,20 +8455,32 @@ TypeScript app to satisfy the letter of the row would be worse than not having i
 `answers.adapt` declares a signature (`name`, `instructions`, `inputs`, `outputs`), actual
 `inputs`, and up to eight typed input/output `demonstrations`. Its `adapter` is `chat`,
 `json` (default), or `xml`. Each declared field has a `type`, optional `description`, and
-optional primitive `choices`. Supported types are `string`, `number`, `integer`, `boolean`
-and their arrays. All one to 24 fields are required; unknown and duplicate outputs are refused.
+optional primitive `choices`. Supported types are `string`, `number`, `integer`, `boolean`,
+`object` and their arrays. Objects require a nested `fields` declaration. Fields are required
+unless `optional: true`; omission stays absent, and explicit null requires `nullable: true`.
+Array elements themselves are non-nullable. Unknown and duplicate outputs are refused at every
+depth. Declarations allow four object levels, one to 24 fields per object and 96 fields total
+per signature side. For example, `profile: { type: 'object', fields: { nickname:
+{ type: 'string', optional: true }, age: { type: 'integer', nullable: true } } }` accepts
+`{ profile: { age: null } }`, while missing age or an undeclared child is refused.
 
 Chat uses labeled `[[ ## field ## ]]` sections and a final `completed` marker; JSON uses
-the provider's native answer schema where available; XML uses escaped field fragments.
-XML accepts no attributes, nested tags, declarations, external resources or general documents.
+the provider's native answer schema where available for fully required declarations. Signatures
+with optional fields use JSON prompt mode to preserve omission semantics across providers.
+Chat object/array values are JSON. XML objects use named child tags and arrays use `<item>` tags;
+primitive values are escaped JSON text, with plain text also accepted for strings. Empty
+nullable XML tags and explicit `null` text represent null. XML accepts no attributes,
+declarations, external resources, mixed content or general documents. It is limited to nine
+tag levels and 4096 elements. JSON duplicate detection also covers nested objects.
 Malformed chat output gets one JSON fallback; JSON and XML get one format repair. Provider
 errors escape without retry. A second malformed answer returns a refusal.
 
 This helper requires `specialists.use` on the initiating running task, shares its model and
 budget accounting, disables model tools, rechecks permission/policy/lock state, and has a
 60-second deadline. Connections that own their own execution time are unsupported here.
-Prompts and replies are each bounded to 64 KiB; array fields to 128 items. This is a bounded
-typed-signature implementation, not arbitrary Python/DSPy types or nested XML compatibility.
+Declarations/values, prompts and replies are each bounded to 64 KiB; array fields to 128 items.
+This is a bounded typed-signature implementation, not arbitrary Python/DSPy classes, arbitrary
+unions, references, schema defaults, dictionary keys or custom XML attributes.
 The independent codecs follow the format contracts in
 [DSPy's MIT-licensed adapters](https://github.com/stanfordnlp/dspy/tree/9c900c7de0a3cc3114c23fe8202ebe48e2206ce1/dspy/adapters);
 no new dependency or upstream implementation code is imported. Provider effect tools continue
