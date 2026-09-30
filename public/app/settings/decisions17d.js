@@ -6,7 +6,7 @@
    What they are used for, each the engine's own switch (POST /api/decisions/settings { route | inbox }, off as shipped: every
    use is a model call the owner did not make): a room message that names nobody goes to the Trunk whose job fits it
    (src/trunks/rooms.ts), and Inbox › Needs you is sorted by urgency (POST /api/decisions/urgency, places/inbox.js).
-   "Filter long lists" stays greyed with its reason.
+   "Filter long lists" (models-ui) is live when a decision model on this computer, or one apart from the task's, can do it.
    Every word goes through t() (public/locales); a switch keeps its English title (its id) and shows through say(). */
 
 import { esc, render, $ } from "../core/dom.js";
@@ -17,6 +17,7 @@ import { markLive } from "../core/features.js";
 import { ic, toast } from "../core/ui.js";
 import { sw15 } from "./rows15.js";
 import { t } from "../../i18n.js";
+import { say } from "../core/words.js";
 
 const KINDS = () => [["yes", t("dashboard.needs.yes")], ["pick", t("savings.option.pick")], ["score", t("window.p17d.score")], ["filter", t("window.p17d.filter")]];
 const D = { data: null, kind: "pick", q: "", o: "", out: "", busy: false };
@@ -46,13 +47,22 @@ function tryIt() {
     <div class="dm-out17d" id="dm-out17d" aria-live="polite">${D.out}</div></div>`;
 }
 
+/* models-ui: "Filter long lists" is the engine's own switch (POST /api/decisions/settings { lists }, on as shipped). It acts
+   only with a decision model on this computer or one chosen apart from the task's own (GET /api/decisions listModel);
+   with neither it is greyed with that reason (window.why.f15-filter-long-lists-before-a-trunk-reads-t). */
+function listsRow(s) {
+  const title = "Filter long lists before a Trunk reads them";
+  const m = D.data.listModel, sub = m ? t("window.p17d.lists-by", { name: m.name, count: s.listMin }) : "";
+  return `<div class="ctl"><b>${esc(say(title))}</b><input class="sw" type="checkbox" ${m ? 'id="f15-filter-long-lists-before-a-trunk-reads-t" data-sw="set"' : 'data-why="f15-filter-long-lists-before-a-trunk-reads-t"'} ${m && s.lists ? "checked" : ""} aria-label="${esc(say(title))}"><small>${esc(say("Mail, files and search results it clearly doesn’t need are dropped."))}${sub ? ` ${esc(sub)}` : ""}</small></div>`;
+}
+
 /** Settings › Models: "Decision models" at Advanced, its technical group at Technical. */
 export function decisions17d(lv) {
   if (lv < 1) return "";
   if (!D.data) return "";
   const s = D.data.settings;
   const main = `<div class="sec x15-sec dm17d"><h2>${esc(t("window.p17d.decision-models"))}</h2><p class="hint">${esc(t("window.p17d.decision-models-hint"))}</p>
-    ${modelRow()}${sw15("Send each message to the right Trunk", "When you don’t say who, it picks from their jobs.", s.route)}${sw15("Sort the Inbox by urgency", "Deadlines and money first.", s.inbox)}${sw15("Filter long lists before a Trunk reads them", "Mail, files and search results it clearly doesn’t need are dropped.")}
+    ${modelRow()}${sw15("Send each message to the right Trunk", "When you don’t say who, it picks from their jobs.", s.route)}${sw15("Sort the Inbox by urgency", "Deadlines and money first.", s.inbox)}${listsRow(s)}
     ${tryIt()}</div>`;
   if (lv < 2) return main;
   const num = (id, title, sub, value, unit) => `<div class="ctl"><b>${esc(title)}</b><span class="right num15"><input class="inp" id="${id}" value="${esc(value)}" aria-label="${esc(title)}" inputmode="decimal">${unit ? `<small>${esc(unit)}</small>` : ""}</span><small>${esc(sub)}</small></div>`;
@@ -95,7 +105,7 @@ async function saveSettings(change) {
 }
 
 export function initDecisions17d() {
-  markLive(["dmmodel17d", "dmkind17d", "dmrun17d", "sw:dm-q17d", "sw:dm-o17d", "sw:dm-sure17d", "sw:dm-max17d", "sw:f15-send-each-message-to-the-right-trunk", "sw:f15-sort-the-inbox-by-urgency"]);
+  markLive(["dmmodel17d", "dmkind17d", "dmrun17d", "sw:dm-q17d", "sw:dm-o17d", "sw:dm-sure17d", "sw:dm-max17d", "sw:f15-send-each-message-to-the-right-trunk", "sw:f15-sort-the-inbox-by-urgency", "sw:f15-filter-long-lists-before-a-trunk-reads-t"]);
   on("dmkind17d", (el) => { D.q = $("#dm-q17d")?.value ?? D.q; D.kind = el.dataset.v; D.o = ""; D.out = ""; render(); });
   on("dmrun17d", () => decide());
   on("dmmodel17d", (el) => saveSettings({ model: el.dataset.v }));
@@ -109,6 +119,7 @@ export function initDecisions17d() {
     else if (e.target.id === "dm-max17d") saveSettings({ maxList: n });
     else if (e.target.id === "f15-send-each-message-to-the-right-trunk") saveSettings({ route: e.target.checked });
     else if (e.target.id === "f15-sort-the-inbox-by-urgency") saveSettings({ inbox: e.target.checked });
+    else if (e.target.id === "f15-filter-long-lists-before-a-trunk-reads-t") saveSettings({ lists: e.target.checked });
   });
   loadDecisions();
 }

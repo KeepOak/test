@@ -24,6 +24,7 @@ export const SKIPPED = {
   discord: account("a Discord bot token and a server to add it to"),
   slack: account("a Slack workspace and an app token"),
   whatsapp: account("a WhatsApp Business number (Meta Cloud API)"),
+  "whatsapp-web": "needs a phone with a WhatsApp account to link the bridge to; WhatsApp has no test server, and the harness never uses a real account",
   messenger: account("a Facebook Page and a Meta app"),
   instagram: account("an Instagram business account and a Meta app"),
   signal: "needs a phone number registered with Signal for signal-cli; Signal has no test server",

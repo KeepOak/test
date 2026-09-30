@@ -88,6 +88,9 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
   // r17-i: another of the owner's computers hands a message to a Trunk here with the "run" key it was given;
   // the message is quoted as that computer's text, capped and limited per hour (src/reach/remote-trunks.ts).
   post("/api/reach/trunks/inbox", "a message from a Trunk on another of the owner's computers"),
+  post("/api/reach/continuity/receive", "receives idempotent continuation work from its owner-paired run key"),
+  post("/api/reach/continuity/status", "reads only the continuity receipt belonging to this paired key"),
+  post("/api/reach/continuity/release", "fences and stops only the continuity transfer belonging to this paired key"),
   // mac7/r17-g: the safety extras. Everything else under /api/safety-extras (the switches, letting the
   // emergency stop go, setting up authenticator codes, installing or running WebAssembly add-ons) is
   // refused by the rule above. Reading /api/safety-extras is allowed: it never carries the code key.
@@ -106,6 +109,10 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
 const ownerOnlyReads: readonly RegExp[] = [
   // Saved task images are read by the profile window, never through a short-lived script key.
   /^\/api\/artifacts\/file$/,
+  /^\/api\/reach\/continuity(\/|$)/,
+  /^\/api\/taste(\/|$)/,
+  /^\/api\/self-development\/publications(\/|$)/,
+  /^\/api\/schedules\/[a-f0-9-]{36}\/dashboard$/,
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
   /^\/api\/chatgpt\/status$/,
