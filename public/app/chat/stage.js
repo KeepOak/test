@@ -42,6 +42,7 @@ import { ic, av, faceOf, toast, app, closePop } from "../core/ui.js";
 import { S, E, refresh, trunkIntro, ownName, chatFace } from "../core/state.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
+import { gifButtons, startGif, observeGif } from "./stage-gif.js";
 import { markLive, greyOut } from "../core/features.js";
 import { work, loadWork } from "./terminal.js";
 import { t } from "../../i18n.js";
@@ -229,7 +230,7 @@ function controls(kind) {
     : browserTake(run);
   const pause = run?.status === "running" ? `<button class="btn sm" type="button" data-act="lw-pause" data-id="${esc(run.id)}">${t("goal.action.pause")}</button>` : "";
   const stop = run && STOPPABLE.has(run.status) ? `<button class="btn ghost sm" type="button" data-act="stage-stop" data-id="${esc(run.id)}">${t("dashboard.stop")}</button>` : "";
-  return take + pause + stop;
+  return take + pause + stop + (kind === "browser" && mine() ? gifButtons(live()?.browser) : "");
 }
 
 function top(kind, steps) {
@@ -386,6 +387,7 @@ export function computerCard(messages) {
 const cardKey = (v) => JSON.stringify([v?.runId, v?.status, v?.doing, v?.browser?.live, !!v?.browser?.frame, v?.browser?.url, v?.browser?.title]);
 /* A new answer: the conversation is drawn again when its card changes; otherwise only the view (a frame is painted in). */
 function onLive(before, now) {
+  void observeGif(now);
   if (cardKey(before) !== cardKey(now)) render(); else drawStage();
 }
 function fitCards() {
@@ -557,6 +559,7 @@ export function initStage() {
   // A computer's tab (or its cell in All screens) picks it for this conversation; All screens is the view's own layout.
   on("comp-view", async (el) => { if (await pickFor(S.chat, el.dataset.v)) { G.grid = false; G.at = 0; drawStage(); } });
   on("comp-grid", () => { G.grid = true; drawStage(); });
+  on("stage-gif-start", () => startGif(live()?.browser));
   on("stage", (el) => openStage(el.dataset.v));
   on("stage-close", () => { G.kind = null; drawStage(); });
   on("stage-pip", () => { G.pip = { kind: G.kind, chat: S.chat }; G.kind = null; drawStage(); });

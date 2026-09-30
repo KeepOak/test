@@ -158,6 +158,7 @@ export class Store {
         UPDATE messages SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=new.id; END;`);
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS events_run_kind ON events(run_id, kind, id)"); // exact task attribution without repeated history scans
     this.conversations = new ConversationMarks(this.db, () => this.clock());
     ensureThreadTable(this.db); // defaulttrunk: which Trunk each conversation is with (src/trunks/threads.ts), read by history
     ensureForgotten(this.db);
@@ -227,8 +228,8 @@ export class Store {
     return this.library.search(owner, input, this.hiddenSessions().slice(0, 500), agent);
   }
   /** The recent conversations with what was last said in each, for picking one up on a phone. */
-  recentSessions(owner: string, limit?: number) {
-    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500));
+  recentSessions(owner: string, limit?: number, offset = 0) {
+    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500), undefined, offset);
   }
   /** A project's conversations, newest first, in the same shape as recentSessions (src/session-library.ts projectOf). */
   projectSessions(owner: string, project: string, limit = 100) {
