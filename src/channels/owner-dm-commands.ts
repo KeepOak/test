@@ -26,7 +26,7 @@ import type { InboundMessage } from "./router.js";
  */
 export const ownerDmCommandNames: readonly string[] = [
   "goal", "subgoal", "bg", "memory", "skills", "health", "sessions", "lockdown", "queue", "busy",
-  "loop", "heartbeat", "suggestions", "blueprint",
+  "loop", "heartbeat", "suggestions", "blueprint", "diagnostics",
 ];
 
 /** One of the owner's own accounts, named exactly, on an app that vouches for its senders, in a direct chat, live. */

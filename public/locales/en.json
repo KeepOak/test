@@ -1295,6 +1295,7 @@
   "commands.dashboard.title": "Commands",
   "commands.dashboard.unknown": "This page does not know that command. Send /help for the list.",
   "commands.default": "the model every new conversation starts with",
+  "commands.diagnostics": "Save a local diagnostic report",
   "commands.diff": "tracked Git changes in a workspace folder, shortened to one reply; owner direct chat with git.read",
   "commands.dry-run": "a dry run: it shows what it would do without doing it",
   "commands.exit": "leave",

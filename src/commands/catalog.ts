@@ -117,6 +117,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("goal", [], "<what should be true> [--max rounds]", "keep working until a goal is met, paused or out of rounds", [...W, "terminal"], "run", { ...was("window", "phone"), route: { method: "POST", path: "/api/goals" } }),
   entry("whoami", ["id"], "", "what you may do from here", ALL, "look"),
   entry("version", ["about"], "", "which Branch this is", ALL, "look"),
+  entry("diagnostics", ["debug"], "[about tasks log]", "save a local metadata report without provider checks or uploads", [...W, "terminal", "dashboard"], "owner", { route: { method: "POST", path: "/api/diagnostics/report" } }),
   entry("health", ["doctor"], "", "a quick check of the database, models, chat apps and schedules", [...W, "terminal", "dashboard"], "look"),
   // bucket 12: the owner's saved prompts and procedures; their own commands are laid over this table in saved.ts
   entry("prompts", ["procedures", "workflows"], "[name]", "your saved prompts and procedures; with a name, one of them in the message box", ALL, "look"),

@@ -1295,6 +1295,7 @@
   "commands.dashboard.title": "Commandes",
   "commands.dashboard.unknown": "Cette page ne connaît pas cette commande. Envoyez /help pour la liste.",
   "commands.default": "le modèle avec lequel chaque nouvelle conversation commence",
+  "commands.diagnostics": "Enregistrer un rapport de diagnostic local",
   "commands.diff": "les modifications Git suivies d'un dossier de l'espace de travail, en une seule réponse ; chat direct du propriétaire avec git.read",
   "commands.dry-run": "un essai : il montre ce qu’il ferait sans le faire",
   "commands.exit": "quitter",
