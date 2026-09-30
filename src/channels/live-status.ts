@@ -291,7 +291,8 @@ export class LiveStatus {
     if (this.closed || this.picturesClosed || !this.permitted()) return;
     // The page the picture shows, else what the step was; every word through the chat's outbound check.
     const caption = (shot!.caption ? await this.checked(shot!.caption) : null) ?? await this.checked(statusOf(this.pictureCaption));
-    if (caption === null) return;
+    // Caption checks may outlive finish's wait just like the screenshot itself.
+    if (caption === null || this.closed || this.picturesClosed || !this.permitted()) return;
     if (this.target.adapter.maxFileBytes && bytes.length > this.target.adapter.maxFileBytes) return;
     const file = { name: "branch-browser.jpg", mediaType: "image/jpeg", bytes, caption };
     this.lastPicture = file;
@@ -301,6 +302,10 @@ export class LiveStatus {
         if (this.pictureId) await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, buttons);
         // Pictures follow the chat's quoting rule like the steps message (#700), not a quote on every one.
         else this.pictureId = await this.target.adapter.sendPicture!(this.target.chatId, file, buttons, this.quoteTarget()) ?? null;
+        // An already-started first send can return its id after finish skipped cleanup.
+        // The same applies to an in-flight edit: remove its controls when it settles.
+        if ((this.closed || this.picturesClosed) && this.pictureId && this.permitted())
+          await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, []);
       } else await this.target.adapter.sendFile!(this.target.chatId, file, this.quoteTarget());
     } catch (error) {
       const wait = retryAfterMs(error);
