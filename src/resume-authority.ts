@@ -2,17 +2,22 @@ import { TrunkSchema } from "./trunks/record.js";
 import type { Run } from "./contracts.js";
 import type { RunSource } from "./policy.js";
 import type { Store } from "./store.js";
+import { recordedRecoveryPerson } from "./never-break/recorded-person.js";
+import type { TrunkRunShape } from "./trunks/shape.js";
+import { profileScope } from "./profiles.js";
 
 export interface ResumeAuthority {
   permissions: string[]; depth: number; delegates: boolean; dryRun: boolean; ownCopy: boolean;
   agent?: string; trunkId?: string; source: RunSource;
+  trunkScope?: { id: string; agent: string; owners: boolean; keys: TrunkRunShape["keys"] };
 }
 type AuthorityRecord = { run: Run; start: Record<string, unknown>; requiredCopy: boolean; borrowedCopy: boolean };
 const sources = new Set(["owner", "trigger", "schedule", "mcp", "a2a", "acp", "channel"]);
 function unavailable(): never { throw new Error("The task's complete saved authority is unavailable or conflicting. Reconcile its original permissions, helper identity and project before continuing."); }
 
 /** Immutable records only: ancestors narrow permissions; only this task's continuation chain supplies identity. */
-export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, runId: string, owner: string, registered: readonly string[]): ResumeAuthority {
+export function resumeAuthority(store: Store, runId: string, owner: string, registered: readonly string[]): ResumeAuthority {
+  const person = recordedRecoveryPerson(store, runId, owner);
   const root = store.run(runId);
   if (!root || !root.project) unavailable();
   const records = new Map<string, AuthorityRecord>();
@@ -49,7 +54,6 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
   visit(runId);
   const initial: AuthorityRecord | undefined = records.get(runId);
   if (!initial) unavailable();
-  if (root.owner !== owner && initial.start.lentTo !== owner) unavailable();
   const lineage: AuthorityRecord[] = [], seen = new Set<string>();
   let id: string | undefined = runId;
   while (id) {
@@ -101,11 +105,21 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
   }
   if (trunkIds.size > 1) unavailable();
   const trunkId = [...trunkIds][0];
+  let trunkScope: ResumeAuthority["trunkScope"];
   if (trunkId) {
-    const record = store.get("governance", root.owner, `trunk:${trunkId}`);
+    const record = store.get("governance", person ? profileScope(person) : root.owner, `trunk:${trunkId}`);
     if (!record || record.data.id !== trunkId || record.data.paused === true) unavailable();
     const core = Object.fromEntries(Object.keys(TrunkSchema.shape).map((key) => [key, record.data[key]]));
     if (!TrunkSchema.safeParse(core).success) unavailable();
+    for (const saved of lineage) {
+      const scope = saved.start.trunkScope as Record<string, unknown> | undefined;
+      const keys = TrunkSchema.shape.keys.safeParse(scope?.keys);
+      if (!scope || !("keys" in scope) || scope.keys === undefined || scope.id !== trunkId || scope.agent !== `trunk:${trunkId}`
+        || typeof scope.owners !== "boolean" || !keys.success) unavailable();
+      const next = { id: trunkId, agent: String(scope.agent), owners: scope.owners, keys: keys.data };
+      if (trunkScope && JSON.stringify(trunkScope) !== JSON.stringify(next)) unavailable();
+      trunkScope = next;
+    }
   }
 
   if (typeof agent === "string" && agent.startsWith("trunk:")) {
@@ -115,5 +129,6 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
   return { permissions: [...permissions], depth, delegates: lineage.every((record) => record.start.delegates === true),
     dryRun: lineage.some((record) => record.start.dryRun === true),
     ownCopy: lineage.some((record) => record.start.ownCopy === true || record.requiredCopy),
-    ...(typeof agent === "string" ? { agent } : {}), ...(trunkId ? { trunkId } : {}), source: source as RunSource };
+    ...(typeof agent === "string" ? { agent } : {}), ...(trunkId ? { trunkId } : {}),
+    ...(trunkScope ? { trunkScope } : {}), source: source as RunSource };
 }

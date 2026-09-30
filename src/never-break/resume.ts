@@ -5,6 +5,7 @@ import type { Run } from "../contracts.js";
 import { outsideSourceOf } from "../outside-origin.js";
 import { runOrigin } from "../key-context.js"; // bucket 19 (integration review)
 import { withRecoveryContext } from "./recovery-context.js";
+import { recordedRecoveryPerson } from "./recorded-person.js";
 import { underProject } from "../project-scope.js";
 import { defaultProjectId } from "../projects.js";
 import { asPerson, currentPerson } from "../people/context.js"; // bucket 19 (integration review)
@@ -244,6 +245,10 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
   };
   let recovery: ReturnType<Runtime["beginInterruptedRecovery"]> | null = null;
   try {
+    if (carryOn) {
+      const person = recordedRecoveryPerson(input.store, runId, input.runtime.owner);
+      if (person && !currentPerson()) return asPerson({ profileId: person, keyId: "resumed" }, () => recoverRun(input, runId, steps));
+    }
     if (carryOn) recovery = input.runtime.beginInterruptedRecovery(runId);
     // Reconcile the saved role and workspace before any journal retry or automatic model continuation.
     if (carryOn) {
@@ -383,18 +388,45 @@ const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_
 /**
  * hot-update: tasks an engine stopped after a whole step so a newer engine could take over (`run.handed_over`). Whichever
  * engine starts next (the new one, or the old one again when the new one failed its check) carries each on once: the
- * carry-on is written down (`run.auto_resumed`) before it starts, so no later start carries it on a second time. No step
+ * carry-on is written down (`run.auto_resumed`) when the replacement task is admitted. No step
  * was cut off, so nothing is checked or done again; a chat app's task is carried on too, since that app sends nothing again.
  */
-export function resumeHandedOver(input: Pick<RecoveryInput, "store" | "runtime" | "maxAgeMs">): { runId: string; resumed: Promise<Run | undefined> }[] {
+type HandedOverContinuation = { runId: string; resumed: Promise<Run | undefined>; admission: Promise<boolean> };
+const pendingHandovers = new WeakMap<Runtime, Map<string, HandedOverContinuation>>();
+export function resumeHandedOver(input: Pick<RecoveryInput, "store" | "runtime" | "maxAgeMs">): HandedOverContinuation[] {
   const since = new Date(Date.now() - (input.maxAgeMs ?? 86_400_000)).toISOString();
   const rows = input.store.sqlite.prepare(`SELECT DISTINCT t.id AS id FROM tasks t JOIN events e ON e.run_id=t.id AND e.kind='run.handed_over'
     WHERE t.status='interrupted' AND t.updated_at >= ? AND NOT EXISTS (SELECT 1 FROM events x WHERE x.run_id=t.id AND x.kind='run.auto_resumed')
     ORDER BY t.created_at`).all(since) as { id: unknown }[];
+  let pending = pendingHandovers.get(input.runtime);
+  if (!pending) { pending = new Map(); pendingHandovers.set(input.runtime, pending); }
+  const active = pending;
   return rows.map((row) => {
     const runId = String(row.id);
-    input.store.event(runId, "run.auto_resumed", { steps: [], handedOver: true });
-    return { runId, resumed: input.runtime.resume(runId).catch(() => undefined) };
+    const existing = active.get(runId);
+    if (existing) return existing;
+    let admitted = false;
+    let receipt!: (accepted: boolean) => void;
+    const admission = new Promise<boolean>((resolve) => { receipt = resolve; });
+    const resumed = input.runtime.resume(runId, undefined, (next) => {
+      admitted = true;
+      input.store.event(runId, "run.auto_resumed", { steps: [], handedOver: true, resumedRunId: next.id });
+      receipt(true);
+    }).then((result) => {
+      if (!admitted) throw new Error("The handed-over continuation finished without a recorded admission receipt.");
+      return result;
+    }).catch((error: unknown) => {
+      receipt(false);
+      const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+      input.store.event(runId, "recovery.continuation_failed", { reason, handedOver: true, admitted });
+      input.store.finish(runId, "needs_input", reason);
+      input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+      input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      return undefined;
+    }).finally(() => { active.delete(runId); });
+    const continuation = { runId, resumed, admission };
+    active.set(runId, continuation);
+    return continuation;
   });
 }
 
@@ -468,10 +500,13 @@ export function releaseInterruptedSchedules(store: Store, nextTurn: (data: Recor
 export async function recoverOnStart(input: RecoveryInput & { nextTurn: (data: Record<string, unknown>, now: Date) => string }): Promise<RecoveredRun[]> {
   // hot-update: a newer engine carries them on only once it has passed its check (main asks it to, `carryOnHandedOver`).
   const handedOver = process.env.BRANCH_HOLD_HANDED_OVER === "1" ? [] : resumeHandedOver(input);
-  if (handedOver.length) console.log(`Carried on from the engine this one replaced: ${handedOver.length} task(s).`);
-  if (input.mode === "off") return handedOver.map(({ runId, resumed }) => ({ runId, outcome: "resumed" as const, steps: [], resumed }));
+  const handoverReport: RecoveredRun[] = await Promise.all(handedOver.map(async ({ runId, resumed, admission }) => ({
+    runId, outcome: await admission ? "resumed" as const : "asked" as const, steps: [], resumed,
+  })));
+  if (handoverReport.length) console.log(`Engine handover reconciled: ${handoverReport.filter((run) => run.outcome === "resumed").length} admitted, ${handoverReport.filter((run) => run.outcome === "asked").length} held.`);
+  if (input.mode === "off") return handoverReport;
   const released = releaseInterruptedSchedules(input.store, input.nextTurn);
-  const report = await recoverAfterRestart({ ...input, askOnly: input.askOnly || process.env.BRANCH_RESUME === "ask" });
+  const report = [...handoverReport, ...await recoverAfterRestart({ ...input, askOnly: input.askOnly || process.env.BRANCH_RESUME === "ask" })];
   const counts = report.reduce<Record<string, number>>((all, run) => ({ ...all, [run.outcome]: (all[run.outcome] ?? 0) + 1 }), {});
   if (report.length || released)
     console.log(`Picked up after a restart: ${JSON.stringify(counts)}; repeating jobs put back: ${released}.`);

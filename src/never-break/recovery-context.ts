@@ -4,6 +4,8 @@ import type { ToolContext } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
 import type { Store } from "../store.js";
 import { runOrigin } from "../key-context.js";
+import { asPerson, currentPerson } from "../people/context.js";
+import { recordedRecoveryPerson } from "./recorded-person.js";
 import { outsideSourceOf } from "../outside-origin.js";
 import { underProject } from "../project-scope.js";
 import { defaultProjectId } from "../projects.js";
@@ -17,8 +19,10 @@ const samePath = (a: string, b: string) => process.platform === "win32" ? a.toLo
 
 /** Restore only recorded constraints. A missing or ambiguous context never becomes the owner's current workspace. */
 export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (context: ToolContext, copy: CopyIdentity | null) => Promise<T>): Promise<T> {
+  const person = recordedRecoveryPerson(deps.store, runId, deps.runtime.owner);
+  if (person && !currentPerson()) return asPerson({ profileId: person, keyId: "resumed" }, () => withRecoveryContext(deps, runId, work));
   const run = deps.store.run(runId);
-  if (!run || run.owner !== deps.runtime.owner) refused("the original task is unavailable");
+  if (!run) refused("the original task is unavailable");
   const project = run.project ?? defaultProjectId;
   if (!deps.store.projects.list(run.owner).some((one) => one.id === project)) refused("the original project is unavailable");
   const ownEvents = deps.store.events(runId);
@@ -49,7 +53,8 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     const ceiling = start.permissions as string[];
     permissions = new Set([...permissions].filter((p) => ceiling.includes(p)));
     // The original Trunk account/key scope is not recoverable from Runtime.context alone. Never impersonate it.
-    if (events.some((event) => event.kind === "trunk.turn")) refused("the original Trunk context cannot be restored for this retry");
+    if (events.some((event) => event.kind === "trunk.turn") && !start.trunkScope)
+      refused("the original Trunk context cannot be restored for this retry");
     const parents: string[] = [];
     for (const key of ["resumedFrom", "parentRunId", "originFrom"]) {
       const next = start[key];
@@ -188,14 +193,14 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
   taskSignal.throwIfAborted();
   return underProject(project, () => {
     taskSignal.throwIfAborted();
-    const context = { ...deps.runtime.context({ runId, signal: taskSignal, permissions: [...permissions], depth: Number(depth),
+    const context = deps.runtime.recoveryTrunkContext(runId, { ...deps.runtime.context({ runId, signal: taskSignal, permissions: [...permissions], depth: Number(depth),
       ...(outside ? { source: outside } : {}), ...(typeof own.agent === "string" ? { agent: own.agent } : {}),
-      ...(own.delegates === true ? { delegates: true } : {}), ...(own.dryRun === true ? { dryRun: true } : {}) }), workspace };
+      ...(own.delegates === true ? { delegates: true } : {}), ...(own.dryRun === true ? { dryRun: true } : {}) }), workspace });
     // Temporary conversations keep their original inability to write durable memory.
     if (deps.store.sessionTemporary(run.sessionId)) context.permissions = new Set([...context.permissions].filter((permission) => permission !== "memory.write"));
     // Origin is still checked by the runtime from the task record; no key/person/approval grant is invented here.
     if (origin.permissions) context.permissions = new Set([...context.permissions].filter((p) => origin.permissions!.includes(p)));
     const proof: CopyIdentity | null = scope === null ? null : { scope, workspace, branch: branch!, base: base!, ...(recordedSource !== undefined ? { source: recordedSource } : {}) };
-    return scope === null ? work(context, proof) : inWorktree(scope, () => work(context, proof));
+    return deps.runtime.inRecoveryAccountScope(context, () => scope === null ? work(context, proof) : inWorktree(scope, () => work(context, proof)));
   });
 }

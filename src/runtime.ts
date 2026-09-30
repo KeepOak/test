@@ -1,6 +1,7 @@
 import type { CopyIdentity } from "./coding/worktrees.js";
 import { realpath } from "node:fs/promises";
 import { resumeAuthority, type ResumeAuthority } from "./resume-authority.js";
+import { recordedRecoveryPerson } from "./never-break/recorded-person.js";
 import { randomUUID } from "node:crypto";
 import { assertContinuitySession } from "./reach/continuity-store.js";
 import type { TasteLearning } from "./taste/learning.js";
@@ -956,7 +957,8 @@ export class Runtime {
   /** Register interrupted journal recovery with the same Stop, Pause and shutdown controls as live work. */
   beginInterruptedRecovery(id: string): { signal: AbortSignal; cancelled(): boolean; release(): void } {
     const run = this.store.run(id);
-    if (!this.accepting || !run || run.status !== "interrupted" || run.owner !== this.owner
+    recordedRecoveryPerson(this.store, id, this.owner);
+    if (!this.accepting || !run || run.status !== "interrupted"
       || this.controllers.has(id) || this.pausing.get(id)?.signal.aborted || this.activeSessions.has(run.sessionId))
       throw new Error("This interrupted task cannot start automatic recovery while stopped, paused or already active.");
     const events = this.store.events(id);
@@ -1255,6 +1257,23 @@ export class Runtime {
       || saved.dryRun !== (context.dryRun === true) || saved.source !== (context.source ?? "owner") || (saved.ownCopy && !copy))
       throw new Error("Normal continuation does not match the task's reconciled authority and retained copy. Automatic continuation was held.");
     return { authority: { ...saved, permissions }, copy, workspace: context.workspace };
+  }
+
+  /** Exact recorded key ceilings only; legacy or changed Trunk scope remains held. */
+  recoveryTrunkContext(runId: string, context: ToolContext): ToolContext {
+    const saved = resumeAuthority(this.store, runId, this.owner, this.registry.permissions());
+    if (!saved.trunkId) return context;
+    const run = this.store.run(runId)!;
+    const shape = this.trunkShape({ prompt: "", sessionId: run.sessionId, source: saved.source });
+    const scope = saved.trunkScope;
+    if (!shape || !scope || shape.trunkId !== scope.id || shape.agent !== scope.agent || (shape.owners === true) !== scope.owners
+      || JSON.stringify(shape.keys) !== JSON.stringify(scope.keys))
+      throw new Error("The task's recorded Trunk identity or credential-key ceiling changed. Reconcile it before continuing.");
+    return { ...context, trunkKeys: scope.keys, ...(scope.owners ? {} : { trunk: scope.id }) };
+  }
+
+  inRecoveryAccountScope<T>(context: ToolContext, work: () => Promise<T>): Promise<T> {
+    return this.asTrunk(context, work);
   }
 
   async resume(runId: string, restriction?: ReturnType<Runtime["recoveryHandoff"]>, onAdmitted?: (run: Run) => void): Promise<Run> {
@@ -1781,10 +1800,19 @@ ${run.output.slice(0, 6000)}`;
       }
     }
     const budget = parent?.budget ?? new Budget(options.budget ?? knobs.taskBudget(this.store, this.owner)); // R17-S09
+    // Bind a new root conversation before recording its authority. Startup must not
+    // later adopt an originally unscoped task into a different Trunk on recovery.
+    if (!parent && !from && !options.sessionId && !options.trunkId) {
+      const home = this.trunkForNew();
+      if (home) options = { ...options, trunkId: home };
+    }
     // ── R17-A (Trunks): a Trunk's turn carries its own instructions, memory scope, tools and model. ──
     const trunk = parent ? null : this.trunkShape(options);
     if (authority && authority.trunkId !== trunk?.trunkId)
       throw new Error("The original task's Trunk scope is unavailable or its conversation now routes to another Trunk. Reconcile it before continuing.");
+    if (authority?.trunkScope && (!trunk || trunk.agent !== authority.trunkScope.agent || (trunk.owners === true) !== authority.trunkScope.owners
+      || JSON.stringify(trunk.keys) !== JSON.stringify(authority.trunkScope.keys)))
+      throw new Error("The original task's Trunk credential-key ceiling or owner designation changed. Reconcile it before continuing.");
     // eng-trunk-controls: a paused Trunk starts nothing new, whoever asks; said in words, above the first await.
     const paused = trunk ? this.trunkPaused(trunk.trunkId) : null;
     if (paused) throw new Error(paused);
@@ -1936,6 +1964,7 @@ ${run.output.slice(0, 6000)}`;
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      ...(trunk ? { trunkScope: { id: trunk.trunkId, agent: trunk.agent, owners: trunk.owners === true, keys: trunk.keys } } : {}),
       // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
       ...(context.depth ? { depth: context.depth } : {}),
       // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
@@ -2411,6 +2440,7 @@ ${run.output.slice(0, 6000)}`;
    * connects it; on its own every task is an ordinary one.
    */
   trunkShape: (options: RunOptions) => TrunkRunShape | null = () => null;
+  trunkForNew: () => string | null = () => null;
   /** defaulttrunk: a conversation a Trunk's turn runs in, not yet anybody's, becomes that Trunk's thread (src/trunks/). */
   trunkClaim: (sessionId: string, trunkId: string) => void = () => undefined;
   /** Q114: a Trunk's own key choices, by its id, or null once it is gone (set by src/trunks). */
