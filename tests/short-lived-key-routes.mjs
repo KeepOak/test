@@ -917,6 +917,8 @@ export const ROUTES = {
   "/api/plugin-catalog/add-ons/pipelines/valves": "owner POST",
   "/api/plugin-catalog/add-ons/remove": "owner POST",
   "/api/plugin-catalog/add-ons/settings": "owner POST",
+  "/api/plugin-catalog/add-ons/inside": "owner POST", // RES-251: one plugin inside Branch or walled
+  "/api/plugin-catalog/add-ons/kept": "owner POST", // RES-251: keep the plugins kept running as before
   "/api/plugin-catalog/add-ons/switch": "owner POST",
   "/api/plugin-catalog/forget": "owner POST",
   "/api/plugin-catalog/inspect": "owner POST",
