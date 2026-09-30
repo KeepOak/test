@@ -1039,6 +1039,19 @@ export class Runtime {
     if (options.uploads?.ids.length && this.attachments?.restoringNow) await this.attachments.restored;
     return this.track(() => this.execute(options));
   }
+  /** A team uses the real lifecycle and caller scope, without a primary model/tool loop. */
+  async runTeam(options: RunOptions, operation: (run: Run, context: ToolContext) => Promise<string>): Promise<Run> {
+    if (options.continuing || options.resumeFrom || options.uploads || options.attachments || options.images)
+      throw new Error("Team orchestration starts a new text-only turn");
+    return this.track(() => this.execute(options, undefined, "", undefined, operation));
+  }
+  /** Stop/Pause and owner changes take effect before another batch can start. */
+  teamCheckpoint(context: ToolContext): void {
+    context.signal.throwIfAborted();
+    if (context.owner !== this.owner || this.store.run(context.runId)?.status !== "running")
+      throw new Error("The team no longer has an owned live parent turn");
+    this.checkPaused(context.runId);
+  }
   /**
    * Q050: carries on a task that stopped to ask, as that same task, after a yes to its exact request (the person's reply
    * to its own question reaches it through replyToAsk). No second task is started, and a task no longer waiting is refused. Every refusal comes before the first await, as a new task's does (see execute).
@@ -1678,11 +1691,16 @@ ${run.output.slice(0, 6000)}`;
     parent?: ToolContext,
     instructions = "",
     helper?: HelperConnection,
+    teamOperation?: (run: Run, context: ToolContext) => Promise<string>,
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
     assertContinuitySession(this.store, this.owner,
       options.sessionId ?? this.store.run(options.resumeFrom ?? options.continuing?.runId ?? "")?.sessionId, parent?.runId, options.continuing?.runId);
+    const carried = options.continuing?.runId ?? options.resumeFrom;
+    if (!teamOperation && carried && this.store.events(carried).some((event) =>
+      event.kind === "run.started" && event.data.teamOrchestration === true))
+      throw new Error("Reconcile this team turn before starting a new team request; it cannot resume as a general agent");
     // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
     if (options.resumeFrom && this.startedAsDryRun(options.resumeFrom)) options = { ...options, dryRun: true };
     if (!parent && !options.resumeFrom && !options.continuing && options.dryRun && !practiceRunsEnabled(this.store, this.owner))
@@ -1752,11 +1770,12 @@ ${run.output.slice(0, 6000)}`;
     // dogfood-ux-2: from here on the task works in ITS conversation's project: its folder and its saved secrets, never
     // those of a project picked anywhere else while it runs (src/project-scope.ts). Entered synchronously, so every
     // refusal above still comes before the first await.
-    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet, helper));
+    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet, helper, teamOperation));
   }
   /** The rest of `execute`, once the task exists: everything it does, inside its own project. */
   private async started(run: Run, options: RunOptions, parent: ToolContext | undefined, instructions: string, budget: Budget,
-    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null, helper?: HelperConnection): Promise<Run> {
+    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null, helper?: HelperConnection,
+    teamOperation?: (run: Run, context: ToolContext) => Promise<string>): Promise<Run> {
     if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
@@ -1842,6 +1861,7 @@ ${run.output.slice(0, 6000)}`;
     else this.store.event(run.id, "run.started", {
       provider: this.provider.name,
       parentRunId: parent?.runId ?? null,
+      ...(teamOperation ? { teamOrchestration: true } : {}),
       deadlineMs, // long-work: a resumed task is given the same time again
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
       // Its name as it was then (agentName), so a helper whose specialist is deleted later is still named, never by its id.
@@ -1889,6 +1909,10 @@ ${run.output.slice(0, 6000)}`;
       }
       if (!parent && !context.isolated && !sealed) instructions += chatPersonalityForRun(this.store, this.owner, run.id);
       const work = async (working: ToolContext) => {
+        if (teamOperation) {
+          this.store.event(run.id, "team.orchestration", { primaryLoop: false });
+          return teamOperation(run, working);
+        }
         if (approved) await this.runApproved(run, working, approved); // QA R1
         return this.loop(run, working, instructions, options.onTextDelta, {
         ...(options.model !== undefined ? { preset: options.model } : {}),
@@ -1924,7 +1948,7 @@ ${run.output.slice(0, 6000)}`;
     }
     await place?.release().catch(() => undefined); // mac7/r17-d
     if (context.dryRun) this.reportDryRun(run);
-    if (status === "completed" && !context.isolated && !sealed) await this.advise(run, context, output);
+    if (!teamOperation && status === "completed" && !context.isolated && !sealed) await this.advise(run, context, output);
     const settled = await this.settleRun(run, context, status, output);
     flyCoreSettled?.(settled); // mac2/fly-core (see above)
     const usage = this.store.usage(run.id);
@@ -1943,12 +1967,12 @@ ${run.output.slice(0, 6000)}`;
     this.leaveSpend(run.id); // R17-S09
     this.helperModels.delete(run.id);
     pinnedHelper?.release?.(); helper?.release?.(); // MODEL-050: the helper's account is free for the next one
-    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
+    if (!teamOperation && !parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
     // asked with no tools, charged to this task, as reviewRun's is; everything it finds waits for
     // the owner. Nothing happens unless its switches are on, and it never fails the task. ──
-    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
+    if (!teamOperation && !parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
       const preset = this.sideJobPreset(this.owner, run.sessionId); // R17-S11
       const scoped: ToolContext = { ...context, permissions: new Set(), budget: new Budget({ maxSteps: 2, maxTokens: 24000 }), signal: AbortSignal.timeout(120000) };
       return (await this.complete(run, [{ role: "system", content: system }, { role: "user", content: question }], scoped, preset, null)).content;

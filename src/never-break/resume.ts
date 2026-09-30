@@ -195,6 +195,12 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
     for (const step of steps) input.journal.finish(step.id, "abandoned");
     return { runId, outcome: "gone", steps: [] };
   }
+  // An orchestration parent has no model loop to resume. Reconcile member effects, never replay the team.
+  if (input.store.events(runId).some((event) => event.kind === "run.started" && event.data.teamOrchestration === true)) {
+    for (const step of steps) input.journal.finish(step.id, "abandoned");
+    input.store.finish(runId, "cancelled", "The team orchestration was interrupted. Check its recorded member work and reconcile the team task before sending a new request.");
+    return { runId, outcome: "left-for-team", steps: [] };
+  }
   // Q63: a team task's own turn that the task never named is ended, not carried on: nothing could trace it.
   if (unlinkedTeamParent(input.store, run.sessionId)) {
     for (const step of steps) input.journal.finish(step.id, "abandoned");
@@ -283,10 +289,14 @@ export function resumeHandedOver(input: Pick<RecoveryInput, "store" | "runtime" 
   const rows = input.store.sqlite.prepare(`SELECT DISTINCT t.id AS id FROM tasks t JOIN events e ON e.run_id=t.id AND e.kind='run.handed_over'
     WHERE t.status='interrupted' AND t.updated_at >= ? AND NOT EXISTS (SELECT 1 FROM events x WHERE x.run_id=t.id AND x.kind='run.auto_resumed')
     ORDER BY t.created_at`).all(since) as { id: unknown }[];
-  return rows.map((row) => {
+  return rows.flatMap((row) => {
     const runId = String(row.id);
+    if (input.store.events(runId).some((event) => event.kind === "run.started" && event.data.teamOrchestration === true)) {
+      input.store.finish(runId, "cancelled", "The team orchestration stopped during engine handover. Reconcile its member work before starting a new team request.");
+      return [];
+    }
     input.store.event(runId, "run.auto_resumed", { steps: [], handedOver: true });
-    return { runId, resumed: input.runtime.resume(runId).catch(() => undefined) };
+    return [{ runId, resumed: input.runtime.resume(runId).catch(() => undefined) }];
   });
 }
 
