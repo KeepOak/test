@@ -55,12 +55,11 @@ async function level(page, pick) {
    at 1440 and 400 px; Trunks are set up in the Team place, not in Settings. */
 for (const width of [1440, 400]) {
   test(`People has the prototype's sections at ${width}px, and its links to Team`, async (t) => {
-    const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
+    const { settingsWindow, openSettingsPage, assertHeadings } = await import("./settings-window.mjs");
     const { page, errors } = await settingsWindow(t, { name: "settings-trunks", width, height: 950 });
     await openSettingsPage(page, "people");
-    const heads = await page.locator(".set-col").locator("h1, h2, h3").evaluateAll((all) => all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
     // The prototype's person card has its "May" section (what that person may do).
-    assert.deepEqual(heads, ["People", "May", "Each person"]);
+    await assertHeadings(page, ["People", "May", "Each person"], `${width} px`, { levels: "h1, h2, h3" });
     assert.deepEqual((await page.locator('.set-col [data-act="p-open-team"]').allInnerTexts()).map((words) => words.trim()),
       ["Groups", "Signing in from other devices", "What you share"]);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${width} px fits`);

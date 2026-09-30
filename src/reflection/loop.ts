@@ -12,6 +12,7 @@ import { offerRetirements } from "./retire.js";
 import { reflectionSettings, saveReflectionSettings, type ReflectionSettings } from "./settings.js";
 import { SkillNotes } from "./skill-notes.js";
 import { syncLearnTool } from "./tool.js";
+import { selectedSource } from "./source-evidence.js";
 
 /**
  * Memory and skills that keep themselves in shape: the one object the rest of Branch talks to.
@@ -98,13 +99,17 @@ export class LearningLoop {
   }
 
   /** "Make this into a skill": drafts from a conversation, in the background. */
-  learn(input: { sessionId: string; notes?: string; runId?: string }): { drafting: true } {
+  learn(input: { sessionId: string; notes?: string; runId?: string; sourceCallId?: string }): { drafting: true } {
     this.drafts.allowed("asked");
     if (!this.store.ownsSession(this.owner, input.sessionId)) throw new Error("Conversation not found");
-    const evidence = asLines(withoutLearnTurns(turnsOf(this.store, input.sessionId)), 10000);
+    const selected = input.sourceCallId ? selectedSource(this.store, this.owner, input.sessionId, input.runId, input.sourceCallId) : null;
+    const turns = asLines(withoutLearnTurns(turnsOf(this.store, input.sessionId)), selected ? 1200 : 10000);
+    const evidence = selected ? `${selected.evidence}\n\nThe conversation's request:\n${turns}`.slice(0, 12000) : turns;
     if (!evidence.trim()) throw new Error("That conversation has nothing in it to learn from yet.");
-    const source = this.store.runs(this.owner).find((run) => run.sessionId === input.sessionId && ownersTask(this.store, run) && !learnCommand.test(run.prompt));
-    if (input.runId) this.store.event(input.runId, "skill.learn_started", { sessionId: input.sessionId });
+    const source = selected && input.runId ? this.store.run(input.runId) : this.store.runs(this.owner)
+      .find((run) => run.sessionId === input.sessionId && ownersTask(this.store, run) && !learnCommand.test(run.prompt));
+    if (input.runId) this.store.event(input.runId, "skill.learn_started", { sessionId: input.sessionId,
+      ...(selected ? { source: selected.reference } : {}) });
     this.jobs.start("Make a conversation into a skill", async () => {
       const draft = await this.drafts.draft({ evidence, notes: input.notes ?? "", fromRunId: source?.id ?? "",
         sessionId: input.sessionId, sourcePrompt: source?.prompt ?? "", origin: "asked" });

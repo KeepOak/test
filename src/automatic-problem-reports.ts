@@ -81,6 +81,8 @@ export interface AutomaticProblemReportDeps {
   gather: (items: readonly string[]) => Promise<ReportItem[]>;
   deliverChannel: (channel: string, chatId: string, text: string, key: string) => Promise<unknown>;
   createGitHubIssue: (repository: string, title: string, body: string, key: string) => Promise<unknown>;
+  /** Recheck the current owner, lock and outbound policy before admitting a report to delivery. */
+  requireDelivery?: (settings: AutomaticProblemReportSettings) => void;
   record: (entry: AutomaticProblemReportRecord) => void;
 }
 
@@ -137,10 +139,18 @@ export class AutomaticProblemReports {
       return { sent: false, retryable: false, key, preview: problemReportPreview(settings, kind, summary, []),
         reason: "That owner chat is no longer linked." };
     let preview = problemReportPreview(settings, kind, summary, []);
-    let gathered = false;
+    let deliveryStarted = false;
+    let consentChanged = false;
     try {
       preview = problemReportPreview(settings, kind, summary, await this.deps.gather(settings.items));
-      gathered = true;
+      // Gathering can wait on health/network checks. Its old consent never authorizes a later send.
+      const current = AutomaticProblemReportSettingsSchema.parse(this.deps.settings());
+      consentChanged = consentFingerprint(current) !== consentFingerprint(settings);
+      if (consentChanged) throw new Error("Automatic report settings changed while the report was prepared; nothing was sent.");
+      if (destination.kind === "channel" && !this.linked(destination.channel, destination.chatId))
+        throw new Error("That owner chat is no longer linked.");
+      this.deps.requireDelivery?.(current);
+      deliveryStarted = true;
       if (destination.kind === "channel")
         await this.deps.deliverChannel(destination.channel, destination.chatId, preview.body, key);
       else await this.deps.createGitHubIssue(destination.repository, preview.title, preview.body, key);
@@ -151,8 +161,9 @@ export class AutomaticProblemReports {
       this.record({ kind, destination: preview.destination, items: preview.items, key, outcome: "failed", reason });
       // Owner chats accept the stable key and can safely deduplicate a retry. GitHub's create-issue
       // API has no idempotency key, so an uncertain response after sending must never create a
-      // second public issue. Gathering failures happen before either external side effect.
-      return { sent: false, retryable: !gathered || destination.kind === "channel", key, preview, reason };
+      // second public issue. Preparation/admission failures are safe to retry with the same consent;
+      // changed consent is discarded, and the outbox also compares its capture-time fingerprint.
+      return { sent: false, retryable: !consentChanged && (!deliveryStarted || destination.kind === "channel"), key, preview, reason };
     }
   }
 

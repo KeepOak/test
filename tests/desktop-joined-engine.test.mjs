@@ -26,24 +26,34 @@ async function freePort() {
   }
 }
 
-/** `branch start` on the app's own data folder, at `port`; resolves once it has written its note and answers. */
+const stopped = async (child) => { if (child.exitCode === null && child.signalCode === null) { child.kill(); await once(child, "exit"); } };
+
+/**
+ * `branch start` on the app's own data folder, at `port`; resolves once it has written its note and answers. The note
+ * is read as the window reads it and must always be whole (a half-written one fails the test). An engine that did not
+ * start is stopped here: the caller never holds it, and a running child would keep this file open until its timeout.
+ */
 async function backgroundEngine(env, port) {
   const child = spawn(process.execPath, [join(root, "dist", "cli.js"), "start"], {
     env: { ...env, BRANCH_PORT: String(port) }, stdio: ["ignore", "ignore", "inherit"], windowsHide: true,
   });
   const note = join(env.BRANCH_DATA_DIR, "running.json");
-  for (const end = Date.now() + 120000; ;) {
-    if (child.exitCode !== null) throw new Error(`the background engine stopped (code ${child.exitCode})`);
-    const written = await readFile(note, "utf8").then(JSON.parse, () => null);
-    if (written?.pid === child.pid && written.mode === "daemon") {
-      const answer = await fetch(`http://127.0.0.1:${port}/api/engine-proof?challenge=${"0".repeat(64)}`).catch(() => null);
-      if (answer?.ok) return child;
+  try {
+    for (const end = Date.now() + 120000; ;) {
+      if (child.exitCode !== null) throw new Error(`the background engine stopped (code ${child.exitCode})`);
+      const written = await readFile(note, "utf8").then(JSON.parse, () => null);
+      if (written?.pid === child.pid && written.mode === "daemon") {
+        const answer = await fetch(`http://127.0.0.1:${port}/api/engine-proof?challenge=${"0".repeat(64)}`).catch(() => null);
+        if (answer?.ok) return child;
+      }
+      if (Date.now() > end) throw new Error("the background engine did not start");
+      await new Promise((done) => setTimeout(done, 100));
     }
-    if (Date.now() > end) throw new Error("the background engine did not start");
-    await new Promise((done) => setTimeout(done, 100));
+  } catch (error) {
+    await stopped(child);
+    throw error;
   }
 }
-const stopped = async (child) => { if (child.exitCode === null && child.signalCode === null) { child.kill(); await once(child, "exit"); } };
 
 test("a window joined to a background engine holds its requests while it restarts and sends its key only to the engine", { timeout: 360000 }, async () => {
   const { options } = await desktopOptions({ hidden: true }); // never on the screen
@@ -60,12 +70,15 @@ test("a window joined to a background engine holds its requests while it restart
     assert.equal(await electron.evaluate(() => globalThis.branchEngineGateForTests.ready()), true);
 
     // The engine stops while the window is busy asking it, sending bodies too, so some requests are on their way when it
-    // goes; a program takes its port before it is back.
+    // goes; a program takes its port before it is back. Each answer is let go once it has come, as the window's own code
+    // reads each one: an answer nobody reads keeps its connection busy (main has 16) until the engine gives up on it, a
+    // minute later, so hundreds of them left unread held the window's requests back far past this test's time.
     await page.evaluate(() => {
+      window.answered = (response) => { void response.body?.cancel(); return response.status; };
       window.busy = setInterval(() => {
-        void fetch("/api/state").catch(() => undefined);
+        void fetch("/api/state").then(window.answered, () => undefined);
         void fetch("/api/nothing-here", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ note: "A BODY THAT MUST NOT LEAVE ".repeat(200) }) }).catch(() => undefined);
+          body: JSON.stringify({ note: "A BODY THAT MUST NOT LEAVE ".repeat(200) }) }).then(window.answered, () => undefined);
       }, 5);
     });
     await page.waitForTimeout(200);
@@ -76,7 +89,7 @@ test("a window joined to a background engine holds its requests while it restart
     }
     squatter = await squatterOn(port);
     const meanwhile = await page.evaluate(() => {
-      window.heldState = fetch("/api/state").then((response) => response.status, (error) => `refused: ${error.message}`);
+      window.heldState = fetch("/api/state").then(window.answered, (error) => `refused: ${error.message}`);
       return Promise.race([window.heldState.then((status) => `answered ${status}`), new Promise((done) => setTimeout(() => done("held"), 1500))]);
     });
     await page.evaluate(() => window.branchDesktop.quickAskKeysChanged()); // main's own request, refused before it is sent
@@ -116,7 +129,7 @@ test("a window joined to a background engine holds its requests while it restart
     // The engine is back at its address: it proves itself, the held request goes on, and the window works.
     engine = await backgroundEngine(options.env, port);
     assert.equal(await page.evaluate(() => window.heldState), 200, "the held request went on once the engine was back");
-    assert.equal(await page.evaluate(async () => (await fetch("/api/state")).status), 200);
+    assert.equal(await page.evaluate(async () => window.answered(await fetch("/api/state"))), 200);
     await connected(page);
     await offScreen(electron, "after the engine came back");
     const windowKey = (await readFile(join(options.env.BRANCH_DATA_DIR, "session-token"), "utf8")).trim();

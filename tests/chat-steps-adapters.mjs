@@ -37,7 +37,7 @@ function sample(schema) {
   return out;
 }
 /** The few settings a schema cannot suggest: a full path where the default is a bare program name. */
-const OVERRIDES = { keybase: { path: program }, deltachat: { path: program } };
+const OVERRIDES = { keybase: { path: program }, deltachat: { path: program }, "whatsapp-web": { server: "http://127.0.0.1:3000" } };
 const SECRETS = { NOSTR_PRIVATE_KEY: "1".repeat(64) };
 
 /** A web service that took every call: records it and answers with ids in the shapes the adapters read. */
