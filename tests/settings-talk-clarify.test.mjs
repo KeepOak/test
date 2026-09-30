@@ -63,7 +63,11 @@ test("a request that fits no setting is handed back to the model, with no questi
 
 test("a clear request gives the exact before and after, and one already as asked gives no change", async (t) => {
   const { app, find, values } = await fixture(t);
-  const clear = await find({ request: "turn on the learning" });
+  // Seasons' overnight learning is a setting too, so "the learning" alone names two things and asks which.
+  const two = await find({ request: "turn on the learning" });
+  assert.equal(two.status, "ask");
+  assert.ok(two.choices.some((choice) => choice.setting === "fly-core.mode"), JSON.stringify(two.choices));
+  const clear = await find({ request: "turn on learning from experience" });
   assert.equal(clear.status, "ready");
   assert.equal(clear.setting, "fly-core.mode");
   assert.deepEqual(clear.preview, [{ setting: "fly-core.mode", name: "What Branch learns from experience", label: "Switch",
@@ -77,7 +81,7 @@ test("a clear request gives the exact before and after, and one already as asked
 
   savePolicy(app.store, app.runtime.owner, { preset: "off" });
   await app.registry.execute("settings.change", { changes: [{ setting: "fly-core.mode", value: "on" }] }, app.runtime.context({ source: "owner" }));
-  const again = await find({ request: "turn on the learning" });
+  const again = await find({ request: "turn on learning from experience" });
   assert.equal(again.status, "unchanged");
   assert.equal(again.preview, undefined, "a no-op is never shown as a change");
   assert.match(again.note, /already on/);
