@@ -363,7 +363,7 @@ export class SlackAdapter implements ChannelAdapter {
     if (!/^[A-Z][A-Z0-9]+$/.test(chatId)) throw new Error("Slack browser pictures require a direct message.");
     const result = await this.call("conversations.info", this.options.token, { channel: chatId, include_num_members: true });
     const { channel } = z.object({ channel: z.object({ id: z.string(), is_im: z.literal(true), is_mpim: z.literal(false).optional(),
-      is_ext_shared: z.literal(false).optional(), num_members: z.literal(2), user: z.string().min(1) }).passthrough() }).passthrough().parse(result);
+      is_ext_shared: z.literal(false).optional(), num_members: z.literal(2).optional(), user: z.string().min(1) }).passthrough() }).passthrough().parse(result);
     if (channel.id !== chatId || (peer && channel.user !== peer)) throw new Error("The Slack picture recipient changed.");
     return channel.user;
   }
