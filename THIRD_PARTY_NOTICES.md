@@ -1,5 +1,9 @@
 # Third-party notices
 
+### Hermes chat branch argument parsing
+
+`src/channels/branch-command.ts` adapts the leading `--here` argument handling from `gateway/slash_commands_branch_thread.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, MIT. Branch uses its existing SessionBranches file/transcript copy, path records and per-conversation choices; it branches in place and does not open a native chat-app thread. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
 ### OpenClaw Telegram inbound locations
 
 `src/channels/telegram-location.ts` adapts `extractTelegramLocation` from `extensions/telegram/src/bot/body-helpers.ts` and location text formatting from `src/channels/location.ts` in [OpenClaw](https://github.com/openclaw/openclaw), Copyright (c) 2026 OpenClaw Foundation, under the MIT License. Its Telegram venue precedence, live-pin detection, coordinate precision and accuracy formatting are retained; the implementation uses Branch's schemas and quotes venue labels as sender-provided material. The OpenClaw MIT license is reproduced elsewhere in this document.
@@ -3782,6 +3786,20 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
 
+## Hermes Telegram private-topic helpers
+
+The getMe capability check and 120-character topic title sanitizer in `src/channels/telegram.ts` are adapted from NousResearch/hermes-agent `gateway/run_topics.py`, https://github.com/NousResearch/hermes-agent/blob/main/gateway/run_topics.py (MIT). Branch uses its own chat routing, owner checks and Telegram transport.
+
+## Hermes personality selection helpers
+
+Neutral-name resolution and selecting a persisted name without rewriting personality files in `src/channels/personality-settings.ts` follow and adapt NousResearch/hermes-agent `hermes_cli/personality.py` and `gateway/slash_commands_model.py`, https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/personality.py and https://github.com/NousResearch/hermes-agent/blob/main/gateway/slash_commands_model.py (MIT). Branch uses its own per-chat setting and task snapshot; its fixed tone instructions are original. Hermes channel override configuration was inspected but not copied.
+
+## Hermes Agent Telegram draft streaming
+
+The private-chat draft eligibility/payload and draft-to-edit fallback in src/channels/telegram.ts and src/channels/reply-stream.ts are adapted from NousResearch/hermes-agent plugins/platforms/telegram/adapter.py (supports_draft_streaming and send_draft), MIT licensed. Branch retains its own plain-text preview, outbound guard, throttling and final delivery.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/main/plugins/platforms/telegram/adapter.py
+
 ### OpenClaw skill manifest requirements (MIT)
 
 `src/skill-metadata.ts` adapts the `requires`/OS extraction structure from OpenClaw `resolveSkillManifestMetadata` and `resolveOpenClawManifestRequires`: https://github.com/openclaw/openclaw/blob/1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef/src/skills/loading/frontmatter.ts#L158-L190 and https://github.com/openclaw/openclaw/blob/1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef/src/shared/frontmatter.ts. Branch preserves bounded metadata and checks local availability without running installation declarations.
@@ -3809,6 +3827,18 @@ The Trunk import preview/apply flow adapts the staged manifest review in [hermes
 MIT License
 
 Copyright (c) 2025 Nous Research
+
+## OpenClaw chat session lifecycle helpers
+
+The off-value aliases, bare-hour duration behavior and earliest idle/max-age expiry calculation in `src/channels/thread-lifecycle.ts` are adapted from OpenClaw `src/auto-reply/reply/commands-session.ts`, https://github.com/openclaw/openclaw/blob/main/src/auto-reply/reply/commands-session.ts (MIT). Branch uses its own saved threads, scoped sessions and next-message reset behavior.
+
+## OpenClaw Telegram poll and forward helpers
+
+The poll snapshot formatter and forwarded-origin normalization in `src/channels/telegram-content.ts` are adapted from OpenClaw `extensions/telegram/src/bot/body-helpers.ts`, https://github.com/openclaw/openclaw/blob/main/extensions/telegram/src/bot/body-helpers.ts (MIT). Branch validates and bounds the fields, quotes user-supplied labels and keeps forwarded origin separate from the authenticated current sender. Sticker handling uses Branch's existing attachment path.
+
+MIT License
+
+Copyright (c) 2026 OpenClaw Foundation
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
