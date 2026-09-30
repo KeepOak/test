@@ -182,3 +182,12 @@ test("the switch is changed from the settings screen, and not with a short-lived
   assert.equal((await call({ mode: "maybe" })).status, 400);
   assert.equal(loopGuardMode(app.store, app.runtime.owner), "when-needed");
 });
+
+test("SELF-022: waiting on checks is a polled tool, so a long CI run and merge queue are waited on, not refused", () => {
+  // Seen on the sandbox proof (pull request #5): the fifth identical github.wait_for_checks was refused while the merge queue ran.
+  assert.equal(isPollTool("github.wait_for_checks"), true);
+  const guard = new LoopGuard();
+  const wait = ["github.wait_for_checks", { repo: "KeepOak/branch-selfdev-sandbox", number: 5, seconds: 300 }];
+  assert.ok(kinds(guard, Array(8).fill(wait)).every((kind) => kind === "allow"), "eight waits of five minutes each are forty minutes of CI");
+  assert.equal(isPollTool("github.merge_pull_request"), false, "merging is never a polled tool");
+});

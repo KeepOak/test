@@ -15,8 +15,8 @@ import { api, origin } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
-import { t, language, LANGUAGES } from "../../i18n.js";
-import { canSpeak, chooseLanguage } from "../shell/language.js";
+import { t, language } from "../../i18n.js";
+import { canSpeak, chooseLanguage, languageChoices } from "../shell/language.js";
 import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
@@ -42,19 +42,15 @@ const TEMPLATES = [
   ["window.flows.tmpl.trip", "window.flows.tmpl.trip-job", "#8A5AA8", 3],
 ];
 /* The language comes first (the owner's call). Only languages with words on file are listed (i18n.js LANGUAGES, the
-   locale files), so one appears as soon as its file does; each is named in its own language by the browser
-   (Intl.DisplayNames), never written here. The one shown is the one in force. */
-const ownName = (code) => {
-  const name = new Intl.DisplayNames([code], { type: "language" }).of(code) ?? code;
-  return name.charAt(0).toLocaleUpperCase(code) + name.slice(1);
-};
+   locale files), so one appears as soon as its file does; each keeps its own-language label and any translation notice.
+   The one shown is the one in force. */
 
 const pressed = (on) => `aria-pressed="${on}"`;
 const pose = (i) => i ? `<span class="mark mark-face ob-pose11" data-css="animation:none" aria-hidden="true"></span>` : "";
 
 function languageControl() {
   const now = language();
-  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now })}</span></div>`;
+  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: languageChoices(), value: now })}</span></div>`;
 }
 
 function welcome(o) {

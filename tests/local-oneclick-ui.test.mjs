@@ -17,7 +17,7 @@ import { readGraphicsCard, useGraphicsReader } from "../dist/local-hardware.js";
 import { useMemoryReaders } from "../dist/local-fit.js";
 import { localModelsMode } from "../dist/local-jobs.js";
 import { localKitFor } from "../dist/local-kit.js";
-import { openPlace, openSettingFor } from "./places.mjs";
+import { openPlace, openSettingFor, pressUntil } from "./places.mjs";
 
 async function fixture(t, width = 1440) {
   useGraphicsReader(async () => ({ name: "Stand-in", memoryBytes: null, sharedMemory: true }));
@@ -53,7 +53,13 @@ async function fixture(t, width = 1440) {
 test("Settings › On this computer lists each model's sizes, looking changes nothing, and it fits 400 px", async (t) => {
   for (const width of [1440, 400]) {
     const { page, errors, app } = await fixture(t, width);
-    await page.locator('[data-act="side"]').first().evaluate((button) => { if (innerWidth <= 760) button.click(); });
+    /* A narrow window slides the list in with its menu button, pressed as a thumb presses it. The button was found in one
+       step and clicked in another, and a redraw in between left the click on a button already off the page, which reached
+       nothing (6x CPU: 3 in 36, the gear then "outside of the viewport"). Then it waits for the list to be open. */
+    if (width <= 760) {
+      await pressUntil(page.locator('[data-act="side"]:visible').first(), () => page.waitForFunction(() => document.getElementById("app").classList.contains("side-open"),
+        undefined, { timeout: 10000 }).then(() => true, () => false), "the list to slide in");
+    }
     await page.locator('#side [data-act="view"][data-v="settings"]').click();
     await page.locator('[data-act="setpage"][data-v="local"]').click();
     await page.locator('#main [data-act="lm-get"]').first().waitFor({ state: "visible", timeout: 15000 });
