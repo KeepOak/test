@@ -90,6 +90,11 @@ async function changes(deps: LocalModelsDeps, path: string, input: unknown): Pro
   if (!kit) throw new Error("One-click models are not set up in this launch of Branch");
   if (path === "/api/local-models/offers") return { offers: offers(await kit.room(), offersBody.parse(input).runtime) };
   assertLocalModelsOn(store, owner);
+  if (path === "/api/local-models/setup" && (input as { runtime?: unknown } | null)?.runtime === "vllm") {
+    store.profiles.requireOwner("Starting vLLM with a local model");
+    if (deps.caller.source !== "owner" || deps.caller.person || deps.caller.shortLivedKey || deps.caller.trunkKeys)
+      throw new Error("Set up vLLM from the owner's own Branch window.");
+  }
   if (path === "/api/local-models/search") return search(kit, input);
   switch (path) {
     case "/api/local-models/setup": return kit.oneClick.begin(input);
@@ -134,8 +139,8 @@ async function oneClickView(deps: LocalModelsDeps, kit: LocalKit) {
   const installed = await kit.launcher.installed();
   const on = localModelsMode(deps.store, deps.owner) !== "off";
   const runtimes = runtimeIds
-    .filter((id) => id !== "mlx" || (kit.launcher.at.platform === "darwin" && kit.launcher.at.arch === "arm64"))
-    .map((id) => ({ ...runtimeInfo[id], installed: installed[id] !== null, startedByBranch: kit.launcher.owns(id) }));
+    .filter((id) => (id !== "mlx" || (kit.launcher.at.platform === "darwin" && kit.launcher.at.arch === "arm64")) && (id !== "vllm" || kit.launcher.at.platform === "linux"))
+    .map((id) => ({ ...runtimeInfo[id], installed: Boolean(installed[id]), startedByBranch: kit.launcher.owns(id) }));
   const chosen = runtimes.find((one) => one.installed)?.id ?? "ollama";
   return {
     room: { freeMemoryBytes: room.freeMemoryBytes, totalMemoryBytes: room.totalMemoryBytes, graphicsLimitBytes: room.graphicsLimitBytes },

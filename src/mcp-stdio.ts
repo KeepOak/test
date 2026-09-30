@@ -2,6 +2,8 @@ import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { z } from 'zod';
 import type { JsonRpcResponse, McpServer } from './mcp-server.js';
+import { serveStdio, StdioServerTransport } from '@modelcontextprotocol/server/stdio';
+import { modernServer } from './mcp-modern-server.js';
 
 const MessageSchema = z
   .object({
@@ -32,6 +34,7 @@ export async function serveMcpStdio(mcp: McpServer, options: StdioOptions = {}):
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
   const log = options.log ?? ((message: string) => void process.stderr.write(`${message}\n`));
+  if (mcp.sharing().statelessPreview) return serveModernStdio(mcp, input, output, log);
   log('Branch is ready for another AI tool on standard input. Close it or press Ctrl+C to stop.');
   const lines = createInterface({ input, crlfDelay: Infinity });
   for await (const line of lines) {
@@ -40,6 +43,30 @@ export async function serveMcpStdio(mcp: McpServer, options: StdioOptions = {}):
     if (response) output.write(`${JSON.stringify(response)}\n`);
   }
   log('The other AI tool disconnected. Branch is stopping.');
+}
+
+async function serveModernStdio(mcp: McpServer, input: Readable, output: Writable,
+  log: (message: string) => void): Promise<void> {
+  mcp.requireModern();
+  const stamp = mcp.modernAccessStamp();
+  const transport = new StdioServerTransport(input, output, { maxBufferSize: 65536 });
+  const handle = serveStdio(() => modernServer(mcp, mcp.modernPrincipal('stdio'), true), {
+    transport, legacy: 'reject', maxSubscriptions: 32, onerror: () => log('Invalid modern MCP stdio request'),
+  });
+  let disconnected!: () => void;
+  const ended = new Promise<void>((resolve) => { disconnected = resolve; });
+  const closed = transport.onclose;
+  transport.onclose = () => { closed?.(); disconnected(); };
+  input.once('end', disconnected);
+  input.once('close', disconnected);
+  const timer = setInterval(() => {
+    try { mcp.requireModern(); if (stamp !== mcp.modernAccessStamp()) void handle.close(); }
+    catch { void handle.close(); }
+  }, 250);
+  timer.unref();
+  log('Branch is ready for stateless MCP on standard input.');
+  try { if (!input.readableEnded && !input.destroyed) await ended; }
+  finally { clearInterval(timer); input.off('end', disconnected); input.off('close', disconnected); await handle.close(); }
 }
 
 /** One line in, one line out; `null` for a notification, which gets no reply. */

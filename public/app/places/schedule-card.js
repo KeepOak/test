@@ -8,7 +8,7 @@
    routines are switched off. */
 
 import { $, esc, renderNow } from "../core/dom.js";
-import { E, refresh, level } from "../core/state.js";
+import { E, refresh, level, ownerHere, activeId, S } from "../core/state.js";
 import { ic, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -19,13 +19,16 @@ const DAYN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", 
 const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const zone = () => E.profiles?.owner?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone; // your-profile: the owner's chosen time zone
 const localDateTime = (iso) => { const date = new Date(iso); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+let revision = 0;
+const visibleOwner = () => ownerHere() && !document.getElementById("app")?.classList.contains("locked-b17");
+const fieldsOf = (p) => JSON.stringify([p.what, p.trunk, p.dashboard, p.days, p.time, p.day, p.proposal.schedule.dueAt]);
 let P = null; // { proposal, what, days, day, time, trunk (the Trunk who does it, or null for the owner) }
 
 /* The engine's schedule on the card's own terms: repeats, which day, and the time (null when the words said none). */
-function fromProposal(proposal, what, trunk = null) {
+function fromProposal(proposal, what, trunk = null, dashboard = false) {
   const s = proposal.schedule, w = (s.weekdays ?? []).join();
   const days = !s.intervalMs && !s.dailyAt ? "once" : s.intervalMs ? null : s.monthDay ? "monthly" : w === "1,2,3,4,5" ? "weekdays" : w === "0,6" ? "weekends" : s.weekdays?.length === 1 ? "weekly" : s.weekdays ? null : "daily";
-  return { proposal, what: what ?? s.prompt, days, day: s.weekdays?.length === 1 ? s.weekdays[0] : null, time: proposal.time === "none" ? null : s.dailyAt ?? null, trunk };
+  return { proposal, what: what ?? s.prompt, days, day: s.weekdays?.length === 1 ? s.weekdays[0] : null, time: proposal.time === "none" ? null : s.dailyAt ?? null, trunk, dashboard };
 }
 const hm = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }); };
 /* A weekday's name in the language chosen (0 is Sunday; 7 January 2024 was one). */
@@ -80,6 +83,7 @@ export function propCard() {
     <div class="fld"><span>${t("window.places.schedule-card.repeats")}</span><span class="seg" role="group" aria-label="${t("window.places.schedule-card.repeats")}">${repeats}</span></div>${on}
     <div class="pp-g17d"><label class="fld ${need ? "need17d" : ""}"><span>${t("window.places.schedule-card.at")}${need ? ` · ${t("window.places.schedule-card.it-didnt-say-when")}` : ""}</span>${p.days === "once" ? `<input class="inp" type="datetime-local" id="pp-once17d" aria-label="${esc(t("window.places.schedule-card.once-date"))}" value="${esc(localDateTime(p.proposal.schedule.dueAt))}"><small>${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}</small>` : `<input class="inp" type="time" id="pp-time17d" value="${esc(p.time ?? "")}">`}</label>${whoField()}</div>
     <p class="pp-first17d" id="pp-first17d">${first}${p.proposal.time === "guessed" ? ` · ${t("window.places.schedule-card.branch-guessed-part-of-this-check")}` : ""}</p>${cron}${p.proposal.reach ? `<p class="pp-first17d">${t("autonomy.orders.authority")}: ${esc(p.proposal.reach)}</p>` : ""}
+    ${ownerHere() ? `<label class="fld"><span><input type="checkbox" id="pp-dashboard" ${p.dashboard ? "checked" : ""}>${esc(t("scheduleddash.enable"))}</span><small>${esc(t("scheduleddash.help"))}</small></label>` : ""}
     <div class="acts"><button class="btn ghost sm" type="button" data-act="ppno17d">${t("first-run-steps.restore-no")}</button><button class="btn pri sm" type="button" data-act="ppok17d" ${ready(p) ? "" : "disabled"}>${t("window.places.schedule-card.confirm-the-schedule")}</button></div>
     <p class="hint" data-css="margin:0">${t("window.places.schedule-card.it-runs-only-after-you-confirm")}</p></div>`;
 }
@@ -90,7 +94,13 @@ const keepWhat = () => { const w = document.getElementById("pp-what17d"); if (P 
 export async function proposeWords() {
   const text = $("#nl-in")?.value.trim();
   if (!text) { $("#nl-in")?.focus(); return; } // B002: nothing to read yet; the box is where the words go
-  try { P = fromProposal((await api("schedules/propose", { text, timezone: zone() })).proposal); } catch (error) { toast(error.message); return; }
+  if (!visibleOwner()) return;
+  const ticket = ++revision, profile = activeId(), view = S.view;
+  try {
+    const result = await api("schedules/propose", { text, timezone: zone() });
+    if (ticket !== revision || !visibleOwner() || activeId() !== profile || S.view !== view) return;
+    P = fromProposal(result.proposal);
+  } catch (error) { if (ticket === revision && visibleOwner() && activeId() === profile && S.view === view) toast(error.message); return; }
   renderNow();
   document.getElementById("pp-what17d")?.focus();
 }
@@ -99,18 +109,26 @@ export async function proposeWords() {
 async function reread() {
   keepWhat();
   const p = P;
+  if (!p || !visibleOwner()) return;
+  const ticket = ++revision, profile = activeId(), view = S.view, stamp = fieldsOf(p);
   if (p.days !== "once" && (!p.days || !p.time)) return renderNow();
   const weekdays = { weekdays: [1, 2, 3, 4, 5], weekends: [0, 6], weekly: [p.day ?? 5] }[p.days];
   const edit = p.days === "once" ? { prompt: p.what.trim() || p.proposal.schedule.prompt, dueAt: p.proposal.schedule.dueAt } : { prompt: p.what.trim() || p.proposal.schedule.prompt, dailyAt: p.time, ...(weekdays ? { weekdays } : {}), ...(p.days === "monthly" ? { monthDay: p.proposal.schedule.monthDay ?? 1 } : {}) };
-  try { P = fromProposal((await api("schedules/propose", { edit, timezone: p.proposal.schedule.timezone })).proposal, p.what, p.trunk); } catch (error) { toast(error.message); }
+  try {
+    const result = await api("schedules/propose", { edit, timezone: p.proposal.schedule.timezone });
+    keepWhat();
+    if (ticket !== revision || P !== p || !visibleOwner() || activeId() !== profile || S.view !== view || fieldsOf(p) !== stamp) return;
+    P = fromProposal(result.proposal, p.what, p.trunk, p.dashboard);
+  } catch (error) { if (ticket !== revision || !visibleOwner() || activeId() !== profile || S.view !== view) return; toast(error.message); }
   renderNow();
 }
 
 /* A Trunk's routine (POST /api/trunks/<id>/routines): the same schedule, run as that Trunk, its result in its conversation.
    Its name is the first line of what it does; its first run is the one the card shows. */
-function routineOf(fresh) {
+function routineOf(fresh, dashboard = false) {
   const s = fresh.schedule, line = s.prompt.trim().split("\n")[0];
   return { name: line.length > 80 ? line.slice(0, 79) + "…" : line, prompt: s.prompt, dueAt: fresh.firstRunAt,
+    ...(dashboard ? { dashboard: { title: s.prompt.trim().slice(0, 120) || "Scheduled dashboard" } } : {}),
     ...Object.fromEntries(["intervalMs", "dailyAt", "weekdays", "monthDay", "timezone"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]])) };
 }
 
@@ -118,42 +136,49 @@ let sending = false; // a second press of Confirm while the first is on its way 
 async function confirm() {
   keepWhat();
   const p = P;
-  if (!p || !ready(p) || sending) return;
+  if (!p || !ready(p) || sending || !visibleOwner()) return;
+  const profile = activeId(), view = S.view, stamp = fieldsOf(p);
   sending = true;
   // Read once more just before saving, so the first run is worked out from now and not from when the card opened.
   const s = p.proposal.schedule, when = Object.fromEntries((p.days === "once" ? ["dueAt"] : ["dailyAt", "weekdays", "monthDay", "intervalMs"]).filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
   try {
     const fresh = (await api("schedules/propose", { edit: { prompt: p.what.trim() || s.prompt, ...when }, timezone: s.timezone })).proposal;
+    keepWhat();
+    if (P !== p || !ownerHere() || activeId() !== profile || S.view !== view || document.getElementById("app")?.classList.contains("locked-b17")
+      || stamp !== fieldsOf(p)) return;
     // Dogfood: edited words can need a different reach; the card shows the new one and waits for a second Confirm.
     const reachMoved = fresh.reach !== p.proposal.reach || String(fresh.schedule.permissions) !== String(p.proposal.schedule.permissions);
     p.proposal = fresh;
     if (reachMoved) { renderNow(); return; }
-    if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh));
-    else await api("schedules", fresh.schedule);
+    if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh, p.dashboard));
+    else await api("schedules", { ...fresh.schedule, ...(p.dashboard ? { dashboard: { title: p.what.trim().slice(0, 120) || "Scheduled dashboard" } } : {}) });
   } catch (error) { toast(error.message); return; } finally { sending = false; }
+  if (P !== p || !ownerHere() || activeId() !== profile || S.view !== view) return;
   P = null;
   const box = $("#nl-in");
   if (box) { box.value = ""; box.dispatchEvent(new Event("input", { bubbles: true })); } // the page keeps the box's words (automations.js)
-  await refresh().catch((error) => toast(error.message));
+  await refresh().catch((error) => { if (visibleOwner() && activeId() === profile && S.view === view) toast(error.message); });
+  if (!visibleOwner() || activeId() !== profile || S.view !== view) return;
   renderNow();
   toast(t("window.places.schedule-card.scheduled-first-run-firstrunat", { firstRunAt: firstRun(p.proposal.firstRunAt) }));
 }
 
 export function initScheduleCard() {
-  markLive(["nl-add", "sw:nl-in", "ppset17d", "ppno17d", "ppok17d", "sw:pp-what17d", "sw:pp-time17d", "sw:pp-once17d"]);
+  markLive(["nl-add", "sw:nl-in", "ppset17d", "ppno17d", "ppok17d", "sw:pp-what17d", "sw:pp-time17d", "sw:pp-once17d", "sw:pp-dashboard"]);
   on("nl-add", () => proposeWords());
   on("ppset17d", (el) => {
     if (!P) return;
     const k = el.dataset.k;
-    if (k === "trunk") { keepWhat(); P.trunk = !el.dataset.v || P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
+    if (k === "trunk") { revision++; keepWhat(); P.trunk = !el.dataset.v || P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
     P[k] = k === "day" ? +el.dataset.v : el.dataset.v;
     if (k === "days" && el.dataset.v === "once") P.proposal.schedule.dueAt = new Date(Date.now() + 120000).toISOString();
     if (k === "days" && el.dataset.v === "weekly" && P.day == null) P.day = 5;
     reread();
   });
-  on("ppno17d", () => { P = null; renderNow(); toast(t("window.places.schedule-card.nothing-was-saved")); });
+  on("ppno17d", () => { revision++; P = null; renderNow(); toast(t("window.places.schedule-card.nothing-was-saved")); });
   on("ppok17d", () => confirm());
   document.addEventListener("change", (e) => {
+    if (e.target.id === "pp-dashboard" && P && ownerHere()) { P.dashboard = e.target.checked; revision++; return; }
     if (e.target.id === "pp-once17d" && P && e.target.value) { P.proposal.schedule.dueAt = new Date(e.target.value).toISOString(); reread(); return; }
     if (e.target.id !== "pp-time17d" || !P || !e.target.value) return;
     P.time = e.target.value;

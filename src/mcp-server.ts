@@ -1,4 +1,7 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { inputRequired, type CallToolResult, type InputRequiredResult } from '@modelcontextprotocol/server';
+import { CallToolResultSchema } from '@modelcontextprotocol/core';
+import { modernHandler } from './mcp-modern-server.js';
 import { z } from 'zod';
 import type { ToolRegistry } from './registry.js';
 import type { Store } from './store.js';
@@ -56,7 +59,7 @@ export type StreamListener = (notification: JsonRpcNotification) => void;
 export const McpSharingSchema = z
   .object({
     enabled: z.boolean().default(false),
-    /** Preview: only stateless discovery/resource/prompt requests, no execution or subscriptions. */
+    /** Opt in to the 2026 protocol served by the official SDK. */
     statelessPreview: z.boolean().optional(),
     exposedTools: z.array(z.string().min(1).max(100)).max(200).default([]),
     /** Also answer assistants elsewhere over the agent-to-agent protocol, from the same shared list. */
@@ -207,6 +210,13 @@ const scopedResources: readonly ResourceScope[] = [
 ];
 
 export class McpServer {
+  private modernGeneration = 0;
+  private modernClosed = false;
+  private modernPending = new Map<string, { session: McpSession; fingerprint: string; principal: string;
+    owner: string; generation: number; expires: number; busy: boolean; asked: boolean }>();
+  private modernRates = new Map<string, { until: number; count: number }>();
+  private modernListeners = new Set<StreamListener>();
+  readonly modern = modernHandler(this);
   private sessions = new Map<string, McpSession>();
   private inFlight = 0;
   private statelessInFlight = 0;
@@ -232,11 +242,18 @@ export class McpServer {
   ) {
     // A skill, a plugin or another MCP server's tools arriving changes what is on offer, and every
     // connected client has to be told or it goes on calling something that is no longer there.
-    this.stopWatching = registry.onToolsChanged(() => this.notifyAll('notifications/tools/list_changed', {}));
+    this.stopWatching = registry.onToolsChanged(() => {
+      this.modernGeneration++;
+      this.notifyAll('notifications/tools/list_changed', {});
+    });
   }
 
   /** Stops listening for tool changes; the connections themselves are closed by their transports. */
   close(): void {
+    this.modernClosed = true;
+    this.modernPending.clear();
+    this.modernListeners.clear();
+    void this.modern.close();
     this.stopWatching();
     for (const session of this.sessions.values()) session.listeners.clear();
     this.sessions.clear();
@@ -302,6 +319,8 @@ export class McpServer {
 
   /** Sends a message that expects no reply to every open stream. */
   notifyAll(method: string, params: Record<string, unknown>): void {
+    for (const listener of this.modernListeners) listener({ jsonrpc: '2.0', method, params });
+    if (method === 'notifications/tools/list_changed') this.modern.notify.toolsChanged();
     for (const session of this.sessions.values()) this.notifySession(session, method, params);
   }
 
@@ -312,6 +331,9 @@ export class McpServer {
 
   /** Tells whoever asked to be told that a resource has new contents. */
   publishResourceUpdate(uri: string): void {
+    for (const listener of this.modernListeners) listener({ jsonrpc: '2.0', method: 'notifications/resources/updated', params: { uri } });
+    if (!this.runtime.fullAccessLocked() && !lockedDown(this.store, this.runtime.owner) && this.sharing().enabled)
+      this.modern.notify.resourceUpdated(uri);
     for (const session of this.sessions.values())
       if (session.subscriptions.has(uri)) this.notifySession(session, 'notifications/resources/updated', { uri });
   }
@@ -332,6 +354,95 @@ export class McpServer {
   /** The shared tools checked against the approval settings before any of them is offered. */
   preflight(): ReturnType<typeof preflight> {
     return preflight(this.registry, this.store, this.runtime.owner, this.exposed());
+  }
+
+  requireModern(): void {
+    this.store.profiles.requireOwner('Stateless MCP');
+    if (this.modernClosed || this.runtime.fullAccessLocked() || lockedDown(this.store, this.runtime.owner)
+      || !this.sharing().enabled || !this.sharing().statelessPreview)
+      throw new StatelessError(-32602, 'Stateless MCP is unavailable');
+  }
+
+  /** Hash only the authenticated transport identity; no token is persisted or returned. */
+  modernPrincipal(value: string): string { return createHash('sha256').update(value).digest('hex'); }
+
+  modernAccessStamp(): string {
+    return JSON.stringify([this.runtime.owner, this.sharing(), readPolicy(this.store, this.runtime.owner), this.modernGeneration]);
+  }
+
+  watchModern(listener: StreamListener): () => void {
+    this.modernListeners.add(listener);
+    return () => void this.modernListeners.delete(listener);
+  }
+
+  async callModernTool(params: { name: string; arguments?: Record<string, unknown> }, principal: string,
+    signal: AbortSignal, state: unknown): Promise<CallToolResult | InputRequiredResult> {
+    this.requireModern();
+    signal.throwIfAborted();
+    const args = params.arguments ?? {}, fingerprint = argumentFingerprint(params.name, JSON.stringify(args));
+    for (const [key, value] of this.modernPending) if (value.expires < this.now()) this.modernPending.delete(key);
+    const token = state === undefined ? randomBytes(32).toString('hex') : z.string().regex(/^[a-f0-9]{64}$/).parse(state);
+    const retained = this.modernPending.get(token);
+    if (state !== undefined && (!retained || retained.fingerprint !== fingerprint || retained.principal !== principal
+      || retained.owner !== this.runtime.owner || retained.generation !== this.modernGeneration || retained.busy))
+      throw new StatelessError(-32602, 'Expired, consumed or mismatched request state');
+    const pending = retained ?? { session: new McpSession(), fingerprint, principal, owner: this.runtime.owner,
+      generation: this.modernGeneration, expires: this.now() + 600000, busy: false, asked: false };
+    pending.session.protocolVersion = statelessVersion;
+    if (!retained && this.modernPending.size >= 100) throw new StatelessError(-32603, 'Too many pending calls');
+    pending.busy = true;
+    this.modernPending.set(token, pending);
+    try { return await this.executeModern(params.name, args, signal, token, pending); }
+    finally { pending.busy = false; }
+  }
+
+  private async executeModern(name: string, args: Record<string, unknown>, signal: AbortSignal, token: string,
+    pending: { session: McpSession; principal: string; owner: string; generation: number; asked: boolean }): Promise<CallToolResult | InputRequiredResult> {
+    this.rateModern(pending.principal);
+    const guard = () => {
+      signal.throwIfAborted(); this.requireModern();
+      if (pending.owner !== this.runtime.owner || pending.generation !== this.modernGeneration)
+        throw new StatelessError(-32602, 'Owner or shared tools changed');
+    };
+    guard();
+    if (name === 'branch.ask' || name === 'mcp.snapshot') {
+      this.modernPending.delete(token);
+      if (this.inFlight - this.waiting >= this.options.maxConcurrentCalls) throw new StatelessError(-32603, 'Branch is busy');
+      this.inFlight++;
+      try {
+        const result = name === 'branch.ask' ? await this.callAsk(args, signal) : this.snapshot(pending.session, args);
+        guard();
+        return CallToolResultSchema.parse(this.runtime.hideSecrets(result));
+      } finally { this.inFlight--; }
+    }
+    if (name === 'mcp.dry_run') { this.modernPending.delete(token); return CallToolResultSchema.parse(this.dryRun(DryRunSchema.parse(args))); }
+    const exposed = this.exposed();
+    if (!exposed.has(name)) throw new StatelessError(-32602, 'Tool is no longer shared');
+    const verdict = this.gate(name, args, pending.session);
+    if (verdict.decision === 'ask') {
+      // A remote accept response never grants permission. Only Branch's native owner answer does.
+      if (pending.asked) return inputRequired({ requestState: token });
+      pending.asked = true;
+      this.inFlight++;
+      let answered: Awaited<ReturnType<McpServer['park']>>;
+      try { answered = await this.park(verdict, pending.session, signal); }
+      finally { this.inFlight--; }
+      guard();
+      if (answered === 'waiting') return inputRequired({ requestState: token });
+      if (answered !== 'allow') { this.modernPending.delete(token); return CallToolResultSchema.parse(failure(verdict.refusal)); }
+    }
+    guard();
+    this.modernPending.delete(token); // Consume before effects, so parallel/repeated retries cannot execute twice.
+    return CallToolResultSchema.parse(this.runtime.hideSecrets(await this.callRegistryTool(name, args, exposed, pending.session, signal, guard)));
+  }
+
+  private rateModern(principal: string): void {
+    const rate = this.modernRates.get(principal);
+    const current = rate && rate.until > this.now() ? rate : { until: this.now() + 60000, count: 0 };
+    for (const [key, value] of this.modernRates) if (value.until <= this.now()) this.modernRates.delete(key);
+    if (this.modernRates.size >= 1000 && !this.modernRates.has(principal)) throw new StatelessError(-32603, 'Client limit reached');
+    this.modernRates.set(principal, current);
+    if (++current.count > this.options.perClientRateLimit) throw new StatelessError(-32603, 'Rate limit reached');
   }
 
   /** Request-local read adapter. Never allocates a session or restores a connection's approvals. */
@@ -548,14 +659,14 @@ export class McpServer {
   }
 
   /** Delegate a prompt to Branch itself; the runtime records the run, we add the receipt. */
-  private async callAsk(args: Record<string, unknown>): Promise<unknown> {
+  private async callAsk(args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
     const parsed = z.object({ prompt: z.string().trim().min(1).max(16000) }).strict().safeParse(args);
     if (!parsed.success) return failure('Give a "prompt" saying what you want Branch to do.');
     try {
       // Bound to what the owner shares: the task may use only the permissions the shared tools need, and as a task from
       // outside it asks before any change (cappedPolicy), whatever the owner's own setting is.
       const permissions = [...new Set([...this.exposed()].filter((name) => this.registry.names().includes(name)).map((name) => this.registry.permissionOf(name)))];
-      const run = await this.runtime.run({ prompt: parsed.data.prompt, source: 'mcp', permissions });
+      const run = await this.runtime.run({ prompt: parsed.data.prompt, source: 'mcp', permissions, ...(signal ? { signal } : {}) });
       await this.recordCall(run.id, 'branch.ask', parsed.data, run.output, run.status === 'completed');
       this.announceRun(run.id);
       return { content: [{ type: 'text', text: run.output }], isError: run.status !== 'completed' };
@@ -567,18 +678,26 @@ export class McpServer {
   /** Run one shared tool as its own recorded task, so it appears in Activity with a receipt. */
   private async callRegistryTool(
     name: string, args: Record<string, unknown>, exposed: Set<string>, session?: McpSession,
+    signal?: AbortSignal, guard?: () => void,
   ): Promise<unknown> {
     const verdict = this.gate(name, args, session);
     if (verdict.decision === 'deny') return failure(verdict.refusal);
     if (verdict.decision === 'ask') {
-      const answered = await this.park(verdict, session);
+      const answered = await this.park(verdict, session, signal);
       if (answered === 'full') return failure(verdict.tooMany);
       if (answered !== 'allow') return failure(answered === 'deny' ? verdict.refusal : verdict.waiting);
     }
+    guard?.();
+    signal?.throwIfAborted();
+    if (signal && this.inFlight - this.waiting >= this.options.maxConcurrentCalls) return failure('Branch is busy. Try again shortly.');
+    if (signal) this.inFlight++;
     const run = this.store.createRun(this.runtime.owner, `Another AI tool used ${name}`);
     this.store.event(run.id, 'run.started', { source: 'mcp', tool: name, provider: this.runtime.provider.name, parentRunId: null });
     try {
-      const result = await this.registry.execute(name, args, { ...this.toolContext(run.id, exposed), ...verdict.sandbox });
+      const context = { ...this.toolContext(run.id, exposed), ...verdict.sandbox };
+      if (signal) context.signal = AbortSignal.any([context.signal, signal]);
+      const result = await this.registry.execute(name, args, context);
+      guard?.();
       await this.recordCall(run.id, name, args, result, true);
       this.store.finish(run.id, 'completed', JSON.stringify(result));
       this.announceRun(run.id);
@@ -589,7 +708,7 @@ export class McpServer {
       this.store.finish(run.id, 'failed', error);
       this.announceRun(run.id);
       return failure(error);
-    }
+    } finally { if (signal) this.inFlight--; }
   }
 
   /**
@@ -633,14 +752,14 @@ export class McpServer {
    * what stops that becoming a way to make Branch hold an unlimited number of them. A call turned
    * away here has had nothing created for it — no question, no task, nothing to answer.
    */
-  private async park(verdict: McpVerdict, session?: McpSession): Promise<'allow' | 'deny' | 'waiting' | 'full'> {
+  private async park(verdict: McpVerdict, session?: McpSession, signal?: AbortSignal): Promise<'allow' | 'deny' | 'waiting' | 'full'> {
     const key = verdict.approvalKey;
     const mine = this.waitingPerSession.get(key) ?? 0;
     if (this.waiting >= WAITING_LIMIT || mine >= WAITING_PER_SESSION) return 'full';
     this.waiting++;
     this.waitingPerSession.set(key, mine + 1);
     try {
-      return await this.waitForOwner(verdict, session);
+      return await this.waitForOwner(verdict, session, signal);
     } finally {
       this.waiting--;
       const left = (this.waitingPerSession.get(key) ?? 1) - 1;
@@ -656,7 +775,7 @@ export class McpServer {
    * it, for as long as the owner's setting allows. If nothing comes, the question stays waiting and
    * the client is told to ask again: the answer is bound to these bytes, so a retry finds it.
    */
-  private async waitForOwner(verdict: McpVerdict, session?: McpSession): Promise<'allow' | 'deny' | 'waiting'> {
+  private async waitForOwner(verdict: McpVerdict, session?: McpSession, signal?: AbortSignal): Promise<'allow' | 'deny' | 'waiting'> {
     const name = verdict.name;
     const asking = this.store.createRun(this.runtime.owner, `Another AI tool asked to use ${name}`);
     const question = approvalQuestion(verdict.label, verdict.target);
@@ -670,6 +789,7 @@ export class McpServer {
       remember: 'session', question, bytes: verdict.bytes, fingerprint: verdict.fingerprint, source: 'mcp' });
     const deadline = this.now() + readServingSettings(this.store, this.runtime.owner).askWaitSeconds * 1000;
     do {
+      signal?.throwIfAborted();
       const answer = this.runtime.approvals.answer(verdict.approvalKey, name, verdict.target, verdict.fingerprint);
       if (answer) {
         this.store.finish(asking.id, 'completed', answer === 'allow' ? 'You said yes.' : 'You said no.');
