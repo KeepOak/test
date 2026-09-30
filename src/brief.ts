@@ -9,6 +9,7 @@ import { nextDailyOccurrence } from "./scheduler.js";
 import { placeholders, substitute } from "./recipes.js";
 import { optionalFields } from "./feature-switches.js";
 import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
+import { briefSources, BriefSourcesSchema } from "./brief-sources.js";
 
 /**
  * One message first thing: what is planned today, what was left unfinished, documents that arrived,
@@ -16,7 +17,8 @@ import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
  * from what the app already knows — no calendar account and nothing read aloud — and the wording is
  * a template the person can change.
  */
-export const briefSections = ["schedules", "tasks", "documents", "watches", "reminders"] as const;
+const originalSections = ["schedules", "tasks", "documents", "watches", "reminders"] as const;
+export const briefSections = [...originalSections, "news", "health"] as const;
 export type BriefSection = (typeof briefSections)[number];
 export const defaultTemplate = `Good morning. Here is {{date}}.
 
@@ -49,7 +51,7 @@ export const BriefSettingsSchema = z.object({
   timezone: zone.default(localZone),
   deliverTo: z.object({ channel: z.string().min(1).max(64), chatId: z.string().min(1).max(64) }).strict().nullable().default(null),
   template: z.string().max(4000).default(defaultTemplate),
-  sections: z.array(z.enum(briefSections)).max(5).default([...briefSections]),
+  sections: z.array(z.enum(briefSections)).max(7).default([...originalSections]),
   nextAt: z.iso.datetime().nullable().default(null),
   lastSentAt: z.iso.datetime().nullable().default(null),
 }).strict();
@@ -74,8 +76,8 @@ export function assembleBrief(settings: BriefSettings, content: BriefContent, no
     date: new Intl.DateTimeFormat("en-GB", { timeZone: settings.timezone, weekday: "long", day: "numeric", month: "long" }).format(now),
   };
   for (const section of briefSections)
-    bound[section] = settings.sections.includes(section) && content[section].length
-      ? content[section].map((line) => `- ${line}`).join("\n")
+    bound[section] = settings.sections.includes(section) && (content[section] ?? []).length
+      ? (content[section] ?? []).map((line) => `- ${line}`).join("\n")
       : settings.sections.includes(section) ? nothing : "";
   const text = substitute(settings.template, bound);
   // A section that was switched off leaves its heading with an empty body; drop both.
@@ -95,6 +97,22 @@ export class MorningBrief {
     private readonly documents?: DocumentLibrary,
     private readonly deliver?: DeliveryHandler,
   ) {}
+  sources(owner: string) { return briefSources(this.store, owner); }
+  configureSources(owner: string, input: unknown) {
+    this.store.profiles.requireOwner("Choosing morning brief sources");
+    const value = BriefSourcesSchema.extend({ approveBriefSources: z.literal(true) }).parse(input);
+    const available = new Set((this.monitors?.list(owner) ?? []).filter(w => w.kind === "search").map(w => w.id));
+    if (value.newsWatchIds.some(id => !available.has(id))) throw new Error("Select existing news search watches");
+    const settings = this.settings(owner);
+    const sections: BriefSection[] = settings.sections.filter(s => s !== "news" && s !== "health");
+    if (value.newsWatchIds.length) sections.push("news");
+    if (value.healthSource !== "off") sections.push("health");
+    let template = settings.template;
+    for (const section of ["news", "health"] as const) if (sections.includes(section) && !placeholders(template).has(section)) template += `\n\n**${section === "news" ? "Selected news watches" : "Private health review"}**\n{{${section}}}`;
+    this.configure(owner, { sections, template });
+    this.store.save("settings", owner, "brief-sources", { newsWatchIds: value.newsWatchIds, healthSource: value.healthSource });
+    return this.sources(owner);
+  }
   settings(owner: string): BriefSettings {
     const saved = BriefSettingsSchema.safeParse(this.store.get("settings", owner, "brief")?.data ?? {});
     if (!saved.success) return BriefSettingsSchema.parse({});
@@ -114,9 +132,12 @@ export class MorningBrief {
   }
   /** Everything the brief can talk about, gathered from what the app already holds. */
   gather(owner: string, now = new Date()): BriefContent {
+    const sources = this.sources(owner);
     const since = new Date(now.getTime() - 86400000).toISOString();
     const endOfDay = new Date(now.getTime() + 86400000).toISOString();
     return {
+      news: this.monitors?.news(owner, sources.newsWatchIds, now) ?? [],
+      health: sources.healthSource === "off" ? [] : [`Review your selected ${sources.healthSource.toUpperCase()} source in Morning brief & watch history. Connection status is not verified by this reminder. A separate owner click approves each private date read; no metrics are included in this saved or delivered brief.`],
       schedules: this.store.list("schedules", owner)
         .filter((record) => record.data.status === "pending" && String(record.data.dueAt ?? "") <= endOfDay)
         .slice(0, 8).map((record) => `${String(record.data.prompt).slice(0, 120)} (${String(record.data.dueAt).slice(11, 16)})`),
