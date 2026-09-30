@@ -3161,6 +3161,12 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/allowlist") {
+    if (request.method === "GET") return { allowlist: app.channels.senderAllowlist() };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    try { return { allowlist: app.channels.setSenderAllowlist(await readBody(request)) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   if (path === "/api/channels/formatting") {
     if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
