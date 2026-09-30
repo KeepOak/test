@@ -2738,7 +2738,7 @@ ${run.output.slice(0, 6000)}`;
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
-  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"] }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"]; dryRun?: boolean }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
   /**
    * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
    * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
@@ -2756,7 +2756,8 @@ ${run.output.slice(0, 6000)}`;
     try {
       // The task's own Stop and budget: a filter never runs on after the task stops, nor past what it may spend.
       const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget, runId: run.id,
-        ...(context.trunk ? { trunk: context.trunk } : {}), ...(context.trunkKeys ? { trunkKeys: context.trunkKeys } : {}) });
+        ...(context.trunk ? { trunk: context.trunk } : {}), ...(context.trunkKeys ? { trunkKeys: context.trunkKeys } : {}),
+        ...(context.dryRun ? { dryRun: true } : {}) });
       if (!said) return result;
       if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
       const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);

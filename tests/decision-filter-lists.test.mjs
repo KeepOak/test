@@ -12,6 +12,7 @@ import { createBranch } from "../dist/index.js";
 import { notes } from "../dist/inspect.js";
 import { DecisionModels } from "../dist/decision-models.js";
 import { runOrigin } from "../dist/key-context.js";
+import { CliAgentProvider, rowFor } from "../dist/providers/cli-agent.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const NEEDLE = "invoice-2026-0917 from Acme Ltd: 4,120.00 overdue";
@@ -159,4 +160,28 @@ test("a list filter's decision answers to its task's asker, with no program tool
   }
   assert.deepEqual(seen.map((one) => one.source), ["schedule", "owner"], "the decision is asked as its task's own asker");
   assert.deepEqual(seen.map((one) => one.programTools), [false, false], "a tool-free decision never gets a program's own tools");
+});
+
+test("a practice task's list filter never reaches an installed coding program: the practice refusal holds for it too", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-filter-practice-"));
+  const task = { name: "scripted", async complete(request) {
+    if (!request.messages.some((m) => m.role === "tool")) return { content: "", toolCalls: [{ id: "s1", name: "archive.search", arguments: "{}" }] };
+    return { content: "done", toolCalls: [] };
+  } };
+  let spawned = 0;
+  const program = new CliAgentProvider(rowFor({ id: "installed", command: "an-installed-assistant" }), { timeoutMs: 5000 },
+    async () => { spawned++; return { stdout: JSON.stringify({ keep: [1], confidence: 0.9 }), stderr: "", code: 0 }; });
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), presets: [
+    { id: "task", name: "Task model", model: "task-1", provider: task },
+    { id: "installed", name: "Installed assistant", model: "cli-1", provider: program }] });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.runtime.models.configure(app.runtime.owner, { activePreset: "task" });
+  app.decisionModels.configure({ model: "installed" });
+  app.registry.register({ name: "archive.search", permission: "files.read", description: "stand-in mail search",
+    parameters: z.object({}).strict(), execute: async () => ({ query: "invoice", results }) });
+  const run = await app.runtime.run({ prompt: "Find the overdue invoice in my mail", permissions: ["files.read"], dryRun: true });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(spawned, 0, "the installed program was never started for a practice task's filter");
+  const failed = app.store.events(run.id).find((e) => e.kind === "list.filter_failed");
+  assert.match(failed?.data.reason ?? "", /Practice cannot use an installed coding assistant/, "the practice refusal is the reason");
 });

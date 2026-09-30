@@ -70,7 +70,7 @@ type Raw = { answer?: boolean; choice?: string; score?: number; keep?: number[];
  * never by a request) makes the decision's own run part of the task: it stays on this computer when the task must, and
  * its spending counts against the task's cap.
  */
-export interface DecisionOrigin { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"] }
+export interface DecisionOrigin { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"]; dryRun?: boolean }
 export type DecisionAsk = (text: string, shape: AnswerShape, preset: ModelPreset, origin?: DecisionOrigin) => Promise<ShapedAnswer>;
 
 export interface DecisionResult {
