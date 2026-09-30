@@ -4952,7 +4952,8 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {
-    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined) });
+    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined),
+      locked: () => app.sessionLock.refusal(request.method, path) });
     return true;
   }
   // ---- end of the bucket 13 block ----
