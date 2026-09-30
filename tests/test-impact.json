@@ -1,6 +1,6 @@
 {
-  "prSlots": 3,
-  "prLinuxShards": 2,
+  "prSlots": 20,
+  "prLinuxShards": 4,
   "partialBases": [
     "redesign/window"
   ],

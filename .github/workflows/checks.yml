@@ -18,7 +18,7 @@ name: Checks
 # request into redesign/window is a light, fast signal (scripts/select-affected-tests.mjs, the `plan` job):
 # documentation alone runs no test; anything else runs the tests nearest its change (the changed tests, what it reaches
 # by name, mapping or graph, the tests near a src/ change, then browser tests for a page change) on at most
-# `prLinuxShards` (2) Linux shares, cut to fit them; `npm run build` in each share is the type-check. Windows and
+# `prLinuxShards` (4) Linux shares, cut to fit them; `npm run build` in each share is the type-check. Windows and
 # macOS run on a pull request only when it touches their own code, the files only a few tests including theirs use
 # (`platformSourceTests`), or their tests and those tests' helpers; local voice only when the change reaches its test.
 # On 2026-09-29 a pull-request run fanned out to 11 to 14 jobs (8 Linux, 2 Windows, 1 macOS, voice, plan, verify) and

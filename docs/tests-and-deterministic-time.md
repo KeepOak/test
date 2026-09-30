@@ -26,7 +26,7 @@ hand and a pull request into anything but `redesign/window` run the whole suite 
   files import `dist/index.js`, which imports nearly all of `src/`.
 
 A pull request into `redesign/window` is then made light, because the merge queue runs the whole suite on every
-system before anything lands: at most `prLinuxShards` (2) Linux shares, filled with `always`, the changed tests, what
+system before anything lands: at most `prLinuxShards` (4) Linux shares, filled with `always`, the changed tests, what
 the change reaches by name, mapping or graph, the tests near a `src/` change (`nearTests`: the tests that use a
 changed file or a `src/` file that uses it, never through a hub file that more than `hubTests` tests import), then
 every browser test for a page change, lightest first within each group, while the predicted time fits two shares of
