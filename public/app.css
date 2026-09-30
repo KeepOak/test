@@ -4540,6 +4540,11 @@ audio.docread18m{width:100%}
 #conversation:has(+.tl-after19){padding-bottom:0}
 .tl-after19{padding-top:16px}
 
+.browser-proof7 { margin:8px 0; display:grid; gap:6px; max-width:640px; }
+.browser-proof7 figcaption { font-weight:600; }
+.browser-proof7 img { display:block; width:100%; max-height:360px; object-fit:contain; border-radius:8px; }
+.browser-proof7 small { color:var(--mute17c); }
+
 /* Completed downloads in the owner's browser, retained only for this session. */
 .ob7-downloads{flex:none;padding:8px 16px;border-bottom:1px solid #e6e9ec;background:#f7f9fb;color:#1b1f23;text-align:left}
 .ob7-downloads summary{cursor:pointer;font-size:13px}
