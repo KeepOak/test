@@ -65,6 +65,8 @@ function keepFields() {
   const n = $("#st-name"), r = $("#st-role");
   if (n) ed.d.name = n.value;
   if (r) ed.d.title = r.value;
+  const voice = $("#st-voice");
+  if (voice) ed.d.voice = voice.value;
   for (const box of document.querySelectorAll("[data-personality-file]")) {
     const file = ed.files?.find((file) => file.name === box.dataset.personalityFile);
     if (file) file.text = box.value;
@@ -74,6 +76,27 @@ function keepFields() {
 function filesTab() {
   markLive((ed.files ?? []).map((file) => `sw:personality-${file.name}`));
   return (ed.files ?? []).map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button></div>`).join("");
+}
+
+function voicePicker() {
+  const names = [...new Set([...(ed.voices ?? []), ed.d.voice].filter(Boolean))];
+  const options = [["", t("voice.default")], ...names.map((name) => [name, name])];
+  const hint = ed.voiceError || say("Reads this Trunk's replies in its own voice. Default uses your voice setting.");
+  return `<div class="field"><label for="st-voice">${t("field.voice")}</label>${gsel({ id: "st-voice", label: t("field.voice"), options, value: ed.d.voice })}<small class="hint">${esc(hint)}</small></div>`;
+}
+
+async function loadTrunkVoices(id) {
+  try {
+    const voices = await api("voice/voices");
+    if (ed?.id !== id) return;
+    ed.voices = [...(voices.system ?? []), ...(voices.windows ?? [])].filter((name) => typeof name === "string" && name.length <= 80);
+  } catch (error) {
+    if (ed?.id !== id) return;
+    ed.voiceError = error.message;
+  }
+  if (!dialog()?.querySelector(".editor")) return;
+  keepFields();
+  drawEditor();
 }
 
 /* The pebble as this editor would save it: the draft's colour, shape, eyes and motion over the saved face. */
@@ -107,7 +130,7 @@ function lookTab(tr, d) {
     ${row("colour", `<div class="field"><label>${t("studio.colour")}</label><div class="swatches">${swatches}</div></div>`)}
     ${row("shape", `<div class="field"><label>${t("studio.shape")}</label><div class="shapes">${shapes}</div></div>`)}
     <div class="split" data-css="grid-template-columns:1fr 1fr">${photoField(tr)}${row("moves", `<div class="field"><label>${t("window.flows.trunk.moves")}</label><span class="seg">${moves}</span></div>`)}</div>
-    ${row("eyes", `<div class="field"><label>${t("window.flows.trunk.eyes")}</label><span class="seg">${eyes}</span></div>`)}`;
+    ${row("eyes", `<div class="field"><label>${t("window.flows.trunk.eyes")}</label><span class="seg">${eyes}</span></div>`)}${voicePicker()}`;
 }
 
 /* ---------- a photo instead of a face: POST /api/trunks/{id}/avatar, which keeps a PNG, JPEG or WebP under about 290 KB
@@ -310,8 +333,9 @@ function editTrunk(id) {
   const tr = trunkById(id);
   if (!tr) return;
   const look = lookOf(tr);
-  ed = { id, tab: "look", d: { name: tr.name, title: tr.title ?? "", colour: hex(tr.chosenColour), shape: look.shape, motion: look.motion, eyes: tr.eyes ?? "round" } };
+  ed = { id, tab: "look", voices: [], d: { name: tr.name, title: tr.title ?? "", voice: tr.voice ?? "", colour: hex(tr.chosenColour), shape: look.shape, motion: look.motion, eyes: tr.eyes ?? "round" } };
   drawEditor();
+  loadTrunkVoices(id);
 }
 
 /* The whole look, with this editor's shape and motion (and any extra change) over what is saved. */
@@ -322,7 +346,7 @@ function fullLook(tr, change = {}) {
 async function saveEditor() {
   keepFields();
   const tr = trunkById(ed.id);
-  const body = { name: ed.d.name.trim(), title: ed.d.title.trim(), look: fullLook(tr), eyes: ed.d.eyes, ...(ed.d.colour ? { chosenColour: ed.d.colour } : {}) };
+  const body = { name: ed.d.name.trim(), title: ed.d.title.trim(), voice: ed.d.voice, look: fullLook(tr), eyes: ed.d.eyes, ...(ed.d.colour ? { chosenColour: ed.d.colour } : {}) };
   try {
     await api(`trunks/${encodeURIComponent(ed.id)}`, body);
     /* The window's own Trunks are read again before the editor closes: closing first left a moment in which Edit Trunk…
@@ -648,7 +672,7 @@ export function init() {
     else if (e.target.dataset?.tkPool) pickAccount(e.target);
     else if (e.target.dataset?.tkNext) pickNext(e.target);
   });
-  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-next"]);
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:st-voice", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-next"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));
