@@ -28,6 +28,8 @@ function addUsage(total: Usage, part: Usage | undefined): void {
   total.input += part.input;
   total.output += part.output;
   if (part.cachedInput !== undefined) total.cachedInput = (total.cachedInput ?? 0) + part.cachedInput;
+  if (part.cacheWrite !== undefined) total.cacheWrite = (total.cacheWrite ?? 0) + part.cacheWrite;
+  if (part.cacheWrite1h !== undefined) total.cacheWrite1h = (total.cacheWrite1h ?? 0) + part.cacheWrite1h;
 }
 
 export function referencesMessage(answers: { name: string; text: string }[]): Message {
