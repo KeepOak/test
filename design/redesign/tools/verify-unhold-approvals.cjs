@@ -156,7 +156,7 @@ async function secondLook(page) {
   check("second look under Lockdown: refused in the engine's words, and still off", /Lockdown is on/.test(await toastText(page)) && (await mode()) === "off", await toastText(page));
   check("second look under Lockdown: the switch is drawn from the engine again", !(await box().isChecked()));
   await api("lockdown", { on: false });
-  check("Hold back keys found in answers stays greyed (the leak guard has no switch)", await greyed(page.locator("#f15-hold-back-keys-found-in-answers")));
+  check("Hold back keys found in answers is words, not a switch (the leak guard has none)", (await page.locator('[data-fact="f15-hold-back-keys-found-in-answers"]').count()) === 1 && (await page.locator("#f15-hold-back-keys-found-in-answers").count()) === 0);
 }
 
 /* Q257: a "without asking" switch that loosens is refused by the engine until the owner says yes in the dialog; Cancel

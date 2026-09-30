@@ -6,16 +6,18 @@
    { autoReadAloud }, merged). The spoken morning brief is the engine's personal part "spoken-brief" (GET /api/personal
    modes, POST /api/personal/switch { part, mode }), on unless "off", turned on as "when-needed"; it is the owner's alone.
    "Voice" reads replies aloud in one of the computer's voices (POST /api/voice/settings { voiceId,
-   autoReadAloud }, merged; the voice the speech routes use), or Off (autoReadAloud false). "Listening" and Answer aloud's "When I talk" have no single engine setting behind them, so they are drawn
-   greyed. */
+   autoReadAloud }, merged; the voice the speech routes use), or Off (autoReadAloud false). "Listening" has no single engine setting behind it: it
+   says in words how Branch listens now, from the push-to-talk key and the wake word, each set in its own row (rows15.js
+   fact15). Answer aloud's "When I talk" has none either, so it is drawn greyed. */
 import { esc, render } from "../../core/dom.js";
 import { level, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { toast } from "../../core/ui.js";
-import { ctl, ctlSeg } from "../parts.js";
+import { ctl } from "../parts.js";
 import { voice17 } from "../p17-more.js";
+import { fact15 } from "../rows15.js";
 import { t } from "../../../i18n.js";
 import { calls17d } from "../../chat/calls17d.js"; // pass 17 part D §2 (greyed)
 
@@ -94,7 +96,7 @@ const num = (id, title, sub, value, unit, attrs = "") => `<div class="ctl"><b>${
 function talking() {
   const key = V.comfort?.pushToTalkKey ?? "";
   const listening = !V.settings ? "" : V.wake && V.wake !== "off" ? t("window.settings.voice.wake-word") : key ? t("window.settings.voice.push-to-talk") : t("accounts.switch.off");
-  return `<div class="sec"><h2>${t("window.settings.voice.talking")}</h2>${ctlSeg(t("dictation.listening"), t("window.settings.voice.push-to-talk-holds-the-key"), [t("accounts.switch.off"), t("window.settings.voice.push-to-talk"), t("window.settings.voice.wake-word")], listening, "f15-listening")}
+  return `<div class="sec"><h2>${t("window.settings.voice.talking")}</h2>${fact15(t("dictation.listening"), "f15-listening", listening)}
     <div class="ctl"><b>${t("comfort.field.pushToTalkKey")}</b><span class="right">${key ? `<kbd data-css="font-size:12px;padding:4px 8px">${esc(key)}</kbd>` : ""}<button class="btn sm" type="button" data-act="ptt-key">${t("window.settings.voice.change")}</button></span><small>${t("window.settings.voice.hold-it-anywhere-in-windows")}</small></div></div>`;
 }
 
@@ -119,7 +121,7 @@ function listeningMore() {
 function answerAloud() {
   const cur = !V.settings ? null : !V.settings.autoReadAloud ? "never" : V.settings.readAloudWhen === "spoken" ? "talk" : "always";
   const opt = (v, l, act) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}">${esc(l)}</button>`;
-  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "aloud15")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small></small></div>`;
+  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "aloud15")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small>${t("settings-kit.field.read-aloud-when")}</small></div>`;
 }
 /* Voice: a computer voice reads replies aloud in that voice; Off stops reading aloud. */
 async function saveVoice(v) {

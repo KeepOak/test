@@ -25,6 +25,7 @@ import { K, kitOn, kitSeg, changed, loadKit } from "../kit17.js";
 import { t } from "../../../i18n.js";
 import { loadPracticeRuns, practiceAttrs, initPracticeRuns } from "../practice-runs.js";
 import { say } from "../../core/words.js";
+import { fact15 } from "../rows15.js";
 import { initGuards, guardsLive, piiOn, codesOn } from "../perm-guards.js";
 
 const HEAD = () => `<h1>${t("settings.page.permissions")}</h1><p class="lede">${t("window.settings.permissions.what-trunks-may-do-without-asking")}</p>`;
@@ -38,9 +39,9 @@ const BASE_SWITCHES = () => `@@STATUS@@
       <div class="ctl"><b>${t("window.settings.permissions.record-tasks-so-you-can-watch")}</b><input class="sw" type="checkbox" id="p-record" @@record@@ aria-label="${t("window.settings.permissions.record-tasks-so-you-can-watch")}" data-sw="set"><small>${t("window.settings.permissions.recordings-stay-on-this-computer")}</small></div>
     </div>
     <details class="adv" @@ADVOPEN@@><summary><svg class="i s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>${t("settings.page.advanced")}</summary>
-      <div class="ctl"><b>${t("window.settings.permissions.when-tools-are-loaded")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.when-tools-are-loaded")}"><button type="button" aria-pressed="false" data-act="seg" data-why="when-tools-are-loaded">${t("window.settings.advanced.never")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="when-tools-are-loaded">${t("accounts.switch.when-needed")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="when-tools-are-loaded">${t("window.places.automations.always")}</button></span></span><small>${t("window.settings.permissions.when-needed-keeps-a-tool-one")}</small></div>
+      ${fact15(t("window.settings.permissions.when-tools-are-loaded"), "when-tools-are-loaded")}
       <div class="ctl"><b>${t("window.settings.permissions.stop-a-trunk-that-repeats-itself")}</b><input class="sw" type="checkbox" id="p-loop" @@loop@@ aria-label="${t("window.settings.permissions.stop-a-trunk-that-repeats-itself")}" data-sw="set"><small>${t("window.settings.permissions.after-5-identical-steps-it-pauses")}</small></div>
-      <div class="ctl"><b>${t("settings-kit.name.folder-trust")}</b><span class="right"><button class="btn sm" type="button" data-act="ft-add8">${t("asks.runtimes.add")}</button></span><small></small></div>
+      <div class="ctl"><b>${t("settings-kit.name.folder-trust")}</b><span class="right"><button class="btn sm" type="button" data-act="ft-add8">${t("asks.runtimes.add")}</button></span><small>${t("folder-trust.lead")}</small></div>
     </details>
     <div class="danger"><div><b>${t("lockdown.label")}</b><p>${t("window.settings.permissions.one-switch-that-stops-every-trunk")}</p></div><button class="btn bad" type="button" data-act="perm-lock">@@LOCK@@</button></div>`;
 
@@ -154,7 +155,7 @@ function allowed(id) {
 function wall() {
   const title = t("window.settings.permissions.system-sandbox-for-commands");
   const opts = [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("window.places.automations.always")]];
-  if (P.wall?.computer?.available && K.kit) return kitSeg(title, "", "os-sandbox", "mode", opts);
+  if (P.wall?.computer?.available && K.kit) return kitSeg(title, t("describe.os-sandbox"), "os-sandbox", "mode", opts);
   return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([, l]) => `<button type="button" aria-pressed="false" data-act="seg" data-why="p-wall">${esc(l)}</button>`).join("")}</span></span><small>${esc(P.wall?.computer?.reason ?? "")}</small></div>`;
 }
 const onIf = (yes) => (yes ? "checked" : "");

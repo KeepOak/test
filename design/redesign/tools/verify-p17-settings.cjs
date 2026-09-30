@@ -179,7 +179,7 @@ async function advanced(page) {
   await openPage(page, "advanced");
   await flip(page, "advanced", "f15-read-links-you-paste", async () => onMode((await api("web-pages")).settings.mode));
   await flip(page, "advanced", "f15-smart-home", async () => onMode((await api("personal")).modes["home-control"]));
-  check("deep research stays greyed", await greyed(page.locator("#f15-deep-research-reports")));
+  check("deep research is words, not a switch (it has none in the engine)", (await page.locator('[data-fact="f15-deep-research-reports"]').count()) === 1 && (await page.locator("#f15-deep-research-reports").count()) === 0);
   // The whole-agent file holds no Trunks, so Share a Trunk is not pointed at it.
   check("share a Trunk stays greyed", await greyed(page.locator('.set-col .ctl:has(b:text-is("Share a Trunk")) button')));
 }
