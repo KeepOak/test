@@ -10417,5 +10417,20 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "routinecost.title": "Usage and budget",
+  "routinecost.period": "This calendar month (UTC): {month}",
+  "routinecost.turns": "Task-producing turns",
+  "routinecost.tasks": "Tasks including helpers",
+  "routinecost.calls": "Recorded model calls",
+  "routinecost.tokens": "Recorded or estimated tokens",
+  "routinecost.estimate": "Known model cost estimate",
+  "routinecost.other": "Other recorded spend",
+  "routinecost.unpriced": "Calls or costs that cannot be priced",
+  "routinecost.unknown": "Unknown",
+  "routinecost.note": "Each recorded call uses its own model and the current prices on file. Plan sign-ins and missing billing metadata are unknown, not free. Local model calls have no provider charge; other recorded spend is separate. These figures are estimates, not an invoice.",
+  "routinecost.incomplete": "The retained legacy history or bounded task record is incomplete. A budget holds model work while the month cannot be priced.",
+  "routinecost.limit": "Monthly estimate budget (USD)",
+  "routinecost.help": "Empty means no routine budget. An enabled budget checks before every model round, including helpers, and holds unknown or incomplete records. A call already admitted can overshoot; this is not a provider billing limit. Evaluation schedules cannot yet enable this budget.",
+  "routinecost.saved": "Routine budget saved."
 }

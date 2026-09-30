@@ -16,6 +16,8 @@
  * ":id" stands for any task, conversation or item id.
  */
 export const ROUTES = {
+  "/api/schedules/:id/usage": "owner GET", // routine billing metadata
+  "/api/schedules/:id/budget": "owner POST", // owner-window budget only
   "/a2a": "task POST",
   "/ap/": "prefix",
   "/ap/v1/agent/tasks": "task POST",
