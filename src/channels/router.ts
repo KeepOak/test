@@ -74,6 +74,12 @@ export interface InboundMessage {
    */
   caughtUp?: boolean;
   /**
+   * The chat app could not confirm who sent this: a mail whose receiving server did not vouch for the From: address
+   * (src/channels/mail-auth.ts). Such a sender is a stranger whatever address it shows: never on the allowlist, never
+   * paired, never the owner, and not offered a pairing code, since approving one could not make the next mail provable.
+   */
+  unverifiedSender?: boolean;
+  /**
    * A voice note, when the person sent one instead of typing. The bytes are fetched only if the
    * message gets as far as being answered, so a stranger cannot make Branch download anything.
    */
@@ -1957,7 +1963,8 @@ export class ChannelRouter {
     const entry = this.adapters.get(channel);
     return !!entry && !!senderId && this.access({ channel, senderId } as InboundMessage, entry.policy) === "allowed";
   }
-  private access(message: Pick<InboundMessage, "channel" | "senderId">, policy: ChannelPolicy): "allowed" | "pairing" | "rejected" {
+  private access(message: Pick<InboundMessage, "channel" | "senderId" | "unverifiedSender">, policy: ChannelPolicy): "allowed" | "pairing" | "rejected" {
+    if (message.unverifiedSender) return "rejected";
     // Batch 20 (wave 8): the one list for every chat app is read first, so "never this person"
     // holds everywhere at once. A channel's own list still works and is read after it.
     const list = readSenderAllowlist(this.store, this.runtime.owner);
