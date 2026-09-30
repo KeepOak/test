@@ -7652,6 +7652,27 @@ for a region whose words you want in those notifications. OCR errors fail the lo
 advancing its fingerprint; unchanged OCR text is reported honestly rather than invented as a
 text change. OCR recognizes printed text imperfectly and does not infer what a page means.
 
+### Local OCR of workspace pictures and scans
+
+`documents.ocr` reads a workspace-relative PNG/JPEG or explicitly selected scanned-PDF pages locally.
+It uses the same bounded Tesseract adapter as screen watches. PDF pages additionally need installed
+Poppler `pdftoppm`; neither executable is installed automatically. Executables are resolved only
+from absolute directories on the owner's startup PATH, never from a task argument or working folder.
+
+This is an owner-only `files.read` tool, held to the task's workspace/project, file rules, hidden and
+secret filename checks, and symlink/hardlink refusals. No renderer endpoint accepts arbitrary paths.
+PNG/JPEG inputs are capped at 8 MiB and 4 megapixels; PDFs at 24 MiB. Choose `firstPage` (default 1)
+and `pageCount` (default 1, maximum 5). PDF pages render one at a time at a maximum 2048-pixel long
+side; a page outside the document is an error. Private temporary input/raster files are removed
+on success, error and cancellation. A job has a 90-second overall cap, each child 15 seconds, and
+only one local document OCR job runs at a time.
+
+Recognized text is capped at 4096 characters per page, scrubbed for known secrets and passed through
+the existing file-content instruction filter. Results identify the selected page numbers and remain
+untrusted document content; OCR does not execute their instructions or index the file. Returned text
+can be retained in the tool's conversation, as with other file reads. Password-protected or damaged
+PDFs, unsupported pictures, missing executables and cancelled work fail explicitly.
+
 ## Asking a specialist one question (batch 22, wave 8)
 
 The composer has a **Who should answer** picker beside the Temporary toggle. Leave it on "Your

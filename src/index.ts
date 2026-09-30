@@ -185,6 +185,7 @@ import { Monitors, registerMonitors, trunksSwitchedOff } from "./monitors.js";
 // Wave 8: watching a rectangle of the screen for a change, off unless the owner asks twice.
 import { ScreenWatches, registerScreenWatches } from "./screen-watch.js";
 import { readScreenText } from "./screen-watch-ocr.js";
+import { registerLocalOcr } from "./local-ocr.js";
 import { MorningBrief, registerBrief } from "./brief.js";
 import { DesktopControl } from "./integrations/desktop.js";
 import { LinuxDesktopSandbox } from "./integrations/linux-desktop.js";
@@ -713,6 +714,10 @@ export async function createBranch(options: {
     }
   };
   registerDocuments(registry, documents);
+  registerLocalOcr(registry, files, (context) => {
+    if (context.owner !== runtime.owner) throw new Error("Local OCR is the owner's alone");
+    store.profiles.requireOwner("Local OCR");
+  }, (text) => runtime.hideSecrets(text));
   registerAttachmentTools(registry, store, attachments);
   registry.register(environmentTool((runId) => runtime.channelOf(runId))); // where Branch is running, on request
   runtime.documents = documents;
