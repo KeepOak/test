@@ -34,9 +34,92 @@ and live tools using Branch's existing content detector. Copyright (c) 2025 Nous
 https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py
 and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this document.
 
+## Optional external Piper voice program
+
+The original `src/voice-piper.ts` adapter uses the stdin and WAV output contract documented by
+OHF-Voice/piper1-gpl at `efffbfb226bfb511ebbcf55d0cecd8b35a89743d`
+(`src/piper/__main__.py`, `docs/CLI.md`). Piper is GPL-3.0 software installed separately by the
+owner. Branch does not import, bundle, download or redistribute that program or any voice model.
+No Piper implementation code is copied here. Each chosen model has its own license.
+
+The persistent-worker approach was informed by Hermes Agent's MIT-licensed local TTS cache
+(`tools/tts_tool_local.py`, `a9a54245b2311c705d29050b7f9868c015917aec`) and Pipecat's BSD-2-Clause
+external Piper service distinction (`src/pipecat/services/piper/tts.py`,
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc`). Their implementation code is not copied.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
+
+## Hermes spoken-text port
+
+`src/voice-spoken-text.ts` ports `prepare_spoken_text` and `SentenceChunker` from
+`tools/tts_text_normalize.py` and `tools/tts_streaming.py` at commit
+`a9a54245b2311c705d29050b7f9868c015917aec` of https://github.com/NousResearch/hermes-agent.
+Modified for TypeScript, bounded per-sentence payloads and Branch's existing voice service.
+
+## Hermes wake-word adapter
+
+`src/voice-wake-kws.ts` adapts threshold and phrase display mapping from
+`tools/wake_word_engines.py` at `a9a54245b2311c705d29050b7f9868c015917aec`
+of https://github.com/NousResearch/hermes-agent. Branch uses an external installed
+sherpa-onnx CLI and owner-supplied models/keywords, with no model downloads.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Pipecat dictation VAD and pre-speech adaptations
+
+`src/voice-dictation.ts` and `src/voice-dictation-preroll.ts` port the four-state
+speech hysteresis and pre-speech buffer approach from
+`src/pipecat/audio/vad/vad_analyzer.py` and
+`src/pipecat/audio/turn/smart_turn/base_smart_turn.py` at
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc` of https://github.com/pipecat-ai/pipecat.
+Modified to use Branch's local energy detector and forward every recorder frame.
+
+BSD 2-Clause License
+
+Copyright (c) 2024–2026, Daily
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 The browser also includes the pinned markdown-it 15.0.2 ESM bundle (MIT) at
 `public/app/vendor/markdown-it-15.0.2/markdown-it.js`. Its upstream license and
@@ -3787,6 +3870,14 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `programStart` in `src/coding/hand-off.ts` starts an npm-installed Codex as its own program with the environment its npm launcher (`codex-cli/bin/codex.js`, commit d14143834) adds, as `codexBinary` in `src/asks/codex-app-server.ts` already did for the app-server.
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
+
+## Hermes Agent Codex notification scope
+
+src/asks/codex-conversation.ts adapts _notification_scope_ids and
+_notification_belongs_to_turn from Hermes Agent's
+[agent/transports/codex_app_server_session.py](https://github.com/NousResearch/hermes-agent/blob/a4c31d592b9d8916ffed9ab80ebee48ba428c172/agent/transports/codex_app_server_session.py).
+The functions were translated to TypeScript for Branch's existing app-server transport.
+The transcript-prefix cache and Branch account/conversation binding are original code.
 
 ## Hermes live-dashboard recipe (scheduled dashboard design)
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { prepareSpokenText, spokenSentences } from "./voice-spoken-text.js";
 import type { Provider, ToolContext } from "./contracts.js";
 import type { ModelRouter } from "./models.js";
 import type { SpeechEngineService } from "./speech-engine-service.js";
@@ -8,6 +9,7 @@ import type { Store } from "./store.js";
 import { voiceSettings, type AudioProvider, type VoiceSettings } from "./voice.js";
 import { LocalSpeechSchema, runProgram, Transcription, type AudioClip, type SttRoute, type TranscriptionResult } from "./voice-stt.js";
 import { LocalWhisper, type LocalWhisperFound, type WhisperChoice } from "./voice-whisper.js";
+import { findPiper, LocalPiper } from "./voice-piper.js";
 import { Speech, SpeakRequestSchema, type ProgramLocator, type SpeakRequest, type SpokenAudio, type TtsRoute } from "./voice-tts.js";
 
 /**
@@ -20,6 +22,7 @@ export interface VoiceRoute<K> {
   provider: AudioProvider | null;
   /** Why this route was chosen, in plain words, for the record and the settings screen. */
   reason: string;
+  ready?: boolean;
 }
 
 /** The audio address of a connection, plus how Gemini is told who is asking. */
@@ -64,9 +67,13 @@ export function systemVoiceWords(platform: string = process.platform): { chosen:
 }
 
 /** Which service should read a reply aloud. The computer's own voice is the one that needs nothing. */
-export function ttsRouteFor(settings: VoiceSettings, provider: Provider | undefined, platform: string = process.platform): VoiceRoute<TtsRoute> {
+export function ttsRouteFor(settings: VoiceSettings, provider: Provider | undefined, platform: string = process.platform, piperReady = false): VoiceRoute<TtsRoute> {
   const audio = audioOf(provider);
   const words = systemVoiceWords(platform);
+  if (settings.ttsRoute === "piper") return { kind: "piper", provider: null, reason: "You chose the installed Piper voice" };
+  if (piperReady && settings.ttsRoute === "auto" && (settings.voiceId === "default" || settings.voiceId === "piper") &&
+      (!settings.useProviderVoice || settings.keepAudioOnThisComputer))
+    return { kind: "piper", provider: null, reason: "An installed Piper voice is ready on this computer" };
   if (settings.keepAudioOnThisComputer)
     return { kind: "windows", provider: null, reason: "You asked for audio to stay on this computer" };
   if (settings.ttsRoute === "windows") return { kind: "windows", provider: null, reason: `You chose ${words.chosen}` };
@@ -95,12 +102,14 @@ export interface VoiceSystem {
   locate?: ProgramLocator;
   /** RES-709: faster-whisper on this computer. Left out, the real one unless `runProgram` was handed in; null for none. */
   whisper?: LocalWhisper | null;
+  piper?: LocalPiper | null;
 }
 
 /** Everything the voice screens and routes need in one object, so callers never wire it up twice. */
 export class VoiceService {
   readonly transcription: Transcription;
   readonly speech: Speech;
+  private readonly piper: LocalPiper | null;
   /** The kind of computer this is, for the words the voice screens use. */
   readonly platform: string;
   /** Bucket 17: speech plug-ins the owner picked under Settings → Voice; asked first, null means carry on. */
@@ -115,6 +124,7 @@ export class VoiceService {
   ) {
     const given: VoiceSystem = typeof system === "function" ? { runProgram: system } : system ?? {};
     this.platform = given.platform ?? process.platform;
+    this.piper = given.piper !== undefined ? given.piper : given.runProgram ? null : new LocalPiper();
     const where = { platform: this.platform, ...(given.locate ? { locate: given.locate } : {}) };
     // A test that hands in its own program runner starts no program, so it gets no speech worker either.
     const whisper = given.whisper !== undefined ? given.whisper : given.runProgram ? null : new LocalWhisper();
@@ -127,7 +137,7 @@ export class VoiceService {
     return this.transcription.whisper?.find(whisperChoice(this.settings(owner))) ?? null;
   }
   /** Ends the speech worker, if one is running. */
-  close(): void { this.transcription.whisper?.stop(); }
+  close(): void { this.transcription.whisper?.stop(); this.piper?.stop(); }
   /** The connection that answers for this owner right now, for whichever conversation is open. */
   private provider(owner: string, sessionId = "voice"): Provider | undefined {
     return this.models.plan(owner, sessionId).candidates[0]?.provider;
@@ -135,14 +145,19 @@ export class VoiceService {
   /** What would happen if the owner pressed the microphone or Read aloud right now. */
   plan(owner: string): { stt: VoiceRoute<SttRoute>; tts: VoiceRoute<TtsRoute>; settings: VoiceSettings } {
     const settings = this.settings(owner), provider = this.provider(owner);
-    const tts = ttsRouteFor(settings, provider, this.platform);
-    const off = tts.kind === "windows" && settings.systemVoice === "off";
+    const piperReady = !!this.piper && !!findPiper(settings);
+    const chosen = ttsRouteFor(settings, provider, this.platform, piperReady);
+    const tts = chosen.kind === "piper" ? { ...chosen, ready: piperReady,
+      reason: piperReady ? chosen.reason : "Choose an installed Piper program and voice model under Settings → Voice." } : chosen;
+    const off = (tts.kind === "windows" || tts.kind === "piper") && settings.systemVoice === "off";
     const reason = systemVoiceOffMessage(this.platform, settings.keepAudioOnThisComputer);
     return { stt: sttRouteFor(settings, provider, !!this.localSpeech(owner)?.available), tts: off ? { ...tts, reason } : tts, settings };
   }
   /** The computer's own voices, or none without asking the computer while that voice is switched off. */
   async systemVoiceNames(owner: string): Promise<string[]> {
-    return this.settings(owner).systemVoice === "off" ? [] : this.speech.windowsVoices();
+    const settings = this.settings(owner);
+    if (settings.systemVoice === "off") return [];
+    return [...(this.piper && findPiper(settings) ? ["piper"] : []), ...await this.speech.windowsVoices()];
   }
   /** Writes a recording out, using the owner's chosen service and language. */
   async transcribe(owner: string, clip: AudioClip, options: { signal?: AbortSignal } = {}): Promise<TranscriptionResult> {
@@ -162,13 +177,17 @@ export class VoiceService {
     });
   }
   /** Reads text aloud, using the owner's chosen voice and speed. */
+  sentences(text: string): string[] { return spokenSentences(text); }
   async speak(owner: string, input: SpeakRequest, options: { signal?: AbortSignal } = {}): Promise<SpokenAudio> {
     const settings = this.settings(owner);
+    input = { ...input, text: prepareSpokenText(input.text) };
+    if (!input.text) throw new Error("There is no spoken text in this reply.");
     // Bucket 17 hook: a chosen speech plug-in does the work instead.
     const byEngine = await this.engines?.speak(owner, input.text, settings.keepAudioOnThisComputer, options.signal);
     if (byEngine) return byEngine;
-    const route = ttsRouteFor(settings, this.provider(owner), this.platform);
-    if (route.kind === "windows" && settings.systemVoice === "off")
+    const found = this.piper ? findPiper(settings) : null;
+    const route = ttsRouteFor(settings, this.provider(owner), this.platform, !!found);
+    if ((route.kind === "windows" || route.kind === "piper") && settings.systemVoice === "off")
       throw new Error(systemVoiceOffMessage(this.platform, settings.keepAudioOnThisComputer));
     const request: SpeakRequest = {
       text: input.text,
@@ -176,6 +195,11 @@ export class VoiceService {
       speed: input.speed ?? settings.speechRate,
       ...(input.model || settings.ttsModel ? { model: input.model || settings.ttsModel } : {}),
     };
+    if (route.kind === "piper") {
+      if (!this.piper || !found) throw new Error("Choose an installed Piper program and voice model under Settings → Voice.");
+      if (request.voice && request.voice !== "piper") throw new Error("This installed Piper route uses the configured voice model.");
+      return this.piper.speak(found, SpeakRequestSchema.parse(request), options.signal);
+    }
     return this.speech.speak(request, { kind: route.kind, provider: route.provider }, {
       keepOnThisComputer: settings.keepAudioOnThisComputer,
       ...(options.signal ? { signal: options.signal } : {}),

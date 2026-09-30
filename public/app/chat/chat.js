@@ -24,7 +24,8 @@ import { FIND, findBar, applyFind, initFind } from "./find.js";
 import { initToolsHub } from "./toolshub.js";
 import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } from "./dictate.js";
 import { initTalkLive } from "./talklive.js";
-import { replyMark, readNewReply, sentMessage } from "./aloud.js";
+import { replyMark, readNewReply, sentMessage, startReplyStream } from "./aloud.js";
+import { stopReplyStream, checkReplyStream } from "./replyspeech.js";
 import { dockRow, initBg } from "./bg.js";
 import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
@@ -430,6 +431,7 @@ async function rereadRoom() {
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */
 export async function openConversation(id) {
   C.seat += 1;
+  stopReplyStream();
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   openLine();
@@ -468,6 +470,7 @@ export async function rereadOpen(force = false) {
 
 export function startConversation(project = null) {
   C.seat += 1;
+  stopReplyStream();
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   leaveLine();
@@ -725,7 +728,7 @@ function adoptDraft(sessionId) {
 
 /* The answered conversation becomes the one on screen: its id (a new conversation's first), its draft and its messages,
    unless another was opened while they were read. */
-async function adopt(sessionId, before, keepDraft) {
+async function adopt(sessionId, before, keepDraft, spoken = async () => false) {
   const seat = C.seat;
   keepDraft(adoptDraft(sessionId));
   C.sessionId = sessionId;
@@ -735,11 +738,19 @@ async function adopt(sessionId, before, keepDraft) {
   if (C.seat !== seat) return;
   C.messages = got.messages ?? C.messages;
   C.project = got.project ?? C.project;
-  readNewReply(before, C.messages);
+  if (!await spoken()) readNewReply(before, C.messages);
 }
 
 /* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
    card's answer and a room's route are sent word for word. */
+async function streamReplyVoice(index) {
+  const sessionId = C.sessionId;
+  await loadWho();
+  if (C.sessionId !== sessionId) return "";
+  const info = whoHere();
+  return authorOf({ role: "assistant", content: "" }, index, info)?.voice ?? (!sessionId ? speaker()?.voice : "") ?? "";
+}
+
 async function sendPlain(said, withLead = false) {
   const lead = withLead ? PREFIX.map((take) => take(C.sessionId ?? null)).filter(Boolean).join("\n") : "";
   const prompt = lead ? `${lead}\n\n${said}` : said;
@@ -755,14 +766,21 @@ async function sendPlain(said, withLead = false) {
   watchThinking(true);
   renderNow();
   let started = false;
+  let speech = null;
   let restoreDraft = () => undefined;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
+    const sessionId = C.sessionId;
+    const replyIndex = C.messages.filter(countsAsReply).length;
+    speech = ownerHere() ? await startReplyStream({ sessionId,
+      current: (id) => ownerHere() && S.view === "chat" && !$("#app")?.classList.contains("locked") &&
+        (C.sessionId === sessionId || C.sessionId === id),
+      voice: () => streamReplyVoice(replyIndex) }) : null;
+    const run = await api("run", { prompt, ...(speech ? { speechStreamId: speech.requestId } : {}), ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
     filesSent();
     practiceSent();
     // Gone and come back to it before the answer came: it is on screen again, so its answer is read here all the same.
-    if (!moved() || C.sessionId === run.sessionId) await adopt(run.sessionId, before, (restore) => { restoreDraft = restore; });
+    if (!moved() || C.sessionId === run.sessionId) await adopt(run.sessionId, before, (restore) => { restoreDraft = restore; }, () => speech?.finish(run));
     /* The task is over once its answer is read back: from here the window only reads what it left (its questions, the
        picture, the extras). Still "sending" meanwhile, a message sent after the answer showed went to the waiting line of
        a task that had ended, and in a new conversation, which has no line, it was left unsent in the box (D1 on CI). */
@@ -772,6 +790,7 @@ async function sendPlain(said, withLead = false) {
     restoreDraft(); // on this redraw, before the person can type in the box that now shows the answer
     await loadWaiting();
   } catch (error) {
+    speech?.stop();
     if (moved()) { toast(error.message); if (!started) S.drafts[from] = prompt; }
     else if (error.offline && !started) keepForLater(prompt);
     else {
@@ -938,6 +957,7 @@ async function resumeRun(runId, sessionId) {
 
 /* Stop (the prototype puts it in Send's place while the conversation works): POST /api/runs/<id>/cancel. */
 async function stopRun() {
+  stopReplyStream();
   let run = stoppable();
   if (!run) { await refresh().catch((error) => toast(error.message)); run = stoppable(); }
   if (!run) return;
@@ -1022,6 +1042,7 @@ export function init() {
   initWork({ onResume: (runId, sessionId) => resumeRun(runId, sessionId) }); // long-work
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
+  onRender(checkReplyStream);
   markLive(["ask", "ask-always", "room-ask", "send", "side", "stop-run", "sw:prompt", "sugg", "g-ans"]);
   on("sugg", (el) => send(el.dataset.v));
   on("stop-run", () => stopRun());

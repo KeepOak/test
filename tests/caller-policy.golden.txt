@@ -2259,6 +2259,8 @@ owner GET /api/voice/live | here=ok remote=ok phone=ok legacy=ok person=401/3272
 owner POST /api/voice/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/voice/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/voice/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/voice/sentences | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/voice/sentences | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner GET /api/voice/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/voice/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/voice/speak | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4519,6 +4521,8 @@ owner+lockdown GET /api/voice/live | here=ok remote=ok phone=ok legacy=ok person
 owner+lockdown POST /api/voice/live | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/voice/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/voice/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/voice/sentences | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/voice/sentences | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner+lockdown GET /api/voice/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/voice/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/voice/speak | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6779,6 +6783,8 @@ household GET /api/voice/live | here=400/f6e21c remote=400/f6e21c read=400/f6e21
 household POST /api/voice/live | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/voice/plan | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/voice/plan | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/voice/sentences | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/voice/sentences | here=ok remote=ok read=401/d45404 run=ok
 household GET /api/voice/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/voice/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/voice/speak | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9039,6 +9045,8 @@ household+lockdown GET /api/voice/live | here=400/f6e21c remote=400/f6e21c read=
 household+lockdown POST /api/voice/live | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/voice/plan | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/voice/plan | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/voice/sentences | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/voice/sentences | here=ok remote=ok read=401/d45404 run=ok
 household+lockdown GET /api/voice/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/voice/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/voice/speak | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -11299,6 +11307,8 @@ applock GET /api/voice/live | here=423/a8f863
 applock POST /api/voice/live | here=423/a8f863
 applock GET /api/voice/plan | here=423/a8f863
 applock POST /api/voice/plan | here=423/a8f863
+applock GET /api/voice/sentences | here=423/a8f863
+applock POST /api/voice/sentences | here=423/a8f863
 applock GET /api/voice/settings | here=423/a8f863
 applock POST /api/voice/settings | here=423/a8f863
 applock GET /api/voice/speak | here=423/a8f863

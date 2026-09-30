@@ -5,6 +5,7 @@ import {
   frameBytes, mostWords, RoomFloor, dictationSettings,
 } from "./voice-dictation.js";
 import { voiceSettings } from "./voice.js";
+import { DictationPreroll } from "./voice-dictation-preroll.js";
 
 /**
  * mac7/live-voice: the microphone open, and let go of again. This is the whole of the hard part.
@@ -126,6 +127,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
   const platform = deps.platform ?? process.platform;
   const present = deps.present;
   const room = new RoomFloor();
+  const preroll = new DictationPreroll();
   let speech: SpeechStream | null = null;
   let recorder: { stop(): void } | null = null;
   let ticker: ReturnType<typeof setInterval> | null = null;
@@ -157,8 +159,10 @@ export function startDictation(deps: DictationDeps): LiveDictation {
     speech = null; recorder = null;
     if (ticker) { clearInterval(ticker); ticker = null; }
     recording?.stop();
+    if (settle) for (const frame of preroll.flush()) going.hear(frame);
     going.stop();
     room.forget();
+    preroll.forget();
     leftOver = new Uint8Array(0);
     if (settle) tell(true);
     words = ""; // nothing is kept past the phrase it belongs to
@@ -241,11 +245,11 @@ export function startDictation(deps: DictationDeps): LiveDictation {
       let at = 0;
       for (; at + frameBytes <= leftOver.length; at += frameBytes) {
         const frame = leftOver.subarray(at, at + frameBytes);
-        if (!room.speech(frame)) continue;
-        lastSpeechAt = now();
+        const speaking = room.speech(frame);
+        if (speaking) lastSpeechAt = now();
         // A program that is not keeping up is not waited for and its sound is not piled up behind
         // it: the piece is dropped where it arrives, which is what keeps this from growing.
-        speech.hear(frame);
+        for (const sound of preroll.push(frame, speaking)) speech.hear(sound);
       }
       leftOver = Uint8Array.from(leftOver.subarray(at));
       if (now() - lastSpeechAt >= quietFor()) release(true);
