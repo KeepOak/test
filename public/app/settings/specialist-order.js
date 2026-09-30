@@ -45,8 +45,9 @@ async function saveOrder() {
 }
 
 async function removeOrder(el) {
-  try { await api("autonomy/instructions/remove", { id: el.dataset.id }); } catch (error) { toast(error.message); return; }
-  await openOrder();
+  const still = viewFence("ad-fno-remove"); // the dialog this came from: closed while removing, it is not opened again
+  try { await api("autonomy/instructions/remove", { id: el.dataset.id }); } catch (error) { if (still()) toast(error.message); return; }
+  if (still()) await openOrder();
 }
 
 export function initSpecialistOrder() {

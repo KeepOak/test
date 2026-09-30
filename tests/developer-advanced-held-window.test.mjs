@@ -73,7 +73,8 @@ test("Advanced: the standing-instruction dialog opens nothing late over a dialog
     if (slow && request.request().method() === "GET") await new Promise((done) => setTimeout(done, 2500));
     await request.continue();
   });
-  const { page, errors } = await settingsWindow(t, { name: "held-fno-late", route, before: (app) => { app.trunks.create({ name: "Scout" }); } });
+  let scout = "";
+  const { page, errors, call } = await settingsWindow(t, { name: "held-fno-late", route, before: (app) => { scout = app.trunks.create({ name: "Scout" }).id; } });
   await openSettingsPage(page, "general");
   await setLevel(page, "advanced");
   await openSettingsPage(page, "advanced");
@@ -87,5 +88,32 @@ test("Advanced: the standing-instruction dialog opens nothing late over a dialog
   await page.waitForTimeout(500);
   assert.equal(await page.locator("#fno-text").count(), 0, "the instruction dialog did not open over the newer one");
   assert.equal(await page.locator(".dlg h2").first().innerText(), shown);
+
+  // Nothing open, then another dialog opened and closed while the list was read: still nothing opens late.
+  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  const again = page.waitForResponse((response) => response.url().endsWith("/api/autonomy/instructions"), { timeout: 15000 });
+  await page.locator('[data-act="ad-fno"]').click();
+  await page.locator('[data-act="ad-orders"]').first().click();
+  await page.locator(".dlg").first().waitFor();
+  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  await again;
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator(".dlg").count(), 0, "opened and closed meanwhile: the instruction dialog is not brought up late");
+
+  // Closed while an instruction is being removed: the dialog is not opened again afterwards.
+  slow = false;
+  await call("/api/autonomy/instructions", { text: "Always cite the source page.", scope: `specialist:trunk:${scout}` });
+  await page.route("**/api/autonomy/instructions/remove", async (request) => { await new Promise((done) => setTimeout(done, 2500)); await request.continue(); });
+  await page.locator('[data-act="ad-fno"]').click();
+  await page.locator('.dlg [data-act="ad-fno-rm"]').first().waitFor();
+  const removed = page.waitForResponse((response) => response.url().endsWith("/api/autonomy/instructions/remove"), { timeout: 15000 });
+  await page.locator('.dlg [data-act="ad-fno-rm"]').first().click();
+  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  await removed;
+  await page.waitForTimeout(800);
+  assert.equal(await page.locator(".dlg").count(), 0, "closed during the removal: not reopened");
   assert.deepEqual(errors, []);
 });
