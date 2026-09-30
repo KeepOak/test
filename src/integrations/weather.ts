@@ -14,7 +14,7 @@ const Location = z.object({ id: z.number().int(), name: z.string().max(100), cou
   feature_code: z.string(), admin1: z.string().max(100).optional() });
 const Forecast = z.object({ latitude: z.number(), longitude: z.number(), timezone: z.string(),
   daily_units: z.object({ temperature_2m_max: z.literal("°C"), temperature_2m_min: z.literal("°C"),
-    precipitation_sum: z.literal("mm") }), daily: z.object({ time: z.array(z.string()).max(7),
+    precipitation_sum: z.literal("mm") }), daily: z.object({ time: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).max(7),
     temperature_2m_max: z.array(z.number().nullable()).max(7), temperature_2m_min: z.array(z.number().nullable()).max(7),
     precipitation_sum: z.array(z.number().nullable()).max(7), weather_code: z.array(z.number().int().nullable()).max(7) }) });
 

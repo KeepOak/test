@@ -8,7 +8,7 @@ export function weatherSection() {
     <button class="btn" type="button" data-act="weather-settings">Enable or disable weather</button>
     <button class="btn" type="button" data-act="weather-city">Get a city forecast</button>
     <pre id="weather-result" style="white-space:pre-wrap"></pre>
-    <a href="https://open-meteo.com/en/terms" target="_blank" rel="noopener">Provider terms</a> · <a href="https://open-meteo.com/en/licence" target="_blank" rel="noopener">Open-Meteo / GeoNames attribution</a></div>`;
+    <a href="https://open-meteo.com/" target="_blank" rel="noopener">Weather data by Open-Meteo.com</a> · <a href="https://open-meteo.com/en/terms" target="_blank" rel="noopener">Provider terms</a> · <a href="https://open-meteo.com/en/licence" target="_blank" rel="noopener">Open-Meteo / GeoNames attribution</a></div>`;
 }
 on("weather-settings", async () => {
   if (!ownerHere()) return;
