@@ -74,6 +74,8 @@ test("the Inbox says it carries on only when it does, and that it still waits wh
   // before what the task did after the yes and its final reply, never after them.
   await page.locator(`#side .list [data-act="chat"][data-id="${first.sessionId}"]`).click();
   await page.locator("#conversation .decided").first().waitFor({ timeout: 20000 });
+  // The final reply can be drawn a moment after the decided line; the order is measured once both are on screen.
+  await page.waitForFunction(() => [...document.querySelectorAll("#conversation *")].some((el) => !el.children.length && el.textContent.trim() === "Done."), null, { timeout: 20000 });
   const order = await page.evaluate(() => {
     const root = document.querySelector("#conversation"), line = root.querySelector(".decided");
     const reply = [...root.querySelectorAll("*")].find((el) => !el.children.length && el.textContent.trim() === "Done.");
