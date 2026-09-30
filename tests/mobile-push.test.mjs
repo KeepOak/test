@@ -15,7 +15,7 @@ test("RES-600: off by default, references only, and an unpaired phone is refused
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   assert.equal(app.mobilePush.settings().enabled, false, "ships off");
-  assert.throws(() => app.mobilePush.configure({ enabled: true, fcm: { project: "my-project", credential: "-----BEGIN PRIVATE KEY-----" } }));
+  assert.throws(() => app.mobilePush.configure({ enabled: true, fcm: { project: "my-project", credential: "-----BEGIN PRIVATE KEY-----" } })); // not-a-real-secret: an inline key is refused
   app.mobilePush.configure({ enabled: true, fcm: { project: "my-project", credential: "secret://default/FCM_SERVICE_ACCOUNT" } });
   assert.equal(app.mobilePush.settings().enabled, true);
   await assert.rejects(app.mobilePush.register("0123456789abcdef", "a".repeat(64), { provider: "fcm", token: "token-for-a-phone-123", enabled: true }), /no longer paired/);
