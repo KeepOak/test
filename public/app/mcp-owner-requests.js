@@ -1,20 +1,21 @@
 import { api } from './core/api.js';
 import { toast } from './core/ui.js';
+import { t } from '../i18n.js';
 
 /** A visible, local owner form is the heartbeat; closing it immediately stops renewing capability. */
 export function initMcpOwnerRequests() {
   const button = document.createElement('button');
-  button.type = 'button'; button.className = 'btn sm'; button.textContent = 'Server questions';
+  button.type = 'button'; button.className = 'btn sm'; button.textContent = t('window.mcp-asks.title');
   button.addEventListener('click', open);
   document.body.append(button);
 }
 async function open() {
   const panel = document.createElement('dialog');
-  const heading = document.createElement('h2'); heading.textContent = 'Server questions';
+  const heading = document.createElement('h2'); heading.textContent = t('window.mcp-asks.title');
   const notice = document.createElement('p');
-  notice.textContent = 'Each server feature starts off. Keep this window open to receive questions. After enabling a feature, reconnect that server to advertise it.';
+  notice.textContent = t('window.mcp-asks.purpose');
   const settings = document.createElement('form'), requests = document.createElement('section');
-  const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close';
+  const close = document.createElement('button'); close.type = 'button'; close.textContent = t('window.mcp-asks.close');
   close.addEventListener('click', () => panel.close());
   panel.append(heading, notice, settings, requests, close); document.body.append(panel); panel.showModal();
   let seen = '', busy = false;
@@ -49,10 +50,10 @@ function drawSettings(form, models) {
   const rpm = field(form, 'Requests per minute', 'number'); rpm.value = '3'; rpm.min = '1'; rpm.max = '20';
   const cap = field(form, 'Maximum output tokens per request', 'number'); cap.value = '2048'; cap.min = '128'; cap.max = '8192';
   const allowed = document.createElement('select'); allowed.multiple = true;
-  allowed.setAttribute('aria-label', 'Allowed models');
+  allowed.setAttribute('aria-label', t('window.mcp-asks.models'));
   for (const model of models) { const option = new Option(model.name, model.id); allowed.add(option); }
   form.append(allowed);
-  const load = document.createElement('button'); load.type = 'button'; load.textContent = 'Read saved choices';
+  const load = document.createElement('button'); load.type = 'button'; load.textContent = t('window.mcp-asks.read');
   load.onclick = async () => {
     try {
       const value = await api(`/api/mcp/owner-requests/settings?server=${encodeURIComponent(server.value)}`);
@@ -61,7 +62,7 @@ function drawSettings(form, models) {
       for (const option of allowed.options) option.selected = value.models.includes(option.value);
     } catch (error) { toast(error.message); }
   };
-  const save = document.createElement('button'); save.type = 'submit'; save.textContent = 'Save choices'; form.append(load, save);
+  const save = document.createElement('button'); save.type = 'submit'; save.textContent = t('window.mcp-asks.save'); form.append(load, save);
   form.onsubmit = async event => {
     event.preventDefault();
     try { await api('/api/mcp/owner-requests/settings', 'POST', { server: server.value, settings: {
@@ -81,8 +82,8 @@ function question(request) {
   if (request.kind === 'elicitation') for (const [name, spec] of Object.entries(request.details.requestedSchema.properties)) {
     const input = field(form, spec.title || name, spec.type === 'boolean' ? 'checkbox' : spec.type === 'number' || spec.type === 'integer' ? 'number' : 'text');
     if (spec.type === 'number') input.step = 'any';
-    if (spec.type === 'array') input.placeholder = 'List the chosen values as a JSON array';
-    if (spec.description || spec.enum) { const hint = document.createElement('p'); hint.textContent = spec.description || `Choose one: ${spec.enum.join(', ')}`; form.append(hint); }
+    if (spec.type === 'array') input.placeholder = t('window.mcp-asks.list-hint');
+    if (spec.description || spec.enum) { const hint = document.createElement('p'); hint.textContent = spec.description || `${t('window.mcp-asks.choose-one')} ${spec.enum.join(', ')}`; form.append(hint); }
     input.required = spec.type !== 'boolean' && (request.details.requestedSchema.required || []).includes(name);
     inputs.set(name, { input, spec });
   }
