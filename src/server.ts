@@ -80,6 +80,7 @@ import { serveRunSocket, tokenFromProtocol, tokenFromSocket } from "./ws.js";
 import { handlesRecordingPath, recordingApi, startEventLoopWatch } from "./run-recording-api.js";
 import { liveHooks } from "./realtime-socket.js";
 import { readBodyWithRaw, type TriggerState } from "./triggers.js";
+import { mcpEventWebhook } from './mcp-events-webhook.js';
 import { knowledgeApi } from "./knowledge-tools.js";
 import { knowledgeExtrasApi } from "./knowledge-more.js";
 import { WhatsAppAdapter } from "./channels/whatsapp.js";
@@ -3485,6 +3486,21 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   throw new HttpError(404, "Endpoint not found");
 }
 async function mcpApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
+  if (path.startsWith('/api/mcp/events/')) {
+    app.store.profiles.requireOwner('MCP event automations');
+    if (startedWithShortLivedKey() || throughDoor(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers))
+      throw new HttpError(403, 'Configure MCP event automations in the local owner window.');
+    if (path === '/api/mcp/events/state' && request.method === 'GET') return app.mcpEvents.list();
+    if (request.method !== 'POST') throw new HttpError(405, 'Use POST.');
+    const input = await readBody(request, 16384);
+    if (path === '/api/mcp/events/configure') { app.mcpEvents.configure(input); return { saved: true }; }
+    if (path === '/api/mcp/events/catalog') return app.mcpEvents.catalog(input);
+    if (path === '/api/mcp/events/subscribe') return app.mcpEvents.subscribe(input);
+    if (path === '/api/mcp/events/refresh') return app.mcpEvents.refresh(input);
+    if (path === '/api/mcp/events/stop') return app.mcpEvents.stop(input);
+    if (path === '/api/mcp/events/forget') { app.mcpEvents.forget(input); return { forgotten: true }; }
+    throw new HttpError(404, 'Unknown MCP Events operation.');
+  }
   if (path.startsWith('/api/mcp/scripted-app/')) {
     app.store.profiles.requireOwner('Interactive server pages');
     if (startedWithShortLivedKey() || throughDoor(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers))
@@ -4078,6 +4094,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       }
       if (await whatsAppWebhook(app, request, response, path, webhookLimiter, () => listen.beyond)) return;
       if (await chatWebhook(app, request, response, path, webhookLimiter, () => listen.beyond)) return;
+      if (await mcpEventWebhook(app, request, response, path)) return;
       // Wave 6: a read-only shared conversation carries its own code instead of the session key.
       if (await sharePage(app, request, response, path)) return;
       // Wave 7: a page an outside AI-tool server sent, shown in a frame that can do nothing at all.

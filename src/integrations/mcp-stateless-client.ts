@@ -3,7 +3,7 @@ import { Client, StreamableHTTPClientTransport, withInputRequired, isInputRequir
 import { CallToolResultSchema } from '@modelcontextprotocol/core';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
-import type { McpConfig } from './mcp-config.js';
+import type { McpConfig, McpTransportConfig } from './mcp-config.js';
 import type { ToolContext } from '../contracts.js';
 import { boundedFetch } from './bounded-fetch.js';
 import { runAsNode } from '../child-env.js';
@@ -22,7 +22,7 @@ function selectedEnv(config: Extract<McpConfig, { transport: 'stdio' }>, env: No
   }));
 }
 
-function httpTransport(config: Extract<McpConfig, { transport: 'http' }>, env: NodeJS.ProcessEnv,
+function httpTransport(config: Extract<McpTransportConfig, { transport: 'http' }>, env: NodeJS.ProcessEnv,
   policy?: { guard(base: typeof fetch): typeof fetch }) {
   const url = new URL(config.url), local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
   if ((url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) || url.username || url.password || url.search || url.hash)
@@ -45,6 +45,34 @@ function boundedRequests(base: typeof fetch): typeof fetch {
     if (size > 16384) throw new Error('MCP routing headers exceed limit');
     return base(input, init);
   };
+}
+
+/** Events use the same reviewed HTTP transport and actual modern negotiation, without starting programs. */
+export async function openEventMcp(config: McpConfig, env: NodeJS.ProcessEnv,
+  policy: { guard(base: typeof fetch): typeof fetch }, signal: AbortSignal) {
+  if (config.transport !== 'http') throw new Error('Events require a reviewed HTTP server.');
+  const client = await openModernHttp(config, env, policy, signal);
+  if (client.getServerVersion()?.version !== config.expectedVersion) {
+    await client.close(); throw new Error('The reviewed MCP server version changed.');
+  }
+  return client;
+}
+
+/** Shared side-effect-free discovery for adding a modern HTTP server and operating its event methods. */
+export async function openModernHttp(config: Extract<McpTransportConfig, { transport: 'http' }>, env: NodeJS.ProcessEnv,
+  policy: { guard(base: typeof fetch): typeof fetch }, signal: AbortSignal) {
+  if (!['auto', 'stateless-preview'].includes(config.protocol ?? '')) throw new Error('Configure this HTTP server for modern MCP.');
+  const client = new Client({ name: 'branch-events', version: '1.0.0' }, {
+    capabilities: {}, versionNegotiation: { mode: { pin: '2026-07-28' } }, listMaxPages: 10,
+  });
+  const { transport } = httpTransport(config, env, policy);
+  try {
+    signal.throwIfAborted();
+    await negotiateModern(client, transport, config, 10000, signal);
+    signal.throwIfAborted();
+    if (client.getProtocolEra() !== 'modern') throw new Error('The source did not negotiate modern MCP.');
+    return client;
+  } catch (error) { await client.close(); throw error; }
 }
 
 export async function openStatelessMcp(config: McpConfig, env: NodeJS.ProcessEnv,
@@ -81,8 +109,9 @@ export async function openStatelessMcp(config: McpConfig, env: NodeJS.ProcessEnv
   } catch (error) { await client.close(); throw error; }
 }
 
-async function negotiateModern(client: Client, transport: Parameters<Client['connect']>[0], config: McpConfig, timeout: number) {
-  try { await client.connect(transport, { timeout }); }
+async function negotiateModern(client: Client, transport: Parameters<Client['connect']>[0], config: McpTransportConfig,
+  timeout: number, signal?: AbortSignal) {
+  try { await client.connect(transport, { timeout, ...(signal ? { signal } : {}) }); }
   catch (error) {
     // Only the side-effect-free discovery negotiation may fall back; never tool execution.
     if (config.protocol === 'auto' && (error instanceof SdkError && error.code === SdkErrorCode.EraNegotiationFailed
