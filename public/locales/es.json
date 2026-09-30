@@ -10419,5 +10419,10 @@
   "wsedit.unsaved": "(sin guardar)",
   "wsedit.up": "Subir una carpeta",
   "window.flows.setup.greeting-account": "Activar una cuenta le envía un breve saludo. Esto consume una pequeña parte de su plan o saldo de pago.",
-  "window.flows.setup.signin-expired": "Este inicio de sesión ha caducado. Inícielo de nuevo para obtener una página o un código nuevos."
+  "window.flows.setup.signin-expired": "Este inicio de sesión ha caducado. Inícielo de nuevo para obtener una página o un código nuevos.",
+  "onboarding.routine.question": "¿Qué tarea aburrida puedo quitarte de encima?",
+  "onboarding.routine.example": "Por ejemplo: resume mis tareas pendientes cada día laborable a las 9.",
+  "onboarding.routine.hint": "Opcional. Revisa la tarea, la hora, quién la ejecuta y los permisos antes de confirmar. Los Trunks seleccionados se crean al salir de este paso.",
+  "onboarding.routine.review": "Revisar mi primera rutina",
+  "onboarding.routine.changed": "La configuración ha cambiado. Abre de nuevo la introducción para continuar."
 }

@@ -10420,5 +10420,10 @@
   "wsedit.unsaved": "(non enregistré)",
   "wsedit.up": "Remonter d'un dossier",
   "window.flows.setup.greeting-account": "Activer un compte lui envoie un bref message. Cela utilise une petite part de son forfait ou de son crédit payant.",
-  "window.flows.setup.signin-expired": "Cette connexion a expiré. Relancez-la pour obtenir une nouvelle page ou un nouveau code."
+  "window.flows.setup.signin-expired": "Cette connexion a expiré. Relancez-la pour obtenir une nouvelle page ou un nouveau code.",
+  "onboarding.routine.question": "Quelle tâche ennuyeuse puis-je vous épargner ?",
+  "onboarding.routine.example": "Par exemple : résume mes tâches en cours chaque jour ouvré à 9 h.",
+  "onboarding.routine.hint": "Facultatif. Vérifiez la tâche, l’heure, qui l’exécute et les autorisations avant de confirmer. Les Trunks sélectionnés sont créés en quittant cette étape.",
+  "onboarding.routine.review": "Examiner ma première routine",
+  "onboarding.routine.changed": "La configuration a changé. Rouvrez le guide de démarrage pour continuer."
 }

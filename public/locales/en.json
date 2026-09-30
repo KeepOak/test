@@ -10419,5 +10419,10 @@
   "wsedit.unsaved": "(not saved)",
   "wsedit.up": "Up one folder",
   "window.flows.setup.greeting-account": "Switching an account on sends one small greeting through it. This uses a little of its plan or paid allowance.",
-  "window.flows.setup.signin-expired": "This sign-in has expired. Start it again for a fresh sign-in page or code."
+  "window.flows.setup.signin-expired": "This sign-in has expired. Start it again for a fresh sign-in page or code.",
+  "onboarding.routine.question": "What boring task should I take off your plate?",
+  "onboarding.routine.example": "For example: summarize my open tasks every weekday at 9am.",
+  "onboarding.routine.hint": "Optional. Review the task, time, who runs it and permissions before confirming. Selected Trunks are created when leaving this step.",
+  "onboarding.routine.review": "Review my first routine",
+  "onboarding.routine.changed": "Setup changed. Reopen onboarding to continue."
 }
