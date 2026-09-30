@@ -33,13 +33,13 @@ function claude(calls) {
   return provider;
 }
 
-async function branch(t, { withClaude }) {
+async function branch(t, { withClaude, claudeId = "claude-plan" }) {
   const calls = [];
   const presets = [
     { id: "chatgpt-gpt-6-sol", name: "ChatGPT · GPT-6 Sol", model: "gpt-6-sol", provider: spentChatGPT("gpt-6-sol", calls) },
     { id: "chatgpt-gpt-6-luna", name: "ChatGPT · GPT-6 Luna", model: "gpt-6-luna", provider: spentChatGPT("gpt-6-luna", calls) },
     { id: "openai-key", name: "OpenAI key", model: "gpt-5", provider: { name: "openai-compatible", async complete() { calls.push("key"); return { content: "paid", toolCalls: [] }; } } },
-    ...(withClaude ? [{ id: "claude-plan", name: "Claude · Opus 5.5", model: "claude-opus-5-5", provider: claude(calls) }] : []),
+    ...(withClaude ? [{ id: claudeId, name: "Claude · Opus 5.5", model: "claude-opus-5-5", provider: claude(calls) }] : []),
   ];
   const root = await mkdtemp(join(tmpdir(), "branch-plan-limit-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), presets });
@@ -64,4 +64,14 @@ test("with no other sign-in the task stops rather than spending on a key", async
   const run = await app.runtime.run({ prompt: "carry on with the work" });
   assert.notEqual(run.status, "completed");
   assert.ok(!calls.includes("key"), "a key billed per token is never chosen for a spent plan");
+});
+
+test("the owner's real Claude connection id is the one moved to; nothing of it is started here", async (t) => {
+  // cli-claude-code is answered through the accounts pool, which would start the real program; the test's guard refuses
+  // that after the move is written down, so only the move is checked.
+  const { app, calls } = await branch(t, { withClaude: true, claudeId: "cli-claude-code" });
+  const run = await app.runtime.run({ prompt: "carry on with the work" });
+  const moved = app.store.events(run.id).filter((event) => event.kind === "model.fallback").map((event) => event.data.to);
+  assert.equal(moved[0], "cli-claude-code");
+  assert.ok(!calls.includes("key") && !calls.includes("gpt-6-luna"), "neither the key nor the spent plan's other model");
 });
