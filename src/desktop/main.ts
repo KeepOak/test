@@ -92,10 +92,16 @@ import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesk
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
 import { versionedLayout } from "./app-folders.js";
-import { handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
+import { handOverHook, resumeWindow, shellUpWithoutWindow, sameInstall, settleLayout } from "./shell-window.js";
 import { portableMarker } from "../install/layout.js";
 
+import { watchTrayNotifications } from "./tray-notifications.js";
+
 let window: BrowserWindow | undefined;
+let openShell: () => Promise<void> = async () => undefined;
+let closeNotifications: (() => void) | undefined;
+let notificationTarget: string | null = null;
+let pageAllowsNotifications = false;
 let tray: Tray | undefined;
 let trayTimer: NodeJS.Timeout | undefined;
 let stop: (() => Promise<void>) | undefined;
@@ -302,8 +308,57 @@ function protectWindow(
   session.webRequest.onErrorOccurred((details) => answers.forget(details.id));
 }
 
-async function createWindow(
+/** The engine/update loop/tray exist before any application page. First open creates the full window once. */
+async function startShell(
   url: string, key: () => string, settings: DesktopSettings, update: UpdateHooks, access: EngineAccess, client: EngineClient,
+): Promise<void> {
+  // The window as it is at each moment (none while closed for good or not yet opened): updates go on without one.
+  const openWindow = () => window ?? null;
+  updater = registerUpdaterIpc(openWindow, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
+    { ...update, readiness: async () => updateReadiness(url, key(), client.fetch),
+      githubConnected: () => updateGitHubConnected(url, client.fetch),
+      // Update by itself runs in this process, whatever the page is doing (update-loop.ts).
+      plan: (facts) => updatePlanFrom(url, key(), facts, client.fetch),
+      // Versioned app folders: the switch waits for the window's invisible moment and hands its state over (shell-window.ts).
+      handOver: handOverHook({ window: openWindow, userData: app.getPath("userData"), power: powerMonitor }) });
+  let creating: Promise<void> | null = null;
+  openShell = async () => {
+    if (quitting) return;
+    if (!window && !creating) creating = createWindow(url, key, settings, access, client);
+    await creating;
+    window?.show();
+    window?.focus();
+    if (notificationTarget) window?.webContents.send("branch:notification-open");
+  };
+  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window: openWindow, origin: url, open: () => openShell(),
+    keys: async () => {
+      for (let tries = 0; !access.ready() && tries < 20; tries++) await new Promise<void>((done) => setTimeout(done, 250));
+      return quickAskKeys(url, key(), client.fetch);
+    }, log: (line) => console.error(line) });
+  ipcMain.handle("branch:notification-target", (event) => {
+    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame ||
+      new URL(event.senderFrame.url).origin !== url) throw new Error("Notification access denied");
+    const target = notificationTarget;
+    notificationTarget = null;
+    return target;
+  });
+  ipcMain.handle("branch:notification-presentation", (event, allowed: unknown) => {
+    if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame ||
+      new URL(event.senderFrame.url).origin !== url) throw new Error("Notification access denied");
+    pageAllowsNotifications = allowed === true;
+  });
+  createTray();
+  watchTrayUsage(url, key, () => access.ready());
+  closeNotifications = watchTrayNotifications({ origin: url, call: client.fetch,
+    background: () => !window || (pageAllowsNotifications && (!window.isVisible() || window.isMinimized() || !window.isFocused())),
+    open: (sessionId) => { notificationTarget = sessionId; void openShell().catch((error: Error) => console.error("Notification open:", error.message)); },
+    log: (error) => console.error("Tray notification:", error) });
+  if (!startsMinimized(process.argv)) await openShell();
+  else await shellUpWithoutWindow({ scratchDir: updateScratchDir(), version: app.getVersion() });
+}
+
+async function createWindow(
+  url: string, key: () => string, settings: DesktopSettings, access: EngineAccess, client: EngineClient,
 ): Promise<void> {
   const statePath = join(app.getPath("userData"), "window-state.json");
   const opening = openingFor(readWindowState(statePath), screen.getAllDisplays().map((display) => display.workArea));
@@ -321,9 +376,8 @@ async function createWindow(
     show: false,
     icon: branchIcon(),
     autoHideMenuBar: true,
-    // Started in the tray, the page stays hidden until the window is first shown: otherwise it counts as visible and
-    // draws, decodes its loops and holds its tiles for a window nobody can see.
-    paintWhenInitiallyHidden: !startsMinimized(process.argv),
+    // This page is made on the owner's first open, so its first paint is wanted.
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
       nodeIntegration: false,
@@ -336,9 +390,8 @@ async function createWindow(
   // DG-177: the first launch fills the screen; later ones open the way the owner left the window. The size is put
   // back before maximising and before anything is remembered, so un-maximising returns to it.
   if (opening.bounds) restoreBounds(window, opening.bounds);
-  // Maximising shows a hidden window, so a quiet start in the tray maximises it only once it is opened.
-  if (opening.maximized && startsMinimized(process.argv)) window.once("show", () => window?.maximize());
-  else if (opening.maximized) window.maximize();
+  // Creation now means the owner opened the window, including after a quiet tray start.
+  if (opening.maximized) window.maximize();
   const remember = () => {
     if (window && !window.isDestroyed() && !window.isMinimized())
       writeWindowState(statePath, { maximized: window.isMaximized(), bounds: window.getNormalBounds() });
@@ -395,15 +448,6 @@ async function createWindow(
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate, client.fetch);
   registerShowInFolderIpc(window, url, key, undefined, client.fetch);
-  // The window as it is at each moment (none while closed for good or not yet opened): updates go on without one.
-  const openWindow = () => window ?? null;
-  updater = registerUpdaterIpc(openWindow, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
-    { ...update, readiness: async () => updateReadiness(url, key(), client.fetch),
-      githubConnected: () => updateGitHubConnected(url, client.fetch),
-      // Update by itself runs in this process, whatever the page is doing (update-loop.ts).
-      plan: (facts) => updatePlanFrom(url, key(), facts, client.fetch),
-      // Versioned app folders: the switch waits for the window's invisible moment and hands its state over (shell-window.ts).
-      handOver: handOverHook({ window: openWindow, userData: app.getPath("userData"), power: powerMonitor }) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
   const liveWindow = registerLiveWindowIpc({ ipc: ipcMain, window, origin: url, cover: () => pictureCover(main) });
@@ -414,8 +458,6 @@ async function createWindow(
     quitReason = "restart";
     app.quit();
   });
-  registerQuickAsk({ shortcuts: globalShortcut, ipc: ipcMain, window, origin: url, keys: async () => quickAskKeys(url, key(), client.fetch),
-    log: (line) => console.error(line) });
   // Redesign phase 1 (integration review): Windows ending the session never waits for the quit question.
   window.on("query-session-end", () => { quitReason = "system"; });
   window.on("session-end", () => { quitReason = "system"; });
@@ -425,8 +467,8 @@ async function createWindow(
       window?.hide();
     }
   });
-  // "Start quietly in the corner of the taskbar" keeps the window hidden until the tray icon is used.
-  window.once("ready-to-show", () => { if (!startsMinimized(process.argv)) window?.show(); });
+  // A quiet launch never reaches this point until its first open.
+  window.once("ready-to-show", () => window?.show());
   // After a shell switch (shell-switch.ts): what the old version's window had open comes back in this one's first page,
   // and only once it has, this version says its window is up (the switch script goes back to the old one otherwise).
   const windowUp = await resumeWindow({ ipc: ipcMain, window, origin: url, userData: app.getPath("userData"), version: app.getVersion(),
@@ -439,8 +481,6 @@ async function createWindow(
     console.error("Window:", (error as Error).message);
     pageRecovery.failed();
   });
-  createTray();
-  watchTrayUsage(url, key, () => access.ready());
   void windowUp().then(() => settleVersions(), (error: Error) => {
     console.error("Window up:", error.message);
     diagnose("updater", "warn", `This version's window could not say it is up: ${error.message}`);
@@ -488,18 +528,14 @@ function createTray(): void {
       {
         label: "Open Branch Agent",
         click: () => {
-          window?.show();
-          window?.focus();
+          void openShell().catch((error: Error) => console.error("Open window:", error.message));
         },
       },
       { type: "separator" },
       { label: "Quit", click: () => app.quit() },
     ]),
   );
-  tray.on("click", () => {
-    window?.show();
-    window?.focus();
-  });
+  tray.on("click", () => { void openShell().catch((error: Error) => console.error("Open window:", error.message)); });
 }
 
 /**
@@ -600,7 +636,7 @@ async function start(): Promise<void> {
       tellWindow: tellOpenWindow, recoverWindow: recoverOpenWindow, log: liveNote,
     }).catch((error: Error) => { liveNote(`Background engine's update channel: ${error.message}`); return null; }) : null;
     if (testHooksOn() && brokerLive) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: brokerLive.hooks, engineState: brokerLive.inspect };
-    await createWindow(running.url, key, settings, {
+    await startShell(running.url, key, settings, {
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
       stopDaemon: async () => {
         closingForUpdate = true;
@@ -617,7 +653,7 @@ async function start(): Promise<void> {
       currentCommit: commit,
       ...(brokerLive ? { live: brokerLive.hooks } : {}),
     }, gate, client);
-    window?.once("closed", () => brokerLive?.close());
+    app.once("will-quit", () => brokerLive?.close());
     // selfdev: joined to the background engine, the window is up; a Beta update waiting to see this keeps the new
     // version. Without it, a Beta update with the background engine on was put back after 90 s every time.
     void markStarted(updateScratchDir(), app.getVersion()).catch(() => undefined);
@@ -644,7 +680,7 @@ async function start(): Promise<void> {
     onEngineDeparture: () => closeCapture(),
     log: liveNote });
   if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };
-  await createWindow(url, key, settings, {
+  await startShell(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
     backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
     // mac3/never-break: the new version is tried on a copy of this data before it is used.
@@ -862,6 +898,7 @@ function joinedGate(dataDir: string, url: string, key: () => string): EngineGate
  */
 function shutDown(): void {
   quitting = true;
+  closeNotifications?.();
   const forUpdate = quitReason === "update";
   if (forUpdate) diagnose("updater", "info", "Stopping the engine so the update can be handed over");
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 8000).unref());
@@ -986,11 +1023,8 @@ else if (process.argv.includes(refreshShortcutsFlag)) {
     .then((code) => app.exit(code), () => app.exit(1));
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.on("second-instance", () => {
-    window?.show();
-    window?.focus();
-  });
-  app.on("activate", () => window?.show());
+  app.on("second-instance", () => { void openShell().catch((error: Error) => console.error("Open window:", error.message)); });
+  app.on("activate", () => { void openShell().catch((error: Error) => console.error("Open window:", error.message)); });
   app.on("will-quit", () => globalShortcut.unregisterAll()); // pass 17: quick-ask keys go with the app
   app.on("before-quit", (event) => {
     if (quitting) return;

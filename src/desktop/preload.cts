@@ -8,6 +8,10 @@ try {
 } catch { /* nothing kept, or no storage: an ordinary start */ }
 
 contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
+  nativeTrayNotifications: true,
+  notificationTarget: () => ipcRenderer.invoke("branch:notification-target"),
+  notificationPresentation: (allowed: boolean) => ipcRenderer.invoke("branch:notification-presentation", allowed === true),
+  onNotificationOpen: (callback: () => void) => ipcRenderer.on("branch:notification-open", () => callback()),
   modelSettings: () => ipcRenderer.invoke("branch:model-settings"),
   saveModelSettings: (settings: unknown) =>
     ipcRenderer.invoke("branch:save-model-settings", settings),

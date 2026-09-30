@@ -14,9 +14,9 @@
    - Quiet hours and whole days off (CF.quiet): the card still shows, but no sound and no computer notification. */
 
 import { $, esc, onRender, applyCss } from "../core/dom.js";
-import { S, E, ownName, chatFace } from "../core/state.js";
+import { S, E, ownName, chatFace, ownerHere } from "../core/state.js";
 import { app, av, ic } from "../core/ui.js";
-import { on } from "../core/actions.js";
+import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { CF } from "../chat/comfort.js";
 import { t } from "../../i18n.js";
@@ -78,8 +78,8 @@ function systemNote(title, body) {
 }
 
 /* Everything past the card: the sound and the computer's notification, unless it is quiet now. */
-function alertOwner(title, body) {
-  if (quietNow()) return;
+function alertOwner(title, body, nativeHandled = true) {
+  if (quietNow() || (nativeHandled && window.branchDesktop?.nativeTrayNotifications && (document.hidden || !document.hasFocus()))) return;
   playSound(CF.notify?.sound);
   if (CF.notify?.method === "system") systemNote(title, body);
 }
@@ -158,10 +158,33 @@ function watchMoves() {
   const who = m.who || ownName(m.open || m.sessionId) || sessionTitle(m.sessionId);
   const words = t("window.shell.notify.moved", { name: m.name, to: m.to, from: m.from }) + (m.why ? ` ${m.why}` : "");
   show({ sessionId: m.sessionId, open: m.open, who, question: words });
-  alertOwner(who, words);
+  alertOwner(who, words, false);
 }
 
 export function initNotify() {
+  let firstTarget = false, openingTarget = false;
+  const openTarget = async () => {
+    if (!E.loaded || !ownerHere() || openingTarget) return;
+    openingTarget = true;
+    try {
+      const id = await window.branchDesktop?.notificationTarget?.();
+      if (typeof id === "string" && id.length <= 200 && ownerHere()) {
+        const button = document.createElement("button"); button.dataset.id = id;
+        run("chat", button);
+      }
+    } catch { /* engine/page still loading: leave ordinary navigation available */ }
+    finally { openingTarget = false; }
+  };
+  window.branchDesktop?.onNotificationOpen?.(() => void openTarget());
+  let presented = null;
+  onRender(() => {
+    const allowed = E.loaded && ownerHere() && !quiet();
+    if (allowed !== presented) {
+      presented = allowed;
+      window.branchDesktop?.notificationPresentation?.(allowed)?.catch(() => {});
+    }
+  });
+  onRender(() => { if (!firstTarget && E.loaded && ownerHere()) { firstTarget = true; void openTarget(); } });
   markLive(["notif-x"]);
   on("notif-x", () => { clearTimeout(timer); $(".notif")?.remove(); });
   document.addEventListener("click", (e) => { if (e.target.closest?.('.notif [data-act="chat"]')) $(".notif")?.remove(); });

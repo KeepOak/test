@@ -29,10 +29,13 @@ export async function quickAskKeys(url: string, token: string, call: typeof fetc
   return typeof body.values?.keys?.quickAsk === "string" ? body.values.keys.quickAsk : "";
 }
 
+type QuickAskWindow = Pick<BrowserWindow, "webContents" | "on" | "show" | "focus" | "isDestroyed">;
 export interface QuickAskDeps {
   shortcuts: Pick<GlobalShortcut, "register" | "unregister">;
   ipc: Pick<IpcMain, "handle" | "removeHandler">;
-  window: Pick<BrowserWindow, "webContents" | "on" | "show" | "focus" | "isDestroyed">;
+  window: QuickAskWindow | (() => QuickAskWindow | null);
+  /** A tray-only start creates its window only when these owner keys are pressed. */
+  open?: () => Promise<void>;
   origin: string;
   keys: () => Promise<string>;
   platform?: NodeJS.Platform;
@@ -45,30 +48,34 @@ export interface QuickAskDeps {
  * still opens from the New menu. Returns a function that lets go of the keys.
  */
 export function registerQuickAsk(deps: QuickAskDeps): () => void {
+  const window = () => typeof deps.window === "function" ? deps.window() : deps.window;
   let held: string | null = null;
   const letGo = () => { if (held) deps.shortcuts.unregister(held); held = null; };
-  const press = () => {
-    if (deps.window.isDestroyed()) return;
-    deps.window.show();
-    deps.window.focus();
-    deps.window.webContents.send(quickAskChannel);
+  const press = async () => {
+    await deps.open?.();
+    const shown = window();
+    if (!shown || shown.isDestroyed()) return;
+    shown.show();
+    shown.focus();
+    shown.webContents.send(quickAskChannel);
   };
   const apply = async () => {
     const accelerator = toAccelerator(await deps.keys().catch(() => ""), deps.platform);
     if (accelerator === held) return held;
     letGo();
     if (!accelerator) return null;
-    if (deps.shortcuts.register(accelerator, press)) held = accelerator;
+    if (deps.shortcuts.register(accelerator, () => { void press().catch((error: Error) => deps.log?.(error.message)); })) held = accelerator;
     else deps.log?.(`Quick ask: ${accelerator} is taken by another app`);
     return held;
   };
   const authorized = (event: IpcMainInvokeEvent) => {
-    if (event.sender !== deps.window.webContents || event.senderFrame !== deps.window.webContents.mainFrame
+    const shown = window();
+    if (!shown || event.sender !== shown.webContents || event.senderFrame !== shown.webContents.mainFrame
       || new URL(event.senderFrame?.url ?? "about:blank").origin !== deps.origin)
       throw new Error("Quick ask access denied");
   };
   deps.ipc.handle(quickAskRefreshChannel, async (event) => { authorized(event); return (await apply()) !== null; });
-  deps.window.on("closed", () => { deps.ipc.removeHandler(quickAskRefreshChannel); letGo(); });
+  window()?.on("closed", () => { deps.ipc.removeHandler(quickAskRefreshChannel); letGo(); });
   void apply();
   return letGo;
 }
