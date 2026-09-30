@@ -1417,7 +1417,12 @@ export class ChannelRouter {
       }
       const images: { mediaType: "image/jpeg" | "image/png" | "image/webp" | "image/gif"; data: string; name: string }[] = [];
       const files: string[] = [];
+      let mediaHeld = 0;
       for (const inbound of turn.messages) for (const attachment of inbound.attachments ?? []) {
+        if (this.adapters.get(inbound.channel)?.adapter.kind === "telegram" && !this.intake().telegramMedia) {
+          mediaHeld++;
+          continue; // before bytes(): no download, image input or stored artifact
+        }
         const tooLarge = async () => {
           await live?.finish("error");
           await this.deliver(message.channel, message.chatId, `That file is larger than ${maxArtifactBytes / 1024 / 1024} MB, so it was not used`,
@@ -1444,7 +1449,8 @@ export class ChannelRouter {
         }
       }
       const run = await this.runtime.run({
-        prompt: [heard.prompt, ...files.map((file) => `[attached file: ${file}]`)].filter(Boolean).join("\n") || "Please inspect the attached picture.", ...(images.length ? { images } : {}), ...(sessionId ? { sessionId } : trunkId ? { trunkId } : {}), permissions: this.chatPermissions(message),
+        prompt: [heard.prompt, ...(mediaHeld ? [`[Telegram photos and files are turned off. ${mediaHeld} attachment(s) were not read.]`] : []),
+          ...files.map((file) => `[attached file: ${file}]`)].filter(Boolean).join("\n") || "Please inspect the attached picture.", ...(images.length ? { images } : {}), ...(sessionId ? { sessionId } : trunkId ? { trunkId } : {}), permissions: this.chatPermissions(message),
         // A chat cannot prove who is typing, so its task is never the owner's own (see RunSource).
         source: "channel",
         // Which app it came in on, for the model's line saying where it runs (src/environment.ts).

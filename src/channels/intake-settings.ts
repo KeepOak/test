@@ -20,6 +20,8 @@ import type { Store } from "../store.js";
 export const ChatIntakeSchema = z.object({
   edited: z.boolean().default(true),
   albums: z.boolean().default(true),
+  /** Telegram photos, videos and documents enter tasks. Voice notes keep their separate controls. */
+  telegramMedia: z.boolean().default(true),
   splitWaitMs: z.union([z.literal(0), z.literal(1000), z.literal(3000)]).default(1000),
   watchdog: z.boolean().default(true),
   reconnectMinutes: z.union([z.literal(1), z.literal(3), z.literal(10)]).default(3),
