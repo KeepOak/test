@@ -112,6 +112,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/self-development\/publications(\/|$)/,
   new RegExp(`^/api/monitors/${id}/prices$`),
   /^\/api\/schedules\/[a-f0-9-]{36}\/dashboard$/,
+  // Saved task images are read by the profile window, never through a short-lived script key.
+  /^\/api\/artifacts\/file$/,
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
   /^\/api\/chatgpt\/status$/,

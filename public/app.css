@@ -4551,3 +4551,8 @@ audio.docread18m{width:100%}
 
 /* Plan-step pictures are visibly separate from the live browser. */
 #stage7 .st7-replay-note{position:absolute;bottom:12px;left:12px;padding:6px 10px;border-radius:6px;background:var(--bg);color:var(--ink);box-shadow:0 2px 8px #0002}
+
+.browser-proof7 { margin:8px 0; display:grid; gap:6px; max-width:640px; }
+.browser-proof7 figcaption { font-weight:600; }
+.browser-proof7 img { display:block; width:100%; max-height:360px; object-fit:contain; border-radius:8px; }
+.browser-proof7 small { color:var(--mute17c); }
