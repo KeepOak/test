@@ -1209,6 +1209,10 @@ export class Runtime {
     const lentTo = origin?.lentTo ?? null;
     if (!previous || !origin || (previous.owner !== this.owner && previous.owner !== lentTo)) throw new Error("Run not found");
     if (previous.status !== "interrupted") throw new Error("Only interrupted tasks can be continued");
+    const project = previous.project;
+    if (typeof project !== "string" || !this.store.projects.list(this.owner).some((one) => one.id === project)
+      || this.store.sessionProject(previous.sessionId) !== project)
+      throw new Error("The interrupted task's original project is unavailable or its conversation changed project. Reconcile its saved context before continuing; no new task was started.");
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
     // (carryOrigin, mac7/outside-resume), whoever pressed Continue.
@@ -1227,7 +1231,7 @@ export class Runtime {
     };
     // bucket 19: a task a household person started carries on as that person, after a restart too.
     const person = origin.personProfileId;
-    return this.track(() => (person && !currentPerson() ? asPerson({ profileId: person, keyId: "resumed" }, go) : go()));
+    return this.track(() => underProject(project, () => (person && !currentPerson() ? asPerson({ profileId: person, keyId: "resumed" }, go) : go())));
   }
   /** A tool run outside a conversation; `options` says how it is gated (src/tool-gate.ts). */
   async executeTool(name: string, args: unknown, options: ToolGateOptions = {}): Promise<unknown> {
