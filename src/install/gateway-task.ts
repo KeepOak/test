@@ -1,6 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
+import { userInfo } from "node:os";
 import { join, win32 } from "node:path";
 import { runTool, systemTool, type RunTool } from "./windows.js";
 
@@ -29,8 +30,20 @@ export interface GatewayTaskInput {
   executable: string;
   /** Start at sign-in (the owner's "Start with Windows"); off, the task only restarts a gateway it started itself. */
   atSignIn: boolean;
-  /** `DOMAIN\user` the task belongs to; without one it is left to the Users group, as OpenClaw does. */
+  /**
+   * `DOMAIN\user` the task belongs to (`taskUser`). Without one nothing is registered: a task left to a group (the
+   * Users group, as OpenClaw does) would start this person's gateway at any other account's sign-in.
+   */
   user: string | null;
+}
+
+export const unknownUserWords = "Windows did not say which account is signed in, so Branch did not register its background task.";
+
+/** The account, or a refusal: never a group. */
+function owner(input: GatewayTaskInput): string {
+  const user = input.user?.trim();
+  if (!user || /[\r\n]/.test(user)) throw new Error(unknownUserWords);
+  return user;
 }
 
 const escapeXml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
@@ -38,11 +51,11 @@ const escapeXml = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, 
 
 /** Task Scheduler's own XML: needed to switch off the battery stops and set restart on failure. */
 export function gatewayTaskXml(input: GatewayTaskInput): string {
-  const user = input.user ? escapeXml(input.user) : null;
+  const user = escapeXml(owner(input));
   const trigger = input.atSignIn
-    ? `\n  <Triggers>\n    <LogonTrigger>\n      <Enabled>true</Enabled>${user ? `\n      <UserId>${user}</UserId>` : ""}\n    </LogonTrigger>\n  </Triggers>`
+    ? `\n  <Triggers>\n    <LogonTrigger>\n      <Enabled>true</Enabled>\n      <UserId>${user}</UserId>\n    </LogonTrigger>\n  </Triggers>`
     : "";
-  const principal = user ? `\n      <UserId>${user}</UserId>\n      <LogonType>InteractiveToken</LogonType>` : "\n      <GroupId>S-1-5-32-545</GroupId>";
+  const principal = `\n      <UserId>${user}</UserId>\n      <LogonType>InteractiveToken</LogonType>`;
   return `<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -167,10 +180,14 @@ export type GatewaySupervision = "task" | "startup" | "none";
 const schtasks = (deps: GatewayTaskDeps) => systemTool("schtasks.exe", deps.systemRoot);
 const exists = (path: string) => access(path).then(() => true, () => false);
 
-/** The account the task belongs to, from Windows' own variables. */
-export function taskUser(env: NodeJS.ProcessEnv = process.env): string | null {
+/**
+ * The account the task belongs to: Windows' own variables, or else the account this process runs as. Null when neither
+ * says, and then nothing is registered (`GatewayTaskInput.user`).
+ */
+export function taskUser(env: NodeJS.ProcessEnv = process.env, account: () => string = () => userInfo().username): string | null {
   const name = env.USERNAME?.trim(), domain = env.USERDOMAIN?.trim();
-  return name ? (domain ? `${domain}\\${name}` : name) : null;
+  if (name) return domain ? `${domain}\\${name}` : name;
+  try { return account().trim() || null; } catch { return null; }
 }
 
 /** An installed app's program, never a plain Node from a source checkout, which has no `--branch-gateway`. */
@@ -189,6 +206,7 @@ export interface RegisterInput extends GatewayTaskInput {
  */
 export async function registerGatewayTask(input: RegisterInput, deps: GatewayTaskDeps = {}): Promise<GatewaySupervision> {
   if (!isAppProgram(input.executable)) throw new Error("Only the installed Branch Agent app can keep working in the background on Windows.");
+  owner(input); // refused before anything is written: never a task for a group
   const run = deps.run ?? runTool, xmlPath = join(input.dataDir, "gateway-task.xml");
   await writeFile(xmlPath, taskXmlBytes(gatewayTaskXml(input)));
   try {

@@ -67,15 +67,17 @@ test("the task runs the app itself at sign-in, restarts it on failure, and never
   assert.match(xml, /<DisallowStartIfOnBatteries>false<\/DisallowStartIfOnBatteries>\s*<StopIfGoingOnBatteries>false<\/StopIfGoingOnBatteries>/);
   assert.match(xml, /<MultipleInstancesPolicy>IgnoreNew<\/MultipleInstancesPolicy>/);
   assert.ok(!/wscript|cscript|\.vbs|cmd\.exe/i.test(xml), "no script host and no console");
-  const off = gatewayTaskXml({ executable: app, atSignIn: false, user: null });
+  const off = gatewayTaskXml({ executable: app, atSignIn: false, user: "pat" });
   assert.ok(!/<Triggers>|LogonTrigger/.test(off), "with Start with Windows off, nothing starts it at sign-in");
-  assert.match(off, /<GroupId>S-1-5-32-545<\/GroupId>/);
+  assert.ok(!/GroupId/.test(off), "never a group: the task is this account's alone");
   assert.match(off, /<RestartOnFailure>/, "it still restarts a gateway it started itself");
   const bytes = taskXmlBytes(xml);
   assert.deepEqual([...bytes.subarray(0, 2)], [0xff, 0xfe]);
   assert.equal(bytes.subarray(2).toString("utf16le"), xml);
   assert.equal(taskUser({ USERDOMAIN: "PC", USERNAME: "pat" }), "PC\\pat");
-  assert.equal(taskUser({}), null);
+  assert.equal(taskUser({}, () => "pat"), "pat", "the account this process runs as when Windows' variables are missing");
+  assert.equal(taskUser({}, () => ""), null);
+  assert.equal(taskUser({}, () => { throw new Error("no account"); }), null);
 });
 
 test("a refusal is told by its HRESULT, never by words; refused or stuck falls back, any other failure is real", () => {
@@ -110,17 +112,17 @@ test("registering writes the task's XML only for the moment schtasks reads it", 
 test("Access is denied: a Startup shortcut starts the app's gateway directly, with no VBScript", async (t) => {
   const root = await scratch(t), tasks = schtasks(denied), links = [];
   const deps = { run: tasks.run, env: { APPDATA: join(root, "roaming") }, writeShortcut: async (link) => { links.push(link); } };
-  assert.equal(await registerGatewayTask({ executable: app, atSignIn: true, user: null, dataDir: root }, deps), "startup");
+  assert.equal(await registerGatewayTask({ executable: app, atSignIn: true, user: "pat", dataDir: root }, deps), "startup");
   assert.deepEqual(links, [{ path: startupShortcutPath(deps.env), target: app, arguments: "--branch-gateway",
     workingDirectory: "C:\\Program Files\\Branch & Co <x>", description: "Branch Agent, working with the window closed" }]);
   assert.ok(links[0].path.endsWith(".lnk"));
-  assert.equal(await registerGatewayTask({ executable: app, atSignIn: false, user: null, dataDir: root }, deps), "none",
+  assert.equal(await registerGatewayTask({ executable: app, atSignIn: false, user: "pat", dataDir: root }, deps), "none",
     "with Start with Windows off, a shortcut would only start it against the owner's choice");
   assert.equal(links.length, 1);
   const broken = schtasks(() => { throw new Error("powershell.exe failed: hresult=0x80041318 The task XML is malformed."); });
-  await assert.rejects(registerGatewayTask({ executable: app, atSignIn: true, user: null, dataDir: root }, { ...deps, run: broken.run }), /malformed/);
+  await assert.rejects(registerGatewayTask({ executable: app, atSignIn: true, user: "pat", dataDir: root }, { ...deps, run: broken.run }), /malformed/);
   assert.equal(links.length, 1, "a real failure is reported, not hidden behind a shortcut");
-  await assert.rejects(registerGatewayTask({ executable: "C:\\node\\node.exe", atSignIn: true, user: null, dataDir: root }, deps),
+  await assert.rejects(registerGatewayTask({ executable: "C:\\node\\node.exe", atSignIn: true, user: "pat", dataDir: root }, deps),
     /Only the installed Branch Agent app/);
 });
 
@@ -195,6 +197,22 @@ test("three unclean starts within ten minutes are a restart storm, said once per
   assert.match(await recordUncleanStart(root, at + 32 * minute), /started again 3 times/, "a new storm later is said again");
   await writeFile(join(root, "gateway-restarts.json"), "not json");
   assert.equal(await recordUncleanStart(root, at + 40 * minute), null, "an unreadable file never stops the gateway");
+});
+
+test("an unknown account registers nothing: the task never falls back to a group that any sign-in would start", async (t) => {
+  const root = await scratch(t), tasks = schtasks(), links = [];
+  const deps = { run: tasks.run, env: { APPDATA: join(root, "roaming") }, writeShortcut: async (link) => { links.push(link); } };
+  for (const user of [null, "", "  ", "PC\\pat\nx"]) {
+    assert.throws(() => gatewayTaskXml({ executable: app, atSignIn: true, user }), /did not say which account/);
+    await assert.rejects(registerGatewayTask({ executable: app, atSignIn: true, user, dataDir: root }, deps), /did not say which account/);
+    await assert.rejects(ensureGatewayTask({ executable: app, atSignIn: true, user, dataDir: root }, deps), /did not say which account/);
+  }
+  assert.deepEqual(tasks.calls, [], "Task Scheduler was never asked");
+  assert.deepEqual(links, [], "and no Startup shortcut stands in for it");
+  assert.equal(await stat(join(root, "gateway-task.xml")).catch(() => null), null, "no XML was written");
+  const xml = gatewayTaskXml({ executable: app, atSignIn: true, user: "PC\\pat" });
+  assert.equal((xml.match(/<UserId>PC\\pat<\/UserId>/g) ?? []).length, 2, "both the sign-in trigger and the principal name this account");
+  assert.ok(!/GroupId|S-1-5-32-545/.test(xml));
 });
 
 test("the portable swap switches the gateway's task off before anything is ended, and on again before any version starts", () => {
