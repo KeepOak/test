@@ -241,3 +241,27 @@ test("a task that starts browsing opens its browser full size once, and a view t
   assert.equal((await pending).status, "completed");
   assert.deepEqual(w.errors, []);
 });
+
+test("SCREEN-019: words being composed with an input method survive the view being drawn again, and arrive whole", async (t) => {
+  const w = await fixture(t, { name: "scripted", async complete() { return { content: "Unused", toolCalls: [] }; } });
+  const { page } = w;
+  await page.locator('.head [data-act="stage"][data-v="browser"]').first().click();
+  const bar = page.locator("#stage7 #st-addr");
+  await bar.fill(`${w.origin}/`);
+  await bar.press("Enter");
+  await framed(page);
+  await focusBox(w, "#name", "name");
+  await w.until(async () => (await page.evaluate(() => document.activeElement?.id)) === "ob7-keys", "the window's keyboard box to have the keys");
+  await page.evaluate(() => { window.keysBox = document.getElementById("ob7-keys"); });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.imeSetComposition", { text: "に", selectionStart: 1, selectionEnd: 1 });
+  // The page renames itself mid-composition, so the view's head would be drawn again.
+  await w.enginePage().evaluate(() => { document.title = "Renamed while composing"; });
+  await new Promise((resolve) => setTimeout(resolve, 2500));
+  assert.equal(await page.evaluate(() => window.keysBox === document.getElementById("ob7-keys") && window.keysBox === document.activeElement), true,
+    "the box being composed in is kept, with the keys, while the view waits");
+  await cdp.send("Input.insertText", { text: "日本" });
+  await w.until(async () => (await w.enginePage().inputValue("#name")).endsWith("日本"), "the composed words in the page");
+  await page.locator("#stage7 .ob7-tabs").filter({ hasText: "Renamed while composing" }).waitFor({ timeout: 30000 });
+  assert.deepEqual(w.errors, []);
+});

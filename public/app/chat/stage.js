@@ -48,7 +48,7 @@ import { t } from "../../i18n.js";
 import { pickChip, computersOf, computerNamed, pickFor } from "../flows/computers17.js"; // pass 17 part D §9: the conversation's computer menu
 import { liveOf, liveError, liveLoading, watchLive } from "./stage-live.js";
 import { hasOwnerBrowser, ownerBrowserHTML, ownerBrowserPip, ownerBrowserButtons, ownerBrowserHolder, watchOwnerBrowser,
-  paintOwnerBrowser, initOwnerBrowser, ownerBrowserNeeds, ownerBrowserState, ownerBrowserToolbar, needsHTML, takeControl } from "./stage-browser-control.js";
+  paintOwnerBrowser, initOwnerBrowser, ownerBrowserNeeds, ownerBrowserState, ownerBrowserToolbar, needsHTML, takeControl, ownerBrowserComposing } from "./stage-browser-control.js";
 import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, setDriving } from "./stage-screen.js";
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
@@ -473,6 +473,8 @@ function region(id, cls, show, html) {
   if (!el) { el = Object.assign(document.createElement("div"), { id, className: cls }); app()?.appendChild(el); G.drawn[id] = ""; }
   const next = html();
   if (next !== G.drawn[id]) {
+    // Restoring a textarea's value/focus cannot restore its native IME session. Frames still paint below.
+    if (id === "stage7" && G.kind === "browser" && ownerBrowserComposing(S.chat)) { fit(el); return; }
     redraw(el, next);
     el.classList.toggle("tabs-b2", !!el.querySelector(".st7-tabs"));
     G.drawn[id] = next;
