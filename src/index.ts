@@ -1659,7 +1659,8 @@ ${result.output || "(it said nothing)"}`;
   // ── end mac3/security-check ──
   // eng-connectors: whether another person's server is started as Branch starts or only when a task needs it, and
   // what it last said its tools are. The launch file's servers and the owner's own (kept in the store) share it.
-  const mcpOwnerRequests = new McpOwnerRequests(store, () => runtime.owner, runtime.models);
+  const mcpOwnerRequests = new McpOwnerRequests(store, () => runtime.owner, runtime.models, () => sessionLock.locked());
+  releaseOnLock.push(async () => mcpOwnerRequests.closeWindow());
   const mcpHost = {
     injectionPolicy: () => web.injectionPolicy,
     ownerRequests: mcpOwnerRequests,

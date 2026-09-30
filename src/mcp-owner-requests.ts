@@ -33,17 +33,19 @@ interface Pending {
 export class McpOwnerRequests {
   private windowUntil = 0;
   private windowOwner = '';
+  private windowGeneration = 0;
+  private readonly active = new Set<AbortController>();
   private readonly pending = new Map<string, Pending>();
   private readonly rates = new Map<string, number[]>();
   constructor(private readonly store: Store, private readonly owner: () => string,
-    private readonly models: ModelRouter) {}
+    private readonly models: ModelRouter, private readonly locked: () => boolean) {}
 
   settings(server: string): Settings {
     const saved = McpOwnerRequestSettings.safeParse(this.store.get('settings', this.owner(), `mcp-owner-requests:${server}`)?.data ?? {});
     return saved.success ? saved.data : McpOwnerRequestSettings.parse({});
   }
   save(input: unknown): void {
-    if (!this.store.profiles.isOwner() || lockdownActive(this.store, this.owner())) throw new Error('Change server choices in the unlocked owner window.');
+    if (this.locked() || !this.store.profiles.isOwner() || lockdownActive(this.store, this.owner())) throw new Error('Change server choices in the unlocked owner window.');
     const value = z.object({ server: ServerId, settings: McpOwnerRequestSettings }).strict().parse(input);
     if (value.settings.sampling && !value.settings.models.length) throw new Error('Choose at least one allowed model.');
     for (const id of value.settings.models) {
@@ -55,6 +57,10 @@ export class McpOwnerRequests {
   }
   /** A visible form polls every five seconds; no window heartbeat means no capability or spending. */
   window(): unknown {
+    if (this.locked() || !this.store.profiles.isOwner() || lockdownActive(this.store, this.owner())) {
+      this.closeWindow();
+      throw new Error('The owner window is unavailable.');
+    }
     this.windowOwner = this.owner(); this.windowUntil = Date.now() + 15_000;
     return { requests: [...this.pending.values()].filter(p => p.owner === this.owner())
       .map(({ id, server, kind, details }) => ({ id, server, kind, details })),
@@ -62,11 +68,16 @@ export class McpOwnerRequests {
   }
   closeWindow(): void {
     this.windowUntil = 0;
+    this.windowGeneration++;
+    for (const stop of this.active) stop.abort();
     for (const item of this.pending.values()) item.finish({ action: 'cancel' });
   }
   private ready(): boolean {
-    return Date.now() < this.windowUntil && this.windowOwner === this.owner()
+    return !this.locked() && Date.now() < this.windowUntil && this.windowOwner === this.owner()
       && this.store.profiles.isOwner() && !lockdownActive(this.store, this.owner());
+  }
+  private requireWindow(generation: number): void {
+    if (!this.ready() || generation !== this.windowGeneration) throw new Error('The owner window is unavailable.');
   }
   capabilities(server: string): ClientCapabilities {
     if (!this.ready()) return {};
@@ -120,6 +131,7 @@ export class McpOwnerRequests {
   }
   private async sample(server: string, input: unknown, signal: AbortSignal) {
     const settings = this.guard(server, 'sampling');
+    const generation = this.windowGeneration;
     const params = z.object({ messages: z.array(z.object({ role: z.enum(['user', 'assistant']),
       content: z.object({ type: z.literal('text'), text: z.string().max(16000) }).passthrough() }).passthrough()).min(1).max(32),
       maxTokens: z.number().int().positive(), systemPrompt: z.string().max(16000).optional(),
@@ -136,10 +148,10 @@ export class McpOwnerRequests {
       notice: 'Allow this server to send this exact text to this model using your subscription or API credit?' };
     const answer = await this.ask(server, 'sampling', details, settings, signal);
     if (answer.action !== 'accept') throw new Error('The owner declined or cancelled sampling.');
-    signal.throwIfAborted(); this.guard(server, 'sampling', false);
+    signal.throwIfAborted(); this.requireWindow(generation); this.guard(server, 'sampling', false);
     if (JSON.stringify(this.settings(server)) !== JSON.stringify(settings) || this.models.presets.get(preset.id) !== preset) throw new Error('Sampling settings or model changed.');
     const result = await this.complete(server, preset.id, messages, maxTokens, signal);
-    this.guard(server, 'sampling', false); signal.throwIfAborted();
+    this.requireWindow(generation); this.guard(server, 'sampling', false); signal.throwIfAborted();
     if (Buffer.byteLength(result.content) > 32768) throw new Error('Sampling response is too large.');
     if (result.toolCalls.length) throw new Error('Sampling may not invoke tools.');
     return { model: preset.model, role: 'assistant' as const, content: { type: 'text' as const, text: result.content }, stopReason: 'endTurn' };
@@ -149,32 +161,40 @@ export class McpOwnerRequests {
     if (!preset || !bounded(preset)) throw new Error('The approved model is unavailable.');
     const run = this.store.createRun(this.owner(), `Approved model request from ${server}`);
     const stop = new AbortController();
+    this.active.add(stop);
+    const requestSignal = AbortSignal.any([signal, stop.signal, AbortSignal.timeout(30_000)]);
+    let usageRecorded = false;
     const timer = setInterval(() => { if (!this.ready() || !this.settings(server).sampling) stop.abort(); }, 500);
     timer.unref?.();
     try {
       this.store.event(run.id, 'mcp.sampling', { server, model: presetId, maxTokens });
       const result = await preset.provider.complete({ messages, tools: [], maxTokens, programTools: false,
-        signal: AbortSignal.any([signal, stop.signal, AbortSignal.timeout(30_000)]) });
+        signal: requestSignal });
+      // Account for provider work even when it returns after ignoring cancellation.
       this.store.addUsage(run.id, estimateTokens(JSON.stringify(messages)), estimateTokens(result.content), result.usage);
+      usageRecorded = true;
+      requestSignal.throwIfAborted();
       this.store.finish(run.id, 'completed', 'The approved server request finished.');
       return result;
     } catch (error) {
-      this.store.addUsage(run.id, estimateTokens(JSON.stringify(messages)),
+      if (!usageRecorded) this.store.addUsage(run.id, estimateTokens(JSON.stringify(messages)),
         error instanceof ProviderStreamError ? error.estimatedOutput : 0,
         error instanceof ProviderStreamError ? error.usage : undefined, false);
       this.store.finish(run.id, 'failed', 'The approved server request did not finish.');
       throw new Error('The approved model request failed.');
-    } finally { clearInterval(timer); }
+    } finally { clearInterval(timer); this.active.delete(stop); }
   }
   private async elicit(server: string, input: unknown, signal: AbortSignal) {
     const settings = this.guard(server, 'elicitation');
+    const generation = this.windowGeneration;
     const params = z.object({ mode: z.literal('form').optional(), message: z.string().max(4000),
       requestedSchema: z.object({ type: z.literal('object'), properties: z.record(z.string(), z.unknown()), required: z.array(z.string()).optional() }).passthrough(), task: z.never().optional() }).passthrough().parse(input);
     if (Object.keys(params.requestedSchema.properties).length > 20) throw new Error('This server asks for too many fields.');
     const validate = new (await mcpValidator())().getValidator({ ...params.requestedSchema, additionalProperties: false } as JsonSchemaType);
+    this.requireWindow(generation);
     const answer = await this.ask(server, 'elicitation', params, settings, signal);
     if (answer.action !== 'accept') return { action: answer.action };
-    signal.throwIfAborted(); this.guard(server, 'elicitation', false);
+    signal.throwIfAborted(); this.requireWindow(generation); this.guard(server, 'elicitation', false);
     if (!validate(answer.content ?? {}).valid) throw new Error('The answer does not fit the server form.');
     const content = z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])).parse(answer.content ?? {});
     return { action: 'accept' as const, content };
