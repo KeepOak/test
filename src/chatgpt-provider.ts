@@ -14,6 +14,8 @@ export const chatgptModels = [
   // list (as the Codex CLI reads it) added the GPT-6 family, and GPT-6 Sol at medium is the owner's choice. GPT-6 Astra
   // is an explicit choice; src/chatgpt-presets.ts keeps it out of automatic fallbacks to preserve that spending choice.
   { id: "gpt-6-sol", label: "GPT-6 Sol", reasoning: "medium" },
+  // On 2026-09-30 the account's model list added GPT-6.1 Sol ("latest workhorse"); offered next to the owner's default.
+  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", reasoning: "medium" },
   { id: "gpt-6-luna", label: "GPT-6 Luna", reasoning: "medium" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol (light)", reasoning: "low" },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", reasoning: "medium" },
