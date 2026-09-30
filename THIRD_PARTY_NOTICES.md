@@ -3314,10 +3314,6 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-### Hermes Agent and OpenClaw: spoken replies as voice notes (UP-CHAT-005), MIT
-
-`src/voice-note.ts` adapts Hermes Agent's `tools/tts_text_normalize.py` (`strip_nonspoken_blocks`, `strip_markdown_for_tts`, `smooth_whitespace_for_tts`) and `_wrap_pcm_as_wav` in `tools/tts_tool_delivery.py`, and the OpenAI `response_format: "opus"` request follows `tools/tts_tool.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). The Telegram `sendVoice` / `sendAudio` choice in `src/channels/telegram.ts` follows OpenClaw's `extensions/telegram/src/voice.ts` and `src/media/audio.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch in TypeScript. Used under the MIT licence, whose text is given under IronClaw above.
-
 ### PicoClaw, MIT
 
 `src/channels/deltachat.ts` follows the JSON-RPC call sequence and message fields in PicoClaw's `pkg/channels/deltachat` (https://github.com/sipeed/picoclaw). Used under the MIT licence:
@@ -3365,6 +3361,10 @@ Two parts of Branch are adapted from Aider (https://github.com/Aider-AI/aider, c
 - `src/ai-comments.ts` follows `aider/watch.py` and `aider/watch_prompts.py`: the comment pattern (a comment starting with "ai" or ending with "ai", "ai!" or "ai?") and what the resulting task asks for.
 
 Changes: rewritten in TypeScript for Branch; file access goes through Branch's workspace checks.
+
+### Hermes Agent and OpenClaw: spoken replies as voice notes (UP-CHAT-005), MIT
+
+`src/voice-note.ts` adapts Hermes Agent's `tools/tts_text_normalize.py` (`strip_nonspoken_blocks`, `strip_markdown_for_tts`, `smooth_whitespace_for_tts`) and `_wrap_pcm_as_wav` in `tools/tts_tool_delivery.py`, and the OpenAI `response_format: "opus"` request follows `tools/tts_tool.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). The Telegram `sendVoice` / `sendAudio` choice in `src/channels/telegram.ts` follows OpenClaw's `extensions/telegram/src/voice.ts` and `src/media/audio.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch in TypeScript. Used under the MIT licence, whose text is given under IronClaw above.
 
 ### Understand Anything (ideas only), MIT
 
