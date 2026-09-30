@@ -93,6 +93,7 @@ export class ExtraOwnerCommands {
     return JSON.stringify(server);
   }
   private prune() {
+    if (this.closing) { this.pending.clear(); return; }
     for (const [id, p] of this.pending) {
       try { if (Date.parse(p.expiresAt) <= Date.now() || !this.allowed(p.from) || p.before !== this.fingerprint(p)) this.pending.delete(id); }
       catch { this.pending.delete(id); }
@@ -113,6 +114,7 @@ export class ExtraOwnerCommands {
     return `Requested ${action} for ${target}. Confirm within two minutes in Settings → Chat apps → Native requests. No process was started or credential touched by this chat command.`;
   }
   async confirm(id: string) {
+    if (this.closing) throw new Error("Branch is closing; native requests cannot start.");
     this.prune();
     const p = this.pending.get(id);
     if (!p) throw new Error("The request expired, its configuration changed, or the source owner is no longer authorized.");
