@@ -161,7 +161,7 @@ test("C1: a new skill's tools make Branch tell every connected client the list h
 
 test("C2: a finished task reaches whoever subscribed to it", async (t) => {
   const { url, token, sessionId } = await initialized(t);
-  await share(url, token, []);
+  await share(url, token, ["history.search"]);
   await rpc(url, token, { jsonrpc: "2.0", id: 2, method: "resources/subscribe", params: { uri: "runs://recent" } }, sessionId);
   const { got } = await stream(url, token, sessionId, 1, async () => {
     await rpc(url, token, {
@@ -171,6 +171,18 @@ test("C2: a finished task reaches whoever subscribed to it", async (t) => {
   const updated = got.find((message) => message.method === "notifications/resources/updated");
   assert.ok(updated, JSON.stringify(got));
   assert.equal(updated.params.uri, "runs://recent");
+});
+
+test("C2: a finished task is not announced to a connection the owner does not share task history with", async (t) => {
+  const { url, token, sessionId } = await initialized(t);
+  await share(url, token, ["files.read"]);
+  await rpc(url, token, { jsonrpc: "2.0", id: 2, method: "resources/subscribe", params: { uri: "runs://recent" } }, sessionId);
+  const { got } = await stream(url, token, sessionId, 1, async () => {
+    await rpc(url, token, {
+      jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "branch.ask", arguments: { prompt: "Say hello." } },
+    }, sessionId);
+  });
+  assert.ok(!got.some((message) => message.method === "notifications/resources/updated"), JSON.stringify(got));
 });
 
 test("C2: prompts carry their blanks, and a resource the settings refuse is invisible", async (t) => {
@@ -194,6 +206,7 @@ test("C2: prompts carry their blanks, and a resource the settings refuse is invi
   }, sessionId);
   assert.match(filled.data.result.messages[0].content.text, /Invoices/);
 
+  await share(url, token, ["memory.search"]);
   const before = await rpc(url, token, { jsonrpc: "2.0", id: 5, method: "resources/list", params: {} }, sessionId);
   assert.ok(before.data.result.resources.some((r) => r.uri === "memory://facts"));
 
