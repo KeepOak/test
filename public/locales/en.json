@@ -10417,5 +10417,22 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "pricewatch.below": "Alert below",
+  "pricewatch.history": "Price history",
+  "pricewatch.empty": "No watches yet.",
+  "pricewatch.add": "Add a price watch",
+  "pricewatch.help": "Choose one fixed item and a unique literal price label. The label must be followed on the same line by the currency marker and amount, for example: Total: $199.95. It must identify the intended variant. Branch refuses missing or ambiguous prices and does not infer taxes, delivery costs or stock. The first read must succeed. This card sends qualifying drops to Activity.",
+  "pricewatch.item": "Exact item and variant",
+  "pricewatch.url": "Page address",
+  "pricewatch.label": "Unique price label, for example Total:",
+  "pricewatch.marker": "Currency marker on the page",
+  "pricewatch.currency": "Currency code",
+  "pricewatch.threshold": "Only alert for a drop below",
+  "pricewatch.decimals": "Decimal places in this currency",
+  "pricewatch.format": "Number format on the page",
+  "pricewatch.every": "Check every (minutes)",
+  "pricewatch.retained": "The latest 100 valid observations, including the baseline. Failed reads preserve the last good value. This is the selected page field, not a price guarantee.",
+  "pricewatch.observed": "Observed at",
+  "pricewatch.price": "Price"
 }
