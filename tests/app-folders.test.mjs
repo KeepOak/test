@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { appFolderName, linkRuntime, pointerFiles, pruneAppFolders, readPointer, runtimeFiles, sealAppFolder, partFolder, versionedLayout, writePointer } from "../dist/desktop/app-folders.js";
-import { invisibleMoment, markShellUp, readSwitchFailure, shellUpMarker, takeHandOver, windowsSwitchScript, writeHandOver, failureName } from "../dist/desktop/shell-switch.js";
+import { invisibleMoment, markShellUp, readSwitchFailure, shellUpMarker, takeHandOver, writeHandOver, failureName } from "../dist/desktop/shell-switch.js";
 import { handOverHook, sameInstall, settleLayout } from "../dist/desktop/shell-window.js";
 import { shortcutChanges } from "../dist/install/windows-identity.js";
 import { Updater } from "../dist/desktop/updater.js";
@@ -90,30 +90,6 @@ test("older versions go, but never the one in use, the one before, a newer one w
   assert.deepEqual((await readdir(root)).sort(), [exe, "Branch Data", "app-2.0.0", "app-3.0.0", "app-4.0.0", "app-9.0.0-dev.1-gabc", "locales"].sort());
 });
 
-const plan = (root, extra = {}) => ({ root, next: join(root, "current.next.json"), rollback: join(root, "current.rollback.json"),
-  newExe: join(root, "app-2.0.0", exe), oldExe: join(root, "app-1.0.0", exe), marker: join(root, "scratch", "shell-up-2.0.0"),
-  failureDraft: join(root, "scratch", "f.draft"), failure: join(root, "scratch", "f.json"), log: join(root, "scratch", "log"), minimized: false, ...extra });
-
-test("the switch script waits for this window, switches in one rename, starts the new version and watches for its window", { skip: windowsOnly }, () => {
-  const text = windowsSwitchScript(plan("C:\\P\\Branch 100%"));
-  const lines = text.split("\r\n");
-  const at = (pattern) => lines.findIndex((line) => pattern.test(line));
-  assert.ok(at(/tasklist\.exe \/FI "PID eq %PID%"/) < at(/^move \/y ".*current\.next\.json" ".*current\.json"/), "the old window has gone before anything changes");
-  assert.ok(at(/^move \/y ".*current\.next\.json"/) < at(/^if exist ".*app-2\.0\.0\\Branch Agent\.exe" start "" ".*app-2\.0\.0\\Branch Agent\.exe"$/), "switched before the new one starts, and only a program that is there is started");
-  assert.ok(at(/if exist ".*shell-up-2\.0\.0" goto done/) > at(/start "" ".*app-2\.0\.0/), "then it watches for the new window");
-  assert.equal(lines.filter((line) => /start ""/.test(line) && !/^(if exist ".*" start ""|if errorlevel 1 \( .* & if exist ".*" start "")/.test(line)).length, 0, "never a start of a program that may be missing");
-  assert.match(text, /Branch 100%%/, "a % in a path survives the batch parser");
-  assert.doesNotMatch(text, /\/IM /i, "nothing is ever ended by name");
-  assert.match(text, /\$_\.ExecutablePath -eq \$env:BRANCH_NEW_EXE/);
-  assert.match(text, /set "BRANCH_NEW_EXE=C:\\P\\Branch 100%%\\app-2\.0\.0\\Branch Agent\.exe"/);
-  assert.ok(at(/^move \/y ".*current\.rollback\.json" ".*current\.json"/) > at(/ExecutablePath/), "a new version that never came up is ended, then the pointer goes back");
-  assert.ok(at(/^move \/y ".*f\.draft" ".*f\.json"/) > 0, "and the old version is told why");
-  const restart = lines.findLastIndex((line) => /^if exist ".*app-1\.0\.0\\Branch Agent\.exe" start "" ".*app-1\.0\.0\\Branch Agent\.exe"$/.test(line));
-  assert.ok(restart > at(/^move \/y ".*f\.draft"/) && restart < at(/^:done$/), "and the old version is started again");
-  assert.match(windowsSwitchScript(plan("C:\\P", { minimized: true })), /app-2\.0\.0\\Branch Agent\.exe" --start-minimized/, "a window that was in the tray comes back in the tray");
-  assert.match(windowsSwitchScript(plan("C:\\P", { rollback: null })), /del \/q "C:\\P\\current\.json"/, "going back to a flat copy removes the pointer");
-});
-
 test("what the window had open reaches the new version once, and only that version, while fresh", async (t) => {
   const dir = await temp(t);
   const kept = JSON.stringify({ drafts: { new: "half-written" }, caret: { start: 4, end: 4 } });
@@ -181,7 +157,7 @@ test("shortcuts, start with Windows and the background engine's launcher follow 
   assert.equal(written.run, `"${now}" --start-minimized`);
   assert.match(written.launcher, /app-2\.0\.0\\Branch Agent\.exe"" ""[^"]*app-2\.0\.0\\resources\\app\\dist\\cli\.js/);
   assert.doesNotMatch(written.launcher, /app-1\.0\.0/);
-  assert.deepEqual(done, { runKey: true, launcher: true, pruned: [] }, "nothing is removed unless the pointer names this version");
+  assert.deepEqual(done, { runKey: true, launcher: true, pruned: [], retired: false }, "nothing is removed or retired unless the pointer names this version");
   const other = {};
   await settleLayout({ root, folder: "app-2.0.0" }, exe, dataDir, { readRegistry: async () => `"C:\\Elsewhere\\Branch Agent.exe"`, writeRegistry: async () => { other.run = true; },
     readText: async () => null, writeText: async () => { other.launcher = true; } });
@@ -232,7 +208,7 @@ test("a Beta change becomes a folder of its own beside the running version, is s
     devRun: fake.run, currentCommit: OLD, devBuildDir: buildDir, appFolders: { root, folder: "app-0.19.3" },
     backup: async () => { order.push("backup"); }, canary: async (dir) => { order.push(`canary ${dir}`); }, tryOut: async (dir) => { order.push(`try ${dir}`); return null; },
     beforeStop: async () => { order.push("idle"); }, stopDaemon: async () => { order.push("stop engine"); return 1; },
-    handOver: async ({ version }) => { order.push(`hand over ${version}`); return { minimized: true }; } });
+    handOver: async ({ version }) => { order.push(`hand over ${version}`); return { minimized: true }; }, dataDir: join(root, "data") });
   assert.equal((await updater.check()).phase, "available");
   const { script, stagedDir } = await updater.install();
   const version = `0.19.3-dev.1758600000-g${NEW.slice(0, 12)}`;
@@ -241,8 +217,14 @@ test("a Beta change becomes a folder of its own beside the running version, is s
   assert.equal(fake.calls.some((call) => /package-desktop|package:desktop|packager/.test(call)), false, "nothing is packaged");
   assert.ok(fake.calls.includes(`node scripts/assemble-app.mjs --app ${join(`${partFolder(root, version)}`, "resources", "app")}`));
   assert.equal((await stat(join(stagedDir, exe))).ino, (await stat(join(running, exe))).ino, "the program is the running one's own file");
-  const text = await readFile(script, "utf8");
-  assert.match(text, new RegExp(`app-${version.replace(/\./g, "\\.")}\\\\Branch Agent\\.exe" --start-minimized`));
+  // The switch is a plan the hand-over runner follows (version-switch.ts), not a script.
+  assert.match(script, /switch-version\.json$/);
+  const plan = JSON.parse(await readFile(script, "utf8"));
+  assert.equal(plan.newExe, join(stagedDir, exe));
+  assert.equal(plan.oldExe, join(running, exe));
+  assert.deepEqual([plan.minimized, plan.pid, plan.version, plan.kept], [true, process.pid, version, "0.19.3"], "a window that was in the tray comes back in the tray");
+  assert.equal(plan.dataDir, join(root, "data"), "the switch reads the saved work's format before it goes back");
+  assert.ok(Number.isInteger(plan.understood) && plan.understood > 0, "with the newest format this version understands");
   assert.equal(JSON.parse(await readFile(join(root, "current.next.json"), "utf8")).folder, `app-${version}`);
   assert.equal(await exists(join(root, "current.json")), false, "nothing is switched until the script runs");
   const failure = JSON.parse(await readFile(join(scratchDir, `${failureName}.draft`), "utf8"));

@@ -26,8 +26,8 @@ Facebook Messenger and Instagram.
 Whichever you use, five things work the same way:
 
 - **Each chat keeps its own conversation**, so a group and a direct message do not run into each other.
-- **Strangers pair with a six-digit code** you approve in **Settings → Channels**. Turn pairing off and
-  a stranger is simply told the assistant is private.
+- **Strangers pair with a six-digit code** you approve in **Settings → Channels**. The code is sent only in
+  a direct chat; in a group the request just waits for you there. Turn pairing off and a stranger is sent nothing.
 - **An allowlist** names the people who never have to pair.
 - **Reply when mentioned** decides whether it answers everything in a group or only messages that
   mention it or reply to it.
