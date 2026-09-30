@@ -1,4 +1,10 @@
 {
+  "window.settings.secrets.scheduled-retry": "Réessayer la connexion après vérification",
+  "window.settings.secrets.scheduled-address": "Adresse HTTPS exacte de connexion",
+  "window.settings.secrets.scheduled-address-required": "Saisissez d’abord l’adresse HTTPS exacte de connexion.",
+  "window.settings.secrets.scheduled-password-note": "Les tâches planifiées du propriétaire peuvent saisir ce mot de passe uniquement à cette adresse. Les codes et contrôles de sécurité nécessitent votre intervention. Les autres permissions restent applicables.",
+  "window.settings.secrets.scheduled-enable": "Autoriser la saisie planifiée du mot de passe",
+  "window.settings.secrets.scheduled-disable": "Arrêter la saisie planifiée du mot de passe",
   "_draft": "Brouillon automatique. Non relu par un traducteur. Machine draft, not reviewed by a translator.",
   "about.keeper.acorn": "Le gland. Faites-le glisser ou utilisez les flèches pour le tourner.",
   "accounts.action.add": "Ajouter ce compte",

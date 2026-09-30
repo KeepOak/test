@@ -1,4 +1,10 @@
 {
+  "window.settings.secrets.scheduled-retry": "Anmeldung nach Prüfung erneut versuchen",
+  "window.settings.secrets.scheduled-address": "Genaue HTTPS-Anmeldeadresse",
+  "window.settings.secrets.scheduled-address-required": "Gib zuerst die genaue HTTPS-Anmeldeadresse ein.",
+  "window.settings.secrets.scheduled-password-note": "Geplante Aufgaben des Besitzers dürfen dieses Passwort nur an dieser Adresse eingeben. Codes und Sicherheitsprüfungen benötigen dich. Andere Berechtigungsregeln gelten weiterhin.",
+  "window.settings.secrets.scheduled-enable": "Geplante Passworteingabe erlauben",
+  "window.settings.secrets.scheduled-disable": "Geplante Passworteingabe beenden",
   "about.keeper.acorn": "Die Eichel. Zum Drehen ziehen oder die Pfeiltasten nutzen.",
   "accounts.action.add": "Dieses Konto hinzufügen",
   "accounts.action.disable": "Ausschalten",

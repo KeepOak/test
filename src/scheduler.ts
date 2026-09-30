@@ -343,6 +343,8 @@ export class Scheduler {
   /** Runs a saved schedule now (webhook or local script) without moving its next due time. */
   async trigger(owner: string, id: string, payload: unknown, trigger: "webhook" | "local", slot: string | null = null): Promise<Run> {
     if (!this.store.get("schedules", owner, id)) throw new Error("Schedule not found");
+    if (typeof this.store.get("schedules", owner, id)?.data.authenticationRunId === "string")
+      throw new Error("Resolve the waiting sign-in task and restart this schedule before running a new turn.");
     // One conditional write takes the schedule, so a second trigger (or the clock) arriving meanwhile is refused.
     const claimed = this.store.claimScheduleTrigger(owner, id, new Date().toISOString(), slot);
     if (!claimed) return this.refusedTrigger(owner, id, slot);
@@ -431,7 +433,7 @@ export class Scheduler {
         ...data, runId: run.id, runCount: Number(data.runCount ?? 0) + 1, history: [...history, entry],
         ...(!route && !madeBy && data.kind !== "reminder" && data.kind !== "evaluation" ? { threadId: run.sessionId } : {}),
         lastRunAt: startedAt, lastResult: kept ? run.output.slice(0, 4000) : data.lastResult ?? null,
-        ...(delivery ? { delivery } : {}), ...this.afterTurn(data, now, run.status, advance),
+        ...(delivery ? { delivery } : {}), ...this.afterTurn(data, now, run.status, advance, run.id),
       });
       return run;
     } catch (e) {
@@ -451,7 +453,10 @@ export class Scheduler {
    * failures in a row are counted, and after three the job is paused with the reason written down,
    * so one that is broken rather than unlucky does not fail quietly every day for ever.
    */
-  private afterTurn(data: Record<string, unknown>, now: Date, status: string, advance: boolean): Record<string, unknown> {
+  private afterTurn(data: Record<string, unknown>, now: Date, status: string, advance: boolean, runId?: string): Record<string, unknown> {
+    if (status === "needs_input" && runId && this.store.events(runId).some(event => event.kind === "browser.reauthentication-needed"))
+      return { status: "paused", authenticationRunId: runId,
+        pausedBecause: "Website sign-in needs your attention. Resolve the waiting task, then restart this schedule." };
     if (!advance) return { status: String(data.status) === "running" ? "pending" : data.status };
     if (!repeating(data)) return { status, consecutiveFailures: 0 };
     const failures = status === "completed" ? 0 : Number(data.consecutiveFailures ?? 0) + 1;
@@ -604,12 +609,31 @@ export class Scheduler {
       );
     if (!paused && record.data.gate && !gateIsApproved(record.data))
       throw new Error("Approve this job's check script in Schedules before starting it");
+    const authentication = typeof record.data.authenticationRunId === "string" ? this.store.run(record.data.authenticationRunId) : null;
+    if (!paused && authentication && ["needs_input", "running"].includes(authentication.status))
+      throw new Error("Resolve this schedule’s waiting sign-in task before restarting it.");
     return this.store.save("schedules", context.owner, id, {
       ...record.data,
       status: paused ? "paused" : "pending",
       // Starting it again clears the count, so a fixed check gets its full number of tries.
-      ...(!paused ? { gateFailures: 0 } : {}),
+      ...(!paused ? { gateFailures: 0, authenticationRunId: null, pausedBecause: null, consecutiveFailures: 0 } : {}),
     });
+  }
+  async recoverAuthentication(context: ToolContext, id: string): Promise<Run> {
+    this.store.profiles.requireOwner("Scheduled website sign-in recovery");
+    if (!context.permissions.has("schedules.manage") || (context.source ?? "owner") !== "owner" || context.trunk || context.agent || context.depth > 0
+      || startedWithShortLivedKey() || startedFromChat(context, this.store)) throw new Error("Recover this sign-in from the owner’s Branch window.");
+    const record = this.store.get("schedules", context.owner, id), runId = record?.data.authenticationRunId;
+    if (!record || !this.visibleTo(context, record) || record.data.status !== "paused" || typeof runId !== "string")
+      throw new Error("That schedule has no waiting sign-in recovery.");
+    const run = await this.runtime.continueScheduledAuthentication(runId);
+    const current = this.store.get("schedules", context.owner, id);
+    if (current?.data.authenticationRunId === runId) {
+      const history = (Array.isArray(current.data.history) ? current.data.history : []).map(entry =>
+        entry.runId === runId ? { ...entry, status: run.status, finishedAt: new Date().toISOString() } : entry);
+      this.store.save("schedules", context.owner, id, { ...current.data, history });
+    }
+    return run;
   }
   start(intervalMs = 5000): void {
     if (this.timer) return;
@@ -643,6 +667,10 @@ export function registerSchedules(
   scheduler: Scheduler,
 ): void {
   registerHeartbeat(registry, scheduler.heartbeat);
+  registry.register({ name: "schedules.reauthenticate", permission: "schedules.manage",
+    description: "Owner recovery: retry the same paused scheduled sign-in task with its original source and permissions. The schedule stays paused until the owner restarts it.",
+    parameters: z.object({ id: z.string().uuid() }).strict(),
+    execute: (a, c) => scheduler.recoverAuthentication(c, a.id) });
   registry.register({
     name: "schedules.create",
     description:

@@ -1003,6 +1003,17 @@ export class Runtime {
     return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
       ...this.carriedAs(runId, hooks), continuing: { runId, allowed: true } }));
   }
+  /** Explicit owner recovery of a scheduled authentication question; source and original reach stay scheduled. */
+  async continueScheduledAuthentication(runId: string): Promise<Run> {
+    this.store.profiles.requireOwner("Scheduled website sign-in recovery");
+    const waiting = this.store.run(runId), origin = runOrigin(this.store, runId);
+    if (!waiting || waiting.owner !== this.owner || waiting.status !== "needs_input" || origin.source !== "schedule"
+      || origin.shortLivedKey || origin.keyIds.length || origin.personProfileId || origin.lentTo || origin.parentRunId
+      || !this.store.events(runId).some(event => event.kind === "browser.reauthentication-needed"))
+      throw new Error("That scheduled sign-in is not waiting for owner recovery.");
+    return this.track(() => this.execute({ prompt: "The owner requested another sign-in attempt. Recheck its exact site opt-in and authentication state; keep every original task limit.",
+      sessionId: waiting.sessionId, onTextDelta: () => undefined, ...this.carriedAs(runId, {}), continuing: { runId } }));
+  }
   /**
    * QA R1 follow-up: a task carried on from where it came (a chat app, an editor, the terminal, a room) is held as it
    * started: its recorded source, never the owner's own, and the caller's live hooks for its words and its start.

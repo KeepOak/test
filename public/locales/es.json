@@ -1,4 +1,10 @@
 {
+  "window.settings.secrets.scheduled-retry": "Reintentar el inicio de sesión tras revisarlo",
+  "window.settings.secrets.scheduled-address": "Dirección HTTPS exacta de inicio de sesión",
+  "window.settings.secrets.scheduled-address-required": "Introduce primero la dirección HTTPS exacta de inicio de sesión.",
+  "window.settings.secrets.scheduled-password-note": "Las tareas programadas por el propietario pueden introducir esta contraseña solo en esta dirección. Los códigos y controles de seguridad requieren tu intervención. Las demás reglas de permisos siguen vigentes.",
+  "window.settings.secrets.scheduled-enable": "Permitir contraseñas en tareas programadas",
+  "window.settings.secrets.scheduled-disable": "Detener contraseñas en tareas programadas",
   "about.keeper.acorn": "La bellota. Arrástrala o usa las flechas del teclado para girarla.",
   "accounts.action.add": "Añadir esta cuenta",
   "accounts.action.disable": "Desactivar",

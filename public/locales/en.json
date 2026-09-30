@@ -1,4 +1,10 @@
 {
+  "window.settings.secrets.scheduled-retry": "Retry sign-in after review",
+  "window.settings.secrets.scheduled-address": "Exact HTTPS sign-in address",
+  "window.settings.secrets.scheduled-address-required": "Enter the exact HTTPS sign-in address first.",
+  "window.settings.secrets.scheduled-password-note": "Owner-created schedules may fill this password only at this exact address. Codes and security challenges need you. Other permission rules still apply.",
+  "window.settings.secrets.scheduled-enable": "Allow scheduled password filling",
+  "window.settings.secrets.scheduled-disable": "Stop scheduled password filling",
   "about.keeper.acorn": "The acorn. Drag or use the arrow keys to turn it.",
   "accounts.action.add": "Add this account",
   "accounts.action.disable": "Switch off",

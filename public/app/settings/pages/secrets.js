@@ -31,6 +31,17 @@ async function remove(name) {
   try { await api("vault-autofill/settings", { logins }); toast(t("window.settings.secrets.name-removed-from-what-branch-may", { name })); } catch (error) { toast(error.message); }
   await loadAll();
 }
+async function schedulePassword(el) {
+  const name = el.dataset.name, entry = vault?.logins?.find(s => s.name === name);
+  if (!entry) return;
+  const address = el.closest(".prow")?.querySelector("input[data-signin-address]")?.value.trim();
+  const enabled = !entry.scheduledPassword;
+  if (enabled && !address) { toast(t("window.settings.secrets.scheduled-address-required")); return; }
+  const logins = vault.logins.map(s => s.name === name ? { ...s, ...(address ? { address } : {}), scheduledPassword: enabled } : s);
+  el.disabled = true;
+  try { await api("vault-autofill/settings", { logins }); } catch (error) { toast(error.message); }
+  await loadAll();
+}
 
 const VAULT_NAME = { bitwarden: "vault-autofill.service.bitwarden", onepassword: "vault-autofill.service.1password", windows: "vault-autofill.service.windows" };
 async function chooseVault(v) {
@@ -43,16 +54,17 @@ async function chooseVault(v) {
 export function init() {
   on("secret-rm", (el) => remove(el.dataset.name));
   on("vaultb17", (el) => chooseVault(el.dataset.v));
-  markLive(["secret-rm", "vaultb17"]);
+  on("secret-schedule", schedulePassword);
+  markLive(["secret-rm", "vaultb17", "secret-schedule"]);
   loadAll();
 }
 
 export async function load() { await loadAll(); }
 
-export const live = { "secret-rm": true, "vaultb17": true };
+export const live = { "secret-rm": true, "vaultb17": true, "secret-schedule": true };
 
 function rows() {
-  return (vault?.logins ?? []).map((s) => `<div class="prow"><span class="ico-tile">${ic("key", "s")}</span><span class="grow"><b>${esc(s.name)}</b><small>${esc(s.site)}</small></span><span class="meta">${MASK}</span><button class="btn ghost sm" type="button" data-act="secret-rm" data-name="${esc(s.name)}">${t("accounts.action.remove")}</button></div>`).join("");
+  return (vault?.logins ?? []).map((s) => `<div class="prow"><span class="ico-tile">${ic("key", "s")}</span><span class="grow"><b>${esc(s.name)}</b><small>${esc(s.site)}</small><label>${t("window.settings.secrets.scheduled-address")}<input type="url" data-signin-address value="${esc(s.address ?? "")}" autocomplete="off" ${s.scheduledPassword ? "readonly" : ""}></label><small>${t("window.settings.secrets.scheduled-password-note")}</small><button class="btn sm" type="button" data-act="secret-schedule" data-name="${esc(s.name)}">${t(s.scheduledPassword ? "window.settings.secrets.scheduled-disable" : "window.settings.secrets.scheduled-enable")}</button></span><span class="meta">${MASK}</span><button class="btn ghost sm" type="button" data-act="secret-rm" data-name="${esc(s.name)}">${t("accounts.action.remove")}</button></div>`).join("");
 }
 
 export function draw() {
