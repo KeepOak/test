@@ -3567,10 +3567,16 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   const owner = app.runtime.owner;
   if (request.method === "GET" && path === "/api/research") return { reports: app.research.list(owner) };
   if (request.method === "GET" && path === "/api/monitors") return { monitors: app.monitors.list(owner) };
-  if (request.method === "POST" && path === "/api/monitors") return app.monitors.create(owner, await readBody(request), undefined, undefined, () => {
-    app.store.profiles.requireOwner("Creating a watch");
-    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a watch.");
-  });
+  if (request.method === "POST" && path === "/api/monitors") {
+    const body = await readBody(request);
+    const allowed = () => {
+      app.store.profiles.requireOwner("Creating a watch");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a watch.");
+    };
+    // Checked again after waiting for the body, before a price watch's first look at the page, and before saving.
+    allowed();
+    return app.monitors.create(owner, body, undefined, undefined, allowed);
+  }
   const prices = /^\/api\/monitors\/([a-f0-9-]{36})\/prices$/.exec(path);
   if (prices && request.method === "GET") {
     app.store.profiles.requireOwner("Your watched prices");
