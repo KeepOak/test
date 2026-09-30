@@ -1,6 +1,6 @@
 /* Pass 17's rows on the smaller Settings pages (prototype patch17b), each at its own level:
    Gateway › Never break opens the journal of updates tried, kept or rolled back (GET /api/never-break/journal);
-   "Try a bad change" would break the running engine on purpose, so it stays greyed. Saved sign-ins › the password
+   "Try a bad change" runs an isolated fixture update and records its rollback. Saved sign-ins › the password
    manager is shown pressed from the engine's own list of services (GET /api/credentials/settings; the engine calls
    1Password "1password") and chosen in pages/secrets.js. Windows Credential Manager is not a service the engine can
    ask, so that one choice is drawn and greyed. Every other row here has no readout in the window yet, so it is drawn
@@ -22,12 +22,29 @@ export const gateway17 = (lv) => (lv < 1 ? "" : sec17(t("window.settings.p17-mor
 
 const ENDED = () => ({ activated: ["ok", t("window.places.kept")], superseded: ["ok", t("window.places.kept")], "rolled-back": ["warn", t("window.settings.p17-more.rolled-back")], failed: ["warn", t("window.settings.p17-more.rolled-back")] });
 async function openJournal() {
-  let entries;
-  try { entries = (await api("never-break/journal")).entries ?? []; } catch (error) { toast(error.message); return; }
+  let entries, drill;
+  try { const journal = await api("never-break/journal"); entries = journal.entries ?? []; drill = journal.drill; } catch (error) { toast(error.message); return; }
   const when = (at) => new Date(at).toLocaleString(language(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
   const rows = entries.map((e) => `<div class="prow"><span class="grow"><b>${esc(e.fromVersion)} → ${esc(e.toVersion)}</b><small>${esc(when(e.finishedAt ?? e.startedAt))}</small></span>${ENDED()[e.state] ? pill17(...ENDED()[e.state]) : ""}</div>`).join("");
-  openDlg({ title: t("window.settings.p17-more.never-break-the-journal"), wide: true, body: `<p class="lead-b17">${t("window.settings.p17-more.each-change-to-how-branch-runs")}</p><div class="rows">${rows}</div>`,
+  const rehearsal = drill ? `<p><b>${esc(say(drill.ok ? "Isolated rollback drill passed" : "Isolated rollback drill failed"))}</b> · ${esc(when(drill.finishedAt))}</p><p>${esc(drill.detail)}</p><div class="rows">${(drill.ledger ?? []).map((line) => `<div class="prow"><span class="grow">${esc(line.step)}<small>${esc(line.detail)}</small></span>${pill17(line.ok ? "ok" : "warn", line.ok ? "OK" : "Failed")}</div>`).join("")}</div>` : "";
+  openDlg({ title: t("window.settings.p17-more.never-break-the-journal"), wide: true, body: `<p class="lead-b17">${t("window.settings.p17-more.each-change-to-how-branch-runs")}</p><div class="rows">${rows}</div>${rehearsal}`,
     foot: `<button class="btn ghost" type="button" data-act="nbtryb17">${t("window.settings.p17-more.try-a-bad-change")}</button><button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
+}
+
+let drillBusy = false;
+function confirmDrill() {
+  if (drillBusy) return;
+  openDlg({ title: t("window.settings.p17-more.try-a-bad-change"),
+    body: `<p>${esc(say("Try a deliberately broken fixture update in a temporary folder, then restore and restart its previous version. Your running Branch and saved work are separate from the drill."))}</p>`,
+    foot: `<button class="btn ghost" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn" data-act="nbdrillyes">${t("window.settings.p17-more.try-a-bad-change")}</button>` });
+}
+async function runDrill() {
+  if (drillBusy) return;
+  drillBusy = true;
+  toast(say("Trying the isolated update and rollback…"));
+  try { await api("never-break/drill", { confirm: true }); await openJournal(); }
+  catch (error) { toast(error.message); }
+  finally { drillBusy = false; }
 }
 
 /* ---------- Saved sign-ins ---------- */
@@ -61,5 +78,7 @@ export function initMore17() {
   if (started) return;
   started = true;
   on("nbb17", () => openJournal());
-  markLive(["nbb17"]);
+  on("nbtryb17", confirmDrill);
+  on("nbdrillyes", () => runDrill());
+  markLive(["nbb17", "nbtryb17", "nbdrillyes"]);
 }
