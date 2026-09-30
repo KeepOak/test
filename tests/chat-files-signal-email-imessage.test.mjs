@@ -128,6 +128,7 @@ test("email: a multipart message gives its words and its files, and a formatted 
 test("email: the adapter hands files to the task only when asked, and sends a file as an attachment in the thread", async () => {
   const adapter = new EmailAdapter({ id: "email", address: "me@example.com", imap: { host: "x", port: 1, user: "u", password: "p" }, smtp: { host: "x", port: 1, user: "u", password: "p" } });
   const mail = { seq: 1, from: "ann@example.com", fromName: "Ann", subject: "Pics", messageId: "<m2@x>", references: "", text: "",
+    authenticationResults: "mx.example.com; dmarc=pass header.from=example.com",
     attachments: [{ name: "cat.jpg", mediaType: "image/jpeg", bytes: new Uint8Array([1, 2]) }, { name: "huge.bin", mediaType: "application/octet-stream", bytes: new Uint8Array(9 * 1024 * 1024) }] };
   const inbound = adapter["inbound"](mail);
   assert.equal(inbound.attachments.length, 2);
