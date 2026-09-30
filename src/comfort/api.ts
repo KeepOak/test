@@ -14,6 +14,7 @@ import { checkCertificate, validateNetwork, type OutboundNetwork } from "./netwo
 import { busyTasks, updateHold, staleTaskMs, noteUpdateLook, stalledWords, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, noteUpdateWait, updatePlan, updateProblem } from "./auto-update.js";
 import { sensitiveBrowserTools } from "./browser-safety.js";
 import { diagnose } from "../diagnostic-log.js";
+import { clearInstallRequest, installRequested } from "./update-now.js";
 import { staleAfterMs } from "../activity.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
 
@@ -170,7 +171,6 @@ function plan(app: ComfortApp, body: unknown) {
   const { store, runtime: { owner } } = app;
   // Integration review: only the owner's window may be told to install; everyone's tasks count as work.
   requireOwnerHere(store, updateWords);
-  noteUpdateLook(store, owner);
   // A loop that had stopped is looking again: what said so is no longer true.
   if (updateProblem(store, owner)?.message.startsWith(stalledWords)) clearUpdateProblem(store, owner);
   if (input.checked) noteUpdateCheck(store, owner);
@@ -185,13 +185,17 @@ function plan(app: ComfortApp, body: unknown) {
   const held = countBusy(app);
   const { working: workingTasks, asking: askingTasks } = held;
   const busyTasks = workingTasks + askingTasks;
+  // The owner's "update now" (update-now.ts) is done once Branch has the newest version.
+  if (input.checked && input.updaterPhase === "current") clearInstallRequest(store, owner);
   // The Update button asks this too: tasks working now are offered a wait before anything closes.
-  const decided = updatePlan(store, owner, { busyTasks, workingTasks, askingTasks, overdueTasks: held.overdue, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag });
+  const planned = updatePlan(store, owner, { busyTasks, workingTasks, askingTasks, overdueTasks: held.overdue, updaterPhase: input.updaterPhase,
+    updaterTag: input.updaterTag, installRequested: installRequested(store, owner) });
+  noteUpdateLook(store, owner, new Date(), { step: planned.step, reason: planned.reason });
   const holding = held.overdue ? [] : holdingTasks(store, owner, Date.now(), staleMsOf(app));
   // A ready update held back leaves its reason in the activity log, once per reason: otherwise nothing says why it waits.
-  noteUpdateWait(owner, decided, { channel: readComfort(store, owner, "notify").releaseChannel, version: input.updaterTag ?? null,
+  noteUpdateWait(owner, planned, { channel: readComfort(store, owner, "notify").releaseChannel, version: input.updaterTag ?? null,
     busyTasks, workingTasks, askingTasks, holding, heldSince: held.heldSince, overdueTasks: held.overdue });
-  return { ...decided,
+  return { ...planned,
     busyTasks, workingTasks, askingTasks, staleTasks: held.stale.length, overdueTasks: held.overdue,
     holding, problem: updateProblem(store, owner), ...(problemIsNew ? { tellProblem: true } : {}),
     ...(tell ? { failed: "The newest version did not install here, so Branch will not try it again by itself. It tries the next one as soon as it lands; Update in Settings tries this one again now." } : {}) };
@@ -210,7 +214,7 @@ export async function comfortApi(app: ComfortApp, request: IncomingMessage, path
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");
       const notify = readComfort(app.store, app.runtime.owner, "notify");
       const busy = countBusy(app);
-      return { channel: notify.releaseChannel, busyTasks: busy.working + busy.asking, workingTasks: busy.working, autoUpdate: notify.autoUpdate };
+      return { channel: notify.releaseChannel, busyTasks: busy.working + busy.asking, workingTasks: busy.working, autoUpdate: installRequested(app.store, app.runtime.owner) ? "install" : notify.autoUpdate };
     }
     if (path === "/api/comfort/status") {
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");

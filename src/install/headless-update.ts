@@ -19,13 +19,16 @@ import { writeUpdateBackup } from "./update-backup.js";
 import { takeDataCopy } from "./data-copy.js";
 import { restartService, waitForReturn, type ReturnDeps } from "./service-return.js";
 import { openWindow, rollbackCommand } from "./rollback-cli.js";
+import { desktopUpdateCommand } from "./desktop-update.js";
+import type { DesktopUpdateReceipt } from "../desktop/update-receipt.js";
 
 /**
  * `branch update --yes`: the app's Update button without the window. It uses the same updater, so the
  * download is checked against its published checksum, the new version is tried on a copy of the
  * work when that switch is on, a safety copy is written first, and the same hand-over script swaps
  * the files and keeps the version before as `<name>.previous`, logging to the same file. Branch is
- * closed for the swap and opened again only if its window was open before.
+ * closed for the swap and opened again only if its window was open before (macOS/Linux).
+ * Windows delegates a request to the resident desktop updater, which retains the gateway and owns the handover.
  */
 
 import { primaryRepo } from "../desktop/repo-pair.js";
@@ -46,10 +49,12 @@ export interface HeadlessUpdateInput {
   arch?: string;
   /** False only checks and says what would happen. */
   yes: boolean;
+  json?: boolean;
   print: (line: string) => void;
   deps?: HeadlessUpdateDeps;
 }
 export interface HeadlessUpdateDeps {
+  desktopUpdate?: (dataDir: string, install: boolean) => Promise<DesktopUpdateReceipt>;
   fetch?: typeof fetch;
   extract?: UpdaterOptions["extract"];
   /** UpdaterOptions.lastReleaseWithoutProvenance: a test of another step names its own release. */
@@ -193,13 +198,10 @@ function makeUpdater(input: HeadlessUpdateInput, note: RunningInstance | null, s
   });
 }
 
-/** Checks, and with `yes` installs, the newest release. Answers with the exit code. */
+/** Checks/installs on Unix; Windows returns the resident updater's status or owner request receipt. */
 export async function headlessUpdate(input: HeadlessUpdateInput): Promise<number> {
   const platform = input.platform ?? process.platform, deps = input.deps ?? {};
-  if (platform === "win32") {
-    input.print("On Windows, update from the app: Settings, Updates. `branch update --yes` works on macOS and Linux.");
-    return 1;
-  }
+  if (platform === "win32") return desktopUpdateCommand(input, deps.desktopUpdate);
   const note = await (deps.running ?? runningNow)(input.dataDir);
   const stopped: { report: QuitReport | null } = { report: null };
   const updater = makeUpdater(input, note, stopped);

@@ -13,7 +13,7 @@ const packet = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("reply"), id: z.number().int().nonnegative(), ok: z.boolean(), value: z.unknown().optional(), error: z.string().max(2000).optional() }).strict(),
 ]);
 const challenge = z.object({ hello: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
-const answer = z.object({ proof: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
+const answer = z.object({ proof: z.string().regex(/^[a-f0-9]{64}$/), role: z.literal("cli").optional() }).strict();
 const descriptor = (dataDir: string): string => join(dataDir, "desktop-control", "authority.json");
 const proof = (key: string, side: string, nonce: string): string => createHmac("sha256", key).update(`${side}:${nonce}`).digest("hex");
 const matches = (a: string, b: string): boolean => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
@@ -42,16 +42,16 @@ function channel(socket: Socket, send: (value: unknown) => void, handlers: Handl
   return link;
 }
 
-function accept(socket: Socket, key: string, handlers: Handlers, ready: (link: Link) => void): void {
+function accept(socket: Socket, key: string, handlers: Handlers, cliHandlers: Handlers, ready: (link: Link, shell: boolean) => void): void {
   const nonce = randomBytes(32).toString("hex"); let link: Link | null = null;
   const late = setTimeout(() => socket.destroy(), 5000); late.unref();
   socket.once("close", () => clearTimeout(late));
   const send = lines(socket, (message) => {
     if (link) { link.receive(packet.parse(message)); return; }
     const auth = answer.parse(message);
-    if (!matches(auth.proof, proof(key, "shell", nonce))) { socket.destroy(); return; }
+    if (!matches(auth.proof, proof(key, auth.role ?? "shell", nonce))) { socket.destroy(); return; }
     clearTimeout(late); send({ proof: proof(key, "broker", nonce) });
-    link = channel(socket, send, handlers); ready(link);
+    link = channel(socket, send, auth.role === "cli" ? cliHandlers : handlers); ready(link, auth.role !== "cli");
   });
   send({ hello: nonce });
 }
@@ -61,14 +61,17 @@ export interface DesktopControlHost {
   current(): Link | null;
 }
 
-/** Only trusted main processes that can read this data folder can prove either side of the private channel. */
-export async function serveDesktopControl(dataDir: string, handlers: Handlers): Promise<DesktopControlHost> {
+/** A shell occupies the window slot; authenticated CLI observers get only their separate handler set. */
+export async function serveDesktopControl(dataDir: string, handlers: Handlers, cliHandlers: Handlers = {}): Promise<DesktopControlHost> {
   const suffix = randomBytes(16).toString("hex"), key = randomBytes(32).toString("hex");
   const address = process.platform === "win32" ? `\\\\.\\pipe\\branch-desktop-${suffix}` : join(tmpdir(), `branch-desktop-${suffix}.sock`);
   const sockets = new Set<Socket>(); let current: Link | null = null;
   const server = createServer((socket) => {
     sockets.add(socket); socket.once("close", () => sockets.delete(socket));
-    accept(socket, key, handlers, (link) => { current = link; socket.once("close", () => { if (current === link) current = null; }); });
+    accept(socket, key, handlers, cliHandlers, (link, shell) => {
+      if (!shell) return;
+      current = link; socket.once("close", () => { if (current === link) current = null; });
+    });
   });
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(address, () => { server.off("error", reject); resolve(); }); });
   try { await writeAtomic(descriptor(dataDir), JSON.stringify({ pid: process.pid, address, key })); }
@@ -84,7 +87,7 @@ export async function serveDesktopControl(dataDir: string, handlers: Handlers): 
 }
 
 export interface DesktopControlClient { link: Link; close(): void }
-export async function connectDesktopControl(dataDir: string, handlers: Handlers = {}): Promise<DesktopControlClient> {
+export async function connectDesktopControl(dataDir: string, handlers: Handlers = {}, role?: "cli"): Promise<DesktopControlClient> {
   const saved = shape.parse(JSON.parse(await readFile(descriptor(dataDir), "utf8")));
   process.kill(saved.pid, 0); // Refuse stale descriptors before connecting to their address.
   const socket = connect(saved.address);
@@ -95,7 +98,7 @@ export async function connectDesktopControl(dataDir: string, handlers: Handlers 
     socket.once("close", () => { clearTimeout(late); if (!link) reject(new Error("The background desktop broker refused the private connection.")); });
     const send = lines(socket, (message) => {
       if (link) { link.receive(packet.parse(message)); return; }
-      if (!nonce) { nonce = challenge.parse(message).hello; send({ proof: proof(saved.key, "shell", nonce) }); return; }
+      if (!nonce) { nonce = challenge.parse(message).hello; send({ proof: proof(saved.key, role ?? "shell", nonce), ...(role ? { role } : {}) }); return; }
       if (!matches(answer.parse(message).proof, proof(saved.key, "broker", nonce))) { socket.destroy(); return; }
       clearTimeout(late); link = channel(socket, send, handlers);
       resolve({ link, close: () => { link?.close(); socket.destroy(); } });
