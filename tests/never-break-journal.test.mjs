@@ -23,6 +23,10 @@ import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gate
 import { saveLongWorkSettings } from "../dist/long-work.js";
 
 const sha = (text) => createHash("sha256").update(text).digest("hex");
+function recordBoundedStart(app, run) {
+  app.store.event(run.id, "run.started", { source: "owner", parentRunId: null,
+    permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false });
+}
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("BRANCH_") && name !== "NODE_OPTIONS"));
 /**
  * Windows will not delete an open database, so what a test opened (`closeFirst`) is closed, newest
@@ -237,6 +241,7 @@ test("a file step checked after the fact: done is kept, not done is done", async
   closeFirst(t, () => app.close());
   const make = async (callId, path, content, landed) => {
     const run = app.store.createRun("local", `write ${path}`);
+    recordBoundedStart(app, run);
     app.store.message(run.sessionId, { role: "assistant", content: "", toolCalls: [{ id: callId, name: "files.write", arguments: JSON.stringify({ path, content }) }] });
     const evidence = await evidenceFor("files.write", { path, content }, app.runtime.workspace);
     app.neverBreak.journal.begin({ runId: run.id, sessionId: run.sessionId, callId, tool: "files.write", arguments: JSON.stringify({ path, content }), key: "k", effects: "idempotent", evidence });
@@ -356,6 +361,7 @@ async function severalCalls(t, calls, register) {
     execute: async ({ n }) => { sent.push(n); return { sent: n }; } });
   register?.(app);
   const run = app.store.createRun("local", "several at once");
+  recordBoundedStart(app, run);
   app.neverBreak.journal.turn(run.id, run.sessionId, 1);
   const toolCalls = calls.map((c) => ({ id: c.id, name: c.tool, arguments: JSON.stringify(c.args) }));
   const hook = journalHook(app.neverBreak.journal);
@@ -407,6 +413,7 @@ test("a task from before intents were written keeps today's behaviour: a call wi
   app.registry.register({ name: "chaos.send", permission: "chaos.send", description: "send", parameters: z.object({ n: z.number() }).strict(),
     execute: async ({ n }) => { sent.push(n); return { sent: n }; } });
   const run = app.store.createRun("local", "from an older version");
+  recordBoundedStart(app, run);
   app.neverBreak.journal.turn(run.id, run.sessionId, 1);
   app.store.message(run.sessionId, { role: "assistant", content: "", toolCalls: [
     { id: "o1", name: "files.write", arguments: JSON.stringify({ path: "old.txt", content: "old" }) },
