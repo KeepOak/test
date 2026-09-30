@@ -46,6 +46,7 @@ export function scorecardMarkdown(current, previous) {
   lines.push(`# Branch evals — ${current.finishedAt.slice(0, 10)}`);
   lines.push("");
   lines.push(`Model: **${current.model.label}** · host: ${current.host} · ${Math.round(current.durationMs / 1000)}s`);
+  if (current.ownerSkills?.setHash) lines.push(`Skill fixture: ${current.ownerSkills.side} · ${current.ownerSkills.count} selected package(s) · SKILL.md only · corpus ${current.ownerSkills.setHash}`);
   const rate = s.passRate === null ? "—" : `${s.passed}/${s.counted} (${Math.round(s.passRate * 100)}%)`;
   const prevRate = prev && prev.passRate !== null ? ` (was ${prev.passed}/${prev.counted}, ${Math.round(prev.passRate * 100)}%)` : "";
   lines.push(`Pass rate (pass+fail only): **${rate}**${prevRate}`);
@@ -92,6 +93,8 @@ export function sideBySideMarkdown(date, cards, links = []) {
     lines.push(`| ${card.model.label} | ${rate} | ${Math.round(card.durationMs / 1000)}s | ${other} |`);
   }
   const ran = cards.filter((card) => !card.missing);
+  if (ran.some((card) => card.ownerSkills?.setHash)) lines.push("", "Selected skill instructions are separate with/without columns. Package resources, tools and hooks are omitted; these results do not prove full package behavior.");
+  for (const card of cards.filter((entry) => entry.skillPairRefusal)) lines.push("", `${cell(card.model.label)}: ${cell(card.skillPairRefusal)}`);
   const ids = [...new Set(ran.flatMap((card) => card.results.map((r) => r.id)))];
   lines.push("", `| Task | Area | ${cards.map((card) => card.model.label).join(" | ")} |`, `|---|---|${cards.map(() => "---|").join("")}`);
   for (const id of ids) {

@@ -20,11 +20,12 @@ import { stopAllEngines } from "./lib/engine.mjs";
 import { startStandin } from "./lib/standin.mjs";
 import { previousRun, scorecardJson, scorecardMarkdown, summarise, writeScorecard } from "./lib/report.mjs";
 import { allTasks, smokeTasks } from "./tasks/index.mjs";
+import { loadOwnerSkills, installOwnerSkills, comparableSkillRun } from "./lib/owner-skills.mjs";
 
 const evalsDir = fileURLToPath(new URL("./", import.meta.url));
 
 function parseArgs(argv) {
-  const args = { model: "ollama", out: join(evalsDir, "results"), smoke: false, only: null, basePort: 0 };
+  const args = { model: "ollama", out: join(evalsDir, "results"), smoke: false, only: null, basePort: 0, skillPackages: [], skillSide: "none" };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
     if (flag === "--model") args.model = argv[++i];
@@ -32,12 +33,15 @@ function parseArgs(argv) {
     else if (flag === "--smoke") args.smoke = true;
     else if (flag === "--only") args.only = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
     else if (flag === "--base-port") args.basePort = Number(argv[++i]);
+    else if (flag === "--skill-package") { args.skillPackages.push(argv[++i]); if (args.skillSide === "none") args.skillSide = "with"; }
+    else if (flag === "--skill-side") args.skillSide = argv[++i];
   }
   return args;
 }
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
+  args.ownerSkills = await loadOwnerSkills(args.skillPackages, scratch(args), args.skillSide);
   const startedAt = new Date().toISOString();
 
   // The stand-in model runs for the smoke subset only; it proves the plumbing, never a model's quality.
@@ -74,8 +78,10 @@ async function main() {
 
   const finishedAt = new Date().toISOString();
   const current = scorecardJson({ model: { id: model.id, label: model.label }, startedAt, finishedAt, results, host: hostname() });
+  current.ownerSkills = args.ownerSkills.provenance;
   await mkdir(args.out, { recursive: true });
-  const previous = await previousRun(args.out, `${finishedAt.slice(0, 10)}.json`);
+  const earlier = await previousRun(args.out, `${finishedAt.slice(0, 10)}.json`);
+  const previous = earlier && comparableSkillRun(current, earlier.data) ? earlier : null;
   const { jsonPath, mdPath } = await writeScorecard(args.out, current, previous);
   process.stdout.write("\n" + scorecardMarkdown(current, previous) + "\n");
   process.stdout.write(`\nWrote ${jsonPath}\n      ${mdPath}\n`);
@@ -94,7 +100,7 @@ async function runOne({ task, model, modelBlock, standin, args, judge }) {
   if (task.needsTools && !model.branchTools) return { ...base, status: "n/a", reason: "this model answers in words only (cli-agent by design)", ms: 0 };
   if (modelBlock) return { ...base, status: statusFor(modelBlock), reason: modelBlock, ms: 0 };
 
-  const root = join(scratch(args), task.id);
+  const root = args.skillSide === "none" ? join(scratch(args), task.id) : join(scratch(args), args.skillSide, task.id);
   await rm(root, { recursive: true, force: true });
   const port = 0; // each engine binds a port the system picks as it starts (no gap for another program to take it)
   if (standin && task.script) standin.script = task.script; // the stand-in answers this task's script
@@ -102,6 +108,7 @@ async function runOne({ task, model, modelBlock, standin, args, judge }) {
   const started = Date.now();
   try {
     await withTimeout(ctx.start(), 90_000, "engine start");
+    await withTimeout(installOwnerSkills(ctx.engine, args.ownerSkills), 90_000, "isolated skill fixture");
     const outcome = await withTimeout(task.run(ctx), task.timeoutMs ?? 300_000, "task");
     const usage = await tokensUsed(ctx).catch(() => ({ tokens: null, estimated: false }));
     const checks = outcome.checks ?? [];

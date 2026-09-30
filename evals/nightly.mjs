@@ -79,10 +79,18 @@ async function main() {
   // 5. The full suite on each model, each into its own folder (its own page, with a trend against its previous night),
   //    then one page for the night with every model side by side.
   const cards = [], links = [];
-  for (const model of nightModels()) {
-    const { card, label } = await runModel(model);
+  const settings = nightSettings();
+  const packages = settings.skillPackages ?? [];
+  if (!Array.isArray(packages) || packages.length > 10 || packages.some((file) => typeof file !== "string" || !file))
+    throw new Error("nightly.local.json skillPackages must name at most ten explicit exported package paths.");
+  const baselines = new Map();
+  for (const model of nightModels(settings)) for (const side of packages.length ? ["without", "with"] : ["none"]) {
+    const { card, label } = await runModel(model, packages, side);
+    if (side === "without") baselines.set(model.name, card.ownerSkills?.setHash ?? null);
+    if (side === "with" && (!baselines.get(model.name) || baselines.get(model.name) !== card.ownerSkills?.setHash))
+      card.skillPairRefusal = "With/without corpora differ or the baseline is missing; do not infer a skill gain.";
     cards.push(card);
-    links.push(`[${label}](${folderOf(model.name)}/${date}.md)`);
+    links.push(`[${label}](${folderOf(model.name)}${side === "none" ? "" : "/" + side}/${date}.md)`);
   }
   if (!cards.some((card) => !card.missing)) { writeStub(`no model's suite wrote a scorecard (${cards.map((c) => `${c.model.label}: ${c.missing}`).join("; ")})`); process.exitCode = 1; }
   else {
@@ -94,18 +102,21 @@ async function main() {
 
 /* The models of a night: the one on this computer (EVAL_MODEL), plus a model on another machine when the runner's
    nightly.local.json (or EVAL_NIGHTLY_CONFIG) names one under "remote" (evals/README.md, "A model on another machine"). */
-function nightModels() {
-  const models = [{ name: MODEL }];
+function nightSettings() {
   const file = process.env.EVAL_NIGHTLY_CONFIG ?? join(RUNNER, "nightly.local.json");
-  const remote = existsSync(file) ? JSON.parse(readFileSync(file, "utf8")).remote : null;
+  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : {};
+}
+function nightModels(settings) {
+  const models = [{ name: MODEL }];
+  const remote = settings.remote;
   if (remote?.model) models.push({ name: remote.model, remote });
   return models;
 }
 const folderOf = (name) => name.replace(/[^a-z0-9.]+/gi, "-").toLowerCase();
 
 /* One model's suite. A remote model is reached through an SSH forward that is open only while its suite runs. */
-async function runModel(model) {
-  const out = join(evalsResults, folderOf(model.name));
+async function runModel(model, packages, side) {
+  const out = side === "none" ? join(evalsResults, folderOf(model.name)) : join(evalsResults, folderOf(model.name), side);
   mkdirSync(out, { recursive: true });
   let tunnel = null, env = {};
   if (model.remote) {
@@ -113,10 +124,17 @@ async function runModel(model) {
     catch (error) { return missing(model, `could not reach ${model.remote.sshHost}: ${error.message}`); }
   }
   try {
-    const outcome = run("node", ["evals/run.mjs", "--model", model.name, "--out", out], RUNNER, { env });
+    const fixtureArgs = packages.flatMap((file) => ["--skill-package", file]);
+    const began = Date.now();
+    const outcome = run("node", ["evals/run.mjs", "--model", model.name, "--out", out, ...fixtureArgs, "--skill-side", side], RUNNER, { env });
     const file = join(out, `${date}.json`);
     if (!existsSync(file)) return missing(model, `the run wrote no scorecard (exit ${outcome.status})`);
     const card = JSON.parse(readFileSync(file, "utf8"));
+    if (!Number.isFinite(Date.parse(card.startedAt)) || Date.parse(card.startedAt) < began || !Number.isFinite(Date.parse(card.finishedAt)))
+      return missing(model, "the suite did not write a fresh scorecard for this invocation");
+    if (side !== "none" && (card.ownerSkills?.side !== side || !card.ownerSkills?.setHash))
+      return missing(model, "the suite did not retain the selected skill fixture receipt");
+    if (side !== "none") card.model.label += ` · ${side} selected skill instructions`;
     return { card, label: card.model.label };
   } finally {
     await tunnel?.close();

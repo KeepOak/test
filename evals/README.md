@@ -18,6 +18,18 @@ npm run evals:smoke                 # the 3-task smoke subset, scripted stand-in
 A scorecard (JSON + a short Markdown table with a trend against the previous run) is written to `evals/results/`
 (or `--out <dir>`).
 
+## Explicit selected skill instructions
+
+The nightly dev clone can evaluate instructions from the owner's explicitly exported `.branchskill` files. Export selected skills through the existing Skills package export controls, keep the files outside the disposable evaluation scratch folder, and add their paths to `nightly.local.json` as `skillPackages` (at most ten). No installed owner database or locker is discovered or copied. Export packages contain the newest instructions, which can differ from the owner's active version; inspect the export before selecting it.
+
+The launcher runs each configured model twice: `without` and `with` the same selected corpus, with separate output folders. For an individually configured run, repeated `--skill-package <file>` options choose exports and `--skill-side with|without` chooses the side. Supplying packages defaults to `with`; leaving them out retains the ordinary run.
+
+Package checksums and size limits are checked before engines start. Only `SKILL.md` is repacked into each fresh throwaway engine, installed through the existing blocking skill scan, then explicitly activated from its switched-off state. No scan finding is acknowledged or bypassed. References, bundled tools, hooks, scripts and other resources are omitted. A skill that depends on them cannot be evaluated fully through this fixture.
+
+Scorecards retain corpus/package/document hashes, package versions, omitted file counts and the side, without serializing the instruction text or export paths. A changed corpus or side cannot supply the previous run's trend. A score records observed outcomes, never an assumed skill improvement. Skill instructions remain private data in the ignored throwaway engine folders and may influence task output; inspect results before sharing them. Selecting exports does not grant their declared permissions or access to their original owner's memory or credentials.
+
+Source-only delivery: no nightly run, engine, model, build or test was executed for this change. Actual skill loading and paired quality results require an authorized future run.
+
 ## Models — never a paid API
 
 - **`ollama`** (default): the best tool-capable model Ollama has on this computer. `ollama:<tag>` names one.
