@@ -84,6 +84,8 @@ const cards = [
   ["/api/comfort", { card: "mcp", values: { startupTimeoutSeconds: 20 } }, "comfort-mcp.startupTimeoutSeconds"],
   ["/api/knobs", { card: "limits", values: { maxModelRounds: 20 } }, "round-limit.maxModelRounds"],
   ["/api/knobs", { card: "limits", reset: true }, "round-limit.maxModelRounds"],
+  ["/api/knobs", { card: "limits", values: { maxSteps: "none" } }, "step-limit.maxSteps"],
+  ["/api/knobs", { card: "limits", reset: true }, "step-limit.maxSteps"],
   ["/api/knobs", { card: "limits", values: { maxTaskTokens: 400000 } }, "task-tokens.taskAllowance"],
   ["/api/knobs", { card: "limits", reset: true }, "task-tokens.taskAllowance"],
   // The switch families: every part that is a Settings setting, through its family's one route.
@@ -162,6 +164,7 @@ const unreadKeys = {
   "src/orchestration-modes.ts": "one record per orchestration hand-off",
   "src/people/groups.ts": "who may do what, per group",
   "src/personal/settings.ts": "the personal connector parts, none of them in the catalogue",
+  "src/personal/signin.ts": "one read-check result per personal connection (RES-408), none of them in the catalogue",
   "src/plugin-catalog.ts": "one record per plugin offer",
   "src/plugins.ts": "one record per plugin",
   "src/profile-roles.ts": "one record per profile",

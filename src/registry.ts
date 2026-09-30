@@ -15,6 +15,7 @@ import { underTask } from "./task-scope.js"; // household-followups
 import { reachOf, type ToolReach } from "./tool-reach.js"; // Q59
 import { cardSchema } from "./tool-cards.js"; // PLAT-191: tools listed from their cards until their part loads
 import { sourceOfTool } from "./tool-context-modes.js";
+import { handOnRefusal } from "./helper-tree.js"; // helper-lifecycle
 
 /** Tools `policyTarget` reads a target for by name rather than from a `url` or `path`. */
 const targetedByName: ReadonlySet<string> = new Set(["shell.execute", "shell.session.run", "shell.session.open"]);
@@ -337,6 +338,8 @@ export class ToolRegistry {
     if (!tool) throw new Error(`Unknown tool: ${name}`);
     if (!context.permissions.has(tool.permission))
       throw new Error(`Permission denied: ${tool.permission}`);
+    const withheld = handOnRefusal(name, context); // helper-lifecycle (src/helper-tree.ts)
+    if (withheld) throw new Error(withheld);
     context.budget.step(context.signal);
     const parsed = tool.parameters.parse(args);
     // Q12: a call that would change Branch's own source is held to its written contract first. It is
