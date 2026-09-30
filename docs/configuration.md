@@ -10092,8 +10092,9 @@ included (`src/personal/guard.ts`):
   this computer's own requests, and Branch is handed the path the door checked rather than the raw one.
 
 **What each card saves.** Your own accounts (one record each for Google, Microsoft and Spotify): `clientId`,
-`clientSecretName` (the name of a secret, or empty), `tenant` (Microsoft only, `common` by default) and `drafts`
-(off). Searching X: `keyName` (`XAI_API_KEY`) and `model` (`grok-4.5`). Home Assistant: `url`, `tokenName`
+`clientSecretName` (the name of a secret, or empty), `tenant` (Microsoft only, `common` by default), `drafts`
+(off), `calendarWrite` (off; turning it on asks the provider for calendar write access again before any event is changed)
+and `mailSend` (off; its own send-only access, never implied by `drafts`). Searching X: `keyName` (`XAI_API_KEY`) and `model` (`grok-4.5`). Home Assistant: `url`, `tokenName`
 (`HOMEASSISTANT_TOKEN`) and `domains`. Files into chats: `maxMegabytes` (20). The spoken briefing: `calendar`, `mail`
 and `morningBrief` (all on) and `maxCharacters` (1500). The email inbox: `host`, `port` (993), `user`, `passwordName`
 (`EMAIL_PASSWORD`) and `folder` (`mail-attachments`). The webhook address: `program` (`cloudflared`) and
