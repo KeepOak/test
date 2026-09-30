@@ -8,8 +8,10 @@ import { outsideSourceOf } from "../outside-origin.js";
 import { underProject } from "../project-scope.js";
 import { defaultProjectId } from "../projects.js";
 import { inWorktree } from "../coding/worktrees.js";
+import { GitRunner, type GitRunOptions, type GitOutcome } from "../integrations/git-run.js";
 
-type Deps = { store: Store; runtime: Runtime };
+type Deps = { store: Store; runtime: Runtime; git?: (input: GitRunOptions, signal: AbortSignal) => Promise<GitOutcome> };
+const identityGit = new GitRunner({ timeoutMs: 10_000 });
 const refused = (why: string): never => { throw new Error(`This interrupted step was not retried: ${why}. Its original context must be reconciled before continuing.`); };
 const samePath = (a: string, b: string) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 
@@ -69,7 +71,7 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
   visit(runId);
   // Parent links constrain authority, but do not prove this task was assigned its parent's copy.
   // Only same-conversation/project continuations may carry a recorded copy identity forward.
-  let copy: string | null = null, branch: string | null = null;
+  let copy: string | null = null, branch: string | null = null, base: string | null = null;
   const copySeen = new Set<string>();
   let id: string | null = runId, requiresCopy = Number(depth) > 0;
   while (id !== null) {
@@ -84,12 +86,13 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     if (events.some((event) => ["worktree.removed", "worktree.missing", "worktree.skipped"].includes(event.kind)))
       refused("the task's original working copy is unavailable or was not established");
     for (const event of events.filter((event) => event.kind === "worktree.used")) {
-      const path = event.data.path, assignedBranch = event.data.branch;
-      if (typeof path !== "string" || !path || typeof assignedBranch !== "string" || !assignedBranch)
+      const path = event.data.path, assignedBranch = event.data.branch, assignedBase = event.data.base;
+      if (typeof path !== "string" || !path || typeof assignedBranch !== "string" || !assignedBranch
+        || typeof assignedBase !== "string" || !/^[a-f0-9]{40}([a-f0-9]{24})?$/.test(assignedBase))
         refused("the task's complete working-copy identity is unavailable");
-      if ((copy !== null && copy !== path) || (branch !== null && branch !== assignedBranch))
+      if ((copy !== null && copy !== path) || (branch !== null && branch !== assignedBranch) || (base !== null && base !== assignedBase))
         refused("the task's recorded working-copy assignments disagree");
-      copy = path; branch = assignedBranch;
+      copy = path; branch = assignedBranch; base = assignedBase;
     }
     const previous = new Set<string>();
     for (const key of ["resumedFrom", "originFrom"]) {
@@ -105,23 +108,42 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     id = previous.size ? [...previous][0]! : null;
   }
   if (requiresCopy && copy === null) refused("the helper's own retained working-copy assignment is unknown");
-  const root = deps.runtime.context({ permissions: [] }).workspace;
+  const originalContext = deps.runtime.context({ permissions: [] });
+  const root = originalContext.workspace;
+  const taskSignal = deps.runtime.activeRunSignal(runId) ?? originalContext.signal;
   let workspace = root;
   if (copy !== null) {
     if (isAbsolute(copy) || /[\\:\0]/.test(copy) || copy.split("/").some((part) => !part || part === "." || part === ".."))
       refused("the recorded working-copy path is invalid");
-    const requested = resolve(root, copy), rootReal = await realpath(root);
+    const requested = resolve(root, copy), rootReal = await realpath(root).catch(() => refused("the original workspace is unavailable"));
     const copyReal = await realpath(requested).catch(() => null);
     const from = copyReal ? relative(rootReal, copyReal) : "";
     if (!copyReal || !from || isAbsolute(from) || from === ".." || from.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
-      || !samePath(copyReal, resolve(rootReal, copy)) || !(await stat(copyReal)).isDirectory())
+      || !samePath(copyReal, resolve(rootReal, copy)) || !(await stat(copyReal).catch(() => null))?.isDirectory())
       refused("the retained working copy could not be verified inside the workspace");
+    if (!branch || !base) refused("the retained copy's branch and baseline are unknown");
+    // These are bounded local identity reads through the established hook-disabled Git seam, never a fetch or write.
+    const signal = AbortSignal.any([taskSignal, AbortSignal.timeout(15_000)]);
+    const git = deps.git ?? ((input: GitRunOptions, stop: AbortSignal) => identityGit.run(input, stop));
+    const read = async (args: string[]) => {
+      try { return await git({ cwd: copyReal, args, timeoutMs: 10_000, maxOutputBytes: 8192 }, signal); }
+      catch { return refused("the retained copy's local identity could not be read"); }
+    };
+    const top = await read(["rev-parse", "--show-toplevel"]);
+    const actualTop = top.status === "completed" && top.exitCode === 0 && !top.truncated
+      ? await realpath(top.stdout.trim()).catch(() => null) : null;
+    const line = await read(["symbolic-ref", "--quiet", "--short", "HEAD"]);
+    const ancestor = await read(["merge-base", "--is-ancestor", base, "HEAD"]);
+    if (!actualTop || !samePath(actualTop, copyReal) || line.status !== "completed" || line.exitCode !== 0
+      || line.truncated || line.stdout.trim() !== branch || ancestor.status !== "completed" || ancestor.exitCode !== 0 || ancestor.truncated)
+      refused("the retained working copy no longer proves its recorded branch and baseline");
+    signal.throwIfAborted();
     workspace = copyReal;
   }
   const origin = runOrigin(deps.store, runId), outside = outsideSourceOf(deps.store, runId);
   const scope = copy;
   return underProject(project, () => {
-    const context = { ...deps.runtime.context({ runId, permissions: [...permissions], depth: Number(depth),
+    const context = { ...deps.runtime.context({ runId, signal: taskSignal, permissions: [...permissions], depth: Number(depth),
       ...(outside ? { source: outside } : {}), ...(typeof own.agent === "string" ? { agent: own.agent } : {}),
       ...(own.delegates === true ? { delegates: true } : {}), ...(own.dryRun === true ? { dryRun: true } : {}) }), workspace };
     // Temporary conversations keep their original inability to write durable memory.
