@@ -157,8 +157,9 @@ test("Discord: a stranger is turned away and the token stays out of what the app
   await until(() => adapter.botName(), "ready");
   connection.send({ op: 0, s: 2, t: "MESSAGE_CREATE", d: { id: "m1", channel_id: "dm9",
     content: "let me in", author: { id: "6666", username: "mallory" }, mentions: [] } });
-  const refusal = await until(() => rest.calls[0], "refusal");
-  assert.equal(refusal.body.content, "This assistant is private.");
+  // UP-CHAT-008: a block is silent, so it does not even confirm the bot is there.
+  await delay(300);
+  assert.equal(rest.calls.length, 0, "nothing is sent to a stranger");
   assert.equal(provider.requests.length, 0, "a stranger never reaches the model");
 
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
@@ -315,8 +316,9 @@ test("Email: a stranger is turned away, and the mail helpers read what a server 
     imap: { host: "127.0.0.1", port: mailbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 },
     smtp: { host: "127.0.0.1", port: outbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 } });
   await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["alice@example.com"] });
-  const refusal = await until(() => outbox.messages[0], "refusal sent");
-  assert.equal(refusal.body.trim(), "This assistant is private.");
+  // UP-CHAT-008: a block is silent: no mail goes back to the stranger.
+  await delay(500);
+  assert.equal(outbox.messages.length, 0);
   assert.equal(provider.requests.length, 0);
   await adapter.stop();
 
@@ -337,6 +339,40 @@ test("Email: a stranger is turned away, and the mail helpers read what a server 
   assert.equal(handle("short@example.com", "who"), "short@example.com");
   assert.match(handle("a".repeat(70) + "@example.com", "who"), /^who:[0-9a-f]{32}$/);
   assert.equal(toMrkdwn("keep ```**this**``` as is"), "keep ```**this**``` as is");
+});
+
+test("Email: a forged From is a stranger, even for an address on the list, and is sent nothing, not even a pairing code", async (t) => {
+  for (const [label, auth, pairing] of [["no header", [], false], ["a fail", ["mx.example.net; dmarc=fail header.from=example.com"], true],
+    ["a pass from another server below the real one", ["mx.example.net; spf=softfail", "attacker.test; dmarc=pass header.from=example.com"], true]]) {
+    const { app, provider } = await fixture(t);
+    const mailbox = await fakeImap(t, { auth });
+    const outbox = await fakeSmtp(t);
+    const adapter = new EmailAdapter({ id: "email", address: "assistant@example.com", pollMs: 50,
+      imap: { host: "127.0.0.1", port: mailbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 },
+      smtp: { host: "127.0.0.1", port: outbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 } });
+    await app.channels.attach(adapter, { activation: "always", pairing, allowlist: ["alice@example.com"] });
+    // UP-CHAT-008 (#1054): a block is silent, so a forged From gets no mail back; the mail is still read and set aside.
+    await until(() => mailbox.stored.some((command) => /STORE 1 \+FLAGS \(\\Seen\)/.test(command)), `mail read (${label})`);
+    await delay(300);
+    assert.equal(outbox.messages.length, 0, `${label}: nothing is sent to an address nobody proved`);
+    assert.equal(app.channels.summary().pending.length, 0, `${label}: no pairing request for an address nobody proved`);
+    assert.equal(provider.requests.length, 0, `${label}: the forged mail never reaches the model`);
+    await adapter.stop();
+  }
+});
+
+test("Email: with the owner's server named, only its verdict is read", async (t) => {
+  const { app, provider } = await fixture(t);
+  const mailbox = await fakeImap(t, { auth: ["mx.example.net; dmarc=fail header.from=example.com", "mx.google.com; dmarc=pass header.from=example.com"] });
+  const outbox = await fakeSmtp(t);
+  const adapter = new EmailAdapter({ id: "email", address: "assistant@example.com", pollMs: 50, authservId: "mx.google.com",
+    imap: { host: "127.0.0.1", port: mailbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 },
+    smtp: { host: "127.0.0.1", port: outbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 } });
+  await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["alice@example.com"] });
+  const reply = await until(() => outbox.messages[0], "reply sent");
+  assert.equal(reply.body.trim(), "Echo: How much is the fee?");
+  assert.equal(provider.requests.length, 1);
+  await adapter.stop();
 });
 
 test("a mail with accents and emoji is read whole, since IMAP counts bytes (CHAT-003)", async (t) => {
@@ -403,10 +439,14 @@ test("a channel that is refused says so in words, and never repeats the secret i
   await adapter.stop();
 });
 
-/** A stand-in IMAP server holding one unread message. */
+/**
+ * A stand-in IMAP server holding one unread message. As a real receiving server does, it stamps the message with an
+ * Authentication-Results header, here a DMARC pass for example.com, unless the test gives other lines (`auth`).
+ */
 async function fakeImap(t, options = {}) {
   const stored = [];
-  const headers = `From: ${options.from ?? "Alice <alice@example.com>"}\r\nSubject: A question\r\nMessage-ID: <first@example.com>\r\n`;
+  const auth = (options.auth ?? ["mx.example.net; dmarc=pass header.from=example.com"]).map((line) => `Authentication-Results: ${line}\r\n`).join("");
+  const headers = `${auth}From:${options.from ?? "Alice <alice@example.com>"}\r\nSubject: A question\r\nMessage-ID: <first@example.com>\r\n`;
   const body = options.body ?? "How much is the fee?";
   let fetched = false;
   const server = createSocketServer((socket) => {

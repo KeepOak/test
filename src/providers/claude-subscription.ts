@@ -13,7 +13,23 @@ import { isOutOfRoomThinking } from "../provider-stream.js";
 import { NativeProcess, type NativeInvocation, type NativeSpawn, type NativeEvent } from "./claude-subscription-process.js";
 import { boundedNativeJson, nativeGeneration, nativeHistory, nativeInventory, type NativeFrame } from "./claude-subscription-history.js";
 
-export interface ClaudeSubscriptionOptions { owner: string; model?: string; accountHome?: AccountHome; command?: string; timeoutMs?: number }
+/**
+ * The design of this transport (an inert native Claude Code process per generation behind a one-request loopback
+ * admission relay, stream-json history replay with zero-turn acknowledgments, and the same native flags) follows the
+ * Hermes Agent Claude subscription DirectSDK plugin, MIT licensed, Copyright (c) 2026 Nous Research and contributors:
+ * https://github.com/NousResearch/hermes-plugin-claude-subscription-directsdk (directsdk.py). Its idle deadline, which
+ * starts again on every native event (directsdk.py `receive`), is the one used here. See THIRD_PARTY_NOTICES.md.
+ */
+export interface ClaudeSubscriptionOptions {
+  owner: string; model?: string; accountHome?: AccountHome; command?: string;
+  /** How long the reply may go quiet: no native event and no streamed chunk. Every one of them starts it again. */
+  timeoutMs?: number;
+  /** The longest one reply may run in all, however steadily it streams. */
+  maxDurationMs?: number;
+}
+/** A long Opus reply streams for many minutes; only silence this long stops it (Hermes uses the same 180 s). */
+export const claudeSubscriptionIdleMs = 180_000;
+export const claudeSubscriptionMaxDurationMs = 3_600_000;
 /** Injection is confined to explicit in-process protocol fixtures, never persisted account or model settings. */
 export interface ClaudeSubscriptionDependencies { spawn?: NativeSpawn; connect?: NativeConnector }
 function authorized(owner: string): void {
@@ -143,6 +159,8 @@ export class ClaudeSubscriptionProvider implements Provider {
       throw new Error("Claude subscription account home must be its owner's absolute CLAUDE_CONFIG_DIR");
     if (options.timeoutMs !== undefined && (!Number.isInteger(options.timeoutMs) || options.timeoutMs < 100 || options.timeoutMs > 3600000))
       throw new Error("Claude subscription timeout must be between 100 milliseconds and one hour");
+    if (options.maxDurationMs !== undefined && (!Number.isInteger(options.maxDurationMs) || options.maxDurationMs < 100 || options.maxDurationMs > 4 * 3600000))
+      throw new Error("Claude subscription longest reply time must be between 100 milliseconds and four hours");
     this.model = options.model ?? claudeDefaultModel;
     this.options = Object.freeze({ ...options, ...(options.accountHome ? { accountHome: Object.freeze({ ...options.accountHome }) } : {}) });
   }
@@ -150,8 +168,13 @@ export class ClaudeSubscriptionProvider implements Provider {
     authorized(this.options.owner); request.signal.throwIfAborted();
     nativeHistory(request); nativeInventory(request.tools); nativeGeneration(request, nativeInventory(request.tools));
     const controller = new AbortController(), signal = AbortSignal.any([request.signal, controller.signal]);
-    const timer = setTimeout(() => controller.abort(new Error("Claude subscription took too long and was stopped")), this.options.timeoutMs ?? 180000);
-    timer.unref();
+    // An idle deadline, started again by every native event and every streamed chunk, and one generous cap on the whole.
+    const idle = setTimeout(() => controller.abort(new Error("Claude subscription was silent for too long and was stopped")),
+      this.options.timeoutMs ?? claudeSubscriptionIdleMs);
+    const cap = setTimeout(() => controller.abort(new Error("Claude subscription reply ran past its longest allowed time and was stopped")),
+      this.options.maxDurationMs ?? claudeSubscriptionMaxDurationMs);
+    idle.unref(); cap.unref();
+    const alive = (): void => { if (!signal.aborted) idle.refresh(); };
     const scope = { ...request, signal }, authorize = (): void => { signal.throwIfAborted(); authorized(this.options.owner); };
     let root: string | undefined, native: NativeProcess | undefined, relay: NativeAdmission | undefined;
     const stop = (): void => { void native?.stop().catch(() => {}); };
@@ -159,16 +182,18 @@ export class ClaudeSubscriptionProvider implements Provider {
     try {
       const parent = join(tmpdir(), "Codex-session-files"); await mkdir(parent, { recursive: true, mode: 0o700 });
       root = await requestFolder(parent, this.options, request);
-      relay = new NativeAdmission(scope, nativeInventory(request.tools), authorize, this.dependencies.connect);
+      relay = new NativeAdmission(scope, nativeInventory(request.tools), authorize, this.dependencies.connect, alive);
       await relay.listen(); authorize();
       const input = await invocation(root, this.options, scope, relay); authorize();
-      native = new NativeProcess(input.invocation, this.dependencies.spawn);
+      native = new NativeProcess(input.invocation, this.dependencies.spawn, alive);
       await replay(native, input.frames, signal, authorize);
       const result = completed(relay, await nativeResult(native, signal)); authorize();
-      const rateEvents = native.rateEvents(); if (rateEvents) this.onOutput?.(rateEvents);
-      authorize(); return result;
+      return result;
     } finally {
-      clearTimeout(timer); signal.removeEventListener("abort", stop); controller.abort();
+      clearTimeout(idle); clearTimeout(cap); signal.removeEventListener("abort", stop); controller.abort();
+      // Plan usage is published whatever the outcome: a refused (429) or failed reply still says how much is left.
+      const rateEvents = native?.rateEvents();
+      if (rateEvents) try { this.onOutput?.(rateEvents); } catch { /* the reply's own outcome stands */ }
       try { await native?.stop(); } finally {
         try { await relay?.close(); } finally { if (root) try { await removePrivateRequest(root); } finally { inUse.delete(root); } }
       }
