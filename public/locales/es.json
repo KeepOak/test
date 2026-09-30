@@ -7347,6 +7347,7 @@
   "window.flows.chw.default-answers": "Aquí responde tu Trunk predeterminado.",
   "window.flows.chw.default-trunk": "predeterminado",
   "window.flows.chw.digit": "Cifra {n}",
+  "window.flows.chw.dm-policy-hint": "Solo mensajes directos; las reglas de los grupos no cambian. «Solo yo» requiere que tu propia cuenta verificada esté indicada en esta aplicación. El acceso para el espacio de trabajo aún no está disponible.",
   "window.flows.chw.found-bot": "Bot encontrado: @{name}",
   "window.flows.chw.get-app": "Consigue la app de {name}",
   "window.flows.chw.link": "Vincular",
