@@ -1692,7 +1692,8 @@ ${run.output.slice(0, 6000)}`;
   ): Promise<Run> {
     if (options.deferredFrom) {
       const saved = this.deferredScope(options.deferredFrom, options.sessionId);
-      options = { ...options, ...(saved.dryRun ? { dryRun: true } : {}) };
+      options = { ...options, source: saved.source, originFrom: options.deferredFrom,
+        ...(saved.dryRun ? { dryRun: true } : {}) };
     }
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
@@ -1880,11 +1881,11 @@ ${run.output.slice(0, 6000)}`;
       permissions: [...context.permissions].sort(),
       // Only an ordinary root can be reconstructed by this deferred queue. Helpers, scoped
       // memory, borrowed copies and other execution shapes require their original placement.
-      deferredScope: { version: 4, credentials: trunk && !trunk.roomTurn
+      deferredScope: { version: 5, source: context.source ?? "owner", credentials: trunk && !trunk.roomTurn
         ? { trunkId: trunk.trunkId, agent: trunk.agent, owners: trunk.owners === true, keys: context.trunkKeys } : null, workspace: this.workspace, root: !parent && context.depth === 0 && (!context.agent || (!!trunk && context.agent === trunk.agent))
         && (!context.trunk || context.trunk === trunk?.trunkId) && (!context.trunkKeys || !!trunk)
         && (!trunk || !trunk.roomTurn) && !currentAccountCall()?.trunk && !context.isolated && !context.ownCopy && !options.lentTo
-        && context.workspace === this.workspace && (context.source ?? "owner") === "owner"
+        && context.workspace === this.workspace
         && !currentPerson() && !startedWithShortLivedKey() && (!options.originFrom || !!options.deferredFrom)
         && !options.resumeFrom && !options.continuing, dryRun: context.dryRun === true },
       // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
@@ -2115,7 +2116,7 @@ ${run.output.slice(0, 6000)}`;
     return this.store.events(runId).find((event) => event.kind === "run.started")?.data.dryRun === true;
   }
   /** Deferred answers only resume a durably identified ordinary root; other shapes remain held. */
-  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean; credentials: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null } {
+  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean; source: RunSource; credentials: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null } {
     const run = runId ? this.store.run(runId) : null;
     const events = runId ? this.store.events(runId) : [];
     const started = events.find((event) => event.kind === "run.started")?.data;
@@ -2124,7 +2125,7 @@ ${run.output.slice(0, 6000)}`;
       ? value as Record<string, unknown> : null;
     if (!run || run.owner !== this.owner || run.sessionId !== sessionId
       || !saved
-      || saved.version !== 4 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
+      || saved.version !== 5 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
       || !Array.isArray(started?.permissions) || !started.permissions.every((permission) => typeof permission === "string")
       || events.some((event) => event.kind === "worktree.used" || event.kind === "worktree.inherited"))
       throw new Error("This handed-over task cannot continue safely because its saved effective scope or workspace cannot be recovered. The job remains unanswered; reconcile its original task first.");
@@ -2141,7 +2142,12 @@ ${run.output.slice(0, 6000)}`;
         throw new Error("The handed-over task's saved credential identity or key restrictions are invalid; the job remains unanswered.");
       credentials = { trunkId: record.trunkId, agent: record.agent, owners: record.owners, keys: keys.data };
     }
-    return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun, credentials };
+    const sources: readonly string[] = ["owner", "trigger", "schedule", "mcp", "a2a", "acp", "channel"];
+    const origin = runOrigin(this.store, run.id);
+    if (typeof saved.source !== "string" || !sources.includes(saved.source) || saved.source !== started.source
+      || saved.source !== origin.source || origin.shortLivedKey || origin.personProfileId || origin.lentTo)
+      throw new Error("The handed-over task's original source or caller scope cannot be recovered safely; the job remains unanswered.");
+    return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun, source: saved.source as RunSource, credentials };
   }
   private checkDeferredCredentials(saved: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null, current: TrunkRunShape | null): void {
     // Equality deliberately holds changed scopes: neither a different identity nor newly added
