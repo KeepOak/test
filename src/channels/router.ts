@@ -48,6 +48,7 @@ import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
 import { ModelPicker, staleModelMenu } from "./model-picker.js";
 import { listModels } from "../model-switch.js";
+import { PersonalMainThread, personalMainTurn } from './personal-main.js';
 
 /**
  * Messaging channels (Telegram first) deliver messages from chats into conversations. Each chat
@@ -412,6 +413,18 @@ export class ChannelRouter {
   bindingFor: (channel: string, chatId: string) => string | null = () => null;
   /** The Trunk a chat with no binding starts its thread with: the default Trunk. `createBranch` connects it. */
   defaultTrunk: () => string | null = () => null;
+  personalMainTarget: () => { sessionId: string; trunkId: string } | null = () => null;
+  private personalMain() {
+    return new PersonalMainThread(this.store, this.runtime.owner, this.personalMainTarget, (channel, sender) =>
+      this.adapters.get(channel)?.adapter.kind === 'telegram' && this.pair(channel, sender)?.status === 'approved'
+      && this.ownerFullFrom({ channel, senderId: sender, chatKind: 'direct' }));
+  }
+  personalMainView() {
+    return { ...this.personalMain().view(), accounts: this.pairs(this.runtime.owner).filter((pair) =>
+      pair.status === 'approved' && this.adapters.get(pair.channel)?.adapter.kind === 'telegram'
+      && this.ownAccount(pair.channel, pair.senderId)).map((pair) => ({ channel: pair.channel, sender: pair.senderId, name: pair.name })) };
+  }
+  setPersonalMain(input: unknown) { return this.personalMain().set(input); }
   /** Like trunkReach, for a Trunk a new thread is about to start with. */
   trunkIdReach: (channel: string, trunkId: string) => string | null = () => null;
   /** The Trunk a conversation is a thread with, written on the chat's record. */
@@ -706,6 +719,9 @@ export class ChannelRouter {
   link(owner: string, input: unknown) {
     const { channel, chatId, sessionId } = z.object({ channel: z.string().min(1).max(64), chatId: z.string().min(1).max(64), sessionId: z.string().uuid() }).strict().parse(input);
     if (!this.store.ownsSession(owner, sessionId)) throw new Error("Session not found");
+    const personal = this.personalMain().saved();
+    if (personal && (personal.sessionId === sessionId || this.personalMain().matches(channel, chatId)))
+      throw new Error('Disconnect personal main-thread sharing before changing this chat link.');
     const trunkId = this.trunkOfConversation(sessionId);
     // defaulttrunk: the conversation the chat had before is kept in its thread's history (src/channels/threads.ts).
     saveChatThread(this.store, owner, channel, chatId, { sessionId, updatedAt: new Date().toISOString(), linked: true,
@@ -794,6 +810,8 @@ export class ChannelRouter {
   }
   /** The conversation this chat is carrying on, when there is one. */
   private sessionFor(channel: string, chatId: string): string | undefined {
+    const main = this.personalMain().session(channel, chatId);
+    if (main) return main;
     const owner = this.runtime.owner;
     const saved = this.store.get("settings", owner, `channel-session:${channel}:${chatId}`)?.data as { sessionId?: string } | undefined;
     return saved?.sessionId && this.store.ownsSession(owner, saved.sessionId) ? saved.sessionId : undefined;
@@ -813,6 +831,10 @@ export class ChannelRouter {
      *  before a chat's own yes may answer a question about what one of the owner's lines granted. */
     from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined },
   ): Promise<{ decision: string; tool: string; refusal?: string; sessionId?: string; show?: WaitingQuestion | undefined; runId?: string } | null> {
+    if (this.personalMain().matches(channel, chatId)) {
+      if (!from?.senderId || !from.chatKind) return null;
+      this.personalMain().assertMessage({ channel, chatId, senderId: from.senderId, chatKind: from.chatKind, caughtUp: from.caughtUp });
+    }
     const read = readApprovalAnswer(value);
     if (!read) return null;
     const sessionId = this.sessionFor(channel, chatId);
@@ -944,6 +966,7 @@ export class ChannelRouter {
   }
 
   private async answer(message: InboundMessage): Promise<Outcome> {
+    try { this.personalMain().assertMessage(message); } catch { return 'rejected'; }
     // Telegram sends /start when somebody opens the bot: a welcome, answered here without asking the model.
     if (startCommand.test(message.text.trim()) && !message.voice) return this.welcome(message);
     // ---- bucket 12: one of the owner's saved commands becomes the message it stands for ----
@@ -1276,6 +1299,7 @@ export class ChannelRouter {
   }
   /** Keeps the chat in the list of chats, but pointed at no conversation. */
   private forgetSession(channel: string, chatId: string): void {
+    if (this.personalMain().matches(channel, chatId)) throw new Error('Disconnect personal main-thread sharing in the owner window before starting a separate Telegram thread.');
     freshThread(this.store, this.runtime.owner, channel, chatId); // defaulttrunk: the conversation it had is kept in `earlier`
   }
   /**
@@ -1498,12 +1522,15 @@ export class ChannelRouter {
       // started in the window gets; every other chat cannot prove who is typing, so its task is never the owner's own.
       const owners = this.ownerFullFrom(message);
       const mode = owners ? this.ownerChatMode(sessionId) : null;
-      const run = await this.runtime.run({
+      this.personalMain().assertMessage(message);
+      const run = await personalMainTurn(this.store, this.runtime.owner, sessionId, () => this.runtime.run({
         prompt: [heard.prompt, ...files.map((file) => `[attached file: ${file}]`)].filter(Boolean).join("\n") || "Please inspect the attached picture.", ...(images.length ? { images } : {}), ...(sessionId ? { sessionId } : trunkId ? { trunkId } : {}), permissions: this.chatPermissions(message),
         source: owners ? "owner" : "channel", ...(mode ? { conversationMode: mode } : {}),
         // Which app it came in on, for the model's line saying where it runs (src/environment.ts).
         channel: chatAppName(this.adapters.get(message.channel)?.adapter.kind ?? message.channel),
         onStarted: (started) => {
+          if (this.personalMain().matches(message.channel, message.chatId)) this.store.event(started.id, 'personal.main',
+            { channel: message.channel, sender: message.senderId, sessionId: started.sessionId });
           // mac3/never-break: a task a chat started is left for the chat app to send again after a restart.
           this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId,
             senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true,
@@ -1518,7 +1545,7 @@ export class ChannelRouter {
           if (!firstWords && turn.runId) { firstWords = true; this.store.event(turn.runId, "channel.first_words", { ms: Date.now() - receivedAt }); }
           turn.reply?.text(delta);
         },
-      });
+      }));
       const outcome = await this.finishTurn(turn, run, heard.quoted);
       this.store.event(run.id, "channel.sent", { ms: Date.now() - receivedAt });
       return outcome;
@@ -1563,7 +1590,7 @@ export class ChannelRouter {
     const message = turn.messages[0]!, live = turn.live;
     // defaulttrunk: the chat's one thread, with the Trunk it is with; whatever else the record holds is kept.
     const trunkId = this.trunkOfConversation(run.sessionId);
-    saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
+    if (!this.store.events(run.id).some((event) => event.kind === 'personal.main')) saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
       ...(trunkId ? { trunkId } : {}) });
     // hot-update: a newer engine took this task over and carries it on; its answer goes to the chat from there

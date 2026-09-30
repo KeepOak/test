@@ -171,6 +171,7 @@ import { handlesSkillInstallsPath, skillInstallsApi } from "./skill-installs.js"
 import { PolicyRememberSchema, nextPolicy, policyPresets, readPolicy, savePolicy } from "./policy.js";
 import { looseningRefusal, policyChangeRefusal, withoutConfirm } from "./policy-change-guard.js"; // Q257
 import { PrivacyChangeRefused } from "./privacy-guard.js"; // the privacy checks are held to the same yes
+import { personalMainTurn } from './channels/personal-main.js';
 import { mayAnswerHere, nothingWaitingRefusal, personConversation, personTaskHere, unnamedAnswerRefusal } from "./household-approvals.js"; // Q257, Q259
 import { householdStateParts, ownerStateParts } from "./household-state.js"; // Q258
 import { archiveBodyLimit } from "./session-library.js";
@@ -2095,7 +2096,7 @@ async function api(
     let userMessageId: number | undefined;
     // defaulttrunk: a new conversation that names nobody is a thread with the default Trunk (a temporary one stays nobody's).
     const home = !input.sessionId && !input.temporary ? app.trunks.homeForNew() : null;
-    const run = await runForCurrentPerson(app, {
+    const run = await personalMainTurn(app.store, app.runtime.owner, input.sessionId, () => runForCurrentPerson(app, {
       prompt: input.prompt,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(home ? { trunkId: home } : {}),
@@ -2123,7 +2124,7 @@ async function api(
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
       // works (runtime.thoughtsOf); the words themselves still arrive with the finished answer, as before.
       onTextDelta: () => undefined,
-    });
+    }));
     return userMessageId !== undefined ? { ...run, userMessageId } : run;
   }
   // phase2/panels: what the side panel's Browser and Terminal tabs show (src/panels-work.ts); owner only.
@@ -3139,6 +3140,18 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === '/api/channels/personal-main') {
+    if (throughDoor(request) || startedWithShortLivedKey() || request.headers['x-branch-origin'] !== 'window')
+      throw new HttpError(403, 'Personal main-thread sharing is managed in the owner window on this computer.');
+    if (app.sessionLock.locked() || lockdownActive(app.store, owner)) throw new HttpError(423, 'Unlock Branch and leave Lockdown before sharing your main thread.');
+    if (request.method === 'GET') return app.channels.personalMainView();
+    if (request.method !== 'POST') throw new HttpError(405, 'Use GET or POST.');
+    const { pin, ...settings } = z.object({ pin: z.string().max(64).optional(), on: z.boolean(),
+      channel: z.string().max(64).optional(), sender: z.string().max(20).optional(),
+      sessionId: z.string().uuid().optional(), trunkId: z.string().uuid().optional() }).strict().parse(await readBody(request));
+    if (app.sessionLock.pinSet()) await appLockAnswer(async () => app.sessionLock.unlock({ pin }));
+    return app.channels.setPersonalMain(settings);
+  }
   if (path === "/api/channels/formatting") {
     if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
