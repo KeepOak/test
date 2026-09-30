@@ -112,14 +112,14 @@ function play(pcm16) {
 
 /* Set before the engine is asked, so a second press while the first is on its way makes no second task. */
 let asking = false;
-async function press() {
+async function press(stillWanted = () => true) {
   closePop();
   if (L.phase !== "idle" || asking) return;
   asking = true;
   const asked = hooks.state().sessionId ?? null;
   let opened;
   try { opened = await api("voice/live", { sessionId: asked }); } catch (error) { toast(error.message); return; } finally { asking = false; }
-  if (L.phase !== "idle") { api(`runs/${encodeURIComponent(opened.runId)}/cancel`, {}).catch((error) => toast(error.message)); return; }
+  if (L.phase !== "idle" || !stillWanted()) { api(`runs/${encodeURIComponent(opened.runId)}/cancel`, {}).catch((error) => toast(error.message)); return; }
   Object.assign(L, fresh(), { phase: "starting", call: ++calls, runId: opened.runId, sessionId: opened.sessionId, service: opened.plan?.service ?? null, note: opened.plan?.reason ?? "" });
   draw();
   connect();
@@ -200,12 +200,13 @@ let shortcutTaking = false, shortcutState = null;
 async function takeShortcut() {
   if (!E.loaded || shortcutTaking || !window.branchDesktop?.takeTalkShortcut) return;
   shortcutTaking = true;
-  const profiles = E.profiles, state = E.state;
+  const profiles = E.profiles, state = E.state, sessionId = hooks.state().sessionId;
+  const freshPress = () => profiles === E.profiles && state === E.state && sessionId === hooks.state().sessionId &&
+    E.profiles?.isOwner === true && !E.state?.lock?.locked && !document.querySelector(".locked, .locked-b17, .dlg");
   try {
     const wanted = await window.branchDesktop.takeTalkShortcut();
-    if (!wanted || profiles !== E.profiles || state !== E.state || E.profiles?.isOwner !== true ||
-      E.state?.lock?.locked || document.querySelector(".locked, .locked-b17, .dlg")) return;
-    if (L.phase !== "idle") stop(); else void press();
+    if (!wanted || !freshPress()) return;
+    if (L.phase !== "idle") stop(); else void press(freshPress);
   } catch { /* A retired shell or locked page does not start recording. */ }
   finally { shortcutTaking = false; }
 }
