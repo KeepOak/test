@@ -80,7 +80,8 @@ const ImportSchema = z.object({ items: z.array(z.string().regex(/^[0-9a-f]{32}$/
 /** The trees to read and which assistant they belong to, for what the owner asked for. */
 async function opened(body: z.infer<typeof SourceRequestSchema>, options: PlaceInput): Promise<{ source: MoveInSource; input: ScanInput }> {
   if (!body.path && !body.archive) {
-    const place = placesFor(options).find((entry) => entry.source === body.source)!;
+    const place = placesFor(options).find((entry) => entry.source === body.source);
+    if (!place) throw new MoveInApiError(400, "Choose your ChatGPT export folder or zip file to preview it");
     return { source: place.source, input: placeInput(place) };
   }
   if (body.path && !isAbsolute(body.path)) throw new MoveInApiError(400, "Give the whole path to the folder or file, starting from the top of the disk");

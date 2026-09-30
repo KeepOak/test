@@ -132,7 +132,8 @@ export async function bringOver(
     if (item.blocked) { receipt.skipped.push({ key: item.key, title: item.title, reason: item.detail }); continue; }
     try {
       const target = await bringOne(store, owner, source, item, contextFiles);
-      rememberMoved(store, owner, source, [{ key: item.key, kind: item.kind, title: item.title, target }]);
+      rememberMoved(store, owner, source, [{ key: item.key, kind: item.kind, title: item.title, target,
+        ...(item.provenance ? { provenance: item.provenance } : {}) }]);
       receipt.brought.push({ key: item.key, title: item.title, kind: item.kind, target });
       for (const name of item.needsKeys) needed.add(name);
     } catch (error) {
