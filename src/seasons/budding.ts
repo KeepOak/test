@@ -11,6 +11,7 @@ import { typedBy } from "./evidence.js";
 import type { OwnMcpServers } from "../mcp-own-servers.js";
 import type { SourceChangeRequests } from "../self-development-requests.js";
 import { lockdownActive } from "../lockdown.js";
+import { underProject } from "../project-scope.js";
 import { evaluateBud, regressionCases, type BudEvaluation } from "./bud-evaluation.js";
 import { candidatesFor, namingWords, negated, valueFor } from "../settings-kit/clarify.js";
 
@@ -183,16 +184,14 @@ export class Budding {
       if (found.length !== 1 || valueFor(found[0]!.field, bud.settingRequest.value) === undefined) return false;
       return Boolean(bud.requestId && this.deps.sourceRequests.installed(bud.requestId));
     }
-    return Boolean(bud.requestId && this.deps.sourceRequests.installed(bud.requestId)
-      || this.deps.version && bud.requestedVersion && this.deps.version !== bud.requestedVersion && bud.branchConfirmed);
+    return Boolean(bud.requestId && this.deps.sourceRequests.installed(bud.requestId));
   }
   /** A version change alone cannot prove that this request's reviewed PR was installed. */
   confirmBranch(id: string): Bud {
     this.ownerOnly();
     const bud = this.get(id);
-    if (bud.stage !== "branch-review" || !this.deps.version || this.deps.version === bud.requestedVersion
-      || !this.deps.sourceRequests.list().some((request) => request.id === bud.requestId && request.status === "approved"))
-      throw new Error("Approve and install the reviewed Branch change before confirming it here");
+    if (bud.stage !== "branch-review" || !this.branchArrived(bud))
+      throw new Error("This request's reviewed change has not been proved installed in the running Branch yet");
     return this.save({ ...bud, branchConfirmed: true });
   }
   /** A newly connected, owner-approved MCP server automatically takes up the preserved task once. */
@@ -222,12 +221,18 @@ export class Budding {
     if (!bud) return;
     this.save({ ...bud, resuming: true });
     try {
+      // A preserved conversation does not itself restore its original project's scope.
+      // Refuse missing provenance rather than selecting whichever project is chosen now.
+      const original = this.deps.store.run(bud.runId);
+      if (!original || original.owner !== this.deps.runtime.owner || !bud.sessionId || original.sessionId !== bud.sessionId
+        || typeof original.project !== "string" || !this.deps.store.projects.list(original.owner).some((project) => project.id === original.project))
+        throw new Error("The original task's conversation or project is unavailable. Reconcile its saved context before continuing; no work was replayed.");
       // Only the exact connector the owner approved contributes new permissions after hot reload.
       const added = bud.serverId ? this.deps.registry.inventory().filter((tool) => this.deps.registry.sourceOf(tool.name) === `mcp:${bud.serverId}`).map((tool) => tool.permission) : [];
-      const run = await this.deps.runtime.run({ prompt: `${bud.task}\nContinue the original task. Do not repeat work already completed. Prior attempt:\n${bud.output ?? ""}`,
+      const run = await underProject(original.project, () => this.deps.runtime.run({ prompt: `${bud.task}\nContinue the original task. Do not repeat work already completed. Prior attempt:\n${bud.output ?? ""}`,
         permissions: [...new Set([...(bud.permissions ?? []), ...added])], ...(bud.sessionId ? { sessionId: bud.sessionId } : {}), originFrom: bud.runId,
         signal: this.stopping.signal, onStarted: (started) => { this.save({ ...bud, resuming: true, resumeRunId: started.id }); },
-        ...(bud.trunkId ? { trunkId: bud.trunkId } : {}) });
+        ...(bud.trunkId ? { trunkId: bud.trunkId } : {}) }));
       this.finish(bud, run);
     } catch (error) { this.save({ ...bud, stage: "failed", resuming: false, error: error instanceof Error ? error.message : String(error) }); }
   }
