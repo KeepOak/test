@@ -38,6 +38,8 @@ export interface LiveTiming {
   typingEveryMs: number;
   /** Quick changes of reaction are held this long so the chat does not flicker. */
   reactEveryMs: number;
+  /** When the sparse "Still working" lines go out on a chat that cannot edit (CHAT-040); at most three. */
+  milestonesAtMs?: readonly number[] | undefined;
 }
 export const defaultLiveTiming: LiveTiming = { progressAfterMs: 4000, editEveryMs: 1500, typingEveryMs: 4000, reactEveryMs: 700 };
 export type OutboundGuard = (text: string) => Promise<{ text: string; blocked: boolean }>;
@@ -86,6 +88,8 @@ export interface LiveTarget {
   kindsOnly?: boolean | undefined;
   /** False: no progress message at all, only typing and the reaction (the owner's "no steps in groups"). */
   progress?: boolean | undefined;
+  /** Sparse elapsed-time updates on a direct chat that cannot edit; checked again before sending. */
+  milestones?: (() => boolean) | undefined;
   /**
    * A picture of the task's browser now (a masked frame), or null when there is none to show. Set only for a direct
    * chat whose owner has pictures on and whose app can send a file; absent, no picture is ever sent.
@@ -99,6 +103,8 @@ export const pictureTiming = { everyMs: 20_000, most: 6, inPlaceEveryMs: 4_000, 
 interface Step { label: string; name: string; state: "working" | "done" | "failed" }
 /** A part that failed this many times in a row is left alone for the rest of the task. */
 const giveUpAfter = 2;
+/** At most three extra messages, even when a task runs for hours. */
+const milestoneAfterMs = [60_000, 180_000, 600_000] as const;
 const stepMarks: Record<Step["state"], string> = { working: "…", done: "✓", failed: "✗" };
 
 /** The progress message: the steps so far, or once the reply is being written, the reply itself. */
@@ -140,6 +146,7 @@ export class LiveStatus {
   /** The steps' messages have been started (with `each`, the first step may not have come yet). */
   private pagesOpen = false;
   private progressPlanned = false;
+  private milestoneFailures = 0;
   /** The task has worked long enough for a progress message; it opens with its first step. */
   private due = false;
   private shown = "";
@@ -196,6 +203,9 @@ export class LiveStatus {
     this.setState("thinking");
     if (this.progressPlanned) return;
     this.progressPlanned = true;
+    if (this.target.milestones) {
+      for (const after of (this.timing.milestonesAtMs ?? milestoneAfterMs).slice(0, 3)) this.later(() => void this.milestone(), after);
+    }
     this.later(() => {
       if (this.closed) return;
       if (!this.awake) {
@@ -592,6 +602,29 @@ export class LiveStatus {
     } catch {
       return false;
     }
+  }
+  private async milestone(): Promise<void> {
+    await this.enqueue(async () => {
+      if (!this.milestoneAllowed()) return;
+      const done = this.steps.filter((step) => step.state === "done").length;
+      const count = done ? ` (${done} ${done === 1 ? "step" : "steps"} completed)` : "";
+      const text = await this.checked(`Still working${count}…`);
+      if (text === null || !this.milestoneAllowed()) return;
+      try {
+        await this.target.adapter.send(this.target.chatId, text, this.quoteTarget(), { quiet: true });
+        this.milestoneFailures = 0;
+      } catch (error) {
+        const wait = retryAfterMs(error);
+        if (wait) this.pausedUntil = Date.now() + wait;
+        else this.milestoneFailures++;
+      }
+    });
+  }
+  private milestoneAllowed(): boolean {
+    if (this.closed || !this.awake || this.target.progress === false || this.target.adapter.edit
+      || this.stepsSource?.each || this.milestoneFailures >= giveUpAfter || Date.now() < this.pausedUntil
+      || !this.permitted()) return false;
+    try { return this.target.milestones?.() === true; } catch { return false; }
   }
   private async checked(text: string): Promise<string | null> {
     try {
