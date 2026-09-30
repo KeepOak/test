@@ -14,6 +14,7 @@ import { openStatelessMcp, LegacyMcpFallback } from './mcp-stateless-client.js';
 import { StatelessError } from '../mcp-stateless.js';
 import { appendMcpUi, mcpUi } from './mcp-app-resource.js';
 import { urlRequiredRetry } from './mcp-url-retry.js';
+import { nativeSource } from './mcp-native-source.js';
 
 export const mcpToolName = (id: string, tool: string): string =>
   `mcp.${id}.${createHash('sha256').update(tool).digest('hex').slice(0, 16)}`;
@@ -219,7 +220,9 @@ export async function openMcp(
     let alive = true;
     client.onclose = () => { alive = false; revokeOwnerRequests?.(); };
     return { config, found, secrets, call: through(client, found, config.id, ownerRequests, revokeOwnerRequests),
-      close: () => { revokeOwnerRequests?.(); return client.close(); }, alive: () => alive };
+      nativeSource: nativeSource(client.getServerCapabilities(), found, secrets, () => alive,
+        (uri, signal) => client.readResource({ uri }, { signal, timeout: 10000 })),
+      close: () => { alive = false; revokeOwnerRequests?.(); return client.close(); }, alive: () => alive };
   } catch {
     revokeOwnerRequests?.();
     await client.close().catch(() => undefined);
@@ -275,7 +278,10 @@ function restarting(first: Awaited<ReturnType<typeof openMcp>>, reopen: () => Pr
     }
     return current.call(tool, args, context);
   };
-  return { call, close: async () => { closed = true; await current.close(); } };
+  return { call, nativeSource: () => {
+    if (closed || !current.alive()) throw new Error('MCP connection is unavailable.');
+    return current.nativeSource;
+  }, close: async () => { closed = true; await current.close(); } };
 }
 
 export async function connectMcp(
@@ -294,7 +300,7 @@ export async function connectMcp(
     if (definitions.some(tool => existing.has(tool.name))) throw new Error('MCP tool name collision');
     for (const tool of definitions) registry.register(tool);
     return { id: opened.config.id, version: opened.config.expectedVersion,
-      tools: definitions.map(tool => tool.name), call: opened.call, close: opened.close };
+      tools: definitions.map(tool => tool.name), call: opened.call, nativeSource: live.nativeSource, close: opened.close };
   } catch {
     await opened.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');

@@ -15,6 +15,7 @@ import type { McpOwnerRequests } from '../mcp-owner-requests.js';
 import { randomUUID } from 'node:crypto';
 import { urlRequiredRetry } from './mcp-url-retry.js';
 import { mcpProgress } from './mcp-progress.js';
+import { nativeSource } from './mcp-native-source.js';
 export class LegacyMcpFallback extends Error {}
 
 function selectedEnv(config: Extract<McpConfig, { transport: 'stdio' }>, env: NodeJS.ProcessEnv): Record<string, string> {
@@ -111,6 +112,8 @@ export async function openStatelessMcp(config: McpConfig, env: NodeJS.ProcessEnv
     // Shared Apps bridge can consume this structural interface after capability negotiation is wired.
     const resourceReader = { readResource: client.readResource.bind(client) };
     return { config, found, secrets: connection.secrets, call, resourceReader, alive: () => alive,
+      nativeSource: nativeSource(client.getServerCapabilities(), found, connection.secrets, () => alive,
+        (uri, signal) => client.readResource({ uri }, { signal, timeout: 10000 })),
       close: async () => { revoke(); continuations.clear(); await client.close(); } };
   } catch (error) { revoke(); await client.close(); throw error; }
 }
