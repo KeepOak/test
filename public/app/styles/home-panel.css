@@ -11,8 +11,10 @@
 @media (max-width:1100px){.home19{position:absolute;right:0;top:var(--tb-h,52px);bottom:28px;width:min(400px,100%);z-index:31;padding:8px}}
 @media (max-width:760px){.home19{left:0;width:auto;bottom:0}}
 .hm19{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;border-radius:var(--r4-17,20px);box-shadow:var(--pop),inset 0 0 0 1px var(--chrome-edge,var(--line))}
-.hm19-h{flex:none;display:flex;align-items:center;gap:8px;padding:10px 8px 8px 12px;border-bottom:1px solid var(--hair17,var(--line))}
+.hm19-h{flex:none;display:flex;flex-wrap:wrap;align-items:center;gap:8px;padding:10px 8px 8px 12px;border-bottom:1px solid var(--hair17,var(--line))}
 .hm19-h b{font-weight:600;font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* The Ideas, Today and Home conversation buttons wrap below rather than squeeze the Trunk's name away. */
+.hm19-h b.grow{flex:1 0 8ch}
 .hm19-h .icon-btn{width:28px;height:28px}
 .hm19-scroll{flex:1;min-height:0;overflow-y:auto;padding:4px 0}
 .hm19 .thread{max-width:none;padding:12px 14px;gap:10px;font-size:13.5px}
