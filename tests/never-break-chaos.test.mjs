@@ -69,7 +69,10 @@ async function checkOutcome(root, result, label) {
   const statuses = result.runs.map((run) => run.status);
   assert.ok(!statuses.includes("failed"), `${label}: a task failed: ${JSON.stringify(result.runs)}`);
   const finished = result.runs.some((run) => run.status === "completed" && run.output === "all done");
-  const asked = result.runs.some((run) => run.status === "needs_input" && /may already have happened/.test(run.output));
+  const asked = result.runs.some((run) => run.status === "needs_input" && (
+    /may already have happened/.test(run.output)
+    || (/The original task's Trunk scope is unavailable.*Reconcile it before continuing/.test(run.output)
+      && result.report.some((entry) => entry.runId === run.id && entry.outcome === "asked"))));
   assert.ok(finished || asked, `${label}: neither finished nor asked: ${JSON.stringify(result.runs)} ${JSON.stringify(result.report)}`);
   if (finished) {
     const seen = `${JSON.stringify(result.report)} ${JSON.stringify(result.steps)}`;
