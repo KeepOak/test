@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { TeamHandoffs, TeamHandoffRefusedError } from "./team-handoff.js";
 import { quietJobsApi } from "./scheduler.js";
+import { routineUsage, saveRoutineBudget } from "./routine-usage.js";
 import { finishChatGPTSignIn, syncChatGPTPresets } from "./chatgpt-presets.js";
 import { embedSettings, widgetOrigin } from "./embeds.js";
 import { RunInputSchema, errorText, maximumImagesPerTurn, runBodyLimit, type Run } from "./contracts.js";
@@ -47,6 +48,7 @@ import { suggestSkills } from "./skill-suggest.js";
 import { healthReport, startedCleanly } from "./health.js";
 import { noModelWords } from "./no-model.js";
 import { maximumBackupBytes } from "./backup.js";
+import { skillMarketplaceApi } from "./skill-marketplace.js";
 import { chatCompletion, modelsList } from "./openai-compat.js";
 import { AnthropicProvider, GeminiProvider, OpenAIProvider } from "./providers.js";
 import { allPresets, findPreset } from "./providers/presets.js";
@@ -149,7 +151,9 @@ import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
+import { handlesSourceDraftPath, sourceDraftApi } from "./self-development-drafts.js";
 import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
+import { sourceCiApi } from "./self-development-ci-api.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
@@ -289,7 +293,8 @@ import { guardsApi, GuardsApiError, handlesGuardsPath } from "./run-guards.js";
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
-import { readChatIntake, saveChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
+import { channelMessageOrigins } from "./channels/message-origin.js";
+import { readChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
 import { replyStyles, saveReplyStyle } from "./channels/reply-style.js";
 import { practiceRunsEnabled, savePracticeRuns } from "./practice-runs.js";
@@ -1069,7 +1074,12 @@ async function api(
   // A change to Branch itself asked for from a chat (src/self-development-requests.ts): reading the requests
   // and answering them is the owner's alone, in the app window. Short-lived keys and household persons are
   // refused before this (src/short-lived-keys.ts, src/household-routes.ts), and each answer checks again.
+  if (handlesSourceDraftPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    return sourceDraftApi(app.sourceDrafts, request.method ?? "GET", path, () => readBody(request));
+  }
   if (handlesSourceRequestPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
     app.store.profiles.requireOwner("The list of requests to change Branch itself");
     return sourceRequestsApi(app.sourceRequests, request.method ?? "GET", path, () => readBody(request));
   }
@@ -1092,6 +1102,15 @@ async function api(
   if (handlesSourceMergePath(path)) {
     if (throughADoor(request)) throw new HttpError(403, hereOnly);
     return sourceMergeApi(app.sourceMerges, request.method ?? "GET", path, () => readBody(request));
+  }
+  if (path === "/api/self-development/ci") {
+    return sourceCiApi(app, request.method ?? "GET", throughADoor(request), () => readBody(request));
+  }
+  if (path === "/api/continuous-qa") {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    if (request.method === "GET") return app.continuousQa.status();
+    if (request.method === "POST") return app.continuousQa.configure(await readBody(request));
+    throw new HttpError(405, "Use GET or POST here.");
   }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))
@@ -1192,6 +1211,10 @@ async function api(
     return { ...listenView(app.store, app.runtime.owner, listen), note: "Saved. It takes effect the next time Branch starts." };
   }
   // mac3/never-break: the gateway switch and the changes the assistant suggested for it.
+  if (path === "/api/never-break/drill") {
+    app.store.profiles.requireOwner("The isolated recovery drill");
+    if (throughDoor(request)) throw new HttpError(403, hereOnly);
+  }
   if (handlesNeverBreakPath(path))
     return neverBreakApi(dataDir, request, path, readBody, {
       snapshot: () => snapshotData({ dataDir, database: app.store.sqlite, journal: app.neverBreak.journal.database }),
@@ -1266,6 +1289,8 @@ async function api(
     throw new HttpError(405, "Use GET or POST here.");
   }
   // ── R17-S-A (understandable settings): presets, putting settings back, one settings file, and the files you write. ──
+  if (["/api/settings-kit/task-preview", "/api/settings-kit/task-apply"].includes(path)
+    && (throughADoor(request) || app.sessionLock.locked())) throw new HttpError(403, "Review task settings in the owner's unlocked local app window.");
   if (handlesSettingsKitPath(path))
     return settingsKitApi({
       store: app.store, owner: app.runtime.owner, workspace: app.runtime.workspace, appVersion: app.version,
@@ -1867,6 +1892,8 @@ async function api(
     const { url } = z.object({ url: z.string().url().max(2000) }).strict().parse(await readBody(request));
     return app.skillRegistry.browse(url);
   }
+  if (path === "/api/skill-marketplace" || path.startsWith("/api/skill-marketplace/"))
+    return skillMarketplaceApi(app.skillMarketplace, request.method ?? "GET", path, () => readBody(request));
   // The owner's yes to a registry's signing key, by the fingerprint browsing showed them (src/registry-install.ts).
   if (request.method === "POST" && path === "/api/registry/trust") {
     const { url, fingerprint } = z.object({ url: z.string().url().max(2000), fingerprint: z.string().regex(/^[0-9a-fA-F]{64}$/) }).strict().parse(await readBody(request));
@@ -2346,7 +2373,9 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     const shared = person && app.trunks.rooms.forPerson(person.id).some((room) => room.sessionId === match[1]);
     const view = app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
     // Dogfood D14: the project the conversation is filed under, so the window can say so; projects are the owner's.
-    return app.store.profiles.isOwner() ? { ...view, project: app.store.sessionProject(match[1]!) ?? null } : view;
+    return app.store.profiles.isOwner() ? { ...view, messages: channelMessageOrigins(app.store, owner, match[1]!, view.messages),
+      project: app.store.sessionProject(match[1]!) ?? null }
+      : { ...view, messages: view.messages.map((message) => ({ ...message, channelOrigin: undefined })) };
   }
   if (match && match[2] === "skill") {
     if (!app.store.ownsSession(owner, match[1]!)) throw new HttpError(404, "Session not found");
@@ -2664,6 +2693,21 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
     // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
     const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
+  }
+  const usage = /^\/api\/schedules\/([a-f0-9-]{36})\/(usage|budget)$/.exec(path);
+  if (usage) {
+    app.store.profiles.requireOwner("Your routine usage and budget");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Routine budgets belong to the owner at the app.");
+    if (!app.store.get("schedules", owner, usage[1]!)) throw new HttpError(404, "Schedule not found");
+    if (request.method === "GET" && usage[2] === "usage") return routineUsage(app.store, owner, usage[1]!);
+    if (request.method === "POST" && usage[2] === "budget") {
+      const input = await readBody(request);
+      app.store.profiles.requireOwner("Changing a routine budget");
+      if (startedWithShortLivedKey()) throw new HttpError(403, "Routine budgets belong to the owner at the app.");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing a routine budget.");
+      return saveRoutineBudget(app.store, owner, usage[1]!, input);
+    }
+    throw new HttpError(404, "Endpoint not found");
   }
   const dashboard = /^\/api\/schedules\/([a-f0-9-]{36})\/dashboard$/.exec(path);
   if (dashboard && request.method === "GET") {
@@ -3230,7 +3274,7 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (path === "/api/channels/intake") {
     if (request.method === "GET") return { intake: readChatIntake(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
-    const before = readChatIntake(app.store, owner).presence, intake = saveChatIntake(app.store, owner, await readBody(request));
+    const before = readChatIntake(app.store, owner).presence, intake = app.channels.saveIntake(await readBody(request));
     if (intake.presence !== before) await app.channels.presenceChanged(intake.presence);
     return { intake };
   }
@@ -4257,6 +4301,25 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const input = request.method === "GET" ? Object.fromEntries(new URL(request.url ?? "/", "http://local").searchParams) : await readBody(request);
           send(response, 200, await tasteApi.handle(app.runtime.owner, request.method ?? "GET", path, input, authorizeTaste));
           return;
+        }
+        if (["/api/mobile-push", "/api/mobile-push/register", "/api/mobile-push/unregister", "/api/mobile-push/revoke"].includes(path)) {
+          app.store.profiles.requireOwner("Mobile push notifications");
+          if (app.sessionLock.locked() || lockdownActive(app.store, app.runtime.owner)) throw new HttpError(423, "Unlock Branch and turn off Lockdown first.");
+          if (path === "/api/mobile-push" || path === "/api/mobile-push/revoke") {
+            if (key !== "window" || throughDoor(request)) throw new HttpError(403, "Configure mobile push in the app window on this computer.");
+            if (request.method === "GET" && path === "/api/mobile-push") { send(response, 200, app.mobilePush.view()); return; }
+            if (request.method !== "POST") throw new HttpError(405, "Use GET or POST.");
+            const body = await readBody(request, 4096);
+            const answer = path.endsWith("/revoke") ? app.mobilePush.unregister(z.object({ id: z.string().regex(/^[a-f0-9]{16}$/) }).strict().parse(body).id)
+              : app.mobilePush.configure(body);
+            send(response, 200, answer); return;
+          }
+          if (request.method !== "POST") throw new HttpError(405, "Use POST.");
+          const device = gateway.keyDevice(supplied);
+          if (!device || key !== "phone" || !device.keyFingerprint) throw new HttpError(403, "A paired phone's own current key is required.");
+          const answer = path.endsWith("/unregister") ? app.mobilePush.unregister(device.id)
+            : await app.mobilePush.register(device.id, device.keyFingerprint, await readBody(request, 8192));
+          send(response, 200, answer); return;
         }
         if (handlesBrowserApiPath(path) || path === capturedApiSkillsPath) {
           const stopped = new AbortController();

@@ -23,6 +23,7 @@ import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { chatPersonalityForRun } from "./channels/personality-settings.js";
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
+import { ownMessageHold } from "./channels/message-actions.js"; // CHAT-023: edits and deletions of sent messages ask once
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
@@ -1974,6 +1975,9 @@ ${run.output.slice(0, 6000)}`;
     const root = this.spendRoot.get(runId);
     return root ? [...(this.spendMembers.get(root) ?? [runId])] : [runId];
   }
+  /** Captured connection metadata for per-call estimates, with no credential access. */
+  billingKindFor: ((preset: ModelPreset) => import("./routine-usage.js").UsageKind) | undefined;
+  routineBudgetRefusal: ((runId: string, preset: ModelPreset) => string | null) | undefined;
   /** R17-S09: stops a task whose tree has reached the owner's cap; says once when the cap cannot be checked. */
   private checkSpendCap(run: Run, model: string): void {
     const family = this.spendFamily(run.id);
@@ -3969,6 +3973,9 @@ ${run.output.slice(0, 6000)}`;
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
+    const routineRefusal = this.routineBudgetRefusal?.(run.id, preset);
+    if (routineRefusal) throw new BudgetError(routineRefusal);
+    const usageKind = this.billingKindFor?.(preset) ?? null;
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
     const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
@@ -4047,6 +4054,7 @@ ${run.output.slice(0, 6000)}`;
       context.signal.throwIfAborted();
       this.store.event(run.id, "model.completed", {
         toolCalls: completion.toolCalls.length,
+        usageKind, // captured connection billing kind; plan sign-ins never imply an API charge
         estimatedInput: input,
         estimatedOutput: output,
         // mac7/empty-completion: thinking that is not part of the answer, so a round that thought
@@ -4518,7 +4526,7 @@ ${run.output.slice(0, 6000)}`;
     // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
     const loosening = fullAccess ? settingsHold(tool, args) : null;
-    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? ownMessageHold(tool) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;

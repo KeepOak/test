@@ -14,6 +14,7 @@ import { readState } from "./gateway-state.js";
 import { lastActivation, recentActivations } from "./activation.js";
 import { runAsNode } from "../child-env.js";
 import { errorText, validationText } from "../request-errors.js";
+import { lastRecoveryDrill, runRecoveryDrill } from "./drill.js";
 
 /**
  * The owner's side of the gateway: the switch, what the gateway last said, and changes the
@@ -55,7 +56,7 @@ export interface NeverBreakExtras {
   /** Takes a copy of the saved work for an update's check (the process that holds the database). */
   snapshot?: () => Promise<string>;
   /** The Telegram setup card's state, and saving its switch and token. */
-  telegram?: { view: () => Record<string, unknown>; save: (input: unknown) => Promise<void> };
+  telegram?: { view: () => Record<string, unknown>; save: (input: unknown) => Promise<void>; control?: (input: unknown) => Promise<Record<string, unknown>> };
 }
 
 export async function neverBreakApi(dataDir: string, request: IncomingMessage, path: string, readBody: Read,
@@ -69,8 +70,15 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
   if (request.method === "GET" && path === "/api/never-break/last-update") return { last: lastActivation(dataDir, thisStart) };
   // p17: the journal of updates tried, kept or rolled back, for Settings › Gateway › Never break. The owner's alone,
   // like last-update: a short-lived key and a household person are refused it before this is reached.
-  if (request.method === "GET" && path === "/api/never-break/journal") return { entries: recentActivations(dataDir) };
+  if (request.method === "GET" && path === "/api/never-break/journal")
+    return { entries: recentActivations(dataDir), drill: await lastRecoveryDrill(dataDir) };
   if (request.method !== "POST") throw new NeverBreakApiError(405, "Use GET or POST here.");
+  if (path === "/api/never-break/drill") {
+    if (!z.object({ confirm: z.literal(true) }).strict().safeParse(await readBody(request)).success)
+      throw new NeverBreakApiError(400, "Confirm the isolated recovery drill.");
+    try { return { drill: await runRecoveryDrill(dataDir) }; }
+    catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
+  }
   if (path === "/api/never-break") {
     const body = z.object({ mode: FeatureModeSchema.optional(), keepAwake: z.boolean().optional() }).strict()
       .refine((value) => value.mode !== undefined || value.keepAwake !== undefined).safeParse(await readBody(request));
@@ -102,7 +110,14 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
 async function telegramApi(request: IncomingMessage, readBody: Read, telegram: NonNullable<NeverBreakExtras["telegram"]>): Promise<unknown> {
   if (request.method === "GET") return telegram.view();
   if (request.method !== "POST") throw new NeverBreakApiError(405, "Use GET or POST here.");
-  try { await telegram.save(await readBody(request)); }
+  try {
+    const body = await readBody(request);
+    if (body && typeof body === "object" && "action" in body) {
+      if (!telegram.control) throw new Error("This launch cannot control the Telegram card connection.");
+      return await telegram.control(body);
+    }
+    await telegram.save(body);
+  }
   catch (error) {
     const said = error instanceof z.ZodError ? validationText(error) : errorText(error);
     throw new NeverBreakApiError(400, said);

@@ -1261,6 +1261,18 @@ Use `"type": "instagram"` for Instagram, with the professional account's id as `
 
 Two tools send on the assistant's own initiative rather than answering somebody. `channels.broadcast` sends one message to several linked chats at once — leave the list empty to reach every chat that has talked to the assistant — and `channels.digest` sends the morning brief as it stands right now to one chat on any connected service. Both go through the same waiting line every reply uses, so quiet hours, splitting and retries apply unchanged: during quiet hours the message is written down and sent when they end. Both are the owner's alone: somebody else using this computer under their own profile is refused, because the chats belong to the owner. Neither is available to a task started from a chat message, so somebody you have paired cannot make the assistant write to everyone else.
 
+### Correcting or removing Branch's own messages
+
+From your own task in the app, ask Branch to correct or remove an earlier message it sent. `channels.own_messages`
+lists up to 50 retained own text deliveries in one exact channel and chat, including message IDs and edit/delete
+availability. `channels.edit_message` replaces one recorded message's text; `channels.delete_message` removes it.
+They require `channels.send` and the owner's profile, and refuse tasks from chat apps, schedules, triggers,
+short-lived keys or borrowed conversations. Edits pass the outbound secret and safety checks and must fit in one
+message. Actions pause while Branch is locked, paused, in Lockdown or in quiet hours. Service failures and time
+limits are reported, and success is recorded only after the service accepts the action. The original send and its
+stable deduplication key remain, so deletion does not resend the message after reconnect. Sent deliveries are kept
+for seven days; unknown, expired, already deleted or other people's message IDs are refused.
+
 ### Who may change the chat apps
 
 **Everything under `/api/channels` is yours alone.** The chats are the owner's, so somebody else signed in on this computer under their own profile is refused every address there, and told so in one sentence: the off / on / when-needed switches for typing, commands, steering and splitting; the More chat apps switches; approving or removing a pairing; pointing a chat at one of your conversations; sending a test message; retrying a message that is waiting; the Slack automations and starting one; what a chat's task may use beyond talking; and the addresses each service posts to, including making a new word for one. Reading is refused with the rest, because the list carries your pairings, the chats that have talked to the assistant and the secret address each service posts to. The catalogue of chat services Branch knows how to talk to carries no secret and is refused with everything else on purpose, so that a chat-app address added later is yours without anybody having to remember to say so.
@@ -2536,7 +2548,8 @@ them on a task in a suite file as `"scorers": [...]`:
 `exact` (the answer, once case, spacing and trailing punctuation are taken off), `contains`,
 `regex`, `json-schema`, `numeric` (with a tolerance), `url` (a pattern the address must match),
 `file-exists` and `file-contains` (inside the workspace), `tool-called` (optionally `withArgs`, so
-you can say a tool must have been used with particular arguments), `budget` (`maxSteps`, `maxMs`,
+you can say a tool must have been used with particular arguments), `helper-runs` (`min`, `max`,
+`completed`, `output`: the helpers the engine actually recorded for the task), `budget` (`maxSteps`, `maxMs`,
 `maxTokens`, `maxDollars` — the rounds, time, tokens and money a task may use), `finished` (did it
 actually do the work, or did it say it could not — the completion checks you already use, plus the
 phrases an answer uses when it has quietly given up), `f1`, `passage`, `html`, `trajectory`, and
@@ -8682,7 +8695,7 @@ wait at once.
 | Suggested automations | Automations → Scheduled | A catalogue of 13 blueprints with checked blanks, and up to five suggestions worked out from what Branch remembers and what is connected, without asking a model (`automation.ideas`, `automation.propose`, `/suggestions`, `/blueprint`) |
 | Standing orders | Automations → Scheduled | A named programme: what it may do, when it starts, what needs a yes, when to stop and ask. A reply starting `ESCALATE:` pauses it and asks you (`orders.list`, `orders.propose`) |
 | Repeating in a conversation | Automations → Scheduled | `/loop every 10m <what> [--times n] [--until …]` (1 minute apart at least, 10 turns unless said, 100 at most, stops on `LOOP_COMPLETE`) and `/heartbeat every 30m <what>` (5 minutes apart at least, adds a note only with news). Owner only |
-| Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; `/handoff <chat app>` points a chat that has talked to Branch at this conversation, and `/handoff terminal` or `assistant <name>` uses Interop's hand-on, behind its own switch |
+| Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; Conversation → Share → Hand off selects an exact available Telegram owner DM and rechecks both conversation pointers before linking. The chooser considers the latest 50 Telegram chats and their latest 20 runs. Busy tasks, waiting questions, changed destinations and unavailable chats are refused. `/handoff terminal` shows the attach command to run; `/handoff assistant <name>` reports the remote assistant's returned state and answer, behind Interop's own switch. A chat app name alone does not choose a destination. |
 | Procedures that start themselves | Automations → Procedures | Steps that start on a clock, after one of your tasks, or by hand; each asks before every step, before it starts (the default), or runs on its own. A step marked `confirm` always asks; an "on its own" procedure under 50% after four runs goes back to asking (`procedures.auto.list`, `procedures.auto.propose`, `procedures.auto.suggest_change`, which the owner answers in the flow editor) |
 | What skills need | Customize → Skills | Programs, keys and systems a skill declares in its `metadata` (`requires-bins`, `requires-any-bins`, `requires-keys`, `os`, `install-brew`/`-apt`/`-winget`/`-npm`/`-pip`, or OpenClaw's `openclaw` block), and whether this computer has them (`skills.readiness`). Programs are looked for on `PATH` without running anything; install lines are only shown |
 | "From now on" instructions | Settings → Assistant | "From now on, …" in one of your messages is kept, after one yes, as a standing instruction for the assistant, every specialist, or one specialist (`instructions.list`, `instructions.propose`) |
@@ -10100,8 +10113,9 @@ included (`src/personal/guard.ts`):
   this computer's own requests, and Branch is handed the path the door checked rather than the raw one.
 
 **What each card saves.** Your own accounts (one record each for Google, Microsoft and Spotify): `clientId`,
-`clientSecretName` (the name of a secret, or empty), `tenant` (Microsoft only, `common` by default) and `drafts`
-(off). Searching X: `keyName` (`XAI_API_KEY`) and `model` (`grok-4.5`). Home Assistant: `url`, `tokenName`
+`clientSecretName` (the name of a secret, or empty), `tenant` (Microsoft only, `common` by default), `drafts`
+(off), `calendarWrite` (off; turning it on asks the provider for calendar write access again before any event is changed)
+and `mailSend` (off; its own send-only access, never implied by `drafts`). Searching X: `keyName` (`XAI_API_KEY`) and `model` (`grok-4.5`). Home Assistant: `url`, `tokenName`
 (`HOMEASSISTANT_TOKEN`) and `domains`. Files into chats: `maxMegabytes` (20). The spoken briefing: `calendar`, `mail`
 and `morningBrief` (all on) and `maxCharacters` (1500). The email inbox: `host`, `port` (993), `user`, `passwordName`
 (`EMAIL_PASSWORD`) and `folder` (`mail-attachments`). The webhook address: `program` (`cloudflared`) and
@@ -10739,6 +10753,23 @@ The Gardener extends this record with the following settings when its feature is
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
 
+
+### Thirty-day usage insights
+
+`/insights` reports completed-task tokens, estimated cost, unknown prices, recorded failures, top models and task sources for the last thirty days. It works in the window, phone, terminal, dashboard and supported chat commands, without invoking a model. In chat or with a restricted key, it reports only the current conversation. With the owner key on other surfaces, it reports the owner's conversations; `/insights conversation` narrows it, and `/insights all` explicitly requests the owner aggregate. Household profiles cannot request the owner's aggregate. Costs are estimates rather than bills, and running tasks are excluded.
+
+
+`/history` also works in the window and phone conversation composer. It reads the current conversation only, shows the last twenty user/assistant turns with bounded previews, and scrubs known secrets. Household profiles can read their own current conversation; unknown or another person's conversation is refused. It does not invoke a model and can be used while a task runs.
+
+### Routine usage and estimate budgets
+
+Each Scheduled row offers Usage and budget to the owner. It shows UTC-month turns, tasks including helpers, recorded model calls, provider-reported or estimated tokens, per-call model cost estimates and other `spend.recorded` dollars. Each new successful model call captures its connection billing kind before awaiting the provider; only known API calls are priced at the current prices on file. Local model calls have no provider charge. Plan sign-ins, missing metadata, failed-call cost records and unpriced models remain unknown; the last model used never prices every call in a task. These figures are estimates, not a bill.
+
+An optional monthly USD estimate budget lives in owner governance, apart from editable/exportable routine definitions. Empty means no limit. An enabled budget is checked before each model round, including its helpers: a reached limit or incomplete/unpriced current-month record holds further model work. Unknown upcoming connections are refused before their first call. A call already admitted, concurrent helper calls, retry charges and external tool spending can exceed the estimate budget; it is not a provider billing limit or a reservation system. The owner's unrelated tasks retain their own limits. Changing a budget does not restart a stopped task. Scheduled evaluation suites link each evaluated task and both rubric-judge paths to the suite task before a model round; they can use the same estimate budget. Unknown judge cost holds subsequent calls rather than assuming a free evaluation.
+
+Schedule turns get an engine-authored `schedule.turn` receipt; helper attribution follows the engine's owner-verified `run.started.parentRunId` chain, including engine-authored `resumedFrom` continuations. Evaluation tasks and isolated judges additionally use engine-authored `routine.parent` receipts; suite definitions and tool arguments cannot supply them. Manual evaluation runs receive no routine attribution. The current month is UTC and uses at most 3,000 retained task records, 40,000 relevant events and depth 20, with caps disclosed and budget checks held if records are incomplete. Before these receipts existed, at most the schedule's retained 50 history entries can be linked; current-month legacy entries make budget checks hold rather than assert complete history. Deleted task records and provider charges not returned by the provider cannot be reconstructed. Opening this local record makes no provider request and starts no model call.
+
+Owner-window APIs: `GET /api/schedules/<id>/usage` and `POST /api/schedules/<id>/budget` with `{ "monthlyEstimatedDollars": 5 }` or null. Short-lived script keys cannot read or change these controls. No budget is enabled by default.
 
 ### Agent-written scheduled dashboards
 

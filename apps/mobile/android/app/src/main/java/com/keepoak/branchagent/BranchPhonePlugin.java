@@ -115,6 +115,7 @@ public class BranchPhonePlugin extends Plugin {
                     .put("pairedAt", BranchClock.now());
                 if (json.has("deviceId")) session.put("deviceId", json.getString("deviceId")).put("deviceKey", json.getString("deviceKey"));
                 vault.save(session);
+                BranchPushRegistration.sync(getContext());
                 call.resolve(result("paired", true));
                 restartWindow();
             } catch (Exception error) {
@@ -147,10 +148,12 @@ public class BranchPhonePlugin extends Plugin {
         }
         call.resolve(result("paired", true).put("origin", session.optString("origin")).put("pairedAt", session.optString("pairedAt"))
             .put("deviceId", session.optString("deviceId")));
+        BranchPushRegistration.sync(getContext());
     }
 
     @PluginMethod
     public void forget(PluginCall call) {
+        BranchPushRegistration.forget(getContext(), vault.load());
         vault.forget();
         call.resolve();
         restartWindow();
@@ -195,6 +198,7 @@ public class BranchPhonePlugin extends Plugin {
     /** Asks for what a switch now needs: permission to notify, the background job, the share target. */
     @PluginMethod
     public void switchesChanged(PluginCall call) {
+        BranchPushRegistration.sync(getContext());
         BranchShareInbox.applySwitch(getContext());
         BranchNotify.schedule(getContext());
         boolean wantsAlerts = !BranchWords.position(getContext(), "notifications").equals("off");

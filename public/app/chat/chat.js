@@ -8,6 +8,7 @@ import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast, faceOf } from "../core/ui.js";
 import { markLive } from "../core/features.js";
+import { taskSettingsButton, initTaskSettings } from "./task-settings.js";
 import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
@@ -30,7 +31,7 @@ import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { rosterButton, initBeside } from "./beside.js";
 import { panesWrap, panesOn, paneOpen, followPane, paneTo, paneWords, paneTarget, paneBusy, paneRoom, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
-import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
+import { msgActs, viaChannel, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
@@ -135,7 +136,7 @@ const ownWords = (words) => String(words ?? "").replace(/^\[Trunk @[a-z0-9-]{1,6
    came with them (src/runtime.ts attachmentsNote); the file's own row is drawn under the bubble, so the bubble leaves the
    note out rather than saying it twice. A message with no file rows keeps every word. */
 const withoutFileNote = (m, words) => (m.attachments?.length ? words.replace(/\s*\[attached files?: [^\]\n]*\]\s*$/, "") : words);
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(withoutFileNote(m, ownWords(m.content)))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${viaChannel(m)}${esc(withoutFileNote(m, ownWords(m.content)))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
@@ -326,7 +327,7 @@ function composer() {
   return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}${paneTarget() ? " away19" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" aria-expanded="false" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}${paneTo()}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}" data-main="${main}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${practiceFlag()}${costLine(C.sessionId)}</span>`}
-    ${chips()}
+    ${chips()}${taskSettingsButton()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
       : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}"${C.sessionId ? "" : ` data-tip="${esc(t("window.chat.bgsend.tip", { keys: spoken("Ctrl+Enter") }))}"`}>${ic("up")}</button>`}</form></div>`;
@@ -978,6 +979,7 @@ function putAway(id) {
 }
 
 export function init() {
+  initTaskSettings();
   initAgent17();
   initTrunkLine();
   document.addEventListener("conv-put-away", (e) => putAway(e.detail));

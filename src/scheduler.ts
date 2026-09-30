@@ -16,6 +16,7 @@ import { nextCronOccurrence, nextWallOccurrence, validCron } from "./recurrence.
 import { underProject } from "./project-scope.js"; // dogfood-ux-3
 import { defaultProjectId } from "./projects.js"; // dogfood-ux-3
 import { conversationRateRefusal } from "./knobs/apply.js";
+import { routineBudgetRefusal } from "./routine-usage.js";
 import { ScheduleDashboardSchema, recordScheduledDashboard, scheduledDashboardPrompt } from "./scheduled-dashboards.js";
 
 const timezone = z.string().min(1).max(64).refine((zone) => {
@@ -191,7 +192,9 @@ export class Scheduler {
     readonly runtime: Runtime,
     private readonly deliver?: DeliveryHandler,
   ) {
+    store.sqlite.exec("CREATE INDEX IF NOT EXISTS events_run_kind ON events(run_id, kind, id)");
     this.heartbeat = new Heartbeat(store, runtime, deliver);
+    runtime.routineBudgetRefusal = (runId, preset) => routineBudgetRefusal(store, runtime.owner, runId, preset, runtime.billingKindFor?.(preset) ?? null);
   }
   /**
    * Dogfood: what a schedule's turn may use. A list the owner chose is kept; one they never chose (saved before
@@ -421,13 +424,15 @@ export class Scheduler {
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
         ...(madeBy ? { trunkId: madeBy } : {}),
-        onStarted: (started) => { entry.runId = started.id; if (late) this.store.event(started.id, "schedule.caught_up", { scheduleId: record.id, note: late }); },
+        onStarted: (started) => { entry.runId = started.id; this.store.event(started.id, "schedule.turn", { scheduleId: record.id }); if (late) this.store.event(started.id, "schedule.caught_up", { scheduleId: record.id, note: late }); },
         onTextDelta: () => undefined, // stream so a silent model is noticed
       });
       // Q118: a schedule a Trunk made (not one of its routines, which run as it already) runs as that Trunk,
       // and not at all once the Trunk is gone.
       const run = madeBy ? await this.asMaker(data, () => this.runtime.asTrunkWork(madeBy, work)) : await work();
       Object.assign(entry, { runId: run.id, status: run.status, finishedAt: new Date().toISOString() });
+      if (!this.store.events(run.id).some((event) => event.kind === "schedule.turn"))
+        this.store.event(run.id, "schedule.turn", { scheduleId: record.id });
       route?.finished(run); // R17-A (Trunks)
       this.runtime.notifyEvent("schedule.fired", { scheduleId: record.id, runId: run.id, status: run.status, trigger });
       const dashboardChanged = recordScheduledDashboard(this.store, record.owner, record.id, data, run, saidNothingNew(run.output));
@@ -537,7 +542,9 @@ export class Scheduler {
   private async evaluateSuite(record: SavedRecord): Promise<Run> {
     if (!this.evaluations) throw new Error("Evaluations are not available in this launch");
     const preset = typeof record.data.preset === "string" ? record.data.preset : undefined;
-    const { run } = await this.evaluations.runScheduled(String(record.data.suite), preset);
+    const { run } = await this.evaluations.runScheduled(String(record.data.suite), preset, (run) => {
+      this.store.event(run.id, "schedule.turn", { scheduleId: record.id });
+    });
     return run;
   }
   /** Whether the Trunk that made a schedule may send to chats now; false once it is gone. */

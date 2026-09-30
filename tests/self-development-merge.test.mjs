@@ -274,3 +274,18 @@ test("the old repository name is asked for as KeepOak/Branch-Agent: GitHub only 
   assert.equal(canonicalRepo("KeepOak/Branch-Agent"), canonicalRepo("stabrea/Branch-Agent"));
   assert.notEqual(canonicalRepo("alice/Branch-Agent"), canonicalRepo("KeepOak/Branch-Agent"));
 });
+
+test("SELF-102: a test copy is a detached checkout of the exact reviewed commit with its own data, and a changed copy runs nothing", async (t) => {
+  const f = await fixture(t);
+  await writeFile(join(f.cwd, "README.md"), "uncommitted\n");
+  await assert.rejects(f.merges.testCopy({ worktree }), /.+/);
+  git(f.cwd, "checkout", "--", "README.md");
+  const copy = await f.merges.testCopy({ worktree });
+  assert.equal(copy.sha, f.headSha);
+  assert.equal(git(copy.folder, "rev-parse", "HEAD"), f.headSha);
+  assert.equal(git(copy.folder, "rev-parse", "--abbrev-ref", "HEAD"), "HEAD", "detached, not on the change's branch");
+  assert.deepEqual([copy.tested, copy.launched], [false, false]);
+  assert.notEqual(copy.dataDirectory, f.app.store.dataDir);
+  await writeFile(join(copy.folder, "README.md"), "edited in the copy\n");
+  await assert.rejects(f.merges.testCopyJob("start", { id: copy.id, mode: "tests" }), /copy changed/);
+});

@@ -24,23 +24,29 @@ export const SignInSettingsSchema = z.object({
   tenant: z.string().trim().regex(/^[A-Za-z0-9.-]{1,80}$/).default("common"),
   /** Google and Microsoft: also ask for leave to write drafts. Off by default; nothing ever sends mail. */
   drafts: z.boolean().default(false),
+  /** Explicit opt-in; a new provider consent is required before calendar writes. */
+  calendarWrite: z.boolean().default(false),
+  /** Separate send-only scope, never enabled by permission to write provider drafts. */
+  mailSend: z.boolean().default(false),
 }).strict();
 export type SignInSettings = z.infer<typeof SignInSettingsSchema>;
 
 const settingsKey = (service: SignInService): string => `personal-signin-${service}`;
 
 /** The scopes each service is asked for. Read-only unless the owner turned drafts on. */
-export function scopesFor(service: SignInService, drafts: boolean): string[] {
+export function scopesFor(service: SignInService, drafts: boolean, calendarWrite = false, mailSend = false): string[] {
   if (service === "google") return [
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/calendar.events.readonly",
+    calendarWrite ? "https://www.googleapis.com/auth/calendar.events" : "https://www.googleapis.com/auth/calendar.events.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
     // Gmail has no drafts-only scope; this one could also send, which Branch never does.
     ...(drafts ? ["https://www.googleapis.com/auth/gmail.compose"] : []),
+    ...(mailSend ? ["https://www.googleapis.com/auth/gmail.send"] : []),
   ];
   if (service === "microsoft") return [
-    "offline_access", "User.Read", drafts ? "Mail.ReadWrite" : "Mail.Read", "Calendars.Read",
+    "offline_access", "User.Read", drafts ? "Mail.ReadWrite" : "Mail.Read", calendarWrite ? "Calendars.ReadWrite" : "Calendars.Read",
     "OnlineMeetings.Read", "OnlineMeetingTranscript.Read.All",
+    ...(mailSend ? ["Mail.Send"] : []),
   ];
   return ["user-read-playback-state", "user-read-currently-playing", "user-modify-playback-state"];
 }
@@ -50,12 +56,13 @@ const labels: Record<SignInService, string> = { google: "Google", microsoft: "Mi
 /** The service described for the existing connection flow, without its client secret. */
 export function describeSignIn(service: SignInService, settings: SignInSettings): OAuthProvider {
   const base = { id: `personal-${service}`, label: labels[service], clientId: settings.clientId,
-    scopes: scopesFor(service, settings.drafts), extra: {} as Record<string, string> };
+    scopes: scopesFor(service, settings.drafts, settings.calendarWrite, settings.mailSend), extra: {} as Record<string, string> };
   if (service === "google") return { ...base, authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token", extra: { access_type: "offline", prompt: "consent" } };
   if (service === "microsoft") {
     const root = `https://login.microsoftonline.com/${encodeURIComponent(settings.tenant)}/oauth2/v2.0`;
-    return { ...base, authorizeUrl: `${root}/authorize`, tokenUrl: `${root}/token` };
+    return { ...base, authorizeUrl: `${root}/authorize`, tokenUrl: `${root}/token`,
+      extra: settings.calendarWrite || settings.mailSend ? { prompt: "consent" } : {} };
   }
   return { ...base, authorizeUrl: "https://accounts.spotify.com/authorize", tokenUrl: "https://accounts.spotify.com/api/token" };
 }
@@ -70,10 +77,13 @@ export interface SignInDeps {
 
 /** One service's sign-in: its settings, starting it, whether it is done, and a usable access key. */
 export class SignIn {
+  private mailRevision = 0;
   constructor(private readonly deps: SignInDeps, readonly service: SignInService, readonly part: PersonalPart) {}
   settings(): SignInSettings { return partSettings(this.deps.store, this.deps.owner, settingsKey(this.service), SignInSettingsSchema); }
   save(input: unknown): SignInSettings {
-    return savePartSettings(this.deps.store, this.deps.owner, settingsKey(this.service), SignInSettingsSchema, input);
+    const settings = savePartSettings(this.deps.store, this.deps.owner, settingsKey(this.service), SignInSettingsSchema, input);
+    this.mailRevision++;
+    return settings;
   }
   /** The full description, with the client secret filled in from the locker when one is named. */
   async provider(): Promise<OAuthProvider> {
@@ -86,6 +96,7 @@ export class SignIn {
   }
   /** Starts the sign-in through the existing flow; the owner opens the address it hands back. */
   async start(): Promise<OAuthStart> {
+    this.mailRevision++;
     const started = await this.deps.oauth.start(await this.provider());
     this.deps.oauth.waitFor(started.id).catch(() => undefined);
     return started;
@@ -97,6 +108,21 @@ export class SignIn {
   /** A usable access key, renewed first when it has run out. */
   async token(): Promise<string> {
     return this.deps.oauth.accessToken(await this.provider());
+  }
+  async requireCalendarWrite(): Promise<void> {
+    if (!this.settings().calendarWrite) throw new Error("Allow calendar changes on your account card, then sign in again.");
+    const tokens = await this.deps.oauth.saved(`personal-${this.service}`);
+    const scope = this.service === "google" ? "https://www.googleapis.com/auth/calendar.events" : "Calendars.ReadWrite";
+    if (!tokens?.scope?.split(/\s+/).includes(scope))
+      throw new Error("Sign in again and consent to calendar changes. Your saved read-only grant cannot write events.");
+  }
+  mailPreviewIdentity(): string { return JSON.stringify([this.service, this.settings(), this.mailRevision]); }
+  async requireMailSend(): Promise<void> {
+    if (!this.settings().mailSend) throw new Error("Allow sending mail on your account card, then sign in again.");
+    const tokens = await this.deps.oauth.saved(`personal-${this.service}`);
+    const scope = this.service === "google" ? "https://www.googleapis.com/auth/gmail.send" : "Mail.Send";
+    if (!tokens?.scope?.split(/\s+/).includes(scope))
+      throw new Error("Sign in again and consent to sending mail. A read or drafts grant cannot enable Branch's Send tool.");
   }
 }
 

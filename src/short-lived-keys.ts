@@ -110,6 +110,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/reach\/continuity(\/|$)/,
   /^\/api\/taste(\/|$)/,
   /^\/api\/self-development\/publications(\/|$)/,
+  new RegExp(`^/api/schedules/${id}/(usage|budget)$`),
   /^\/api\/schedules\/[a-f0-9-]{36}\/dashboard$/,
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
@@ -199,6 +200,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/self-development\/merge(\/|$)/,
   // The bounded diff of such a change: Branch's own source as a task changed it, for the owner to read.
   new RegExp(`^/api/self-development/requests/${id}/diff$`),
+  // The committed draft of such a change, read before the owner publishes it from the Inbox.
+  new RegExp(`^/api/self-development/requests/${id}/draft$`),
 ];
 
 /**

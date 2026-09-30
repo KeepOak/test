@@ -41,6 +41,8 @@ export const ROUTES = {
   "/api/taste/feedback": "owner POST",
   "/api/taste/correct": "owner POST",
   "/api/taste/forget": "owner POST",
+  "/api/schedules/:id/usage": "owner GET", // routine billing metadata
+  "/api/schedules/:id/budget": "owner POST", // owner-window budget only
   "/a2a": "task POST",
   "/ap/": "prefix",
   "/ap/v1/agent/tasks": "task POST",
@@ -1117,7 +1119,13 @@ export const ROUTES = {
   "/api/second-opinion": "owner POST",
   "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
   "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
+  "/api/continuous-qa": "owner POST",
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
+  "/api/never-break/drill": "owner POST",
+  "/api/mobile-push": "owner POST",
+  "/api/mobile-push/register": "owner POST",
+  "/api/mobile-push/revoke": "owner POST",
+  "/api/mobile-push/unregister": "owner POST",
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
   "/api/secrets/default": "look",
@@ -1139,6 +1147,8 @@ export const ROUTES = {
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
+  "/api/self-development/requests/:id/draft": "secret-read", // the committed draft, for the owner to review before publishing
+  "/api/self-development/requests/:id/publish": "owner POST",
   "/api/sessions": "look",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
@@ -1183,6 +1193,8 @@ export const ROUTES = {
   "/api/skill-installs": "look",
   "/api/skill-installs/": "prefix",
   "/api/skill-installs/export": "look",
+  "/api/skill-installs/github": "owner POST", // looks at a GitHub skill and holds a preview; the owner's alone
+  "/api/skill-installs/github/install": "owner POST",
   "/api/skill-installs/inspect": "owner POST",
   "/api/skill-installs/install": "owner POST",
   "/api/skill-installs/remove": "owner POST",
@@ -1299,6 +1311,22 @@ export const ROUTES = {
   "/api/panels/browser/action": "owner POST",
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
+  "/api/settings-kit/task-apply": "owner POST",
+  "/api/settings-kit/task-preview": "owner POST",
+  "/api/self-development/ci": "owner POST",
+  "/api/self-development/merge/test-copy": "owner POST",
+  "/api/self-development/merge/test-copy/": "prefix",
+  "/api/self-development/merge/test-copy/cancel": "owner POST",
+  "/api/self-development/merge/test-copy/start": "owner POST",
+  "/api/self-development/merge/test-copy/status": "owner POST",
+  "/api/skill-marketplace": "owner POST",
+  "/api/skill-marketplace/": "prefix",
+  "/api/skill-marketplace/browse": "owner POST",
+  "/api/skill-marketplace/inspect": "owner POST",
+  "/api/skill-marketplace/install": "owner POST",
+  "/api/skill-marketplace/remove": "owner POST",
+  "/api/skill-marketplace/sources": "owner POST",
+  "/api/skill-marketplace/trust": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",

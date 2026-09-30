@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ToolRegistry } from "../registry.js";
 import { briefOwnerOnly } from "../key-context.js";
 import { ChannelPolicySchema, type ChannelAdapter, type ChannelRouter } from "./router.js";
+import { registerOwnMessageTools } from "./message-actions.js";
 
 /**
  * A plugin may bring a chat service of its own. It exports one or more adapters under
@@ -153,8 +154,9 @@ export async function digest(router: ChannelRouter, brief: DigestSource, owner: 
 export interface OwnerCheck { requireOwner(what?: string): void }
 const onlyTheOwner = "Sending messages to your chats";
 
-/** The two tools that send on their own rather than answering somebody. */
+/** Owner tools for sending to chats and acting on recorded own messages. */
 export function registerChannelTools(registry: ToolRegistry, router: ChannelRouter, brief: DigestSource, people: OwnerCheck): void {
+  registerOwnMessageTools(registry, router, people);
   registry.register({
     name: "channels.broadcast", permission: "channels.send",
     description: "Send one message to several linked chats at once. Leave the list empty to reach every chat that has talked to the assistant.",
