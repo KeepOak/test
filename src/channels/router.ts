@@ -28,6 +28,7 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
   readChatPermissionSettings as chatPermissionSettings,
   saveChatPermissionSettings, type ChatPermissionSettings } from "./chat-permissions.js";
 import { commandMode } from "../commands/settings.js";
+import { groupCommandsGranted } from "./chat-permissions.js"; // UP-CHAT-009
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
@@ -102,6 +103,13 @@ const pairingCodeMs = 60 * 60_000;
 /** owner-dm-signin: the task sources a chat's chain may hold and still be the owner's own (never MCP, ACP or A2A). */
 const ownersOrChat = new Set(["owner", "channel", "schedule", "trigger"]);
 const pairingCodeFresh = (pair: { requestedAt?: string }): boolean => Date.now() - Date.parse(pair.requestedAt ?? "") <= pairingCodeMs;
+/** UP-CHAT-007: how many strangers on one chat app may wait for the owner at once (OpenClaw's CHANNEL_PAIRING_PENDING_MAX). */
+const maxPendingPairs = 3;
+/**
+ * UP-CHAT-009: the commands anybody let into a group may use. Every other command there (the model, a fresh start,
+ * folding the conversation, and stopping a task somebody else started) is the owner's, or someone the owner named.
+ */
+const groupFloor = new Set(["help", "status", "usage", "btw", "steer", "stop", "improve"]); // /improve only files a request the owner answers in the app
 export interface ChannelAdapter {
   readonly id: string;
   readonly kind: string;
@@ -151,6 +159,8 @@ export interface ChannelAdapter {
   setCommands?(commands: { command: string; description: string }[]): Promise<void>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
+  /** UP-CHAT-005: the sound a spoken reply must be for this app to show it as a voice bubble ("audio/ogg": OGG/Opus). */
+  readonly voiceNoteType?: string;
   /**
    * Sends a question with buttons to press, on the channels that have them. Absent means this
    * channel has none, and the question goes out as words with "reply y / a / n" instead.
@@ -350,6 +360,17 @@ function fitsTurn(messages: InboundMessage[], next: InboundMessage): boolean {
  * Edited messages: a new version arriving once its message is already being answered is a message of its own. It keeps
  * the original as the one a reaction goes on, and gets an id of its own so it is not taken for a repeat.
  */
+/**
+ * UP-CHAT-002: whether an edited message reads as something that acts rather than words: a slash command (the chat's,
+ * the owner's DM list, a saved one, /platform, /start), a typed y / a / n, or a button's payload. An edit of one is never
+ * carried out: editing `/bg x` would start a second task, and editing an old message into `/new` would reset the thread.
+ * Following OpenClaw (MIT), extensions/telegram/src/bot-handlers.inbound-pipeline.ts `handleEditedMessage`, which only
+ * records an edit and never dispatches it.
+ */
+export function editedCommandShaped(text: string): boolean {
+  const line = text.trim();
+  return /^\/[a-z?][\w?-]*(?:@[\w.-]+)?(?:\s|$)/i.test(line) || /^[yan](?::[0-9a-f:]*)?$/i.test(line) || /^(?:br|m):\S+$/.test(line);
+}
 function editedAsNew(message: InboundMessage): InboundMessage {
   return { ...message, edited: false, reactTo: message.reactTo ?? message.messageId, messageId: `${message.messageId}:edited:${Date.now().toString(36)}` };
 }
@@ -452,7 +473,7 @@ export class ChannelRouter {
    * Reads a reply aloud so it can be sent back as a voice note, but only when the owner has asked
    * for that. Returning null means "send the words instead", which is what happens by default.
    */
-  speakReply: (text: string) => Promise<{ bytes: Uint8Array; mediaType: string } | null> = async () => null;
+  speakReply: (text: string, voiceNoteType?: string) => Promise<{ bytes: Uint8Array; mediaType: string } | null> = async () => null;
   /**
    * Messages from one chat that arrive within this many milliseconds of the first become one
    * turn, so a thought typed as three quick messages is answered once.
@@ -739,6 +760,8 @@ export class ChannelRouter {
     const entry = this.adapters.get(message.channel);
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
+    // UP-CHAT-002: an edit is answered as words at most; a command, approval or button in one is never carried out.
+    if (message.edited && editedCommandShaped(message.text)) return "ignored";
     const { adapter, policy } = entry;
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
@@ -751,11 +774,18 @@ export class ChannelRouter {
     const access = this.access(message, policy);
     if (access !== "allowed") {
       if (message.caughtUp) return "ignored"; // mac6/bucket-16 integration
-      const text = access === "pairing"
-        ? `I don't know you yet. Ask my owner to approve code ${this.pairingCode(message)} under Settings → Channels, then message me again.`
-        : "This assistant is private.";
-      await adapter.send(message.chatId, text, this.quoteFor(message));
-      return access;
+      // UP-CHAT-007 (OpenClaw dm-access.ts and pairing-store.ts, Hermes pairing.py; MIT): a block says nothing, so it
+      // does not confirm the bot is there. A code is sent only to a direct chat, never where a group can read it; in a
+      // group the request is still written down, quietly, for the owner to approve under Settings → Channels, because
+      // some apps (Matrix rooms, Mattermost and Teams webhooks) have no direct chat to pair in.
+      if (access === "rejected") return "rejected";
+      // In a group only a message to Branch asks to be let in, so talk among others there fills no waiting place.
+      if (message.chatKind !== "direct" && !message.addressed) return "ignored";
+      const code = this.pairingRequest(message);
+      if (code && message.chatKind === "direct") await this.deliver(message.channel, message.chatId,
+        `I don't know you yet. Ask my owner to approve code ${code} under Settings → Channels, then message me again.`,
+        `pairing:${message.channel}:${message.senderId}:${code}`, this.quoteFor(message)).catch(() => undefined);
+      return "pairing";
     }
     this.latest.set(chatKey(message), message.messageId);
     // Checked without waiting, so messages from one chat still reach `answer` in the order they came.
@@ -800,7 +830,7 @@ export class ChannelRouter {
     if (!adapter?.sendVoice) return;
     const checked = await this.outboundGuard(text);
     if (checked.blocked) return;
-    const spoken = await this.speakReply(checked.text);
+    const spoken = await this.speakReply(checked.text, adapter.voiceNoteType);
     if (!spoken) return;
     await adapter.sendVoice(message.chatId, spoken.bytes, spoken.mediaType, replyTo);
   }
@@ -1171,8 +1201,13 @@ export class ChannelRouter {
   /** Carries out a chat command and sends its answer back. */
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
-    if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
+    const refused = this.groupCommandRefusal(message, command, turn);
+    if (refused) {
+      await this.deliver(channel, chatId, refused, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
+      return "replied";
+    }
+    if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     if (command.name === "trunk") {
       const reply = this.routeCommand(message, command.argument);
       await this.deliver(channel, chatId, reply, `route:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);
@@ -1222,6 +1257,21 @@ export class ChannelRouter {
       return "Saved who answers here. Your next message starts a fresh thread; the earlier conversation stays in history.";
     } catch (error) { return error instanceof Error ? error.message : "Could not save who answers here."; }
   }
+  /**
+   * UP-CHAT-009, adapted from Hermes Agent's gateway/slash_access.py (MIT): in a group, only the owner's own account, or
+   * a person the owner named for it (a chat permission line with `groupCommands`), runs the commands that change what
+   * everybody there shares. Everybody else gets `groupFloor`, and /stop only for a task they started themselves.
+   * A command added later is the owner's in groups until it is put on the floor.
+   */
+  private groupCommandRefusal(message: InboundMessage, command: ChatCommand, turn: ChatTurnState | undefined): string | null {
+    if (message.chatKind === "direct" || this.ownAccount(message.channel, message.senderId)
+      || groupCommandsGranted(chatPermissionSettings(this.store, this.runtime.owner), message.channel, message.senderId)) return null;
+    if (command.name === "stop")
+      return turn && turn.messages[0] && turn.messages[0].senderId !== message.senderId
+        ? "In a group, only the person who started a task, or the owner, can stop it." : null;
+    return groupFloor.has(command.name) ? null
+      : `In a group, only the owner or someone they choose can use /${command.name}. Send /help for the commands you can use here.`;
+  }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
   ownerDmHost: (() => CommandHost) | null = null;
   /**
@@ -1233,6 +1283,9 @@ export class ChannelRouter {
     const adapter = this.adapters.get(message.channel)?.adapter;
     const dm = message.voice ? null : ownerDmCommand(message.text);
     if (!dm || !adapter || !this.ownerDmHost || !ownerDmHere(this.store, this.runtime.owner, adapter.kind, { ...message, caughtUp: false })) return null;
+    // UP-CHAT-010: the owner's own "chat commands off" holds here too (chat-live-settings.ts); only the shipped off, never
+    // moved, leaves the owner's paired direct chat its commands, as `commandIn` reads it.
+    if (this.switches().commands === "off" && !commandsInPairedDm(this.store, this.runtime.owner)) return null;
     if (message.caughtUp) return "ignored"; // the owner's command sent while Branch was closed is old news, never carried out
     const refused = ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), dm.name, dm.argument);
     const key = `owner-dm:${message.chatId}:${message.messageId}`;
@@ -1566,6 +1619,9 @@ export class ChannelRouter {
       ...(trunkId ? { trunkId } : {}) });
     if (turn.routingAtStart && turn.routingAtStart !== this.chatTrunk(message.channel, message.chatId))
       freshThread(this.store, this.runtime.owner, message.channel, message.chatId);
+    // hot-update: a newer engine took this task over and carries it on; its answer goes to the chat from there
+    // (carryOnReply), so nothing is said from here: no "could not finish", and no second answer.
+    if (run.status === "interrupted" && this.handedOver(run.id)) { live?.cancel(); turn.reply?.cancel(); return "replied"; }
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
       : run.status === "cancelled" ? "Stopped."
       // owner-dm-signin: the task's own reason, scrubbed and kept short, rather than the bare status.
@@ -1589,6 +1645,51 @@ export class ChannelRouter {
     if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
     if (message.voice) await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
     return ok ? "replied" : "failed";
+  }
+  /**
+   * hot-update: resolves once no chat's turn is still finishing (its answer written down and sent) and no send is under
+   * way, or after `ms`; answers whether all were done. An engine handing over waits for this before it lets go.
+   */
+  async settle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (this.turns.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.flushing, new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, until - Date.now())); })]);
+    clearTimeout(timer);
+    return this.turns.size === 0;
+  }
+  /**
+   * The chat message a task began from, through every engine it was carried on in: each carried-on task names the one
+   * it carried on (`resumedFrom`), and only the first holds the chat's mark (`channel.inbound`).
+   */
+  private chatOrigin(runId: string): { channel?: unknown; chatId?: unknown; messageId?: unknown } | undefined {
+    let id: string | undefined = runId;
+    for (let hops = 0; id && hops < 50; hops++) {
+      const events = this.store.events(id);
+      const inbound = events.find((event) => event.kind === "channel.inbound");
+      if (inbound) return inbound.data as { channel?: unknown; chatId?: unknown; messageId?: unknown };
+      const from = events.find((event) => event.kind === "run.started")?.data.resumedFrom;
+      id = typeof from === "string" ? from : undefined;
+    }
+    return undefined;
+  }
+  private handedOver(runId: string): boolean {
+    return !!this.store.sqlite.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.handed_over' LIMIT 1").get(runId);
+  }
+  /**
+   * hot-update: a chat's task that an older engine handed to this one (src/never-break/resume.ts resumeHandedOver)
+   * answers the chat from here once it finishes, in reply to the message that started it. The older engine said
+   * nothing for it (finishTurn), and a chat app that sent its message once never sends it again.
+   */
+  async carryOnReply(runId: string, resumed: Promise<Run | undefined>): Promise<boolean> {
+    const inbound = this.chatOrigin(runId);
+    if (typeof inbound?.channel !== "string" || typeof inbound.chatId !== "string") return false;
+    const run = await resumed ?? this.store.run(runId);
+    if (!run || run.status === "interrupted") return false; // handed on again: the next engine answers it
+    const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
+      : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
+    await this.deliver(inbound.channel, inbound.chatId, said, `reply:${run.id}`, typeof inbound.messageId === "string" ? inbound.messageId : undefined);
+    return true;
   }
   /**
    * Batch 20 (wave 8): the message going back out is the last step of the task, so it hangs off the
@@ -1752,7 +1853,7 @@ export class ChannelRouter {
     return new ReplyStream({ adapter, chatId: message.chatId, messageId: message.messageId,
       ...(turn ? { quote: () => this.quoteIn(turn) } : {}),
       allowed: () => this.liveOn() && this.senderAllowed(message.channel, message.senderId) },
-    (text) => this.outboundGuard(this.hideLeaks(text)), this.liveTiming.editEveryMs);
+    (text) => this.outboundGuard(this.hideLeaks(text)), this.liveTiming.editEveryMs, () => this.switches().splitting);
   }
   /**
    * "Show steps in chats" in an app that cannot edit a message (WhatsApp, Signal, iMessage, email…): one line above the
@@ -1825,9 +1926,16 @@ export class ChannelRouter {
     if (list.unknown === "block") return "rejected";
     return policy.pairing ? "pairing" : "rejected";
   }
-  private pairingCode(message: InboundMessage): string {
+  /**
+   * UP-CHAT-007: a new pairing request, and its code, or null when none is made: this sender was already given a code
+   * that still works (they are answered once per code, so a stranger cannot drive how much Branch sends), or as many
+   * strangers as `maxPendingPairs` already wait on this chat app.
+   */
+  private pairingRequest(message: InboundMessage): string | null {
     const existing = this.pair(message.channel, message.senderId);
-    if (existing?.status === "pending" && pairingCodeFresh(existing)) return existing.code;
+    if (existing?.status === "pending" && pairingCodeFresh(existing)) return null;
+    const waiting = this.pairs(this.runtime.owner).filter((p) => p.status === "pending" && p.channel === message.channel && pairingCodeFresh(p));
+    if (waiting.length >= maxPendingPairs) return null;
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
     this.store.save("settings", this.runtime.owner, `channel-pair:${message.channel}:${message.senderId}`,
       { status: "pending", code, name: message.senderName.slice(0, 120), requestedAt: new Date().toISOString() } satisfies Pair);
@@ -1868,6 +1976,7 @@ export class ChannelRouter {
     if (matches.length > 1) throw new Error("Two requests have that code. Ask the person to write to the bot again for a new one.");
     const match = matches[0];
     if (!match) { this.wrongCodes.push(now); throw new Error("No pending request has that code"); }
+    this.wrongCodes = []; // UP-CHAT-007 (Hermes pairing.py): the owner's own typos before a right code never add up to a lockout
     const approved: Pair = { status: "approved", code: match.code, name: match.name, requestedAt: match.requestedAt, approvedAt: new Date().toISOString() };
     this.store.save("settings", owner, `channel-pair:${match.channel}:${match.senderId}`, approved);
     audit(this.store, owner, { action: "channel.paired", actor: owner, subject: `${match.name} on ${match.channel}`,

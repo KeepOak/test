@@ -3258,6 +3258,10 @@ Copyright 2025 OpenAI
 
 The command names `branch` answers to beside its own (`config`, `skin`, `cron`, `pause`, `insights`, `checkpoints`, `kanban` and the rest, listed in `src/terminal-parity.ts` and `docs/configuration.md`) were chosen after reading the command lists of Hermes Agent (https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research) and OpenClaw (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation). No code was taken from either; both are under the MIT licence, whose text is given under IronClaw above.
 
+### OpenClaw: edited chat messages are never commands (UP-CHAT-002), MIT
+
+`editedCommandShaped` and its check in `ChannelRouter.handle` (`src/channels/router.ts`) follow OpenClaw's `handleEditedMessage` in `extensions/telegram/src/bot-handlers.inbound-pipeline.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation): an edit is recorded, never dispatched as a command. The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### Letta Code (Letta, Inc.), Apache-2.0
 
 `src/reflection/settings.ts` and `src/reflection/pass.ts` follow the reflection trigger model (off, every N steps with a default of 25, or when the conversation is compacted) in Letta Code's `src/reflection-settings.ts` and `src/cli/helpers/post-turn-reflection.ts`, and the order of work in its reflection subagent, `src/agent/subagents/builtin/reflection-v2.md` (https://github.com/letta-ai/letta-code, commit 6e84e8a). The ideas were rewritten in Branch's words; Branch's pass stages suggestions instead of writing. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0): you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -3304,7 +3308,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### Hermes Agent credential pool (Nous Research), MIT
 
-`src/accounts/pool.ts` and `src/accounts/pool-provider.ts` follow the shape of Hermes Agent's credential pool, `agent/credential_pool.py` and `agent/credential_pool_model_cooldowns.py` (https://github.com/NousResearch/hermes-agent): the fill-first, round-robin and least-used strategies, resting a whole credential after an authentication or billing failure, resting one model only after a plain rate limit, and taking the rest's length from the service's own reset time. The code was written again for Branch. Used under the MIT licence:
+`src/accounts/pool.ts` and `src/accounts/pool-provider.ts` follow the shape of Hermes Agent's credential pool, `agent/credential_pool.py` and `agent/credential_pool_model_cooldowns.py` (https://github.com/NousResearch/hermes-agent): the fill-first, round-robin and least-used strategies, resting a whole credential after an authentication or billing failure, resting one model only after a plain rate limit, and taking the rest's length from the service's own reset time. The code was written again for Branch. `src/accounts/leases.ts` adapts its per-credential leases (`acquire_lease` and `release_lease` in `agent/credential_pool.py`, with `DEFAULT_MAX_CONCURRENT_PER_CREDENTIAL` = 1) and the lease each delegated child takes for its run (`_lease_child_credential` in `tools/delegate_tool_child_run.py`), so helpers working side by side spread over a connection's accounts; `src/accounts/rests.ts` keeps each account's rest on disk the way the pool saves `last_status`, `last_status_at` and `last_error_reset_at`. Used under the MIT licence:
 
 Copyright (c) 2025 Nous Research
 
@@ -3313,6 +3317,46 @@ Permission is hereby granted, free of charge, to any person obtaining a copy of 
 The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### LiteLLM (BerriAI), MIT
+
+The prompt-cache pricing in `src/pricing.ts` (`promptCost`) follows LiteLLM's `litellm/litellm_core_utils/llm_cost_calc/utils.py` (https://github.com/BerriAI/litellm, commit 3a6744cd): a missing cache-read or cache-write rate falls back to the input rate and a missing one-hour write rate to the five-minute one (lines 382-394), and five-minute and one-hour cache writes are charged apart (`calculate_cache_writing_cost`). The Claude cache-read and cache-write rates in the same file were copied from LiteLLM's `model_prices_and_context_window.json` (commit 27c110cb); the Claude 3.x and 4.0/4.1 rates are its Bedrock entries for those models. Only the file outside LiteLLM's `enterprise/` directory was used, which is under the MIT licence:
+
+Copyright (c) 2023 Berri AI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### models.dev, MIT
+
+The prices of `claude-opus-5-5` and `claude-sonnet-5-5` in `src/pricing.ts` were checked against models.dev's `providers/anthropic/models/*.toml` (https://github.com/anomalyco/models.dev, commit 1ba7a9df). Used under the MIT licence:
+
+Copyright (c) 2025 models.dev
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### OpenClaw rate-limit backoff, MIT
+
+The rest after a plain rate limit in `src/accounts/pool.ts` (`rateBackoffMs`, and `rest` never moving a running rest further out) is adapted from OpenClaw's `src/agents/auth-profiles/usage-failure-state.ts` (https://github.com/openclaw/openclaw, commit dc6e5cd2): 30 seconds doubling to at most a day (`RATE_LIMIT_BACKOFF_BASE_MS`, `RATE_LIMIT_BACKOFF_MAX_MS`, `calculateCappedExponentialBackoffMs`) and `keepActiveWindowOrRecompute`. The repository's LICENSE file is the MIT licence:
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### OpenAI Codex usage-limit refusals, Apache-2.0
+
+How a ChatGPT sign-in's 429 is read in `src/provider-retry.ts` and `src/accounts/pool.ts` is adapted from Codex's `codex-rs/codex-api/src/api_bridge.rs` (https://github.com/openai/codex, commit 8bd5a136, Copyright 2025 OpenAI): only an `error.type` of `usage_limit_reached` is a plan limit, lasting until the body's `resets_at` (seconds since the epoch); `usage_not_included` means the plan does not include that use; any other 429 is a passing rate limit. The code was rewritten in TypeScript for Branch. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 
 ### PicoClaw, MIT
 
@@ -3345,6 +3389,10 @@ Permission to use, copy, modify, and/or distribute this software for any purpose
 
 THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+### Hermes Agent: replies in each chat app's own formatting, and streamed replies that end cleanly (UP-CHAT-011, UP-CHAT-012), MIT
+
+`src/channels/chat-markdown.ts` adapts Hermes Agent's `gateway/platforms/signal_format.py` (`markdown_to_signal`) and `gateway/platforms/whatsapp_common.py` (`format_message`); the tail-only fallback in `src/channels/reply-stream.ts` adapts `gateway/stream_consumer_fallback.py` (`_send_fallback_final`, `_continuation_text`), and its preview fence closing follows `gateway/stream_consumer_fences.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). The code was written for Branch in TypeScript. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### OpenFang loop guard (idea only), MIT OR Apache-2.0
 
 The graduated warn / refuse / stop loop guard in `src/loop-guard.ts` — counting identical calls and identical results, noticing calls that go back and forth, and gentler limits for tools meant to be polled — is an idea from OpenFang's `crates/openfang-runtime/src/loop_guard.rs` (https://github.com/RightNow-AI/openfang, MIT OR Apache-2.0). It was written afresh; no code was copied.
@@ -3361,6 +3409,10 @@ Two parts of Branch are adapted from Aider (https://github.com/Aider-AI/aider, c
 - `src/ai-comments.ts` follows `aider/watch.py` and `aider/watch_prompts.py`: the comment pattern (a comment starting with "ai" or ending with "ai", "ai!" or "ai?") and what the resulting task asks for.
 
 Changes: rewritten in TypeScript for Branch; file access goes through Branch's workspace checks.
+
+### Hermes Agent and OpenClaw: spoken replies as voice notes (UP-CHAT-005), MIT
+
+`src/voice-note.ts` adapts Hermes Agent's `tools/tts_text_normalize.py` (`strip_nonspoken_blocks`, `strip_markdown_for_tts`, `smooth_whitespace_for_tts`) and `_wrap_pcm_as_wav` in `tools/tts_tool_delivery.py`, and the OpenAI `response_format: "opus"` request follows `tools/tts_tool.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). The Telegram `sendVoice` / `sendAudio` choice in `src/channels/telegram.ts` follows OpenClaw's `extensions/telegram/src/voice.ts` and `src/media/audio.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch in TypeScript. Used under the MIT licence, whose text is given under IronClaw above.
 
 ### Understand Anything (ideas only), MIT
 
@@ -3447,6 +3499,10 @@ Copyright 2024 Block, Inc.
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+### Hermes Agent and OpenClaw: group command access and pairing (UP-CHAT-007..010), MIT
+
+`groupCommandRefusal` in `src/channels/router.ts` and the `groupCommands` line in `src/channels/chat-permissions.ts` adapt Hermes Agent's `gateway/slash_access.py` (admins run every command, everybody else a small floor, failing closed); resetting the wrong-code count after an approval follows `gateway/pairing.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). Answering a stranger only when a request is new, the cap of three waiting requests, no codes in groups and silent blocks follow OpenClaw's `src/pairing/pairing-store.ts` and `extensions/telegram/src/dm-access.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
 
 ### Ollama, MIT
 
@@ -3564,6 +3620,16 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Helper lifecycle (ideas only), MIT and Apache-2.0
+
+`src/helper-tree.ts` and the helper start, stop and limit in `src/runtime.ts` (`delegateBackground`, `cancel`, `stopHelpers`) were written for Branch after reading these projects; no code was copied.
+
+- Hermes Agent (https://github.com/NousResearch/hermes-agent, commit a9a5424, Copyright (c) 2025 Nous Research, MIT): a child registered with its parent before it runs, and one attached after the parent's stop landed stopped at once (`tools/delegate_tool_child_run.py`); background hand-offs refused at capacity rather than queued (`tools/delegate_tool_config.py`); the tools a child never has (`tools/delegate_tool_toolsets.py`).
+- OpenClaw (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation, MIT): a stop that walks a child's descendants (`src/agents/subagents/registry/subagent-control-kill.ts`), children at once per requester (`src/agents/spawn-plan.ts`, `src/config/agent-limits.ts`) and a reset that stops the session's children (`src/auto-reply/reply/session-reset-cleanup.ts`).
+- Codex (https://github.com/openai/codex, commit bd4204efc2, Apache-2.0): a spawn slot reserved before the child starts and given back when it ends (`codex-rs/core/src/agent/registry.rs`).
+
+The MIT licence text is given under IronClaw above. Codex is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); only its design was followed.
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
@@ -3656,3 +3722,12 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+
+### Branch builds Branch (P0 fixes): Hermes Agent (MIT); Codex (Apache-2.0)
+
+- `boundSummaryInput` in `src/compaction-input.ts`, which holds a fold's input to its room by keeping 45% from the start and 55% from the end with a marker naming how much of the middle was left out, is adapted from `_bound_summary_input` in Hermes Agent's `agent/context_compressor.py` (https://github.com/NousResearch/hermes-agent, commit 7083a524a, Copyright (c) 2025 Nous Research, MIT; the licence text is given under IronClaw above).
+- `ownerWordsSection` in `src/compaction-input.ts` (the owner's own messages kept word for word through a fold, newest first up to a budget, the last one cut) follows `build_compacted_history_with_limit` and `COMPACT_USER_MESSAGE_MAX_TOKENS` in Codex's `codex-rs/core/src/compact.rs`, and `Runtime.summariseRange` in `src/runtime.ts` (a summariser refused as too long asked again without the oldest item) its handling of `ContextWindowExceeded` there (https://github.com/openai/codex, commit 5f3180c79).
+- `src/integrations/command-turns.ts` bounds how many host commands run at once after `MAX_UNIFIED_EXEC_PROCESSES` in Codex's `codex-rs/core/src/unified_exec/mod.rs` (commit 995138d71), and `src/processes.ts` settles a program left running once its output closes, or a moment after it exits, after `TRAILING_OUTPUT_GRACE` in `codex-rs/core/src/unified_exec/async_watcher.rs` (commit 4891c4e35).
+- `programStart` in `src/coding/hand-off.ts` starts an npm-installed Codex as its own program with the environment its npm launcher (`codex-cli/bin/codex.js`, commit d14143834) adds, as `codexBinary` in `src/asks/codex-app-server.ts` already did for the app-server.
+
+The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.

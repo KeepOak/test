@@ -6,12 +6,13 @@ import type { ToolContext } from '../contracts.js';
 import type { ToolRegistry } from '../registry.js';
 import { commandFolder, ShellConfigSchema, ShellInputSchema, shellEnvironment, netlessEnvironment, validateExecutables, type ShellConfig, type ShellInput } from './shell-config.js';
 import { ShellProcess, type ProcessResult } from './shell-process.js';
+import { CommandTurns, maxParallelCommands, projectRoot, queueGraceMs } from './command-turns.js'; // SELF-302
 import { defaultJobObjects, type Job, type JobObjects } from './job-object.js';
 import { scrubSecrets } from '../locker.js';
 import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
-import { checkRunner, heldCover, npmScript, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
+import { checkRunner, heldCover, npmScript, wslHeldPlan, wslHeldRunner, wslHeldStart, wslOnlyName, wslProbe, wslReadiness } from './wsl-held.js';
 
 /** Longest a command waits for its Windows job object before running with sampled limits. */
 const jobStartupMs = 1000;
@@ -24,11 +25,27 @@ export interface ShellTarget {
   isolation: 'job-object' | 'sampling';
 }
 
+/** SELF-304: a held command ready to be left running, and what to do once it ends (BranchShell.launchHeld). */
+export interface HeldLaunch {
+  start: { executable: string; args: string[]; env: NodeJS.ProcessEnv };
+  cwd: string;
+  /** Closes the wall, sweeps any `.git` it planted (named in the answer) and removes its scratch folder. */
+  cleanup: () => Promise<string[]>;
+}
+
 interface Operation { controller: AbortController; owner: string; runId: string; done: Promise<unknown>; cleared: Promise<unknown> }
 export class BranchShell {
   private readonly config: ShellConfig;
   private readonly env: NodeJS.ProcessEnv;
   private readonly pending = new Set<Operation>();
+  /**
+   * SELF-302: whose turn it is to run a command. There used to be one command at a time for the whole engine, so a
+   * second one from any helper or conversation was refused at once, and helpers started together could not build or
+   * test in their own copies. Now each folder takes one command at a time (so two never write the same folder or sweep
+   * each other's `.git`), the rest wait their turn, and the engine as a whole runs a bounded number at once, since each
+   * holds its own memory and processor limits.
+   */
+  private readonly turns = new CommandTurns(maxParallelCommands);
   private closed = false;
   private spare: Job | null = null;
   /**
@@ -49,15 +66,26 @@ export class BranchShell {
   async ready(): Promise<void> { await validateExecutables(this.config); }
   execute(input: ShellInput, context: ToolContext): Promise<ProcessResult & { target: ShellTarget }> {
     if (this.closed) return Promise.reject(new Error('Host command execution is closed'));
-    if (this.pending.size) return Promise.reject(new Error('A host command is already active'));
     if (!context.owner || !context.runId) return Promise.reject(new Error('Host commands require an owner and run ID'));
     const parsed = ShellInputSchema.parse(input);
     const operation: Operation = { controller: new AbortController(), owner: context.owner, runId: context.runId, done: Promise.resolve(), cleared: Promise.resolve() };
+    // A command waiting for its turn is pending too, so a run finishing or the shell closing stops it as well.
     this.pending.add(operation);
     const done = this.perform(parsed, context, operation.controller.signal);
     operation.done = done;
     operation.cleared = done.finally(() => this.pending.delete(operation)).catch(() => undefined);
     return done;
+  }
+  /**
+   * The program an alias names: the launch file's first, then the owner's own. SELF-015: on Windows a command held to
+   * one folder runs inside WSL and never starts a Windows program, so a program WSL runs (curl, wget, pip, uv, python3)
+   * needs no Windows alias of its own; it is named as it is, and wsl-held.ts decides whether it runs (apt never does).
+   */
+  private executableFor(name: string, context: Pick<ToolContext, 'writesConfinedTo'>): { path: string; args: string[] } | undefined {
+    const own = this.extra();
+    if (Object.hasOwn(this.config.executables, name)) return this.config.executables[name];
+    if (Object.hasOwn(own, name)) return own[name];
+    return context.writesConfinedTo && process.platform === 'win32' && wslOnlyName(name) ? { path: name, args: [] } : undefined;
   }
   /** Resolves once no host command is running, so a caller can take its turn instead of guessing. */
   async whenIdle(signal?: AbortSignal): Promise<void> {
@@ -69,9 +97,7 @@ export class BranchShell {
     signal?.throwIfAborted();
   }
   private async perform(input: ShellInput, context: ToolContext, stopping: AbortSignal) {
-    const own = this.extra();
-    const executable = Object.hasOwn(this.config.executables, input.executable) ? this.config.executables[input.executable]
-      : Object.hasOwn(own, input.executable) ? own[input.executable] : undefined;
+    const executable = this.executableFor(input.executable, context);
     if (!executable) throw new Error('Executable alias is not configured');
     const signal = AbortSignal.any([context.signal, stopping]);
     signal.throwIfAborted();
@@ -83,6 +109,15 @@ export class BranchShell {
     const tuned = this.tuning(); // R17-S10
     const limitMs = tuned.timeoutMs ?? this.config.timeoutMs;
     if (input.timeoutMs && input.timeoutMs > limitMs) throw new Error('Command timeout exceeds configured maximum');
+    signal.throwIfAborted();
+    // SELF-302: one command at a time per folder, the rest wait their turn (src/integrations/command-turns.ts).
+    const release = await this.turns.take(confined ?? await projectRoot(cwd, context.workspace), signal, limitMs + queueGraceMs);
+    try { return await this.performInTurn(input, context, signal, { executable, cwd, confined, tuned, limitMs }); }
+    finally { release(); }
+  }
+  private async performInTurn(input: ShellInput, context: ToolContext, signal: AbortSignal, at: { executable: { path: string; args: string[] };
+    cwd: string; confined: string | null; tuned: ReturnType<BranchShell['tuning']>; limitMs: number }) {
+    const { executable, cwd, confined, tuned, limitMs } = at;
     signal.throwIfAborted();
     const injected = await this.injected(input.secrets, context);
     // An approval rule may say how tightly this command is held; without one the shell settings and
@@ -129,6 +164,11 @@ export class BranchShell {
       const result = await this.spawnIn(run, scratch);
       swept = before ? await sweepNewGitFolders(run.workspace, before) : [];
       return swept.length ? { ...result, stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}Branch removed the .git this command made (${swept.join(', ')}): Git is never run from a repository a held command planted.` } : result;
+    } catch (error) {
+      // A command refused before it started (WSL not ready, a program WSL does not run, apt) never reached its job, and
+      // the job's supervisor would outlive it; closing twice is harmless.
+      await run.job?.close().catch(() => undefined);
+      throw error;
     } finally {
       // However the command ended, what it planted does not outlive it.
       if (before && !swept.length) await sweepNewGitFolders(run.workspace, before).catch(() => undefined);
@@ -136,6 +176,22 @@ export class BranchShell {
     }
   }
   private async spawnIn(run: Parameters<BranchShell['spawn']>[0], scratch: string | null): Promise<ProcessResult> {
+    const { start, wall } = await this.startFor(run, scratch);
+    try {
+      const result = await new ShellProcess({ executable: start.executable, args: start.args,
+        cwd: run.cwd, env: start.env, signal: run.signal, timeoutMs: run.timeoutMs, maxOutputBytes: this.config.maxOutputBytes,
+        maxMemoryMb: this.config.maxMemoryMb, maxCpuSeconds: this.config.maxCpuSeconds, job: run.job ?? undefined }).run();
+      const note = wall ? await wall.finish(result) : null;
+      return note ? { ...result, stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${note}` } : result;
+    } catch (error) {
+      await run.job?.close().catch(() => undefined);
+      throw error;
+    } finally {
+      await wall?.close();
+    }
+  }
+  /** How a command starts: as it is, behind the wall, or (held, on Windows) inside WSL; and the wall to close after. */
+  private async startFor(run: Parameters<BranchShell['spawn']>[0], scratch: string | null) {
     // The environment is built from an allowlist only, then the owner's extra names (R17-S10, never a
     // secret, never replacing a name already set), then the dead-address proxy, then secrets.
     const env = { ...withPassedEnvironment(this.env, run.passed ?? {}), ...(run.netless ? netlessEnvironment() : {}), ...run.injected,
@@ -154,18 +210,42 @@ export class BranchShell {
     const walled = run.wall && cover ? { ...run.wall, readOnly: [...(run.wall.readOnly ?? []), ...cover.restored] } : run.wall;
     const wall = walled && !held ? await openWall(walled, plain, { workspace: run.workspace, secrets: run.injected,
       ...(scratch ? { temp: scratch, held: true } : {}), ...(cover ? { covered: cover.covered } : {}) }) : null;
-    const start = held ?? wall?.start ?? plain;
+    return { start: held ?? wall?.start ?? plain, wall };
+  }
+  /**
+   * SELF-304: a command held to one folder and left running (process.start while Branch's own source is checked out).
+   * It is resolved, checked and walled exactly as a held `shell.execute` is: its own scratch folder, the wall (inside
+   * WSL on Windows), no network but the owner's Full Access or `npm ci`'s registry, no secrets. It comes back unstarted,
+   * with the clean-up to run once it ends: the wall closed, any `.git` it planted swept away, its scratch folder removed.
+   */
+  async launchHeld(input: { executable: string; args: string[]; cwd: string }, context: ToolContext, timeoutMs: number): Promise<HeldLaunch> {
+    if (this.closed) throw new Error('Host command execution is closed');
+    if (!context.writesConfinedTo) throw new Error('Only a command held to one folder is started this way');
+    const own = this.extra();
+    const executable = Object.hasOwn(this.config.executables, input.executable) ? this.config.executables[input.executable]
+      : Object.hasOwn(own, input.executable) ? own[input.executable] : undefined;
+    if (!executable) throw new Error('Executable alias is not configured');
+    const cwd = await new WorkspaceFiles(context.workspace).checked(input.cwd, true);
+    if (cwd !== commandFolder(context.workspace, input.cwd) || !(await stat(cwd)).isDirectory()) throw new Error('Command cwd must be a workspace directory');
+    const confined = await confinedFolder(context.writesConfinedTo, cwd);
+    const held = heldCommand(executable, input.args);
+    const before = await gitFoldersUnder(confined);
+    const scratch = await mkdtemp(join(tmpdir(), 'branch-held-'));
+    const run = { executable, args: held.args, cwd, injected: {}, netless: false, job: null, timeoutMs, signal: context.signal,
+      passed: this.tuning().env, wall: confinedWall(context.osSandbox, { registry: held.registry, open: context.ownerFullAccess === true }),
+      workspace: confined, confined: true };
     try {
-      const result = await new ShellProcess({ executable: start.executable, args: start.args,
-        cwd: run.cwd, env: start.env, signal: run.signal, timeoutMs: run.timeoutMs, maxOutputBytes: this.config.maxOutputBytes,
-        maxMemoryMb: this.config.maxMemoryMb, maxCpuSeconds: this.config.maxCpuSeconds, job: run.job ?? undefined }).run();
-      const note = wall ? await wall.finish(result) : null;
-      return note ? { ...result, stderr: `${result.stderr}${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${note}` } : result;
+      const { start, wall } = await this.startFor(run, scratch);
+      const cleanup = async (): Promise<string[]> => {
+        await wall?.close().catch(() => undefined);
+        const swept = await sweepNewGitFolders(confined, before).catch(() => []);
+        await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
+        return swept;
+      };
+      return { start, cwd, cleanup };
     } catch (error) {
-      await run.job?.close().catch(() => undefined);
+      await rm(scratch, { recursive: true, force: true }).catch(() => undefined);
       throw error;
-    } finally {
-      await wall?.close();
     }
   }
   /** How WSL is asked whether it can hold a command; replaced in tests. */

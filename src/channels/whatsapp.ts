@@ -1,7 +1,8 @@
 import { attachmentKind, voiceFileName } from "./media.js";
 import { z } from "zod";
 import { ReactionAnswers } from "./reaction-answers.js";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
+import { whatsappMarkdown } from "./chat-markdown.js";
 import { assertMetaSigned, metaChallenge } from "./meta-graph.js";
 
 /**
@@ -229,8 +230,10 @@ export class WhatsAppAdapter implements ChannelAdapter {
     const parsed = z.object({ messages: z.array(z.object({ id: z.string() }).passthrough()).default([]) }).passthrough().safeParse(await response.json().catch(() => ({})));
     return parsed.success ? parsed.data.messages[0]?.id : undefined;
   }
-  async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     this.assertWindow(chatId);
+    // UP-CHAT-011: Markdown in WhatsApp's own marks (*bold*, _italic_, ~strike~, code), unless the owner chose plain words.
+    if (!format?.plain) text = whatsappMarkdown(text);
     const response = await this.fetch(`${this.base}/${encodeURIComponent(this.options.phoneNumberId)}/messages`, {
       method: "POST", headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/json" },
       body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", to: chatId,
