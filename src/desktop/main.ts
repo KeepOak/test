@@ -12,7 +12,8 @@ import {
   type NativeImage,
 } from "electron";
 import { existsSync, readFileSync } from "node:fs";
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // Wave 5 (deployment): portable folders, joining a background engine, opening straight to the tray.
@@ -91,8 +92,11 @@ import { desktopGatewayConfig } from "./gateway-mode.js";
 import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesktopGateway } from "./gateway-launch.js";
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
-import { versionedLayout } from "./app-folders.js";
-import { forwardedVariable, forwardTarget, handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
+import { rollBackPointer, versionedLayout } from "./app-folders.js";
+import { goingBackIsSafe, systemDeps } from "./version-switch.js";
+import { failureName, shellUpMarker } from "./shell-switch.js";
+import { storeMigrations } from "../never-break/migrations.js";
+import { forwardedVariable, forwardTarget, guardedForward, handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
 import { portableMarker } from "../install/layout.js";
 
 let window: BrowserWindow | undefined;
@@ -984,10 +988,19 @@ else if (process.argv.includes(refreshShortcutsFlag)) {
   const trial = new URL("./beta-smoke-window.js", import.meta.url).href;
   void app.whenReady().then(async () => (await import(trial) as typeof import("./beta-smoke-window.js")).smokeMode(report, app.getVersion()))
     .then((code) => app.exit(code), () => app.exit(1));
-} else if (forwardToVersionInUse()) {
-  // Started the version current.json names in this one's place (a shortcut to an older version's folder); this one ends.
-} else if (!app.requestSingleInstanceLock()) app.quit();
-else {
+} else {
+  // Versioned app folders: a start of another version of this install goes to the version in use (guarded).
+  const forward = app.isPackaged ? forwardTarget(appLayout(), appEntryName(process.platform), process.env, {
+    readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, exists: existsSync }) : null;
+  // Said once, to this start only: nothing this one starts later (the gateway, a relaunch) inherits it.
+  delete process.env[forwardedVariable];
+  if (!forward) startAsThis();
+  else void forwardToVersionInUse(forward).then((outcome) => (outcome === "went-back" ? startAsThis() : app.exit(0)), () => startAsThis());
+}
+
+/** The window's own start: one copy at a time, then the app. */
+function startAsThis(): void {
+  if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   app.on("second-instance", () => {
     window?.show();
     window?.focus();
@@ -1027,19 +1040,32 @@ else {
 /**
  * Versioned app folders: a start of a version that is not the one in use (a shortcut, the taskbar or "start with Windows"
  * still naming an older folder, or the version before after a switch made with no window open) starts the version in
- * use instead, with the same arguments, and ends. That keeps every start on the version `current.json` names.
+ * use instead, with the same arguments. A version never seen up is watched first (shell-window.ts, guardedForward).
  */
-function forwardToVersionInUse(): boolean {
-  if (!app.isPackaged) return false;
-  const target = forwardTarget(appLayout(), appEntryName(process.platform), process.env, {
-    readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, exists: existsSync });
-  if (!target) return false;
+async function forwardToVersionInUse(target: { program: string; version: string }): Promise<"forwarded" | "went-back"> {
+  const layout = appLayout()!, exe = appEntryName(process.platform), scratch = updateScratchDir();
   const env: NodeJS.ProcessEnv = { ...process.env, [forwardedVariable]: process.execPath };
   delete env.ELECTRON_RUN_AS_NODE;
-  try { spawn(target, process.argv.slice(1), { detached: true, stdio: "ignore", env }).unref(); }
-  catch { return false; } // could not start it: this version opens instead, as before
-  app.exit(0);
-  return true;
+  return guardedForward(target, {
+    start: (program) => {
+      const child = spawn(program, process.argv.slice(1), { detached: true, stdio: "ignore", env });
+      child.on("error", () => undefined);
+      child.unref();
+      return child.pid ?? null;
+    },
+    up: (version) => existsSync(shellUpMarker(scratch, version)),
+    end: (pid) => new Promise((done) => execFile(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+      ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: 20_000 }, () => done())),
+    safe: async () => (await goingBackIsSafe({ dataDir: (await folders(app.getPath("userData"))).dataDir, understood: storeMigrations.at(-1)?.version ?? null },
+      { format: systemDeps("").format, note: async (line) => diagnose("updater", "warn", line) })).ok,
+    rollBack: async () => (await rollBackPointer(layout.root, exe)) !== null,
+    tell: async (tried) => {
+      await mkdir(scratch, { recursive: true });
+      await writeFile(join(scratch, failureName), JSON.stringify({ kept: app.getVersion(), tried, commit: null, at: new Date().toISOString(),
+        message: `Version ${tried} did not open its window, so Branch went back to ${app.getVersion()} by itself. Your conversations are kept. The next change is tried as soon as it lands.` }));
+    },
+    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+  });
 }
 
 /** The broker's lock is separate from its windows; closing or updating a shell leaves this owner running. */

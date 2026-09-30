@@ -164,11 +164,51 @@ export const forwardedVariable = "BRANCH_FORWARDED_FROM";
  * to start in its place, or null to start this one. Only another version of this same install is ever named.
  */
 export function forwardTarget(layout: Layout | null, executableName: string, env: NodeJS.ProcessEnv,
-  deps: { readText: (path: string) => string | null; exists: (path: string) => boolean }): string | null {
+  deps: { readText: (path: string) => string | null; exists: (path: string) => boolean }): { program: string; version: string } | null {
   if (!layout || env[forwardedVariable]) return null;
   let pointer: Pointer | null = null;
   try { pointer = PointerSchema.parse(JSON.parse(deps.readText(join(layout.root, "current.json")) ?? "null")); } catch { pointer = null; }
   if (!pointer || pointer.folder === layout.folder) return null;
-  const target = join(layout.root, pointer.folder, executableName);
-  return deps.exists(target) ? target : null;
+  const program = join(layout.root, pointer.folder, executableName);
+  return deps.exists(program) ? { program, version: pointer.version } : null;
+}
+
+export interface ForwardDeps {
+  /** Starts the program with this start's own arguments; answers its process id. */
+  start: (program: string) => number | null;
+  /** Whether that version has said its window is up, now or ever before (`shellUpMarker`, written at every window start). */
+  up: (version: string) => boolean;
+  /** Ends one process, with what it started, by its id. */
+  end: (pid: number) => Promise<void>;
+  /** Whether the version doing the forwarding can still read the saved work (version-switch.ts, goingBackIsSafe). */
+  safe: () => Promise<boolean>;
+  /** One rename of `current.json` back to the version before (app-folders.ts, rollBackPointer); false when there is none. */
+  rollBack: () => Promise<boolean>;
+  /** Leaves the note this version reads once it is up (shell-switch.ts, SwitchFailure). */
+  tell: (tried: string) => Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+  upSeconds?: number;
+}
+
+/**
+ * Forwarding a start to the version in use, guarded. A version that has had a window up before is simply started. One
+ * that never has (put in use by the gateway with no window open, so nothing watched it) is watched here the way the
+ * switch watches it: if its window does not come up in time, that process is ended and, when the saved work allows it,
+ * the pointer goes back and this version starts as itself ("went-back"), so a broken update can never leave Branch
+ * unable to open. Answers "forwarded" (this start ends) or "went-back" (this start goes on as itself).
+ */
+export async function guardedForward(target: { program: string; version: string }, deps: ForwardDeps): Promise<"forwarded" | "went-back"> {
+  const confirmed = deps.up(target.version);
+  const pid = deps.start(target.program);
+  if (confirmed) return "forwarded";
+  for (let waited = 0; waited < (deps.upSeconds ?? 120); waited++) {
+    if (deps.up(target.version)) return "forwarded";
+    await deps.sleep(1000);
+  }
+  if (deps.up(target.version)) return "forwarded";
+  if (pid) await deps.end(pid).catch(() => undefined);
+  // Not safe for the saved work, or no version before: the version in use is started once more rather than this one.
+  if (!(await deps.safe()) || !(await deps.rollBack())) { deps.start(target.program); return "forwarded"; }
+  await deps.tell(target.version).catch(() => undefined);
+  return "went-back";
 }

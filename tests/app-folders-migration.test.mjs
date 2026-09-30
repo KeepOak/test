@@ -12,7 +12,7 @@ import {
   launcherMain, launcherName, partFolder, pointerFiles, pruneAppFolders, readPointer, retireFlatCopy, rollBackPointer, sealAppFolder,
   tidyRetirement, writePointer,
 } from "../dist/desktop/app-folders.js";
-import { forwardedVariable, forwardTarget } from "../dist/desktop/shell-window.js";
+import { forwardedVariable, forwardTarget, guardedForward } from "../dist/desktop/shell-window.js";
 import { holdOpen, locksWork } from "./version-lock.mjs";
 
 const exe = "Branch Agent.exe";
@@ -158,12 +158,55 @@ test("the stable launcher is plain script that starts the version in use and nev
 test("a start of a version that is not the one in use goes to the one in use, once, and only within this install", () => {
   const root = "C:\\P", pointer = JSON.stringify({ folder: "app-3.0.0", version: "3.0.0", previous: null, at: at() });
   const deps = (text, there = true) => ({ readText: () => text, exists: () => there });
-  assert.equal(forwardTarget({ root, folder: "app-2.0.0" }, exe, {}, deps(pointer)), join(root, "app-3.0.0", exe));
-  assert.equal(forwardTarget({ root, folder: "" }, exe, {}, deps(pointer)), join(root, "app-3.0.0", exe), "the flat copy forwards too");
+  assert.deepEqual(forwardTarget({ root, folder: "app-2.0.0" }, exe, {}, deps(pointer)), { program: join(root, "app-3.0.0", exe), version: "3.0.0" });
+  assert.equal(forwardTarget({ root, folder: "" }, exe, {}, deps(pointer))?.program, join(root, "app-3.0.0", exe), "the flat copy forwards too");
   assert.equal(forwardTarget({ root, folder: "app-3.0.0" }, exe, {}, deps(pointer)), null, "the version in use starts itself");
   assert.equal(forwardTarget({ root, folder: "app-2.0.0" }, exe, { [forwardedVariable]: "x" }, deps(pointer)), null, "never twice");
   assert.equal(forwardTarget({ root, folder: "app-2.0.0" }, exe, {}, deps(pointer, false)), null, "a missing version is never started");
   assert.equal(forwardTarget({ root, folder: "app-2.0.0" }, exe, {}, deps(null)), null, "no pointer");
   assert.equal(forwardTarget({ root, folder: "app-2.0.0" }, exe, {}, deps(JSON.stringify({ folder: "..\\evil", version: "1", previous: null, at: at() }))), null);
   assert.equal(forwardTarget(null, exe, {}, deps(pointer)), null, "portable, other systems, from source");
+});
+
+/** Stand-ins for the forwarding start: `upAfter` starts (null: never) before the version says its window is up. */
+function forwarding({ seenBefore = false, upAfter = null, safe = true, back = true } = {}) {
+  const log = { started: 0, ended: [], told: [], rolledBack: 0 };
+  let waits = 0;
+  const deps = {
+    start: () => { log.started++; return 5000 + log.started; },
+    up: () => seenBefore || (upAfter !== null && waits >= upAfter),
+    end: async (pid) => { log.ended.push(pid); }, safe: async () => safe,
+    rollBack: async () => { log.rolledBack++; return back; }, tell: async (tried) => { log.told.push(tried); },
+    sleep: async () => { waits++; }, upSeconds: 5,
+  };
+  return { deps, log };
+}
+const target = { program: "C:\\P\\app-3.0.0\\Branch Agent.exe", version: "3.0.0" };
+
+test("a start forwarded to a version seen up before just starts it", async () => {
+  const { deps, log } = forwarding({ seenBefore: true });
+  assert.equal(await guardedForward(target, deps), "forwarded");
+  assert.deepEqual([log.started, log.ended.length, log.rolledBack], [1, 0, 0]);
+});
+
+test("a start forwarded to a version never seen up waits for its window; one that comes up is kept", async () => {
+  const { deps, log } = forwarding({ upAfter: 2 });
+  assert.equal(await guardedForward(target, deps), "forwarded");
+  assert.deepEqual([log.started, log.ended.length, log.rolledBack], [1, 0, 0]);
+});
+
+test("a version put in use with no window open that never comes up is ended and gone back from, and this start opens instead", async () => {
+  const { deps, log } = forwarding();
+  assert.equal(await guardedForward(target, deps), "went-back");
+  assert.deepEqual(log.ended, [5001], "the one process it started, by its id");
+  assert.deepEqual([log.rolledBack, log.told], [1, ["3.0.0"]]);
+});
+
+test("going back is refused when the saved work is too new for this version, or there is nothing before: the version in use starts again", async () => {
+  for (const setup of [{ safe: false }, { back: false }]) {
+    const { deps, log } = forwarding(setup);
+    assert.equal(await guardedForward(target, deps), "forwarded");
+    assert.equal(log.started, 2);
+    assert.deepEqual(log.told, []);
+  }
 });
