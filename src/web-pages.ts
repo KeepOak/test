@@ -28,6 +28,8 @@ export interface PageAnswer {
   droppedChars: number; provenance: ReturnType<typeof provenance>; warnings: ReturnType<typeof detectInjection>;
   browserNote?: string;
 }
+/** What a browser step answers, including the hand-over the browser itself made (src/integrations/browser-challenge.ts). */
+interface BrowserStep { url?: string; challenged?: boolean; site?: string; what?: string; takeOver?: string }
 interface PlainRead { raw: RawPage; title: string; text: string; scriptBuilt: boolean }
 
 export interface WebPagesHost {
@@ -114,12 +116,24 @@ export class WebPages {
   private async rendered(url: string, context: ToolContext, maxChars: number, strict: boolean): Promise<PageAnswer | ChallengeAnswer> {
     const blocked = this.browserBlock(url, context, strict);
     if (blocked) throw new Error(`The browser route cannot be used: ${blocked}`);
-    const opened = await this.host.registry.execute("browser.navigate", { url }, context) as { url?: string; title?: string };
-    const seen = await this.host.registry.execute("browser.snapshot", {}, context) as { url?: string; accessibility?: string };
+    const opened = await this.host.registry.execute("browser.navigate", { url }, context) as BrowserStep & { title?: string };
+    if (opened.challenged === true) return this.handedOverByBrowser(opened, url);
+    const seen = await this.host.registry.execute("browser.snapshot", {}, context) as BrowserStep & { accessibility?: string };
+    if (seen.challenged === true) return this.handedOverByBrowser(seen, url);
     const text = String(seen.accessibility ?? ""), at = seen.url ?? opened.url ?? url;
     const challenge = detectRenderedChallenge(`${opened.title ?? ""}\n${text}`);
     if (challenge) return this.handOver(context, at, challenge, "browser", "web.page");
     return this.answer("browser", at, null, opened.title ?? "", text, maxChars);
+  }
+
+  /**
+   * UP-SCREEN-004: the browser met the check itself, told the owner to take over, and waited for them in vain. It has
+   * already handed the page over, so it is reported as it is rather than handed over a second time.
+   */
+  private handedOverByBrowser(step: BrowserStep, url: string): ChallengeAnswer {
+    const at = step.url ?? url;
+    return { challenged: true, route: "browser", url: at, site: step.site ?? new URL(url).host, what: step.what ?? "a check that asks whether you are a person",
+      takeOver: step.takeOver ?? "", handOverId: "" };
   }
 
   private answer(route: PageRoute, url: string, status: number | null, title: string, text: string, maxChars: number): PageAnswer {
