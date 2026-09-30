@@ -10417,5 +10417,16 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "recap.title": "Weekly recap",
+  "recap.completed": "Your Trunks completed {count} tasks in the last seven days.",
+  "recap.noEstimate": "No time-saving estimate is set.",
+  "recap.estimate": "About {hours} hours saved, estimated using your usual {minutes} manual minutes per completed Trunk task.",
+  "recap.other": "Other completed tasks",
+  "recap.capped": "Showing the latest {count} completed records; older work in this period is not counted.",
+  "recap.retained": "Counts use retained completed tasks. Helpers, engine activity, temporary chats and deleted conversations are excluded.",
+  "recap.configure": "Estimate your time saved",
+  "recap.minutes": "Usual manual minutes per Trunk task",
+  "recap.basis": "This is your estimate of manual work avoided, not measured time saved. It applies to completed Trunk tasks only; waiting and machine running time are not your attention time. Leave blank for no estimate.",
+  "recap.clear": "Clear estimate"
 }
