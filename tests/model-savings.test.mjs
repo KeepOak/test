@@ -19,19 +19,23 @@ import {
 import { OpenAIProvider } from "../dist/providers.js";
 import { startServer } from "../dist/server.js";
 import { offersFlex, requestExtras } from "../dist/model-savings/hook.js";
+import { currentAccountCall } from "../dist/accounts/context.js";
 
 const owner = "local";
+const cacheAccount = { pool: "fixture-claude", account: "fixture-account" };
 const answer = (content, toolCalls = [], usage) => ({ content, toolCalls, ...(usage ? { usage } : {}) });
 const planJson = '{"steps":[{"title":"Look it up","changes":false}]}';
 
 /** A provider that answers from a function and remembers every request it was sent. */
-function scripted(name, reply = () => answer("done")) {
+function scripted(name, reply = () => answer("done"), accountReceipt) {
   const provider = { name, requests: [], async complete(request) {
     provider.requests.push(request);
     const system = request.messages[0]?.content ?? "";
     if (/Summarize the conversation below/.test(system)) return answer("Handoff: short summary.");
     if (/You are planning a task/.test(system)) return answer(planJson);
-    return reply(request, provider.requests.length);
+    const completion = await reply(request, provider.requests.length);
+    if (accountReceipt) currentAccountCall()?.note?.("model.account", accountReceipt);
+    return completion;
   } };
   return provider;
 }
@@ -322,7 +326,7 @@ test("R17-050 keeping the cache warm needs its switch, stops at its pings and ca
   assert.equal(timers.at(-1).cleared, true);
 
   // In the app: the ping goes to the same connection with one token and lands in the task's usage.
-  const claude = scripted("anthropic", () => answer("hi", [], { input: 1000, output: 3 }));
+  const claude = scripted("anthropic", () => answer("hi", [], { input: 1000, output: 3 }), cacheAccount);
   const { app } = await fixture(t, [preset("claude", claude, "claude-3-5-sonnet-latest")]);
   saveSavings(app.store, owner, "keepAlive", { mode: "on" });
   const run = await app.runtime.run({ prompt: "hello" });
@@ -332,7 +336,7 @@ test("R17-050 keeping the cache warm needs its switch, stops at its pings and ca
   // The runtime's own pause is replaced by one on the fake clock, with the same ping the runtime built.
   const { afterRound } = await import("../dist/model-savings/hook.js");
   afterRound(app.runtime, warm, { run, owner, preset: app.runtime.models.presets.get("claude"), messages: claude.requests[0].messages,
-    tools: claude.requests[0].tools, estimatedInput: 1000, reported: { input: 1000, output: 3 }, mainRound: true });
+    tools: claude.requests[0].tools, estimatedInput: 1000, reported: { input: 1000, output: 3 }, mainRound: true, pinnedAccount: cacheAccount });
   await timers.at(-1).run();
   const pinged = claude.requests.at(-1);
   assert.equal(pinged.maxTokens, 1);
@@ -509,7 +513,7 @@ test("review: cache pings stop on Lockdown, a gone conversation, a spent budget,
   assert.match(logged.at(-1).data.reason, /Lockdown is on/);
   assert.equal(keep.waiting, 0);
 
-  const claude = scripted("anthropic", () => answer("hi", [], { input: 1000, output: 3 }));
+  const claude = scripted("anthropic", () => answer("hi", [], { input: 1000, output: 3 }), cacheAccount);
   const { app } = await fixture(t, [preset("claude", claude, "claude-3-5-sonnet-latest")]);
   saveSavings(app.store, owner, "keepAlive", { mode: "on" });
   const { pingRefusal } = await import("../dist/model-savings/hook.js");

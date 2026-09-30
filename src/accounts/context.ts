@@ -9,6 +9,8 @@ export interface AccountCall {
   owner: string;
   sessionId: string;
   runId: string;
+  /** A maintenance call must use the account that answered, with no account fallback or retry. */
+  pinnedAccount?: { pool: string; account: string };
   /**
    * mac7/lockdown-fix: set when the call is a Trunk's (its conversation, a room seat, a routine, or
    * work under them). A sign-in account never answers it, and a key is chosen by the Trunk's own pick.
