@@ -1729,6 +1729,12 @@ owner GET /api/registry/updates | here=ok remote=ok phone=ok legacy=ok person=40
 owner POST /api/registry/updates | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/release-notes | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/release-notes | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/connectors/accounts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/connectors/accounts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/connectors/accounts/github/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/connectors/accounts/github/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/connectors/accounts/linear/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/connectors/accounts/linear/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/reply-flags | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/reply-flags | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/reply-flags/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3931,6 +3937,12 @@ owner+lockdown GET /api/registry/updates | here=ok remote=ok phone=ok legacy=ok 
 owner+lockdown POST /api/registry/updates | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/release-notes | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/release-notes | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/connectors/accounts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/connectors/accounts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/connectors/accounts/github/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/connectors/accounts/github/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/connectors/accounts/linear/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/connectors/accounts/linear/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/reply-flags | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/reply-flags | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/reply-flags/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6133,6 +6145,12 @@ household GET /api/registry/updates | here=400/f6e21c remote=400/f6e21c read=400
 household POST /api/registry/updates | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/release-notes | here=ok remote=ok read=ok run=ok
 household POST /api/release-notes | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/connectors/accounts | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/connectors/accounts | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/connectors/accounts/github/test | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/connectors/accounts/github/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/connectors/accounts/linear/test | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/connectors/accounts/linear/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/reply-flags | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/reply-flags | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/reply-flags/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8335,6 +8353,12 @@ household+lockdown GET /api/registry/updates | here=400/f6e21c remote=400/f6e21c
 household+lockdown POST /api/registry/updates | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/release-notes | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/release-notes | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/connectors/accounts | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/connectors/accounts | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/connectors/accounts/github/test | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/connectors/accounts/github/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/connectors/accounts/linear/test | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/connectors/accounts/linear/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/reply-flags | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/reply-flags | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/reply-flags/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10537,6 +10561,12 @@ applock GET /api/registry/updates | here=423/a8f863
 applock POST /api/registry/updates | here=423/a8f863
 applock GET /api/release-notes | here=423/a8f863
 applock POST /api/release-notes | here=423/a8f863
+applock GET /api/connectors/accounts | here=423/a8f863
+applock POST /api/connectors/accounts | here=423/a8f863
+applock GET /api/connectors/accounts/github/test | here=423/a8f863
+applock POST /api/connectors/accounts/github/test | here=423/a8f863
+applock GET /api/connectors/accounts/linear/test | here=423/a8f863
+applock POST /api/connectors/accounts/linear/test | here=423/a8f863
 applock GET /api/reply-flags | here=423/a8f863
 applock POST /api/reply-flags | here=423/a8f863
 applock GET /api/reply-flags/:id/remove | here=423/a8f863

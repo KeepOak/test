@@ -1008,6 +1008,10 @@ export const ROUTES = {
   "/api/registry/updates": "look",
   // eng-connectors: What's new for the installed version.
   "/api/release-notes": "look",
+  // RES-408: which issue-tracker accounts are set up, and one authenticated read to check each; the owner's alone.
+  "/api/connectors/accounts": "look",
+  "/api/connectors/accounts/github/test": "owner POST",
+  "/api/connectors/accounts/linear/test": "owner POST",
   // eng-connectors: flagged replies; keeping, removing and exporting (a POST, so a key never reads it out) are the owner's.
   "/api/reply-flags": "owner POST",
   "/api/reply-flags/": "prefix",
