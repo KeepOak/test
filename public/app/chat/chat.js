@@ -1,3 +1,4 @@
+import { afterReplyTables } from "./reply-tables.js";
 /* The conversation (design doc 4.1–4.4): the header (merged into the title bar on wide windows), the thread, the
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
@@ -416,6 +417,7 @@ export function after(main) {
     stillOutOfSight(box);
     lineAfter(box);
   }
+  afterReplyTables(main, `${E.profiles?.active?.id ?? "owner"}:${C.sessionId ?? "new"}`, FIND.on);
   applyFind();
   frameAfter(); // pass 18a: the helpers frame's clock, and the character window above it
   loadDictation();
