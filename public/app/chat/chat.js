@@ -365,6 +365,7 @@ export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S
    browser's keys scrolled was the one taken away. Focused, it is found again by its id (core/dom.js keepFocus). */
 export function draw() {
   LINE.now = null;
+  readPlace();
   /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
      in the composer's place */
   if (viewingHelper()) return `${panesWrap(`<div class="scroll" id="scroll" tabindex="-1"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
@@ -379,6 +380,24 @@ export function draw() {
    are written into the drawn thread and must start from a fresh one each time. */
 export const inParts = () => !FIND.on;
 const heard = new WeakSet();
+/* Where the reader is in the conversation's box: at its end, or how far from its top. */
+function place(box) {
+  C.readTop = box.scrollTop;
+  C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+}
+/* Read off the box on screen before it is drawn over. Its scroll event comes only on the next frame, and a drawing before
+   then (a read landing, the window's own redraw) put the reader back where the last event had heard them, at the end,
+   losing the scroll they had just made (CI, window-trunk-timeline, 987 !== 300). */
+function readPlace() {
+  const box = $("#scroll");
+  if (box?.isConnected && box.clientHeight > 0 && C.readSid === C.sessionId) place(box);
+}
+/* A message sent takes the reader to the end: the box on screen too, since the drawing that shows it reads it there. */
+function toEnd() {
+  C.atBottom = true;
+  const box = $("#scroll");
+  if (box) box.scrollTop = box.scrollHeight;
+}
 export function after(main) {
   /* Newest at the bottom stays in view only while the reader is at the bottom; someone reading back keeps their place. */
   const box = $("#scroll", main);
@@ -392,7 +411,7 @@ export function after(main) {
     // A scroll box kept from the last draw already has its listener. A box drawn over before the next frame is still sent
     // the scroll queued on it, and off the page it reads 0 for everything, which looked like a reader at the end: only
     // the box on screen says where the reader is.
-    if (!heard.has(box)) box.addEventListener("scroll", () => { if (!box.isConnected) return; C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    if (!heard.has(box)) box.addEventListener("scroll", () => { if (box.isConnected) place(box); }, { passive: true });
     heard.add(box);
     stillOutOfSight(box);
     lineAfter(box);
@@ -759,7 +778,7 @@ async function sendPlain(said, withLead = false) {
      the answer is this conversation's, read when it is opened again, never drawn over the one on screen. */
   const moved = () => C.seat !== seat;
   C.messages.push({ role: "user", content: prompt });
-  C.atBottom = true;
+  toEnd();
   C.prompt = prompt;
   S.drafts[C.sessionId ?? "new"] = "";
   C.sending = true;

@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { autoArchiveTick, autoArchiveSettings } from "../dist/memory-auto-archive.js";
+import { autoArchiveApi, autoArchiveTick, autoArchiveSettings } from "../dist/memory-auto-archive.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const quiet = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
@@ -65,4 +65,18 @@ test("only 90, 180 or never can be chosen", async (t) => {
   const { call } = await served(t);
   assert.equal((await call("/api/memory/auto-archive", { afterDays: 3 })).status, 400);
   assert.equal((await call("/api/memory/auto-archive", { afterDays: null })).body.settings.afterDays, null);
+});
+
+test("a change is refused when the owner switched away or Branch locked while its body was being read", async (t) => {
+  const { app } = await served(t);
+  const owner = app.runtime.owner;
+  for (const late of ["switched", "locked"]) {
+    let now = "owner";
+    const deps = { store: app.store, owner, retrieval: app.memory.retrieval,
+      requireOwner: () => { if (now === "switched") throw new Error("Only the owner can do this."); },
+      requireUnlocked: () => { if (now === "locked") throw new Error("Unlock Branch first."); } };
+    const body = async () => { now = late; return { afterDays: 90 }; };
+    await assert.rejects(autoArchiveApi(deps, "POST", body), late === "locked" ? /Unlock/ : /Only the owner/);
+    assert.equal(autoArchiveSettings(app.store, owner).afterDays, null, `${late} mid-request: the choice is not kept`);
+  }
 });

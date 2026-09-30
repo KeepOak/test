@@ -68,12 +68,19 @@ export class AutoArchiveApiError extends Error {
 
 /** GET /api/memory/auto-archive reads the choice and how many facts it would set aside now; POST changes it (owner only). */
 export async function autoArchiveApi(
-  deps: { store: Store; owner: string; retrieval: Pick<MemoryRetrieval, "lastUses">; requireOwner: (what: string) => void },
+  deps: { store: Store; owner: string; retrieval: Pick<MemoryRetrieval, "lastUses">; requireOwner: (what: string) => void;
+    requireUnlocked: () => void },
   method: string, body: () => Promise<unknown>,
 ): Promise<{ settings: AutoArchiveSettings; wouldSetAside: number }> {
   deps.requireOwner("Setting unused facts aside");
   if (method === "POST") {
-    try { saveAutoArchiveSettings(deps.store, deps.owner, await body()); }
+    let input: unknown;
+    try { input = await body(); }
+    catch { throw new AutoArchiveApiError(400, "Send afterDays as 90, 180 or null (never)."); }
+    // Reading the body takes time: the owner and the app lock are checked again right before the choice is kept.
+    deps.requireOwner("Setting unused facts aside");
+    deps.requireUnlocked();
+    try { saveAutoArchiveSettings(deps.store, deps.owner, input); }
     catch { throw new AutoArchiveApiError(400, "Send afterDays as 90, 180 or null (never)."); }
   } else if (method !== "GET") throw new AutoArchiveApiError(405, "Read the choice with GET or change it with POST.");
   const settings = autoArchiveSettings(deps.store, deps.owner);
