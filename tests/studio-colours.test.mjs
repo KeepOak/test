@@ -140,7 +140,7 @@ test("TRUNK-033 a Trunk keeps its own voice in the editor, even one this compute
   await picker.waitFor();
   assert.match(await picker.innerText(), /Voice Kept Elsewhere/, "a saved voice is shown even when it is not on this computer");
   await picker.click();
-  await page.locator('.gsel-pop [role="menuitemradio"]', { hasText: "Default" }).click();
+  await page.locator('.gsel-pop [data-act="gsel-pick"]', { hasText: "Default" }).click(); // whatever role the list's items carry
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.locator(".dlg").waitFor({ state: "detached" });
   const [kept] = (await (await call("GET", "/api/trunks")).json()).trunks;
