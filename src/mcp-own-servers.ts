@@ -43,10 +43,11 @@ import { lockdownActive } from "./lockdown.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
-import { makeTransport, McpTransportSchema, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { makeTransport, McpConfigSchema, McpTransportSchema, type McpTransportConfig } from "./integrations/mcp-config.js";
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
 import { workspaceRefusal } from "./mcp-workspace-guard.js";
+import { openModernHttp, LegacyMcpFallback } from './integrations/mcp-stateless-client.js';
 
 export const AddServerSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -158,6 +159,15 @@ export class OwnMcpServers {
   }
   list(full: boolean) { return { servers: this.saved().map((entry) => this.view(entry, full)) }; }
 
+  /** No launch or discovery here: events may use only an enabled, already reviewed modern HTTP source. */
+  eventConfig(id: string) {
+    const entry = this.find(id);
+    if (!entry.on || entry.server.transport !== 'http' || !entry.version
+      || !['auto', 'stateless-preview'].includes(entry.server.protocol ?? ''))
+      throw new Error('Choose an enabled HTTP server reviewed for modern MCP.');
+    return McpConfigSchema.parse({ ...entry.server, id: entry.id, tools: entry.tools, expectedVersion: entry.version });
+  }
+
   /** Written as a connection changing, with what happened in the subject and the outcome. */
   private record(what: string, subject: string, outcome: string): void {
     const owner = this.deps.owner();
@@ -248,6 +258,10 @@ export class OwnMcpServers {
 
   /** Lists what a server offers now (after the yes), keeping only what the owner's settings do not refuse outright. */
   private async listTools(entry: OwnServer): Promise<{ tools: string[]; hidden: string[]; version: string }> {
+    if (entry.server.transport === 'http' && ['auto', 'stateless-preview'].includes(entry.server.protocol ?? '')) {
+      try { return await this.listModernHttp(entry); }
+      catch (error) { if (!(error instanceof LegacyMcpFallback)) throw error; }
+    }
     const { transport } = await makeTransport(entry.server, this.env, this.deps.policy());
     const client = new (await mcpClient())({ name: "branch", version: "0.1.0" });
     try {
@@ -260,6 +274,22 @@ export class OwnMcpServers {
     } finally {
       await client.close().catch(() => undefined);
     }
+  }
+
+  private async listModernHttp(entry: OwnServer): Promise<{ tools: string[]; hidden: string[]; version: string }> {
+    if (entry.server.transport !== 'http') throw new Error('Modern HTTP discovery requires an HTTP server.');
+    const policy = this.deps.policy();
+    if (!policy) throw new Error('Modern HTTP discovery requires the owner network policy.');
+    const client = await openModernHttp(entry.server, this.env, { guard: base => policy.guard(base) }, AbortSignal.timeout(20000));
+    try {
+      const listed = await client.listTools({}, { timeout: 10000 });
+      if (listed.tools.length > 64) throw new Error('Review at most 64 MCP tools for one source.');
+      const names = listed.tools.map(tool => tool.name), rules = readPolicy(this.deps.store, this.deps.owner());
+      const refused = (name: string) => evaluatePolicy(rules, {
+        tool: mcpToolName(entry.id, name), target: '', readOnly: false,
+      }).decision === 'deny';
+      return { tools: names.filter(name => !refused(name)), hidden: names.filter(refused), version: client.getServerVersion()?.version ?? '' };
+    } finally { await client.close().catch(() => undefined); }
   }
 
   private nextGeneration(id: string): number {
