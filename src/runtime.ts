@@ -4518,7 +4518,7 @@ ${run.output.slice(0, 6000)}`;
     // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
     const loosening = fullAccess ? settingsHold(tool, args) : null;
-    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
