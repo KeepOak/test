@@ -1698,7 +1698,7 @@ export class ChannelRouter {
     return new ReplyStream({ adapter, chatId: message.chatId, messageId: message.messageId,
       ...(turn ? { quote: () => this.quoteIn(turn) } : {}),
       allowed: () => this.liveOn() && this.senderAllowed(message.channel, message.senderId) },
-    (text) => this.outboundGuard(this.hideLeaks(text)), this.liveTiming.editEveryMs);
+    (text) => this.outboundGuard(this.hideLeaks(text)), this.liveTiming.editEveryMs, () => this.switches().splitting);
   }
   /**
    * "Show steps in chats" in an app that cannot edit a message (WhatsApp, Signal, iMessage, email…): one line above the

@@ -3345,6 +3345,10 @@ Permission to use, copy, modify, and/or distribute this software for any purpose
 
 THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+### Hermes Agent: replies in each chat app's own formatting, and streamed replies that end cleanly (UP-CHAT-011, UP-CHAT-012), MIT
+
+`src/channels/chat-markdown.ts` adapts Hermes Agent's `gateway/platforms/signal_format.py` (`markdown_to_signal`) and `gateway/platforms/whatsapp_common.py` (`format_message`); the tail-only fallback in `src/channels/reply-stream.ts` adapts `gateway/stream_consumer_fallback.py` (`_send_fallback_final`, `_continuation_text`), and its preview fence closing follows `gateway/stream_consumer_fences.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). The code was written for Branch in TypeScript. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### OpenFang loop guard (idea only), MIT OR Apache-2.0
 
 The graduated warn / refuse / stop loop guard in `src/loop-guard.ts` — counting identical calls and identical results, noticing calls that go back and forth, and gentler limits for tools meant to be polled — is an idea from OpenFang's `crates/openfang-runtime/src/loop_guard.rs` (https://github.com/RightNow-AI/openfang, MIT OR Apache-2.0). It was written afresh; no code was copied.
