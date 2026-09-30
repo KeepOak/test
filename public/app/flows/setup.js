@@ -229,7 +229,7 @@ export async function openSetup(jump = 1, how = "start") {
   try { await load(o); } catch (error) { toast(error.message); }
   if (S.ob !== o) return;
   if (!o.mine) { S.ob = null; origin.setup = false; return; } // setup is the owner's: the engine's refusal was shown above, nothing opens empty
-  o.i = how === "resume" ? resumeAt(o) : 0;
+  o.i = how === "models" && o.trust ? 1 : how === "resume" ? resumeAt(o) : 0;
   draw();
   if (o.i) progress(o, { step: WIZARD[o.i] });
   if (E.state?.onboarding?.skipped) progress(o, { skipped: false }); // open again: a reload comes back to it until it is left
@@ -420,7 +420,7 @@ async function pickLanguage(code) {
 
 export function init() {
   initLocalPick();
-  markLive(["sw:ob-brain", "sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "ob-model-change", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
+  markLive(["sw:ob-brain", "sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "onboard-model-recovery", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "ob-model-change", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
   on("ob-restore", () => document.getElementById("ob-restore-file")?.click());
   document.addEventListener("change", (e) => {
     if (e.target?.id !== "ob-restore-file" || !e.target.files?.[0]) return;
@@ -429,6 +429,7 @@ export function init() {
     restoreFrom(file);
   });
   on("onboard", (el) => openSetup(Number(el?.dataset?.v) || 1));
+  on("onboard-model-recovery", () => openSetup(1, "models"));
   on("onboard-resume", () => openSetup(1, "resume")); // Guide › Onboarding: where the person left off
   on("ob-go", (el) => go(+el.dataset.v));
   on("ob-next", () => { if (S.ob.i === 0 && !S.ob.trust) { nudgeTrust(); return; } doneWith(S.ob, WIZARD[S.ob.i]); go(S.ob.i === 0 ? S.ob.jump : S.ob.i + 1); });

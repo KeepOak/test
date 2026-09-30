@@ -971,6 +971,12 @@ function trunkMoves(app: Branch) {
     return { ...move, ...(by ? { who: by.name, open: by.sessionId } : {}) };
   });
 }
+/** Recovery metadata is private to the local owner; only terminal engine markers are exposed. */
+function modelRecoveryView(app: Branch, run: Run): Record<string, unknown> {
+  if (run.status !== "failed" || !app.store.profiles.isOwner() || throughPairedDoor() || currentPerson() || startedWithShortLivedKey()) return {};
+  const recovery = app.store.events(run.id).filter((event) => event.kind === "model.setup_needed").at(-1)?.data.recovery;
+  return ["setup", "account", "unavailable"].includes(String(recovery)) ? { modelRecovery: recovery } : {};
+}
 function state(app: Branch): unknown {
   const owner = app.runtime.owner;
   // Wave 6: conversations and saved facts are read under whoever's profile is switched on.
@@ -995,7 +1001,7 @@ function state(app: Branch): unknown {
     chatgpt: { configured: Boolean(app.chatgpt) },
     preferences: preferences(app.store, owner),
     runs: runs
-      .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+      .map((run) => ({ ...run, ...modelRecoveryView(app, run), title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
         ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
