@@ -248,6 +248,8 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   const { trunk: bo } = await f.call("/api/trunks", { name: "Bo", title: "", description: "" });
   await app.trunks.introduced();
   await place(page, "customize", "trunks");
+  // Bo was made through the engine, not the window: wait until the window's list has caught up before picking him.
+  await card.locator(".prow").filter({ hasText: "Bo" }).first().waitFor();
   await card.getByRole("button", { name: "A new room" }).click();
   const group = page.locator(".dlg");
   await group.getByRole("heading", { name: "New group chat" }).waitFor();
