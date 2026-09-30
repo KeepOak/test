@@ -1003,8 +1003,20 @@ to be able to change your local copy but never publish it, and now it cannot do 
 below allows it — unlike commands and your devices, which a line can never allow. This is a change: before, a chat's task was given everything except
 a named few, so anything nobody had thought of was handed over. It is now the other way round.
 
-**Your own paired account is a chat account.** The list above is what your own phone gets too. Nothing
-makes a chat account count as you.
+**Your own chats have your full access.** One chat counts as you: an account you named as your own
+(Customize → Chat apps → Commands from your own chat, or `/platform`), writing to Branch one to one, on an
+app whose servers vouch for who sent it (Telegram, Discord, Slack, Matrix; never email, SMS or a webhook).
+Its task runs as a task you start in the window: every permission, your approval rules, and the Access
+level a new conversation in the window starts on (Full access included), and you can answer its questions
+from that chat. The switch is `ownerChats` on this card, **Your own chats have your full access**, on by
+default. What `/goal` and `/bg` start from that chat is yours in the same way, and so is Full Access in
+the self-development worktree (Branch building Branch works from your phone). Lockdown and the App lock
+turn it off while they are on. It is checked again at every step: turning the switch off (or unmarking
+the account) gives the next message the short list, and a task already running is held to a chat's rules
+from its next step, so its next change waits for your yes in the window. A group,
+anybody else, or a message the app cannot vouch for still gets the short list above. This follows
+OpenClaw's "main" session: the owner's direct chat runs on the host with the full toolset, and every
+other session is held back.
 
 **Allowing more, per app and per person.** The card is **Customize → Chat apps → What a chat may do
 beyond talking** (`POST /api/channels/permissions`, read back from `GET /api/channels` as

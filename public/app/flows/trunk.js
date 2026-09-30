@@ -19,6 +19,7 @@ import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass
 import { loadAccounts, poolById } from "./account.js"; // models-ui: account names as Settings › Accounts shows them
 import { logo } from "../core/logos.js";
 import { gsel } from "../core/gsel.js";
+import { fact15 } from "../settings/rows15.js";
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
 /* The prototype's Bob is the engine's sway (the engine has no bob). */
@@ -580,7 +581,7 @@ function groupDlg() {
     <div class="fld"><span>${t("window.flows.trunk.people-eight")}</span><span class="chips8">${people.map((p) => chip("grp-person", p.id, p.name, grp.people.includes(p.id))).join("")}</span></div>
     <div class="fld"><span>${t("window.flows.trunk.agents")}</span><span class="chips8">${agents.map((a) => chip("grp-agent", a.id, `${a.name}${where(a)}`, grp.agents.includes(a.id))).join("")}</span></div>
     ${ruleSeg("grp-rule", grp.rule)}
-    ${ctl("grp-talk", t("window.flows.trunk.talk"), t("window.flows.trunk.talk-hint"), true)}`, // state: every room lets its Trunks talk (room-plan.ts)
+    ${fact15(t("window.flows.trunk.talk"), "grp-talk")}`, // every room lets its Trunks talk (room-plan.ts): words, no switch
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="grp-make"${needName() || needTwo() ? " disabled" : ""}>${t("window.flows.trunk.start-group")}</button>` });
 }
 
