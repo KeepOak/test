@@ -363,7 +363,8 @@ export class McpServer {
         default: throw new StatelessError(-32601, 'Method unavailable in the stateless read preview');
       }
       this.store.profiles.requireOwner('Stateless MCP reads');
-      if (!this.sharing().enabled || !this.sharing().statelessPreview || this.runtime.fullAccessLocked() || lockedDown(this.store, this.runtime.owner))
+      if (!this.sharing().enabled || !this.sharing().statelessPreview || this.runtime.fullAccessLocked() || lockedDown(this.store, this.runtime.owner)
+        || (request.method === 'resources/read' && !this.mayStillRead(argumentsOnly)))
         throw new StatelessError(-32602, 'Stateless MCP reads are no longer available');
       return respond(this.runtime.hideSecrets(result));
     } catch (error) {
@@ -728,6 +729,13 @@ export class McpServer {
     const { decision } = evaluatePolicy(policy,
       { tool: scope.tool, target: '', readOnly: isReadOnlyPermission(scope.permission) });
     return decision !== 'deny';
+  }
+
+  /** The approval settings as they are now, for a resource that has already been read, just before it is sent. */
+  private mayStillRead(params: Record<string, unknown>): boolean {
+    const uri = params.uri;
+    if (uri === hiddenToolsUri) return true;
+    return this.mayRead(scopedResources.find((entry) => entry.uri === uri) ?? historyScope);
   }
 
   private listResources(): unknown[] {
