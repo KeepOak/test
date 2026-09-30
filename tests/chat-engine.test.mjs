@@ -55,7 +55,8 @@ async function fixture(t, scripted) {
   app.knowledgeBases.attach("local", made.id, true);
   return app;
 }
-const systemText = (messages) => messages.filter((m) => m.role === "system").map((m) => m.content).join("\n");
+// Passages travel with the question, as Branch's own note in the turn (src/runtime.ts intoTurn).
+const systemText = (messages) => messages.filter((m) => m.role === "system" || m.from === "branch").map((m) => m.content).join("\n");
 const questionEvent = (app, runId) => app.store.events(runId).find((e) => e.kind === "documents.question");
 
 /** Two turns: a first question, then a follow-up that means nothing on its own. */

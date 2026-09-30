@@ -109,11 +109,11 @@ export function neverKeep(parts: CacheKeyParts): boolean {
 }
 
 /**
- * The environment line (src/environment.ts) ends its local time with the hour and minute. The key leaves the clock
+ * The environment line (src/environment.ts) ends its local time with the hour (it once gave the minute). The key leaves the clock
  * out, so the same request a minute later is still the same request; the date stays in, so a new day never matches.
  */
 export function withoutClock(content: string): string {
-  return content.replace(/(Local time: [^()\n]*?),? \d{1,2}:\d{2}( \()/g, "$1$2");
+  return content.replace(/(Local time: [^()\n]*?),? \d{1,2}:\d{2}(?: to \d{1,2}:\d{2})?( \()/g, "$1$2");
 }
 /**
  * A question about the time or the date is never answered from, or kept in, the kept answers: its right answer
