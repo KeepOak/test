@@ -36,16 +36,19 @@ let turn = 0;
 
 /** Reads the newest reply aloud when it is newer than `before` and the engine's Answer aloud is Always. `words` gives
     the words the window shows for a reply (a room's reply without its "@name:" prefix). */
-export async function readNewReply(before, messages, words = (m) => m.content) {
+export async function readNewReply(before, messages, words = (m) => m.content, voiceOf = () => "") {
   if (replyMark(messages) === before || !replies(messages).length) return;
   const mine = ++turn;
-  const text = String(words(replies(messages).at(-1)) ?? "").trim().slice(0, 4000);
+  const reply = replies(messages).at(-1);
+  const text = String(words(reply) ?? "").trim().slice(0, 4000);
+  // Capture the reply's author before asynchronous speech work; a later picker change cannot change its voice.
+  const voice = String(voiceOf(reply) ?? "");
   if (!text) return;
   let settings, sound;
   try { settings = await api("voice/settings"); } catch (error) { toast(error.message); return; }
   if (!settings.autoReadAloud || mine !== turn) return;
   if (settings.readAloudWhen === "spoken" && !A.lastSpoken) return;
-  try { sound = await apiBlob("voice/speak", { text, speed: settings.speechRate }); } catch (error) { toast(error.message); return; }
+  try { sound = await apiBlob("voice/speak", { text, voice, speed: settings.speechRate }); } catch (error) { toast(error.message); return; }
   if (mine !== turn) return;
   stop();
   A.url = URL.createObjectURL(sound);
