@@ -160,8 +160,9 @@ test("integrations file starts a Telegram channel from a locker secret, and the 
   assert.equal(summary.channels[0].botName, "BranchTestBot");
   assert.equal(summary.channels[0].activation, "always");
   state.queue.push(update(dm, bob, "am I allowed?"));
-  await until(() => state.sent.length === 1, "rejection");
-  assert.equal(state.sent[0].text, "This assistant is private.");
+  // UP-CHAT-008: a block is silent.
+  await delay(400);
+  assert.equal(state.sent.length, 0);
   await assert.rejects(loadIntegrations(app.registry, configPath, {}, app.secretsFor), /cannot host them/);
   const bad = join(root, "bad.json");
   await writeFile(bad, JSON.stringify({ channels: [{ type: "telegram", tokenEnv: "MISSING_TOKEN", apiBase }] }));
