@@ -1,4 +1,5 @@
-import { createHash } from 'node:crypto';
+import { mcpToolName, legacyMcpToolName } from './mcp-tool-names.js';
+export { mcpToolName } from './mcp-tool-names.js';
 import { describesScreen } from '../screen-guard.js'; // dogfood follow-up
 import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -9,9 +10,6 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolDefinition, ToolContext } from '../contracts.js';
 import { McpConfigSchema, makeTransport, type McpConfig } from './mcp-config.js';
-
-export const mcpToolName = (id: string, tool: string): string =>
-  `mcp.${id}.${createHash('sha256').update(tool).digest('hex').slice(0, 16)}`;
 
 async function discover(client: Client, wanted: string[], timeout = 10000): Promise<Tool[]> {
   const found = new Map<string, Tool>(), seen = new Set<string>();
@@ -67,7 +65,8 @@ function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: s
   // Dogfood follow-up: a server's computer-use or screen tool, by its annotations' title, name, description or inputs.
   const screen = describesScreen({ name: tool.name, title: tool.annotations?.title ?? tool.title, description: tool.description, inputSchema: tool.inputSchema });
   return { name, description: tool.description?.slice(0, 2000) ?? tool.name, external: true, ...(screen ? { screen: true } : {}),
-    permission: name, parameters: z.record(z.string(), z.unknown()), inputSchema: tool.inputSchema,
+    permission: legacyMcpToolName(config.id, tool.name), source: `mcp:${config.id}`,
+    group: 'skills', parameters: z.record(z.string(), z.unknown()), inputSchema: tool.inputSchema,
     execute: async (args: unknown, context: ToolContext) => {
       validate ??= new (await mcpValidator())().getValidator(tool.inputSchema as JsonSchemaType);
       if (!validate(args).valid) throw new Error('MCP arguments do not match the configured tool schema');

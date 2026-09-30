@@ -1,3 +1,4 @@
+import { canonicalMcpToolName } from "./integrations/mcp-tool-names.js";
 import { z } from "zod";
 import { describesScreen } from "./screen-guard.js"; // dogfood follow-up
 import type {
@@ -127,7 +128,7 @@ export class ToolRegistry {
   register<T>(tool: ToolDefinition<T>): void {
     if (
       !/^[a-z][a-z0-9_.-]{0,99}$/.test(tool.name) ||
-      this.tools.has(tool.name)
+      this.tools.has(canonicalMcpToolName(tool.name))
     )
       throw new Error("Invalid or duplicate tool name");
     this.tools.set(tool.name, tool as ToolDefinition);
@@ -158,7 +159,7 @@ export class ToolRegistry {
    * by what it says about itself (src/screen-guard.ts `describesScreen`). The product's own screen tools are desktop.*.
    */
   declaresScreen(name: string): boolean {
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     if (!tool) return false;
     if (tool.screen === true) return true;
     if (!tool.external && !tool.source) return false;
@@ -166,19 +167,19 @@ export class ToolRegistry {
   }
   /** Whether a tool came from outside, so its description is read as untrusted text. */
   isExternal(name: string): boolean {
-    return this.tools.get(name)?.external === true;
+    return this.tools.get(canonicalMcpToolName(name))?.external === true;
   }
   /** Where a tool came from ("mcp:<id>", "plugin:<id>"); the product's own tools have none (src/tool-context-modes.ts). */
   sourceOf(name: string): string | undefined {
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     return tool ? sourceOfTool(name, tool.source) : undefined;
   }
   /** The toolbox a tool belongs to: its own answer, or one worked out from its name. */
   groupOf(name: string): string {
-    return this.tools.get(name)?.group ?? inferToolGroup(name);
+    return this.tools.get(canonicalMcpToolName(name))?.group ?? inferToolGroup(name);
   }
   unregister(name: string): boolean {
-    const removed = this.tools.delete(name);
+    const removed = this.tools.delete(canonicalMcpToolName(name));
     if (removed) { this.revision++; this.announceChange(); }
     return removed;
   }
@@ -196,7 +197,7 @@ export class ToolRegistry {
    * arguments can name a file, a folder, a site, an account, a device or a person says so.
    */
   declaresTarget(name: string): { target: boolean; targets: boolean } {
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     return { target: typeof tool?.target === "function", targets: typeof tool?.targets === "function" };
   }
   /**
@@ -208,7 +209,7 @@ export class ToolRegistry {
   noStandingTarget(name: string, target: string): boolean {
     if (patternTarget(target, name)) return true;
     if (!blankTarget(target)) return false;
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     if (!tool || tool.target || tool.targets || targetedByName.has(name)) return true;
     const shape = (tool.parameters as { shape?: Record<string, unknown> }).shape;
     if (shape && Object.keys(shape).length === 0) return false;
@@ -220,7 +221,7 @@ export class ToolRegistry {
   }
   /** PLAT-191: the tool registered under a name now (a card, or the real tool that took its place). */
   registered(name: string): ToolDefinition | undefined {
-    return this.tools.get(name);
+    return this.tools.get(canonicalMcpToolName(name));
   }
   /** Every registered tool with its permission, for the capability inventory. */
   inventory(): { name: string; permission: string; description: string }[] {
@@ -228,7 +229,7 @@ export class ToolRegistry {
   }
   /** The permission a tool needs, or "" when no such tool is registered. */
   permissionOf(name: string): string {
-    return this.tools.get(name)?.permission ?? "";
+    return this.tools.get(canonicalMcpToolName(name))?.permission ?? "";
   }
   /**
    * What a call would touch, for the approval policy: the tool's own answer, or one read from the
@@ -237,7 +238,7 @@ export class ToolRegistry {
    */
   targetOf(name: string, args: unknown, context: ToolContext): string {
     const seen = this.runArgs(name, args);
-    const own = this.tools.get(name)?.target?.(seen, context);
+    const own = this.tools.get(canonicalMcpToolName(name))?.target?.(seen, context);
     return (own ?? policyTarget(name, seen)) || "";
   }
   /**
@@ -247,7 +248,7 @@ export class ToolRegistry {
    * cannot tell what it would touch (a patch that cannot be read): the caller refuses the call.
    */
   targetsOf(name: string, args: unknown, context: ToolContext): ToolTarget[] | null {
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     if (!tool?.targets) return null;
     // Arguments that do not fit the tool never run, but they are not waved through here either: what
     // they would touch cannot be told, so the call is refused, saying what does not fit.
@@ -264,7 +265,7 @@ export class ToolRegistry {
    * arguments do not parse is refused by the tool, so it is judged as it was sent.
    */
   runArgs(name: string, args: unknown): unknown {
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     if (!tool) return args;
     try {
       const parsed = tool.parameters.safeParse(args);
@@ -278,7 +279,7 @@ export class ToolRegistry {
    */
   resourceOf(name: string, target: string, args: unknown): PolicyResource | null {
     // mac7/residuals: a tool that says which command it runs is judged by that command.
-    const command = this.tools.get(name)?.command?.(this.runArgs(name, args));
+    const command = this.tools.get(canonicalMcpToolName(name))?.command?.(this.runArgs(name, args));
     if (command) return { kind: "command", value: command.slice(0, 8000), listed: true, ...(command.length > 8000 ? { cut: true } : {}) };
     const resource = resourceOf(name, this.permissionOf(name), target, args);
     const scope = this.pathScope();
@@ -286,7 +287,7 @@ export class ToolRegistry {
   }
   /** Q59: whether a tool reaches beyond the workspace (src/tool-reach.ts); an unknown tool counts as outbound. */
   reachOf(name: string): ToolReach {
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     return tool ? reachOf(tool) : "outbound";
   }
   /** Q59: every registered tool that reaches beyond the workspace, for the conversation modes' questions. */
@@ -306,7 +307,7 @@ export class ToolRegistry {
    * dropped key can never be seen by one step and not another.
    */
   clean(name: string, args: unknown): { args: unknown; ignored: string[] } {
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     if (!tool || !args || typeof args !== "object" || Array.isArray(args)) return { args, ignored: [] };
     let current: unknown = structuredClone(args);
     const ignored: string[] = [];
@@ -333,7 +334,7 @@ export class ToolRegistry {
     context: ToolContext,
   ): Promise<unknown> {
     context.signal.throwIfAborted();
-    const tool = this.tools.get(name);
+    const tool = this.tools.get(canonicalMcpToolName(name));
     if (!tool) throw new Error(`Unknown tool: ${name}`);
     if (!context.permissions.has(tool.permission))
       throw new Error(`Permission denied: ${tool.permission}`);

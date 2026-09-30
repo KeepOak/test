@@ -320,11 +320,11 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
     // effect by the next turn, with nothing else restarted. Only this section is followed; the others are read once.
     const launch = new LaunchMcp(async (server) => {
       const stop = await startMcp(registry, server, env, policy, channels?.mcp);
-      // Stopping a server takes its tools out too (its tools are named mcp.<id>.<tool>), not only its program.
-      const prefix = `mcp.${McpConfigSchema.parse(server).id}.`;
+      // Stop the server and remove its tools by declared source, independent of callable spelling.
+      const source = `mcp:${McpConfigSchema.parse(server).id}`;
       return async () => {
         await stop?.();
-        for (const name of registry.names()) if (name.startsWith(prefix)) registry.unregister(name);
+        for (const name of registry.names()) if (registry.sourceOf(name) === source) registry.unregister(name);
       };
     });
     following.push(() => launch.close());

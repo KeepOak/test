@@ -4993,7 +4993,7 @@ ${run.output.slice(0, 6000)}`;
     if (!this.registry.isExternal(call.name)) return;
     const app = mcpAppIn(result);
     if (!app) return;
-    this.store.event(context.runId, "mcp.app", { tool: call.name, server: call.name.split(".")[1] ?? call.name, ...app });
+    this.store.event(context.runId, "mcp.app", { tool: call.name, server: this.registry.sourceOf(call.name)?.replace(/^mcp:/, "") ?? call.name, ...app });
   }
   /**
    * hardening-3: a model's call read once — the arguments cleaned of keys the tool does not take
