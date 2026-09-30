@@ -29,6 +29,7 @@ import { startLikeNew } from "../conversation-mode-api.js"; // Q013
 import { defaultProjectId } from "../projects.js"; // dogfood D14
 import { defaultGreeting, introPrompt, introSystem } from "./intro.js"; // a new Trunk's first words, the engine's own
 import { TrunkThreads } from "./threads.js"; // defaulttrunk
+import { trunkInbox } from "./inbox.js";
 import { adoptOrphans, defaultAmong, defaultPointer, designatedDefault, pickDefault, saveDefault, setupOver } from "./defaults.js"; // defaulttrunk
 import { assistantIdentity } from "../identity.js"; // defaulttrunk: the default Branch makes is named as the owner named their assistant
 import { TrunkFiles } from "./files.js";
@@ -558,6 +559,13 @@ export class Trunks {
     if (!this.deps.picture) throw new Error("No picture model is connected. Connect one under Settings → Models → Pictures & sound.");
     const made = await this.deps.picture(`A friendly, simple avatar portrait for an assistant called ${trunk.name}. ${value.prompt}`);
     return this.edit(id, { avatar: { kind: "generated", dataUrl: pictureAddress(made.bytes, made.mediaType), prompt: value.prompt } });
+  }
+
+  /** Each task is attributed by its recorded Trunk, even after a conversation changes hands. */
+  inbox(id: string) {
+    this.require("trunks");
+    const trunk = this.records.get(id);
+    return { trunk: { id: trunk.id, name: trunk.name }, ...trunkInbox(this.store, this.owner, id, this.deps.runtime, this.messages) };
   }
 
   /** R17-013: the one-file export, and bringing one in (reach off, the owner's keys). */
