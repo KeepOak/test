@@ -117,6 +117,7 @@ test("a change to the engine is compiled, never packaged, and holds the engine's
   assert.ok(!seen.some((line) => /package-desktop|dependency-notices/.test(line)), "never packaged");
   assert.equal(lf(await readFile(join(outcome.dir, "dist", "runtime.js"), "utf8")), "export const run = 2;\n");
   assert.equal(JSON.parse(await readFile(join(outcome.dir, "dist", "build-info.json"), "utf8")).commit, commit);
+  assert.ok(JSON.parse(await readFile(join(outcome.dir, "dist", "build-info.json"), "utf8")).ancestors.includes(repo.first));
   assert.equal(JSON.parse(await readFile(join(outcome.dir, "package.json"), "utf8")).version, outcome.version, "it answers to its own version");
   await verifyLive(outcome.dir, { commit, digest: outcome.digest });
 });

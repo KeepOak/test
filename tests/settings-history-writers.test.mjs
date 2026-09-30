@@ -85,6 +85,8 @@ const cards = [
   ["/api/comfort", { card: "mcp", values: { startupTimeoutSeconds: 20 } }, "comfort-mcp.startupTimeoutSeconds"],
   ["/api/knobs", { card: "limits", values: { maxModelRounds: 20 } }, "round-limit.maxModelRounds"],
   ["/api/knobs", { card: "limits", reset: true }, "round-limit.maxModelRounds"],
+  ["/api/knobs", { card: "limits", values: { maxSteps: "none" } }, "step-limit.maxSteps"],
+  ["/api/knobs", { card: "limits", reset: true }, "step-limit.maxSteps"],
   ["/api/knobs", { card: "limits", values: { maxTaskTokens: 400000 } }, "task-tokens.taskAllowance"],
   ["/api/knobs", { card: "limits", reset: true }, "task-tokens.taskAllowance"],
   // The switch families: every part that is a Settings setting, through its family's one route.
