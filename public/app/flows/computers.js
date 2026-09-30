@@ -1,9 +1,8 @@
 /* Adding a computer or phone (the computers popover's "Add a computer or phone…", and Settings › Computer's "Add a
    computer"), 1:1 with the prototype's two dialogs. Pairing is the engine's Devices (flows/pair.js): the "With a code"
    tab and "Another computer with Branch" make a real invitation, and the device that answers waits for the owner's
-   "Let it in"; the phone tab hands over to the phone pairing dialog. What stays greyed: a private computer on this PC
-   and a cloud computer (not in the engine) and a computer over remote desktop or SSH (gives Trunks another machine to
-   act on; not part of pairing).
+   "Let it in"; the phone tab hands over to the phone pairing dialog. SSH workspaces use the owner's existing config
+   and host-key checks through flows/ssh-computers.js. Private and cloud computers remain separate choices.
 
    find-computers: the network tab lists the owner's other Branch computers the engine found (GET and POST
    /api/devices/find): Branch on the owner's Tailscale network, and computers waiting to pair on the local network. The
@@ -21,6 +20,8 @@ import { markLive } from "../core/features.js";
 import { startPairing, stopPairing, pairingInvite } from "./pair.js";
 import { t } from "../../i18n.js";
 import { init as initComputers17 } from "./computers17.js"; // pass 17 part D §9
+import { initSshComputers } from "./ssh-computers.js";
+import { say } from "../core/words.js";
 
 const TABS = [["network", "window.flows.comp.network"], ["code", "window.flows.comp.code"], ["phone", "studio.tab.phone"]];
 /* The prototype's note under the tabs (addComputer): what pairing leads to. */
@@ -102,22 +103,20 @@ function addComputer(tab) {
 }
 
 const KINDS = [["sandbox", "shield", "window.flows.comp.sandbox", "window.flows.comp.sandbox-hint"], ["pair", "monitor", "window.flows.comp.pair", "window.flows.comp.pair-hint"], ["cloud", "cloud17d", "window.flows.comp.cloud", "window.flows.comp.cloud-hint"], ["remote", "key", "window.flows.comp.remote", "window.flows.comp.remote-hint"]];
-/* Only pairing is real here; each other kind is drawn greyed with its own reason (window.why.<key>): no private computer
-   can be made on this PC, a cloud computer needs keepoak.com, and adding a computer over SSH (the engine's /api/remotes)
-   gives Trunks another machine, which waits for a separate safety review. Their action has no handler, so core/features.js
-   greys them and shows the reason. */
+/* Pairing and SSH setup have live handlers. The other kinds retain their own unavailable reasons. */
 const WHY = { sandbox: "comp-sandbox", cloud: "cloudnew17d", remote: "comp-remote" };
 
 function addKind() {
   closePop();
   openDlg({ title: t("window.flows.comp.add"),
-    body: `<div class="provs">${KINDS.map(([v, i, n, s]) => `<button class="prov" type="button" data-act="${v === "pair" ? "comp-add-go" : "comp-kind"}" data-v="${v}"${v === "pair" ? "" : ` data-why="${WHY[v]}"`}><span class="ico-tile">${ic(i, "s")}</span><b>${t(n)}</b><small>${t(s)}</small></button>`).join("")}</div>`,
+    body: `<div class="provs">${KINDS.map(([v, i, n, s]) => `<button class="prov" type="button" data-act="${v === "pair" ? "comp-add-go" : v === "remote" ? "ssh-comp-open" : "comp-kind"}" data-v="${v}"${v === "pair" || v === "remote" ? "" : ` data-why="${WHY[v]}"`}><span class="ico-tile">${ic(i, "s")}</span><b>${v === "remote" ? esc(say("A computer over SSH")) : t(n)}</b><small>${v === "remote" ? esc(say("Use a trusted computer from your SSH config as a file workspace.")) : t(s)}</small></button>`).join("")}</div>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>` });
 }
 
 export function init() {
   markLive(["addcomp", "ac-tab", "comp-add", "comp-add-go", "ac-pair"]);
   initComputers17();
+  initSshComputers();
   on("addcomp", () => addComputer("network"));
   on("ac-tab", (el) => addComputer(el.dataset.v));
   on("ac-pair", (el) => pairFound(el.dataset.v));
