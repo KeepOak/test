@@ -140,7 +140,7 @@ import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRu
 import { startDictation, type SoundStreamRunner, type SpeechStreamRunner } from "./voice-dictation-run.js"; // mac7/live-voice
 import { soundStreamRunner, speechStreamRunner } from "./voice-dictation-host.js"; // mac7/live-voice
 import type { LocalWhisper } from "./voice-whisper.js"; // RES-709
-import { wakeCaptureRunner, wakeRunner } from "./voice-wake-host.js"; // mac7/wake-mic
+import { wakeCaptureRunner, wakeRunner, wakeStreamRunner } from "./voice-wake-host.js"; // mac7/wake-mic
 // Bucket 17.
 import { MediaUnderstanding, registerMediaUnderstanding } from "./media-understand.js";
 import { SpeechEngineService } from "./speech-engine-service.js";
@@ -1565,6 +1565,8 @@ ${result.output || "(it said nothing)"}`;
   const wake = startWakeWord({
     store, owner: runtime.owner, runner: options.wake?.runner ?? wakeRunner(),
     capture: options.wake?.capture ?? wakeCaptureRunner(),
+    stream: wakeStreamRunner(),
+    ...(voice.transcription.whisper ? { whisper: voice.transcription.whisper } : {}),
     // Integration review: being locked is a state the listener asks about before every window and
     // before every start, so a settings save cannot reopen the microphone on a locked Branch.
     locked: () => sessionLock.locked(),

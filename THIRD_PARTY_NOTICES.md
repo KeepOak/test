@@ -38,6 +38,13 @@ Electron distributions additionally include LICENSE and LICENSES.chromium.html. 
 `a9a54245b2311c705d29050b7f9868c015917aec` of https://github.com/NousResearch/hermes-agent.
 Modified for TypeScript, bounded per-sentence payloads and Branch's existing voice service.
 
+## Hermes wake-word adapter
+
+`src/voice-wake-kws.ts` adapts threshold and phrase display mapping from
+`tools/wake_word_engines.py` at `a9a54245b2311c705d29050b7f9868c015917aec`
+of https://github.com/NousResearch/hermes-agent. Branch uses an external installed
+sherpa-onnx CLI and owner-supplied models/keywords, with no model downloads.
+
 MIT License
 
 Copyright (c) 2025 Nous Research

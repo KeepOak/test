@@ -9703,6 +9703,26 @@ switch and `sureness` are in the settings catalogue, so a whole-app preset or a 
 turn listening off or make it stricter but can **never choose what this computer listens for**: the
 word is set by you, in the card, and nowhere else.
 
+**Installed streaming keyword spotter.** Branch prefers
+`sherpa-onnx-keyword-spotter-microphone` when its complete model bundle and a tokenized
+keyword file are already present. The owner-only wake settings API accepts `keywordModel`
+(model folder), `keywordFile` (defaults to `keywords.txt` in that folder), and
+`confirmationFrames` (1–20, default 3 trailing blank frames in the native decoder).
+The bundle needs `tokens.txt` plus encoder, decoder and joiner ONNX files. The keyword
+file must contain a tokenized entry with an `@DISPLAY_NAME` matching your word in
+uppercase with spaces replaced by underscores. Prepare that entry with the installed
+spotter's vocabulary tools; Branch does not tokenize or download models for you.
+Check the license of the model you choose: no pretrained model is included, and
+openWakeWord's noncommercial pretrained models are never used.
+
+This program holds the microphone open continuously while the wake word is On, keeps
+its model loaded, and stops on lock, Lockdown, switch-off or application exit. Matches
+have a two-second cooldown and start ordinary turns with the existing permissions.
+If only faster-whisper is available, Branch uses its existing worker instead of passing
+whisper-cli flags to Python. That fallback still records separate windows and can miss
+speech while a window is being recognized. The new model/file settings currently have
+no dedicated controls in the Voice card; configure them through the owner settings API.
+
 **Your word stays yours.** `GET /api/voice/wake` is readable by anybody using this computer, so it
 never carries the word itself to anybody but you: somebody on a household profile is told only
 whether a word has been chosen (`wordChosen`), and the sentences about what this computer would use
