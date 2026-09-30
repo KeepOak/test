@@ -55,11 +55,11 @@ export function vacuousTaskProblem(task: { id: string; checks?: unknown; scorers
  * Decides one task. Checks that can be settled without a model always win when the task has them;
  * a judge is only asked when there are none. What the task forbade is fatal either way.
  */
-export async function gradeTask(runtime: Runtime, task: EvaluationTask, output: string): Promise<Grade> {
-  const forbidden = await denyProblem(output, task, runtime.workspace);
+export async function gradeTask(runtime: Runtime, task: EvaluationTask, output: string, workspace = runtime.workspace): Promise<Grade> {
+  const forbidden = await denyProblem(output, task, workspace);
   if (forbidden) return { score: 0, passed: false, method: "checks", problem: forbidden, reason: null };
   if (task.checks) {
-    const problem = await evaluateChecks(output, { ...task.checks, maxRetries: 0 }, runtime.workspace);
+    const problem = await evaluateChecks(output, { ...task.checks, maxRetries: 0 }, workspace);
     return { score: problem ? 0 : 1, passed: !problem, method: "checks", problem, reason: null };
   }
   if (task.judge) {

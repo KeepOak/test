@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
+import { resolve as resolveWorkspace } from "node:path";
+import { worktreeScope } from "./coding/worktrees.js";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
 import { newAppHold, newAppHoldReason, openedBefore } from "./desktop-app-ask.js"; // unhold-control
 import { asksForScreen, reachesScreen, screenHoldReason, screenStandingRefusal, screenTool, screenWithheldRefusal } from "./screen-guard.js"; // dogfood-safety
@@ -900,7 +902,7 @@ export class Runtime {
     const trunkWork = mark?.id;
     return {
       owner: this.owner,
-      workspace: this.workspace,
+      workspace: resolveWorkspace(this.workspace, worktreeScope() ?? ""),
       runId: options.runId ?? "",
       permissions: new Set(options.permissions ?? this.registry.permissions()),
       signal: options.signal ?? new AbortController().signal,
@@ -1772,7 +1774,8 @@ ${run.output.slice(0, 6000)}`;
     let status: Run["status"] = "completed";
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
-    const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    // An inherited working folder wins, including an evaluation's disposable folder.
+    const place = this.coding && !worktreeScope() ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
     try {
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
