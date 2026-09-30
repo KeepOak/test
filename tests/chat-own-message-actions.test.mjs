@@ -96,20 +96,21 @@ const APPS = {
 };
 
 function behindAdmission(app) {
-  const sent = [], admitting = [];
+  const sent = [], admitting = [], wire = { throttled: false };
   const fetch = async (url, init) => {
     const method = String(url).split("/").pop();
     if (method === "getUpdates") return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
     if (app.mutations.includes(method)) await new Promise((resolve) => admitting.push(resolve));
     init.signal?.throwIfAborted();
     sent.push(method);
+    if (wire.throttled && app.mutations.includes(method)) return new Response("{}", { status: 429, headers: { "retry-after": "3" } });
     return new Response(JSON.stringify(app.answer(method)), { headers: { "content-type": "application/json" } });
   };
   const inAdmission = async () => {
     for (let i = 0; i < 2000 && !admitting.length; i++) await new Promise((resolve) => setImmediate(resolve));
     assert.equal(admitting.length, 1, "the request reached its address check");
   };
-  return { sent, fetch, inAdmission, admit: () => admitting.shift()() };
+  return Object.assign(wire, { sent, fetch, inAdmission, admit: () => admitting.shift()() });
 }
 
 async function chatApp(t, kind, name) {
@@ -157,3 +158,27 @@ for (const kind of Object.keys(APPS)) {
     });
   }
 }
+
+/* Slack's rate limit (#1361) and the send gate go through the same call(): the gate is checked before sending, and a
+   429 after it is Slack's "wait", so nothing is recorded as deleted. */
+test("CHAT-023: a Slack delete that Slack rate-limits after its gate passed is refused and recorded as not done", async (t) => {
+  const { app, wire, context, target } = await chatApp(t, "slack", "throttled");
+  wire.throttled = true;
+  const deleting = app.channels.actOnOwnMessage(target, "delete", context);
+  await wire.inAdmission();
+  wire.admit();
+  await assert.rejects(deleting, /slow down/);
+  assert.deepEqual(wire.sent.filter((m) => m === "chat.delete"), ["chat.delete"], "it was sent once, after the gate");
+  assert.equal(app.channels.ownMessages({ channel: "slack", chatId: target.chatId }).messages[0].deletedAt ?? null, null);
+});
+
+test("CHAT-023: a rate-limited Slack path still stops at the gate when Branch locks during the address check", async (t) => {
+  const world = await chatApp(t, "slack", "throttled-lock");
+  world.wire.throttled = true;
+  const deleting = world.app.channels.actOnOwnMessage(world.target, "delete", world.context);
+  await world.wire.inAdmission();
+  world.app.sessionLock.lock();
+  world.wire.admit();
+  await assert.rejects(deleting);
+  assert.deepEqual(world.wire.sent.filter((m) => m === "chat.delete"), [], "nothing went out behind the lock");
+});
