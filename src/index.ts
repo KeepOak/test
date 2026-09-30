@@ -1,4 +1,5 @@
 import { environmentTool } from "./environment.js";
+import { MobilePush } from "./mobile-push.js";
 import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
 import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
@@ -1080,8 +1081,11 @@ export async function createBranch(options: {
   webhooks.secretFor = lockerSecret("webhook");
   // Wave 8: while Lockdown is on, no note about what happened reaches another program either.
   const notify = webhooks.notifier(runtime.owner);
+  const mobilePush = new MobilePush(store, runtime.owner, web.policy, () => !sessionLock.locked() && !lockedDown(store, runtime.owner));
+  releaseOnLock.push(async () => mobilePush.stop());
   const guardedNotify: typeof notify = (event, payload) => {
     if (!lockedDown(store, runtime.owner)) notify(event, payload);
+    try { mobilePush.notify(event, payload); } catch { /* Push cannot fail task completion. */ }
   };
   runtime.notifyEvent = guardedNotify;
   channels.deliveries.notifyEvent = guardedNotify;
@@ -1915,6 +1919,7 @@ ${result.output || "(it said nothing)"}`;
     },
     /** References, replacement dates, the use audit and the shared scrubber. */
     secrets: store.secrets,
+    mobilePush,
     /** Locking the app, by hand or after a quiet spell. */
     sessionLock,
     /** The phones holding a task's browser through the Telegram Mini App (src/miniapp/sessions.ts). */
@@ -2046,6 +2051,7 @@ ${result.output || "(it said nothing)"}`;
       summary: (limit?: number) => liveScoreSummary(liveScores(store, runtime.owner, limit)),
     },
     close: () => (closing ??= (async () => {
+      mobilePush.close();
       // bucket-18 (A0300): nothing is sent to GitHub while the app is closing.
       stopPullRequests();
       stopOfferingPullRequests();
