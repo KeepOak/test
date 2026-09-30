@@ -479,6 +479,8 @@ test("a plugin may bring a chat service, which is registered, connected and deli
   const { app, root } = await fixture(t);
   const service = await chatService(t);
   app.web.policy.configure({ allowPrivateAddresses: true });
+  // RES-251: a chat service lives inside Branch, so a plugin bringing one runs there only by the owner's own choice.
+  app.addOns.save({ wallEveryPlugin: false, confirmLoosening: true });
   const folder = join(root, "data", "plugins");
   await mkdir(folder, { recursive: true });
   await writeFile(join(folder, "toy-chat.mjs"), `
