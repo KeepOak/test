@@ -5,10 +5,21 @@ import { markLive } from '../core/features.js';
 import { toast } from '../core/ui.js';
 
 let data = null, busy = false, message = '';
+let initialized = false;
 const bridge = () => window.branchDesktop;
 const ready = () => E.profiles?.isOwner === true && typeof bridge()?.keepOakTeam === 'function';
 const options = (selected = 'operator') => ['admin', 'operator', 'viewer'].map((role) =>
   `<option value="${role}"${role === selected ? ' selected' : ''}>${role}</option>`).join('');
+
+export function keepOakWorkspaceBanner() {
+  if (!ready()) return '';
+  const summary = data ? `${data.seats.used} of ${data.seats.total} member places used · ${data.organizationId}`
+    : 'Open the isolated KeepOak view and read your current computer team.';
+  return `<div class="ko-banner"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>Your keepoak.com team</b><small>${esc(summary)}</small><small role="status" aria-live="polite">${esc(message)}</small></span>
+    <button class="btn sm" data-act="ko-view-open">Open KeepOak view</button>
+    <button class="btn pri sm" data-act="ko-team-read"${busy ? ' disabled' : ''}>${data ? 'Refresh team' : 'Read team'}</button>
+    <button class="btn sm" data-act="p-open-team" data-v="people">Members and invitations</button></div>`;
+}
 
 export function keepOakWorkspaceSection() {
   if (!ready()) return '';
@@ -18,7 +29,7 @@ export function keepOakWorkspaceSection() {
     ${manager && !member.you && member.role !== 'owner' ? `<select aria-label="Role for ${esc(member.email)}" data-ko-role="${esc(member.id)}"${busy ? ' disabled' : ''}>${options(member.role)}</select>
     <button class="btn sm" data-act="ko-team-role" data-id="${esc(member.id)}"${busy ? ' disabled' : ''}>Review role change</button>
     <button class="btn sm" data-act="ko-team-remove" data-id="${esc(member.id)}"${busy ? ' disabled' : ''}>Review removal</button>` : ''}</li>`).join('');
-  return `<section class="sec" data-ko-workspace><h2>KeepOak computer team</h2>
+  return `<section class="sec" data-ko-workspace><h2>From your keepoak.com team</h2>
     <p>Sign in through the isolated KeepOak view, then read your team. These members are separate from local Branch profiles.</p>
     <div class="acts"><button class="btn" data-act="ko-view-open">Open KeepOak view</button><button class="btn pri" data-act="ko-team-read"${busy ? ' disabled' : ''}>${data ? 'Refresh team' : 'Read team'}</button></div>
     <p role="status" aria-live="polite">${esc(message)}</p>
@@ -55,6 +66,8 @@ async function update(action, element) {
   finally { busy = false; renderNow(); }
 }
 export function initKeepOakWorkspace() {
+  if (initialized) return;
+  initialized = true;
   markLive(['ko-team-read', 'ko-team-invite', 'ko-team-role', 'ko-team-remove']);
   on('ko-team-read', read);
   on('ko-team-invite', (el) => update('invite', el));

@@ -21,6 +21,7 @@ import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
 import { say } from "../../core/words.js";
 import { reason } from "../../core/why.js";
+import { keepOakWorkspaceSection, initKeepOakWorkspace } from '../../places/keepoak-workspace.js';
 
 /* The prototype's words for the engine's seven kinds (src/tool-categories.ts), in the prototype's order. */
 const KINDS = [["read", "Look things up"], ["browse", "Use web pages"], ["files", "Write files"], ["commands", "Run commands"], ["message", "Send messages"], ["spend", "Spend money"], ["settings", "Change how Branch is set up"]];
@@ -81,8 +82,8 @@ function item(p) {
 function list(all) {
   const invite = ownerHere() ? `<button type="button" class="btn pri" data-css="margin-top:10px;justify-self:start" data-act="p-invite"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>${t("household.invite")}</button>` : "";
   /* The prototype's groups: people signed in on their own device (a key the engine issued them, GET /api/people/settings
-     people[].signedIn) and everyone else, on this computer. The keepoak.com team group needs keepoak.com, which Branch
-     does not link to, so it is not drawn. */
+     people[].signedIn) and everyone else, on this computer. The separate KeepOak membership section below uses the
+     native isolated-session bridge; cloud roles never enter this local profile list. */
   const own = all.filter((p) => p.id !== OWNER && devices(p.id).length), here = all.filter((p) => !own.includes(p));
   const group = (title, people) => (people.length ? `<div class="grp8">${title}</div>${people.map(item).join("")}` : "");
   return `<div class="t9-list">${group(t("glance.local"), here)}${group(t("household.invite.device"), own)}${invite}</div>`;
@@ -153,7 +154,7 @@ export function peopleBody() {
   pickDefault();
   const all = people();
   return `<div class="t10">${list(all)}${card(all.find((p) => p.id === picked))}</div>
-    <p class="hint">${t("window.settings.people.separation-on-one-computer-not-separate")}</p>`;
+    <p class="hint">${t("window.settings.people.separation-on-one-computer-not-separate")}</p>${keepOakWorkspaceSection()}`;
 }
 
 export function draw() {
@@ -170,6 +171,7 @@ export function pickPerson(id) { picked = id; }
 
 /* Picking whom to look at, for both pages; registered once, by whichever starts first. */
 export function startPeople() {
+  initKeepOakWorkspace();
   if (has("p-sel")) return;
   on("p-sel", (el) => { picked = el.dataset.v; render(); });
   markLive(["p-sel"]);
