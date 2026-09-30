@@ -45,7 +45,7 @@ export function openBesidePicker(anchor) {
   const box = $("#beside-query"); box?.focus(); if (box) void search(box);
 }
 export function initBesidePicker() {
-  markLive(["beside-more"]);
+  markLive(["beside-more", "sw:beside-query"]);
   on("beside-more", () => { const box = $("#beside-query"); if (box && !P.busy && P.next !== null) void search(box, P.next); });
   document.addEventListener("input", (e) => {
     if (e.target.id !== "beside-query") return;
