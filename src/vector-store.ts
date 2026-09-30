@@ -36,6 +36,8 @@ export interface VectorBackend {
    */
   search(owner: string, collection: string, query: Float32Array, limit: number, scanAtMost?: number, model?: string): Promise<VectorMatch[]>;
   count(owner: string, collection?: string): Promise<number>;
+  /** External adapters delete only this owner's Branch namespace, then verify it is empty. */
+  clearOwner?(owner: string): Promise<number>;
   /** Which passages of a collection are already read, by fingerprint, so re-reading is free. */
   fingerprints(owner: string, collection: string, model: string): Promise<Map<string, string>>;
   /**

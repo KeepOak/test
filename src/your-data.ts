@@ -152,7 +152,10 @@ const gitHost = (remote: string): string => /^git@([^:]+):/.exec(remote)?.[1] ??
 /** Where this person's facts go when they are kept off this computer: an outside memory service, or a copy of their history. */
 function memoryLeaves(app: Branch, scope: string, owner: boolean): Leaves[] {
   const service = memoryProviderSettings(app.store, scope), history = memoryHistorySettings(app.store, scope);
+  const vectors = app.knowledgeBases.vectorDeletionChoice(app.runtime.owner);
   return [
+    ...(vectors && leavesHere(vectors.vectorsUrl)
+      ? [{ id: "knowledge:vectors", kind: "memory", name: owner ? hostOf(vectors.vectorsUrl) : "", sends: "Document and question embedding vectors, passage identifiers and fingerprints go to the vector service you chose. Branch sends no passage text to this store. Changing or removing the connection leaves old vectors there; Delete everything retries cleanup only while that same connection is selected.", page: owner ? "library" : null }] : []),
     ...(app.memory.backend.isOutside(scope) && leavesHere(service.url)
       ? [{ id: "memory:outside", kind: "memory", name: hostOf(service.url), sends: sends.memory, page: owner ? "advanced" : null }] : []),
     ...(history.mode !== "off" && history.remote
@@ -452,7 +455,8 @@ function purge(app: Branch, scope: string, sessions: string[], outside: { url: s
     // Facts on an outside service are marked forgotten here, now, so none is read back whatever the service does later.
     if (outside) app.memory.backend.markAllForgotten(scope, outside.ids);
     const removed = [`${conversations === 1 ? "One conversation with its" : `${conversations} conversations with their`} files, recordings and receipts, and ${memory === 1 ? "one remembered fact" : `${memory} remembered facts`}.`];
-    const journal = openJournal(app, { scope, sessions, runIds, outside: outside ? { url: outside.url, pending: outside.ids } : null, history }, removed);
+    const vectors = app.knowledgeBases.vectorDeletionChoice(app.runtime.owner);
+    const journal = openJournal(app, { scope, sessions, runIds, outside: outside ? { url: outside.url, pending: outside.ids } : null, vectors, history }, removed);
     audit(app.store, app.runtime.owner, { action: "history.pruned", actor: scope, subject: "everything kept for this person",
       reason: `Settings › Your data: deleted ${conversations} conversations with their files, recordings and receipts, and ${memory} remembered facts`, outcome: "deleted" });
     return { journal, conversations, memory };
@@ -474,7 +478,8 @@ function deleteView(app: Branch, scope: string) {
   const journal = latest(app, scope);
   if (!journal) return null;
   const elsewhere = savedElsewhere(app, scope, journal.startedAt);
-  return { id: journal.id, done: journal.done.length, total: steps.length, working: finishing.has(journal.id),
+  const relevant = steps.filter((step) => step !== "vectors" || !!journal.vectors);
+  return { id: journal.id, done: relevant.filter((step) => journal.done.includes(step)).length, total: relevant.length, working: finishing.has(journal.id),
     removed: journal.removed, waiting: journal.waiting, elsewhere,
     elsewhereNote: elsewhere.length ? "Branch did not touch these copies you saved outside its folder. They still hold what they held when you saved them; delete them yourself if you want them gone." : null };
 }
