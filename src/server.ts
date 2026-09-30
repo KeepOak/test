@@ -4938,11 +4938,19 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
   // is refused by RunArtifacts itself, and only kinds the browser can safely display are served.
   if (request.method === "GET" && path === "/api/artifacts/file") {
+    const requestingScope = scopeWhileUnlocked(app);
     const wanted = new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "";
     const entry = (await app.artifacts.list(500)).find((kept) => kept.path === wanted);
     if (!entry) throw new HttpError(404, "That file was not made by the assistant");
+    const readable = () => {
+      const currentScope = scopeWhileUnlocked(app), run = app.store.run(entry.runId);
+      return !!requestingScope && currentScope === requestingScope && !!run && run.owner === currentScope
+        && app.store.ownsSession(currentScope, run.sessionId);
+    };
+    if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     if (!/^(image|audio)\//.test(entry.mediaType)) throw new HttpError(415, "Only pictures and sounds are shown here");
     const bytes = await app.artifacts.read(entry.path);
+    if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     response.writeHead(200, {
       "content-type": entry.mediaType, "cache-control": "no-store",
       "x-content-type-options": "nosniff", "content-disposition": `inline; filename="${entry.name}"`,

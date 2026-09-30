@@ -104,6 +104,8 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
 
 /** Reads a short-lived key may not make: what they return is a secret, or everybody's data. */
 const ownerOnlyReads: readonly RegExp[] = [
+  // Saved task images are read by the profile window, never through a short-lived script key.
+  /^\/api\/artifacts\/file$/,
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
   /^\/api\/chatgpt\/status$/,
