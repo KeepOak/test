@@ -28,9 +28,9 @@ export type AllowRule = z.infer<typeof AllowRuleSchema>;
 export const SenderAllowlistSchema = z.object({
   /**
    * What happens to somebody no rule covers: "pair" offers them a code to be approved with, "block"
-   * turns them away without one. This is the same choice each channel had, in one place.
+   * turns them away without one; "ignore" also leaves unauthorized direct chats unanswered.
    */
-  unknown: z.enum(["pair", "block"]).default("pair"),
+  unknown: z.enum(["pair", "block", "ignore"]).default("pair"),
   rules: z.array(AllowRuleSchema).max(200).default([]),
 }).strict();
 export type SenderAllowlist = z.infer<typeof SenderAllowlistSchema>;
@@ -45,7 +45,8 @@ export function saveSenderAllowlist(store: Store, owner: string, input: unknown)
   store.save("settings", owner, settingsKey, next);
   audit(store, owner, {
     action: "policy.changed", actor: owner, subject: "who may message the assistant",
-    reason: `${next.rules.length} rule(s); anybody else is ${next.unknown === "pair" ? "offered a code" : "turned away"}`,
+    reason: `${next.rules.length} rule(s); anybody else is ${next.unknown === "pair" ? "offered a code"
+      : next.unknown === "ignore" ? "turned away without a direct-chat reply" : "turned away"}`,
     outcome: "saved",
   });
   return next;

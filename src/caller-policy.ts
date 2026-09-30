@@ -182,6 +182,7 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
   // mac7/connect: saving a chat app's token or switching setting-up on is the owner's alone.
   if (handlesChannelSetupPath(path)) return "A short-lived key cannot save a chat app's token or change how chat apps are set up. Do that in the app window.";
   // mac3/never-break (integration review): letting a new person reach the assistant is the owner's alone.
+  if (path === "/api/channels/allowlist") return "A short-lived key cannot read or change who may message Branch. Do that in the app window.";
   if (path.startsWith("/api/channels/pairings/")) return "A short-lived key cannot let a new person reach the assistant, or remove one. Do that in the app window.";
   // Bucket 17: naming a program for Branch to run (ffmpeg, yt-dlp, a reading-aloud program) is the owner's step.
   if (path === "/api/media/programs" || path === "/api/voice/engines")
