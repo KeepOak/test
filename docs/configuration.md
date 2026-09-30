@@ -2434,6 +2434,9 @@ Everyone answers or Only who I tag. A checked, sufficiently confident pick is wr
 does not ask again; an unknown or unsure pick falls back to the room rule. Tagged messages are never rerouted.
 `inbox` enables `POST /api/decisions/urgency { items }`, an owner-only action that scores Needs you rows from
 1 to 10, at most eight new rows per call. Scores are cached by row key and content; changed words are scored again.
+The `lists` switch (on by default) filters a long list a tool hands back (search results, files, messages) before
+the task reads it, keeping what the task could need. It acts only with a decision model on this computer or one chosen
+apart from the task's own; a list shorter than `listMin` lines (20 to 2000, default 60) is read whole.
 Switching it off refuses scoring with 409 and restores the inbox's original order.
 
 ## Teams, linked chats, registries and evaluation
