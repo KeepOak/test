@@ -885,7 +885,9 @@ splitting to keep escape characters inside the service's message limit.
 Settings › Chat apps reads `intake` from `GET /api/channels`; `POST /api/channels/intake` saves only the named
 fields and is owner-only. `edited` and `albums` default to true: edited messages replace a version still being
 gathered, and a photo album joins one turn. An edit after that turn has started is its own message.
-`splitWaitMs` is 0, 1000 (default), or 3000; messages from the same live chat arriving during that wait join a turn.
+`splitWaitMs` is 0, 1000 (default), or 3000. It is waited only after a message of at least 4,000 characters (the first
+piece of one an app split); the same person's messages arriving during that wait join its turn. A shorter message starts
+its turn at once.
 Fetched messages after a restart stay separate. Albums still wait at least one second when split waiting is off.
 
 `watchdog` defaults to true. A watched connection with no service contact for `stalledAfterSeconds` (30–3600,

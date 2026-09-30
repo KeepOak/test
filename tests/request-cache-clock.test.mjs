@@ -16,7 +16,9 @@ import { RequestCache, requestHash, saveCacheSettings, saysAClockTime, withoutCl
 import { createBranch } from "../dist/index.js";
 
 const facts = { device: "desk", system: "Windows 11", host: "desktop", window: "shown", channel: null, timeZone: "America/New_York" };
-const at = (time) => ({ role: "system", content: environmentLine({ ...facts, time }) });
+// The line gives the hour the time falls in (src/environment.ts); the key leaves that out too.
+const hourOf = (time) => time.replace(/(\d{2}):\d{2}$/, (_, h) => `${h}:00 to ${String((Number(h) + 1) % 24).padStart(2, "0")}:00`);
+const at = (time) => ({ role: "system", content: environmentLine({ ...facts, time, hour: hourOf(time) }) });
 const request = (time, question = "What is the capital of France?") => ({ provider: "p", model: "m", reasoning: null, maxTokens: 100,
   messages: [{ role: "system", content: "You are Branch." }, at(time), { role: "user", content: question }], tools: [] });
 
@@ -25,6 +27,7 @@ test("the same request either side of a minute boundary has one key; a new day o
   assert.notEqual(requestHash(request("Mon, 28 Sept 2026, 13:59")), requestHash(request("Tue, 29 Sept 2026, 13:59")), "the date stays in");
   assert.notEqual(requestHash(request("Mon, 28 Sept 2026, 13:59")), requestHash(request("Mon, 28 Sept 2026, 13:59", "And of Spain?")));
   assert.equal(withoutClock("Local time: Mon, 28 Sept 2026, 09:05 (UTC). Use it."), "Local time: Mon, 28 Sept 2026 (UTC). Use it.");
+  assert.equal(withoutClock("Local time: Mon, 28 Sept 2026, 09:00 to 10:00 (UTC). Use it."), "Local time: Mon, 28 Sept 2026 (UTC). Use it.");
   assert.equal(withoutClock("The meeting is at 09:05 (room 4)."), "The meeting is at 09:05 (room 4).", "only the environment line's clock goes");
 });
 

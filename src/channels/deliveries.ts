@@ -19,12 +19,18 @@ export const DeliverySchema = z.object({
   order: z.number().int().min(0).default(0),
   text: z.string().min(1).max(4096),
   replyTo: z.string().max(64).nullable().default(null),
-  status: z.enum(["pending", "sent", "dead"]),
+  /**
+   * "attempting" is written just before a send and cleared by its outcome, so a row still attempting when the ledger
+   * next looks was cut off by Branch stopping mid-send: it may have reached the chat, and it is resent marked `resent`.
+   */
+  status: z.enum(["pending", "attempting", "sent", "dead"]),
   attempts: z.number().int().min(0),
   nextAt: z.string(),
   lastError: z.string().max(500).nullable().default(null),
   messageId: z.string().max(64).nullable().default(null),
   sentAt: z.string().nullable().default(null),
+  /** Sent again after Branch stopped while sending it, so the chat may show it twice. */
+  resent: z.boolean().optional(),
 }).strict();
 export type Delivery = z.infer<typeof DeliverySchema> & { id: string; createdAt: string; updatedAt: string };
 export type Sender = (chatId: string, text: string, replyTo?: string) => Promise<string | undefined>;
@@ -118,6 +124,24 @@ export function openFenceAt(text: string, index: number): { line: string; close:
   const language = (open.info.split(/\s+/)[0] ?? "").slice(0, Math.max(0, fenceRoom - open.marker.length - 2));
   return { line: `${open.marker}${language}`, close: open.marker };
 }
+/**
+ * What a failed send means for the next try, after Hermes Agent's delivery ledger (`gateway/delivery_ledger.py`
+ * `retry_not_before`, and the error table in `gateway/platforms/base.py` `classify_send_error`;
+ * https://github.com/NousResearch/hermes-agent, MIT, Copyright (c) 2025 Nous Research):
+ * - "gone": the bot was blocked or removed, or the chat no longer exists. Sending again cannot work, so it is never retried.
+ * - "flood": the chat app asked to be left alone for a while (`retryAfter`, in seconds): wait exactly that, and do not
+ *   count it as a failed try.
+ * - "unknown": anything else backs off, 5 s doubling, and is given up after `maxAttempts` tries.
+ */
+export type SendErrorKind = "gone" | "flood" | "unknown";
+const gone = ["bot was blocked", "blocked by the user", "user is deactivated", "chat not found", "bot was kicked",
+  "not a member", "have no rights to send", "not enough rights", "forbidden: "];
+export function sendErrorKind(error: unknown): SendErrorKind {
+  const wait = Number((error as { retryAfter?: unknown } | null)?.retryAfter);
+  if (Number.isFinite(wait) && wait > 0) return "flood";
+  const text = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return gone.some((words) => text.includes(words)) ? "gone" : "unknown";
+}
 /** Retry delay after `attempts` failures: 5 s, 10 s, 20 s, 40 s ... capped at ten minutes. */
 export function backoffMs(attempts: number): number {
   return Math.min(600000, 5000 * 2 ** Math.max(0, attempts - 1));
@@ -162,7 +186,7 @@ export class Deliveries {
     const due = this.now().toISOString();
     const totals = { sent: 0, failed: 0, dead: 0 };
     const byChat = new Map<string, Delivery[]>();
-    for (const row of this.list().filter((d) => d.channel === channel && d.status === "pending"))
+    for (const row of this.list().filter((d) => d.channel === channel && (d.status === "pending" || d.status === "attempting")))
       byChat.set(row.chatId, [...(byChat.get(row.chatId) ?? []), row]);
     for (const rows of byChat.values()) {
       rows.sort((a, b) => a.order - b.order);
@@ -177,15 +201,19 @@ export class Deliveries {
     return totals;
   }
   private async attempt(row: Delivery, send: Sender): Promise<"sent" | "failed" | "dead"> {
+    // Still "attempting": Branch stopped while this was being sent, so it may already be in the chat. Sent again, marked.
+    const trying = { ...this.data(row), status: "attempting" as const, ...(row.status === "attempting" ? { resent: true } : {}) };
+    this.save(row.id, trying);
     try {
       const messageId = await send(row.chatId, row.text, row.replyTo ?? undefined);
-      this.save(row.id, { ...this.data(row), status: "sent", messageId: messageId ?? null, sentAt: this.now().toISOString(), lastError: null });
+      this.save(row.id, { ...trying, status: "sent", messageId: messageId ?? null, sentAt: this.now().toISOString(), lastError: null });
       return "sent";
     } catch (error) {
-      const attempts = row.attempts + 1, dead = attempts >= maxAttempts;
-      const lastError = (error instanceof Error ? error.message : String(error)).slice(0, 500);
-      this.save(row.id, { ...this.data(row), status: dead ? "dead" : "pending", attempts, lastError,
-        nextAt: new Date(this.now().getTime() + backoffMs(attempts)).toISOString() });
+      const kind = sendErrorKind(error), lastError = (error instanceof Error ? error.message : String(error)).slice(0, 500);
+      const attempts = kind === "flood" ? row.attempts : row.attempts + 1;
+      const dead = kind === "gone" || attempts >= maxAttempts;
+      const wait = kind === "flood" ? Number((error as { retryAfter: number }).retryAfter) * 1000 : backoffMs(attempts);
+      this.save(row.id, { ...trying, status: dead ? "dead" : "pending", attempts, lastError, nextAt: new Date(this.now().getTime() + wait).toISOString() });
       if (dead) this.notifyEvent("delivery.failed", { deliveryId: row.id, channel: row.channel, chatId: row.chatId, attempts, error: lastError });
       return dead ? "dead" : "failed";
     }
