@@ -1,8 +1,11 @@
 import { createHash } from 'node:crypto';
+import { basename, isAbsolute } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describesScreen } from '../screen-guard.js'; // dogfood follow-up
 import { z } from 'zod';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { mcpClient, mcpValidator } from './mcp-sdk.js';
+import { mcpClient, mcpValidator, mcpTypes } from './mcp-sdk.js';
+import { McpLiveTools } from './mcp-live-tools.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -156,6 +159,7 @@ export interface LiveMcp {
   tools?: readonly { name: string; inputSchema?: unknown }[];
   /** False once the connection has closed under it: the program ended or crashed, or the address went away. */
   alive?: () => boolean;
+  onToolsChanged?: (listener: (tools: readonly Tool[]) => void) => () => void;
 }
 /**
  * How long to wait before starting a server again after it stopped answering: a moment the first time, doubling each
@@ -175,6 +179,74 @@ const cacheable = (tools: Tool[]): CachedMcpTool[] =>
   tools.map(tool => ({ name: tool.name, description: tool.description?.slice(0, 2000) ?? tool.name,
     inputSchema: tool.inputSchema }));
 
+/** Replace only this connection's registered names; check every replacement before publication. */
+function updateDefinitions(registry: ToolRegistry, config: McpConfig, call: CallThrough,
+  secrets: readonly string[], names: readonly string[], injection: InjectionSetting) {
+  return (tools: readonly Tool[]): void => {
+    const definitions = tools.filter(tool => config.tools.includes(tool.name))
+      .map(tool => definition(call, config, reviewMetadata(tool, secrets, injection), [...secrets], injection));
+    for (const name of names) registry.unregister(name);
+    for (const tool of definitions) registry.register(tool);
+  };
+}
+
+/** Reuse the current outside-text policy before discovered metadata reaches either cache or model. */
+function reviewMetadata(tool: Tool, secrets: readonly string[], injection: InjectionSetting): Tool {
+  if (JSON.stringify(redact(tool, [...secrets])) !== JSON.stringify(tool))
+    throw new Error('MCP discovery contains a configured credential');
+  return guardResult(tool, injection()) as Tool;
+}
+
+/** The on-demand connection owns and releases its refresh subscription with its registered tools. */
+class CachedConnection {
+  private opened: Promise<LiveMcp> | undefined;
+  private watched: LiveMcp | undefined;
+  private unwatch: (() => void) | undefined;
+  private active = true;
+  constructor(private readonly registry: ToolRegistry, private readonly config: McpConfig,
+    private readonly names: string[], private readonly open: () => Promise<LiveMcp>,
+    private readonly injection: InjectionSetting) {}
+  close(): void { this.active = false; this.unwatch?.(); }
+
+  private async reach(again = true): Promise<LiveMcp> {
+    if (!this.active) throw new Error('MCP server was switched off');
+    const current = (this.opened ??= this.open());
+    let live: LiveMcp;
+    try { live = await current; } catch (error) { if (this.opened === current) this.opened = undefined; throw error; }
+    if (!this.active) throw new Error('MCP server was switched off');
+    if (live.alive?.() !== false) {
+      if (this.watched !== live) {
+        this.unwatch?.(); this.watched = live;
+        const changed = updateDefinitions(this.registry, this.config, this.call.bind(this), live.secrets ?? [], this.names, this.injection);
+        const update = (tools: readonly Tool[]) => { if (this.active) changed(tools); };
+        this.unwatch = live.onToolsChanged?.(update);
+        if (live.tools) update(live.tools as readonly Tool[]);
+      }
+      return live;
+    }
+    if (this.opened === current) this.opened = undefined;
+    if (!again) throw new Error('MCP server stopped answering');
+    return this.reach(false);
+  }
+
+  async call(name: string, args: Record<string, unknown>, context: ToolContext): Promise<unknown> {
+    const live = await this.reach();
+    const fresh = live.tools?.find(tool => tool.name === name);
+    if (live.tools && !fresh) throw new Error('Configured MCP tool is unavailable');
+    if (fresh) {
+      const check = new (await mcpValidator())().getValidator(fresh.inputSchema as JsonSchemaType);
+      if (!check(args).valid) throw new Error('MCP server changed this tool since Branch last spoke to it');
+    }
+    // On-demand credentials are known only after connecting; protect both answers and failure reasons.
+    const secrets = [...(live.secrets ?? [])];
+    let result: unknown;
+    try { result = await live.call(name, args, context); } catch (error) {
+      throw new Error(scrub(error instanceof Error ? error.message : String(error), secrets));
+    }
+    return secrets.length ? redact(result, secrets) : result;
+  }
+}
+
 /**
  * Puts a server's tools in the list without starting it. They come from what that server said the
  * last time it was connected, so the assistant can find them and the owner can see them; the
@@ -185,53 +257,33 @@ const cacheable = (tools: Tool[]): CachedMcpTool[] =>
 export function registerCachedMcp(
   registry: ToolRegistry, input: unknown, cached: readonly CachedMcpTool[],
   open: () => Promise<LiveMcp>, injection: InjectionSetting = redactByDefault,
+  onClose?: (close: () => void) => void,
 ): string[] {
   const config = McpConfigSchema.parse(input);
   const wanted = config.tools
     .map(name => cached.find(tool => tool.name === name))
     .filter((tool): tool is CachedMcpTool => tool !== undefined);
   if (wanted.length !== config.tools.length) return [];
-  const remembered = new Map(wanted.map(tool => [tool.name, JSON.stringify(tool.inputSchema)]));
-  let opened: Promise<LiveMcp> | undefined;
-  // A connection that failed to open, or that has since closed under it (its program crashed), is not kept: the next
-  // call opens it again through `open`, where the connection manager waits and retries (src/mcp-lifecycle.ts).
-  const reach = async (again = true): Promise<LiveMcp> => {
-    const current = (opened ??= open());
-    let live: LiveMcp;
-    try { live = await current; } catch (error) { if (opened === current) opened = undefined; throw error; }
-    if (live.alive?.() !== false) return live;
-    if (opened === current) opened = undefined;
-    if (!again) throw new Error('MCP server stopped answering');
-    return reach(false);
-  };
-  const call: CallThrough = async (name, args, context) => {
-    const live = await reach();
-    // The shape above came from an earlier connection. If the server has changed what this tool
-    // needs since then, the remembered shape is not to be trusted for a moment longer: the call is
-    // checked against what the server says now, and refused if it no longer fits.
-    const fresh = live.tools?.find(tool => tool.name === name);
-    if (fresh && JSON.stringify(fresh.inputSchema) !== remembered.get(name)) {
-      remembered.set(name, JSON.stringify(fresh.inputSchema));
-      const check = new (await mcpValidator())().getValidator(fresh.inputSchema as JsonSchemaType);
-      if (!check(args).valid) throw new Error('MCP server changed this tool since Branch last spoke to it');
-    }
-    // Redacted here as well as in `definition`, because the credentials are only known once the
-    // connection has actually been made; without this an on-demand server could echo one back,
-    // in an answer or in the reason a call failed.
-    const secrets = [...(live.secrets ?? [])];
-    let result: unknown;
-    try { result = await live.call(name, args, context); } catch (error) {
-      throw new Error(scrub(error instanceof Error ? error.message : String(error), secrets));
-    }
-    return secrets.length ? redact(result, secrets) : result;
-  };
   const names: string[] = [];
+  const connection = new CachedConnection(registry, config, names, open, injection);
+  onClose?.(() => connection.close());
   for (const tool of wanted) {
-    const made = definition(call, config, tool as unknown as Tool, [], injection);
+    const made = definition(connection.call.bind(connection), config, tool as unknown as Tool, [], injection);
     registry.register(made);
     names.push(made.name);
   }
   return names;
+}
+
+/** Adapted from Gemini CLI: expose one permitted workspace, with file-URL escaping. */
+async function configureRoots(client: Client, workspace: (() => string) | undefined): Promise<void> {
+  if (!workspace) return;
+  const { ListRootsRequestSchema } = await mcpTypes();
+  client.registerCapabilities({ roots: {} });
+  client.setRequestHandler(ListRootsRequestSchema, async () => {
+    const folder = workspace();
+    return { roots: isAbsolute(folder) ? [{ uri: pathToFileURL(folder).href, name: basename(folder) }] : [] };
+  });
 }
 
 /**
@@ -244,23 +296,38 @@ export async function openMcp(
   policy?: { guard(base: typeof fetch): typeof fetch }, cache?: McpToolCache,
   /** R17-S20: how long the server may take to start and list its tools (Settings › Connections). */
   startupTimeoutMs = 10000,
+  workspace?: () => string,
+  injection: InjectionSetting = redactByDefault,
 ) {
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
   const { transport, secrets } = await makeTransport(config, env, policy);
   const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' });
   try {
+    const { ToolListChangedNotificationSchema } = await mcpTypes();
+    await configureRoots(client, workspace);
     // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
     await client.connect(transport as Transport, { timeout: startupTimeoutMs });
     if (client.getServerVersion()?.version !== config.expectedVersion)
       throw new Error('MCP server version changed; review compatibility before enabling');
-    const found = await discover(client, config.tools, startupTimeoutMs);
+    const list = async () => (await discover(client, config.tools, startupTimeoutMs))
+      .map(tool => reviewMetadata(tool, secrets, injection));
+    const found = await list();
     // What it has just said its tools are, so a later launch can list them without starting it.
     cache?.write(config.id, cacheable(found));
+    const catalogue = new McpLiveTools(found, list,
+      tools => tools.map(tool => reviewMetadata(tool, secrets, injection)),
+      tools => { cache?.write(config.id, cacheable(tools)); }, through(client));
+    // Adapted from Gemini CLI's list_changed handler; refresh and cache only allowlisted, checked metadata.
+    client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
+      await catalogue.refresh().catch(() => undefined); // A failed refresh leaves tools unavailable.
+    });
     // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
     let alive = true;
-    client.onclose = () => { alive = false; };
-    return { config, found, secrets, call: through(client), close: () => client.close(), alive: () => alive };
+    client.onclose = () => { alive = false; catalogue.close(); };
+    return { config, found, secrets, call: catalogue.call.bind(catalogue),
+      onToolsChanged: catalogue.subscribe.bind(catalogue),
+      close: () => { catalogue.close(); return client.close(); }, alive: () => alive };
   } catch {
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');
@@ -275,6 +342,9 @@ export async function openMcp(
  */
 function restarting(first: Awaited<ReturnType<typeof openMcp>>, reopen: () => Promise<Awaited<ReturnType<typeof openMcp>>>) {
   let current = first, closed = false, crashes = 0, lastCrashAt = 0;
+  const listeners = new Set<(tools: readonly Tool[]) => void>();
+  const publish = (tools: readonly Tool[]) => { for (const listener of listeners) listener(tools); };
+  let unwatch = first.onToolsChanged(publish);
   let restart: Promise<Awaited<ReturnType<typeof openMcp>>> | undefined;
   const again = async () => {
     crashes = nextCrashCount(crashes, lastCrashAt);
@@ -291,10 +361,15 @@ function restarting(first: Awaited<ReturnType<typeof openMcp>>, reopen: () => Pr
     if (!current.alive()) {
       const pending = (restart ??= again().finally(() => { restart = undefined; }));
       current = await pending;
+      unwatch(); unwatch = current.onToolsChanged(publish);
+      publish(current.found);
     }
-    return current.call(tool, args, context);
+    try { return redact(await current.call(tool, args, context), current.secrets); }
+    catch (error) { throw new Error(scrub(error instanceof Error ? error.message : String(error), current.secrets)); }
   };
-  return { call, close: async () => { closed = true; await current.close(); } };
+  return { call, onToolsChanged: (listener: (tools: readonly Tool[]) => void) => {
+    listeners.add(listener); return () => void listeners.delete(listener);
+  }, close: async () => { closed = true; unwatch(); listeners.clear(); await current.close(); } };
 }
 
 export async function connectMcp(
@@ -303,17 +378,20 @@ export async function connectMcp(
   /** How to open the same server again after a crash; the plain open when not given. */
   reopen?: () => Promise<Awaited<ReturnType<typeof openMcp>>>,
   injection: InjectionSetting = redactByDefault,
+  workspace?: () => string,
 ) {
-  const first = await openMcp(input, env, policy, cache, startupTimeoutMs);
-  const live = restarting(first, reopen ?? (() => openMcp(input, env, policy, cache, startupTimeoutMs)));
+  const first = await openMcp(input, env, policy, cache, startupTimeoutMs, workspace, injection);
+  const live = restarting(first, reopen ?? (() => openMcp(input, env, policy, cache, startupTimeoutMs, workspace, injection)));
   const opened = { ...first, call: live.call, close: live.close };
   try {
     const definitions = opened.found.map(tool => definition(opened.call, opened.config, tool, opened.secrets, injection));
     const existing = new Set(registry.descriptions(new Set(registry.permissions())).map(tool => tool.name));
     if (definitions.some(tool => existing.has(tool.name))) throw new Error('MCP tool name collision');
     for (const tool of definitions) registry.register(tool);
+    const names = definitions.map(tool => tool.name);
+    const unwatch = live.onToolsChanged(updateDefinitions(registry, opened.config, opened.call, opened.secrets, names, injection));
     return { id: opened.config.id, version: opened.config.expectedVersion,
-      tools: definitions.map(tool => tool.name), call: opened.call, close: opened.close };
+      tools: names, call: opened.call, close: async () => { unwatch(); await opened.close(); } };
   } catch {
     await opened.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');

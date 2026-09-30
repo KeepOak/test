@@ -1656,6 +1656,7 @@ ${result.output || "(it said nothing)"}`;
   // eng-connectors: whether another person's server is started as Branch starts or only when a task needs it, and
   // what it last said its tools are. The launch file's servers and the owner's own (kept in the store) share it.
   const mcpHost = {
+    workspace: () => runtime.workspace,
     connectWhen: () => readLifecycleSettings(store, store.profiles.scope()).connect,
     cache: {
       read: (id: string) =>
