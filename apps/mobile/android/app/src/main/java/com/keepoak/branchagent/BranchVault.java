@@ -23,8 +23,10 @@ final class BranchVault {
     private static final String PREFS = "branch-vault";
     private static final String FIELD = "session";
     private final SharedPreferences prefs;
+    private final Context context;
 
     BranchVault(Context context) {
+        this.context = context.getApplicationContext();
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
@@ -43,6 +45,10 @@ final class BranchVault {
 
     /** Keeps { origin, token, deviceId?, deviceKey?, pairedAt }. */
     void save(JSONObject session) throws Exception {
+        JSONObject old = load();
+        if (old == null || !BranchTrunkWidget.identity(old).equals(BranchTrunkWidget.identity(session))) {
+            BranchTrunkWidget.prefs(context).edit().clear().apply(); BranchTrunkWidget.clear(context);
+        }
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key());
         byte[] sealed = cipher.doFinal(session.toString().getBytes(StandardCharsets.UTF_8));
@@ -67,6 +73,8 @@ final class BranchVault {
     }
 
     void forget() {
+        BranchWords.state(context).edit().remove("widget-chat").remove("widget-id").apply();
+        BranchTrunkWidget.prefs(context).edit().clear().apply(); BranchTrunkWidget.clear(context);
         prefs.edit().remove(FIELD).apply();
     }
 }

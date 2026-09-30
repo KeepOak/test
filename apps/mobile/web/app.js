@@ -104,6 +104,10 @@ async function openApp() {
   phone.shared = ((await plugin.takeShared?.())?.items ?? []).concat(phone.shared);
   P.scr = phone.shared.length ? P.scr : "home";
   P.sheet = phone.shared.length ? "share" : null;
+  if (platform() === "and" && plugin?.takeWidget) {
+    const widget = await plugin.takeWidget().catch(() => null);
+    if (/^[a-f0-9-]{36}$/.test(widget?.sessionId ?? "")) { P.chat = widget.sessionId; P.scr = "chat"; }
+  }
   lastScreen = null;
   draw();
   void followBranch().then(draw);
@@ -141,6 +145,7 @@ function wire() {
   $("pick-camera").addEventListener("change", (event) => { void scanPicture(event.target.files?.[0]); event.target.value = ""; });
   for (const id of ["pick-photos", "pick-files"]) $(id).addEventListener("change", (event) => { void attachFiles([...event.target.files]); event.target.value = ""; });
   document.addEventListener("branch-shared", () => void openApp());
+  document.addEventListener("branch-widget", () => void route());
   document.addEventListener("branch-language", () => draw());
   initHome(); initChats(); initInbox(); initMore(); initSwitches(); initVoice();
   initSettings(() => { phone.session = null; P.scr = "pair"; draw(); });

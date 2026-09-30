@@ -303,6 +303,7 @@ import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { phoneViewGrants, phoneViewFrame } from "./phone-view-grants.js";
+import { phoneWidgets } from "./phone-widgets.js";
 import { MiniAppDoor } from "./miniapp/door.js";
 import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
 import { handlesMiniAppPath, MiniAppApi } from "./miniapp/api.js";
@@ -1051,6 +1052,9 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path === "/api/phone/widgets") {
+    try { return phoneWidgets(app, request); } catch { throw new HttpError(403, "Phone widget unavailable. Unlock the owner profile and pair this phone again if needed."); }
+  }
   if (path === "/api/phone/view-grants" || path === "/api/phone/trunk-view") {
     if (startedWithShortLivedKey()) throw new HttpError(403, "A short-lived key cannot manage or use phone view grants.");
     const deps = { store: app.store, owner: app.runtime.owner, profiles: app.store.profiles,

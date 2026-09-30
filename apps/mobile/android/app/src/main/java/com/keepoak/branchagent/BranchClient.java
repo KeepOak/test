@@ -32,8 +32,8 @@ final class BranchClient {
         String address = origin + path + (query != null && query.matches("^[A-Za-z0-9=&._-]*$") && !query.isEmpty() ? "?" + query : "");
         HttpURLConnection connection = (HttpURLConnection) new URL(address).openConnection();
         connection.setInstanceFollowRedirects(false);
-        connection.setConnectTimeout(15000);
-        connection.setReadTimeout(120000);
+        connection.setConnectTimeout(path.equals("/api/phone/widgets") ? 3000 : 15000);
+        connection.setReadTimeout(path.equals("/api/phone/widgets") ? 3000 : 120000);
         connection.setRequestMethod(method);
         connection.setRequestProperty("Authorization", "Bearer " + session.getString("token"));
         if (session.has("deviceId") && session.has("deviceKey")) {

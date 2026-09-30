@@ -148,6 +148,7 @@ public class BranchPhonePlugin extends Plugin {
         out.put(key, value);
         return out;
     }
+    private static JSObject result(String key, String value) { JSObject out=new JSObject(); out.put(key,value); return out; }
 
     @PluginMethod
     public void session(PluginCall call) {
@@ -158,6 +159,27 @@ public class BranchPhonePlugin extends Plugin {
         }
         call.resolve(result("paired", true).put("origin", session.optString("origin")).put("pairedAt", session.optString("pairedAt"))
             .put("deviceId", session.optString("deviceId")));
+    }
+    @PluginMethod
+    public void takeWidget(PluginCall call) {
+        if(!appPageShowing()) { call.reject("Open this phone app first."); return; }
+        String chat=BranchWords.state(getContext()).getString("widget-chat","");
+        int id=BranchWords.state(getContext()).getInt("widget-id",-1);
+        BranchWords.state(getContext()).edit().remove("widget-chat").remove("widget-id").apply();
+        getBridge().execute(() -> { try {
+            String packed=BranchTrunkWidget.prefs(getContext()).getString("config-"+id,null);
+            if(packed==null || !chat.matches("^[a-f0-9-]{36}$")) { call.resolve(result("sessionId", "")); return; }
+            JSONObject config=new JSONObject(packed),data=BranchTrunkWidget.projection(getContext());
+            boolean selected=false;
+            if(data.getString("profileId").equals(config.getString("profile")) && data.getString("_identity").equals(config.getString("identity"))) {
+                org.json.JSONArray trunks=data.getJSONArray("trunks"),wanted=config.getJSONArray("selected");
+                for(int i=0;i<trunks.length();i++) for(int j=0;j<wanted.length();j++) {
+                    JSONObject trunk=trunks.getJSONObject(i);
+                    if(chat.equals(trunk.optString("sessionId")) && wanted.getString(j).equals(trunk.optString("id"))) selected=true;
+                }
+            }
+            call.resolve(result("sessionId", selected && appPageShowing() ? chat : ""));
+        } catch(Exception error) { call.resolve(result("sessionId", "")); } });
     }
 
     @PluginMethod
@@ -481,6 +503,7 @@ public class BranchPhonePlugin extends Plugin {
     /** Throws this phone's key away; its signature stops working at once. */
     @PluginMethod
     public void deviceForget(PluginCall call) {
+        BranchTrunkWidget.prefs(getContext()).edit().clear().apply(); BranchTrunkWidget.clear(getContext());
         lend.stop();
         node.forget();
         call.resolve();

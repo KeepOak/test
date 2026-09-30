@@ -6,9 +6,9 @@
  *                 the window's) and Documents (GET /api/documents)
  *   Trunks        GET /api/trunks; a Trunk's page pauses or resumes it (POST /api/trunks/<id>/pause|resume)
  *   What's left   GET /api/usage/glance, a bar only where the service gave a limit, else the engine's own sentence
- * Team (a keepoak.com team), the keepoak.com sign-in, New Trunk and the widgets are drawn and not live.
+ * Team (a keepoak.com team), the keepoak.com sign-in and New Trunk are drawn and not live.
  */
-import { E, P, attempt, av, big, draw, esc, firstLine, get, ic, nav, on, post, say, soon, time, w } from "/ph-core.js";
+import { E, P, attempt, av, big, draw, esc, firstLine, get, ic, ios, nav, on, post, say, soon, time, w } from "/ph-core.js";
 import { loadDocuments, loadGlance, loadHeartbeat, loadState, loadTrunks, trunkOf } from "/ph-data.js";
 
 const li = (act, v, icon, key, english, value, extra = "") => `<button type="button" class="p-li" data-act="${act}" data-v="${v}" ${extra}><span class="p-ico8">${ic(icon, "s")}</span><span class="grow"><b>${w(key, english)}</b></span><span class="p-val">${value}</span>›</button>`;
@@ -18,7 +18,7 @@ export function drawMore() {
   const places = [li("go", "team", "users", "phone8.more.team", "Team", "", soon), li("go", "automations", "clock", "place.automations", "Automations", esc(String(schedules.length))),
     li("go", "library", "book", "place.library", "Library", w("phone8.more.libraryNote", "Memory and documents")), li("go", "trunks", "sliders", "phone8.chats.trunks", "Trunks", esc(String(trunks.length))),
     li("go", "usage", "spark", "phone8.home.left", "What’s left", w("phone8.more.leftNote", "5-hour and weekly limits"))].join("");
-  const end = li("go", "settings", "gear", "nav.settings", "Settings", "") + li("go", "widgets", "layers", "phone8.more.widgets", "Widgets and lock screen", "", soon);
+  const end = li("go", "settings", "gear", "nav.settings", "Settings", "") + li("go", "widgets", "layers", "phone8.more.widgets", "Home-screen widgets", "");
   return big(w("more.label", "More")) + `<div class="p-scroll">${account}<div class="p-list">${places}</div><div class="p-list">${end}</div></div>`;
 }
 export const loadMore = () => Promise.all([loadState(), loadTrunks()]);
@@ -60,7 +60,10 @@ function drawProfile() {
   const pause = `<button type="button" class="p-li" data-act="pausetrunk" data-id="${esc(t.id)}" data-v="${t.paused ? "resume" : "pause"}"><span class="grow"><b>${t.paused ? w("phone8.profile.resume", "Resume {name}", { name: t.name }) : w("window.chat.media.pause", "Pause {name}", { name: t.name })}</b></span></button>`;
   return nav("", t.name) + `<div class="p-scroll"><div class="p-prof8">${av(t.name, 88)}<b>${esc(t.name)}</b><small>${esc(t.title ?? "")}</small></div><div class="p-list">${rows}</div><div class="p-list">${pause}</div></div>`;
 }
-export const PLACES = { automations: drawAutomations, library: drawLibrary, trunks: drawTrunks, usage: drawUsage, profile: drawProfile };
+function drawWidgets() {
+  return nav("Home-screen widgets", "More") + `<div class="p-scroll"><p>${ios() ? "Android home-screen widgets are available in the Android app. iOS widgets are not supported." : "On the Android home screen, touch and hold an empty area, choose Widgets, then Branch: one Trunk or Branch: several Trunks. Select one or up to four Trunks and explicitly allow their names, pebble faces and last-known status."}</p><p>No messages, task titles or secrets appear. Tap a face to open its actual Trunk after the phone and owner profile are unlocked. Refresh reads status only; it grants no notification or computer action permission.</p><p>Status is last-known, not live. Android refreshes periodically or when you tap Refresh. Data clears on refusal, unpair, phone screen-off while Branch is running, and a scheduled one-minute expiry. Android may delay expiry while idle; remove a widget to stop sharing its metadata.</p></div>`;
+}
+export const PLACES = { automations: drawAutomations, library: drawLibrary, trunks: drawTrunks, usage: drawUsage, profile: drawProfile, widgets: drawWidgets };
 export const PLACE_LOADS = {
   automations: () => Promise.all([loadState(), loadHeartbeat()]), library: () => Promise.all([loadState(), loadDocuments()]),
   trunks: loadTrunks, usage: loadGlance, profile: loadTrunks,
