@@ -15,7 +15,7 @@ const CI = { kind: "github", provider: "anthropic", model: "", endpoint: "", key
 const DEFAULTS = { anthropic: ["https://api.anthropic.com", "ANTHROPIC_API_KEY"], openai: ["https://api.openai.com/v1", "OPENAI_API_KEY"] };
 
 const seg = (act, pairs, cur, label) => segmentedControl({title: label, options: pairs, current: cur, action: act});
-const box = (id, label, value) => `<div class="fld"><label for="${id}">${esc(label)}</label><input class="inp" id="${id}" value="${esc(value)}" spellcheck="false"></div>`;
+const box = (id, label, value) => `<div class="fld"><label for="${id}">${esc(label)}</label><input class="inp" id="${id}" value="${esc(value)}" spellcheck="false"><small>${esc(t("settings.help." + id))}</small></div>`;
 
 /* What the boxes hold now, kept across a redraw. */
 function keep() {
@@ -27,8 +27,8 @@ function keep() {
 
 function draw() {
   const where = t("window.settings.computer.ci-where"), service = t("window.settings.computer.ci-service");
-  const body = `${controlRow(`<b>${esc(where)}</b><span class="right">${seg("ci-kind", [["github", "GitHub Actions"], ["gitlab", "GitLab CI"]], CI.kind, where)}</span><small></small>`)}`
-    + `${controlRow(`<b>${esc(service)}</b><span class="right">${seg("ci-provider", [["anthropic", "Anthropic"], ["openai", t("window.settings.computer.ci-openai-shape")]], CI.provider, service)}</span><small></small>`)}`
+  const body = `${controlRow(`<b>${esc(where)}</b><span class="right">${seg("ci-kind", [["github", "GitHub Actions"], ["gitlab", "GitLab CI"]], CI.kind, where)}</span><small>${esc(t("settings.help.ci-kind"))}</small>`)}`
+    + `${controlRow(`<b>${esc(service)}</b><span class="right">${seg("ci-provider", [["anthropic", "Anthropic"], ["openai", t("window.settings.computer.ci-openai-shape")]], CI.provider, service)}</span><small>${esc(t("settings.help.ci-provider"))}</small>`)}`
     + box("ci-model", t("window.settings.computer.ci-model"), CI.model)
     + box("ci-endpoint", t("window.settings.computer.ci-endpoint"), CI.endpoint)
     + box("ci-key", t("window.settings.computer.ci-key"), CI.key)

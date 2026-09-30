@@ -20,7 +20,7 @@ test("Settings rows must use the shared kit rather than new inline containers", 
   for (const path of await sources(root)) {
     if (relative(root, path) === "row-kit.js") continue;
     const source = await readFile(path, "utf8");
-    if (/<(?:div|label)\b[^>]*\bclass\s*=\s*["'][^"']*\bctl\b/.test(source)) offenders.push(relative(root, path));
+    if (/<(?:div|label)\b[^>]*\bclass\s*=\s*["'][^"']*\bctl\b/.test(source.replace(/\\["']/g, '"'))) offenders.push(relative(root, path));
   }
   assert.deepEqual(offenders, [], "Import controlRow or a semantic row from row-kit.js");
 });

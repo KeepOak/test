@@ -99,7 +99,7 @@ async function exportNow() {
 let keyAccounts = [];
 function capsDlg() {
   markLive(keyAccounts.map((a, i) => "sw:cap-b17-" + i)); // each box is read by saveCaps below
-  const rows = keyAccounts.map((a, i) => `${controlRow(`<b>${esc(a.name)}</b><span class="right num15"><input class="inp" id="cap-b17-${i}" value="${esc(a.cap ?? "")}" aria-label="${esc(t("window.settings.p17-usage.name-monthly-cap", { name: a.name }))}"><small>${t("window.settings.p17-usage.usd-a-month")}</small></span><small></small>`)}`).join("");
+  const rows = keyAccounts.map((a, i) => `${controlRow(`<b>${esc(a.name)}</b><span class="right num15"><input class="inp" id="cap-b17-${i}" value="${esc(a.cap ?? "")}" aria-label="${esc(t("window.settings.p17-usage.name-monthly-cap", { name: a.name }))}"><small>${t("window.settings.p17-usage.usd-a-month")}</small></span><small>${esc(t("settings.help.account-cap"))}</small>`)}`).join("");
   openDlg({ title: t("window.settings.p17-usage.spend-caps-per-service"), body: `<p class="lead-b17">${t("window.settings.p17-usage.when-a-service-reaches-its-cap")}</p>${rows || `<p class="empty">${esc(t("inspector.nothing"))}</p>`}`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="capssaveb17" ${keyAccounts.length ? "" : "disabled"}>${t("window.settings.p17-usage.save-caps")}</button>` });
 }
