@@ -7,3 +7,5 @@ export const mcpClient = async () => (await import('@modelcontextprotocol/sdk/cl
 export const mcpStdio = () => import('@modelcontextprotocol/sdk/client/stdio.js');
 export const mcpHttp = async () => (await import('@modelcontextprotocol/sdk/client/streamableHttp.js')).StreamableHTTPClientTransport;
 export const mcpValidator = async () => (await import('@modelcontextprotocol/sdk/validation/ajv')).AjvJsonSchemaValidator;
+/** The SDK's sign-in (`auth()`), loaded only when the owner signs in to a server. */
+export const mcpAuth = () => import('@modelcontextprotocol/sdk/client/auth.js');
