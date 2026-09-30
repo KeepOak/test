@@ -9392,7 +9392,7 @@
   "window.settings.models.picture-connection-hint": "Elige una conexión API para imágenes sin cambiar el modelo usado para texto.",
   "window.settings.models.picture-follow": "Usar la conexión actual",
   "window.settings.models.picture-own": "El del servicio ({model})",
-  "window.settings.models.picture-through": "Se hacen con {name}, la conexión que responde ahora.",
+  "window.settings.models.picture-through": "Se crea mediante {name}.",
   "window.settings.models.picture-unavailable": "La conexión seleccionada no está disponible",
   "window.settings.models.planning-and-hard-problems": "Planificación y problemas difíciles",
   "window.settings.models.planning-model": "Modelo de planificación",
