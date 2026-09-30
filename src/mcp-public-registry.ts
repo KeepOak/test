@@ -1,14 +1,13 @@
 import { z } from "zod";
+import { ServerJsonSchema, publicServerJson } from './mcp-server-json.js';
 
 export const RegistrySearchSchema = z.object({
+  networkConfirmed: z.literal(true),
   search: z.string().trim().min(1).max(200),
   cursor: z.string().min(1).max(2000).optional(),
 }).strict();
-const PackageSchema = z.object({ registryType: z.string().max(40), identifier: z.string().max(500), version: z.string().max(255).optional() });
 const EntrySchema = z.object({
-  server: z.object({ name: z.string().regex(/^[a-zA-Z0-9.-]+\/[a-zA-Z0-9._-]+$/).max(200),
-    description: z.string().max(500), version: z.string().max(255), title: z.string().max(100).optional(),
-    packages: z.array(PackageSchema).max(20).optional() }),
+  server: ServerJsonSchema,
   _meta: z.object({ "io.modelcontextprotocol.registry/official": z.object({ status: z.enum(["active", "deprecated", "deleted"]).optional() }).optional() }).optional(),
 });
 const PageSchema = z.object({ servers: z.array(z.unknown()).max(40),
@@ -41,12 +40,13 @@ export async function searchPublicRegistry(input: unknown, fetchImpl: typeof fet
 function sanitizeEntry(raw: unknown) {
   const parsed = EntrySchema.safeParse(raw);
   if (!parsed.success) return null;
-  const { server, _meta } = parsed.data;
+  const { _meta } = parsed.data;
+  const server = publicServerJson(parsed.data.server);
   const status = _meta?.["io.modelcontextprotocol.registry/official"]?.status ?? "active";
   if (status === "deleted") return null;
   // Package identifiers describe what exists; browsing never constructs or starts a command.
   return { name: server.name, title: server.title ?? server.name, description: server.description,
-    version: server.version, packages: server.packages ?? [], status };
+    version: server.version, packages: server.packages, status, server };
 }
 
 async function registryBody(response: Response): Promise<unknown> {

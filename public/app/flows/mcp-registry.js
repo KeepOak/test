@@ -5,9 +5,11 @@ import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { openDlg, toast } from "../core/ui.js";
 import { t } from "../../i18n.js";
+import { ownServer } from './connectors.js';
 
 let active = 0;
 let search = "", nextCursor = null, busy = false;
+let entries = [];
 
 function openRegistry() {
   active++;
@@ -18,7 +20,7 @@ function openRegistry() {
 }
 
 function resultsBody(page) {
-  const rows = page.entries.map((entry) => `<div class="prow"><span class="grow"><b>${esc(entry.title)}</b><small>${esc(entry.name)} · ${esc(entry.version)} · ${esc(entry.status)}</small><p>${esc(entry.description)}</p>${entry.packages.map((pkg) => `<small>${esc(pkg.registryType)} · ${esc(pkg.identifier)}${pkg.version ? ` · ${esc(pkg.version)}` : ""}</small>`).join("")}</span></div>`).join("");
+  const rows = page.entries.map((entry, index) => `<div class="prow"><span class="grow"><b>${esc(entry.title)}</b><small>${esc(entry.name)} · ${esc(entry.version)} · ${esc(entry.status)}</small><p>${esc(entry.description)}</p>${entry.packages.map((pkg) => `<small>${esc(pkg.registryType)} · ${esc(pkg.identifier)}${pkg.version ? ` · ${esc(pkg.version)}` : ""}</small>`).join("")}</span><button class="btn sm" type="button" data-act="mcp-registry-fill" data-v="${index}">Fill add form</button></div>`).join("");
   const more = page.nextCursor ? `<button class="btn sm" type="button" data-act="mcp-registry-next">${esc(t("action.next"))}</button>` : "";
   return `${rows || `<p class="empty">${esc(t("window.flows.conn.nothing"))}</p>`}${more}`;
 }
@@ -27,14 +29,15 @@ async function queryRegistry(next = false) {
   if (busy || !$("#mcp-registry-q")) return;
   const term = next ? search : $("#mcp-registry-q").value.trim();
   if (!term || (next && !nextCursor)) return;
+  if (!confirm('Send this search to the public MCP registry? Results are untrusted metadata; nothing will be installed or connected.')) return;
   const generation = active;
   busy = true;
   const result = $("#mcp-registry-results");
   paint(result, `<p class="hint">${esc(t("live.working"))}</p>`);
   try {
-    const page = await api("mcp/registry/search", { search: term, ...(next ? { cursor: nextCursor } : {}) });
+    const page = await api("mcp/registry/search", { networkConfirmed: true, search: term, ...(next ? { cursor: nextCursor } : {}) });
     if (generation !== active || result !== $("#mcp-registry-results")) return;
-    search = term; nextCursor = page.nextCursor;
+    search = term; nextCursor = page.nextCursor; entries = page.entries;
     greyOut(paint(result, resultsBody(page)));
   } catch (error) {
     if (generation === active && result === $("#mcp-registry-results")) {
@@ -46,7 +49,8 @@ async function queryRegistry(next = false) {
 }
 
 export function initPublicRegistry() {
-  markLive(["mcp-registry-open", "mcp-registry-search", "mcp-registry-next", "sw:mcp-registry-q"]);
+  markLive(["mcp-registry-open", "mcp-registry-search", "mcp-registry-next", "mcp-registry-fill", "sw:mcp-registry-q"]);
+  on('mcp-registry-fill', element => { const entry = entries[Number(element.dataset.v)]; if (entry) ownServer({ name: entry.title, server: entry.server }); });
   on("mcp-registry-open", openRegistry);
   on("mcp-registry-search", () => queryRegistry());
   on("mcp-registry-next", () => queryRegistry(true));

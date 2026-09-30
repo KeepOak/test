@@ -43,7 +43,7 @@ import { lockdownActive } from "./lockdown.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
-import { makeTransport, McpTransportSchema, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { makeTransport, privateStdioArguments, McpTransportSchema, type McpTransportConfig } from "./integrations/mcp-config.js";
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
 import { workspaceRefusal } from "./mcp-workspace-guard.js";
@@ -55,6 +55,7 @@ export const AddServerSchema = z.object({
   server: McpTransportSchema,
   /** The catalogue entry the form was filled from, if it was. */
   catalogue: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/).optional(),
+  saveOff: z.boolean().default(false),
 }).strict();
 
 export interface OwnServer {
@@ -73,8 +74,9 @@ const waitLimitMs = 60 * 60 * 1000;
 /** The exact launch, in a fixed order, and its fingerprint: what a yes is bound to. */
 export function launchBytes(server: McpTransportConfig): string {
   return server.transport === "stdio"
-    ? JSON.stringify({ transport: "stdio", command: server.command, args: server.args, cwd: server.cwd ?? null, envKeys: server.envKeys })
-    : JSON.stringify({ transport: "http", url: server.url, bearerEnv: server.bearerEnv ?? null });
+    ? JSON.stringify({ transport: "stdio", command: server.command, args: server.args, cwd: server.cwd ?? null, envKeys: server.envKeys,
+      ...(server.envValues ? { envValues: server.envValues } : {}), ...(server.envRefs ? { envRefs: server.envRefs } : {}), ...(server.argEnv ? { argEnv: server.argEnv } : {}) })
+    : JSON.stringify({ transport: "http", url: server.url, bearerEnv: server.bearerEnv ?? null, ...(server.headerEnv ? { headerEnv: server.headerEnv } : {}) });
 }
 export const launchFingerprint = (server: McpTransportConfig): string =>
   createHash("sha256").update(launchBytes(server), "utf8").digest("hex").slice(0, 32);
@@ -125,9 +127,11 @@ export class OwnMcpServers {
   }
   private get env(): NodeJS.ProcessEnv { return this.deps.env ?? process.env; }
   /** Refuses a launch that runs anything inside the workspace, in plain words. */
-  private guard(server: McpTransportConfig): void {
-    const refusal = workspaceRefusal(server, this.deps.workspace(), this.env);
-    if (refusal) throw new Error(refusal);
+  private guard(server: McpTransportConfig, resolvePrivate = false): void {
+    const checked = resolvePrivate && server.transport === 'stdio' ? { ...server, args: privateStdioArguments(server, this.env) } : server;
+    const refusal = workspaceRefusal(checked, this.deps.workspace(), this.env);
+    if (refusal) throw new Error(resolvePrivate && server.transport === 'stdio' && Object.keys(server.argEnv ?? {}).length
+      ? 'The resolved private arguments violate the workspace launch guard.' : refusal);
   }
   /** A start question answered: whether the owner, at the window, gave the answer is kept with it. */
   private answered(taken: PendingApproval): void {
@@ -178,15 +182,15 @@ export class OwnMcpServers {
     const wanted = AddServerSchema.parse(input);
     const servers = this.saved();
     if (servers.length >= maxServers) throw new Error(`Branch keeps at most ${maxServers} servers of your own. Remove one first.`);
-    if (wanted.server.transport === "stdio") { this.guard(wanted.server); await this.deps.vet(wanted.server.command, wanted.server.args); }
+    if (wanted.server.transport === "stdio") { this.guard(wanted.server); if (!wanted.saveOff) await this.deps.vet(wanted.server.command, wanted.server.args); }
     const taken = new Set([...this.launchIds, ...servers.map((entry) => entry.id)]);
     let id = slug(wanted.name);
     for (let n = 2; taken.has(id); n++) id = `${slug(wanted.name)}-${n}`;
     const entry: OwnServer = { id, name: wanted.name, server: wanted.server, on: false, approved: null, tools: [], version: null,
       hidden: [], addedAt: new Date().toISOString(), ...(wanted.catalogue ? { catalogue: wanted.catalogue } : {}) };
     this.save([...servers, entry]);
-    this.record("Tool server added:", `${entry.name}: ${how(entry.server)}`, entry.server.transport === "stdio" ? "saved off" : "saved on");
-    if (entry.server.transport === "stdio") return { server: this.view(entry), said: `${entry.name} is added. It is off until you switch it on and say yes.` };
+    this.record("Tool server added:", entry.name, wanted.saveOff || entry.server.transport === "stdio" ? "saved off" : "saved on");
+    if (wanted.saveOff || entry.server.transport === "stdio") return { server: this.view(entry), said: `${entry.name} is added. It is off until you switch it on and say yes.` };
     await this.open(entry, true).catch(() => undefined);
     return { server: this.view(this.find(id)), said: this.problems.get(id) ?? `${entry.name} is added.` };
   }
@@ -200,7 +204,7 @@ export class OwnMcpServers {
       return { server: this.view(this.find(id)), said: `${entry.name} is on.` };
     }
     if (lockdownActive(this.deps.store, this.deps.owner())) throw new Error(lockdownStartRefusal);
-    this.guard(entry.server);
+    this.guard(entry.server, true);
     await this.deps.vet(entry.server.command, entry.server.args);
     const pending = this.waiting.get(id) ?? this.ask(entry);
     return { server: this.view(entry), said: pending.question };
@@ -292,7 +296,7 @@ export class OwnMcpServers {
     const overtaken = `${entry.name} did not finish starting: it was switched off, removed or started again first.`;
     let started: Started | undefined;
     try {
-      if (entry.server.transport === "stdio") { this.guard(entry.server); await this.deps.vet(entry.server.command, entry.server.args); }
+      if (entry.server.transport === "stdio") { this.guard(entry.server, true); await this.deps.vet(entry.server.command, entry.server.args); }
       if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
       const found = list ? await this.listTools(entry) : { tools: entry.tools, hidden: entry.hidden, version: entry.version ?? "" };
       if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
@@ -308,7 +312,8 @@ export class OwnMcpServers {
       this.record("Tool server started:", `${entry.name}: ${found.tools.length} tools`, "started");
     } catch (error) {
       if (!this.stillWanted(entry, generation)) { await this.letGo(entry.id, started); throw new Error(overtaken); }
-      const reason = (error instanceof Error ? error.message : "It did not answer").slice(0, 300);
+      const privateInputs = entry.server.transport === 'stdio' ? Object.keys(entry.server.argEnv ?? {}).length || Object.keys(entry.server.envRefs ?? {}).length : Object.keys(entry.server.headerEnv ?? {}).length;
+      const reason = privateInputs ? 'The connector could not start. Check its private environment references and published transport.' : (error instanceof Error ? error.message : "It did not answer").slice(0, 300);
       this.problems.set(entry.id, reason);
       if (this.saved().some((item) => item.id === entry.id)) this.update(entry.id, { on: false });
       this.record("Tool server started:", `${entry.name}: ${reason}`, "failed");
