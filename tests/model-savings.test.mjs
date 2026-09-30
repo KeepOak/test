@@ -60,6 +60,7 @@ test("every card that sends or spends ships off, and a fresh install sends and r
     keepAlive: { mode: "off", everyMinutes: 4, maxPings: 3, spendCapDollars: 0.05 },
     mixtures: { mixtures: [] },
     pacing: { mode: "on" },
+    costThresholds: { mode: "off", activatedAt: null, rules: [] },
   });
   const main = scripted("anthropic");
   const { app } = await fixture(t, [preset("main", main, "claude-sonnet-4-5")]);
