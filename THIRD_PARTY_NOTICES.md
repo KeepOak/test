@@ -3262,6 +3262,28 @@ The command names `branch` answers to beside its own (`config`, `skin`, `cron`, 
 
 `src/reflection/settings.ts` and `src/reflection/pass.ts` follow the reflection trigger model (off, every N steps with a default of 25, or when the conversation is compacted) in Letta Code's `src/reflection-settings.ts` and `src/cli/helpers/post-turn-reflection.ts`, and the order of work in its reflection subagent, `src/agent/subagents/builtin/reflection-v2.md` (https://github.com/letta-ai/letta-code, commit 6e84e8a). The ideas were rewritten in Branch's words; Branch's pass stages suggestions instead of writing. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0): you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Hermes Agent skill guard, MIT
+
+`src/skill-scan-patterns.ts` adapts selected exfiltration, destructive, persistence, network and obfuscation regexes and the invisible-character set from `tools/skills_guard.py` at commit `a9a54245b2311c705d29050b7f9868c015917aec` (https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/skills_guard.py), Copyright (c) 2025 Nous Research, MIT. Changes: port selected families to JavaScript, supply Branch's finding reasons, scan both original and visible text and retain Branch's existing block/review policy instead of the upstream repository trust tiers. Package text/layout checks are Branch code and keep its existing size/file-count limits.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ### Gemini CLI (Google LLC), Apache-2.0
 
 The test in `src/skill-authoring.ts` for whether something deserves to be a new skill (a concrete, repeatable procedure, not general knowledge, a one-off fix or a preference; when in doubt, none) follows `packages/core/src/agents/skill-extraction-agent.ts` in Gemini CLI (https://github.com/google-gemini/gemini-cli, commit 6a466a7), rewritten in Branch's words. Copyright 2026 Google LLC. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), on the same terms as above.
