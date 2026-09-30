@@ -47,6 +47,7 @@ import { suggestSkills } from "./skill-suggest.js";
 import { healthReport, startedCleanly } from "./health.js";
 import { noModelWords } from "./no-model.js";
 import { maximumBackupBytes } from "./backup.js";
+import { skillMarketplaceApi } from "./skill-marketplace.js";
 import { chatCompletion, modelsList } from "./openai-compat.js";
 import { AnthropicProvider, GeminiProvider, OpenAIProvider } from "./providers.js";
 import { allPresets, findPreset } from "./providers/presets.js";
@@ -1866,6 +1867,8 @@ async function api(
     const { url } = z.object({ url: z.string().url().max(2000) }).strict().parse(await readBody(request));
     return app.skillRegistry.browse(url);
   }
+  if (path === "/api/skill-marketplace" || path.startsWith("/api/skill-marketplace/"))
+    return skillMarketplaceApi(app.skillMarketplace, request.method ?? "GET", path, () => readBody(request));
   // The owner's yes to a registry's signing key, by the fingerprint browsing showed them (src/registry-install.ts).
   if (request.method === "POST" && path === "/api/registry/trust") {
     const { url, fingerprint } = z.object({ url: z.string().url().max(2000), fingerprint: z.string().regex(/^[0-9a-fA-F]{64}$/) }).strict().parse(await readBody(request));
