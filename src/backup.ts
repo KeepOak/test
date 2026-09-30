@@ -130,6 +130,8 @@ export const signInPrefixes: readonly string[] = ["remote-agent:"];
 export const thisComputerSettings: readonly string[] = [
   "folder_trust", "folder_trust_mode", "folder-trust-real", "folder-trust-copies", "remote-agent-pairing", "remote-computers",
   "secret-commands", "keychain-entries", "reach-remote-trunks-keys",
+  // RES-718: when the local index of mail and calendars last ran and what each source said; the index itself is no backup table.
+  "local-index-state",
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
   // no backup carries, so the account stays with it.
   "gitlab-account",
@@ -226,6 +228,8 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   // switch, the chats a relay may bring, the USB rules that start a task, and the git sources the assistant shares to.
   "desktop-control", "approval_reviewer", "loop_guard", "security-check", ...safetyParts.map(safetyKey), ...reachParts.map(reachKey),
   "reach-relay-chats", "reach-usb-rules", "reach-agent-git-sources",
+  // RES-718: the local index reads all the owner's mail and calendars onto this disk, so a file cannot switch it on by itself.
+  "local-index",
   // RES-719: the GitLab switch reaches a server, so a file cannot switch it on by itself.
   "gitlab-connection",
   // NAS 23e7382: which chat accounts count as the owner for `/platform`, read before the sender list is.

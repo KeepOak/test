@@ -253,6 +253,8 @@ const readOnlyPermissions = new Set([
   "process.read",
   // Reading GitLab (issues, merge requests, releases, how the checks went) changes nothing; `gitlab.manage` does.
   "gitlab.read",
+  // RES-718: searching the local index of mail and calendars reads rows on this computer only.
+  "index.read",
   // A check-in writing down its own answer (src/heartbeat.ts); the news goes out afterwards, by Branch.
   "heartbeat.respond",
   // mac6/bucket-23: a project's board, which intent a request is, the sources' cursors, the list of

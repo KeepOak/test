@@ -4,6 +4,7 @@ import type { Store } from "../store.js";
 import { stripTags } from "./mime.js";
 import { clip, outsideTextNote, requirePersonal } from "./settings.js";
 import { signedCall, signedText, type SignIn } from "./signin.js";
+import type { IndexItem } from "./local-index.js";
 
 /**
  * R17-030: the owner's Outlook mail (read, search, and drafts when allowed), Outlook calendar (read)
@@ -77,6 +78,30 @@ export class MicrosoftConnector {
       .passthrough().parse(await this.call(path));
     return { note: outsideTextNote, messages: body.value.map((m) => ({ id: m.id, subject: m.subject ?? "", from: who(m.from),
       received: m.receivedDateTime ?? "", unread: m.isRead === false, preview: clip(m.bodyPreview ?? "", 300) })) };
+  }
+
+  /** RES-718: the Outlook inbox's messages of the last `days` days, in one call, for the local index. */
+  async mailForIndex(days: number, limit: number, now = new Date()): Promise<IndexItem[]> {
+    const since = new Date(now.getTime() - days * 86_400_000).toISOString();
+    const query = new URLSearchParams({ $top: String(limit), $filter: `receivedDateTime ge ${since}`, $orderby: "receivedDateTime desc",
+      $select: "id,subject,from,receivedDateTime,bodyPreview,webLink" });
+    const body = z.object({ value: z.array(z.object({ id: z.string(), subject: z.string().nullish(), from: Address.optional(),
+      receivedDateTime: z.string().optional(), bodyPreview: z.string().optional(), webLink: z.string().optional() }).passthrough()).default([]) })
+      .passthrough().parse(await this.call(`/mailFolders/inbox/messages?${String(query).replace(/\+/g, "%20")}`)); // Graph wants %20, not +
+    return body.value.map((m) => ({ id: m.id, at: m.receivedDateTime ?? null, who: who(m.from), title: clip(m.subject ?? "", 300),
+      body: clip(m.bodyPreview ?? "", 2000), address: m.webLink ?? "" }));
+  }
+  /** RES-718: the Outlook calendar's events from `days` days back to 60 days ahead, for the local index. */
+  async eventsForIndex(days: number, limit: number, now = new Date()): Promise<IndexItem[]> {
+    const query = new URLSearchParams({ startDateTime: new Date(now.getTime() - days * 86_400_000).toISOString(),
+      endDateTime: new Date(now.getTime() + 60 * 86_400_000).toISOString(), $top: String(limit),
+      $select: "subject,start,location,bodyPreview,webLink", $orderby: "start/dateTime" });
+    const body = z.object({ value: z.array(z.object({ id: z.string(), subject: z.string().nullish(),
+      start: z.object({ dateTime: z.string() }).passthrough().optional(), bodyPreview: z.string().optional(), webLink: z.string().optional(),
+      location: z.object({ displayName: z.string().nullish() }).passthrough().nullish() }).passthrough()).default([]) })
+      .passthrough().parse(await this.call(`/calendarView?${query}`, { headers: { prefer: 'outlook.timezone="UTC"' } }));
+    return body.value.map((e) => ({ id: e.id, at: e.start?.dateTime ? `${e.start.dateTime.replace(/Z?$/, "")}Z` : null,
+      who: clip(e.location?.displayName ?? "", 200), title: clip(e.subject ?? "(no title)", 300), body: clip(e.bodyPreview ?? "", 2000), address: e.webLink ?? "" }));
   }
 
   async read(input: unknown) {

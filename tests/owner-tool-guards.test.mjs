@@ -97,6 +97,7 @@ const NOT_TOOL_GUARDS = {
   "src/index.ts": "hands store.profiles.requireOwner to the guards listed above",
   "src/integrations/bootstrap.ts": "hands store.profiles.requireOwner to signin.fill (listed above)",
   "src/self-development-merge.ts": "its requireOwner (ownerHere) guards the owner's review-and-merge routes in Inbox; the branch.finish_source_change tool is gated by autoOwner instead: runtime.ownerFullAccessFor(context, true), which refuses any task that is not the owner's own direct Full Access task with the owner's profile active, and no person, household caller, paired door or short-lived key",
+  "src/personal/local-index.ts": "its requireOwner guards the HTTP routes (/api/local-index); its index.search tool is registered through ownerOnlyTools (src/personal/guard.ts, listed above)",
   "src/self-development-requests.ts": "its requireOwner (ownerHere) guards the owner's chat-request routes in Inbox, and installed() is a read-only proof that only refuses, never grants, when the window is on someone else; the tool path, fileOwnerTask (seasons.request_setting), is gated by ownerOnly(context), which judges by the task's recorded origin (runOrigin: person, key, lent door) and refuses Trunks and short-lived keys",
   "src/coding/project-tests.ts": "the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
 };
