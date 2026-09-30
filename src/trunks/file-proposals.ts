@@ -5,7 +5,8 @@ import { FileProposalInput, type TrunkFiles } from "./files.js";
 /** A personality change is always a proposal. The existing owner/person Files route applies the exact reviewed draft. */
 export function registerFileProposals(registry: ToolRegistry, files: TrunkFiles, trunkFor: (context: ToolContext) => string): void {
   registry.register({
-    name: "trunk.propose_file", permission: "trunks.propose", group: "trunks", parameters: FileProposalInput,
+    // memory.write, as writing the Trunk's own memory files: "trunks.propose" is Branch's alone (src/trunks/shape.ts).
+    name: "trunk.propose_file", permission: "memory.write", group: "trunks", parameters: FileProposalInput,
     description: "Propose new complete text for one of your own personality files, with a reason. Nothing is applied: the owner reviews the before/after in Customize > Trunks > Files and accepts or rejects it. You cannot change another Trunk's files.",
     target: (args) => args.name,
     execute: async (input, context) => {
