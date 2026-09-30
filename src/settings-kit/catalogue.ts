@@ -46,6 +46,7 @@ import { codingModelRounds, noLimit, readKnobs, saveKnobs } from "../knobs/setti
 import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 import { sdkKitMode, sdkKitShipsAs } from "../sdk-kit-switch.js"; // defaults audit
 import { gitlabMode, gitlabShipsAs } from "../gitlab-switch.js"; // RES-719
+import { seasonsSettings, saveSeasonsSettings } from "../seasons/settings.js";
 
 /**
  * R17-S-A (understandable settings): the settings that can be put back to how they started, set
@@ -441,6 +442,33 @@ const limitShown = (saved: number | typeof noLimit | null): number | string => s
 const limitSaved = (value: unknown): number | typeof noLimit | null => value === roundsUnset ? null : value === unlimitedWord ? noLimit : value as number;
 
 const comfort: SettingSpec[] = [
+  {
+    key: "seasons", name: "Seasons overnight learning", t: "seasons.settings-title", home: "settings:developer",
+    fields: [
+      { field: "rings", label: "Rings overnight memory", t: "seasons.settings-rings", guard: "reach", initial: "on",
+        kind: { type: "choice", options: ["off", "on"] } },
+      { field: "gardener", label: "Gardener skill improvements", t: "seasons.settings-gardener", guard: "reach", initial: "on",
+        kind: { type: "choice", options: ["off", "on"] } },
+      { field: "nightFrom", label: "Night starts at hour", t: "seasons.settings-from", guard: "plain", initial: 1,
+        kind: { type: "number", min: 0, max: 23 } },
+      { field: "nightTo", label: "Night ends at hour", t: "seasons.settings-to", guard: "plain", initial: 6,
+        kind: { type: "number", min: 0, max: 23 } },
+      { field: "idleMinutes", label: "Idle minutes before learning", t: "seasons.settings-idle", guard: "guard", initial: 30,
+        kind: { type: "number", min: 5, max: 720 } },
+      yesNo("paidModels", "Use paid models overnight", "seasons.settings-paid", "reach"),
+      { field: "minGainPercent", label: "Minimum skill gain in percentage points", t: "seasons.settings-gain", guard: "guard", initial: 10,
+        kind: { type: "number", min: 1, max: 100, fractions: true } },
+    ],
+    read: (store, owner) => {
+      const value = seasonsSettings(store, owner);
+      return { ...value, minGainPercent: value.minGain * 100 };
+    },
+    write: (store, owner, patch) => {
+      // The catalogue uses whole percentage points; the engine keeps gain on its original 0..1 scale.
+      const { minGainPercent, ...rest } = patch;
+      saveSeasonsSettings(store, owner, { ...rest, ...(typeof minGainPercent === "number" ? { minGain: minGainPercent / 100 } : {}) });
+    },
+  },
   one("local-models", "Models on this computer", "settings-kit.name.local-models", "settings:models:local", "plain", { keepsEnabled: true,
     ...modeFrom(localModelsMode), write: (store, owner, patch) => { saveLocalModelsMode(store, owner, { mode: localModelsMode(store, owner), ...patch }); } }),
   // mac7/one-click (issue #107): installing a program that runs models is the one thing here that
