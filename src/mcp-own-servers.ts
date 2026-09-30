@@ -43,7 +43,7 @@ import { lockdownActive } from "./lockdown.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
-import { credentialNames, makeTransport, McpTransportSchema, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { credentialNames, makeTransport, mcpEndpoint, McpTransportSchema, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
 import { secretNameSchema } from "./locker.js";
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
@@ -78,8 +78,10 @@ const waitLimitMs = 60 * 60 * 1000;
 /** The exact launch, in a fixed order, and its fingerprint: what a yes is bound to. */
 export function launchBytes(server: McpTransportConfig): string {
   return server.transport === "stdio"
-    ? JSON.stringify({ transport: "stdio", command: server.command, args: server.args, cwd: server.cwd ?? null, envKeys: server.envKeys })
-    : JSON.stringify({ transport: "http", url: server.url, bearerEnv: server.bearerEnv ?? null });
+    ? JSON.stringify({ transport: "stdio", command: server.command, args: server.args, cwd: server.cwd ?? null, envKeys: server.envKeys,
+      ...(server.secretNames ? { secretNames: server.secretNames } : {}) })
+    : JSON.stringify({ transport: "http", url: server.url, bearerEnv: server.bearerEnv ?? null,
+      ...(server.bearerSecret ? { bearerSecret: server.bearerSecret } : {}) });
 }
 export const launchFingerprint = (server: McpTransportConfig): string =>
   createHash("sha256").update(launchBytes(server), "utf8").digest("hex").slice(0, 32);
@@ -89,6 +91,8 @@ const slug = (name: string): string => {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^[^a-z]+|-+$/g, "").slice(0, 26);
   return base || "server";
 };
+const serverSecretName = (id: string, field: string): string =>
+  `MCP_${createHash("sha256").update(`${id}:${field}`).digest("hex").slice(0, 16).toUpperCase()}_${field.toUpperCase().slice(0, 40)}`;
 
 export interface OwnServersDeps {
   store: Store; owner: () => string; registry: ToolRegistry; approvals: ApprovalGate; workspace: () => string;
@@ -176,15 +180,17 @@ export class OwnMcpServers {
 
   /** Adds one server. A command is saved off; a web address is saved on and connected now. */
   async add(input: unknown) {
+    this.deps.store.profiles.requireOwner("Adding a tool server");
+    if (startedWithShortLivedKey()) throw new Error("Add a tool server in the app window.");
     const wanted = AddServerSchema.parse(input);
     const servers = this.saved();
     if (servers.length >= maxServers) throw new Error(`Branch keeps at most ${maxServers} servers of your own. Remove one first.`);
     if (wanted.server.transport === "stdio") { this.guard(wanted.server); await this.deps.vet(wanted.server.command, wanted.server.args); }
-    await this.keepValues(wanted.server, wanted.values);
     const taken = new Set([...this.launchIds, ...servers.map((entry) => entry.id)]);
     let id = slug(wanted.name);
     for (let n = 2; taken.has(id); n++) id = `${slug(wanted.name)}-${n}`;
-    const entry: OwnServer = { id, name: wanted.name, server: wanted.server, on: false, approved: null, tools: [], version: null,
+    const server = await this.keepValues(id, wanted.server, wanted.values);
+    const entry: OwnServer = { id, name: wanted.name, server, on: false, approved: null, tools: [], version: null,
       hidden: [], addedAt: new Date().toISOString(), ...(wanted.catalogue ? { catalogue: wanted.catalogue } : {}) };
     this.save([...servers, entry]);
     this.record("Tool server added:", `${entry.name}: ${how(entry.server)}`, entry.server.transport === "stdio" ? "saved off" : "saved on");
@@ -194,13 +200,29 @@ export class OwnMcpServers {
   }
 
   /** The form's credential values, into the locker; only for names this server's launch actually uses. */
-  private async keepValues(server: McpTransportConfig, values: Record<string, string>): Promise<void> {
+  private async keepValues(id: string, server: McpTransportConfig, values: Record<string, string>): Promise<McpTransportConfig> {
+    if (server.transport === "http") await this.deps.policy()?.assertAllowed(mcpEndpoint(server.url), "MCP server connection");
+    if (server.transport === "http") mcpEndpoint(server.url);
     const needed = new Set(credentialNames(server));
     const typed = Object.entries(values).filter(([, value]) => value.length > 0);
     const stray = typed.find(([name]) => !needed.has(name));
     if (stray) throw new Error(`${stray[0]} is not one of the secrets this server is given.`);
     if (typed.length && !this.deps.saveSecret) throw new Error("This launch cannot save secrets; set them as environment variables.");
-    for (const [name, value] of typed) await this.deps.saveSecret!(name, value);
+    const bindings: Record<string, string> = {}, saved: string[] = [], owner = this.deps.owner();
+    try {
+      for (const [field, value] of typed) {
+        this.deps.store.profiles.requireOwner("Saving tool server credentials");
+        const name = serverSecretName(id, field);
+        await this.deps.saveSecret!(name, value);
+        saved.push(name); bindings[field] = name;
+      }
+    } catch (error) {
+      for (const name of saved) this.deps.store.secrets.remove(owner, "default", name);
+      throw error;
+    }
+    if (!typed.length) return server;
+    return server.transport === "stdio" ? { ...server, secretNames: { ...server.secretNames, ...bindings } }
+      : { ...server, bearerSecret: bindings[server.bearerEnv!] };
   }
 
   /** Switching a server on. A command asks first, through the approval gate; a web address connects now. */
@@ -268,6 +290,8 @@ export class OwnMcpServers {
 
   /** Lists what a server offers now (after the yes), keeping only what the owner's settings do not refuse outright. */
   private async listTools(entry: OwnServer): Promise<{ tools: string[]; hidden: string[]; version: string }> {
+    if (entry.server.transport === "http") await this.deps.policy()?.assertAllowed(mcpEndpoint(entry.server.url), "MCP server connection");
+    if (entry.server.transport === "http") mcpEndpoint(entry.server.url);
     const env = await withLockerSecrets(entry.server, this.env, this.deps.host()?.secret);
     const { transport } = await makeTransport(entry.server, env, this.deps.policy());
     const client = new (await mcpClient())({ name: "branch", version: "0.1.0" });
@@ -394,6 +418,10 @@ export class OwnMcpServers {
     await this.shut(id);
     this.problems.delete(id);
     this.save(this.saved().filter((item) => item.id !== id));
+    const bindings = entry.server.transport === "stdio" ? entry.server.secretNames ?? {} : entry.server.bearerEnv && entry.server.bearerSecret ? { [entry.server.bearerEnv]: entry.server.bearerSecret } : {};
+    for (const [field, name] of Object.entries(bindings)) {
+      if (name === serverSecretName(id, field)) this.deps.store.secrets.remove(this.deps.owner(), "default", name);
+    }
     this.record("Tool server removed:", `${entry.name}: ${how(entry.server)}`, "removed");
     return { removed: id, said: `${entry.name} is removed.` };
   }

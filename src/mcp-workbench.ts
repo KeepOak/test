@@ -15,7 +15,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
 import type { NetworkPolicy } from "./network-policy.js";
-import { makeTransport, McpTransportSchema, withLockerSecrets, type McpTransportConfig, type SecretLookup } from "./integrations/mcp-config.js";
+import { makeTransport, mcpEndpoint, McpTransportSchema, withLockerSecrets, type McpTransportConfig, type SecretLookup } from "./integrations/mcp-config.js";
 
 export const TrySchema = z.object({
   server: McpTransportSchema,
@@ -56,6 +56,7 @@ export async function tryServer(
   secret?: SecretLookup,
 ): Promise<WorkbenchResult> {
   const parsed = TrySchema.parse(input);
+  if (parsed.server.transport === "http") await policy?.assertAllowed(mcpEndpoint(parsed.server.url), "MCP server connection");
   const where = label(parsed.server);
   const { transport, secrets } = await makeTransport(parsed.server, await withLockerSecrets(parsed.server, env, secret), policy);
   const client = new (await mcpClient())({ name: "branch-workbench", version: "1.0.0" });

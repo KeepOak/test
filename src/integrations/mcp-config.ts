@@ -12,12 +12,16 @@ const stdioShape = {
   transport: z.literal('stdio'), command: z.string().min(1),
   args: z.array(z.string()).max(40).default([]), cwd: z.string().optional(),
   envKeys: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).max(20).default([]),
+  secretNames: z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/))
+    .refine(names => Object.keys(names).length <= 20, 'At most 20 MCP secret bindings').optional(),
 };
 const httpShape = {
   transport: z.literal('http'), url: z.string().url(),
   // A saved sign-in (OAUTH_*) is kept as JSON, not as a bare key, so it is never sent as one.
   bearerEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
     .refine((name) => !/^OAUTH_/i.test(name), 'A saved sign-in (OAUTH_…) cannot be used as a key').optional(),
+  bearerSecret: z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/)
+    .refine(name => !/^(OAUTH_|MCP_SIGNIN_)/i.test(name), 'A saved sign-in cannot be used as a bearer secret').optional(),
 };
 /** Just how to reach a server, without the allowlist a permanently configured one also needs. */
 export const McpTransportSchema = z.discriminatedUnion('transport', [
@@ -60,12 +64,24 @@ export async function withLockerSecrets(
   config: McpTransportConfig, env: NodeJS.ProcessEnv, lookup?: SecretLookup,
 ): Promise<NodeJS.ProcessEnv> {
   const found: Record<string, string> = {};
+  if (config.transport === 'http') mcpEndpoint(config.url);
   for (const name of credentialNames(config)) {
-    if (env[name] || !lookup || !lockerName.test(name)) continue;
-    const value = await lookup(name).catch(() => undefined);
+    const reference = config.transport === 'stdio' ? config.secretNames?.[name] ?? name : config.bearerSecret ?? name;
+    if (env[name] || !lookup || !lockerName.test(reference)) continue;
+    const value = await lookup(reference).catch(() => undefined);
     if (value) found[name] = value;
   }
   return Object.keys(found).length ? { ...env, ...found } : env;
+}
+
+/** Validate an HTTP destination before a locker lookup; makeTransport repeats this at the transport boundary. */
+export function mcpEndpoint(address: string): URL {
+  const url = new URL(address), local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local))
+    throw new Error('MCP endpoint requires HTTPS or loopback HTTP');
+  if (url.username || url.password || url.search || url.hash)
+    throw new Error('MCP URL must not contain credentials, query, or fragment');
+  return url;
 }
 
 export async function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv, policy?: { guard(base: typeof fetch): typeof fetch }) {
@@ -79,12 +95,7 @@ export async function makeTransport(config: McpTransportConfig, env: NodeJS.Proc
     transport.stderr?.on('data', () => undefined);
     return { transport, secrets: Object.values(selected) };
   }
-  const url = new URL(config.url);
-  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local))
-    throw new Error('MCP endpoint requires HTTPS or loopback HTTP');
-  if (url.username || url.password || url.search || url.hash)
-    throw new Error('MCP URL must not contain credentials, query, or fragment');
+  const url = mcpEndpoint(config.url);
   const secret = config.bearerEnv ? credential(env, config.bearerEnv) : undefined;
   const StreamableHTTPClientTransport = await mcpHttp();
   const transport = new StreamableHTTPClientTransport(url, {
