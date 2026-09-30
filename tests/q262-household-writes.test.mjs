@@ -49,6 +49,7 @@ import { SAMPLE_ID } from "./short-lived-key-routes.mjs";
 
 /** The reviewed list, as "METHOD path" the way the table writes each address. */
 const REVIEWED = [
+  "POST /api/sessions/:id/context-audit",
   "POST /api/documents", "DELETE /api/documents/:id", "POST /api/documents/reindex", "POST /api/documents/search",
   "POST /api/knowledge", "DELETE /api/knowledge/:id", "POST /api/knowledge/ask", "POST /api/knowledge/attach",
   "POST /api/knowledge/export", "POST /api/knowledge/graph", "POST /api/knowledge/graph/names", "POST /api/knowledge/import",

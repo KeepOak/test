@@ -290,6 +290,8 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // checklist, pinned skill and autonomy, a procedure's recipe checks, and a specialist's handoff list.
   "coding-", "interop-", "learning-more-", "trunks-", "model-savings-", "conversation-mode:", "goal:", "coding-checklist:",
   "pinned-skill:", "plan-act:", "flowboards-recipe-checks:", "handoffs:",
+  // A conversation's read results the owner left out of future model requests: a file must not hide evidence by itself.
+  "context-result-exclusions:",
   // What each person here is called (src/person-about.ts): the owner's name is weighed against the household's names,
   // which they sign in by, so a file does not rename anybody by itself.
   "person-about:",
