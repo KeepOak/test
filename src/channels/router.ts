@@ -1148,8 +1148,10 @@ export class ChannelRouter {
   /** Carries out a chat command and sends its answer back. */
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
-    if (command.name === "verbose" && message.chatKind !== "direct") {
-      await this.deliver(channel, chatId, "Set steps from a direct chat; a group keeps the owner's group settings.", `verbose-group:${message.messageId}`, this.quoteFor(message));
+    // A chat's steps level lasts beyond the conversation and can show more (files, commands), so, as /session and
+    // /personality, only the owner's own direct chat sets it; a group or a paired friend keeps the owner's settings.
+    if (command.name === "verbose" && !ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message)) {
+      await this.deliver(channel, chatId, "Only the owner's own direct chat sets its steps; this chat keeps the owner's settings.", `verbose-refused:${message.messageId}`, this.quoteFor(message));
       return "replied";
     }
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
