@@ -10752,6 +10752,13 @@ The Gardener extends this record with the following settings when its feature is
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
 
 
+### Thirty-day usage insights
+
+`/insights` reports completed-task tokens, estimated cost, unknown prices, recorded failures, top models and task sources for the last thirty days. It works in the window, phone, terminal, dashboard and supported chat commands, without invoking a model. In chat or with a restricted key, it reports only the current conversation. With the owner key on other surfaces, it reports the owner's conversations; `/insights conversation` narrows it, and `/insights all` explicitly requests the owner aggregate. Household profiles cannot request the owner's aggregate. Costs are estimates rather than bills, and running tasks are excluded.
+
+
+`/history` also works in the window and phone conversation composer. It reads the current conversation only, shows the last twenty user/assistant turns with bounded previews, and scrubs known secrets. Household profiles can read their own current conversation; unknown or another person's conversation is refused. It does not invoke a model and can be used while a task runs.
+
 ### Agent-written scheduled dashboards
 
 In Scheduled → Describe it, the owner can choose Keep the result as a dashboard before confirming an ordinary assistant task. A task/check can also declare `dashboard: { title: "My dashboard" }` through its existing authorized schedule creation API. This adds a structured-output instruction, no tool permission or source connection. Each scheduled task refreshes up to eight columns and forty rows with values, source identifiers, retrieval timestamps and freshness status, plus up to twelve attention notes. Dashboard jobs default to notifying only on material value, source, freshness, layout or attention changes; timestamp-only refreshes and repeated invalid-refresh errors do not alert again. Explicit `notify: "always"` retains the owner's digest choice. The table and fifty recent field-change notes persist in owner governance, separate from editable schedule definitions.

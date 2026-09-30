@@ -78,7 +78,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("dry-run", [], "[on|off]", "a dry run: it shows what it would do without doing it", ["terminal"], "look", was("terminal")),
   entry("temporary", ["incognito"], "[on|off]", "a conversation that is not remembered; set it before the first message", [...W, "terminal"], "look", was("terminal")),
   entry("attach", ["image"], "<file>", "send a file or picture with your next message", [...W, "terminal"], "look", was("terminal")),
-  entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
+  entry("history", [], "", "the last twenty turns of this conversation", [...W, "terminal", "chat"], "look", { ...was("terminal"), whileWorking: true }),
   entry("diff", [], "[--staged] [relative folder]", "tracked Git changes in a workspace folder, shortened to one reply; owner direct chat with git.read", ["chat"], "look"), // reads only; the runner holds it to the owner's own direct chat and git.read
   entry("topic", [], "[name]", "create a separate private Telegram topic; on its own, setup guidance", ["chat"], "look"), // like /new: a new conversation place, no Branch setting changes; the runner holds it to the owner's own direct chat
   entry("session", [], "[idle|max-age] [duration|off]", "this chat's chosen idle and age limits; expired conversations stay in history", ["chat"], "look"), // owner-approved 2026-09-30: the runner holds it to the owner's own direct chat, like /diff and /topic
@@ -112,6 +112,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("status", [], "", "what is working right now, and with which model", ALL, "look", { ...was("chat"), whileWorking: true }),
   entry("compact", ["compress", "fold"], "", "fold the earlier part of this conversation into a summary", ["window", "phone", "terminal", "chat"], "run", { ...was("chat"), newAliases: added(["compress", "fold"], "chat") }),
   entry("usage", ["cost"], "[on|off]", "tokens and cost so far; in a chat app, on or off adds a line to each reply", ALL, "look", { ...was("chat"), newAliases: added(["cost"], "chat") }),
+  entry("insights", [], "[conversation|all]", "last 30 days of completed-task tokens, estimated cost, models and sources", ALL, "look", { whileWorking: true }),
   entry("btw", ["side"], "<question>", "a quick question on the side; it does not join the task", ["window", "phone", "terminal", "chat"], "run", { ...was("chat"), whileWorking: true, newAliases: added(["side"], "chat") }),
   entry("tokens", ["context"], "", "what fills the next request: instructions, tools, the conversation, and what it costs", ["window", "phone", "terminal", "chat"], "look"),
   entry("goal", [], "<what should be true> [--max rounds]", "keep working until a goal is met, paused or out of rounds", [...W, "terminal"], "run", { ...was("window", "phone"), route: { method: "POST", path: "/api/goals" } }),
