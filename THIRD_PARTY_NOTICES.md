@@ -3510,6 +3510,9 @@ Unless required by applicable law or agreed to in writing, software distributed 
 ### Hermes Agent and OpenClaw: group command access and pairing (UP-CHAT-007..010), MIT
 
 `groupCommandRefusal` in `src/channels/router.ts` and the `groupCommands` line in `src/channels/chat-permissions.ts` adapt Hermes Agent's `gateway/slash_access.py` (admins run every command, everybody else a small floor, failing closed); resetting the wrong-code count after an approval follows `gateway/pairing.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). Answering a stranger only when a request is new, the cap of three waiting requests, no codes in groups and silent blocks follow OpenClaw's `src/pairing/pairing-store.ts` and `extensions/telegram/src/dm-access.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+### Gemini CLI (Google), Apache-2.0: signing in to an MCP server
+
+`LockerAuthProvider` and `signIn` in `src/integrations/mcp-oauth.ts` implement the MCP SDK's `OAuthClientProvider` (`@modelcontextprotocol/sdk` 1.30.0, MIT, notice above; https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/client/src/client/auth.ts#L246-L330) and follow Gemini CLI's MCP sign-in in starting the callback page first and registering with its real port (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/mcp/oauth-provider.ts#L103-L130). The code was written for Branch, which keeps the identity and keys in its locker. Gemini CLI is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 
 ### Ollama, MIT
 

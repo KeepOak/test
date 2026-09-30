@@ -43,7 +43,7 @@ import { lockdownActive } from "./lockdown.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
-import { credentialNames, makeTransport, McpTransportSchema, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { credentialNames, makeTransport, McpTransportSchema, reachFor, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
 import { secretNameSchema } from "./locker.js";
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
@@ -95,6 +95,8 @@ export interface OwnServersDeps {
   env?: NodeJS.ProcessEnv; policy: () => NetworkPolicy | undefined; host: () => McpHost | undefined;
   /** Saves one value in the default project's locker (the form's credentials). */
   saveSecret?: (name: string, value: string) => Promise<void>;
+  /** Forgets a removed server's sign-in, so a later server under the same name starts with none. */
+  forgetSignIn?: (id: string) => void;
   /** The malware check: throws a plain sentence for a package listed as harmful. */
   vet: (command: string, args: readonly string[]) => Promise<void>;
   /** How often a waiting question is looked at again; tests shorten it. */
@@ -269,7 +271,8 @@ export class OwnMcpServers {
   /** Lists what a server offers now (after the yes), keeping only what the owner's settings do not refuse outright. */
   private async listTools(entry: OwnServer): Promise<{ tools: string[]; hidden: string[]; version: string }> {
     const env = await withLockerSecrets(entry.server, this.env, this.deps.host()?.secret);
-    const { transport } = await makeTransport(entry.server, env, this.deps.policy());
+    const signIn = entry.server.transport === "http" ? this.deps.host()?.signIn?.(entry.id, entry.server.url) : undefined;
+    const { transport } = await makeTransport(entry.server, env, reachFor(this.deps.policy(), signIn));
     const client = new (await mcpClient())({ name: "branch", version: "0.1.0" });
     try {
       await client.connect(transport as Transport, { timeout: 20000 });
@@ -394,6 +397,7 @@ export class OwnMcpServers {
     await this.shut(id);
     this.problems.delete(id);
     this.save(this.saved().filter((item) => item.id !== id));
+    this.deps.forgetSignIn?.(id);
     this.record("Tool server removed:", `${entry.name}: ${how(entry.server)}`, "removed");
     return { removed: id, said: `${entry.name} is removed.` };
   }

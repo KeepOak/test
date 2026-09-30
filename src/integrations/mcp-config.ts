@@ -2,6 +2,18 @@ import { z } from 'zod';
 import { mcpHttp, mcpStdio } from './mcp-sdk.js';
 import { boundedFetch } from './bounded-fetch.js';
 import { runAsNode } from '../child-env.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+
+/**
+ * How a server is reached: every address through the network policy, and for a server the owner signed in to, the
+ * saved sign-in, which the SDK's HTTP transport sends and renews itself (src/integrations/mcp-oauth.ts).
+ */
+export interface McpReach { guard(base: typeof fetch): typeof fetch; auth?: OAuthClientProvider | undefined }
+/** The reach for one server: the network policy's guard (or none), with that server's sign-in when it has one. */
+export function reachFor(policy: { guard(base: typeof fetch): typeof fetch } | undefined, auth?: OAuthClientProvider): McpReach | undefined {
+  if (!policy && !auth) return undefined;
+  return { guard: (base) => policy ? policy.guard(base) : base, ...(auth ? { auth } : {}) };
+}
 
 const common = {
   id: z.string().regex(/^[a-z][a-z0-9-]{0,29}$/),
@@ -68,7 +80,7 @@ export async function withLockerSecrets(
   return Object.keys(found).length ? { ...env, ...found } : env;
 }
 
-export async function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv, policy?: { guard(base: typeof fetch): typeof fetch }) {
+export async function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv, policy?: McpReach) {
   if (config.transport === 'stdio') {
     const selected = Object.fromEntries(config.envKeys.map(key => [key, credential(env, key)]));
     const { getDefaultEnvironment, StdioClientTransport } = await mcpStdio();
@@ -90,6 +102,8 @@ export async function makeTransport(config: McpTransportConfig, env: NodeJS.Proc
   const transport = new StreamableHTTPClientTransport(url, {
     fetch: policy ? policy.guard(boundedFetch) : boundedFetch,
     requestInit: { redirect: 'error', ...(secret ? { headers: { authorization: `Bearer ${secret}` } } : {}) },
+    // A key given by hand wins; otherwise a saved sign-in is sent, and renewed by the SDK when the server says 401.
+    ...(!secret && policy?.auth ? { authProvider: policy.auth } : {}),
   });
   return { transport, secrets: secret ? [secret] : [] };
 }

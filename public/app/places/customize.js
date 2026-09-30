@@ -138,7 +138,10 @@ const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot ba
 function detailActs(k, x) {
   const rm = k === "skills" || k === "agents" || x.own || x.shelf ? "tool-rm" : "tool-rm-kept";
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
-  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm" type="button" data-act="${rm}" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button></div>`;
+  // One of your own servers at a web address can be signed in to (POST /api/mcp/signin): the engine gives back the
+  // server's sign-in page to open in your browser, keeps the keys in the locker and connects the server again.
+  const signIn = k === "mcp" && x.own?.transport === "http" ? `<button class="btn sm" type="button" data-act="mcp-signin" data-id="${esc(x.id)}" data-url="${esc(x.own.how)}">${t("accounts.action.sign-in")}</button>` : "";
+  return `<div class="acts" data-css="margin-top:16px">${signIn}${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm" type="button" data-act="${rm}" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button></div>`;
 }
 /* Which Trunks may use a server or a skill is drawn from each Trunk's own lists (servers by id, skills by name), and stays
    greyed: adding a server to a Trunk widens what it can reach. */
@@ -421,6 +424,23 @@ async function switchServer(el) {
   renderNow();
 }
 
+/* Sign in to your own web server: the engine answers with its sign-in page, opened in your own browser, or says the
+   saved sign-in was renewed. The page on this computer that the browser comes back to finishes it. */
+async function signInServer(el) {
+  el.disabled = true;
+  try {
+    const got = await api("mcp/signin", { id: el.dataset.id, url: el.dataset.url });
+    if (got.url) {
+      if (typeof window.branchDesktop?.openExternal === "function") await window.branchDesktop.openExternal(got.url);
+      else window.open(got.url, "_blank", "noopener");
+      toast(t("window.places.customize.finish-sign-in-in-browser"));
+    } else toast(t("window.places.customize.server-signed-in"));
+  } catch (error) { toast(error.message); }
+  el.disabled = false;
+  await reloadTools();
+  renderNow();
+}
+
 /* Retry on your own server that did not start: the same start the switch asks for (POST /api/mcp/servers/{id}/start);
    the engine's words say what happened, and the lists are read again. */
 async function retryServer(el) {
@@ -454,8 +474,9 @@ export function init() {
   initPluginLifecycle();
   markLive(pluginInsideLive);
   initPluginInside(reloadShown);
-  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
+  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "mcp-signin", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
   on("tool-retry", (el) => retryServer(el));
+  on("mcp-signin", (el) => signInServer(el));
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "tool9g") switchServer(e.target); });
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "ctx9") setContextMode(e.target); });
   on("pat15", (el) => choosePattern(el));

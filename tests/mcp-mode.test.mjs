@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { discardTemp } from "./temp-dir.mjs";
 import { z } from "zod";
-import { createBranch, McpConnections, savePolicy, sanitiseApp, appContentSecurityPolicy, signIn } from "../dist/index.js";
+import { createBranch, McpConnections, savePolicy, sanitiseApp, appContentSecurityPolicy } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 async function fixture(t) {
@@ -318,87 +318,7 @@ test("C3: a dry run says what would happen and changes nothing", async (t) => {
   assert.equal(viaTool.data.result.structuredContent.tool, "files.write");
 });
 
-test("C4: Branch registers itself with a server that needs a sign-in, and the key never leaves the locker", async (t) => {
-  const { app, url, token } = await fixture(t);
-  const secret = "fixture-access-token-not-real";
-  const seen = [];
-  const auth = createServer(async (request, response) => {
-    seen.push(request.url);
-    if (request.url === "/.well-known/oauth-authorization-server") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        issuer: `http://127.0.0.1:${port}`,
-        authorization_endpoint: `http://127.0.0.1:${port}/authorize`,
-        token_endpoint: `http://127.0.0.1:${port}/token`,
-        registration_endpoint: `http://127.0.0.1:${port}/register`,
-        code_challenge_methods_supported: ["S256"],
-      }));
-      return;
-    }
-    if (request.url === "/register") {
-      response.writeHead(201, { "content-type": "application/json" });
-      response.end(JSON.stringify({ client_id: "dynamically-registered", client_id_issued_at: 1 }));
-      return;
-    }
-    if (request.url === "/token") {
-      let raw = "";
-      for await (const chunk of request) raw += chunk;
-      assert.match(raw, /code_verifier=/, "the proof key is sent when the code is exchanged");
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ access_token: secret, token_type: "Bearer", expires_in: 3600 }));
-      return;
-    }
-    response.writeHead(404);
-    response.end();
-  });
-  auth.listen(0, "127.0.0.1");
-  await once(auth, "listening");
-  const port = auth.address().port;
-  t.after(() => new Promise((resolve) => auth.close(resolve)));
-
-  const started = await signIn({ id: "fixture", url: `http://127.0.0.1:${port}/mcp` }, {
-    store: app.store, owner: app.runtime.owner, connections: app.oauth, policy: app.web.policy,
-  });
-  assert.equal(started.registered, "dynamically-registered");
-  assert.match(started.redirectUri, /^http:\/\/127\.0\.0\.1:\d+\/oauth\/callback$/);
-  const authorize = new URL(started.url);
-  assert.equal(authorize.searchParams.get("client_id"), "dynamically-registered");
-  assert.equal(authorize.searchParams.get("code_challenge_method"), "S256");
-  assert.ok((authorize.searchParams.get("code_challenge") ?? "").length >= 43);
-
-  const waiting = app.oauth.waitFor("mcp-fixture");
-  await fetch(`${started.redirectUri}?code=fixture-code&state=${encodeURIComponent(authorize.searchParams.get("state"))}`);
-  const tokens = await waiting;
-  assert.equal(tokens.accessToken, secret);
-  assert.ok(seen.includes("/register"), "it asked the server for an identity of its own");
-
-  // The second sign-in reuses the identity instead of registering again.
-  seen.length = 0;
-  await app.oauth.cancel("mcp-fixture");
-  const again = await signIn({ id: "fixture", url: `http://127.0.0.1:${port}/mcp` }, {
-    store: app.store, owner: app.runtime.owner, connections: app.oauth, policy: app.web.policy,
-  });
-  assert.equal(again.registered, "dynamically-registered");
-  assert.ok(!seen.includes("/register"));
-  await app.oauth.cancel("mcp-fixture");
-
-  // The same sign-in from the app's own route, so the path a person uses is the path that is tested.
-  const viaRoute = await api(url, token, "/api/mcp/signin", { id: "fixture", url: `http://127.0.0.1:${port}/mcp` });
-  assert.match(viaRoute.url, /code_challenge_method=S256/);
-  assert.ok(!JSON.stringify(viaRoute).includes(secret), "the route never carries the key");
-  await app.oauth.cancel("mcp-fixture");
-  await assert.rejects(
-    api(url, token, "/api/mcp/signin", { id: "nowhere", url: "http://127.0.0.1:1/mcp" }),
-    /does not publish how to sign in/,
-  );
-
-  const everything = JSON.stringify([
-    app.store.runs(app.runtime.owner).flatMap((run) => app.store.events(run.id)),
-    app.store.audit.list(app.runtime.owner),
-    app.store.get("settings", app.runtime.owner, "mcp-oauth:fixture"),
-  ]);
-  assert.ok(!everything.includes(secret), "no record anywhere holds the key itself");
-});
+// C4 (signing in to a server that needs it) is in tests/mcp-sign-in.test.mjs, through the MCP SDK the transport uses.
 
 test("C5: an outside server opens when a task needs it, closes when the task ends, and never goes over the cap", async (t) => {
   const { app } = await fixture(t);
