@@ -539,7 +539,7 @@ export function init() {
     const read = await api("self-development/requests").catch((error) => (still() ? sayOnce(error) : {}));
     if (!still()) return;
     changeRequests = read.requests ?? [];
-    if (published) await readSourcePublications();
+    if (published) await readSourcePublications(still);
     if (still()) renderNow();
   });
   on("selfrev15", (el) => reviewChange(el.dataset.id));

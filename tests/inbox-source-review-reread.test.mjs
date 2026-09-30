@@ -20,7 +20,7 @@ const SPECIAL = {
   renderNow: "() => { globalThis.__ib.renders++; }",
   ownerHere: "() => globalThis.__ib.owner", activeId: "() => globalThis.__ib.profile",
   initSourceReview: "(after) => { globalThis.__ib.reread = after; }",
-  readSourcePublications: "async () => false",
+  readSourcePublications: "(still) => globalThis.__ib.publications(still)",
   t: "(key) => key",
 };
 
@@ -42,7 +42,9 @@ async function inboxPage(t) {
   }
   const held = [];
   const ib = { S: { view: "inbox", tabs: {} }, E: { state: {}, profiles: { isOwner: true } }, owner: true, profile: null, locked: false,
-    toasts: [], renders: 0, reread: null, api: (path) => new Promise((resolve, reject) => held.push({ path, resolve, reject })) };
+    toasts: [], renders: 0, reread: null, api: (path) => new Promise((resolve, reject) => held.push({ path, resolve, reject })),
+    /* The publications read: handed the callback's own context, held open like any read. */
+    publications: (still) => new Promise((resolve, reject) => held.push({ path: "publications", still, resolve, reject })) };
   globalThis.__ib = ib;
   globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && ib.locked } } : null),
     addEventListener: () => {}, querySelector: () => null };
@@ -58,6 +60,9 @@ test("with nothing changed, the requests read after a review are drawn", async (
   const { ib, next } = await inboxPage(t);
   const reading = ib.reread(true);
   (await next()).resolve({ requests: [] });
+  const publications = await next();
+  assert.equal(publications.still(), true, "the publications read is handed the callback's context");
+  publications.resolve(false);
   await reading;
   assert.equal(ib.renders, 1);
 });
@@ -85,6 +90,20 @@ for (const [what, change] of LATE) {
     read.reject(new Error("The engine is not answering"));
     await reading;
     assert.deepEqual(ib.toasts, []);
+    assert.equal(ib.renders, 0);
+  });
+}
+
+for (const [what, change] of LATE) {
+  test(`${what} while the publications were read after a review: their context says so and nothing is redrawn`, async (t) => {
+    const { ib, next } = await inboxPage(t);
+    const reading = ib.reread(true);
+    (await next()).resolve({ requests: [] });
+    const publications = await next();
+    change(ib);
+    assert.equal(publications.still(), false, "the publications read sees the change, so it keeps nothing");
+    publications.resolve(false);
+    await reading;
     assert.equal(ib.renders, 0);
   });
 }
