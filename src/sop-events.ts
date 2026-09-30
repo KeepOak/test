@@ -44,7 +44,8 @@ export class SopEvents {
     const definition = SopSchema.parse(input), rows = this.rows();
     if (rows.length >= 20) throw new Error("Remove a procedure before adding another (limit 20)");
     if (!this.flows.macros().some((macro) => macro.id === definition.macroId)) throw new Error("Choose an existing imported typed macro");
-    if (definition.event.kind === "webhook" && rows.some((row) => row.event.kind === "webhook" && row.event.triggerId === definition.event.triggerId))
+    const event = definition.event;
+    if (event.kind === "webhook" && rows.some((row) => row.event.kind === "webhook" && row.event.triggerId === event.triggerId))
       throw new Error("That webhook already belongs to a procedure");
     const row: Binding = { ...definition, id: randomUUID(), enabled: false, due: null, pending: [], slots: [], runs: [], lastEvent: null, hold: this.available(definition.event) };
     this.write([...rows, row]); return row;

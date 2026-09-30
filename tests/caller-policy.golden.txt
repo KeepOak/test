@@ -540,6 +540,16 @@ owner GET /api/flows/macros | here=ok remote=ok phone=ok legacy=ok person=401/32
 owner POST /api/flows/macros | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/flows/macros/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/flows/macros/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/flows/sops | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/flows/sops | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/flows/sops/:id/enable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/flows/sops/:id/enable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/flows/sops/:id/approve | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/flows/sops/:id/approve | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/flows/sops/:id/reject | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/flows/sops/:id/reject | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/flows/sops/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/flows/sops/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/flows/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/flows/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/flows/runs/:id/resume | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2806,6 +2816,16 @@ owner+lockdown GET /api/flows/macros | here=ok remote=ok phone=ok legacy=ok pers
 owner+lockdown POST /api/flows/macros | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/flows/macros/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/flows/macros/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/flows/sops | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/flows/sops | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/flows/sops/:id/enable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/flows/sops/:id/enable | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/flows/sops/:id/approve | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/flows/sops/:id/approve | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/flows/sops/:id/reject | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/flows/sops/:id/reject | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/flows/sops/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/flows/sops/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/flows/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/flows/runs/:id/cancel | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/flows/runs/:id/resume | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5072,6 +5092,16 @@ household GET /api/flows/macros | here=400/f6e21c remote=400/f6e21c read=400/f6e
 household POST /api/flows/macros | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/flows/macros/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/flows/macros/check | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/flows/sops | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/flows/sops | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/flows/sops/:id/enable | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/flows/sops/:id/enable | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/flows/sops/:id/approve | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/flows/sops/:id/approve | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/flows/sops/:id/reject | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/flows/sops/:id/reject | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/flows/sops/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/flows/sops/:id/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/flows/runs/:id/cancel | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/flows/runs/:id/cancel | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/flows/runs/:id/resume | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7338,6 +7368,16 @@ household+lockdown GET /api/flows/macros | here=400/f6e21c remote=400/f6e21c rea
 household+lockdown POST /api/flows/macros | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/flows/macros/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/flows/macros/check | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/flows/sops | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/flows/sops | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/flows/sops/:id/enable | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/flows/sops/:id/enable | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/flows/sops/:id/approve | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/flows/sops/:id/approve | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/flows/sops/:id/reject | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/flows/sops/:id/reject | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/flows/sops/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/flows/sops/:id/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/flows/runs/:id/cancel | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/flows/runs/:id/cancel | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/flows/runs/:id/resume | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9604,6 +9644,16 @@ applock GET /api/flows/macros | here=423/a8f863
 applock POST /api/flows/macros | here=423/a8f863
 applock GET /api/flows/macros/check | here=423/a8f863
 applock POST /api/flows/macros/check | here=423/a8f863
+applock GET /api/flows/sops | here=423/a8f863
+applock POST /api/flows/sops | here=423/a8f863
+applock GET /api/flows/sops/:id/enable | here=423/a8f863
+applock POST /api/flows/sops/:id/enable | here=423/a8f863
+applock GET /api/flows/sops/:id/approve | here=423/a8f863
+applock POST /api/flows/sops/:id/approve | here=423/a8f863
+applock GET /api/flows/sops/:id/reject | here=423/a8f863
+applock POST /api/flows/sops/:id/reject | here=423/a8f863
+applock GET /api/flows/sops/:id/remove | here=423/a8f863
+applock POST /api/flows/sops/:id/remove | here=423/a8f863
 applock GET /api/flows/runs/:id/cancel | here=423/a8f863
 applock POST /api/flows/runs/:id/cancel | here=423/a8f863
 applock GET /api/flows/runs/:id/resume | here=423/a8f863
