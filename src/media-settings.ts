@@ -10,6 +10,8 @@ export const MediaSettingsSchema = z
   .object({
     /** The provider's picture model, for example gpt-image-1. Empty means the provider's default. */
     imageModel: z.string().trim().max(200).default(""),
+    /** Empty follows the current connection; otherwise pictures use this configured API connection. */
+    imagePreset: z.string().trim().max(200).default(""),
     /** The workspace folder finished pictures and sounds are saved into. */
     folder: z
       .string()

@@ -8264,8 +8264,9 @@ alongside transducer bundles. An explicitly named streaming program still wins.
   default in this workspace, `fallbackOrder` the connections to try in order when one fails, and
   `cooldownMs` how long a failed connection rests before it is tried again.
 - **Pictures** (`src/media-settings.ts`): `imageModel` is which model makes them (leave it empty for
-  the connection's own default) and `imagePrices` your own corrections to the per-picture prices,
-  for a service whose price Branch does not know.
+  the connection's own default), `imagePreset` a separate API-key connection that makes them while
+  text stays on the connection that answers (empty uses that one), and `imagePrices` your own
+  corrections to the per-picture prices, for a service whose price Branch does not know.
 - **The waiting line** (`POST /api/queue/settings`): `atOnce` is how many tasks may work at the same
   time.
 - **A standing brief** (`src/briefs.ts`): `lastSentAt` is when it last went out and `nextAt` when it

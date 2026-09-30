@@ -1570,7 +1570,7 @@ async function api(
   // Pictures and sounds (wave 5): what the media tools should use, and everything they have made.
   if (request.method === "GET" && path === "/api/media/settings")
     return { settings: mediaSettings(app.store, app.runtime.owner), prices: builtInImagePrices, pricedAt: imagePricedAt,
-      pictures: picturesNow(app), pictureModels: knownPictureModels };
+      pictures: picturesNow(app), pictureModels: knownPictureModels, pictureConnections: pictureConnections(app) };
   if (request.method === "POST" && path === "/api/media/settings")
     return { settings: saveMediaSettings(app.store, app.runtime.owner, await readBody(request)) };
   // w911 (A1753) hook: plain-language page test scenarios, drafted, accepted and run as suites.
@@ -3343,9 +3343,20 @@ function conversationCost(app: Branch, owner: string, sessionId: string): { amou
  * picture route it has, or null when it has none, so Settings › Models › Media offers only models that route can make.
  */
 function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini"; defaultModel: string } | null {
-  const preset = app.runtime.models.plan(app.runtime.owner, "media").candidates[0];
+  const selected = mediaSettings(app.store, app.runtime.owner).imagePreset;
+  if (selected && !app.runtime.models.presets.has(selected)) return null;
+  const preset = app.runtime.models.plan(app.runtime.owner, "media", selected ? { preset: selected } : {}).candidates[0];
+  if (selected && preset?.id !== selected) return null;
   const where = preset ? providerImages(preset.provider) : null;
+  if (selected && where?.bearer) return null;
   return preset && where ? { connection: preset.name, kind: where.kind, defaultModel: where.defaultModel } : null;
+}
+/** Token-free choices: only ordinary API-key picture routes, never a sign-in accessor. */
+function pictureConnections(app: Branch): { id: string; name: string; kind: "openai" | "gemini" }[] {
+  return [...app.runtime.models.presets.values()].flatMap((preset) => {
+    const where = providerImages(preset.provider);
+    return where && !where.bearer ? [{ id: preset.id, name: preset.name, kind: where.kind }] : [];
+  });
 }
 function runCost(app: Branch, runId: string) {
   const usage = app.store.usage(runId);
