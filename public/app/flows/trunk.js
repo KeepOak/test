@@ -79,7 +79,7 @@ function filesTab() {
   markLive(files.map((file) => `sw:personality-${file.name}`));
   const more = files.length < (ed.files ?? []).length
     ? `<p class="hint">${esc(say(level() === 0 ? "More personality files are available in Advanced and Technical." : "Working instructions, tool notes and check-ins are available in Technical."))}</p>` : "";
-  return more + files.map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button></div>`).join("");
+  return more + files.map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button>${fileSuggestions(file.name)}</div>`).join("");
 }
 
 function voicePicker() {
@@ -101,6 +101,31 @@ async function loadTrunkVoices(id) {
   if (!dialog()?.querySelector(".editor")) return;
   keepFields();
   drawEditor();
+}
+
+function fileSuggestions(name) {
+  return (ed.proposals ?? []).filter((proposal) => proposal.name === name).map((proposal) => `<div class="card"><b>${esc(say("Suggested change"))}</b><p>${esc(proposal.reason)}</p><details><summary>${esc(say("Review before and after"))}</summary><b>${esc(say("Before"))}</b><pre>${esc(proposal.before)}</pre><b>${esc(say("After"))}</b><pre>${esc(proposal.text)}</pre></details><div class="acts"><button class="btn ghost sm" type="button" data-act="trunk-file-decide" data-id="${esc(proposal.id)}" data-decision="reject">${t("memory.review.reject")}</button><button class="btn sm" type="button" data-act="trunk-file-decide" data-id="${esc(proposal.id)}" data-decision="accept">${t("memory.review.accept")}</button></div></div>`).join("");
+}
+
+let decidingFile = false;
+async function decideFile(el) {
+  if (!ed || decidingFile) return;
+  keepFields();
+  const editor = ed;
+  const proposal = editor.proposals?.find((one) => one.id === el.dataset.id);
+  if (!proposal || !["accept", "reject"].includes(el.dataset.decision)) return;
+  const drafts = new Map(editor.files.map((file) => [file.name, file.text]));
+  decidingFile = true;
+  try {
+    const data = await api(`trunks/${editor.id}/files`, { proposalId: el.dataset.id, decision: el.dataset.decision });
+    if (ed !== editor) return;
+    ed.files = data.files.map((file) => el.dataset.decision === "accept" && file.name === proposal.name
+      ? file : { ...file, text: drafts.get(file.name) ?? file.text });
+    ed.proposals = data.proposals;
+    drawEditor();
+    await refresh();
+  } catch (error) { toast(error.message); }
+  finally { decidingFile = false; }
 }
 
 /* The pebble as this editor would save it: the draft's colour, shape, eyes and motion over the saved face. */
@@ -646,13 +671,14 @@ export function init() {
     keepFields();
     const id = ed.id;
     if (el.dataset.v === "files" && !ed.files) {
-      try { const data = await api(`trunks/${id}/files`); if (ed?.id !== id) return; ed.files = data.files; }
+      try { const data = await api(`trunks/${id}/files`); if (ed?.id !== id) return; ed.files = data.files; ed.proposals = data.proposals; }
       catch (error) { toast(error.message); return; }
     }
     ed.tab = el.dataset.v; drawEditor();
     if (ed.tab === "accounts") loadKeys(ed.id);
   });
-  markLive(["trunk-default", "trunk-file-save"]);
+  markLive(["trunk-default", "trunk-file-save", "trunk-file-decide"]);
+  on("trunk-file-decide", decideFile);
   on("trunk-default", async (el) => {
     try { await api(`trunks/${el.dataset.id}/default`, {}); await refresh(); }
     catch (error) { toast(error.message); }

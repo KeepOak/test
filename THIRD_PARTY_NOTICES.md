@@ -17,6 +17,17 @@ MIT License
 Copyright (c) 2023 SYSTRAN
 Copyright (c) 2020-present Silero Team
 
+## Hermes memory tool approval snapshot adaptation
+
+The whole-file proposal snapshot guard in `src/trunks/files.ts` adapts the pinned-entry approval pattern in
+[`tools/memory_tool.py`](https://github.com/NousResearch/hermes-agent/blob/94a57ead919dddfe54f7945cab5c829e907e5c26/tools/memory_tool.py),
+specifically `_pin_matched_entries` and `_gate_or_stage`. Branch captures the entire original file at staging,
+then refuses acceptance if that content changed. The integration always requires a person to review the proposal.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights
@@ -68,6 +79,7 @@ https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918
 and live tools using Branch's existing content detector. Copyright (c) 2025 Nous Research, MIT;
 https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py
 and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this document.
+
 
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
