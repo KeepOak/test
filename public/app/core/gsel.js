@@ -38,7 +38,7 @@ let open = null; // the dropdown whose list is showing
 function show(el) {
   const list = choices(el), current = el.value;
   /* Select semantics follow Hermes Desktop's searchable-select (Nous Research, MIT), adapted to our popover. */
-  const items = list.map(([v, words, off], i) => `<button class="mi" type="button" role="option" aria-selected="${v === current}" tabindex="-1" data-act="gsel-pick" data-i="${i}"${off ? ' aria-disabled="true"' : ""}><span class="tick">${ic("check", "s")}</span><span class="mi-t">${esc(words)}</span></button>`).join("");
+  const items = list.map(([v, words, off], i) => `<button class="mi" type="button" role="option" aria-selected="${v === current}" tabindex="-1" data-act="gsel-pick" data-i="${i}" data-v="${esc(v)}"${off ? ' aria-disabled="true"' : ""}><span class="tick">${ic("check", "s")}</span><span class="mi-t">${esc(words)}</span></button>`).join("");
   const filter = list.length > LONG ? `<div class="gsel-q"><input class="inp" type="search" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="${LIST_ID}" data-sw="gsel-q" aria-label="${esc(t("window.core.gsel.narrow"))}" placeholder="${esc(t("window.core.gsel.narrow"))}" autocomplete="off" spellcheck="false"></div>` : "";
   const name = el.getAttribute("aria-label") || el.textContent.trim();
   openPop(el, `${filter}<div id="${LIST_ID}" role="listbox" aria-label="${esc(name)}">${items}</div>`, { role: "presentation" });
@@ -56,8 +56,10 @@ function show(el) {
 const inPlace = (el) => (!el || el.isConnected ? el : el.id ? document.getElementById(el.id)
   : [...document.querySelectorAll(".gsel")].find((x) => ["sw", "k", "j", "id"].every((k) => x.dataset[k] === el.dataset[k])) ?? null);
 
-function pick(i) {
-  const el = inPlace(open), found = choices(el)[i];
+/* The choice is found by its value, so a list drawn again while it was open (new choices in front) still takes the
+   one that was pressed; a list item with no value falls back to its place. */
+function pick(i, value) {
+  const el = inPlace(open), list = choices(el), found = value === undefined ? list[i] : list.find(([v]) => v === value);
   if (!el || !found || found[2]) return; // a choice that cannot be taken stays where it is
   closePop({ refocus: true });
   open = null;
@@ -67,7 +69,7 @@ function pick(i) {
 }
 
 on("gsel", (el) => show(el));
-on("gsel-pick", (el) => pick(Number(el.dataset.i)));
+on("gsel-pick", (el) => pick(Number(el.dataset.i), el.dataset.v));
 markLive(["gsel", "gsel-pick", "sw:gsel-q"]);
 
 /* The narrowing box keeps only the choices holding what was typed; Enter picks the first one left. */
