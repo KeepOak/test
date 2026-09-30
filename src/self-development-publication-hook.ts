@@ -40,6 +40,37 @@ async function validate(deps: PullRequestDeps, entry: PublicationEntry, signal: 
   if (entry.adapter === "saved" && !deps.registry.names().includes("github.open_pull_request"))
     throw new Error("The saved GitHub connection was removed.");
 }
+/** Persist only bounded publication identities, never proposal text or provider failure output. */
+function recordPublication(deps: PullRequestDeps, entry: PublicationEntry): void {
+  const runId = entry.receiptRunId ?? entry.runId;
+  if (!runId || deps.store.run(runId)?.owner !== deps.owner) return;
+  const data = { publicationId: entry.id, repository: entry.repository, branch: entry.branch, base: entry.base,
+    sha: entry.sha, files: entry.files.length, state: entry.state, phase: entry.phase, attempts: entry.attempts };
+  const seen = deps.store.sqlite.prepare(`SELECT 1 FROM events WHERE run_id=? AND kind='pull_request.publication'
+    AND json_extract(data,'$.publicationId')=? AND json_extract(data,'$.state')=?
+    AND json_extract(data,'$.phase')=? AND json_extract(data,'$.attempts')=? LIMIT 1`)
+    .get(runId, entry.id, entry.state, entry.phase, entry.attempts);
+  if (!seen) deps.store.event(runId, "pull_request.publication", data);
+  if (entry.state !== "published" || !entry.pullRequest || typeof entry.pullRequest !== "object") return;
+  const pr = entry.pullRequest as { number?: unknown; address?: unknown; url?: unknown; html_url?: unknown };
+  const link = pr.address ?? pr.url ?? pr.html_url;
+  let number = pr.number, address: string | null = null;
+  if (typeof link === "string") {
+    const url = new URL(link), found = /^\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/.exec(url.pathname);
+    if (url.protocol !== "https:" || url.hostname !== "github.com" || url.username || url.password
+      || !found || found[1]!.toLowerCase() !== entry.repository.toLowerCase()) return;
+    const linked = Number(found[2]);
+    if (number !== undefined && number !== linked) return;
+    number = linked; url.search = ""; url.hash = ""; address = url.href;
+  }
+  if (!Number.isSafeInteger(number) || Number(number) <= 0) return;
+  // Compatible with the task-to-PR receipt seam; an already recorded real opening remains intact.
+  const opened = deps.store.sqlite.prepare(`SELECT 1 FROM events WHERE run_id=? AND kind='pull_request.opened'
+    AND lower(json_extract(data,'$.repository'))=lower(?) AND json_extract(data,'$.number')=? LIMIT 1`)
+    .get(runId, entry.repository, Number(number));
+  if (!opened) deps.store.event(runId, "pull_request.opened", { ...data, number: Number(number), address });
+}
+
 export function sourcePublicationQueue(deps: PullRequestDeps): PublicationQueue {
   return new PublicationQueue(deps.store.sqlite, deps.owner, {
     validate: (entry, signal) => validate(deps, entry, signal),
@@ -61,7 +92,7 @@ export function sourcePublicationQueue(deps: PullRequestDeps): PublicationQueue 
     open: (entry, signal) => entry.adapter === "saved"
       ? deps.runTool("github.open_pull_request", entry.opening, entry.runId)
       : deps.openWithComputerGh!(entry.opening, signal),
-  });
+  }, Date.now, (entry) => recordPublication(deps, entry));
 }
 export async function queueSourcePublication(deps: PullRequestDeps, intent: Omit<PublicationIntent, "contractHash">,
   signal: AbortSignal): Promise<PublicationEntry> {

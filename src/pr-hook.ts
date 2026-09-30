@@ -216,7 +216,7 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
       throw new Error(`"${head}" is not just one new commit on the checked work, so nothing was sent.`);
     const publication = await queueSourcePublication(deps, { cwd, workspace: deps.files.root, remote: settings.remote,
       pushRepo: where.pushRepo, pushAddress: where.pushAddress, repository: where.repo, branch: head, base: where.base, sha: made, walked,
-      files: visible, opening, runId: input.runId, adapter: saved ? "saved" : "computer" }, input.signal);
+      files: visible, opening, runId: input.runId, receiptRunId: input.runId ?? input.auditRunId, adapter: saved ? "saved" : "computer" }, input.signal);
     return { repository: where.repo, branch: head, base: where.base, files: visible, pullRequest: publication.pullRequest ?? null, publication };
   }
   // An explicit refspec: exactly this new line, to a branch of the same name, never anything else.
@@ -334,7 +334,12 @@ export function watchFinishedTasks(deps: PullRequestDeps, track: (work: () => Pr
     const title = `Branch: ${prompt.split("\n")[0]!.trim().slice(0, 150) || "changes from a task"}`;
     const summary = `${prompt.trim().slice(0, 4000)}\n\nOpened by Branch when task ${runId.slice(0, 8)} finished.`;
     track(() => pullRequestFromChanges(deps, { name: `task-${runId.slice(0, 8)}`, title, summary, paths, auditRunId: runId, byItself: true, signal: AbortSignal.timeout(300000) })
-      .then((opened) => note(deps, runId, "pull_request.opened", { repository: opened.repository, branch: opened.branch, base: opened.base, files: opened.files.length }))
+      .then((opened) => {
+        // Durable source publications record their exact eventual PR through the queue observer.
+        // A waiting or blocked intent is not an opened pull request.
+        if (!opened.publication) note(deps, runId, "pull_request.opened", {
+          repository: opened.repository, branch: opened.branch, base: opened.base, files: opened.files.length });
+      })
       .catch((error: unknown) => note(deps, runId, "pull_request.failed", { reason: error instanceof Error ? error.message.slice(0, 500) : "unknown" })));
   });
 }
