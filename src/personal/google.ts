@@ -5,7 +5,7 @@ import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
 import { buildPlainMail, stripTags } from "./mime.js";
 import { clip, outsideTextNote, requirePersonal } from "./settings.js";
-import { signedCall, signedText, type SignIn } from "./signin.js";
+import { signedCall, signedCalendarCall, signedText, type SignIn } from "./signin.js";
 
 /**
  * R17-029: the owner's Gmail (read, search, and drafts when allowed), Google Calendar (read) and
@@ -157,12 +157,17 @@ export class GoogleConnector {
       location: clip(event.location ?? "", 200) })) };
   }
 
-  async writeCalendar(action: "create" | "move" | "delete", input: unknown) {
+  async writeCalendar(action: "create" | "move" | "delete", input: unknown, signal: AbortSignal = new AbortController().signal) {
     this.on();
+    const identity = this.signIn.calendarWriteIdentity();
+    this.signIn.assertCalendarWrite(identity, signal);
     await this.signIn.requireCalendarWrite();
+    const write = (url: string, init: RequestInit & { json?: unknown }) => signedCalendarCall(this.fetcher,
+      this.signIn, "Google", url, identity, signal,
+      () => this.on(), init);
     if (action === "create") {
       const v = CalendarCreateSchema.parse(input);
-      return this.call(`${calendar}?sendUpdates=all`, { method: "POST", json: {
+      return write(`${calendar}?sendUpdates=all`, { method: "POST", json: {
         summary: v.title, location: v.location, start: { dateTime: v.starts }, end: { dateTime: v.ends }, reminders: googleDayBefore,
       } });
     }
@@ -174,7 +179,7 @@ export class GoogleConnector {
     if (event.recurrence || event.recurringEventId) throw new Error("Recurring events must be changed in Google Calendar.");
     const moved = action === "move" ? CalendarMoveSchema.parse(input) : null;
     const json = moved ? { start: { dateTime: moved.starts }, end: { dateTime: moved.ends }, reminders: googleDayBefore } : undefined;
-    const result = await this.call(`${url}?sendUpdates=all`, { method: action === "delete" ? "DELETE" : "PATCH",
+    const result = await write(`${url}?sendUpdates=all`, { method: action === "delete" ? "DELETE" : "PATCH",
       headers: { "if-match": v.etag }, ...(json ? { json } : {}) });
     return { action, id: v.id, result };
   }
@@ -206,7 +211,7 @@ export class GoogleConnector {
 
 export function registerGoogle(registry: Pick<ToolRegistry, "register">, google: GoogleConnector): void {
   google.registerSending(registry);
-  registerCalendarWrites(registry, "gcal", (action, input) => google.writeCalendar(action, input));
+  registerCalendarWrites(registry, "gcal", (action, input, signal) => google.writeCalendar(action, input, signal));
   const tool = (name: string, permission: string, description: string, parameters: z.ZodType, run: (input: unknown) => Promise<unknown>) =>
     registry.register({ name, permission, description, parameters, execute: async (input) => run(input) });
   tool("gmail.search", "personal.read", "Search the owner's Gmail with Gmail's own search words (from:, subject:, is:unread, newer_than:2d).",
