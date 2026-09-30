@@ -2,8 +2,8 @@
    "Needs you" lists three kinds of request, each answered only by its own route: a task waiting on a yes (GET /api/policy;
    Allow names it by session and fingerprint, the chat’s exact-match "ask"), a message one Trunk wants to send
    another (state.trunkWaiting; POST /api/trunks/messages/<id>/answer or /decline), and a request for a package or a tool
-   server (GET /api/flows-boards/installs; POST /api/flows-boards/installs/<id>/decline). Security tier: an install
-   request's Allow (xdo, POST .../approve) stays greyed for the separate security review; Don't only declines.
+   server (GET /api/flows-boards/installs; POST /api/flows-boards/installs/<id>/approve|decline). Allow records the owner's
+   answer after a fresh malware check and shows the manual next step; nothing is installed or started.
    Above every tab: each task Branch closed on that can be continued (state.attention with canContinue), picked up with
    POST /api/runs/<id>/resume or left with POST /api/runs/<id>/cancel. At the bottom of "Needs you": each request to change
    Branch itself (GET /api/self-development/requests), waiting or prepared; its review shows the request and the engine's
@@ -14,7 +14,7 @@
    "Allow all N…" (more than one waiting) answers exactly the questions and Trunk messages its confirm lists, each once,
    through the same routes as their own Allow: POST /api/policy/approve { remember: "never" } by session and fingerprint,
    and POST /api/trunks/messages/<id>/answer. It never keeps a standing yes, and it leaves out install requests, whose
-   own Allow stays greyed, and any question that carries no fingerprint; anything that arrives after the confirm opened
+   own answer is separate, and any question that carries no fingerprint; anything that arrives after the confirm opened
    waits for its own answer.
    History's "Verify" walks the activity chain (POST /api/safety-extras/activity/verify) and shows what the engine found.
    "Watch again" plays a task back from its recording (GET /api/runs/<id>/recording): the engine's own frames, stepped or
@@ -51,6 +51,7 @@ let asksRead = false; // pass 18: "Nothing needs you" only once the engine answe
 let recMode = null;
 const recordingsOff = (sentence) => offTile("recordings", sentence || t("window.switch-on.recordings"), t("window.switch-on.recordings-old"));
 let installs = [];
+const installAnswers = new Set();
 let changeRequests = [];
 let chain = null;
 const trunkName = (id) => (Array.isArray(E.trunks) ? E.trunks : []).find((t) => t.id === id || t.name === id)?.name ?? id ?? "";
@@ -67,7 +68,8 @@ function askRow(q) {
 /* A request for a package or a tool server (GET /api/flows-boards/installs, status waiting). Answering it only writes the
    answer down: a yes comes back with the exact next step, and nothing is installed. */
 function installRow(r) {
-  return `${prowOpen(`install:${r.id}`, r.createdAt)}<span class="ico-tile">${ic("puzzle", "s")}</span><span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed">${t("trunks.room.allow")}</button></div>`;
+  const disabled = installAnswers.has(r.id) || E.profiles?.isOwner !== true ? "disabled" : "";
+  return `${prowOpen(`install:${r.id}`, r.at)}<span class="ico-tile">${ic("puzzle", "s")}</span><span class="grow"><b>${esc(r.ask?.why ?? "")}</b><small>${t("window.places.inbox.from-wants-value-nothing-is-installed", { from: esc(r.from), value: esc(r.ask?.name ?? "") })}</small></span><button class="btn ghost sm" type="button" data-act="xdo-no" data-id="${esc(r.id)}" data-v="denied" ${disabled}>${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="xdo" data-id="${esc(r.id)}" data-v="allowed" ${disabled}>${t("trunks.room.allow")}</button></div>`;
 }
 function messageRow(m) {
   return `${prowOpen(`tmsg:${m.id}`, m.createdAt ?? m.at)}${trunkById(m.from) ? av(trunkById(m.from), 34) : `<span class="ico-tile">${ic("chat", "s")}</span>`}<span class="grow"><b>${esc(m.message)}</b><small>${esc(trunkName(m.from))} → ${esc(trunkName(m.to))}</small></span><button class="btn ghost sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="decline">${t("window.places.inbox.dont")}</button><button class="btn pri sm" type="button" data-act="tmsg" data-id="${esc(m.id)}" data-v="answer">${t("trunks.room.allow")}</button></div>`;
@@ -208,16 +210,39 @@ async function readInstalls() {
   return ((await api("flows-boards/installs").catch(sayOnce)).requests ?? []).filter((r) => r.status === "waiting");
 }
 
-/* Don’t declines, Allow approves (POST /api/flows-boards/installs/<id>/decline|approve); a yes shows the engine's next step. */
+const installOwnerVisible = () => E.profiles?.isOwner === true && !E.profiles?.active?.id &&
+  S.view === "inbox" && (S.tabs.inbox || "needs") === "needs" && !document.querySelector(".lockscreen, #app.locked-b17");
+
+function installAnswerResult(request) {
+  if (request?.status === "declined") { toast(t("window.places.inbox.install-declined")); return; }
+  const approved = request?.status === "approved" && typeof request.nextStep === "string" && request.nextStep;
+  openDlg({ title: t(approved ? "window.places.inbox.install-approved" : "window.places.inbox.install-refused"),
+    body: approved ? `<p>${esc(t("window.places.inbox.install-manual-next-step"))}</p><pre class="diff6">${esc(request.nextStep)}</pre>` : `<p>${esc(request?.check?.note || t("window.places.inbox.install-refused"))}</p>`,
+    foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
+}
+
+/* Each answer is for the exact waiting request displayed. Approval records a manual step, never executes it. */
 async function answerInstall(el) {
-  const yes = el.dataset.v === "allowed";
-  el.disabled = true;
+  const id = el.dataset.id, shown = installs.find((r) => r.id === id);
+  if (!shown || shown.status !== "waiting" || installAnswers.has(id) || !installOwnerVisible()) return;
+  const snapshot = JSON.stringify(shown), yes = el.dataset.v === "allowed";
+  installAnswers.add(id); el.disabled = true;
   try {
-    const { request } = await api(`flows-boards/installs/${encodeURIComponent(el.dataset.id)}/${yes ? "approve" : "decline"}`, {});
-    if (yes && request?.nextStep) toast(request.nextStep);
-  } catch (error) { toast(error.message); }
-  installs = await readInstalls();
-  renderNow();
+    const [profiles, lock, fresh] = await Promise.all([api("profiles"), api("lock"), api("flows-boards/installs")]);
+    if (!installOwnerVisible() || !el.isConnected || !profiles.isOwner || profiles.active?.id || lock.locked) return;
+    const current = (fresh.requests ?? []).find((r) => r.id === id);
+    if (JSON.stringify(current) !== snapshot) throw new Error(t("window.places.inbox.install-changed"));
+    const { request } = await api(`flows-boards/installs/${encodeURIComponent(id)}/${yes ? "approve" : "decline"}`, { expectedRequest: snapshot });
+    const [answerer, answeredLock] = await Promise.all([api("profiles"), api("lock")]);
+    if (installOwnerVisible() && answerer.isOwner && !answerer.active?.id && !answeredLock.locked && !dialog()) installAnswerResult(request);
+  } catch (error) { if (installOwnerVisible()) toast(error.message); }
+  finally {
+    installAnswers.delete(id);
+    if (installOwnerVisible()) {
+      const waiting = await readInstalls();
+      if (installOwnerVisible()) { installs = waiting; renderNow(); }
+    }
+  }
 }
 
 /* After a draw: re-read what the tab shows from the engine, and draw again only if it changed. */
@@ -394,8 +419,8 @@ export function init() {
   initAutonomyInbox();
   initDemo17();
   initInbox17();
-  // Security tier: Allow on an install request (xdo) stays greyed for the security review; Don't (xdo-no) only declines.
-  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
+  // Install answers only record the owner's decision and show a manual next step.
+  markLive(["allowall", "allowall-go", "ptab", "chat", "tmsg", "cutgo15", "cutno15", "verify15", "selfrev15", "replay", "rp", "compare", "xdo", "xdo-no", "sw:histq", "selfno15", "rp-page", "rp-flow"]);
   on("replay", (el) => openReplay(el.dataset.id));
   /* Recordings switched on from History or from the replay dialog: the task that was asked for plays now. */
   document.addEventListener("branch-switched", (e) => {
