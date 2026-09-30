@@ -8264,6 +8264,7 @@
   "window.p18.working-round": "Working · round {n}",
   "window.panes.add": "Add a pane",
   "window.panes.answer": "Answer",
+  "window.panes.attachments-wait": "This pane is busy and accepts only text right now. Your message and files are still in the composer; send them when it finishes.",
   "window.panes.close-main": "Close this pane",
   "window.panes.full": "{count} panes are already waiting on an answer; wait for one to finish.",
   "window.panes.label": "Conversations side by side",

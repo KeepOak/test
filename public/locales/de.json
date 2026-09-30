@@ -8264,6 +8264,7 @@
   "window.p18.working-round": "Arbeitet · Runde {n}",
   "window.panes.add": "Bereich hinzufügen",
   "window.panes.answer": "Antworten",
+  "window.panes.attachments-wait": "Dieser Bereich ist beschäftigt und nimmt gerade nur Text an. Deine Nachricht und Dateien bleiben im Eingabefeld; sende sie, sobald die Aufgabe fertig ist.",
   "window.panes.close-main": "Diesen Bereich schließen",
   "window.panes.full": "Schon {count} Bereiche warten auf eine Antwort; warte, bis einer fertig ist.",
   "window.panes.label": "Unterhaltungen nebeneinander",

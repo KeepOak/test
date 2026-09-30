@@ -221,6 +221,9 @@ export async function sendToPane(id, prompt, fields = {}) {
   const p = P.get(id) ?? { messages: [], loaded: false, mark: "", sending: false, reading: 0 };
   P.set(id, p);
   if ((E.state?.runs ?? []).some((r) => r.sessionId === id && LIVE.includes(r.status)) || p.sending) {
+    // Busy sends accept text only; recheck here because a pane can become busy while uploads are prepared.
+    if (fields.uploads?.length) { toast(t("window.panes.attachments-wait")); return false; }
+    if (fields.dryRun) { toast(t("practice.ordinary-chat")); return false; }
     if (!prompt) return false;
     const said = await api("flows-boards/busy/send", { sessionId: id, prompt }).catch((error) => { toast(error.message); return null; });
     if (!said) return false;
@@ -235,10 +238,10 @@ export async function sendToPane(id, prompt, fields = {}) {
   p.sending = true;
   renderNow();
   const letGo = holdWait(), follow = setInterval(() => load(id, true), 1500);
-  let taken = true;
-  try { await api("run", { prompt, sessionId: id, ...fields }); } catch (error) {
+  let taken = false;
+  try { await api("run", { prompt, sessionId: id, ...fields }); taken = true; } catch (error) {
     toast(error.message);
-    /* Refused at once, or the engine was away: it never got the message, so the words and files stay in the box. */
+    /* Without a successful acknowledgement, retain the draft and never retry a change automatically. */
     if (error.offline || (error.status >= 400 && error.status < 500)) { taken = false; p.messages = before; }
   } finally {
     clearInterval(follow);
