@@ -52,7 +52,10 @@ export function applyTaskSettings(deps: SettingsKitDeps, input: unknown) {
     record: { writer: "owner-in-window", source: "card", detail: "Task settings suggestions" } });
 }
 
+/* Called once the request body has been read: the door checks in src/server.ts ran before that wait, so App lock is
+   asked again here, just before the owner's request is echoed back or any setting is written. */
 function authorize(deps: SettingsKitDeps): void {
+  if (deps.locked?.()) throw new HttpError(423, "Unlock Branch before reviewing task settings.");
   deps.store.profiles.requireOwner("Suggested task settings");
   if (startedWithShortLivedKey() || currentTaskRun() || currentPerson() || throughPairedDoor())
     throw new HttpError(403, "Review task settings in the owner's local app window.");

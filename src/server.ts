@@ -1275,6 +1275,7 @@ async function api(
       writers: settingsKitWriters(app),
       // A move of the approval preset is weighed on the tools Branch has (src/preset-moves.ts).
       tools: app.registry,
+      locked: () => app.sessionLock.locked(),
       guard: (target) => protectedTarget({ tool: "files.write", readOnly: false, args: { path: target }, target,
         workspace: app.runtime.workspace }, app.runtime.protectedAreas),
     }, request.method ?? "GET", path, () => readBody(request, settingsKitBodyBytes)).catch((error: unknown) => {

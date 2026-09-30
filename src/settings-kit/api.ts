@@ -37,6 +37,8 @@ export interface SettingsKitDeps {
   guard?: ((target: string) => string | null) | undefined;
   /** The tools Branch has, which a move of the approval preset is weighed on (see changesFor). */
   tools?: ToolLister | undefined;
+  /** Whether App lock is on now; task settings ask it again after their body has been read (src/settings-kit/task-settings.ts). */
+  locked?: (() => boolean) | undefined;
 }
 
 function ownerOnly(deps: SettingsKitDeps, what: string): void {
