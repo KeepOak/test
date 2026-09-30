@@ -352,6 +352,8 @@ export class Budget {
   }
 }
 export interface ToolContext {
+  /** Numeric remote progress only, recorded under the current run and original tool permission. */
+  reportMcpProgress?: (tool: string, progress: number, total?: number) => void;
   /** Set only by the MCP Apps host after owner confirmation; app-only tools stay unavailable to the model. */
   appCaller?: boolean;
   owner: string;

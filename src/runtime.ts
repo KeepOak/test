@@ -680,6 +680,7 @@ export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOw
 
 export class Runtime {
   private readonly controllers = new Map<string, AbortController>();
+  private readonly recordedMcpRuns = new Set<string>();
   /** long-work: tasks the owner paused; each stops after the step it is on (or at once while it only waits). */
   private readonly pausing = new Map<string, AbortController>();
   /**
@@ -897,7 +898,7 @@ export class Runtime {
     // FQ-routing.isolated-agents: work a Trunk set going (a workflow or flow step, a procedure it replays)
     // remembers as that Trunk, never with the owner's whole memory (see memoryAgent).
     const mark = currentAccountCall()?.trunk;
-    const trunkWork = mark?.id;
+    const trunkWork = mark?.id, contextOwner = this.owner;
     return {
       owner: this.owner,
       workspace: this.workspace,
@@ -906,6 +907,15 @@ export class Runtime {
       signal: options.signal ?? new AbortController().signal,
       budget: options.budget ?? new Budget(),
       depth: options.depth ?? 0,
+      reportMcpProgress: (tool, progress, total) => {
+        const run = options.runId ? this.store.run(options.runId) : undefined;
+        if (!run || contextOwner !== this.owner || run.owner !== contextOwner || run.status !== 'running' || this.fullAccessLocked()
+          || options.signal?.aborted || !tool.startsWith('mcp.')
+          || !(options.permissions ?? this.registry.permissions()).includes(tool)) return;
+        if (!Number.isFinite(progress) || progress < 0 || total !== undefined
+          && (!Number.isFinite(total) || total < progress)) return;
+        this.store.event(run.id, 'mcp.progress', { tool, progress, ...(total === undefined ? {} : { total }) });
+      },
       ...(options.scratchRoot ?? options.runId ? { scratchRoot: options.scratchRoot ?? options.runId! } : {}),
       ...(options.dryRun ? { dryRun: true } : {}),
       ...(options.isolated ? { isolated: true } : {}),
@@ -935,7 +945,7 @@ export class Runtime {
    * once), is kept as cut off, and Resume carries it on from there (`resume`). False when it is not working here.
    */
   pause(id: string): boolean {
-    if (!this.controllers.has(id)) return false;
+    if (!this.controllers.has(id) || this.recordedMcpRuns.has(id)) return false;
     let pausing = this.pausing.get(id);
     if (!pausing) this.pausing.set(id, pausing = new AbortController());
     pausing.abort(new PausedError());
@@ -1189,6 +1199,26 @@ export class Runtime {
       if (status !== "completed") throw failure;
       if (settled.status !== "completed") throw new Error(settled.output);
       return value as T;
+    });
+  }
+  /** Register an already recorded MCP operation with native Stop and runtime shutdown. */
+  async recordedMcpOperation<T>(id: string, signal: AbortSignal,
+    operation: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const run = this.store.run(id);
+    if (!run || run.owner !== this.owner || run.status !== 'running'
+      || runOrigin(this.store, id).source !== 'mcp' || this.controllers.has(id))
+      throw new Error('MCP operation is not an owned live run');
+    return this.track(async () => {
+      const controller = new AbortController();
+      this.controllers.set(id, controller);
+      this.recordedMcpRuns.add(id);
+      const bound = AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120000)]);
+      try {
+        bound.throwIfAborted();
+        const result = await operation(bound);
+        bound.throwIfAborted();
+        return result;
+      } finally { this.controllers.delete(id); this.recordedMcpRuns.delete(id); }
     });
   }
   async shutdown(): Promise<void> {
