@@ -23,7 +23,7 @@ test("the tree stands clear of the Settings gear, and Who checks is one line", a
   await page.locator('[data-act="mtab"][data-v="second"]').click();
   const who = page.locator("#m-second-by");
   await who.waitFor();
-  assert.equal(await who.getAttribute("aria-haspopup"), "menu", "a glass list");
+  assert.equal(await who.getAttribute("aria-haspopup"), "listbox", "a glass list");
   assert.equal(await page.locator('[data-act="m-second-by"]').count(), 0, "no row of buttons to wrap");
   assert.deepEqual(errors, []);
 });
