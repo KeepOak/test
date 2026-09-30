@@ -10,6 +10,7 @@ import { agentState } from "./doing.js";
 import { pebbleFace } from "./pebble.js";
 import { t } from "../../i18n.js";
 import { engineAway } from "./api.js";
+import { syncModalBackground } from "./modal-background.js";
 
 export const app = () => document.getElementById("app");
 
@@ -196,6 +197,7 @@ export function closeDlg() {
   const had = !!dlgEl;
   dlgEl?.remove();
   dlgEl = null;
+  syncModalBackground();
   if (had) setTimeout(() => {
     if (dlgEl || !opener) return;
     const back = opener.isConnected ? opener : openerOf(opener);
@@ -214,6 +216,7 @@ export function openDlg({ title, body, foot = "", wide = false }) {
   applyCss(dlgEl);
   greyOut(dlgEl);
   app().appendChild(dlgEl);
+  syncModalBackground();
   const first = [".dlg-b input:not([type=checkbox])", ".dlg-b textarea", ".dlg-f .btn.pri:not(:disabled)", ".dlg-f .btn"].map((q) => dlgEl.querySelector(q)).find(Boolean);
   /* A dialog with no text box and no button at its foot focuses itself, not its X (pass 13c). */
   if (first) first.focus({ preventScroll: true });
