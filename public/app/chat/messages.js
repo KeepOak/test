@@ -60,6 +60,14 @@ function latestRun(wanted) {
   return (E.state?.runs ?? []).filter(wanted).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] ?? null;
 }
 
+/** Exact engine receipt projected by the session API, never a guess based on message words. */
+export function viaChannel(m) {
+  const origin = m.channelOrigin;
+  if (m.role !== "user" || m.from || !origin || !/^[a-z][a-z0-9-]{0,63}$/.test(origin.kind ?? "")
+    || typeof origin.name !== "string" || origin.name.length > 80) return "";
+  return `<small class="channel-via" data-css="display:block">${esc(t("window.chat.msg.via-app", { name: origin.name }))}</small>`;
+}
+
 export function msgActs(m) {
   if (!m.messageId) return "";
   /* A path is taken from a settled conversation: while its answer is pending, Branch from here waits. */

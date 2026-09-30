@@ -6982,6 +6982,7 @@
   "window.chat.msg.tools-offered": "{shown} · {more} weitere einen Schritt entfernt",
   "window.chat.msg.undo-that": "„Mach das rückgängig“ stellt alles wieder so her, wie es war.",
   "window.chat.msg.unpin-this": "Diese Nachricht lösen",
+  "window.chat.msg.via-app": "über {name}",
   "window.chat.msg.waiting": "{count} warten",
   "window.chat.msg.went-back-conv": "In der Unterhaltung zurückgegangen. Dateien sind, wie sie waren.",
   "window.chat.msg.went-back-files": "Zurückgegangen, Dateien eingeschlossen.",

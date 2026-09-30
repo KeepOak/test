@@ -6982,6 +6982,7 @@
   "window.chat.msg.tools-offered": "{shown} · {more} de plus à une étape",
   "window.chat.msg.undo-that": "« Annuler cela » remet tout comme c’était.",
   "window.chat.msg.unpin-this": "Désépingler ce message",
+  "window.chat.msg.via-app": "via {name}",
   "window.chat.msg.waiting": "{count} en attente",
   "window.chat.msg.went-back-conv": "Retour en arrière dans la conversation. Les fichiers sont restés tels quels.",
   "window.chat.msg.went-back-files": "Retour en arrière, fichiers compris.",

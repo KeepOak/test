@@ -6982,6 +6982,7 @@
   "window.chat.msg.tools-offered": "{shown} · {more} más a un paso",
   "window.chat.msg.undo-that": "«Deshacer eso» lo devuelve todo a como estaba.",
   "window.chat.msg.unpin-this": "Dejar de fijar este mensaje",
+  "window.chat.msg.via-app": "vía {name}",
   "window.chat.msg.waiting": "{count} en espera",
   "window.chat.msg.went-back-conv": "Se ha vuelto atrás en la conversación. Los archivos están como estaban.",
   "window.chat.msg.went-back-files": "Se ha vuelto atrás, archivos incluidos.",
