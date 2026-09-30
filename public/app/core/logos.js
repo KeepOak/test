@@ -5,9 +5,8 @@
    Two makers forbid any use of their marks without a licence, even to identify a service: Microsoft ("Don't use
    Microsoft's logos, icons, or designs, in any manner") and Apple (no Apple-owned icon "for any other purpose except
    pursuant to an express written trademark license"). Their services get a neutral glyph, as Email does. A service
-   with no mark in the licensed sets gets its initials on a steady colour. */
+   with no mark in the licensed sets gets a neutral service glyph, never an invented letter logo. */
 
-import { esc } from "./dom.js";
 import { ICONS } from "./icons.js";
 
 const P = "art/providers/", C = "art/channels/";
@@ -30,30 +29,40 @@ const MARKS = {
   discourse: C + "discourse", "x-dm": C + "x", "nextcloud-talk": C + "nextcloud", ntfy: C + "ntfy", threema: C + "threema",
   homeassistant: C + "homeassistant", xmpp: C + "xmpp", mqtt: C + "mqtt", keybase: C + "keybase", simplex: C + "simplex", vk: C + "vk",
   "qq-bot": C + "qq", guilded: C + "guilded", revolt: C + "revoltdotchat", mumble: C + "mumble", "wechat-mp": C + "wechat", drive: C + "googledrive",
+  gotify: C + "gotify",
 };
 /* Not a brand (Email), or a maker that allows no use of its marks at all (Microsoft, Apple): the window's own glyph. */
-const GLYPHS = { email: "mail", outlook: "mail", imessage: "chat", bluebubbles: "chat", msteams: "chat", "msteams-bot": "chat", "azure-openai": "globe", "azure-openai-v1": "globe" };
-const PALETTE = ["#2E6A8A", "#6B4A8A", "#8A4F2A", "#3A5A99", "#2F7A4A", "#8A2F4F", "#4F6B2A", "#2A6B6B"];
+const GLYPHS = { email: "mail", outlook: "mail", imessage: "chat", bluebubbles: "chat", msteams: "chat", "msteams-bot": "chat", teams: "chat", "microsoft-teams": "chat", irc: "chat", "saved-signin": "key", "azure-openai": "globe", "azure-openai-v1": "globe" };
 /* A connection or model id often starts or contains its service's id ("openai-work", "cli-agent:claude-code").
    Only model services are matched this way; a chat app is matched by its exact id ("line" is in "pipeline"). */
 const SERVICES = Object.keys(MARKS).filter((k) => MARKS[k].startsWith(P)).sort((a, b) => b.length - a.length);
-const markFor = (key) => MARKS[key] ?? MARKS[SERVICES.find((k) => key.startsWith(`${k}-`) || (k.length >= 5 && key.includes(k))) ?? ""];
-
-function tint(key) {
-  let h = 0;
-  for (const c of key) h = (h * 31 + c.charCodeAt(0)) >>> 0;
-  return PALETTE[h % PALETTE.length];
-}
+/* Recognised service at the start of an id, or after the engine's cli-agent namespace; never arbitrary substrings. */
+const serviceKey = (key) => key.startsWith("cli-agent:") ? key.slice(10) : key;
+const own = (map, key) => Object.hasOwn(map, key) ? map[key] : undefined;
+const markFor = (key) => own(MARKS, key) ?? own(MARKS, SERVICES.find((k) => ["-", ":", "/"].some((sep) => serviceKey(key).startsWith(k + sep)) || serviceKey(key) === k) ?? "");
 
 /* id: the engine's service, pool, program or channel id; size in px. */
 export function logo(id, name = id, size = 30) {
   const key = String(id ?? "").toLowerCase();
+  size = Number.isFinite(size) ? Math.min(120, Math.max(16, size)) : 30;
   const box = `width:${size}px;height:${size}px;background:`;
   const inner = Math.round(size * 0.62);
-  const glyph = GLYPHS[key] ?? GLYPHS[Object.keys(GLYPHS).find((k) => key.startsWith(`${k}-`)) ?? ""];
+  const glyph = own(GLYPHS, key) ?? own(GLYPHS, Object.keys(GLYPHS).find((k) => key.startsWith(`${k}-`)) ?? "");
   const file = glyph ? "" : markFor(key);
-  if (file) return `<span class="logo mark14" data-css="${box}#fff"><img src="/${file}.svg" alt="" width="${inner}" height="${inner}"></span>`;
-  if (glyph) return `<span class="logo" data-css="${box}#56616B"><svg class="i" viewBox="0 0 24 24" aria-hidden="true" data-css="color:#fff;width:${inner}px;height:${inner}px">${ICONS[glyph] ?? ""}</svg></span>`;
-  const text = (key || String(name)).replace(/^cli-/, "").replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase();
-  return `<span class="logo" data-css="${box}${tint(key)}"><b data-css="font:700 11px var(--sans);color:#fff">${esc(text)}</b></span>`;
+  const credit = file === C + "gotify" ? ' title="Gotify logo © Gotify contributors; original Go gopher by Renee French. Unmodified, CC BY 4.0: https://creativecommons.org/licenses/by/4.0/ — source https://github.com/gotify/logo"' : "";
+  if (file) return `<span class="logo mark14" aria-hidden="true"${credit} data-css="${box}#fff"><img src="/${file}.svg" alt="" width="${inner}" height="${inner}" draggable="false"></span>`;
+  return `<span class="logo neutral-mark" aria-hidden="true" data-css="${box}#56616B"><svg class="i" viewBox="0 0 24 24" data-css="color:#fff;width:${inner}px;height:${inner}px">${ICONS[glyph ?? "globe"]}</svg></span>`;
+}
+
+/* Saved sign-in metadata is a bare exact host. No network, favicons, suffix guessing, or credential access. */
+const SIGN_IN_MARKS = {
+  "openai.com": "openai", "platform.openai.com": "openai", "chatgpt.com": "chatgpt",
+  "anthropic.com": "anthropic", "console.anthropic.com": "anthropic", "claude.ai": "claude",
+  "github.com": "github", "discord.com": "discord", "slack.com": "slack", "app.slack.com": "slack",
+  "web.telegram.org": "telegram", "drive.google.com": "drive", "huggingface.co": "huggingface",
+  "openrouter.ai": "openrouter", "perplexity.ai": "perplexity", "signal.org": "signal",
+};
+export function signInLogo(site, size = 30) {
+  const host = typeof site === "string" ? site.trim().toLowerCase() : "";
+  return logo(own(SIGN_IN_MARKS, host) ?? "saved-signin", host, size);
 }
