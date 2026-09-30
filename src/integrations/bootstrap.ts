@@ -406,7 +406,8 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
     if (new Set(config.channels.map(channel => channel.id)).size !== config.channels.length) throw new Error('Channel ids must be unique');
     for (const channel of config.channels) {
       const adapter = await buildChannel(channel, env, channels!, policy);
-      await channels!.router.attach(adapter, { activation: channel.activation, pairing: channel.pairing, allowlist: channel.allowlist });
+      await channels!.router.attach(adapter, { activation: channel.activation, pairing: channel.pairing, allowlist: channel.allowlist,
+        ...(channel.groupAllowlist !== undefined ? { groupAllowlist: channel.groupAllowlist } : {}) });
       closers.push(() => adapter.stop());
     }
     return { close, count: closers.length + mcpRunning, hosted };

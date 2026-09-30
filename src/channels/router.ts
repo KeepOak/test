@@ -12,7 +12,7 @@ import type { PolicyRemember } from "../policy.js";
 import { Deliveries } from "./deliveries.js";
 import { audit } from "../audit.js";
 import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifacts.js";
-import { decide, readSenderAllowlist } from "./allowlist.js";
+import { decide, groupAllowed, readSenderAllowlist } from "./allowlist.js";
 import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
 import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
@@ -313,6 +313,8 @@ export const ChannelPolicySchema = z.object({
   activation: z.enum(["mention", "always"]).default("mention"),
   pairing: z.boolean().default(true),
   allowlist: z.array(z.string().min(1).max(64)).max(64).default([]),
+  /** Which groups may use this connection: absent preserves existing behavior; [] refuses all. */
+  groupAllowlist: z.array(z.string().trim().min(1).max(64)).max(200).optional(),
 }).strict();
 export type ChannelPolicy = z.infer<typeof ChannelPolicySchema>;
 export type Outcome = "replied" | "ignored" | "pairing" | "rejected" | "failed";
@@ -731,6 +733,8 @@ export class ChannelRouter {
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
+    // Reject an unselected group before pairing codes, approval answers, platform commands or task dispatch.
+    if (message.chatKind === "group" && !groupAllowed(policy.groupAllowlist, adapter.kind, message.chatId)) return "ignored";
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
     const held = platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message); // CHAT-190
