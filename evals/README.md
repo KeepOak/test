@@ -20,6 +20,30 @@ A scorecard (JSON + a short Markdown table with a trend against the previous run
 
 ## Models — never a paid API
 
+### Scoring your own skills
+
+Pass `--owner-skills <absolute JSON path>` to `evals/run.mjs`, or set `EVAL_OWNER_SKILLS` for the nightly launcher.
+The export is explicit; the harness never opens your live data folder. Every case installs the supplied document
+into its own fresh evaluation engine, requires a successful `skills.read` for that installed skill, and checks the
+completed answer against every `answerContains` phrase (case insensitive). Results appear as `owner-skills` tasks
+in the ordinary nightly scorecard, with the document SHA-256 so changed versions can be distinguished. Smoke runs
+do not load owner exports. A skill needing scan review is marked `n/a`, never automatically approved.
+
+```json
+{
+  "version": 1,
+  "skills": [{
+    "id": "your-skill",
+    "document": "---\nname: Your skill\ndescription: Your instructions\n---\nYour skill body here.",
+    "cases": [{ "prompt": "A representative request", "answerContains": ["expected result"] }]
+  }]
+}
+```
+
+Keep this file outside source control. Only documents and cases you explicitly select belong in the export;
+do not include credentials. Evaluation engines retain ordinary tool approval checks; this does not grant skills
+new permissions. Phrase checks measure these cases only, not general skill quality.
+
 - **`ollama`** (default): the best tool-capable model Ollama has on this computer. `ollama:<tag>` names one.
   A sized copy is made first (`num_ctx` from `EVAL_NUM_CTX`, default 8192), which is exactly what Branch's own
   "on this computer" flow does — a raw Ollama connection would fall back to a tiny window and truncate the tool list.
