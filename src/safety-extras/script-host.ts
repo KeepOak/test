@@ -9,7 +9,8 @@ export const scriptAnswerMarker = "\n@@branch-script-answer@@";
 export const scriptHostSource = `import { createWriteStream } from "node:fs";
 import { createInterface } from "node:readline";
 const marker = ${JSON.stringify(scriptAnswerMarker)};
-const requests = createWriteStream(null, { fd: 3 });
+const stdoutRpc = process.env.BRANCH_SCRIPT_RPC_STDOUT === "1";
+const requests = stdoutRpc ? process.stdout : createWriteStream(null, { fd: 3 });
 const waiting = new Map();
 let next = 0;
 createInterface({ input: process.stdin }).on("line", (line) => {
@@ -25,7 +26,9 @@ const branch = Object.freeze({
     const id = ++next;
     return new Promise((resolve, reject) => {
       waiting.set(id, { resolve, reject });
-      requests.write(JSON.stringify({ id, tool: String(tool), args }) + "\\n");
+      const text = JSON.stringify({ id, tool: String(tool), args });
+      if (Buffer.byteLength(text) > 65536) { waiting.delete(id); reject(new Error("RPC request exceeds 65536 bytes")); return; }
+      requests.write((stdoutRpc ? "@@branch-script-rpc@@" : "") + text + "\\n");
     });
   },
 });
@@ -33,7 +36,8 @@ globalThis.branch = branch;
 const finish = (value) => {
   let text;
   try { text = JSON.stringify(value); } catch { text = JSON.stringify({ ok: false, error: "the answer could not be written down" }); }
-  process.stdout.write(marker + text + "\\n", () => requests.end(() => process.exit(0)));
+  if (Buffer.byteLength(text) > 60000) text = JSON.stringify({ ok: false, error: "script answer exceeds 60000 bytes" });
+  process.stdout.write(marker + text + "\\n", () => stdoutRpc ? process.exit(0) : requests.end(() => process.exit(0)));
 };
 try {
   const loaded = await import(new URL("./script.mjs", import.meta.url).href);

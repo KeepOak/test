@@ -3,19 +3,20 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { z } from "zod";
 import { pluginWall } from "../add-ons/walled-plugin.js";
 import { ApprovalRequiredError } from "../approvals.js";
-import type { ToolCall, ToolContext } from "../contracts.js";
+import type { ToolContext } from "../contracts.js";
 import type { JournalHook } from "../never-break/journal.js";
 import type { ToolRegistry } from "../registry.js";
-import { argumentFingerprint } from "../question-fingerprint.js";
 import { openWall, type SandboxStart, type WallDeps } from "../sandbox-backends.js";
 import type { WallContext } from "../sandbox.js";
-import { gateToolUse, type ToolGateHost } from "../tool-gate.js";
+import type { ToolGateHost } from "../tool-gate.js";
 import { requireSafety } from "./settings.js";
 import { scriptAnswerMarker, scriptHostSource } from "./script-host.js";
+import { containerScript } from "./code-mode-container.js";
+import { boundedReply, maxOutputBytes, maxPendingRequests, readFrames, rpcMarker, stopScript } from "./code-mode-rpc.js";
+import { sandboxBackendSettings } from "../sandbox-backends.js";
 
 /**
  * mac7/r17-g (R17-061): the model writes one JavaScript module that calls several Branch tools,
@@ -34,7 +35,8 @@ import { scriptAnswerMarker, scriptHostSource } from "./script-host.js";
  *    before it runs (under a `branch-script:` id no model call can have, so a restart finds it and
  *    the outer `tools.script` step is put to the owner rather than run again), and what it hands back
  *    has keys hidden before the script can reshape them.
- * On Windows there is no file and network wall, so scripts are refused there.
+ * On Windows an already-local Docker image supplies the file and network wall.
+ * Missing Docker or a missing image refuses execution; there is no host fallback.
  */
 export const maxCalls = 50;
 export const ScriptInputSchema = z.object({
@@ -48,6 +50,7 @@ export type ScriptInput = z.infer<typeof ScriptInputSchema>;
 export interface ScriptHost extends ToolGateHost {
   journal: JournalHook;
   hideSecrets: <T>(value: T) => T;
+  callFromScript(tool: string, args: unknown, context: ToolContext, callId: string): Promise<unknown>;
 }
 export interface ToolScriptDeps {
   host: ScriptHost;
@@ -60,6 +63,7 @@ export interface ToolScriptDeps {
 }
 export interface ScriptResult { ok: boolean; result: unknown; calls: { tool: string; outcome: string }[]; output: string; error?: string }
 
+/** Budding's separate Windows execution path still uses this refusal. */
 export const windowsScriptRefusal = "On Windows Branch cannot wall a script off from your files and the internet, so tool scripts do not run here.";
 export const askedInScript = "Your approval settings ask first about this, and a script cannot stop to ask. Call this tool on its own, outside the script.";
 
@@ -67,12 +71,19 @@ export class ToolScripts {
   constructor(private readonly deps: ToolScriptDeps) {}
 
   async run(input: ScriptInput, context: ToolContext): Promise<ScriptResult> {
+    input = ScriptInputSchema.parse(input);
+    if (Buffer.byteLength(input.source) > 32_768) throw new Error("A tool script may contain at most 32768 bytes of source.");
     requireSafety(this.deps.host.store, this.deps.host.owner, "tool-scripts");
-    if ((this.deps.wallDeps?.platform ?? process.platform) === "win32") throw new Error(windowsScriptRefusal);
+    context.signal.throwIfAborted();
     const staging = await mkdtemp(join(tmpdir(), "branch-script-"));
     try {
-      await writeFile(join(staging, "script.mjs"), input.source, { mode: 0o600 });
-      await writeFile(join(staging, "host.mjs"), scriptHostSource, { mode: 0o600 });
+      await writeFile(join(staging, "script.mjs"), input.source, { mode: 0o644 });
+      await writeFile(join(staging, "host.mjs"), scriptHostSource, { mode: 0o644 });
+      if ((this.deps.wallDeps?.platform ?? process.platform) === "win32") {
+        const container = containerScript(staging, sandboxBackendSettings(this.deps.host.store, this.deps.host.owner).image);
+        try { return await this.drive(container.start, input, context, `branch-script:${randomUUID()}:`, true, container.close); }
+        finally { await container.close(); }
+      }
       const wall = scriptWall(context.osSandbox, this.deps.unreadable());
       const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin", HOME: staging, TMPDIR: staging,
         ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
@@ -83,33 +94,48 @@ export class ToolScripts {
     } finally { await rm(staging, { recursive: true, force: true }).catch(() => undefined); }
   }
 
-  private drive(start: SandboxStart, input: ScriptInput, context: ToolContext, idPrefix: string): Promise<ScriptResult> {
+  private drive(start: SandboxStart, input: ScriptInput, context: ToolContext, idPrefix: string, stdoutRpc = false, onStop?: () => Promise<void>): Promise<ScriptResult> {
     const child = (this.deps.start ?? startScript)(start);
+    const lifetime = new AbortController();
+    const task = { ...context, signal: AbortSignal.any([context.signal, lifetime.signal]) };
     child.stdin?.on("error", () => undefined); // a pipe that closes first must not throw on its own
     const calls: ScriptResult["calls"] = [];
     let output = "";
-    child.stdout?.on("data", (chunk: Buffer) => { if (output.length < 64_000) output += chunk.toString("utf8"); });
-    child.stderr?.on("data", (chunk: Buffer) => { if (output.length < 64_000) output += chunk.toString("utf8"); });
+    const append = (text: string) => {
+      if (Buffer.byteLength(output) + Buffer.byteLength(text) > maxOutputBytes) { abort(); return; }
+      output += text;
+    };
+    const abort = () => { lifetime.abort(); stopScript(child); void onStop?.(); };
+    let accepted = 0;
     let queue = Promise.resolve();
+    const request = (line: string) => {
+      if (++accepted > maxPendingRequests) { abort(); return; }
+      queue = queue.then(() => {
+        task.signal.throwIfAborted();
+        return this.answer(line, input, task, calls, idPrefix);
+      }).then((reply) => { if (!task.signal.aborted && child.stdin?.writable) child.stdin.write(`${boundedReply(reply)}\n`, () => undefined); })
+        .catch(() => { if (task.signal.aborted) stopScript(child); });
+    };
+    if (child.stdout) readFrames(child.stdout, (line) => {
+      if (stdoutRpc && line.startsWith(rpcMarker)) request(line.slice(rpcMarker.length));
+      else append(`${line}\n`);
+    }, abort);
+    child.stderr?.on("data", (chunk: Buffer) => append(chunk.toString("utf8")));
     const requests = child.stdio[3];
-    if (requests && "on" in requests) createInterface({ input: requests as NodeJS.ReadableStream }).on("line", (line) => {
-      // mac7/linux-fixes: the script may be gone by the time its call is answered — stopped, timed
-      // out or killed — and then this is a pipe with nobody reading it. Writing to one throws
-      // EPIPE where nothing could catch it, which took the whole run down. The answer is simply
-      // dropped instead: there is no longer anyone to give it to.
-      queue = queue.then(() => this.answer(line, input, context, calls, idPrefix))
-        .then((reply) => { if (child.stdin?.writable) child.stdin.write(`${JSON.stringify(reply)}\n`, () => undefined); })
-        .catch(() => undefined);
-    });
+    if (!stdoutRpc && requests && "on" in requests) readFrames(requests as NodeJS.ReadableStream, request, abort);
     return new Promise<ScriptResult>((resolve) => {
-      const timer = setTimeout(() => stopChild(child), input.timeoutMs);
-      const abort = () => stopChild(child);
+      const timer = setTimeout(abort, input.timeoutMs);
       context.signal.addEventListener("abort", abort, { once: true });
-      child.on("error", (error) => { output += `\n${error.message}`; });
+      if (context.signal.aborted) abort();
+      child.on("error", (error) => append(`\n${error.message}`));
       child.on("close", () => {
         clearTimeout(timer);
         context.signal.removeEventListener("abort", abort);
-        resolve(readScriptAnswer(output, calls));
+        const stopped = task.signal.aborted;
+        lifetime.abort();
+        void queue.finally(() => resolve(this.deps.host.hideSecrets(stopped
+          ? { ok: false, result: null, calls, output: output.slice(-8000), error: "The script was stopped or exceeded its time/output limit." }
+          : readScriptAnswer(output, calls))));
       });
     });
   }
@@ -118,6 +144,8 @@ export class ToolScripts {
   private async answer(line: string, input: ScriptInput, context: ToolContext, calls: ScriptResult["calls"], idPrefix: string): Promise<Record<string, unknown>> {
     let request: { id?: unknown; tool?: unknown; args?: unknown };
     try { request = JSON.parse(line) as typeof request; } catch { return { id: null, ok: false, error: "unreadable request" }; }
+    if (!request || !Number.isSafeInteger(request.id) || typeof request.tool !== "string")
+      return { id: null, ok: false, error: "RPC requests need an integer id and a tool name." };
     const id = request.id, tool = String(request.tool ?? "");
     const refuse = (error: string, outcome = "refused") => { calls.push({ tool, outcome }); return { id, ok: false, error }; };
     if (calls.length >= maxCalls) return refuse(`A script may make at most ${maxCalls} tool calls.`);
@@ -138,17 +166,7 @@ export class ToolScripts {
 
   /** Gate, then journal and loop guard around the call itself, as a task's own call has them. */
   private async perform(tool: string, args: unknown, context: ToolContext, callId: string): Promise<{ ok: boolean; result?: unknown; error?: string }> {
-    const { host, registry } = this.deps;
-    const scope = gateToolUse(host, tool, args, context, argumentFingerprint(tool, JSON.stringify(args ?? {})), "policy");
-    // As in Runtime.callTool: the wall comes only from the gate, never from the context handed in.
-    const { osSandbox: _outer, ...unwalled } = context;
-    const execute = async () => ({ ok: true, result: host.hideSecrets(await registry.execute(tool, args, { ...unwalled, ...scope })) });
-    const runId = context.runId;
-    if (!runId) return execute();
-    const call: ToolCall = { id: callId, name: tool, arguments: JSON.stringify(args) };
-    const sessionId = host.store.run(runId)?.sessionId ?? runId;
-    return await host.journal.around({ runId, sessionId, call, permission: registry.permissionOf(tool), workspace: context.workspace, signal: context.signal },
-      () => host.guards.call(runId, call, execute)) as { ok: boolean; result?: unknown; error?: string };
+    return await this.deps.host.callFromScript(tool, args, context, callId) as { ok: boolean; result?: unknown; error?: string };
   }
 }
 
@@ -167,9 +185,6 @@ export function scriptWall(outer: WallContext | undefined, unreadable: readonly 
 function startScript(start: SandboxStart): ChildProcess {
   return spawn(start.executable, start.args, { cwd: start.cwd, env: start.env, shell: false, windowsHide: true,
     detached: true, stdio: ["pipe", "pipe", "pipe", "pipe"] });
-}
-function stopChild(child: ChildProcess): void {
-  try { if (child.pid) process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }
 }
 
 const AnswerShape = z.object({ ok: z.boolean(), result: z.unknown().optional(), error: z.string().max(1000).optional() }).strip();

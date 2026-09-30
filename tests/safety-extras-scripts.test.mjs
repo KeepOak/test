@@ -15,7 +15,8 @@ import { z } from "zod";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { readScriptAnswer, ToolScripts, windowsScriptRefusal } from "../dist/safety-extras/tool-scripts.js";
+import { readScriptAnswer, ToolScripts } from "../dist/safety-extras/tool-scripts.js";
+import { containerScript } from "../dist/safety-extras/code-mode-container.js";
 import { scriptAnswerMarker } from "../dist/safety-extras/script-host.js";
 
 const mac = { skip: process.platform !== "darwin" && "macOS's own sandbox is only on macOS" };
@@ -46,7 +47,7 @@ async function served(t, steps = []) {
   return { app, api, root, looked, ran };
 }
 
-test("ships when needed; switched off refuses, and Windows refuses", async (t) => {
+test("ships when needed; switched off refuses, and Windows plans a confined container", async (t) => {
   const { app, api } = await served(t);
   const context = app.runtime.context({ runId: app.store.createRun(app.runtime.owner, "x").id });
   assert.equal(app.registry.names().includes("tools.script"), true, "ships when needed: the tool is in the catalog");
@@ -55,8 +56,13 @@ test("ships when needed; switched off refuses, and Windows refuses", async (t) =
   assert.equal(app.registry.names().includes("tools.script"), false);
   await api("/api/safety-extras/switch", { part: "tool-scripts", mode: "on" });
   assert.equal(app.registry.names().includes("tools.script"), true);
-  const windows = new ToolScripts({ host: app.runtime, registry: app.registry, unreadable: () => [], wallDeps: { platform: "win32" } });
-  await assert.rejects(windows.run({ source: "export default 1", tools: ["notes.lookup"], timeoutMs: 5000 }, context), new RegExp(windowsScriptRefusal.slice(0, 30)));
+  const { start } = containerScript("C:/scratch/branch-code", "node:22-alpine");
+  assert.equal(start.executable, "docker");
+  for (const flag of ["--pull=never", "--network=none", "--read-only", "--cap-drop=ALL", "--user=65534:65534"])
+    assert.ok(start.args.includes(flag));
+  assert.ok(start.args.includes("type=bind,source=C:/scratch/branch-code,target=/work,readonly"));
+  assert.equal(Object.keys(start.env).some((key) => key.startsWith("BRANCH_")), false);
+  assert.throws(() => containerScript("C:/scratch/branch-code", "--privileged"), /valid local Docker image/);
 });
 
 // Kept apart from the refusals above so that the two of them still run on Windows: only the plan
