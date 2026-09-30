@@ -39,7 +39,9 @@ async function openOrder() {
 async function saveOrder() {
   const trunk = document.getElementById("fno-trunk")?.value ?? "", text = (document.getElementById("fno-text")?.value ?? "").trim();
   if (!trunk || !text) return;
-  try { await api("autonomy/instructions", { text, scope: prefix + trunk }); } catch (error) { toast(error.message); return; }
+  const still = viewFence("ad-fno-save"); // the dialog this came from: a newer one opened meanwhile is never closed by it
+  try { await api("autonomy/instructions", { text, scope: prefix + trunk }); } catch (error) { if (still()) toast(error.message); return; }
+  if (!still()) return;
   closeDlg();
   toast(W("fno-kept", { name: trunkName(prefix + trunk) }));
 }

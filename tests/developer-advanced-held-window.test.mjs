@@ -115,5 +115,31 @@ test("Advanced: the standing-instruction dialog opens nothing late over a dialog
   await removed;
   await page.waitForTimeout(800);
   assert.equal(await page.locator(".dlg").count(), 0, "closed during the removal: not reopened");
+
+  // Saved, then closed and another dialog opened while the save is on its way: its answer never closes the newer one.
+  let releaseSave;
+  const saveHeld = new Promise((resolve) => { releaseSave = resolve; });
+  await page.route("**/api/autonomy/instructions", async (request) => {
+    if (request.request().method() === "POST") await saveHeld;
+    await request.continue();
+  });
+  await page.locator('[data-act="ad-fno"]').click();
+  await page.locator(".dlg #fno-text").waitFor();
+  await page.locator(".dlg #fno-trunk").click();
+  await page.locator('.gsel-pop [data-act="gsel-pick"]', { hasText: "Scout" }).click();
+  await page.locator(".dlg #fno-text").fill("Say which page each fact came from.");
+  const saving = page.waitForRequest((request) => request.url().endsWith("/api/autonomy/instructions") && request.method() === "POST", { timeout: 15000 });
+  await page.locator('.dlg [data-act="ad-fno-save"]').click();
+  await saving;
+  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator('[data-act="ad-orders"]').first().click();
+  await page.locator(".dlg").first().waitFor();
+  const newer = await page.locator(".dlg h2").first().innerText();
+  const saved = page.waitForResponse((response) => response.url().endsWith("/api/autonomy/instructions") && response.request().method() === "POST", { timeout: 15000 });
+  releaseSave();
+  await saved;
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator(".dlg h2").first().innerText(), newer, "the newer dialog is still open");
+  assert.equal(await page.locator(".toast", { hasText: "Kept for Scout" }).count(), 0, "and no word about the old dialog's save");
   assert.deepEqual(errors, []);
 });
