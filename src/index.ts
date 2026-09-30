@@ -708,7 +708,7 @@ export async function createBranch(options: {
     (tool) => { const permission = registry.permissionOf(tool); return permission !== "" && !isReadOnlyPermission(permission); });
   runtime.turnStarted = (run) => rewinds.turnStarted(run);
   const goals = new GoalMode(runtime, store);
-  registerSkills(registry, store);
+  registerSkills(registry, store, () => skillPackages);
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
   runtime.attachmentsFiled = async (session, owner, refs) => {

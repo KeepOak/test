@@ -31,7 +31,7 @@ test('skill parser accepts YAML metadata and rejects malformed, ambiguous, alias
     '---\nname: example\nname: duplicate\ndescription: example\n---\nbody',
     '---\nname: example\ndescription: !custom example\n---\nbody',
     '---\nname: example\ndescription: example\nunknown: true\n---\nbody',
-    document('example', 'x'.repeat(16000)), document('example', '\u0000'.repeat(11000)),
+    document('example', 'x'.repeat(48000)), document('example', '\u0000'.repeat(11000)),
     '---\nname: example\ndescription: example\nmetadata:\n  count: 12\n---\nbody'])
     assert.throws(() => parseSkillDocument(invalid), invalid.slice(0, 90));
 });

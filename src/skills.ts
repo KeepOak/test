@@ -28,8 +28,8 @@ export class InstalledSkills {
     const parsed = SkillScanPolicySchema.safeParse(row ? JSON.parse(String(row.data)) : {});
     return parsed.success ? parsed.data.policy : "block";
   }
-  private scanned(owner: string, document: string): SkillFinding[] {
-    const findings = scanSkill(document);
+  private scanned(owner: string, document: string, resourceFindings: readonly SkillFinding[] = []): SkillFinding[] {
+    const findings = [...scanSkill(document), ...resourceFindings].slice(0, 20);
     if (findings.length && this.policy(owner) === "block")
       throw new Error(`This skill was not saved because it ${describeFindings(findings)}. Change the skill, or set the skill policy to review.`);
     return findings;
@@ -80,9 +80,9 @@ export class InstalledSkills {
         return [{ id: entry.id, version: entry.version, name: entry.metadata.name, description: entry.metadata.description }];
       });
   }
-  install(owner: string, input: unknown) {
+  install(owner: string, input: unknown, resourceFindings: readonly SkillFinding[] = []) {
     const { document } = skillDocumentInput.parse(input), metadata = parseSkillDocument(document);
-    const findings = this.scanned(owner, document);
+    const findings = this.scanned(owner, document, resourceFindings);
     return this.transaction(() => {
       if (this.list(owner).length >= 50) throw new Error("At most 50 installed skills");
       const id = randomUUID(), now = new Date().toISOString();
