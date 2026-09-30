@@ -195,8 +195,8 @@ export function loudness(sound: Uint8Array): number {
 }
 
 /**
- * Four-state hysteresis ported from Pipecat vad_analyzer.py at20999cd7b816
- * (Copyright2024-2026 Daily, BSD-2-Clause; THIRD_PARTY_NOTICES.md). The existing
+ * Four-state hysteresis ported from Pipecat vad_analyzer.py at 20999cd7b816
+ * (Copyright 2024-2026 Daily, BSD-2-Clause; THIRD_PARTY_NOTICES.md). The existing
  * energy detector remains local; only quiet frames adapt its floor, so speech on
  * the first frame is never learned as ambient noise. No neural VAD is downloaded.
  */
@@ -209,7 +209,7 @@ export class RoomFloor {
   static readonly startFrames = 10;
   static readonly stopFrames = 10;
 
-  /** 200ms start and stop hysteresis, in the recorder's20ms frames. */
+  /** 200ms start and stop hysteresis, in the recorder's 20ms frames. */
   speech(sound: Uint8Array): boolean {
     const level = loudness(sound);
     const loud = level > Math.max(this.floor * RoomFloor.overFloor, RoomFloor.leastLoud);

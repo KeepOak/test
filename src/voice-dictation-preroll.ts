@@ -1,6 +1,6 @@
 /** Pipecat's BSD-2-Clause pre-speech buffering approach, base_smart_turn.py
- * at20999cd7b816. Modified for Branch's continuous recognizer: older quiet frames
- * are forwarded, not discarded. Speech releases the500ms look-behind buffer once,
+ * at 20999cd7b816. Modified for Branch's continuous recognizer: older quiet frames
+ * are forwarded, not discarded. Speech releases the 500ms look-behind buffer once,
  * then every frame (including quiet frames) is handed through immediately. */
 export class DictationPreroll {
   private readonly pending: Uint8Array[] = [];
