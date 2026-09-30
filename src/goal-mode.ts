@@ -102,6 +102,8 @@ export interface GoalState {
   elapsedMs: number;
   activeSince: number | null;
   lastRunId: string | null;
+  /** Every round's task, in order, so undoing the goal (src/goal-undo.ts) knows exactly what it did. Absent on older goals. */
+  runIds?: string[];
   /** CHAT-185: a goal set from a chat runs every round as that chat's task. Never taken from a request body. */
   origin?: { source: "channel"; permissions: string[] };
 }
@@ -127,7 +129,7 @@ const busyError = /already has an active run/;
 const waitMs = 500;
 
 export class GoalMode {
-  private readonly live = new Map<string, { controller: AbortController; runId: string | null }>();
+  private readonly live = new Map<string, { controller: AbortController; runId: string | null; ended: Promise<void> }>();
   /** How long to wait between tries when the owner's own message is still being answered. */
   busyWaitMs = waitMs;
 
@@ -148,7 +150,7 @@ export class GoalMode {
     const state: GoalState = {
       sessionId: wanted.sessionId ?? "", objective: wanted.objective, status: "working", round: 0, maxRounds: wanted.maxRounds,
       score: null, best: 0, flatRounds: 0, missing: [], reason: "", checks: wanted.checks ?? null,
-      startedAt: new Date(this.now()).toISOString(), elapsedMs: 0, activeSince: this.now(), lastRunId: null,
+      startedAt: new Date(this.now()).toISOString(), elapsedMs: 0, activeSince: this.now(), lastRunId: null, runIds: [],
       ...(origin ? { origin: { source: "channel", permissions: [...origin.permissions] } } : {}),
     };
     const started = new Promise<void>((resolve, reject) => {
@@ -206,15 +208,26 @@ export class GoalMode {
     return this.settle(this.store.get("settings", this.runtime.owner, key(sessionId))!.data as unknown as GoalState, "stopped", "Stopped by you.");
   }
 
+  /** Resolves once nothing drives this conversation's goal any more (at once when nothing does). */
+  async settled(sessionId: string): Promise<void> { await this.live.get(sessionId)?.ended; }
+
+  /** Takes the goal off this conversation (undoing it): its strip goes; its rounds stay in the history. */
+  forget(sessionId: string): void {
+    if (this.live.has(sessionId)) throw new Error("This goal is still working. Stop it first.");
+    this.store.delete("settings", this.runtime.owner, key(sessionId));
+  }
+
   /** Runs rounds until the goal is met, blocked, stopped, paused or out of rounds. */
   private async drive(state: GoalState, onStarted: () => void): Promise<void> {
     const controller = new AbortController();
-    if (state.sessionId) this.live.set(state.sessionId, { controller, runId: null });
+    let end!: () => void;
+    const ended = new Promise<void>((resolve) => { end = resolve; });
+    if (state.sessionId) this.live.set(state.sessionId, { controller, runId: null, ended });
     try {
       while (this.current(state).status === "working") {
         if (state.round >= state.maxRounds) { this.settle(state, "limit", `Stopped after ${state.round} rounds without being judged done.`); break; }
         state.round += 1;
-        const run = await this.round(state, controller, onStarted);
+        const run = await this.round(state, controller, onStarted, ended);
         Object.assign(state, this.current(state));
         if (controller.signal.aborted) break;
         this.apply(state, await this.judge(run, state));
@@ -224,11 +237,12 @@ export class GoalMode {
       throw error;
     } finally {
       if (state.sessionId) this.live.delete(state.sessionId);
+      end();
     }
   }
 
   /** One round: the goal itself the first time, a request to carry on afterwards. */
-  private async round(state: GoalState, controller: AbortController, onStarted: () => void): Promise<Run> {
+  private async round(state: GoalState, controller: AbortController, onStarted: () => void, ended: Promise<void>): Promise<Run> {
     // r17-b: the sub-goals added with /subgoal are part of the goal each round is shown.
     const goal = { ...state, objective: goalWithSubgoals(this.store, this.runtime.owner, state) };
     const prompt = state.round === 1 && !state.lastRunId ? firstPrompt(goal.objective) : nextPrompt(goal);
@@ -239,9 +253,10 @@ export class GoalMode {
           ...(state.sessionId ? { sessionId: state.sessionId } : {}),
           ...(state.origin ? { source: state.origin.source, permissions: state.origin.permissions } : {}),
           onStarted: (run) => {
-            if (!state.sessionId) { state.sessionId = run.sessionId; this.live.set(run.sessionId, { controller, runId: null }); }
+            if (!state.sessionId) { state.sessionId = run.sessionId; this.live.set(run.sessionId, { controller, runId: null, ended }); }
             this.live.get(state.sessionId)!.runId = run.id;
             state.lastRunId = run.id;
+            state.runIds = [...(this.current(state).runIds ?? state.runIds ?? []), run.id];
             this.save(state);
             onStarted();
           },

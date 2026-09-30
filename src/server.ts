@@ -132,6 +132,7 @@ import type { createBranch } from "./index.js";
 import { goalApi } from "./goal-mode.js";
 import { diagramFrameRoute } from "./diagram-frame.js";
 import { rewindApi } from "./rewind.js";
+import { goalUndoApi as goalUndoRoute } from "./goal-undo.js";
 import { PreferencesSchema, preferences } from "./preferences.js";
 import { asksApi, AsksHttpError, handlesAsksPath } from "./asks/api.js"; // mac6/bucket-23: the smaller asks
 import { autonomyApi, AutonomyHttpError, handlesAutonomyPath } from "./autonomy/api.js"; // r17-b
@@ -1408,7 +1409,7 @@ async function api(
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
   if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
   // Wave mac2 (goal-undo): working toward a goal in rounds, and going back to an earlier message.
-  if (path === "/api/goals" || path === "/api/goal-undo/settings" || /^\/api\/sessions\/[a-f0-9-]{36}\/(goal|rewind|unrevert)$/.test(path))
+  if (path === "/api/goals" || path === "/api/goal-undo/settings" || /^\/api\/sessions\/[a-f0-9-]{36}\/(goal|goal\/undo|rewind|unrevert)$/.test(path))
     return goalUndoApi(app, request, path);
   if (path.startsWith("/api/sessions/")) return sessionApi(app, request, path);
   if (path.startsWith("/api/memory/")) return memoryApi(app, request, path);
@@ -2403,9 +2404,11 @@ async function conversationActions(app: Branch, request: IncomingMessage, path: 
 /** Wave mac2 (goal-undo): both answer only for conversations of the profile that is switched on. */
 async function goalUndoApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const owner = app.store.profiles.scope(), method = request.method ?? "GET", body = () => readBody(request);
-  const answer = path.endsWith("/goal") || path === "/api/goals" || path === "/api/goal-undo/settings"
-    ? await goalApi(app.goals, (id) => app.store.ownsSession(owner, id), method, path, body)
-    : await rewindApi(app.rewinds, owner, method, path, body);
+  const owns = (id: string) => app.store.ownsSession(owner, id);
+  const answer = path.endsWith("/goal/undo") ? await goalUndoRoute(app.goalUndo, owns, method, path, body)
+    : path.endsWith("/goal") || path === "/api/goals" || path === "/api/goal-undo/settings"
+      ? await goalApi(app.goals, owns, method, path, body)
+      : await rewindApi(app.rewinds, owner, method, path, body);
   if (answer === undefined) throw new HttpError(404, "Endpoint not found");
   return answer;
 }

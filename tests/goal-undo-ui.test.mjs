@@ -48,7 +48,7 @@ async function open(page, sessionId) {
 }
 const overflow = (page) => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 
-test("the goal strip shows the round, score, what is missing and Resume/Stop, and fits 400 px", async (t) => {
+test("the goal strip shows the round, score, what is missing and Resume/Stop/Undo, and fits 400 px", async (t) => {
   const { app, page, errors } = await setUp(t, "strip");
   const run = await app.runtime.run({ prompt: "hello" });
   app.store.save("settings", "local", `goal:${run.sessionId}`, {
@@ -62,7 +62,7 @@ test("the goal strip shows the round, score, what is missing and Resume/Stop, an
   const text = await strip.textContent();
   for (const words of ["Goal: Make the tests pass", "Round 2 of 6", "score 0.4 of 1", "1 min", "still missing: the login test"])
     assert.ok(text.includes(words), `the strip says "${words}": ${text}`);
-  assert.deepEqual(await strip.locator("button").allTextContents(), ["Resume", "Stop"]);
+  assert.deepEqual(await strip.locator("button").allTextContents(), ["Resume", "Stop", "Undo"]);
   assert.ok((await overflow(page)) <= 0, "no sideways scrolling at 400 px");
   // Stop, as a person presses it: a finished goal has no strip (it is said in the conversation itself). Redesign: the old
   // strip's "Goal stopped" wording and its Hide button are replaced by the new window.

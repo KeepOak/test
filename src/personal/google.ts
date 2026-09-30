@@ -123,7 +123,18 @@ export class GoogleConnector {
     const raw = Buffer.from(buildPlainMail({ to: value.to, cc: value.cc, subject: value.subject, text: value.text }), "utf8").toString("base64url");
     const made = z.object({ id: z.string() }).passthrough().parse(await this.call(`${gmail}/drafts`, {
       method: "POST", json: { message: { raw, ...(value.threadId ? { threadId: value.threadId } : {}) } } }));
-    return { draftId: made.id, sent: false, note: "The draft is in your Gmail drafts. Branch never sends it; you do." };
+    return { draftId: made.id, to: [...value.to, ...value.cc], subject: value.subject, sent: false,
+      note: "The draft is in your Gmail drafts. Branch never sends it; you do." };
+  }
+
+  /**
+   * Undoing a goal (src/goal-undo.ts): deletes one draft Branch wrote. Gmail keeps a draft's id only while it is a draft, so a
+   * draft the owner has sent (or deleted) is gone from there and is left alone: nothing that was sent is ever deleted.
+   */
+  async deleteDraft(id: string): Promise<"deleted" | "gone"> {
+    try { await this.call(`${gmail}/drafts/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+    catch (error) { if (/\((404|410)\)/.test(String((error as Error)?.message))) return "gone"; throw error; }
+    return "deleted";
   }
 
   async events(input: unknown, now = new Date()) {
