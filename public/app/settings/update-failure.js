@@ -1,6 +1,6 @@
 /* PLAT-040: the existing owner-only update report, downloaded locally on the owner's press.
    Report contents/redaction stay with the engine. No report is uploaded or sent by this module. */
-import { activeId, ownerHere } from "../core/state.js";
+import { S, activeId, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { esc, render } from "../core/dom.js";
 import { on } from "../core/actions.js";
@@ -9,7 +9,8 @@ import { toast } from "../core/ui.js";
 import { t } from "../../i18n.js";
 
 let failure = null, owner = null, generation = 0, reads = 0, downloading = false;
-const stamp = () => ownerHere() ? activeId() ?? "owner" : null;
+const stamp = () => S.signedIn && ownerHere() && !document.getElementById("app")?.classList.contains("locked-b17")
+  ? activeId() ?? "owner" : null;
 function syncOwner() {
   const now = stamp();
   if (now !== owner) { owner = now; failure = null; downloading = false; generation++; }
@@ -47,8 +48,9 @@ async function download() {
     try {
       const link = Object.assign(document.createElement("a"), { href: url, download: name });
       document.body.append(link);
-      link.click();
-      link.remove();
+      try {
+        if (syncOwner() === who && generation === at) link.click();
+      } finally { link.remove(); }
     } finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
   } catch (error) {
     if (syncOwner() === who && generation === at) toast(error.message);
