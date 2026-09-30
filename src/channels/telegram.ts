@@ -1,3 +1,4 @@
+import { calledByName, type GroupReading } from "./addressing.js";
 import { z } from "zod";
 import { telegramMarkdown } from "./chat-markdown.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
@@ -34,7 +35,9 @@ export interface TelegramOptions {
 export const telegramBotId = (token: string): string => token.split(":")[0] ?? "";
 /** P17-D §8: what Settings › Chat apps and the Inbox show while Telegram refuses the bot token. */
 export const tokenRefused = "Telegram refused the bot token, so messages sent to the bot since then haven't reached Branch. It was probably revoked or replaced in BotFather: paste the new token to bring it back.";
-const userSchema = z.object({ id: z.number(), is_bot: z.boolean().optional(), first_name: z.string().optional(), username: z.string().optional() }).passthrough();
+const userSchema = z.object({ id: z.number(), is_bot: z.boolean().optional(), first_name: z.string().optional(), username: z.string().optional(),
+  /** getMe only: false while the bot's privacy mode is on, when a group hands it only mentions, replies and commands. */
+  can_read_all_group_messages: z.boolean().optional() }).passthrough();
 const voiceSchema = z.object({
   file_id: z.string().min(1).max(200),
   duration: z.number().nonnegative().optional(),
@@ -161,6 +164,23 @@ export class TelegramAdapter implements ChannelAdapter {
   private async learnName(stoppable = false): Promise<void> {
     const me = userSchema.parse(await this.call("getMe", {}, false, stoppable));
     this.username = me.username ?? null;
+    this.me = { id: me.id, firstName: me.first_name ?? null, readsAll: me.can_read_all_group_messages ?? null };
+  }
+  /** The bot itself, from getMe: its id, the name people call it by, and whether privacy mode lets it read every group message. */
+  private me: { id: number; firstName: string | null; readsAll: boolean | null } | null = null;
+  /**
+   * Group chats: with privacy mode on (BotFather's default) a group hands the bot only messages that @mention it, reply to
+   * it or are commands, unless the bot is an admin there. Telegram's own answers decide it: getMe, then getChatMember.
+   */
+  async groupReading(chatId?: string): Promise<GroupReading> {
+    if (!this.me) await this.learnName();
+    if (this.me?.readsAll) return { everyMessage: true };
+    if (chatId && this.me) {
+      const member = z.object({ status: z.string() }).passthrough().safeParse(
+        await this.call("getChatMember", { chat_id: telegramTarget(chatId).chat_id, user_id: this.me.id }).catch(() => null));
+      if (member.success && ["administrator", "creator"].includes(member.data.status)) return { everyMessage: true };
+    }
+    return { everyMessage: false, fix: telegramPrivacyFix(this.username) };
   }
   async stop(): Promise<void> {
     this.stopping.abort();
@@ -440,12 +460,14 @@ export class TelegramAdapter implements ChannelAdapter {
       entity.type === "mention" && written.slice(entity.offset, entity.offset + entity.length).toLowerCase() === mention);
     const replyToBot = !!this.username && message.reply_to_message?.from?.username === this.username;
     const direct = message.chat.type === "private";
+    // Called by name ("Branch, …"). With privacy mode on Telegram only hands such a message over to an admin bot.
+    const named = !direct && calledByName(written, [this.username, this.me?.firstName]);
     const text = mention && mentioned ? written.replace(new RegExp(mention, "ig"), "").trim() : written;
     return {
       channel: this.id, chatId: topicAddress(message.chat.id, message.message_thread_id), chatKind: direct ? "direct" : "group",
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
-      text, addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
+      text, addressed: direct || mentioned || replyToBot || named || (!!spoken && direct), messageId: String(message.message_id),
       ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
         name: message.document?.file_name ?? message.video?.file_name ?? `photo-${message.message_id}.jpg`,
@@ -517,6 +539,12 @@ export class TelegramAdapter implements ChannelAdapter {
       { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
     return parsed.result;
   }
+}
+
+/** What to change in Telegram so a bot reads every message in its groups, in plain words. */
+export function telegramPrivacyFix(username: string | null): string {
+  return `Telegram's privacy mode is on for ${username ? `@${username}` : "this bot"}, so in groups it only sees messages that mention it, reply to it or are commands. `
+    + "To answer every message, send /setprivacy to @BotFather, choose the bot and pick Disable, then remove the bot from the group and add it again; or make the bot an admin of the group.";
 }
 
 /** What Telegram shows as a photo: JPEG, PNG or WebP, up to its 10 MB photo limit. */
