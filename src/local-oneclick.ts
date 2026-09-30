@@ -10,6 +10,10 @@ import { SetupJobs, SetupRequestSchema, assertLocalModelsOn, type SetupJob, type
 import { runtimeIds, runtimeInfo, type RuntimeId, type RuntimeLauncher } from "./local-launch.js";
 import { LmStudioClient, OllamaClient, OpenAiServerClient, lmStudioModelName, localModelName } from "./local-models.js";
 import { localRuntimeFetch } from "./local-policy.js";
+import { localAIModel } from "./local-localai.js";
+import { lockdownActive } from "./lockdown.js";
+import { startedWithShortLivedKey } from "./key-context.js";
+import { currentPerson } from "./people/context.js";
 import { detectTools, installPlan, isInstallable, planSize, runInstall, type InstallPlan, type InstallableRunner } from "./local-install.js";
 import {
   ButtonGoSchema, ButtonPlanSchema, installGuard, needsAgreementNote, notInstalledNote, oneButtonMode, onceGuard, planChangedNote,
@@ -79,6 +83,8 @@ interface Resolved {
   context: number;
   /** Already in Ollama on this computer: used as it is, nothing is downloaded. */
   found?: boolean;
+  backend?: string;
+  servedModel?: string;
 }
 
 export class OneClick {
@@ -105,6 +111,8 @@ export class OneClick {
     if (!(await this.deps.launcher.find(runtime)))
       return { needsRuntime: true, runtimes: [runtimeInfo[runtime]], message: `${runtimeInfo[runtime].name} is not installed on this computer. ${runtimeInfo[runtime].installNote}` };
     const resolved = await this.resolve(request, runtime);
+    if (runtime === "localai" && this.jobs.unfinished().some((job) => job.runtime === runtime && this.running.has(job.id)))
+      throw new Error("A LocalAI setup is already running; stop it or wait for it to finish first.");
     const busy = this.jobs.unfinished().find((job) => job.label === resolved.label && job.runtime === runtime && this.running.has(job.id));
     if (busy) return busy;
     const job = this.jobs.put({
@@ -123,12 +131,21 @@ export class OneClick {
 
   /** The first installed runtime, in the order most people have them. */
   private async pickRuntime(): Promise<RuntimeId | null> {
-    for (const id of runtimeIds) if (await this.deps.launcher.find(id)) return id;
+    for (const id of runtimeIds) if (id !== "localai" && await this.deps.launcher.find(id)) return id;
     return null;
   }
 
   /** What exactly to fetch, and with how much room for words. Refuses what will not fit. */
   private async resolve(request: SetupRequest, runtime: RuntimeId): Promise<Resolved> {
+    if (runtime === "localai") {
+      this.localAIGuard();
+      if (!("name" in request) || request.found !== true || !request.backend)
+        throw new Error("LocalAI setup needs an existing GGUF with found: true and its existing local llama.cpp gRPC backend executable.");
+      const local = await localAIModel(request.name, request.backend, this.deps.launcher.at);
+      return { runtime, source: local.file, label: local.label, context: request.context ?? 4096, bytes: null,
+        entry: null, variant: null, found: true, backend: local.backend, servedModel: local.model };
+    }
+    if ("name" in request && (request.backend || request.context !== undefined)) throw new Error("backend/context are used only for an explicit LocalAI setup.");
     const room = await this.deps.room();
     if ("found" in request && request.found) return this.resolveFound(request.name, runtime, room, request.force);
     if ("model" in request) {
@@ -173,19 +190,28 @@ export class OneClick {
    */
   private async run(id: string, resolved: Resolved, signal: AbortSignal): Promise<void> {
     const step = (change: Partial<SetupJob>) => { if (!signal.aborted) this.jobs.update(id, change); };
+    let localAIStarted = false;
     try {
       await this.checkDisk(resolved);
       if (resolved.runtime === "ollama" || resolved.runtime === "lm-studio") await untilStopped(this.ensureRunning(resolved, step, signal), signal);
       const local = resolved.found ? await untilStopped(this.foundModel(resolved), signal) : await this.download(resolved, signal, step);
       signal.throwIfAborted();
       step({ stage: "loading", message: "Loading it with room for about " + Math.round(resolved.context / 1000) + ",000 words…", percent: 100 });
-      const model = await untilStopped(this.load(resolved, local, step, signal), signal);
+      const model = await untilStopped(this.load(resolved, local, step, signal, async () => {
+        localAIStarted = true; await this.localAIAfterStart(signal);
+      }), signal);
       step({ stage: "connecting", message: "Asking it a small question…" });
       const test = this.deps.test ?? smokeTest;
       const record = await registerLocalConnection({ ...this.deps, endpoint: (runtime) => this.deps.launcher.baseUrl(runtime) }, { runtime: resolved.runtime, model, contextLength: resolved.context, label: resolved.label },
-        (provider) => untilStopped(test(provider), signal));
+        async (provider) => {
+          if (resolved.runtime === "localai") this.localAIGuard();
+          await untilStopped(test(provider), signal);
+          if (resolved.runtime === "localai") this.localAIGuard();
+          signal.throwIfAborted();
+        });
       step({ stage: "done", connectionId: record.id, finishedAt: this.now(), message: `Ready: ${record.name}.` });
     } catch (error) {
+      if (localAIStarted) await this.deps.launcher.stopRuntime("localai");
       // Closing Branch is not the owner stopping it: leave the setup open so it resumes next time.
       if (this.closing) { this.jobs.update(id, { message: "Waiting for Branch to open again…" }); return; }
       const stopped = signal.aborted;
@@ -203,6 +229,7 @@ export class OneClick {
   }
   /** A model Ollama or LM Studio already has is used as it is: it is looked for, never fetched again. */
   private async foundModel(resolved: Resolved): Promise<string> {
+    if (resolved.runtime === "localai") { this.localAIGuard(); return (await localAIModel(resolved.source, resolved.backend ?? "", this.deps.launcher.at)).file; }
     const there = resolved.runtime === "lm-studio"
       ? (await this.lmStudio.list()).models.some((model) => model.name === resolved.source)
       : (await this.ollama.list()).some((model) => model.name === resolved.source);
@@ -256,6 +283,7 @@ export class OneClick {
 
   /** Downloads through whichever route the runtime has; returns the local path where there is one. */
   private async fetchModel(resolved: Resolved, signal: AbortSignal, progress: (completed: number, total: number) => void): Promise<string> {
+    if (resolved.runtime === "localai") throw new Error("Branch uses existing LocalAI model files and never downloads them in this setup.");
     if (resolved.runtime === "ollama") {
       await this.ollama.pull(resolved.source, (report) => progress(report.completed, report.total), signal);
       return resolved.source;
@@ -303,7 +331,8 @@ export class OneClick {
   }
 
   /** Brings the model into memory with its room for words; returns the name the connection uses. */
-  private async load(resolved: Resolved, local: string, step: (change: Partial<SetupJob>) => unknown, signal?: AbortSignal): Promise<string> {
+  private async load(resolved: Resolved, local: string, step: (change: Partial<SetupJob>) => unknown, signal?: AbortSignal, onLocalAIStarted?: () => Promise<void>): Promise<string> {
+    if (resolved.runtime === "localai") { this.localAIGuard(); signal?.throwIfAborted(); }
     switch (resolved.runtime) {
       case "ollama": {
         const sized = await this.ollama.sized(local, resolved.context);
@@ -320,15 +349,30 @@ export class OneClick {
       }
       default: {
         step({ stage: "starting", message: `Starting ${runtimeInfo[resolved.runtime].name} with this model…` });
-        const started = await this.deps.launcher.start(resolved.runtime, resolved.runtime === "mlx" ? { repo: local, context: resolved.context } : { file: local, context: resolved.context });
+        const startModel = resolved.runtime === "mlx" ? { repo: local, context: resolved.context }
+          : { file: local, context: resolved.context, ...(resolved.backend ? { backend: resolved.backend } : {}) };
+        const started = await this.deps.launcher.start(resolved.runtime, startModel);
         if (!started.started) throw new Error(started.message);
+        if (resolved.runtime === "localai") await onLocalAIStarted?.();
         const base = this.deps.launcher.baseUrl(resolved.runtime);
         if (!base) throw new Error(`${runtimeInfo[resolved.runtime].name} did not start`);
         const server = new OpenAiServerClient(base, localRuntimeFetch(this.deps.policy, this.deps.fetch ?? globalThis.fetch, base));
-        await this.waitFor(async () => (await server.models()) !== null, `${runtimeInfo[resolved.runtime].name} did not answer within two minutes`, 120, signal);
-        return local;
+        await this.waitFor(async () => {
+          const names = await server.models();
+          return resolved.servedModel ? names?.includes(resolved.servedModel) === true : names !== null;
+        }, `${runtimeInfo[resolved.runtime].name} did not answer within two minutes`, 120, signal);
+        return resolved.servedModel ?? local;
       }
     }
+  }
+  private localAIGuard(): void {
+    assertLocalModelsOn(this.deps.store, this.deps.owner);
+    if (lockdownActive(this.deps.store, this.deps.owner) || this.deps.store.profiles.scope() !== this.deps.owner || currentPerson() || startedWithShortLivedKey())
+      throw new Error("Only the owner in their own profile can set up LocalAI, while Lockdown is off.");
+  }
+  private async localAIAfterStart(signal: AbortSignal): Promise<void> {
+    try { this.localAIGuard(); signal.throwIfAborted(); }
+    catch (error) { await this.deps.launcher.stopRuntime("localai"); throw error; }
   }
   /** LM Studio names a downloaded model its own way; find the one that matches what was fetched. */
   private async lmStudioKey(resolved: Resolved): Promise<string> {

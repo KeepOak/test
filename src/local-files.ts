@@ -31,6 +31,7 @@ export function modelsFolder(runtime: RuntimeId, at: LaunchEnv, dataDir: string,
     case "lm-studio": return join(at.home, ".lmstudio", "models");
     case "llama-cpp": return join(dataDir, "local-models", "gguf");
     case "mlx": return join(dataDir, "local-models", "mlx");
+    case "localai": return join(dataDir, "local-models", "localai-sessions"); // Private generated state, not the owner's GGUF.
   }
 }
 

@@ -43,7 +43,7 @@ const runtimeEnum = z.enum(runtimeIds as [RuntimeId, ...RuntimeId[]]);
 export const SetupRequestSchema = z.union([
   z.object({ runtime: runtimeEnum.optional(), model: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,40}$/), quant: z.string().regex(/^[A-Za-z0-9_]{2,16}$/), force: z.boolean().default(false) }).strict(),
   // `found`: the model is already in Ollama or LM Studio on this computer, so it is used as it is and never fetched again.
-  z.object({ runtime: runtimeEnum.optional(), name: z.string().trim().min(1).max(300), force: z.boolean().default(false), found: z.literal(true).optional() }).strict(),
+  z.object({ runtime: runtimeEnum.optional(), name: z.string().trim().min(1).max(300), force: z.boolean().default(false), found: z.literal(true).optional(), backend: z.string().trim().min(1).max(300).optional(), context: z.number().int().min(512).max(8192).optional() }).strict(),
 ]);
 export type SetupRequest = z.infer<typeof SetupRequestSchema>;
 
