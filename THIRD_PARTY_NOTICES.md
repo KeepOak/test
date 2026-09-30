@@ -12,6 +12,10 @@
 
 `src/channels/signal-format.ts` adapts code-block extraction, formatting marker removal and `MONOSPACE` style ranges from `gateway/platforms/signal_format.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch uses JavaScript's UTF-16 offsets and its existing progress spans, and sends signal-cli's `textStyle` parameters. OpenClaw `extensions/signal/src/format.ts` was reviewed but depends on its shared markdown renderer, which is not included here.
 
+### Hermes email sender authentication
+
+`src/channels/mail-auth.ts` ports the comment/quote-aware Authentication-Results clause and property parsing and sender-authentication decision from `plugins/platforms/email/adapter.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/plugins/platforms/email/adapter.py), Copyright (c) 2025 Nous Research, MIT. Branch considers only the first header, uses exact optional authserv-id pins, and uses exact domain alignment for SPF/DKIM fallback. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
