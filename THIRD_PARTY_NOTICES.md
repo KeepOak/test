@@ -57,6 +57,35 @@ the notices for bundled entities (BSD-2-Clause), linkify-it, mdurl, punycode.js
 and uc.micro (MIT) are retained alongside the bundle. See that folder's README
 for the official package source, version and checksum.
 
+## Hermes wake-word adapter
+
+`src/voice-wake-kws.ts` adapts threshold and phrase display mapping from
+`tools/wake_word_engines.py` at `a9a54245b2311c705d29050b7f9868c015917aec`
+of https://github.com/NousResearch/hermes-agent. Branch uses an external installed
+sherpa-onnx CLI and owner-supplied models/keywords, with no model downloads.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## @hono/node-server 2.1.1
 
 Declared license: MIT
