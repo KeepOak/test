@@ -1112,6 +1112,7 @@ export const ROUTES = {
   "/api/second-opinion": "owner POST",
   "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
   "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
+  "/api/continuous-qa": "owner POST",
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
@@ -1295,6 +1296,11 @@ export const ROUTES = {
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
   "/api/self-development/ci": "owner POST",
+  "/api/self-development/merge/test-copy": "owner POST",
+  "/api/self-development/merge/test-copy/": "prefix",
+  "/api/self-development/merge/test-copy/cancel": "owner POST",
+  "/api/self-development/merge/test-copy/start": "owner POST",
+  "/api/self-development/merge/test-copy/status": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",

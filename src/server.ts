@@ -1089,6 +1089,12 @@ async function api(
   if (path === "/api/self-development/ci") {
     return sourceCiApi(app, request.method ?? "GET", throughADoor(request), () => readBody(request));
   }
+  if (path === "/api/continuous-qa") {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    if (request.method === "GET") return app.continuousQa.status();
+    if (request.method === "POST") return app.continuousQa.configure(await readBody(request));
+    throw new HttpError(405, "Use GET or POST here.");
+  }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))
     return workspaceEditorApi({

@@ -117,6 +117,7 @@ import { SkillPackages } from "./skill-packages.js";
 import { Plugins } from "./plugins.js";
 import { Evaluation } from "./evaluation.js";
 import { SuiteRunner } from "./evaluation-runner.js";
+import { ContinuousQa } from "./continuous-qa.js";
 import { StudyRunner } from "./study.js";
 import { liveScores, liveScoreSummary, liveScoringSettings, saveLiveScoringSettings, watchFinishedRuns } from "./evaluation-live.js";
 import { NeedsInputError, type ToolContext } from "./contracts.js";
@@ -804,6 +805,9 @@ export async function createBranch(options: {
   registry.onToolsChanged(offerFinish);
   offerContractTests(registry, selfContracts, sourceMerges, (name, args, context) => gatedCall({ runtime, registry }, name, args, context), options.owner ?? "local");
   offerSourceRequests(runtime, sourceRequests);
+  const continuousQa = new ContinuousQa(selfDevelopment, () => sessionLock.shut(), async (prompt, preset, tokens, signal) =>
+    runtime.run({ prompt, model: preset, permissions: [], isolated: true, temporary: true, source: "schedule", signal,
+      timeoutMs: 120_000, budget: { maxSteps: 2, maxTokens: tokens } }));
   const contractChecks = { store, owner: options.owner ?? "local", workspace, registry, book: selfContracts,
     git: (input: GitRunOptions, signal: AbortSignal) => gitRunner.run(input, signal) };
   registry.beforeTool = contractGuard(contractChecks);
@@ -1730,6 +1734,7 @@ ${result.output || "(it said nothing)"}`;
     /** Requests from a chat to change Branch itself; only the owner answers them (src/self-development-requests.ts). */
     sourceRequests,
     sourceMerges,
+    continuousQa,
     /** R17-F: learning, deeper (src/learning-more/); every part ships off. */
     learningMore,
     /** mac7/learn: the map and the tour (src/learn/); ships off. */
@@ -2057,6 +2062,7 @@ ${result.output || "(it said nothing)"}`;
       await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
+      continuousQa.close();
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
       await ownMcp.closeAll(); // eng-connectors: no question watcher or server of the owner's outlives the app
       await mcpConnections.closeAll();

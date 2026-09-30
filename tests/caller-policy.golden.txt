@@ -1902,6 +1902,8 @@ owner GET /api/codex-models | here=ok remote=ok phone=ok legacy=ok person=401/32
 owner POST /api/codex-models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/codex-models/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/codex-models/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/continuous-qa | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/continuous-qa | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/secrets | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2223,6 +2225,14 @@ owner GET /api/panels/browser/stop | here=ok remote=403/4bac86 phone=403/4bac86 
 owner POST /api/panels/browser/stop | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/self-development/ci | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/self-development/ci | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/merge/test-copy | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge/test-copy | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/merge/test-copy/cancel | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge/test-copy/cancel | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/merge/test-copy/start | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge/test-copy/start | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/merge/test-copy/status | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/merge/test-copy/status | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/usage/glance | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/usage/glance | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/usage/by-trunk | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4151,6 +4161,8 @@ owner+lockdown GET /api/codex-models | here=ok remote=ok phone=ok legacy=ok pers
 owner+lockdown POST /api/codex-models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/codex-models/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/codex-models/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/continuous-qa | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/continuous-qa | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/secrets | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4472,6 +4484,14 @@ owner+lockdown GET /api/panels/browser/stop | here=ok remote=403/4bac86 phone=40
 owner+lockdown POST /api/panels/browser/stop | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/self-development/ci | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/self-development/ci | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge/test-copy | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge/test-copy | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge/test-copy/cancel | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge/test-copy/cancel | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge/test-copy/start | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge/test-copy/start | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/merge/test-copy/status | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/merge/test-copy/status | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/usage/glance | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/usage/glance | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/usage/by-trunk | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6400,6 +6420,8 @@ household GET /api/codex-models | here=400/f6e21c remote=400/f6e21c read=400/f6e
 household POST /api/codex-models | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/codex-models/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/codex-models/check | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/continuous-qa | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/continuous-qa | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/secrets | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6721,6 +6743,14 @@ household GET /api/panels/browser/stop | here=400/f6e21c remote=403/4bac86 read=
 household POST /api/panels/browser/stop | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/self-development/ci | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/self-development/ci | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/self-development/merge/test-copy | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge/test-copy | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/self-development/merge/test-copy/cancel | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge/test-copy/cancel | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/self-development/merge/test-copy/start | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge/test-copy/start | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/self-development/merge/test-copy/status | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/self-development/merge/test-copy/status | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/usage/glance | here=ok remote=ok read=ok run=ok
 household POST /api/usage/glance | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/usage/by-trunk | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8649,6 +8679,8 @@ household+lockdown GET /api/codex-models | here=400/f6e21c remote=400/f6e21c rea
 household+lockdown POST /api/codex-models | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/codex-models/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/codex-models/check | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/continuous-qa | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/continuous-qa | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/secrets | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8970,6 +9002,14 @@ household+lockdown GET /api/panels/browser/stop | here=400/f6e21c remote=403/4ba
 household+lockdown POST /api/panels/browser/stop | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/self-development/ci | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/self-development/ci | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge/test-copy | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge/test-copy | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge/test-copy/cancel | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge/test-copy/cancel | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge/test-copy/start | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge/test-copy/start | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/merge/test-copy/status | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/merge/test-copy/status | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/usage/glance | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/usage/glance | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/usage/by-trunk | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10898,6 +10938,8 @@ applock GET /api/codex-models | here=423/a8f863
 applock POST /api/codex-models | here=423/a8f863
 applock GET /api/codex-models/check | here=423/a8f863
 applock POST /api/codex-models/check | here=423/a8f863
+applock GET /api/continuous-qa | here=423/a8f863
+applock POST /api/continuous-qa | here=423/a8f863
 applock GET /api/helper-defaults | here=423/a8f863
 applock POST /api/helper-defaults | here=423/a8f863
 applock GET /api/secrets | here=423/a8f863
@@ -11219,6 +11261,14 @@ applock GET /api/panels/browser/stop | here=423/a8f863
 applock POST /api/panels/browser/stop | here=423/a8f863
 applock GET /api/self-development/ci | here=423/a8f863
 applock POST /api/self-development/ci | here=423/a8f863
+applock GET /api/self-development/merge/test-copy | here=423/a8f863
+applock POST /api/self-development/merge/test-copy | here=423/a8f863
+applock GET /api/self-development/merge/test-copy/cancel | here=423/a8f863
+applock POST /api/self-development/merge/test-copy/cancel | here=423/a8f863
+applock GET /api/self-development/merge/test-copy/start | here=423/a8f863
+applock POST /api/self-development/merge/test-copy/start | here=423/a8f863
+applock GET /api/self-development/merge/test-copy/status | here=423/a8f863
+applock POST /api/self-development/merge/test-copy/status | here=423/a8f863
 applock GET /api/usage/glance | here=423/a8f863
 applock POST /api/usage/glance | here=423/a8f863
 applock GET /api/usage/by-trunk | here=423/a8f863

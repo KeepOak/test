@@ -18,6 +18,8 @@ import { canonicalRepo, officialRepo } from "./desktop/repo-pair.js";
 import { throughPairedDoor } from "./people/context.js";
 import type { ToolContext } from "./contracts.js";
 import { recordSourceArrival } from "./self-development-arrival.js";
+import { prepareTestCopy } from "./self-development-test-copy.js";
+import { TestCopyJobs } from "./self-development-test-copy-jobs.js";
 
 const ReviewSchema = z.object({ worktree: z.string().regex(/^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/),
   // The old stabrea/Branch-Agent name is asked for as KeepOak/Branch-Agent: GitHub only redirects it, and Branch refuses redirects.
@@ -33,11 +35,13 @@ type Reviewer = (snapshot: Snapshot, context: ToolContext) => Promise<Independen
 /** One owner review, one approval, one normal merge. No task or chat can create or consume a grant. */
 export class SelfDevelopmentMerges {
   readonly evidence: SelfDevelopmentEvidence;
+  private readonly testCopyJobs: TestCopyJobs;
   private readonly grants = new Map<string, Grant>();
   private readonly finishing = new Set<string>();
   constructor(private readonly deps: SelfDevelopmentDeps, private readonly locked: () => boolean,
     private readonly reviewer?: Reviewer, private readonly fullAccessOwner?: (context: ToolContext) => string | null) {
     this.evidence = new SelfDevelopmentEvidence(deps);
+    this.testCopyJobs = new TestCopyJobs(deps);
   }
   private ownerHere(): void {
     this.deps.store.profiles.requireOwner("Reviewing and merging Branch's own source");
@@ -59,6 +63,17 @@ export class SelfDevelopmentMerges {
       worktree: contract!.worktreePath, revision: contract!.revision, tests: contract!.expectedTests,
       repositories: contract!.sendRepositories ?? [], evidence: this.evidence.get(contract!.worktreePath),
     })) };
+  }
+  async testCopy(input: unknown): Promise<unknown> {
+    return prepareTestCopy(this.deps, input, () => {
+      this.ownerHere();
+      const worktree = (input as { worktree?: unknown } | null)?.worktree;
+      if (typeof worktree === "string") this.sourceIdle(worktree);
+    });
+  }
+  async testCopyJob(action: "start" | "status" | "cancel", input: unknown): Promise<unknown> {
+    this.ownerHere();
+    return action === "start" ? this.testCopyJobs.start(input) : action === "cancel" ? this.testCopyJobs.cancel(input) : this.testCopyJobs.status(input);
   }
   async runner(): Promise<unknown> {
     this.ownerHere();
@@ -223,6 +238,8 @@ export class SelfDevelopmentMerges {
   }
 }
 export const handlesSourceMergePath = (path: string): boolean => path === "/api/self-development/merge"
+  || path === "/api/self-development/merge/test-copy"
+  || /^\/api\/self-development\/merge\/test-copy\/(start|status|cancel)$/.test(path)
   || path === "/api/self-development/merge/runner" || path === "/api/self-development/merge/review" || path === "/api/self-development/merge/approve" || path === "/api/self-development/merge/finish";
 export async function sourceMergeApi(merges: SelfDevelopmentMerges, method: string, path: string, body: () => Promise<unknown>): Promise<unknown> {
   if (path === "/api/self-development/merge" || path === "/api/self-development/merge/runner") {
@@ -230,6 +247,8 @@ export async function sourceMergeApi(merges: SelfDevelopmentMerges, method: stri
     return path.endsWith("/runner") ? merges.runner() : merges.list();
   }
   if (method !== "POST") throw new HttpError(405, "Use POST here.");
+  if (path === "/api/self-development/merge/test-copy") return merges.testCopy(await body());
+  if (path.startsWith("/api/self-development/merge/test-copy/")) return merges.testCopyJob(path.slice(path.lastIndexOf("/") + 1) as "start" | "status" | "cancel", await body());
   if (path === "/api/self-development/merge/review") return merges.review(await body());
   if (path === "/api/self-development/merge/approve") return merges.approve(await body());
   return merges.merge(await body());
