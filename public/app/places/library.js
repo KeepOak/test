@@ -85,6 +85,13 @@ function docsReadFence() {
     && unlocked() && S.view === view && (S.tabs.library || "memory") === "documents";
   return { who, current };
 }
+/* Who started a save, on which page and from which dialog, noted before it is sent: a late answer never closes a newer
+   dialog (openDlg makes a new one each time), and never speaks to someone else or over the lock. */
+function saveFence() {
+  const who = sessionPrincipal(E.profiles), view = S.view, opened = dialog();
+  const here = () => sessionPrincipal(E.profiles) === who && E.profiles?.isOwner !== false && unlocked() && S.view === view;
+  return { here, fromDialog: () => here() && opened !== null && dialog() === opened };
+}
 
 /* "Write a new document" opens a small editor: a name and the text, kept as a document of the owner's (POST /api/documents
    { name, text }, src/documents.ts AddSchema), searched like any other. A household person's window keeps it greyed, as
@@ -273,11 +280,14 @@ async function saveNewDoc() {
   const typed = document.getElementById("doc-new-name")?.value.trim() ?? "", text = document.getElementById("doc-new-text")?.value ?? "";
   if (!text.trim()) { toast(t("window.places.library.doc-needs-text")); return; }
   const name = !typed ? `${t("window.places.library.doc-untitled")} ${new Date().toISOString().slice(0, 10)}.md` : /\.[a-z0-9]{1,6}$/i.test(typed) ? typed : `${typed}.md`;
-  try { await api("documents", { name, text }); } catch (error) { toast(error.message); return; }
+  const { here, fromDialog } = saveFence();
+  try { await api("documents", { name, text }); } catch (error) { if (fromDialog()) toast(error.message); return; }
+  if (!fromDialog()) { dropStaleDocs(); return; } // closed, replaced, someone else or locked meanwhile: left as it is
   closeDlg();
   const { who, current } = docsReadFence();
   let fresh = null;
-  try { fresh = (await api("documents")).documents ?? null; } catch (error) { toast(error.message); }
+  try { fresh = (await api("documents")).documents ?? null; } catch (error) { if (here()) toast(error.message); }
+  if (!here()) { dropStaleDocs(); return; }
   if (fresh && current()) { docsList = fresh; docsKey = JSON.stringify(fresh); docsFor = who; }
   toast(t("window.places.library.doc-kept"));
   renderNow();
