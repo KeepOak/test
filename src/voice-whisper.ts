@@ -117,6 +117,7 @@ export function findLocalWhisper(choice: WhisperChoice, given: WhisperLookup = {
  */
 export const whisperWorkerScript = `
 import base64, io, json, sys
+import numpy as np
 from faster_whisper import WhisperModel
 from faster_whisper.audio import decode_audio
 model = WhisperModel(sys.argv[1], device="cpu", compute_type="int8", local_files_only=True)
@@ -134,15 +135,15 @@ for line in sys.stdin:
         ask = json.loads(line)
         sound = decode_audio(io.BytesIO(base64.b64decode(ask["audio"])), sampling_rate=16000)
         quick = bool(ask.get("partial"))
-        clips = "0"
         if vad:
             speech = get_speech_timestamps(sound, min_silence_duration_ms=200, speech_pad_ms=400)
             if not speech:
                 print(json.dumps({"id": ask.get("id"), "text": "", "language": ask.get("language")}), flush=True)
                 continue
-            clips = [sample / 16000 for segment in speech for sample in (segment["start"], segment["end"])]
+            # Apply speech spans before language detection, matching faster-whisper's VAD path.
+            sound = np.concatenate([sound[segment["start"]:segment["end"]] for segment in speech])
         segments, info = model.transcribe(sound, language=ask.get("language") or None, beam_size=1 if quick else 5,
-                                          condition_on_previous_text=False, vad_filter=False, clip_timestamps=clips)
+                                          condition_on_previous_text=False, vad_filter=False)
         text = " ".join(part.text.strip() for part in segments).strip()
         print(json.dumps({"id": ask.get("id"), "text": text, "language": info.language}), flush=True)
     except Exception as error:

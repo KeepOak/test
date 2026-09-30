@@ -8,7 +8,9 @@ https://github.com/SYSTRAN/faster-whisper (`faster_whisper/vad.py`, `transcribe.
 Silero's MIT license was inspected at `1e261b036686cd0017d500ee96acd1c4ba572a9d`
 of https://github.com/snakers4/silero-vad. No inference implementation, ONNX model or
 Python dependency is bundled or downloaded; the existing external worker uses the
-owner's installed package asset and remains offline. Branch's wrapper is original.
+owner's installed package asset and remains offline. The wrapper adapts faster-whisper's
+speech-span concatenation before language detection; it imports NumPy already required
+by that installed library.
 
 MIT License
 
