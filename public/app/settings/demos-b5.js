@@ -9,6 +9,7 @@ import { api } from "../core/api.js";
 import { closeDlg, toast } from "../core/ui.js";
 import { onDemo17, demoDlg17 } from "../places/demo17.js";
 import { WORDS } from "./rows17.js";
+import { initTelegramDepth } from "./telegram-depth.js";
 import { t, language } from "../../i18n.js";
 
 const when = (at) => (at ? new Date(at).toLocaleString(language(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
@@ -295,6 +296,7 @@ export function initDemosB5() {
   if (started) return;
   started = true;
   money(); models(); permissions(); reach(); care(); advanced(); developer(); guards(); suggestions();
+  initTelegramDepth(show);
   render();
 }
 
@@ -308,6 +310,5 @@ export function initDemosB5() {
    command's; /api/research lists reports, not one brief's numbered sources);
    events, cli, frame — a live stream only, no route, or (frame) the desktop app always draws its own title bar
    (src/desktop/window-chrome-ipc.ts);
-   tgdepth — the Telegram parts are separate switches (GET /api/channels live, /api/channels/parity), not one readout;
    locker, tokens, devpick, hookaddr, voiceapprove — held for the security review: where keys live, sign-in tokens,
    lending a phone's camera or location, addresses that carry a webhook's secret word, and approving by voice. */
