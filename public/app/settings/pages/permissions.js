@@ -9,7 +9,8 @@
    Greyed, each for its reason: installing without asking (no approval kind of its own: shown on only when both running
    commands and changing settings go without asking); when tools are loaded (the engine decides that itself every round;
    no setting); practice runs (an explicit next-task choice in the window and the terminal's /dry-run); a container per Trunk, sign-ins from outside the
-   sandbox, verifying each release, pinning SSH hosts and where downloads may come from (no engine setting says these).
+   sandbox, verifying each release and pinning SSH hosts (no engine setting says these). Downloads may come from is the
+   owner's browser care card (downloadsFrom: anywhere, only sites the task's pages were on, or ask each time).
    Messages per conversation per hour is the engine's limit on the tasks one conversation starts in an hour (rateAttrs). */
 import { level } from "../../core/state.js";
 import { E } from "../../core/state.js";
@@ -50,21 +51,27 @@ const PINNED = () => `<div class="sec"><h2>${t("window.settings.permissions.pinn
 
 const RULES = () => `<div class="sec x15-sec"><h2>${t("window.settings.permissions.rules-for-each-tool-and-folder")}</h2><p class="hint" data-css="margin:0 0 6px">${t("window.settings.permissions.the-first-rule-that-matches-wins")}</p>@@RULES@@<div class="acts" data-css="margin-top:8px"><button class="btn sm" type="button" data-act="rule-add8"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"></path></svg>${t("window.settings.permissions.add-a-rule")}</button></div><div class="ctl"><b>${t("window.settings.permissions.practice-runs")}</b><input class="sw" type="checkbox" id="f15-practice-runs" @@PRACTICE@@ aria-label="${t("window.settings.permissions.practice-runs")}" data-sw="set"><small>${t("window.settings.permissions.a-trunk-can-show-what-it")}</small></div><div class="ctl"><b>${t("window.settings.permissions.messages-per-conversation-per-hour")}</b><span class="right num15"><input class="inp" @@RATE@@ aria-label="${t("window.settings.permissions.messages-per-conversation-per-hour")}"></span><small>${t("window.settings.permissions.stops-a-runaway-loop")}</small></div></div><div class="sec x15-sec"><h2>${t("window.settings.permissions.checks-before-anything-runs")}</h2><div class="ctl"><b>${t("window.settings.permissions.scan-commands-for-hidden-characters")}</b><input class="sw" type="checkbox" id="f15-scan-commands-for-hidden-characters" @@scan@@ aria-label="${t("window.settings.permissions.scan-commands-for-hidden-characters")}" data-sw="set"><small>${t("window.settings.permissions.invisible-and-look-alike-characters-that")}</small></div><div class="ctl"><b>${t("window.settings.permissions.scan-for-personal-details")}</b><input class="sw" type="checkbox" id="f15-scan-for-personal-details" @@pii@@ aria-label="${t("window.settings.permissions.scan-for-personal-details")}" data-sw="set"><small>${t("window.settings.permissions.card-numbers-id-numbers-and-addresses")}</small></div><div class="ctl"><b>${t("window.settings.permissions.authenticator-code-for-sensitive-tools")}</b><input class="sw" type="checkbox" id="f15-authenticator-code-for-sensitive-tools" @@code@@ aria-label="${t("window.settings.permissions.authenticator-code-for-sensitive-tools")}" data-sw="set"><small>${t("window.settings.permissions.a-six-digit-code-before-sending")}</small></div></div>`;
 
-const ISOLATION = () => `<div class="sec x15-sec"><h2>${t("window.settings.permissions.isolation")}</h2><div class="ctl"><b>${t("window.settings.permissions.a-container-per-trunk")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.a-container-per-trunk")}"><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("accounts.switch.off")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("window.settings.permissions.for-code")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("window.places.automations.always")}</button></span></span><small></small></div>@@WALL@@<div class="ctl"><b>${t("window.settings.permissions.add-sign-ins-from-outside-the")}</b><input class="sw" type="checkbox" id="f15-add-sign-ins-from-outside-the-sandbox" aria-label="${t("window.settings.permissions.add-sign-ins-from-outside-the")}" data-sw="set"><small>${t("window.settings.permissions.the-sandbox-never-holds-a-password")}</small></div><div class="ctl"><b>${t("window.settings.permissions.verify-each-release")}</b><input class="sw" type="checkbox" id="f15-verify-each-release" aria-label="${t("window.settings.permissions.verify-each-release")}" data-sw="set"><small>${t("window.settings.permissions.checks-the-signature-before-installing-an")}</small></div><div class="ctl"><b>${t("window.settings.permissions.pin-ssh-hosts")}</b><input class="sw" type="checkbox" id="f15-pin-ssh-hosts" aria-label="${t("window.settings.permissions.pin-ssh-hosts")}" data-sw="set"><small>${t("window.settings.permissions.refuses-a-computer-whose-fingerprint-changed")}</small></div><div class="ctl"><b>${t("window.settings.permissions.downloads-may-come-from")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.downloads-may-come-from")}"><button type="button" aria-pressed="false" data-act="seg" data-why="downloads-may-come-from">${t("os-sandbox.network.open")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="downloads-may-come-from">${t("window.settings.permissions.known-sites")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="downloads-may-come-from">${t("window.settings.permissions.ask-each-time")}</button></span></span><small></small></div></div>`;
+const ISOLATION = () => `<div class="sec x15-sec"><h2>${t("window.settings.permissions.isolation")}</h2><div class="ctl"><b>${t("window.settings.permissions.a-container-per-trunk")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.a-container-per-trunk")}"><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("accounts.switch.off")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("window.settings.permissions.for-code")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="a-container-per-trunk">${t("window.places.automations.always")}</button></span></span><small></small></div>@@WALL@@<div class="ctl"><b>${t("window.settings.permissions.add-sign-ins-from-outside-the")}</b><input class="sw" type="checkbox" id="f15-add-sign-ins-from-outside-the-sandbox" aria-label="${t("window.settings.permissions.add-sign-ins-from-outside-the")}" data-sw="set"><small>${t("window.settings.permissions.the-sandbox-never-holds-a-password")}</small></div><div class="ctl"><b>${t("window.settings.permissions.verify-each-release")}</b><input class="sw" type="checkbox" id="f15-verify-each-release" aria-label="${t("window.settings.permissions.verify-each-release")}" data-sw="set"><small>${t("window.settings.permissions.checks-the-signature-before-installing-an")}</small></div><div class="ctl"><b>${t("window.settings.permissions.pin-ssh-hosts")}</b><input class="sw" type="checkbox" id="f15-pin-ssh-hosts" aria-label="${t("window.settings.permissions.pin-ssh-hosts")}" data-sw="set"><small>${t("window.settings.permissions.refuses-a-computer-whose-fingerprint-changed")}</small></div>@@DOWNLOADS@@</div>`;
+/* Downloads may come from: the owner's browser care card (downloadsFrom). Ask each time holds each file outside the
+   workspace until the owner says yes on the ordinary approval card (browser.keep_download). */
+const DOWNLOADS = () => {
+  const cur = P.care?.downloadsFrom ?? null, one = (v, words) => `<button type="button" aria-pressed="${cur === v}" data-act="p-dl" data-v="${v}">${words}</button>`;
+  return `<div class="ctl"><b>${t("window.settings.permissions.downloads-may-come-from")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.downloads-may-come-from")}">${one("anywhere", t("os-sandbox.network.open"))}${one("known", t("window.settings.permissions.known-sites"))}${one("ask", t("window.settings.permissions.ask-each-time"))}</span></span><small>${t("window.settings.permissions.downloads-sub")}</small></div>`;
+};
 
 /* The approval policy as the engine keeps it (GET /api/policy, GET /api/approvals/categories, GET /api/lockdown), and
    its rules in the engine's own sentences (GET /api/rules). */
-const P = { policy: null, presets: [], categories: [], locked: false, loaded: false, was: {}, rules: [], loosen: null, privacy: null, safety: null, wall: null };
+const P = { policy: null, presets: [], categories: [], locked: false, loaded: false, was: {}, rules: [], loosen: null, privacy: null, safety: null, wall: null, care: null };
 const SWITCH = { "p-read": "read", "p-browse": "browse", "p-send": "message" };
 
 async function load() {
   const quiet = (path) => api(path).catch((error) => { toast(error.message); return null; });
-  const [pol, cats, lock, kit, rules, privacy, safety, wall] = await Promise.all([api("policy").catch(() => null), api("approvals/categories").catch(() => null), api("lockdown").catch(() => null),
-    quiet("settings-kit"), quiet("rules"), quiet("privacy"), quiet("safety-extras"), quiet("os-sandbox"), loadOs17(), loadKit(), loadPracticeRuns()]);
+  const [pol, cats, lock, kit, rules, privacy, safety, wall, comfort] = await Promise.all([api("policy").catch(() => null), api("approvals/categories").catch(() => null), api("lockdown").catch(() => null),
+    quiet("settings-kit"), quiet("rules"), quiet("privacy"), quiet("safety-extras"), quiet("os-sandbox"), E.profiles?.isOwner === false ? null : quiet("comfort"), loadOs17(), loadKit(), loadPracticeRuns()]);
   // Both the owner's limits and own-settings rule are unavailable to household profiles.
   [P.knobs, P.selfRules] = E.profiles?.isOwner === false ? [null, null] : await Promise.all([quiet("knobs"), quiet("self-rules")]);
   Object.assign(P, { policy: pol?.policy ?? null, presets: pol?.presets ?? [], categories: cats?.categories ?? [], locked: !!lock?.on, loaded: true,
-    pins: kit?.pins ?? [], kit: kit?.settings ?? [], rules: rules?.rules ?? [], privacy, safety, wall });
+    pins: kit?.pins ?? [], kit: kit?.settings ?? [], rules: rules?.rules ?? [], privacy, safety, wall, care: comfort?.values?.browser ?? null });
   render();
 }
 
@@ -171,7 +178,7 @@ function fill(html) {
     .replace("@@ordinary@@", P.selfRules ? onIf(P.selfRules.ownSettings === "allowed") : "disabled")
     .replace("@@record@@", onIf(kitOn("run-recording"))).replace("@@loop@@", onIf(kitOn("loop_guard"))).replace("@@scan@@", onIf(kitOn("safety-command-scan")))
     .replace("@@pii@@", onIf(piiOn(P))).replace("@@code@@", onIf(codesOn(P))).replace("@@install@@", onIf(allowed("commands") && allowed("settings")))
-    .replace("@@PRACTICE@@", practiceAttrs()).replace("@@WALL@@", wall()).replace("@@ADVOPEN@@", advOpen ? "open" : "").replace("@@RATE@@", rateAttrs());
+    .replace("@@PRACTICE@@", practiceAttrs()).replace("@@WALL@@", wall()).replace("@@DOWNLOADS@@", DOWNLOADS()).replace("@@ADVOPEN@@", advOpen ? "open" : "").replace("@@RATE@@", rateAttrs());
 }
 
 /* Lockdown can change elsewhere (the banner's "Turn it off"); the window marks #app "locked" from the engine
@@ -241,7 +248,12 @@ function settingChanged(e) {
 export function init() {
   markLive(["sw:p-read", "sw:p-browse", "sw:p-send", "sw:p-ordinary-settings", "perm-lock", "pin-add8", "pin-do8", "pin-rm8",
     "rule-add8", "rule-dec8", "rule-save8", "rule-rm8", "sw:rule-new8", "perm-loosen8",
-    "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17", "sw:p-rate", ...guardsLive]);
+    "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17", "sw:p-rate", "p-dl", ...guardsLive]);
+  on("p-dl", async (el) => {
+    try { P.care = (await api("comfort", { card: "browser", values: { downloadsFrom: el.dataset.v } })).values?.browser ?? P.care; }
+    catch (error) { toast(error.message); }
+    await load();
+  });
   initGuards({ P, load, askLoosen });
   initOs17();
   initPracticeRuns(load);

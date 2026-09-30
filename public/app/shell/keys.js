@@ -8,7 +8,7 @@ import { E } from "../core/state.js";
 
 const MAC = /Mac/.test(navigator.platform);
 const FIRST = { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", stopTask: "Ctrl+Shift+S", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab",
-  previousConversation: "Ctrl+Shift+Tab", focusPrompt: "Ctrl+L", searchHistory: "Ctrl+Shift+F" };
+  previousConversation: "Ctrl+Shift+Tab", focusPrompt: "Ctrl+L", searchHistory: "Ctrl+Shift+F", lockdownOn: "Ctrl+Shift+L" };
 /* Multiple default chords approach: Hermes keybinds/actions.ts (Nous Research, MIT,
    a9a54245b2311c705d29050b7f9868c015917aec). Original Branch compatibility layer. */
 const ALIASES = { sidePane: ["Ctrl+J"] };
