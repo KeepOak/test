@@ -2613,14 +2613,24 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   if (path === "/api/schedules" || path === "/api/schedules/") {
     app.store.profiles.requireOwner("Your schedules");
     if (request.method === "GET") return { schedules: app.store.list("schedules", owner) };
-    if (request.method === "POST") return app.scheduler.create(scheduleContext(app), await readBody(request));
+    if (request.method === "POST") {
+      const input = await readBody(request);
+      app.store.profiles.requireOwner("Creating your schedule");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a schedule.");
+      return app.scheduler.create(scheduleContext(app), input);
+    }
     throw new HttpError(404, "Endpoint not found");
   }
   // Words to a schedule (src/schedule-words.ts): a proposal only, which the owner confirms with POST /api/schedules.
   if (path === "/api/schedules/propose" && request.method === "POST") {
     app.store.profiles.requireOwner("Your schedules");
-    const proposal = await proposeSchedule(await readBody(request), { now: new Date(),
+    const input = await readBody(request);
+    app.store.profiles.requireOwner("Reading your schedule proposal");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading a schedule proposal.");
+    const proposal = await proposeSchedule(input, { now: new Date(),
       defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) });
+    app.store.profiles.requireOwner("Reading your schedule proposal");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading a schedule proposal.");
     // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
     const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
