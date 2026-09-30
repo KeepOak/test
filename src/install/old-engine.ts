@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { readdir, readFile, readlink, writeFile } from "node:fs/promises";
-import { hiddenRunner } from "../desktop/hand-over.js";
-import { daemonCommandLine } from "./daemon.js";
+import { daemonCommandLine, hiddenRunner } from "./daemon.js";
 import { join } from "node:path";
 import { quitPath } from "./quit.js";
 import { clearRunning, readRunning, sessionTokenFileName, type RunningInstance } from "./running.js";

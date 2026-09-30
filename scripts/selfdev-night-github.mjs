@@ -1,7 +1,7 @@
 // The real-GitHub world of the SELF-314 night gate (scripts/selfdev-night.mjs --github): the night's queue on real
 // GitHub and real Actions, on scratch lines only, all cleaned up afterwards.
 //
-//   stabrea/Branch-Agent  selfdev-proof/night-base-<stamp>   cut from the newest redesign/window commit whose whole
+//   KeepOak/Branch-Agent  selfdev-proof/night-base-<stamp>   cut from the newest redesign/window commit whose whole
 //                                                            suite passed (a pull request into it runs the whole suite)
 //                         selfdev-proof/night-red-<stamp>    adds one test with a wrong expectation: pull request #N
 //                         selfdev-proof/night-other-<stamp>  another wrong test: pull request #M, to be left alone
@@ -11,7 +11,8 @@
 // builds a selfdev-proof/ line. REST only (GitHub's GraphQL allowance is shared by every lane), through `gh api`.
 import { execFileSync } from "node:child_process";
 
-const repo = "stabrea/Branch-Agent", coordRepo = "stabrea/branch-agent-work";
+// The coordination repository has not moved to KeepOak; it is still stabrea/branch-agent-work.
+const repo = "KeepOak/Branch-Agent", coordRepo = "stabrea/branch-agent-work";
 const gh = (...args) => execFileSync("gh", args, { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
 const ghJson = (...args) => JSON.parse(gh(...args) || "null");
 const b64 = (text) => Buffer.from(text, "utf8").toString("base64");
@@ -27,7 +28,7 @@ export function nightTest(wrong) {
 
 /** The newest redesign/window commit whose push run of Checks passed: a scratch base whose whole suite is green. */
 function greenBase() {
-  const runs = ghJson("api", "repos/stabrea/Branch-Agent/actions/runs?branch=redesign/window&event=push&status=success&per_page=20",
+  const runs = ghJson("api", `repos/${repo}/actions/runs?branch=redesign/window&event=push&status=success&per_page=20`,
     "--jq", '[.workflow_runs[] | select(.name=="Checks") | .head_sha]');
   if (!runs?.length) throw new Error("No redesign/window commit has a passed Checks run to cut the night's base from.");
   return runs[0];
@@ -103,7 +104,7 @@ export function githubOutcome(world) {
     try { return ghJson("api", `repos/${coordRepo}/compare/main...${world.coordBranch}`, "--jq", "[.files[].filename]") ?? []; } catch { return null; }
   })();
   // Only the lead's own fix may have merged, and never one of the seeded red pull requests.
-  const outsideBase = ghJson("api", `repos/${repo}/pulls?state=all&head=${encodeURIComponent(`stabrea:branch/self-${world.fixName}`)}&per_page=10`,
+  const outsideBase = ghJson("api", `repos/${repo}/pulls?state=all&head=${encodeURIComponent(`KeepOak:branch/self-${world.fixName}`)}&per_page=10`,
     "--jq", "[.[] | .base.ref]") ?? [];
   return { pulls, mergeAttempts, redMerged: pulls.some((pull) => pull.merged && [world.redPull, world.otherPull].includes(pull.number)),
     fixOnlyIntoBase: outsideBase.every((ref) => ref === world.base),
