@@ -10440,5 +10440,14 @@
   "settings.help.activity-log": "Writes activity to local rotating log files. Turning this switch on selects warnings and errors; off stops writing. Nothing is sent automatically. Older files are removed after the retention period.",
   "settings.help.settings-kit.os-sandbox.mode": "Runs commands behind the system sandbox when the computer supports it. Off disables this isolation; When needed and On select the available sandbox policy. Changes that loosen protection require confirmation.",
   "settings.help.owner-command-on": "Enables owner commands from the selected approved chat accounts. Only the accounts selected below may use this route; a command that needs an owner check still requires that check.",
-  "settings.help.owner-command-account": "Allows this approved sender and channel to use owner commands when the feature is on. Selecting a sender does not approve other senders or channels."
+  "settings.help.owner-command-account": "Allows this approved sender and channel to use owner commands when the feature is on. Selecting a sender does not approve other senders or channels.",
+  "settings.catalogue.title": "All catalogue settings",
+  "settings.catalogue.about": "Edit the engine catalogue’s bounded switches, choices and numbers. Each change uses its normal validator and safety checks.",
+  "settings.catalogue.pinned": "Pinned by the owner. Unpin this field in Permissions before editing it here.",
+  "settings.catalogue.save": "Save this field",
+  "settings.catalogue.count": "{count} bounded catalogue fields. Launch configuration, secrets and settings outside this catalogue use their dedicated pages.",
+  "settings.catalogue.listen-restart": "The listener may differ from its saved preference while an environment override or Lockdown is in force. Check the Computer page for the active addresses; this editor does not restart the engine.",
+  "settings.catalogue.changed": "The active profile or lock state changed. Close this editor and open it again in the owner’s profile.",
+  "settings.catalogue.owner": "Open this editor in the owner’s profile with Lockdown off.",
+  "settings.catalogue.range": "Enter a number within the displayed range. Whole-number fields do not accept fractions."
 }

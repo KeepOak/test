@@ -1,4 +1,5 @@
 import { controlRow } from "../row-kit.js";
+import { catalogueLink, initCatalogueEditor } from "../catalogue-editor.js";
 /* Settings › advanced: bind real engine data and wire controls. */
 import { esc, render } from "../../core/dom.js";
 import { level, E, refresh } from "../../core/state.js";
@@ -163,7 +164,7 @@ export function draw() {
     html += "</div>";
   }
 
-  return html + sections17(lv);
+  return html + sections17(lv) + (lv >= 1 ? catalogueLink() : "");
 }
 
 /* GET /api/logs answers lines of JSON (what the owner's tasks wrote down, keys and passwords taken out), not one JSON
@@ -211,6 +212,7 @@ function restartNow() {
 }
 
 export function init() {
+  initCatalogueEditor();
   initMarket(); // RES-720
   init17();
   on("adv-logs", () => openLogs());

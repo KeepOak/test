@@ -85,6 +85,7 @@ function overview(deps: SettingsKitDeps) {
       // Q65 review: why this setting cannot be changed from here right now, and whether it can be put back as shipped.
       refused: spec.refuses?.(deps.store, deps.owner) ?? null, canPutBack: !!spec.putBack,
       fields: spec.fields.map((field) => ({ field: field.field, label: field.label, t: field.t, guard: field.guard,
+        kind: field.kind, note: field.note ?? null,
         initial: field.initial, value: currentValue(deps.store, deps.owner, spec, field),
         pinned: pinned.has(pinId(spec.key, field.field)) })),
     })),
