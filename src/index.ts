@@ -39,6 +39,7 @@ import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
 import { isCurrentFact, memoryScope, registerMemory } from "./memory.js";
+import { registerMemoryImages } from "./memory-images.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
@@ -780,6 +781,7 @@ export async function createBranch(options: {
   // database — see the comment on `MemoryReview.provider`.
   store.review.provider = memory.backend;
   registerMemory(registry, store, memory.retrieval, memory.backend);
+  registerMemoryImages(registry, { store, attachments, provider: memory.backend });
   const selfDevelopment: SelfDevelopmentDeps = {
     workspace, owner: options.owner ?? "local", projects: store.projects, registry, policy: web.policy,
     git: (input, signal) => gitRunner.run(input, signal), contracts: selfContracts, store,
