@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { FeatureModeSchema } from "../feature-switches.js";
 import { SetupRefusal } from "./check.js";
-import { removeSetup, saveSetup, saveSetupMode, setupList, setupPanel, type SetupHost } from "./service.js";
+import { bridgeLink, removeSetup, saveSetup, saveSetupMode, setupList, setupPanel, type SetupHost } from "./service.js";
 
 /**
  * The Set up panel's routes. All four are the owner's alone (a short-lived key is refused before it
@@ -43,6 +43,11 @@ export async function channelSetupApi(deps: ChannelSetupDeps, method: string, pa
     const body = CheckBodySchema.safeParse(await readBody());
     if (!body.success) throw new SetupRefusal(400, "Send the pasted values, and optionally how to switch the app on.");
     return saveSetup(deps, check[1]!, { values: body.data.values, enable: body.data.enable });
+  }
+  const link = /^\/api\/channel-setup\/([a-z][a-z0-9-]{0,29})\/link$/.exec(path);
+  if (link) {
+    if (method !== "POST") throw new SetupRefusal(405, "Use POST here.");
+    return bridgeLink(deps, link[1]!);
   }
   const panel = /^\/api\/channel-setup\/([a-z][a-z0-9-]{0,29})$/.exec(path);
   if (panel && method === "GET") return setupPanel(deps.store, deps.owner, panel[1]!, deps.platform ?? process.platform);

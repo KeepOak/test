@@ -93,7 +93,18 @@ async function install(desktop) {
   }
 }
 
+/* The app runs update by itself (src/desktop/update-loop.ts), so the page only reads what it is doing. */
+let saidHooked = false;
+async function follow(desktop) {
+  if (!saidHooked) { saidHooked = true; desktop.onUpdateSaid?.((words) => tell(words)); }
+  lastLook.status = await desktop.updateStatus();
+  const loop = await desktop.updateLoop();
+  lastLook.plan = loop.plan ?? lastLook.plan;
+  lastLook.wait = loop.wait ?? null;
+}
+
 async function look(desktop) {
+  if ((await desktop.updateLoop?.().catch(() => null))?.inMain) return follow(desktop);
   let status = lastLook.status = await desktop.updateStatus();
   let plan = await ask(about(status));
   if (plan.failed) tell(plan.failed);

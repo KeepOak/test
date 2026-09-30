@@ -147,7 +147,8 @@ test("where only python3 is installed it is offered as python3, and a yes given 
     const input = { executable, args: ["tool.py"] }, target = policyTarget("shell.execute", input);
     return { tool: "shell.execute", target, readOnly: false, resource: resourceOf("shell.execute", "shell.execute", target, input) };
   };
-  const always = (match) => ({ ...PolicySchema.parse({}),
+  // Owner ruling 2026-09-30: commands no rule covers ship as "allow"; here the owner keeps them asking.
+  const always = (match) => ({ ...PolicySchema.parse({ unmatchedCommands: "ask" }),
     rules: [standingRule({ tool: "shell.execute", match, applies: "any", decision: "allow", remember: "always" })] });
   assert.equal(evaluatePolicy(always("python3 tool.py"), asked("python3")).decision, "allow");
   assert.equal(evaluatePolicy(always("python tool.py"), asked("python3")).decision, "ask");

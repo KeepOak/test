@@ -6,10 +6,12 @@ import { z } from "zod";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { currentAccountCall, refuseSignInForTrunk } from "../accounts/context.js"; // mac7/lockdown-fix
 import { startCall } from "../windows-command.js";
+import { killWindowsTree } from "../integrations/shell-process.js";
 import { assertRealAgentAllowed } from "./real-agent-guard.js"; // owner-dm-signin: never the real program from a test
 import { codexDefaultModel, codexVerified, codexModelsFor, type CodexModels, type CodexProbe, type CodexTry } from "../codex-models.js";
 import { closeWarmCodex, startCodexAppServer, warmCodexTurn, type StartAppServer } from "../asks/codex-app-server.js";
 import { claudeSubscriptionModels } from "./claude-models.js";
+import { closeNativeSubscriptions } from "./claude-subscription-continuation.js";
 
 /**
  * Batch 20 (wave 8): using a coding assistant already installed on this computer as a model.
@@ -281,6 +283,17 @@ export function streamJsonQuestion(prompt: string): string {
   return `${JSON.stringify({ type: "user", message: { role: "user", content: [{ type: "text", text: prompt }] } })}\n`;
 }
 type Child = ReturnType<typeof spawn>;
+/**
+ * P0 (self-build): on Windows an npm-installed program (Codex) is Node running its launcher, which starts the real
+ * program and only passes signals on. Ending Node takes the real program with it but not what that had started, so
+ * the whole tree is ended instead. Elsewhere the launcher passes the signal on, and the program is not in a group of
+ * its own, so the plain kill stays.
+ */
+function endTree(child: Child): void {
+  if (process.platform === "win32" && child.pid && child.exitCode === null)
+    void killWindowsTree(child.pid).then((ended) => { if (!ended) child.kill(); }, () => child.kill());
+  else child.kill();
+}
 /** Whether a program (its process and its pipes) keeps Branch's own process running, as a task waiting on it must. */
 function holdOpen(child: Child, hold: boolean): void {
   for (const handle of [child, child.stdin, child.stdout, child.stderr] as unknown as ({ ref?: () => void; unref?: () => void } | null)[])
@@ -322,6 +335,7 @@ function prepareSpare(key: string, row: CliAgentRow, env: NodeJS.ProcessEnv): vo
 }
 /** Stops every program started ahead of time (Branch closing). */
 export function closeSpareAgents(): void {
+  closeNativeSubscriptions();
   closeWarmCodex(); // QA 2026-09-28: the warm Codex app-servers too
   for (const [key, spare] of spares) { clearTimeout(spare.timer); spare.child.kill(); spares.delete(key); }
 }
@@ -342,11 +356,11 @@ export const runCliAgent: SpawnAgent = (row, prompt, signal, limits, home, onLin
       if (warm && code === 0) prepareSpare(key, row, env);
       resolve({ code, stdout, stderr, ...(missing ? { missing: true } : {}), ...(silent ? { silent: true } : {}) });
     };
-    const stop = (): void => { child.kill(); finish(null); };
+    const stop = (): void => { endTree(child); finish(null); };
     const timer = setTimeout(stop, limits.timeoutMs);
     timer.unref?.();
     // A program that prints nothing at all is stuck (a prompt nobody will answer, a model it hangs on): stopped early.
-    const quiet = limits.firstOutputMs ? setTimeout(() => { child.kill(); finish(null, false, true); }, limits.firstOutputMs) : undefined;
+    const quiet = limits.firstOutputMs ? setTimeout(() => { endTree(child); finish(null, false, true); }, limits.firstOutputMs) : undefined;
     quiet?.unref?.();
     signal.addEventListener("abort", stop, { once: true });
     // stream-json ends with its result line; the program may take seconds more to exit, which nobody needs to wait for.
