@@ -121,7 +121,7 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     // Source preparation publishes its clone through this logical directory link. Resolve only
     // that recorded source prefix; descendants must still match exactly, without nested redirects.
     let expected = resolve(rootReal, copy);
-    if (copy.startsWith("branch-agent-source/")) {
+    if (copy.startsWith("branch-agent-source/.branch-worktrees/")) {
       const sourceReal = await realpath(resolve(root, "branch-agent-source")).catch(() => null);
       const sourceFrom = sourceReal ? relative(rootReal, sourceReal) : "";
       if (!sourceReal || !sourceFrom || isAbsolute(sourceFrom) || sourceFrom === ".."
