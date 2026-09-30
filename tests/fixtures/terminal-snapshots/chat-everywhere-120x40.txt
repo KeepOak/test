@@ -1,5 +1,5 @@
  ♣ Branch Agent · Conversation › write the demo file                                            ● Offline demonstration
-  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize   6 Team                    Ctrl+K Find anything
+  1 Conversation   2 Inbox 2   3 Automations   4 Library   5 Customize   6 Team   7 Seasons        Ctrl+K Find anything
    │       › write the demo file
  ▣ │         · Writing branch-demo.txt
    │       │ Branch needs your yes before it goes on
