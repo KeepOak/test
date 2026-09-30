@@ -47,7 +47,8 @@ async function fixture(t, auto = false) {
     if (!auto || state.ready) throw new Error("No matching draft");
     return evidence();
   }, readyReviewed: async (_pin, beforeSend) => { state.beforeReady?.(); beforeSend(); state.ready = true; state.readyCalls++; },
-    mergeReviewed: async (_pin, beforeSend) => { state.beforeSend?.(); beforeSend(); state.calls++; return { merged: true, sha: "d".repeat(40) }; } };
+    mergeReviewed: async (_pin, beforeSend) => { state.beforeSend?.(); beforeSend(); state.calls++;
+      return state.queue ? { merged: false, queued: true, state: "QUEUED", position: 1 } : { merged: true, sha: "d".repeat(40) }; } };
   registerGitHubProject(registry, fakeGitHub);
   // The command result and confinement guard are explicit stand-ins; repository/head/diff checks use real Git.
   registry.beforeTool = async () => ({ writesConfinedTo: cwd });
@@ -202,4 +203,74 @@ test("automatic finish refuses lost Full Access, stale review and late locks", a
     assert.equal(f.state.calls, 0, "no normal merge follows lost authority or changed evidence");
     if (f.state.changed || !f.state.full) assert.equal(f.state.readyCalls, 0);
   }
+});
+
+test("SELF-025: on a merge-queue base, the owner's merge and the Full Access finish join the queue and say so", async (t) => {
+  const f = await fixture(t); await f.tested();
+  f.state.queue = true;
+  const review = await f.merges.review(f.input); f.merges.approve({ id: review.id });
+  const sent = await f.merges.merge({ id: review.id });
+  assert.deepEqual([sent.merged, sent.queued, sent.reviewedHead], [false, true, f.headSha]);
+  const owner = f.app.store.audit.list(f.app.runtime.owner, { action: "self_development.merge", limit: 10 }).map((entry) => entry.outcome);
+  assert.ok(owner.includes("queued") && !owner.includes("merged"), `a queued change is never written down as merged: ${owner}`);
+  const auto = await autoTask(t);
+  auto.state.queue = true;
+  const finished = await auto.finish();
+  assert.deepEqual([finished.merged, finished.queued], [false, true]);
+  assert.match(finished.note, /until it says merged/);
+  const entry = auto.app.store.audit.list(auto.app.runtime.owner, { action: "self_development.merge", limit: 10 })[0];
+  assert.equal(entry.outcome, "queued");
+  assert.match(entry.reason, /joined the base's merge queue/);
+});
+
+test("SELF-014: the contract's tests run as evidence needs them, and a failed run is recorded with why, never as evidence", async (t) => {
+  const { runContractTests } = await import("../dist/self-development-tests.js");
+  const f = await fixture(t);
+  const sent = [];
+  const call = (name, args, context) => { sent.push(args); return f.registry.execute(name, args, context); };
+  const context = { owner: f.app.runtime.owner, runId: "fixture-run", workspace: f.app.runtime.workspace, source: "owner", depth: 0,
+    signal: AbortSignal.timeout(20_000), permissions: new Set(["shell.execute"]), budget: { step() {} } };
+  const green = await runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, context);
+  assert.deepEqual(sent[0], f.command, "exactly the command evidence counts");
+  assert.deepEqual([green.recorded, green.passed, green.testsPassed, green.commit], [true, true, 2, f.headSha]);
+  assert.equal(f.merges.evidence.get(worktree).sha, f.headSha);
+  f.state.output = "FAIL  tests/fixture.test.mjs  0.1s  1/2 passed\n✖ fixture adds\n";
+  const red = await runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, context);
+  assert.deepEqual([red.recorded, red.passed], [true, false]);
+  assert.match(red.reason, /Not every step passed/);
+  assert.deepEqual(red.failing, ["FAIL  tests/fixture.test.mjs  0.1s  1/2 passed", "✖ fixture adds"]);
+  assert.equal(f.merges.evidence.get(worktree), null, "a failed run is never evidence, and the earlier pass no longer counts");
+  f.state.output = "PASS  tests/fixture.test.mjs  0.1s  2/2 passed\nall steps passed in 1.0s\n";
+  for (const other of [{ ...context, source: "channel" }, { ...context, source: "schedule" }]) {
+    const outside = await runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, other);
+    assert.equal(outside.recorded, false, `a ${other.source} task never records evidence`);
+  }
+  const unnamed = { ...context }; delete unnamed.source;
+  assert.equal((await runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, unnamed)).passed, true,
+    "the owner's own task in the app names no source, and counts");
+  await writeFile(join(f.cwd, "README.md"), "uncommitted\n");
+  await assert.rejects(runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, worktree, context), /Commit all changes/);
+  await assert.rejects(runContractTests(f.contracts, f.merges, call, f.app.runtime.owner, "branch-agent-source/.branch-worktrees/self-none", context), /no self-development contract/);
+});
+
+test("SELF-014: passed tests survive an engine restart, for the exact commit and contract they name", async (t) => {
+  const { SelfDevelopmentEvidence } = await import("../dist/self-development-evidence.js");
+  const f = await fixture(t); await f.tested();
+  const kept = f.merges.evidence.get(worktree);
+  assert.equal(kept.sha, f.headSha);
+  // A new engine on the same data reads what the old one wrote.
+  const restarted = new SelfDevelopmentEvidence({ store: f.app.store, owner: f.app.runtime.owner, workspace: f.app.runtime.workspace });
+  assert.deepEqual(restarted.get(worktree), kept);
+  assert.equal(restarted.lastRun(worktree).passed, true);
+  const review = await f.merges.review(f.input);
+  assert.equal(review.tests.sha, f.headSha, "owner review needs no second test run after a restart");
+});
+
+test("the old repository name is asked for as KeepOak/Branch-Agent: GitHub only redirects it, and Branch refuses redirects", async () => {
+  const { canonicalRepo, officialRepo } = await import("../dist/desktop/repo-pair.js");
+  assert.equal(officialRepo("stabrea/Branch-Agent"), "KeepOak/Branch-Agent");
+  assert.equal(officialRepo("stabrea/branch-agent"), "KeepOak/Branch-Agent");
+  assert.equal(officialRepo("alice/Branch-Agent"), "alice/Branch-Agent", "a fork keeps its own name");
+  assert.equal(canonicalRepo("KeepOak/Branch-Agent"), canonicalRepo("stabrea/Branch-Agent"));
+  assert.notEqual(canonicalRepo("alice/Branch-Agent"), canonicalRepo("KeepOak/Branch-Agent"));
 });

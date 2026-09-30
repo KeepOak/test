@@ -14,6 +14,7 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { arch, hostname, platform, release } from "node:os";
+import type { TokenCounts } from "./pricing.js";
 
 /* ------------------------------------------------------------------ the fence */
 
@@ -142,11 +143,15 @@ export function machineIdentity(): string {
 }
 
 /** The token counts a comparison may use, and whether the provider reported them or Branch guessed. */
-export function ledgerTokens(usage: Record<string, number>): { input: number; output: number; basis: "reported" | "estimated" } {
+export function ledgerTokens(usage: Record<string, number>): TokenCounts & { basis: "reported" | "estimated" } {
   // The provider's own count is the ledger. Branch's estimate is a guess made before the call, kept
   // because some providers report nothing; a run that has a real count never falls back to it.
   if ((usage.reports ?? 0) > 0 && ((usage.reportedInput ?? 0) + (usage.reportedOutput ?? 0)) > 0)
-    return { input: usage.reportedInput ?? 0, output: usage.reportedOutput ?? 0, basis: "reported" };
+    return { input: usage.reportedInput ?? 0, output: usage.reportedOutput ?? 0, basis: "reported",
+      // Parts of the input served from or written to the prompt cache, priced at their own rates (src/pricing.ts).
+      ...(usage.reportedCachedInput ? { cached: usage.reportedCachedInput } : {}),
+      ...(usage.reportedCacheWrite ? { cacheWrite: usage.reportedCacheWrite } : {}),
+      ...(usage.reportedCacheWrite1h ? { cacheWrite1h: usage.reportedCacheWrite1h } : {}) };
   return { input: usage.estimatedInput ?? 0, output: usage.estimatedOutput ?? 0, basis: "estimated" };
 }
 
