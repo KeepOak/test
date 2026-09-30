@@ -29,7 +29,7 @@ const SwitchSchema = z.object({ part: TrunkPartSchema, mode: z.enum(["off", "whe
 const TextSchema = z.object({ text: z.string().trim().min(1).max(16000) }).strict();
 /** eng-trunk-controls: resume takes nothing. */
 const EmptySchema = z.object({}).strict().nullable().optional();
-const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach|pause|resume|computers|default|files|secrets))?$/;
+const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach|pause|resume|computers|default|files|secrets|inbox))?$/;
 const roomPath = /^\/api\/trunks\/rooms\/([a-f0-9-]{36})(?:\/(remove|send|stop|answer|revoke|artifacts|typing))?$/; // phase2/rooms: revoke; chatlook: typing
 const routinePath = /^\/api\/trunks\/routines\/([a-f0-9-]{36})\/remove$/;
 /** mac7/residuals (integration): Answer / Not now on a Trunk's message that waits for the owner. */
@@ -145,6 +145,10 @@ async function trunkRoute(deps: TrunksHttpDeps, id: string, action: string | und
     return deps.method === "POST" ? personal.files.edit(id, await deps.readBody()) : personal.files.view(id);
   deps.requireOwner("Trunks");
   const { trunks } = deps, post = deps.method === "POST";
+  if (action === "inbox") {
+    if (deps.method !== "GET") throw new Error("Use GET to read a Trunk's Inbox");
+    return trunks.inbox(id);
+  }
   if (!action) return post ? edited(trunks, id, await deps.readBody()) : details(trunks, id);
   if (action === "export") return trunks.exportFile(id);
   if (action === "keys") return trunks.keys(id);

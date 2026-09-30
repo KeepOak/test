@@ -93,3 +93,30 @@ export function stepsDisplayFor(settings: StepsSettings, app: { id: string; kind
 function defined(knobs: StepsDisplayChange | undefined): StepsDisplayChange {
   return Object.fromEntries(Object.entries(knobs ?? {}).filter(([, value]) => value !== undefined));
 }
+
+const chatDetailKey = (channel: string, chatId: string): string => `chat-steps-detail:${channel}:${chatId}`;
+/** A chat-specific choice wins over its app's choice; unreadable records follow the app. */
+export function stepsInChat(store: Pick<Store, "get">, owner: string, channel: string, chatId: string, display: StepsDisplay): StepsDisplay {
+  const saved = z.object({ detail: StepsDetailSchema }).strict().safeParse(store.get("settings", owner, chatDetailKey(channel, chatId))?.data);
+  return saved.success ? { ...display, detail: saved.data.detail } : display;
+}
+/**
+ * Adapted from Hermes gateway/slash_commands.py's /verbose cycle and gateway/display_config.py's override precedence
+ * (MIT, Copyright (c) 2025 Nous Research): Branch saves the override per chat instead of changing the whole platform.
+ */
+export function verboseInChat(store: Pick<Store, "get" | "save" | "delete">, owner: string, channel: string, chatId: string,
+  argument: string, display: StepsDisplay): string {
+  const word = argument.trim().toLowerCase();
+  if (word === "default") {
+    store.delete("settings", owner, chatDetailKey(channel, chatId));
+    return "Steps in this chat follow this app's settings again.";
+  }
+  const cycle = ["off", "new", "all", "verbose"] as const;
+  const current = stepsInChat(store, owner, channel, chatId, display).detail;
+  const choice = word === "on" ? "all" : word === "full" ? "verbose" : word;
+  const next = choice ? StepsDetailSchema.safeParse(choice) : { success: true as const, data: cycle[(cycle.indexOf(current) + 1) % cycle.length]! };
+  if (!next.success) return "Use /verbose off, new, all, full or default; /verbose on its own cycles the level.";
+  store.save("settings", owner, chatDetailKey(channel, chatId), { detail: next.data });
+  const descriptions = { off: "off", new: "only when the kind of step changes", all: "every step", verbose: "every step with its details" };
+  return `Steps in this chat: ${descriptions[next.data]}. This applies to the next task; typing and reactions keep their usual settings.`;
+}
