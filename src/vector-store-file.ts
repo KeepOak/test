@@ -7,6 +7,7 @@ import { SqliteVectors, type VectorBackend } from "./vector-store.js";
 import { ChromaVectors, QdrantVectors } from "./vector-store-remote.js";
 import { PineconeVectors } from "./vector-store-pinecone.js";
 import { MilvusVectors } from "./vector-store-milvus.js";
+import { ElasticsearchVectors } from "./vector-store-elasticsearch.js";
 
 /**
  * Somewhere else to keep the lists of numbers: a database file of your own choosing, anywhere on
@@ -28,7 +29,7 @@ import { MilvusVectors } from "./vector-store-milvus.js";
  */
 export const VectorStoreSettingsSchema = z.object({
   /** External services are opt-in; the built-in database remains the default. */
-  vectorsIn: z.enum(["database", "file", "qdrant", "chroma", "pinecone", "milvus"]).default("database"),
+  vectorsIn: z.enum(["database", "file", "qdrant", "chroma", "pinecone", "milvus", "elasticsearch"]).default("database"),
   /** The full path of that file, such as `D:/branch/vectors.db`. Only read when `vectorsIn` is `file`. */
   vectorsFile: z.string().trim().max(400).default(""),
   vectorsUrl: z.string().trim().max(500).default(""),
@@ -43,7 +44,7 @@ export const VectorStoreSettingsSchema = z.object({
   milvusDatabase: z.string().trim().min(1).max(120).default("default"),
 }).strict();
 export type VectorStoreSettings = z.infer<typeof VectorStoreSettingsSchema>;
-export const externalVectorStore = (settings: VectorStoreSettings): boolean => ["qdrant", "chroma", "pinecone", "milvus"].includes(settings.vectorsIn);
+export const externalVectorStore = (settings: VectorStoreSettings): boolean => ["qdrant", "chroma", "pinecone", "milvus", "elasticsearch"].includes(settings.vectorsIn);
 export interface VectorServiceDependencies {
   fetchFor(endpoint: string): typeof fetch;
   key(owner: string, settings: VectorStoreSettings): Promise<string>;
@@ -95,12 +96,12 @@ export function chooseVectorStore(
       const config = { url: settings.vectorsUrl, fetch: remote.dependencies.fetchFor(settings.vectorsUrl),
         active: () => remote.dependencies.current(remote.owner, settings),
         assertAllowed: (target: string) => remote.dependencies.assertAllowed(settings.vectorsUrl, target),
-        timeoutMs: settings.vectorsTimeoutMs, header: settings.vectorsHeader || (settings.vectorsIn === "milvus" ? "Authorization" : settings.vectorsIn === "chroma" ? "x-chroma-token" : "api-key"),
+        timeoutMs: settings.vectorsTimeoutMs, header: settings.vectorsHeader || (["milvus", "elasticsearch"].includes(settings.vectorsIn) ? "Authorization" : settings.vectorsIn === "chroma" ? "x-chroma-token" : "api-key"),
         remoteBehindLoopback: settings.vectorsRemoteBehindLoopback,
         ...(settings.vectorsIn === "pinecone" ? { headers: { "X-Pinecone-Api-Version": "2026-07" } } : {}),
         tenant: settings.chromaTenant, database: settings.vectorsIn === "milvus" ? settings.milvusDatabase : settings.chromaDatabase,
         ...(settings.vectorsSecret ? { key: () => remote.dependencies.key(remote.owner, settings) } : {}) };
-      const constructors = { qdrant: QdrantVectors, chroma: ChromaVectors, pinecone: PineconeVectors, milvus: MilvusVectors };
+      const constructors = { qdrant: QdrantVectors, chroma: ChromaVectors, pinecone: PineconeVectors, milvus: MilvusVectors, elasticsearch: ElasticsearchVectors };
       const Provider = constructors[settings.vectorsIn as keyof typeof constructors];
       if (!Provider) throw new Error("The selected vector service has no native adapter");
       const backend = new Provider(config);

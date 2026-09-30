@@ -1,5 +1,28 @@
 # Third-party notices
 
+## Elasticsearch JavaScript client — native vector REST (Apache-2.0)
+
+`src/vector-store-elasticsearch.ts` adapts the actual generated official JavaScript API
+helpers' native HTTP method/path/body construction at immutable revision
+`c72be9cb93b121cdeecb5d9748c12bfd81a4ff0a`:
+
+- [src/api/api/indices.ts](https://github.com/elastic/elasticsearch-js/blob/c72be9cb93b121cdeecb5d9748c12bfd81a4ff0a/src/api/api/indices.ts): create and getMapping helpers.
+- [src/api/api/index.ts](https://github.com/elastic/elasticsearch-js/blob/c72be9cb93b121cdeecb5d9748c12bfd81a4ff0a/src/api/api/index.ts): individual native document indexing and refresh/pipeline query parameters.
+- [src/api/api/search.ts](https://github.com/elastic/elasticsearch-js/blob/c72be9cb93b121cdeecb5d9748c12bfd81a4ff0a/src/api/api/search.ts): native query/search_after/sort/source construction.
+- [src/api/api/count.ts](https://github.com/elastic/elasticsearch-js/blob/c72be9cb93b121cdeecb5d9748c12bfd81a4ff0a/src/api/api/count.ts) and [delete_by_query.ts](https://github.com/elastic/elasticsearch-js/blob/c72be9cb93b121cdeecb5d9748c12bfd81a4ff0a/src/api/api/delete_by_query.ts): scoped count/deletion routes and completion/refresh parameters.
+
+Copyright Elasticsearch B.V. and contributors; Apache-2.0. The unmodified full license
+appears in `licenses/elasticsearch-js-APACHE-2.0.txt`. Modifications add generated owner/model/
+dimension namespaces, strict mapping/metadata validation, bounded pagination/scan, existing
+policy-controlled JSON transport and verified owner-filtered entity-only cleanup. No SDK dependency.
+
+The actual server `DenseVectorFieldMapper.java` at revision
+`66e841d3dc1c7454e42a3073d52a67df6f2c2116` was inspected for serialization and dimension/default
+compatibility. Its repository license is AGPL/SSPL/Elastic License 2.0 as indicated in source
+headers; **no server code was copied or adapted**. Protocol facts were cross-checked against
+official Elasticsearch dense-vector and script-score documentation. The mathematical/API cosine
+expression is authored in the original guarded Branch adapter.
+
 ## Milvus Node HTTP client and server — native vector REST (Apache-2.0)
 
 `src/vector-store-milvus.ts` adapts actual native v2 request and response helpers:

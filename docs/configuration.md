@@ -5823,16 +5823,17 @@ never starts up broken and it never fails a search in silence. And **nothing is 
 changing it**: the vectors you already had stay where they were, and the new place fills up the next
 time you press **Read it again**.
 
-**Qdrant, Chroma, Pinecone and Milvus native adapters.** Library's **Where meaning vectors are kept** chooser can use
+**Qdrant, Chroma, Pinecone, Milvus and Elasticsearch native adapters.** Library's **Where meaning vectors are kept** chooser can use
 an existing Qdrant REST service, Chroma v2 tenant/database, Pinecone dense cosine serverless index
-or Milvus native v2 service/database. Milvus's `milvusDatabase` defaults to `default`; see
+Milvus native v2 service/database or Elasticsearch dense-vector service. Milvus's `milvusDatabase` defaults to `default`; see
 [Milvus vector store](milvus-vector-store.md) for schema, ordered-query and Strong count requirements.
+[Elasticsearch vector store](elasticsearch-vector-store.md) describes exact cosine search and scoped document cleanup.
 Pinecone uses its existing data-plane address and requires a matching embedding dimension; see
 [Pinecone vector store](pinecone-vector-store.md). This is an owner opt-in; Branch installs
 no server, SDK or embedding function. Set `vectorsUrl`, an optional `vectorsSecret` locker name,
 and for Chroma `chromaTenant`/`chromaDatabase` (defaults `default_tenant`/`default_database`). Keys
 are resolved only in the exact locker project captured when the connection is saved, for the selected destination. The default key headers are `api-key` and
-`x-chroma-token`; the API also accepts `vectorsHeader` and `vectorsTimeoutMs` (500–30,000ms).
+`x-chroma-token`, with native Authorization Bearer for Milvus and Authorization ApiKey for Elasticsearch; the API also accepts `vectorsHeader` and `vectorsTimeoutMs` (500–30,000ms).
 Opening or saving the chooser reads configuration only. A service connection is first used when
 indexing, searching or explicitly deleting; a failure leaves word search available. The owner's
 host/path rules govern local services too, outside services use the ordinary network guard, and a
@@ -5858,7 +5859,7 @@ Qdrant listing is bounded to 2,048 collections, Chroma to 2,000 collections, rea
 per generation and transport responses to 8 MiB. Exceeding these limits fails visibly and retains
 pending cleanup. Pinecone lists at most 2,048 namespaces, with the same per-namespace reading cap;
 its eventual consistency can keep successful deletion pending until statistics settle.
-Elasticsearch, Postgres, Redis, Weaviate, MongoDB and Azure native
+Postgres, Redis, Weaviate, MongoDB and Azure native
 adapters remain unimplemented; QMD retrieval remains outside the accepted scope. This change is
 RES-321's native vector slice, not delivery of every memory, session or vector backend.
 
@@ -6749,7 +6750,7 @@ going to be built. They are written down here so nobody goes looking for them.
   only inside the Branch Agent app, whose own window carries the Stop notice; see "Using this
   computer's screen and keyboard".
 - **Outside vector databases need an explicit choice.** The default is SQLite on this computer.
-  Qdrant, Chroma, Pinecone and Milvus are owner-selected native knowledge-base vector stores; the other requested
+  Qdrant, Chroma, Pinecone, Milvus and Elasticsearch are owner-selected native knowledge-base vector stores; the other requested
   native database adapters remain pending. Saved facts still use the built-in memory backend or
   the explicitly selected Branch-protocol outside memory service.
 - **No crash reporting service.** Nothing is sent to Sentry or anywhere like it. Problems are
