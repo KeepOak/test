@@ -10577,5 +10577,18 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "window.flow-history.title": "Time travel",
+  "window.flow-history.loading": "Loading recorded flows…",
+  "window.flow-history.recent": "The 20 most recently updated graph flows with recorded steps.",
+  "window.flow-history.count": "{n} recorded steps",
+  "window.flow-history.open": "Inspect",
+  "window.flow-history.empty": "No recorded graph-flow runs are available. Recording must be enabled before a flow runs.",
+  "window.flow-history.back": "Back to runs",
+  "window.flow-history.copy": "Copy of {id}, after step {n}",
+  "window.flow-history.step": "Step {n}",
+  "window.flow-history.snapshot": "State after step {n}",
+  "window.flow-history.unavailable": "This snapshot was too large to keep. Its state is unavailable.",
+  "window.flow-history.no-steps": "No steps were kept for this run.",
+  "window.flow-history.inspect-only": "Inspect recorded steps and their saved state. Values are redacted by Branch; this view does not run a flow or change it."
 }

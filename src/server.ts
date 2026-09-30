@@ -4480,7 +4480,9 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           }, path).catch((error: unknown) => {
             throw error instanceof FlowsBoardsHttpError ? new HttpError(error.status, error.message) : error;
           });
-          send(response, 200, answer);
+          // Recorded graph state may contain secret values; use the same scrub as task inspection.
+          const snapshot = request.method === "GET" && /^\/api\/flows-boards\/flows\/[^/]+\/steps$/.test(path);
+          send(response, 200, snapshot ? app.runtime.hideSecrets(answer) : answer);
           return;
         }
         // ---- end of the r17-h block ----

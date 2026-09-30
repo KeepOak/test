@@ -10577,5 +10577,18 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "window.flow-history.title": "Voyage dans le temps",
+  "window.flow-history.loading": "Chargement des flux enregistrés…",
+  "window.flow-history.recent": "Les 20 flux de graphe mis à jour le plus récemment avec des étapes enregistrées.",
+  "window.flow-history.count": "{n} étapes enregistrées",
+  "window.flow-history.open": "Inspecter",
+  "window.flow-history.empty": "Aucune exécution de flux de graphe enregistrée. Activez l’enregistrement avant de lancer un flux.",
+  "window.flow-history.back": "Retour aux exécutions",
+  "window.flow-history.copy": "Copie de {id}, après l’étape {n}",
+  "window.flow-history.step": "Étape {n}",
+  "window.flow-history.snapshot": "État après l’étape {n}",
+  "window.flow-history.unavailable": "Cet état était trop volumineux pour être conservé et n’est pas disponible.",
+  "window.flow-history.no-steps": "Aucune étape conservée pour cette exécution.",
+  "window.flow-history.inspect-only": "Inspectez les étapes enregistrées et leur état sauvegardé. Branch masque les valeurs confidentielles ; cette vue ne lance ni ne modifie aucun flux."
 }

@@ -10577,5 +10577,18 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "window.flow-history.title": "Viaje en el tiempo",
+  "window.flow-history.loading": "Cargando flujos registrados…",
+  "window.flow-history.recent": "Los 20 flujos de grafo actualizados más recientemente con pasos registrados.",
+  "window.flow-history.count": "{n} pasos registrados",
+  "window.flow-history.open": "Inspeccionar",
+  "window.flow-history.empty": "No hay ejecuciones de flujos de grafo registradas. Activa el registro antes de ejecutar un flujo.",
+  "window.flow-history.back": "Volver a las ejecuciones",
+  "window.flow-history.copy": "Copia de {id}, después del paso {n}",
+  "window.flow-history.step": "Paso {n}",
+  "window.flow-history.snapshot": "Estado después del paso {n}",
+  "window.flow-history.unavailable": "Este estado era demasiado grande para guardarlo y no está disponible.",
+  "window.flow-history.no-steps": "No se guardaron pasos de esta ejecución.",
+  "window.flow-history.inspect-only": "Inspecciona los pasos registrados y su estado guardado. Branch oculta los valores confidenciales; esta vista no ejecuta ni cambia ningún flujo."
 }
