@@ -55,6 +55,8 @@ export const auditActions = [
   // defaulttrunk: the owner picked another default Trunk, or conversations with no Trunk were put with one (src/trunks/defaults.ts).
   "trunk.default",
   "trunk.files",
+  // models-ui: the most a Trunk may spend in a month was set, changed or cleared (src/trunks/spend-cap.ts).
+  "trunk.spend_cap",
 ] as const;
 export type AuditAction = (typeof auditActions)[number];
 
@@ -137,6 +139,7 @@ const actionLabels: Record<AuditAction, string> = {
   "trunk.computers": "The computers a Trunk may use were changed",
   "trunk.default": "The default Trunk, or which Trunk a conversation is with, was changed",
   "trunk.files": "A Trunk personality file was changed",
+  "trunk.spend_cap": "A Trunk's monthly spending limit was changed",
 };
 export const auditLabel = (action: AuditAction): string => actionLabels[action];
 

@@ -212,9 +212,11 @@ async function setModel(el) {
    is keys.copyFromOwner (on unless the owner turns it off); with it off, a connection with no pick does not answer. */
 async function loadKeys(id) {
   try {
-    const [keys] = await Promise.all([api(`trunks/${encodeURIComponent(id)}/keys`), loadAccounts()]);
+    const [keys, spend] = await Promise.all([api(`trunks/${encodeURIComponent(id)}/keys`),
+      api(`trunks/${encodeURIComponent(id)}/spend`).catch(() => null), loadAccounts()]);
     if (ed?.id !== id) return;
     ed.keys = keys;
+    ed.spend = spend;
     if (ed.tab === "accounts") drawEditor();
   } catch (error) { toast(error.message); }
 }
@@ -246,7 +248,28 @@ function accountsTab(tr) {
      answers with first and marked). The same "Which model" as What it may do, saved the same way. */
   const pools = [...(view.pools ?? [])].sort((a, b) => Number(usesPool(tr, b)) - Number(usesPool(tr, a)));
   const rows = pools.map((pool) => poolRow(tr, pool, keys)).join("") || `<p class="hint">${t("window.flows.trunk.acc-empty")}</p>`;
-  return `<div class="tk-accounts"><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.acc-lede")}</p>${modelSeg(tr)}${copy}${rows}${notes ? `<ul class="hint tk-notes">${notes}</ul>` : ""}</div>`;
+  return `<div class="tk-accounts"><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.acc-lede")}</p>${modelSeg(tr)}${copy}${rows}${capRow(tr)}${notes ? `<ul class="hint tk-notes">${notes}</ul>` : ""}</div>`;
+}
+/* The most it may spend in a month (GET/POST /api/trunks/{id}/spend, src/trunks/spend-cap.ts): what this month's turns and
+   their helpers cost at list price, and the limit, saved when the field changes; empty is no limit. Tasks on a model with no
+   price on file are named as not counted, never taken as free. */
+function capRow(tr) {
+  const s = ed.spend;
+  if (!s) return "";
+  const money = (n) => `$${Number(n).toFixed(2)}`;
+  const spent = s.monthlyUsd === null ? t("window.flows.trunk.cap-spent", { amount: money(s.spentUsd) })
+    : t("window.flows.trunk.cap-spent-of", { amount: money(s.spentUsd), limit: money(s.monthlyUsd) });
+  const unpriced = s.unpricedTasks ? ` ${t("window.flows.trunk.cap-unpriced", { n: s.unpricedTasks })}` : "";
+  const over = s.monthlyUsd !== null && s.spentUsd >= s.monthlyUsd ? `<span class="pill no tk-cap-over">${t("window.flows.trunk.cap-reached")}</span>` : "";
+  return `<div class="ctl tk-cap"><b><label for="tk-cap">${t("window.flows.trunk.cap")}</label> ${over}</b><span class="right"><input class="inp" id="tk-cap" type="number" min="0.01" max="100000" step="0.01" inputmode="decimal" data-css="width:120px" placeholder="${esc(t("window.flows.trunk.cap-none"))}" value="${s.monthlyUsd ?? ""}" data-id="${esc(tr.id)}"></span><small>${spent}${unpriced} ${t("window.flows.trunk.cap-hint")}</small></div>`;
+}
+async function setCap(el) {
+  const raw = el.value.trim(), id = el.dataset.id;
+  const monthlyUsd = raw === "" ? null : Number(raw);
+  if (monthlyUsd !== null && !(monthlyUsd >= 0.01)) { toast(t("window.flows.trunk.cap-bad")); return; }
+  try { ed.spend = await api(`trunks/${encodeURIComponent(id)}/spend`, { monthlyUsd }); }
+  catch (error) { toast(error.message); }
+  if (ed?.id === id && ed.tab === "accounts") drawEditor();
 }
 /* One save at a time: each reads the Trunk afresh, so two quick picks never write over each other. */
 let keysSaving = Promise.resolve();
@@ -612,10 +635,11 @@ export function init() {
   document.addEventListener("change", (e) => {
     if (e.target.id === "tm-model-sel") setModel(e.target);
     else if (e.target.id === "tk-copy") setCopy(e.target);
+    else if (e.target.id === "tk-cap") setCap(e.target);
     else if (e.target.dataset?.tkPool) pickAccount(e.target);
     else if (e.target.dataset?.tkNext) pickNext(e.target);
   });
-  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-next"]);
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-next", "sw:tk-cap"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));
