@@ -21,7 +21,7 @@ import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
 import { pendingMemories, readPendingMemories, initMemoryReview } from "./memory-review.js";
-import { seasonsTab, readSeasons, initSeasons } from "./seasons.js";
+import { initMemoryDetail } from "./memory-detail.js";
 import { lockdownOn } from "../chat/approvals.js";
 
 function tabBar(tabs, place, current) {
@@ -63,7 +63,7 @@ function memoryTab(mem) {
   if (memSettings) html += `<div class="ctl" data-css="margin:0 0 10px"><b>${t("window.places.library.ask-before-remembering")}</b><input class="sw" type="checkbox" id="mem-ask15" data-sw="mem-ask15" ${memSettings.requireApproval ? "checked" : ""} aria-label="${t("window.places.library.ask-before-remembering")}"><small>${t("window.places.library.ask-before-remembering-sub")}</small></div>`;
   html += mem.map((m, i) => `<div class="prow"><span class="ico-tile">${ic('star', 's')}</span>
         <span class="grow"><b>${inlineText(m.data?.text ?? m.data?.fact ?? m.data?.content ?? "")}</b><small>${esc([m.data?.source, when(m.updatedAt ?? m.createdAt)].filter(Boolean).join(" · "))}</small></span>
-        <button class="btn ghost sm" type="button" data-act="forget" data-i="${i}" data-id="${esc(m.id || '')}">${t("window.places.library.forget")}</button></div>`).join('');
+        <button class="btn ghost sm" type="button" data-act="memory-detail" data-id="${esc(m.id || '')}">${esc(say("Inspect"))}</button><button class="btn ghost sm" type="button" data-act="forget" data-i="${i}" data-id="${esc(m.id || '')}">${t("window.places.library.forget")}</button></div>`).join('');
   return html + (mem.length ? "" : empty18("library:memory"));
 }
 
@@ -96,8 +96,7 @@ export function draw() {
   const tabs = [
     ["memory", t("memory.movein.kind.memory"), mem.length],
     ["documents", t("nav.documents"), 0],
-    ["made", t("place.library.made"), 0],
-    ["seasons", "Seasons", 0]
+    ["made", t("place.library.made"), 0]
   ];
 
   const lockBanner = lockdownOn() ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
@@ -107,7 +106,6 @@ export function draw() {
     ${tabBar(tabs, "library", tab)}<div class="rows">`;
 
   if (tab === "memory") html += pendingMemories() + memoryTab(mem) + learnSection();
-  else if (tab === "seasons") html += seasonsTab();
   else if (tab === "documents") html += documentsTab();
   else if (tab === "made") {
     html += artsList.map((a) => `<div class="prow"><span class="fi">${esc((a.name || '').split('.').pop() || 'bin')}</span>
@@ -132,8 +130,6 @@ export async function after() {
     let fresh = null;
     try { fresh = await api("memory/tidy"); } catch (error) { tidyFailed = true; toast(error.message); return; }
     if (JSON.stringify(fresh) !== JSON.stringify(findings)) { findings = fresh; renderNow(); }
-  } else if (tab === "seasons") {
-    try { await readSeasons(); } catch (error) { toast(error.message); }
   } else if (tab === "documents") {
     const p17 = await readLibrary17(tab, docView);
     if (p17.error) toast(p17.error.message);
@@ -168,7 +164,7 @@ async function openTidy() {
     await api("memory/tidy", {});
     waiting = (await api("memory/proposals")).proposals.filter((p) => p.status === "pending" && p.source === TIDY_SOURCE && TIDY_DO[p.kind]);
   } catch (error) { toast(error.message); return; }
-  openDlg({ title: t("window.places.library.tidy-up-memory"), body: `<p class="hint" data-css="margin:0 0 10px">${t("window.places.library.found-by-comparing-what-each-fact")}</p><div class="tidy15">${waiting.map(tidyRow).join("")}</div>`, foot: `<button class="btn" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
+  openDlg({ title: t("window.places.library.tidy-up-memory"), body: `<p class="hint" data-css="margin:0 0 10px">${waiting.length ? t("window.places.library.found-by-comparing-what-each-fact") : esc(say("There is nothing to tidy."))}</p><div class="tidy15">${waiting.map(tidyRow).join("")}</div>`, foot: `<button class="btn" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
 }
 async function decideTidy(el) {
   const skip = Boolean(el.dataset.x);
@@ -260,8 +256,8 @@ async function saveNewDoc() {
 }
 
 export function init() {
-  initSeasons();
   initMemoryReview();
+  initMemoryDetail();
   markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15", "sw:mem-ask15", "doc-new", "doc-new-save", "sw:doc-new-name", "sw:doc-new-text"]);
   on("doc-new", () => openNewDoc());
   on("doc-new-save", () => saveNewDoc());
