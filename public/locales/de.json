@@ -4415,6 +4415,8 @@
   "recordings.saved": "Gespeichert.",
   "recordings.switch": "Aufzeichnungen von Aufgaben",
   "recordings.title": "Eine Aufgabe noch einmal ansehen",
+  "release-notes.edition": "Dieser Build enthält die Versionshinweise für {version}.",
+  "release-notes.installed-build": "Installierter Build: Branch {version}",
   "repeat.intro": "Wähle einen Rhythmus und sieh ihn in einfachen Worten ausgeschrieben, bevor du ihn nutzt.",
   "repeat.preview": "Es würde {words} passieren.",
   "repeat.title": "Wie oft soll es sich wiederholen?",

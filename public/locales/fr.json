@@ -4416,6 +4416,8 @@
   "recordings.saved": "Enregistré.",
   "recordings.switch": "Enregistrements des tâches",
   "recordings.title": "Revoir une tâche",
+  "release-notes.edition": "Cette version inclut les notes de version de {version}.",
+  "release-notes.installed-build": "Version installée : Branch {version}",
   "repeat.intro": "Choisissez un rythme et lisez-le en toutes lettres avant de l'utiliser.",
   "repeat.preview": "Cela se produirait {words}.",
   "repeat.title": "À quelle fréquence doit-il se répéter ?",
