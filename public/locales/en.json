@@ -10489,5 +10489,11 @@
   "settings.developer.client-tools-help": "Shows whether tools may join through the client-tools WebSocket. Changing this setting from this row remains unavailable pending its safety review; displaying the switch does not connect an external program.",
   "settings.developer.lazy-tools-help": "Tool definitions are loaded when the task needs them instead of sending every definition with each request. This behavior is always enabled; the displayed switch has no write action.",
   "settings.developer.metrics-help": "Uses the configured trace exporter for task-counter sends. Turning this switch on selects When needed; it does not configure a destination or send counters immediately. Sending still requires trace export to be enabled.",
-  "settings.developer.loop-help": "Measures how late the engine's event-loop work starts and how busy it is. Turning this switch on selects When needed, so measurement happens when requested. Continuous watching requires On rather than this row's When needed choice."
+  "settings.developer.loop-help": "Measures how late the engine's event-loop work starts and how busy it is. Turning this switch on selects When needed, so measurement happens when requested. Continuous watching requires On rather than this row's When needed choice.",
+  "settings.voice.key-help": "Choose Change, then press the desired key combination. Escape keeps the previous key. The saved shortcut changes push-to-talk; choosing it does not start listening.",
+  "settings.voice.picker-help": "Chooses an installed computer voice and enables reply read-aloud. Off disables automatic reading while retaining the saved voice. A saved voice that is no longer listed remains visible; it may be unavailable until restored on this computer.",
+  "settings.voice.saved": "{name} (saved, not currently listed)",
+  "settings.voice.unavailable": "Voice settings unavailable",
+  "settings.notify.days-help": "Select up to six whole weekdays without notifications. Each day toggles independently and saves immediately; None clears the selected days. Approvals still wait in Branch. This changes days off, not the separate nightly quiet-hour times.",
+  "settings.notify.days-limit": "Leave at least one weekday with notifications. Remove a selected day before choosing another."
 }
