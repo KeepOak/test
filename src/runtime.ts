@@ -1880,10 +1880,10 @@ ${run.output.slice(0, 6000)}`;
       permissions: [...context.permissions].sort(),
       // Only an ordinary root can be reconstructed by this deferred queue. Helpers, scoped
       // memory, borrowed copies and other execution shapes require their original placement.
-      deferredScope: { version: 3, credentials: trunk && trunk.owners && !trunk.roomTurn
-        ? { trunkId: trunk.trunkId, keys: context.trunkKeys } : null, workspace: this.workspace, root: !parent && context.depth === 0 && !context.agent
-        && !context.trunk && (!context.trunkKeys || !!trunk?.owners)
-        && (!trunk || (trunk.owners === true && !trunk.roomTurn)) && !currentAccountCall()?.trunk && !context.isolated && !context.ownCopy && !options.lentTo
+      deferredScope: { version: 4, credentials: trunk && !trunk.roomTurn
+        ? { trunkId: trunk.trunkId, agent: trunk.agent, owners: trunk.owners === true, keys: context.trunkKeys } : null, workspace: this.workspace, root: !parent && context.depth === 0 && (!context.agent || (!!trunk && context.agent === trunk.agent))
+        && (!context.trunk || context.trunk === trunk?.trunkId) && (!context.trunkKeys || !!trunk)
+        && (!trunk || !trunk.roomTurn) && !currentAccountCall()?.trunk && !context.isolated && !context.ownCopy && !options.lentTo
         && context.workspace === this.workspace && (context.source ?? "owner") === "owner"
         && !currentPerson() && !startedWithShortLivedKey() && (!options.originFrom || !!options.deferredFrom)
         && !options.resumeFrom && !options.continuing, dryRun: context.dryRun === true },
@@ -2115,7 +2115,7 @@ ${run.output.slice(0, 6000)}`;
     return this.store.events(runId).find((event) => event.kind === "run.started")?.data.dryRun === true;
   }
   /** Deferred answers only resume a durably identified ordinary root; other shapes remain held. */
-  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean; credentials: { trunkId: string; keys: NonNullable<ToolContext["trunkKeys"]> } | null } {
+  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean; credentials: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null } {
     const run = runId ? this.store.run(runId) : null;
     const events = runId ? this.store.events(runId) : [];
     const started = events.find((event) => event.kind === "run.started")?.data;
@@ -2124,29 +2124,31 @@ ${run.output.slice(0, 6000)}`;
       ? value as Record<string, unknown> : null;
     if (!run || run.owner !== this.owner || run.sessionId !== sessionId
       || !saved
-      || saved.version !== 3 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
+      || saved.version !== 4 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
       || !Array.isArray(started?.permissions) || !started.permissions.every((permission) => typeof permission === "string")
       || events.some((event) => event.kind === "worktree.used" || event.kind === "worktree.inherited"))
       throw new Error("This handed-over task cannot continue safely because its saved effective scope or workspace cannot be recovered. The job remains unanswered; reconcile its original task first.");
-    let credentials: { trunkId: string; keys: NonNullable<ToolContext["trunkKeys"]> } | null = null;
+    let credentials: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null = null;
     if (saved.credentials !== null) {
       const value = saved.credentials;
       if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("The handed-over task's saved credential scope is unavailable; the job remains unanswered.");
       const record = value as Record<string, unknown>;
       const keys = TrunkSchema.shape.keys.safeParse(record.keys);
-      if (typeof record.trunkId !== "string" || !record.trunkId || record.keys === undefined || !keys.success
+      if (typeof record.trunkId !== "string" || !record.trunkId || typeof record.agent !== "string" || !record.agent
+        || typeof record.owners !== "boolean" || record.keys === undefined || !keys.success
         || canonicalArguments(JSON.stringify(record.keys)) !== canonicalArguments(JSON.stringify(keys.data)))
         throw new Error("The handed-over task's saved credential identity or key restrictions are invalid; the job remains unanswered.");
-      credentials = { trunkId: record.trunkId, keys: keys.data };
+      credentials = { trunkId: record.trunkId, agent: record.agent, owners: record.owners, keys: keys.data };
     }
     return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun, credentials };
   }
-  private checkDeferredCredentials(saved: { trunkId: string; keys: NonNullable<ToolContext["trunkKeys"]> } | null, current: TrunkRunShape | null): void {
+  private checkDeferredCredentials(saved: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null, current: TrunkRunShape | null): void {
     // Equality deliberately holds changed scopes: neither a different identity nor newly added
     // accounts/fallbacks/owner access may be installed by answering an existing handoff.
     if (currentAccountCall()?.trunk || (saved === null ? current !== null
-      : !current || current.owners !== true || current.roomTurn || current.trunkId !== saved.trunkId
+      : !current || (current.owners === true) !== saved.owners || current.agent !== saved.agent
+        || current.roomTurn || current.trunkId !== saved.trunkId
         || canonicalArguments(JSON.stringify(current.keys)) !== canonicalArguments(JSON.stringify(saved.keys))))
       throw new Error("This handed-over task's original credential identity or key restrictions no longer match. Reconcile its scope before answering; no new credential authority was adopted.");
   }
