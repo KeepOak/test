@@ -151,7 +151,8 @@ export class WorktreePlaces {
     if (!current) throw new Error("The task's saved workspace record is unavailable.");
     const pending = [run.id], seen = new Set<string>();
     const placements: { runId: string; data: Record<string, unknown> }[] = [];
-    let required = false, resumed = false;
+    const removed = new Set<string>();
+    let required = false, resumed = false, continuing = false;
     const unavailable = () => new Error("The helper's recorded project copy could not be safely restored. It was not started in another folder.");
     while (pending.length) {
       if (seen.size >= 200) throw unavailable();
@@ -164,11 +165,12 @@ export class WorktreePlaces {
       const starts = events.filter((event) => event.kind === "run.started");
       if (starts.length !== 1) throw unavailable();
       const start = starts[0]!.data;
+      if (id === run.id) continuing = events.some((event) => event.kind === "run.continued");
       required ||= start.ownCopy === true;
       for (const event of events) {
         if (event.kind === "worktree.used" && ("source" in event.data || (typeof event.data.branch === "string" && event.data.branch.startsWith("branch/helper-"))))
           placements.push({ runId: id, data: event.data });
-        if (event.kind === "worktree.removed") throw unavailable();
+        if (event.kind === "worktree.removed" && typeof event.data.path === "string") removed.add(event.data.path);
       }
       const links = [start.resumedFrom, start.originFrom].filter((value): value is string => typeof value === "string");
       const eligible: string[] = [];
@@ -183,7 +185,7 @@ export class WorktreePlaces {
       if (next.length) { resumed = true; pending.push(next[0]!); }
     }
     if (!placements.length) {
-      if (required && resumed) throw unavailable();
+      if (required && (resumed || continuing)) throw unavailable();
       return null;
     }
     if (!required && !codingOn(this.deps.store, this.deps.owner, "worktrees")) throw unavailable();
@@ -193,6 +195,7 @@ export class WorktreePlaces {
       || typeof data.base !== "string" || !/^[a-f0-9]{40,64}$/i.test(data.base)) throw unavailable();
     const name = `helper-${short(origin)}`, branch = `branch/helper-${short(origin)}`;
     const folder = data.source, scope = data.path;
+    if (removed.has(scope)) throw unavailable();
     if (folder.includes("\\") || isAbsolute(folder) || folder.split("/").some((part) => part === ".." || part === ".")
       || scope !== this.scopeFor(folder, name) || data.branch !== branch) throw unavailable();
     for (const prior of placements) {
