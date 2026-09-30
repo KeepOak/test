@@ -41,6 +41,9 @@ const notSettings = new Set(["[page]", "crashes", "help.", "installed_skills", "
  * src/backup.ts; a new one fails here until someone reads it and adds it.
  */
 const reviewedComputedKeys = new Set([
+  "src/channels/topic-command.ts: key",
+  "src/channels/thread-lifecycle.ts: keyFor",
+  "src/channels/personality-settings.ts: keyFor",
   "src/a2a-client.ts: recordId",
   "src/runtime.ts: marked",
   "src/registry-install.ts: pinKey",
@@ -63,6 +66,7 @@ const reviewedComputedKeys = new Set([
   "src/channels/catch-up.ts: id",
   "src/channels/catch-up.ts: key",
   "src/channels/chat-commands.ts: usageKey",
+  "src/channels/chat-voice.ts: key",
   "src/commands/steer-skill.ts: key", // CHAT-205: pinned-skill:<conversation>, the window's own skill pin
   "src/channels/threads.ts: chatThreadKey", // defaulttrunk: channel-session:<channel>:<chat>, the same key the router always wrote
   "src/trunks/defaults.ts: restoredTrunksKey", // defaulttrunk: only read, the Trunks a restore still holds (restore-trunks-held)
@@ -87,6 +91,8 @@ const reviewedComputedKeys = new Set([
   "src/gitlab-connection.ts: gitlabSwitchKey", // RES-719: "gitlab-connection" waits for the owner's yes
   "src/goal-mode.ts: key",
   "src/integrations/mcp-oauth.ts: settingsKey",
+  "src/personal/signin.ts: this.healthKey",
+  "src/channels/steps-display.ts: chatDetailKey",
   "src/interop/settings.ts: interopKey",
   "src/knobs/settings.ts: keyOf",
   "src/learning-more/settings.ts: learningKey",
@@ -147,7 +153,9 @@ const reviewedComputedKeys = new Set([
   "src/tool-report.ts: catalogHealthId",
   "src/tool-usage.ts: id",
   "src/trunks/settings.ts: trunkKey",
-  "src/trunks/teach.ts: watchKey"
+  "src/trunks/teach.ts: watchKey",
+  // Not a key: the tool's group ("settings") and the first words of its description, which the scan reads as one.
+  "src/comfort/update-tool.ts: the"
 ]);
 
 const classified = (id) => staysOnThisComputer(id) || heldForTheOwner(id) || id in travelsWithBackup;
@@ -189,10 +197,11 @@ const computedExamples = {
     "mcp-oauth:server", "settings-kit-file-undo-1", "trunk-watch:t", "cache:abc", "session-carry:s", "plugin:p",
     "plugin-catalog:p", "plugin-version:p:h", "plugin-review:p", "plugin-evaluation:p:e", "add-on-version:a:h",
     "add-on-candidate:a:h", "safety-wasm-add-on:w", "restore-held", "restore-trunks-held", "listen-address", "memory-history-status",
-    "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch"],
+    "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch", "topic-request:telegram:1:2", "chat-session-lifecycle:telegram:1", "chat-personality:telegram:1",
+    "personal-connection-health:google", "chat-steps-detail:telegram:1"],
   held: ["account-session:s", "add-on-export:a", "add-on-list:a", "add-on:a", "add-on-pipelines:a", "asks-hindsight",
     "asks-nodes-list", "autonomy-loop:s", "autonomy-heartbeat:s", "autonomy-subgoals:s", "browser-container",
-    "channel-session:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",
+    "channel-session:telegram:1", "channel-voice:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",
     "conversation-mode:s", "goal:s", "interop-fleet", "interop-handoff", "knobs-compaction", "learning-more-providers-settings",
     "model-savings-mixtures", "handoffs:x", "openapi-service:w", "profile-role:p", "personal-email-settings", "plan-act:project:p",
     "plan-act:session:s", "pinned-skill:s", "skill-package:k", "captured-api-skill:c", "registry-key:r", "skill-candidate:k:1", "trunks-messages", "trunks-routines",

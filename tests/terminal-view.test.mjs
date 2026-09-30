@@ -36,8 +36,8 @@ test("the terminal's homes are exactly the homes docs/places.md lists", async ()
   assert.ok(documented.length >= 30, "the homes table was found");
   assert.deepEqual([...allHomes()].filter((home) => home !== "chat").sort(), [...documented].sort());
   for (const tab of ["Activity", "Plan", "Files", "Memory"]) assert.ok(PANE_TABS.some((entry) => entry.english === tab), `side pane tab ${tab}`);
-  assert.match(text, /six places/, "the new window's six places are the rule");
-  assert.deepEqual(PLACES.map((place) => place.english), ["Conversation", "Inbox", "Automations", "Library", "Customize", "Team"]);
+  assert.match(text, /seven places/, "the new window's seven places are the rule");
+  assert.deepEqual(PLACES.map((place) => place.english), ["Conversation", "Inbox", "Automations", "Library", "Customize", "Team", "Seasons"]);
 });
 
 /* Redesign: the window's lists now live in the new window (public/app/**): its places in shell/shell.js PLACES, its
@@ -506,6 +506,9 @@ test("the prototype's keys and commands: Tab walks the places, a bare /lockdown 
   await tui.command("/team");
   await settle();
   assert.equal(homeOf(tui.route), "team:live", "/team opens Team");
+  input.write("\t");
+  await settle();
+  assert.equal(homeOf(tui.route), "seasons", "Tab moves on to Seasons, the last place");
   input.write("\t");
   await settle();
   assert.equal(homeOf(tui.route), "chat", "Tab goes round from the last place to the conversation");

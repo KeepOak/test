@@ -5,7 +5,7 @@ import { api, token } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { toast, openDlg } from "../../core/ui.js";
-import { seg15 } from "../rows15.js";
+import { fact15 } from "../rows15.js";
 import { sections17, init17, load17 } from "../p17-advanced.js";
 import { initMarket } from "../market.js"; // RES-720
 import { t } from "../../../i18n.js";
@@ -129,7 +129,7 @@ export function draw() {
     html += `<div class=\"sec x15-sec\"><h2>${t("memory.movein.kind.memory")}</h2>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.most-facts-it-keeps")}</b><span class=\"right num15\"><input class=\"inp\" ${own("ad-facts")} value=\"` + esc(E.state?.memoryCapacity?.maxFacts ?? "") + `\" aria-label=\"${t("window.settings.advanced.most-facts-it-keeps")}\" data-sw=\"set\"><small>${t("window.settings.advanced.facts")}</small></span><small>${t("window.settings.advanced.tidy-up-suggests-what-to-archive")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.match-by-meaning")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-match-by-meaning")} aria-label=\"${t("window.settings.advanced.match-by-meaning")}\" data-sw=\"set\"><small>${t("window.settings.advanced.finds-invoice-when-the-fact-says")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.share-memory-between-trunks")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-share-memory-between-trunks\" aria-label=\"${t("window.settings.advanced.share-memory-between-trunks")}\" data-sw=\"set\"><small>${t("window.settings.advanced.off-each-trunk-keeps-its-own")}</small></div>`;
+    html += fact15(t("window.settings.advanced.share-memory-between-trunks"), "f15-share-memory-between-trunks");
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.outside-memory")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.outside-memory")}\">${outsideSeg()}</span></span><small></small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.keep-a-history-in-git")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-keep-a-history-in-git")} aria-label=\"${t("window.settings.advanced.keep-a-history-in-git")}\" data-sw=\"set\"><small>${t("window.settings.advanced.every-change-to-memory-as-a")}</small></div>`;
     html += archiveRow();
@@ -138,10 +138,10 @@ export function draw() {
     html += `<div class=\"sec x15-sec\"><h2>${t("dashboard.automations.title")}</h2>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.report-only-what-changed")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-report-only-what-changed")} aria-label=\"${t("window.settings.advanced.report-only-what-changed")}\" data-sw=\"set\"><small>${t("window.settings.advanced.checks-compare-with-last-time-and")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.checks-and-retries-in-procedures")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-checks-and-retries-in-procedures")} aria-label=\"${t("window.settings.advanced.checks-and-retries-in-procedures")}\" data-sw=\"set\"><small>${t("window.settings.advanced.a-step-can-check-its-own")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("autonomy.part.procedures")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-procedures-that-start-themselves\" aria-label=\"${t("autonomy.part.procedures")}\" data-sw=\"set\"><small>${t("window.settings.advanced.on-a-clock-or-after-a")}</small></div>`;
+    html += fact15(t("autonomy.part.procedures"), "f15-procedures-that-start-themselves");
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.start-when-a-usb-device-is")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-start-when-a-usb-device-is-plugged-in")} aria-label=\"${t("window.settings.advanced.start-when-a-usb-device-is")}\" data-sw=\"set\"><small>${t("window.settings.advanced.only-for-triggers-you-make")}</small></div>`;
     html += household() ? `<div class=\"ctl\"><b>${t("window.settings.advanced.reach-webhooks-from-outside")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.reach-webhooks-from-outside")}\"><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"knobs-owner-only\">${t("accounts.switch.off")}</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"knobs-owner-only\">cloudflared</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"knobs-owner-only\">ngrok</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"knobs-owner-only\">Tailscale</button></span></span><small></small></div>` : tunnelSeg(); // the owner's public door for webhooks (../tunnel-seg.js)
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.use-what-the-trigger-sent")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-use-what-the-trigger-sent\" aria-label=\"${t("window.settings.advanced.use-what-the-trigger-sent")}\" data-sw=\"set\"><small>${t("window.settings.advanced.payload-and-field-path-in-the")}</small></div>`;
+    html += fact15(t("window.settings.advanced.use-what-the-trigger-sent"), "f15-use-what-the-trigger-sent");
     html += "</div>";
 
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.tools-and-skills")}</h2>`;
@@ -154,8 +154,8 @@ export function draw() {
     html += "</div>";
 
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.trunks-more")}</h2>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.projects-pick-up-matching-work")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-projects-pick-up-matching-work\" aria-label=\"${t("window.settings.advanced.projects-pick-up-matching-work")}\" data-sw=\"set\"><small>${t("window.settings.advanced.a-message-in-a-project-goes")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.follow-up-tasks")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-follow-up-tasks\" aria-label=\"${t("window.settings.advanced.follow-up-tasks")}\" data-sw=\"set\"><small>${t("window.settings.advanced.a-trunk-can-leave-itself-a")}</small></div>`;
+    html += fact15(t("window.settings.advanced.projects-pick-up-matching-work"), "f15-projects-pick-up-matching-work");
+    html += fact15(t("window.settings.advanced.follow-up-tasks"), "f15-follow-up-tasks");
     html += `<div class=\"ctl\"><b>${t("autonomy.orders.title")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"ad-orders\">${t("window.settings.p17-permissions.see")} ` + esc(D.orders?.length ?? "") + `</button></span><small>${t("window.settings.advanced.named-programmes-a-trunk-keeps-running")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.from-now-on-for-a-specialist")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"from-now-on-for-a-specialist\">${t("window.settings.advanced.add-one")}</button></span><small>${t("window.settings.advanced.a-standing-instruction-kept-by-one")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.share-a-trunk")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"share-a-trunk\">${t("window.settings.p17-usage.export-2")}</button></span><small>${t("window.settings.advanced.through-git-as-a-skill-bundle")}</small></div>`;
@@ -171,9 +171,7 @@ export function draw() {
     html += "</div>";
 
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.pinned-skills")}</h2>`;
-    // The choices are the engine's own skills (E.state.skills), never the prototype's examples.
-    const skills = (E.state?.skills ?? []).map((k) => [String(k.name ?? k.id ?? ""), String(k.name ?? k.id ?? "")]).filter(([v]) => v);
-    html += seg15(t("window.settings.advanced.always-read-in-full"), t("window.settings.advanced.a-pinned-skills-whole-instructions-go"), [["none", t("comfort.placeholder.none")], ...skills], null, "seg", "f15-always-read-in-full");
+    html += fact15(t("window.settings.advanced.always-read-in-full"), "f15-always-read-in-full");
     html += "</div>";
   }
 

@@ -78,14 +78,16 @@ test("the conversation menu opens another conversation beside, and each side sho
   assert.deepEqual(errors, []);
 });
 
-test("the conversation beside keeps its own messages when the one picked before it is read last", async (t) => {
+/* RES-703: each pick now opens a pane of its own (chat/panes.js), so two picks are two panes. What is still proved: each
+   pane keeps its own conversation's messages when the one picked before it is read last. */
+test("each pane beside keeps its own messages when the one picked before it is read last", async (t) => {
   const f = await newWindow(t);
   const cherries = seedTopic(f.app, "cherries");
   const pears = seedTopic(f.app, "pears");
   const plums = seedTopic(f.app, "plums");
   const { page, errors } = await signIn(f);
-  // The cherries conversation is read well after the pears one, so a late answer for an earlier pick would land in
-  // (or wipe) the conversation now beside.
+  // The cherries conversation is read well after the pears one, so a late answer for an earlier pick could land in
+  // (or wipe) the pane picked after it.
   await page.route(`**/api/sessions/${cherries}`, async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 1500));
     await route.continue();
@@ -94,14 +96,13 @@ test("the conversation beside keeps its own messages when the one picked before 
   await page.locator("#conversation").getByText("Here is what I know about plums.").waitFor();
   await openBeside(page, cherries);
   await openBeside(page, pears);
-  const aside = page.locator("aside.beside15");
-  await aside.getByText("Here is what I know about pears.").waitFor();
-  await page.waitForTimeout(2500); // the cherries answer has come back by now
-  // WINDOW BUG: public/app/chat/beside.js load() keeps whichever read comes back last (V.id/V.messages), so the late
-  // cherries answer replaces pears and the side beside goes blank.
-  const text = await aside.locator(".bs-body15").innerText();
-  assert.match(text, /Here is what I know about pears\./, "the conversation beside still shows its own messages");
+  const pearsPane = page.locator(`aside.beside15[data-pane="${pears}"]`), cherriesPane = page.locator(`aside.beside15[data-pane="${cherries}"]`);
+  await pearsPane.getByText("Here is what I know about pears.").waitFor();
+  await cherriesPane.getByText("Here is what I know about cherries.").waitFor({ timeout: 10000 }); // the late answer, in its own pane
+  const text = await pearsPane.locator(".bs-body15").innerText();
+  assert.match(text, /Here is what I know about pears\./, "the pears pane still shows its own messages");
   assert.doesNotMatch(text, /cherries/, "and never the earlier pick's");
+  assert.doesNotMatch(await cherriesPane.locator(".bs-body15").innerText(), /pears/, "nor the other way round");
   assert.deepEqual(errors, []);
 });
 

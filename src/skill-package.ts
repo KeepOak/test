@@ -56,6 +56,13 @@ export type SkillPackageManifest = z.infer<typeof SkillPackageManifestSchema>;
 export interface SkillPackageContents { manifest: SkillPackageManifest; files: Record<string, string> }
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
+/** The packer and reader accept the same declarative text layout. */
+function checkSkillFile(name: string): void {
+  packageEntryName.parse(name);
+  if (!["SKILL.md", "tools.json", "hooks.json", siteSkillEntry].includes(name) && !name.endsWith(".md"))
+    throw new Error(`A skill package holds instructions, declared tools/hooks/site rules and .md notes; ${name} is not one of them`);
+}
+
 /** What a package asks to be allowed to do, in the owner's words, worked out from what is inside it. */
 export function requestedPermissions(files: Record<string, string>): { permission: string; why: string }[] {
   const asked = [{ permission: "skills.read", why: "Let the assistant read these instructions when a task needs them" }];
@@ -104,10 +111,8 @@ export function packSkill(input: { files: Record<string, string>; author: string
   if (!document) throw new Error("A skill package needs a SKILL.md file");
   const metadata = parseSkillDocument(document);
   for (const name of Object.keys(files)) {
-    packageEntryName.parse(name);
+    checkSkillFile(name);
     if (name === manifestEntry) throw new Error(`${manifestEntry} is written by the packer; remove it from the folder`);
-    if (!["SKILL.md", "tools.json", "hooks.json", siteSkillEntry].includes(name) && !name.endsWith(".md"))
-      throw new Error(`A skill package holds SKILL.md, tools.json, hooks.json, ${siteSkillEntry} and extra .md notes; ${name} is not one of them`);
   }
   // A site block is checked here rather than at install time, so a skill that names a website
   // Branch never opens, or that tries to smuggle script into a selector, cannot be packed at all.
@@ -127,13 +132,14 @@ export function packSkill(input: { files: Record<string, string>; author: string
 /** Opens a package and refuses it unless every file still matches the fingerprint in its manifest. */
 export function readSkillPackage(bytes: Buffer): SkillPackageContents {
   if (bytes.length > maxPackageBytes) throw new Error("The package is larger than allowed");
-  const entries = zipRead(bytes);
+  const entries = zipRead(bytes, { ...defaultZipLimits, strictText: true });
   const manifestText = entries.get(manifestEntry);
   if (!manifestText) throw new Error(`This file is not a skill package (no ${manifestEntry} inside)`);
   const manifest = SkillPackageManifestSchema.parse(JSON.parse(manifestText));
   const files: Record<string, string> = {};
   for (const [name, text] of entries) {
     if (name === manifestEntry) continue;
+    checkSkillFile(name);
     const expected = manifest.files[name];
     if (!expected) throw new Error(`${name} is in the package but not in its manifest, so the package was not installed`);
     if (sha256(text) !== expected) throw new Error(`${name} does not match the fingerprint in the package manifest, so the package was not installed`);
@@ -170,7 +176,7 @@ export function zipWrite(entries: ZipEntry[]): Buffer {
 }
 
 /** How much a zip read here may hold; a skill package is small, an exported agent is larger. */
-export interface ZipLimits { entries: number; entryBytes: number; totalBytes: number }
+export interface ZipLimits { entries: number; entryBytes: number; totalBytes: number; strictText?: boolean }
 export const defaultZipLimits: ZipLimits = { entries: maxEntries, entryBytes: maxEntryBytes, totalBytes: maxPackageBytes };
 
 /** Inflates one entry, stopping as soon as it grows past the size its directory declared. */
@@ -208,7 +214,10 @@ export function zipRead(bytes: Buffer, limits: ZipLimits = defaultZipLimits, acc
     const raw = bytes.subarray(start, start + stored);
     const data = method === 8 ? inflateBounded(raw, size) : method === 0 ? raw : null;
     if (!data || data.length !== size) throw new Error(`${name} could not be unpacked`);
-    files.set(name, data.toString("utf8"));
+    const text = data.toString("utf8");
+    if (limits.strictText && (files.has(name) || text.includes("\0") || !Buffer.from(text, "utf8").equals(data)))
+      throw new Error(`${name} is repeated or is not plain UTF-8 text, so the file was not opened`);
+    files.set(name, text);
     position += 46 + nameLength + extra + comment;
   }
   return files;

@@ -286,8 +286,10 @@ test("each command is weighed as the task's own shell.execute: in Full Access it
   assert.ok(kinds.includes("policy.denied") && kinds.includes("policy.ask"), "each refusal is on the task's record");
 });
 
-test("outside Full Access a command nobody has decided on is a question, so it does not run inside a hand-off", async (t) => {
+test("outside Full Access, for an owner who keeps commands asking, a command nobody has decided on is a question inside a hand-off", async (t) => {
   const f = await engineFixture(t);
+  // Owner ruling 2026-09-30: commands no rule covers ship as "allow"; this owner chose "ask".
+  savePolicy(f.engine.app.store, f.engine.app.runtime.owner, { unmatchedCommands: "ask" });
   const plain = await f.job(null);
   const answer = await f.commands({ program: "npm", args: ["test"], cwd: "." }, f.folder, plain);
   assert.equal(answer.isError, true);

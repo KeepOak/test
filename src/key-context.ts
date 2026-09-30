@@ -51,6 +51,8 @@ export interface RunOrigin {
   personProfileId: string | null;
   /** bucket 19 (integration review): whose own conversation it is, when it was lent to the assistant. */
   lentTo: string | null;
+  /** owner-dm-full: the owner's work because it came from the owner's own verified direct chat, checked just now. */
+  ownerChat?: boolean;
 }
 export type EventReader = { events(runId: string): { kind: string; data: Record<string, unknown> }[] };
 const startOf = (store: EventReader, runId: string) => store.events(runId).find((event) => event.kind === "run.started")?.data;
@@ -62,6 +64,28 @@ const startOf = (store: EventReader, runId: string) => store.events(runId).find(
  */
 export function askerOf(origin: RunOrigin): string {
   return [origin.source, origin.personProfileId ?? "", origin.lentTo ?? "", origin.shortLivedKey ? "key" : "", ...origin.keyIds].join("\u0000");
+}
+/**
+ * owner-dm-full: whether a chat's task came only from the owner's own verified direct chat, asked afresh every time
+ * (the chat router's `ownerFullRun`: the "Your own chats have your full access" switch on, no Lockdown, no App lock, and
+ * every chat message along the chain from an account the owner named as theirs, one to one, on an app that vouches for
+ * its senders). Kept per store, so one copy of Branch never answers for another's tasks; with nothing registered, no.
+ * This is OpenClaw's "main" session (sandbox mode "non-main", `shouldSandboxSession` in
+ * src/agents/sandbox/runtime-status.ts, MIT): the owner's direct chat runs as the owner, everything else is held back.
+ */
+/**
+ * owner-dm-full (gaps): the mark a task started by a command from the owner's own direct chat carries (`/bg`, each
+ * round of `/goal`), with the chat it came from, in place of the chat message a plain message's task carries. It counts
+ * as a chat along the chain, so the task is the owner's only while that chat is still checked to be the owner's.
+ */
+export const ownerChatMark = "channel.owner-command";
+const ownerChatChecks = new WeakMap<object, (runId: string) => boolean>();
+export function setOwnerChatCheck(store: EventReader, check: ((runId: string) => boolean) | null): void {
+  if (check) ownerChatChecks.set(store, check);
+  else ownerChatChecks.delete(store);
+}
+function ownerChat(store: EventReader, runId: string): boolean {
+  try { return ownerChatChecks.get(store)?.(runId) === true; } catch { return false; }
 }
 export function runOrigin(store: EventReader, runId: string): RunOrigin {
   const own = startOf(store, runId);
@@ -75,24 +99,28 @@ export function runOrigin(store: EventReader, runId: string): RunOrigin {
   // A chat message's task carries source "channel"; one saved before that said "owner" and only carried
   // the "channel.inbound" mark the chat router writes, so that mark still means "channel". A chat seen
   // anywhere along the chain wins, whatever order the rest is read in: a chat cannot prove who is typing.
-  let chat = false;
+  let chat = false, elsewhere = false;
   while (queue.length && seen.size < 20) {
     const id = queue.shift()!;
     if (seen.has(id)) continue;
     seen.add(id);
     const events = store.events(id);
     const data = events.find((event) => event.kind === "run.started")?.data;
-    if (events.some((event) => event.kind === "channel.inbound")) chat = true;
+    if (events.some((event) => event.kind === "channel.inbound" || event.kind === ownerChatMark)) chat = true;
     if (!data) continue;
     if (data.shortLivedKey === true) origin.shortLivedKey = true;
     if (typeof data.shortLivedKeyId === "string" && !origin.keyIds.includes(data.shortLivedKeyId)) origin.keyIds.push(data.shortLivedKeyId);
     if (typeof data.personProfileId === "string") origin.personProfileId ??= data.personProfileId;
     if (typeof data.source === "string" && data.source !== "owner") origin.source = data.source;
+    if (typeof data.source === "string" && !["owner", "channel"].includes(data.source)) elsewhere = true;
     if (data.source === "channel") chat = true;
     // mac7/outside-resume: `originFrom` is the earlier task a follow-up or a "Do this again" carries on for.
     for (const next of [data.parentRunId, data.resumedFrom, data.originFrom]) if (typeof next === "string") queue.push(next);
   }
-  if (chat) origin.source = "channel";
+  // owner-dm-full: the owner's own verified direct chat is the owner, as their window is; anything else a chat touched
+  // (another program, a schedule, a trigger along the way) stays a chat's.
+  if (chat) origin.source = !elsewhere && ownerChat(store, runId) ? "owner" : "channel";
+  if (chat && origin.source === "owner") origin.ownerChat = true;
   origin.lentTo = lentAlong(store, runId);
   return origin;
 }

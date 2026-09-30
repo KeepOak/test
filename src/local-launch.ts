@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { promisify } from "node:util";
 import { ollamaHome } from "./local-models.js";
+import { localVllmModel, vllmEnvironment, vllmToolParsers } from "./local-vllm.js";
 
 /**
  * Wave mac5 (local models): the programs that run models, found and started — never installed.
@@ -15,8 +16,8 @@ import { ollamaHome } from "./local-models.js";
  * a shell line, through a runner and a spawner the tests replace, and each is told to listen on
  * this computer only. Branch stops only what it started itself.
  */
-export type RuntimeId = "ollama" | "lm-studio" | "llama-cpp" | "mlx";
-export const runtimeIds: readonly RuntimeId[] = ["ollama", "lm-studio", "llama-cpp", "mlx"];
+export type RuntimeId = "ollama" | "lm-studio" | "llama-cpp" | "mlx" | "vllm";
+export const runtimeIds: readonly RuntimeId[] = ["ollama", "lm-studio", "llama-cpp", "mlx", "vllm"];
 
 export interface RuntimeInfo {
   id: RuntimeId;
@@ -37,6 +38,8 @@ export const runtimeInfo: Record<RuntimeId, RuntimeInfo> = {
     installNote: "Free. Its install page lists a package for each system; Branch uses its llama-server program." },
   mlx: { id: "mlx", name: "MLX", baseUrl: "http://127.0.0.1:8081", installPage: "https://github.com/ml-explore/mlx-lm",
     installNote: "Free, for Macs with Apple silicon. Its page shows how to install mlx-lm." },
+  vllm: { id: "vllm", name: "vLLM", baseUrl: "http://127.0.0.1:8000", installPage: "https://docs.vllm.ai/en/latest/getting_started/installation/",
+    installNote: "Install a compatible Linux GPU build yourself. Branch starts only an existing local model directory." },
 };
 
 export interface LaunchEnv {
@@ -78,6 +81,8 @@ function systemPaths(id: RuntimeId, at: LaunchEnv): string[] {
     case "mlx":
       if (at.platform !== "darwin" || at.arch !== "arm64") return [];
       return [...onPath("mlx_lm.server"), "/opt/homebrew/bin/mlx_lm.server", join(at.home, ".local", "bin", "mlx_lm.server")];
+    case "vllm":
+      return at.platform === "linux" ? [...onPath("vllm"), join(at.home, ".local", "bin", "vllm")] : [];
   }
 }
 
@@ -160,7 +165,7 @@ const realSpawner: Spawner = (file, args, env = {}) => {
   return { pid: child.pid, stop: () => { child.kill(); } };
 };
 
-export interface ModelToStart { file?: string; repo?: string; context?: number; port?: number }
+export interface ModelToStart { file?: string; repo?: string; context?: number; port?: number; toolParser?: string }
 /** A port nobody on this computer is using now, chosen by the system. */
 export const freeLoopbackPort = (): Promise<number> => new Promise((resolve, reject) => {
   const probe = createServer();
@@ -171,7 +176,7 @@ export const freeLoopbackPort = (): Promise<number> => new Promise((resolve, rej
   });
 });
 /** The runtimes Branch starts with one model, each on a fresh port (integration review). */
-const ownPort = (id: RuntimeId): boolean => id === "llama-cpp" || id === "mlx";
+const ownPort = (id: RuntimeId): boolean => id === "llama-cpp" || id === "mlx" || id === "vllm";
 
 export interface StartPlan {
   /** Programs to run and wait for, in order (LM Studio's command line). */
@@ -221,6 +226,13 @@ export function startPlan(
     case "mlx":
       if (!model.repo) return { commands: [], serve: null, instead: "Choose a model first; MLX starts with one model.", env };
       return { commands: [], serve: [program, "--model", model.repo, "--host", "127.0.0.1", "--port", port], instead: null, env };
+    case "vllm":
+      if (at.platform !== "linux" || !model.file || !posix.isAbsolute(model.file) || !vllmToolParsers.some((parser) => parser === model.toolParser))
+        return { commands: [], serve: null, instead: "Choose an existing absolute local Hugging Face model directory and its supported built-in tool parser on Linux for vLLM.", env };
+      return { commands: [], serve: [program, "serve", model.file, "--host", "127.0.0.1", "--port", port, "--max-model-len", ctx,
+        "--distributed-executor-backend", "mp", "--tensor-parallel-size", "1", "--pipeline-parallel-size", "1", "--data-parallel-size", "1",
+        "--enable-auto-tool-choice", "--tool-call-parser", model.toolParser!],
+        instead: null, env: vllmEnvironment };
   }
 }
 
@@ -296,6 +308,10 @@ export class RuntimeLauncher {
    * Returns the sentence to show.
    */
   async start(id: RuntimeId, model: ModelToStart = {}): Promise<{ started: boolean; message: string }> {
+    if (id === "vllm") {
+      const local = await localVllmModel(model.file ?? "", this.at);
+      model = { ...model, file: local.path, context: Math.min(model.context ?? local.context, local.context) };
+    }
     const program = await this.find(id);
     const info = runtimeInfo[id];
     if (!program) return { started: false, message: `${info.name} is not installed on this computer. ${info.installNote}` };

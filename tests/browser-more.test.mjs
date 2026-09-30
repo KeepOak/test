@@ -35,6 +35,10 @@ const routes = {
   '/grab': page('<a id="dl" href="/report.csv" download="report.csv">Get report</a><a href="/thing.exe" download="thing.exe">Get program</a>'),
   '/secret-filled': page('<label>Pass<input type="password" value="hunter2-super-secret"></label>'),
   '/secret-empty': page('<label>Pass<input type="password" value=""></label>'),
+  // SCREEN-042: a cookie notice with an explicit reject choice, one with two, and a Decline that is no cookie notice.
+  '/consent': page(`<div role="dialog" aria-label="Cookies"><p>We use cookies for tracking and ads.</p><button onclick="document.getElementById('choice').textContent='chose accept'">Accept all</button><button onclick="document.getElementById('choice').textContent='chose reject'">Reject all</button></div><p id="choice">no choice</p>`),
+  '/consent-two': page('<div role="dialog"><p>Cookie settings</p><button>Reject all</button><button>Necessary cookies only</button></div>'),
+  '/decline-form': page(`<form><p>Newsletter</p><button type="button" onclick="document.getElementById('choice').textContent='declined newsletter'">Decline</button></form><p id="choice">no choice</p>`),
   '/': page('<p>home</p>'),
 };
 async function fixture() {
@@ -205,6 +209,12 @@ test('files go to the website only from the workspace, and files it sends land i
     const refused = await h.registry.execute('browser.click', {role: 'link', name: 'Get program'}, context);
     assert.match(refused.downloads[0].from, /files ending in \.exe are not saved/);
     assert.equal(refused.downloads[0].file, '');
+    // SCREEN-021: the owner's view keeps the session's completed downloads after the task's once-only events were taken,
+    // newest last, with the plain source address (never the refusal's words) and the refusal as an unsaved file.
+    const history = [...h.browser.sessions.values()].map((entry) => entry.session.completedDownloads()).find((list) => list.length);
+    assert.deepEqual(history.map((one) => one.file), ['downloads/report.csv', '']);
+    assert.doesNotMatch(history[1].from, /not saved/);
+    assert.match(history[1].from, /^http:\/\/127\.0\.0\.1:\d+\//);
     await h.registry.finishRun(context);
   } finally { await h.close(); }
 });
@@ -396,4 +406,34 @@ test('a picture reaches OpenAI as a data URL and Anthropic as a base64 image blo
     const anthropic = bodies[1].messages[0].content;
     assert.deepEqual(anthropic[1], {type: 'image', source: {type: 'base64', media_type: 'image/png', data: 'AAAB'}});
   } finally { server.close(); await once(server, 'close'); }
+});
+
+test('SCREEN-042: a cookie notice is reported on arrival, and reject-consent presses only its explicit reject choice', async () => {
+  const h = await harness('browser-consent');
+  try {
+    const context = runContext('consent');
+    const arrived = await h.registry.execute('browser.navigate', {url: `${h.origin}/consent`}, context);
+    // Discovery on arrival has a one-second budget, so a busy machine may report the notice as not inspected; either way
+    // it is reported, never taken as handled. What is pressed is checked strictly below.
+    if (arrived.consent.status === 'unavailable') assert.match(arrived.next, /do not assume consent was handled/);
+    else {
+      assert.deepEqual(arrived.consent, {status: 'available', choice: 'reject-non-essential'});
+      assert.match(arrived.next, /reject-consent/);
+    }
+    const done = await h.registry.execute('browser.act', {action: 'reject-consent'}, context);
+    assert.equal(done.consent.rejected, true);
+    const seen = (await h.registry.execute('browser.snapshot', {}, context)).accessibility;
+    assert.match(seen, /chose reject/, 'the reject choice was pressed');
+    assert.doesNotMatch(seen, /chose accept/, 'accept is never pressed');
+
+    const two = await h.registry.execute('browser.navigate', {url: `${h.origin}/consent-two`}, context);
+    assert.ok(['ambiguous', 'unavailable'].includes(two.consent.status), 'two reject-like choices are never reported as one to press');
+    assert.equal((await h.registry.execute('browser.act', {action: 'reject-consent'}, context)).consent.rejected, false);
+
+    const form = await h.registry.execute('browser.navigate', {url: `${h.origin}/decline-form`}, context);
+    assert.equal(form.consent, undefined, 'a Decline outside a privacy notice is not a cookie choice');
+    assert.equal((await h.registry.execute('browser.act', {action: 'reject-consent'}, context)).consent.rejected, false);
+    assert.match((await h.registry.execute('browser.snapshot', {}, context)).accessibility, /no choice/, 'nothing on the form was pressed');
+    await h.registry.finishRun(context);
+  } finally { await h.close(); }
 });
