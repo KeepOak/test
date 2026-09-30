@@ -202,7 +202,8 @@ async function installGitHub(app: Branch, body: unknown) {
       const done = await installPackage(app, { kind: "package", file: entry.bytes.toString("base64"), approve: true, allow: [] }, note, name);
       if (!("skill" in done)) throw new Error("The GitHub skill was not installed.");
       requireGitHubSkillOwner(app);
-      app.store.save("settings", app.runtime.owner, `skill-github:${done.skill.id}`, { ...entry.origin, skillVersion: done.skill.headVersion });
+      const skill = done.skill as View & { id: string };
+      app.store.save("settings", app.runtime.owner, `skill-github:${skill.id}`, { ...entry.origin, skillVersion: skill.headVersion });
       return { ...done, origin: entry.origin };
     });
   } finally { entry.bytes.fill(0); }

@@ -1149,6 +1149,8 @@ export const ROUTES = {
   "/api/skill-installs": "look",
   "/api/skill-installs/": "prefix",
   "/api/skill-installs/export": "look",
+  "/api/skill-installs/github": "owner POST", // looks at a GitHub skill and holds a preview; the owner's alone
+  "/api/skill-installs/github/install": "owner POST",
   "/api/skill-installs/inspect": "owner POST",
   "/api/skill-installs/install": "owner POST",
   "/api/skill-installs/remove": "owner POST",
