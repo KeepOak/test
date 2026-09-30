@@ -600,7 +600,7 @@ test("a tool may hand its work over and finish later through the follow-up queue
 
   const { app } = await fixture(t, ({ user }) => {
 
-    if (/handed over earlier has finished/.test(user)) return say(`they did it: ${user.split("What came of it: ")[1]}`);
+    if (/handed over earlier .* has an answer/.test(user)) return say(`they did it: ${user.split("What came of it: ")[1]}`);
 
     round++;
 
