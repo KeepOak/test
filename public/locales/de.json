@@ -9573,6 +9573,8 @@
   "window.settings.permissions.new-rule-pick": "Neue Regel: Wähle ein Werkzeug, einen Ordner oder eine Website, und dann erlauben, fragen oder nie.",
   "window.settings.permissions.not-yet": "Noch nicht",
   "window.settings.permissions.off-means-a-request-shows-up": "Aus heißt, eine Anfrage erscheint in deinem Posteingang.",
+  "window.settings.permissions.ordinary-settings-without-asking": "Branch darf normale Einstellungen ohne Nachfrage ändern",
+  "window.settings.permissions.ordinary-settings-scope": "Nur Einstellungen aus dem Katalog. Änderungen, die Schutzmaßnahmen verringern, benötigen weiter eine Bestätigung; angeheftete Einstellungen bleiben unverändert.",
   "window.settings.permissions.off-means-every-message-waits-for": "Aus heißt, jede Nachricht wartet auf dein Ja.",
   "window.settings.permissions.one-switch-that-stops-every-trunk": "Ein Schalter, der jeden Trunk davon abhält, etwas zu senden, zu ändern oder auszugeben.",
   "window.settings.permissions.open-windows-settings": "Windows-Einstellungen öffnen",
