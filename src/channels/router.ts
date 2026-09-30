@@ -4,6 +4,8 @@ import { z } from "zod";
 import type { Store } from "../store.js";
 import type { MiniAppUser } from "../miniapp/init-data.js";
 import { heldReplay } from "../never-break/resume.js"; // mac3/never-break
+import { runOrigin } from "../key-context.js";
+import { ChatHandoffSchema, type ChatHandoffTarget } from "./handoff-target.js";
 import type { Runtime } from "../runtime.js";
 import { carryable } from "../carry-on.js"; // QA R1 follow-up
 /** One question a task is waiting on, as the runtime lists them. */
@@ -31,7 +33,7 @@ import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
-import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { platformGate, platformSettings, isPaused } from "../reach/platform.js"; // r17-i
 import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
 import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
@@ -335,7 +337,7 @@ interface ChatTurnState extends ChatTurn {
   /** Whether this answer's messages quote the person's message (src/channels/reply-style.ts). */
   quote: QuoteState;
 }
-const chatKey = (message: InboundMessage): string => `${message.channel}\u0001${message.chatId}`;
+const chatKey = (message: Pick<InboundMessage, "channel" | "chatId">): string => `${message.channel}\u0001${message.chatId}`;
 /** Telegram's /start, alone or with its deep-link word, and addressed to this bot in a group ("/start@name"). */
 const startCommand = /^\/start(?:@\w+)?(?:\s+\S{0,64})?$/i;
 /** One turn gathers at most this many messages, and never more words than a task may start with. */
@@ -656,6 +658,7 @@ export class ChannelRouter {
       pending: this.pairs(owner).filter((p) => p.status === "pending"),
       approved: this.pairs(owner).filter((p) => p.status === "approved"),
       chats: this.chats(owner),
+      handoffTargets: this.handoffTargets(owner),
       live: this.switches(),
       dmPolicyChoices: [...this.adapters.values()].map(({ adapter }) => ({ channel: adapter.id, kind: adapter.kind,
         policy: this.intake().dmPolicies[adapter.id] ?? "approved", ownerEligible: this.hasOwnDmAccount(adapter) })),
@@ -737,6 +740,53 @@ export class ChannelRouter {
     return { channel, chatId, sessionId };
   }
   /** Chats that have talked to the assistant, usable as delivery targets. */
+  handoffTargets(owner: string): ChatHandoffTarget[] {
+    if (owner !== this.runtime.owner || !this.store.profiles.isOwner() || !this.liveOn() || lockedDown(this.store, owner)) return [];
+    return this.chats(owner).filter((chat) => this.adapters.get(chat.channel)?.adapter.kind === "telegram")
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 50).flatMap((chat) => {
+      const adapter = this.adapters.get(chat.channel)?.adapter, sessionId = chat.sessionId;
+      if (adapter?.kind !== "telegram" || !/^\d+(?::\d+)?$/.test(chat.chatId) || isPaused(this.store, owner, chat.channel)
+        || adapter.health?.().state === "needs attention"
+        || !sessionId || !this.store.ownsSession(owner, sessionId)
+        || this.turns.has(chatKey(chat)) || this.trunkReach(chat.channel, sessionId)) return [];
+      const runs = this.store.sessionRuns(owner, sessionId);
+      if (runs.some((run) => run.status === "running" || run.status === "needs_input")) return [];
+      for (const run of runs.slice(-20).reverse()) {
+        const origin = runOrigin(this.store, run.id);
+        if (origin.source !== "channel" || origin.shortLivedKey || origin.personProfileId || origin.lentTo) continue;
+        const came = this.store.events(run.id).find((event) => event.kind === "channel.inbound")?.data;
+        if (!came || came.channel !== chat.channel || came.chatId !== chat.chatId) continue;
+        if (typeof came.senderId !== "string" || came.senderId !== chat.chatId.split(":")[0] || came.chatKind !== "direct" || came.caughtUp !== false
+          || !ownerDmHere(this.store, owner, adapter.kind, { channel: chat.channel, senderId: came.senderId, chatKind: "direct", caughtUp: false })
+          || !this.senderAllowed(chat.channel, came.senderId)) return [];
+        return [{ channel: chat.channel, chatId: chat.chatId, title: chat.title, sessionId, updatedAt: chat.updatedAt }];
+      }
+      return [];
+    });
+  }
+  assertHandoffSource(owner: string, sourceSessionId: string): void {
+    this.store.profiles.requireOwner("Handing a conversation on");
+    if (owner !== this.runtime.owner || this.appLocked() || lockedDown(this.store, owner)) throw new Error("Handoff is locked.");
+    if (!this.store.ownsSession(owner, sourceSessionId)) throw new Error("Conversation not found");
+    const source = this.store.sessionRuns(owner, sourceSessionId);
+    if (source.some((run) => run.status === "running" || run.status === "needs_input")) throw new Error("Finish the task or answer its question before handing this conversation on.");
+    const last = source.at(-1), origin = last ? runOrigin(this.store, last.id) : null;
+    if (origin?.shortLivedKey || origin?.personProfileId || origin?.lentTo) throw new Error("This conversation cannot be handed on from here.");
+  }
+  async handoff(owner: string, input: unknown): Promise<{ title: string; sent: boolean; queued: number }> {
+    const value = ChatHandoffSchema.parse(input);
+    this.assertHandoffSource(owner, value.sourceSessionId);
+    if (!this.liveOn()) throw new Error("Chat delivery is paused.");
+    const target = this.handoffTargets(owner).find((chat) => chat.channel === value.channel && chat.chatId === value.chatId
+      && chat.sessionId === value.expectedSessionId && chat.updatedAt === value.expectedUpdatedAt);
+    if (!target) throw new Error("That destination changed or is no longer available. Open the chooser again.");
+    const refusal = this.trunkReach(value.channel, value.sourceSessionId);
+    if (refusal) throw new Error(refusal);
+    this.link(owner, { channel: value.channel, chatId: value.chatId, sessionId: value.sourceSessionId });
+    const sent = await this.deliver(value.channel, value.chatId, "This conversation carries on here.",
+      `handoff:${value.sourceSessionId}:${value.channel}:${value.chatId}`).catch(() => ({ sent: false, queued: 0 }));
+    return { title: target.title, sent: sent.sent, queued: sent.queued };
+  }
   chats(owner: string) {
     return this.store.list("settings", owner).flatMap((record) => {
       if (!record.id.startsWith("channel-session:")) return [];
