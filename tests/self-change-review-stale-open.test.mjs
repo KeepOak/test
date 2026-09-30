@@ -4,7 +4,7 @@
    The real public/app/places/self-change-review.js runs in Node next to stand-ins for the window's core modules; each
    read is held open by the test, so the change happens while the review is waiting, with no timers.
    Mutations: drop `dialog() === opened` -> the close-then-nothing and replaced cases fail; drop `S.view === view` -> the
-   navigation case fails; drop the dlg-close click bump -> the closed case fails; drop `allowed()` -> the lock case fails. */
+   navigation case fails; drop the dlg-close click bump -> the closed case fails; drop the Escape bump -> the Escape case fails; drop `allowed()` -> the lock case fails. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -36,7 +36,7 @@ async function reviewPage(t) {
     openDlg: (o) => { opened.push(o); sr.dlg = { review: o, querySelector: () => null }; return sr.dlg; } };
   globalThis.__sr = sr;
   globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && sr.locked } } : null),
-    addEventListener: (type, fn, capture) => { if (type === "click" && capture) clicks.push(fn); } };
+    addEventListener: (type, fn, capture) => { if (capture) clicks.push({ type, fn }); } };
   globalThis.addEventListener = () => {};
   t.after(async () => { delete globalThis.__sr; delete globalThis.document; delete globalThis.addEventListener; await discardTemp(root); });
   const page = await import(pathToFileURL(join(root, "app", "places", "self-change-review.js")).href);
@@ -48,8 +48,10 @@ async function reviewPage(t) {
     held.splice(at, 1)[0][how](value);
   };
   const answer = (path, value) => settle(path, "resolve", value), fail = (path, error) => settle(path, "reject", error);
-  const closeClick = () => { for (const fn of clicks) fn({ target: { closest: (q) => (q.includes("dlg-close") ? {} : null) } }); };
-  return { page, sr, opened, answer, fail, closeClick };
+  const fire = (type, event) => { for (const one of clicks) if (one.type === type) one.fn(event); };
+  const closeClick = () => fire("click", { target: { closest: (q) => (q.includes("dlg-close") ? {} : null) } });
+  const escape = () => fire("keydown", { key: "Escape" });
+  return { page, sr, opened, answer, fail, closeClick, escape };
 }
 
 const waiting = { id: "r1", text: "Remove the Export button", status: "waiting" };
@@ -125,4 +127,15 @@ test("a read that fails after the owner moved on shows no error over the newer p
   await open;
   assert.equal(opened.length, 0);
   assert.deepEqual(sr.toasts, []);
+});
+
+test("a dialog opened and closed with Escape while the draft was read still counts: the late review does not open", async (t) => {
+  const { page, sr, opened, answer, escape } = await reviewPage(t);
+  const open = page.openSourceReview(approved, blocks);
+  sr.dlg = { other: true };
+  escape();
+  sr.dlg = null;
+  await answer("/draft", draft);
+  await open;
+  assert.equal(opened.length, 0);
 });

@@ -112,6 +112,8 @@ export function initSourceReview(afterChange) {
   markLive(["selfdo15", ...fields.map((name) => `sw:source-${name}`)]);
   on("selfdo15", (el) => answer(el));
   addEventListener("pagehide", () => { current = null; generation += 1; });
-  /* Closing any dialog is newer owner activity: a review still being read must not open after it. */
+  /* Closing any dialog (its close button, or Escape, which main.js turns into a close) is newer owner activity: a review
+     still being read must not open after it. */
   document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) generation += 1; }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && dialog()) generation += 1; }, true);
 }
