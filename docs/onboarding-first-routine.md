@@ -1,0 +1,7 @@
+# First routine from onboarding
+
+The last setup step optionally asks what boring task the owner wants to hand over. Review opens the existing Automations schedule proposal from those exact words. It does not save or run the task. The existing editor exposes repetition, time, executor and permissions; Confirm is the existing schedule or Trunk-routine creation path. Selected Trunks are created by the existing step exit, as the UI states.
+
+No default cadence is silently saved. An incomplete proposal waits for the owner to choose its time. No tool/model authority is added. Onboarding proposals are bound to the current owner, profile, session, unlocked foreground window and scheduled page; responses after navigation or actor changes cannot become a confirmation. Proposal editing keeps that context across rereads and checks again before creation. Already-completed writes cannot be recalled after a switch.
+
+This reuses Branch’s existing schedule parser/editor/API and MIT-licensed source. No external source/dependency is copied or added. The feature is localized in English, Spanish, French and German; other locales use the existing fallback. Text is retained only in the existing in-memory form and proposal until confirmed; onboarding text is not persisted as a new setting. Runtime, localization layout, schedule parser and first execution acceptance remain unverified. No tests, builds, app or provider execution were performed by request.

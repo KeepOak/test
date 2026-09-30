@@ -19,6 +19,7 @@ const DAYN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", 
 const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const zone = () => E.profiles?.owner?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone; // your-profile: the owner's chosen time zone
 const localDateTime = (iso) => { const date = new Date(iso); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
+let reading = 0; // newest proposal or edit owns the response
 let P = null; // { proposal, what, days, day, time, trunk (the Trunk who does it, or null for the owner) }
 
 /* The engine's schedule on the card's own terms: repeats, which day, and the time (null when the words said none). */
@@ -69,6 +70,7 @@ function whoField() {
 /* The card under the box, while a proposal is open. */
 export function propCard() {
   const p = P;
+  if (p?.current && !p.current()) { P = null; return ""; }
   if (!p) return "";
   const repeats = [["once", t("window.places.schedule-card.once")], ["daily", t("window.places.schedule-card.every-day")], ["weekdays", t("window.places.schedule-card.weekdays")], ["weekends", t("window.places.schedule-card.weekends")], ["weekly", t("window.places.schedule-card.once-a-week")], ["monthly", t("window.places.schedule-card.monthly")]].map(([v, l]) => seg("days", v, l, p.days === v)).join("");
   const on = p.days === "weekly" ? `<div class="fld"><span>${t("accounts.switch.on")}</span><span class="seg">${DAYN.map((d, i) => seg("day", i, cap1(dayName(i, "short")), p.day === i)).join("")}</span></div>` : "";
@@ -90,7 +92,18 @@ const keepWhat = () => { const w = document.getElementById("pp-what17d"); if (P 
 export async function proposeWords() {
   const text = $("#nl-in")?.value.trim();
   if (!text) { $("#nl-in")?.focus(); return; } // B002: nothing to read yet; the box is where the words go
-  try { P = fromProposal((await api("schedules/propose", { text, timezone: zone() })).proposal); } catch (error) { toast(error.message); return; }
+  await proposeScheduleText(text);
+}
+
+/* Onboarding uses the same editable, unsaved card; only Confirm creates a routine. */
+export async function proposeScheduleText(text, current = () => true) {
+  if (!text?.trim() || !current() || sending) return;
+  const previous = P, ticket = ++reading;
+  try {
+    const answer = await api("schedules/propose", { text, timezone: zone() });
+    if (ticket !== reading || !current() || P !== previous) return;
+    P = { ...fromProposal(answer.proposal), current };
+  } catch (error) { if (current()) toast(error.message); return; }
   renderNow();
   document.getElementById("pp-what17d")?.focus();
 }
@@ -99,10 +112,16 @@ export async function proposeWords() {
 async function reread() {
   keepWhat();
   const p = P;
+  if (!p || (p.current && !p.current())) { P = null; return renderNow(); }
+  const ticket = ++reading;
   if (p.days !== "once" && (!p.days || !p.time)) return renderNow();
   const weekdays = { weekdays: [1, 2, 3, 4, 5], weekends: [0, 6], weekly: [p.day ?? 5] }[p.days];
   const edit = p.days === "once" ? { prompt: p.what.trim() || p.proposal.schedule.prompt, dueAt: p.proposal.schedule.dueAt } : { prompt: p.what.trim() || p.proposal.schedule.prompt, dailyAt: p.time, ...(weekdays ? { weekdays } : {}), ...(p.days === "monthly" ? { monthDay: p.proposal.schedule.monthDay ?? 1 } : {}) };
-  try { P = fromProposal((await api("schedules/propose", { edit, timezone: p.proposal.schedule.timezone })).proposal, p.what, p.trunk); } catch (error) { toast(error.message); }
+  try {
+    const answer = await api("schedules/propose", { edit, timezone: p.proposal.schedule.timezone });
+    if (ticket !== reading || P !== p || (p.current && !p.current())) return;
+    P = { ...fromProposal(answer.proposal, p.what, p.trunk), current: p.current };
+  } catch (error) { if (!p.current || p.current()) toast(error.message); }
   renderNow();
 }
 
@@ -114,16 +133,20 @@ function routineOf(fresh) {
     ...Object.fromEntries(["intervalMs", "dailyAt", "weekdays", "monthDay", "timezone"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]])) };
 }
 
+const choice = (p) => JSON.stringify([p.what, p.trunk, p.days, p.day, p.time, p.proposal.schedule.dueAt]);
 let sending = false; // a second press of Confirm while the first is on its way sends nothing
 async function confirm() {
   keepWhat();
   const p = P;
-  if (!p || !ready(p) || sending) return;
+  if (!p || !ready(p) || sending || (p.current && !p.current())) return;
   sending = true;
+  const selected = choice(p), ticket = ++reading;
   // Read once more just before saving, so the first run is worked out from now and not from when the card opened.
   const s = p.proposal.schedule, when = Object.fromEntries((p.days === "once" ? ["dueAt"] : ["dailyAt", "weekdays", "monthDay", "intervalMs"]).filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
   try {
     const fresh = (await api("schedules/propose", { edit: { prompt: p.what.trim() || s.prompt, ...when }, timezone: s.timezone })).proposal;
+    keepWhat();
+    if (ticket !== reading || P !== p || choice(p) !== selected || (p.current && !p.current())) return;
     // Dogfood: edited words can need a different reach; the card shows the new one and waits for a second Confirm.
     const reachMoved = fresh.reach !== p.proposal.reach || String(fresh.schedule.permissions) !== String(p.proposal.schedule.permissions);
     p.proposal = fresh;
@@ -131,6 +154,7 @@ async function confirm() {
     if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh));
     else await api("schedules", fresh.schedule);
   } catch (error) { toast(error.message); return; } finally { sending = false; }
+  if (P !== p || (p.current && !p.current())) return;
   P = null;
   const box = $("#nl-in");
   if (box) { box.value = ""; box.dispatchEvent(new Event("input", { bubbles: true })); } // the page keeps the box's words (automations.js)
@@ -151,7 +175,7 @@ export function initScheduleCard() {
     if (k === "days" && el.dataset.v === "weekly" && P.day == null) P.day = 5;
     reread();
   });
-  on("ppno17d", () => { P = null; renderNow(); toast(t("window.places.schedule-card.nothing-was-saved")); });
+  on("ppno17d", () => { reading++; P = null; renderNow(); toast(t("window.places.schedule-card.nothing-was-saved")); });
   on("ppok17d", () => confirm());
   document.addEventListener("change", (e) => {
     if (e.target.id === "pp-once17d" && P && e.target.value) { P.proposal.schedule.dueAt = new Date(e.target.value).toISOString(); reread(); return; }

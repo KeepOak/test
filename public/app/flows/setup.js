@@ -22,6 +22,7 @@ import { newConversationMode } from "../chat/chips.js"; // the mode a new conver
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
 import { gsel } from "../core/gsel.js";
 import { say } from "../core/words.js";
+import { firstRoutinePrompt, initFirstRoutine } from "./onboarding-routine.js";
 
 /* The wizard's steps: each one's short name in the engine's record, and its name on the rail. */
 const WIZARD = ["welcome", "models", "trunks"];
@@ -125,7 +126,7 @@ function trunks(o) {
   const made = new Set(E.trunks.map((tr) => tr.name));
   const face = (n, col, sh) => av({ kind: "trunk", name: t(n), color: col, shape: sh }, 34);
   const busy = o.proposing ? ` disabled aria-busy="true"` : "";
-  return `<h2 tabindex="-1">${t("window.flows.setup.step-trunks")}</h2><p>${t("window.flows.setup.trunks-lede")}</p><div class="ob-tr">${TEMPLATES.map(([n, s, col, sh], i) => `<button class="ob-tpl" type="button" data-act="ob-tpl" data-i="${i}" ${pressed(o.tpls.has(i) || made.has(t(n)))}>${face(n, col, sh)}<b>${esc(t(n))}</b><small>${esc(t(s))}</small></button>`).join("")}</div>${proposed(o, made)}<label class="fld" data-css="margin-top:12px"><span>${t("window.flows.setup.describe")}</span><textarea class="inp" id="ob-life" rows="2" placeholder="${t("window.flows.setup.describe-hint")}">${esc(o.life)}</textarea></label><button class="btn sm" type="button" data-act="ob-propose"${busy}>${ic(o.proposing ? "spin" : "spark", o.proposing ? "s spin" : "s")}${t("window.flows.setup.propose")}</button>${o.note ? `<p class="hint" role="status">${esc(o.note)}</p>` : ""}${o.error ? `<p class="hint" role="alert">${esc(o.error)}</p>` : ""}`;
+  return `<h2 tabindex="-1">${t("window.flows.setup.step-trunks")}</h2><p>${t("window.flows.setup.trunks-lede")}</p><div class="ob-tr">${TEMPLATES.map(([n, s, col, sh], i) => `<button class="ob-tpl" type="button" data-act="ob-tpl" data-i="${i}" ${pressed(o.tpls.has(i) || made.has(t(n)))}>${face(n, col, sh)}<b>${esc(t(n))}</b><small>${esc(t(s))}</small></button>`).join("")}</div>${proposed(o, made)}<label class="fld" data-css="margin-top:12px"><span>${t("window.flows.setup.describe")}</span><textarea class="inp" id="ob-life" rows="2" placeholder="${t("window.flows.setup.describe-hint")}">${esc(o.life)}</textarea></label><button class="btn sm" type="button" data-act="ob-propose"${busy}>${ic(o.proposing ? "spin" : "spark", o.proposing ? "s spin" : "s")}${t("window.flows.setup.propose")}</button>${o.note ? `<p class="hint" role="status">${esc(o.note)}</p>` : ""}${o.error ? `<p class="hint" role="alert">${esc(o.error)}</p>` : ""}${firstRoutinePrompt(o)}`;
 }
 
 const BODIES = [welcome, models, trunks];
@@ -223,7 +224,7 @@ function resumeAt(o) {
 export async function openSetup(jump = 1, how = "start") {
   origin.setup = true;
   const o = S.ob = { i: 0, jump, trust: false, trustKept: false, pools: [], tpls: new Set(), test: null, error: "", later: false,
-    life: "", proposals: [], picks: new Set(), proposing: false, note: "",
+    life: "", routine: "", proposals: [], picks: new Set(), proposing: false, note: "",
     mine: false, step: -1, completed: new Set(), finished: false, restoring: false };
   freshPick();
   try { await load(o); } catch (error) { toast(error.message); }
@@ -420,6 +421,7 @@ async function pickLanguage(code) {
 
 export function init() {
   initLocalPick();
+  initFirstRoutine(close);
   markLive(["sw:ob-brain", "sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "onboard-model-recovery", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "ob-model-change", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
   on("ob-restore", () => document.getElementById("ob-restore-file")?.click());
   document.addEventListener("change", (e) => {
