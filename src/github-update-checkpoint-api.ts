@@ -127,10 +127,14 @@ export async function githubCheckpointApi(app: Branch, request: IncomingMessage,
     return config ? { enabled: true, repository: config.repository, repositoryID: config.repositoryID, fingerprint: config.fingerprint, maxBytes: config.maxBytes, branch: checkpointBranch } : { enabled: false };
   }
   if (request.method !== "POST") throw new HttpError(405, "Unsupported checkpoint operation.");
-  if (path === "/api/deployment/github-checkpoint/preview") return preview(app, request, await readBody(request));
+  if (path === "/api/deployment/github-checkpoint/preview") {
+    const body = await readBody(request); return exclusive(dataDir, () => preview(app, request, body));
+  }
   if (path === "/api/deployment/github-checkpoint/enroll") return enroll(app, request, dataDir, await readBody(request));
   if (path === "/api/deployment/github-checkpoint/recover") return recover(app, request, dataDir, await readBody(request));
-  if (path === "/api/deployment/github-checkpoint/recover-preview") return recoveryPreview(app, request, dataDir, await readBody(request));
+  if (path === "/api/deployment/github-checkpoint/recover-preview") {
+    const body = await readBody(request); return exclusive(dataDir, () => recoveryPreview(app, request, dataDir, body));
+  }
   if (path === "/api/deployment/github-checkpoint/disable") {
     z.object({ disable: z.literal(true) }).strict().parse(await readBody(request));
     return exclusive(dataDir, async () => { ownerHere(app, request); await saveCheckpointConfig(dataDir, null); return { enabled: false }; });

@@ -14,6 +14,7 @@ type TreeEntry = { path: string; mode: string; type: string; sha: string };
 
 export class CheckpointRemote {
   private readonly deadline = Date.now() + 180000;
+  private requests = 0;
   private readonly root: string;
   constructor(readonly repository: string, private readonly token: string, private readonly fetcher: typeof fetch, private readonly authorize: () => void | Promise<void>) {
     if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository) || repository.split("/").some((part) => [".", ".."].includes(part))) throw new Error("Invalid checkpoint repository.");
@@ -24,6 +25,7 @@ export class CheckpointRemote {
 
   private async call(path: string, method = "GET", body?: unknown, missing = false): Promise<unknown> {
     await this.authorize(); const remaining = this.deadline - Date.now();
+    if (++this.requests > 256) throw new Error("Checkpoint request budget exceeded; update held.");
     if (remaining <= 0) throw new Error("Checkpoint exceeded its three-minute network budget; update held.");
     const signal = AbortSignal.timeout(Math.min(20000, remaining));
     const response = await this.fetcher(`${this.root}${path}`, { method, redirect: "error", signal,
