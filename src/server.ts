@@ -337,6 +337,7 @@ import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
+import { readScheduledDashboard } from "./scheduled-dashboards.js";
 import { proposeTrigger } from "./trigger-words.js";
 import { ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
@@ -2623,6 +2624,13 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
     // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
     const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
+  }
+  const dashboard = /^\/api\/schedules\/([a-f0-9-]{36})\/dashboard$/.exec(path);
+  if (dashboard && request.method === "GET") {
+    app.store.profiles.requireOwner("Your scheduled dashboard");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Scheduled dashboards belong to the owner at the app.");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch to read the dashboard.");
+    return readScheduledDashboard(app.store, owner, dashboard[1]!);
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");

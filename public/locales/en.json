@@ -10417,5 +10417,11 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "scheduleddash.title": "Dashboard",
+  "scheduleddash.enable": "Keep the result as a dashboard",
+  "scheduleddash.help": "This task will return a table with sources and timestamps on each run. No extra permissions are granted.",
+  "scheduleddash.pending": "No valid dashboard yet. It is generated after a completed scheduled task.",
+  "scheduleddash.refresh": "Read latest page",
+  "scheduleddash.note": "Local scheduled snapshot. Reading it starts no task. Source values and times are reported by the task, not independently verified."
 }

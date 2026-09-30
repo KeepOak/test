@@ -1072,6 +1072,7 @@ export const ROUTES = {
   "/api/schedules": "other POST",
   "/api/schedules/": "prefix",
   "/api/schedules/:id": "look",
+  "/api/schedules/:id/dashboard": "owner look",
   "/api/schedules/:id/gate": "owner POST",
   "/api/schedules/:id/remove": "other POST",
   "/api/schedules/:id/trigger": "task POST",
