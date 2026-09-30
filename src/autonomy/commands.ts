@@ -133,7 +133,7 @@ const handoff: Handler = async (call) => {
     if (!parts) return say("Handing on to a terminal or another assistant is not in this copy.");
     const done = await handOff(parts, { sessionId: call.sessionId, to: where, ...(rest.length ? { agent: rest.join(" ") } : {}) }, "");
     if ("command" in done) return say(`Run this in a terminal: ${done.command}`);
-    if ("agent" in done) return say(`Assistant ${quoteLine(done.agent, 60)} reported ${quoteLine(done.state, 40)}.${done.answer ? `\n\n${done.answer.slice(0, 2000)}` : ""}`);
+    if ("agent" in done) return say(`Assistant ${quoteLine(done.agent, 60)} reported ${quoteLine(String(done.state ?? "no state"), 40)}.${done.answer ? `\n\n${done.answer.slice(0, 2000)}` : ""}`);
     return say("The handoff did not return a terminal command or an assistant response.");
   }
   return handoffToChat(autonomy, call, where === "chat" ? rest.join(" ") : "");

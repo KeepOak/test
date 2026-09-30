@@ -24,7 +24,7 @@ async function withTrunks(t) {
 const openChat = async (page, name) => { await page.locator(`#side [data-act="chat"]:has-text("${name}")`).first().click(); await page.waitForTimeout(400); };
 const menu = async (page, selector) => { await page.locator('[data-act="chatmenu"]').first().click(); await page.locator(`.pop ${selector}`).click(); };
 
-test("Share…: With people is saved and taken back in the engine; a copy, a key and hand-off stay greyed", async (t) => {
+test("Share…: With people is saved and taken back in the engine; a copy and a key stay greyed, hand-off is live", async (t) => {
   const { page, call, a, person, errors } = await withTrunks(t);
   await openChat(page, "Wren");
   await menu(page, '[data-act="share10"][data-k="conv"]');
@@ -40,10 +40,18 @@ test("Share…: With people is saved and taken back in the engine; a copy, a key
   await page.locator(`.dlg [data-act="share-rel"][data-subject="${subject}"][data-v="no"]`).click();
   await page.waitForTimeout(400);
   assert.deepEqual(await held(), []);
-  for (const [tab, act] of [["copy", "share-link"], ["carry", "share-key"], ["handoff", "share-handoff"]]) {
+  for (const [tab, act] of [["copy", "share-link"], ["carry", "share-key"]]) {
     await page.locator(`.dlg [data-act="share-tab"][data-v="${tab}"]`).click();
     assert.ok(await greyed(page.locator(`.dlg [data-act="${act}"]`).first()), `${act} stays greyed`);
   }
+  // CHAT-261: Hand off is live. With no owner Telegram DM it says how to get one; the terminal answers through /handoff.
+  await page.locator('.dlg [data-act="share-tab"][data-v="handoff"]').click();
+  await page.locator(".dlg .empty").filter({ hasText: "No available Telegram owner DM" }).waitFor();
+  const terminal = page.locator('.dlg [data-act="share-handoff"][data-v="terminal"]');
+  assert.equal(await greyed(terminal), false);
+  await terminal.click();
+  await page.locator(".dlg pre.code").waitFor();
+  assert.ok((await page.locator(".dlg pre.code").textContent()).trim().length > 0, "the command's answer is shown");
   assert.deepEqual((await call("/api/shares")).shares, [], "no copy link was made");
   assert.deepEqual(errors, []);
 });

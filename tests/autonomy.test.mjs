@@ -349,7 +349,7 @@ test("sub-goals are shown to every round and to the judge", async (t) => {
   assert.match(questions[0], /1\. the tests pass/);
 });
 
-test("/subgoal needs a goal, /bg starts a separate conversation, and /handoff points a chat at this one", async (t) => {
+test("/subgoal needs a goal, /bg starts a separate conversation, and /handoff points an exact chat at this one", async (t) => {
   const { app, api, on, command } = await fixture(t);
   const first = await app.runtime.run({ prompt: "Hello", onTextDelta: () => undefined });
   await on("session-commands");
@@ -360,18 +360,23 @@ test("/subgoal needs a goal, /bg starts a separate conversation, and /handoff po
   const other = app.store.runs(app.runtime.owner).find((run) => run.prompt === "summarise the notes folder");
   assert.ok(other && other.sessionId !== first.sessionId);
 
-  const linked = [], sent = [];
+  // CHAT-261: a chat app's name alone no longer picks a chat (the newest one on that app may be somebody else's); only an
+  // exact destination from the Share chooser, which the router checks again before linking.
+  const asked = [];
   app.autonomy.deps.chats = {
     summary: () => ({ channels: [{ id: "tg-main", kind: "telegram" }] }),
     chats: () => [{ channel: "tg-main", chatId: "42", title: "My phone", updatedAt: "2026-09-17T08:00:00Z" }],
-    link: (_owner, input) => linked.push(input),
-    deliver: async (channel, chatId, text) => { sent.push([channel, chatId, text]); },
+    link: () => { throw new Error("never linked by app name"); },
+    deliver: async () => undefined,
+    assertHandoffSource: () => undefined,
+    handoff: async (_owner, input) => { asked.push(input); return { title: "My phone", sent: true, queued: 0 }; },
   };
-  const handed = await command("/handoff telegram", first.sessionId);
-  assert.match(handed.body.text, /Handed to My phone on tg-main/);
-  assert.deepEqual(linked, [{ channel: "tg-main", chatId: "42", sessionId: first.sessionId }]);
-  assert.match(sent[0][2], /carries on here/);
-  assert.match((await command("/handoff discord", first.sessionId)).body.text, /No chat on discord/);
+  assert.match((await command("/handoff telegram", first.sessionId)).body.text, /Choose an exact Telegram destination/);
+  assert.deepEqual(asked, []);
+  const when = "2026-09-17T08:00:00.000Z", target = "11111111-1111-4111-8111-111111111111";
+  const handed = await command(`/handoff chat tg-main 42 ${target} ${encodeURIComponent(when)}`, first.sessionId);
+  assert.match(handed.body.text, /Linked to My phone on Telegram\. .*The notification was sent\./);
+  assert.deepEqual(asked, [{ channel: "tg-main", chatId: "42", expectedSessionId: target, expectedUpdatedAt: when, sourceSessionId: first.sessionId }]);
   // The owner's rule (ships on, 2026-09-26): handing on ships off; the interop switch is switched off explicitly all the same.
   await api("/api/interop/switch", { part: "handoff", mode: "off" });
   assert.match((await command("/handoff terminal", first.sessionId)).body.text, /switched off/, "the interop switch still decides");
