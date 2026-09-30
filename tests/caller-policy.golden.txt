@@ -582,6 +582,10 @@ owner GET /api/interop | here=ok remote=ok phone=ok legacy=ok person=401/327290 
 owner POST /api/interop | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/interop/client-tools/ws | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/interop/client-tools/ws | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/interop/redis-queue | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/interop/redis-queue | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/interop/redis-queue/control | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/interop/redis-queue/control | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/interop/fleet | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/interop/fleet | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/741833 run=401/741833 nobody=401/40daee
 owner GET /api/interop/fleet/stop | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2840,6 +2844,10 @@ owner+lockdown GET /api/interop | here=ok remote=ok phone=ok legacy=ok person=40
 owner+lockdown POST /api/interop | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/interop/client-tools/ws | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/interop/client-tools/ws | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/interop/redis-queue | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/interop/redis-queue | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/interop/redis-queue/control | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/interop/redis-queue/control | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/interop/fleet | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/interop/fleet | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/741833 run=401/741833 nobody=401/40daee
 owner+lockdown GET /api/interop/fleet/stop | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5098,6 +5106,10 @@ household GET /api/interop | here=400/f6e21c remote=400/f6e21c read=400/f6e21c r
 household POST /api/interop | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/interop/client-tools/ws | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/interop/client-tools/ws | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/interop/redis-queue | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/interop/redis-queue | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/interop/redis-queue/control | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/interop/redis-queue/control | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/interop/fleet | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/interop/fleet | here=400/f6e21c remote=400/f6e21c read=401/741833 run=401/741833
 household GET /api/interop/fleet/stop | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7356,6 +7368,10 @@ household+lockdown GET /api/interop | here=400/f6e21c remote=400/f6e21c read=400
 household+lockdown POST /api/interop | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/interop/client-tools/ws | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/interop/client-tools/ws | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/interop/redis-queue | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/interop/redis-queue | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/interop/redis-queue/control | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/interop/redis-queue/control | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/interop/fleet | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/interop/fleet | here=400/f6e21c remote=400/f6e21c read=401/741833 run=401/741833
 household+lockdown GET /api/interop/fleet/stop | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9614,6 +9630,10 @@ applock GET /api/interop | here=423/a8f863
 applock POST /api/interop | here=423/a8f863
 applock GET /api/interop/client-tools/ws | here=423/a8f863
 applock POST /api/interop/client-tools/ws | here=423/a8f863
+applock GET /api/interop/redis-queue | here=423/a8f863
+applock POST /api/interop/redis-queue | here=423/a8f863
+applock GET /api/interop/redis-queue/control | here=423/a8f863
+applock POST /api/interop/redis-queue/control | here=423/a8f863
 applock GET /api/interop/fleet | here=423/a8f863
 applock POST /api/interop/fleet | here=423/a8f863
 applock GET /api/interop/fleet/stop | here=423/a8f863

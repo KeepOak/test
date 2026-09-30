@@ -39,4 +39,4 @@ Calls require the unlocked owner, original `source: owner`, `specialists.use`, F
 
 The queue script and adapter are original Branch code. Protocol references: [Upstash REST](https://upstash.com/docs/redis/features/restapi), [Redis EVAL and declared keys](https://redis.io/docs/latest/commands/eval/), [Redis TIME](https://redis.io/docs/latest/commands/time/). No Redis server or SDK implementation is copied, installed or bundled. The upstream [Redis license](https://github.com/redis/redis/blob/unstable/LICENSE.txt) distinguishes Redis 8's tri-license and older versions; operators choose their own service/version and terms. This change adds no third-party dependency or source-license obligation.
 
-Development verification is source inspection and `git diff --check` only. No tests, builds, Redis/network calls, credential reads, apps or runtime were executed for this change; interoperability and runtime behavior remain unproven.
+Tests: `tests/redis-fleet-queue.test.mjs` (settings, owner route, ship-off). Talking to a real Redis REST service is not exercised by the tests.

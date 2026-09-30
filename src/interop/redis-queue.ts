@@ -94,10 +94,10 @@ export class RedisQueue {
     if (this.active.size >= 2) throw new Error("Two Redis coordination calls are already in progress");
     const controller = new AbortController(); this.active.add(controller);
     const signal = AbortSignal.any([context.signal, controller.signal, AbortSignal.timeout(15000)]);
-    const policy = JSON.stringify(this.policy.snapshot());
+    const policy = JSON.stringify(this.policy.settings());
     const still = (): void => {
       this.fence(context, config, revision); signal.throwIfAborted();
-      if (policy !== JSON.stringify(this.policy.snapshot())) throw new Error("The network policy changed");
+      if (policy !== JSON.stringify(this.policy.settings())) throw new Error("The network policy changed");
     };
     const watch = setInterval(() => { try { still(); } catch { controller.abort(); } }, 100);
     watch.unref();
