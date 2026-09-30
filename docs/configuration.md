@@ -9500,13 +9500,19 @@ authors who test their plugin against Branch before shipping it. A tool with `se
   their names: this computer, numbers and private-network names (`localhost`, `.local`, `.lan`, `.internal`,
   `.home.arpa`) are refused in the package. A hand-placed plugin walled by the tick is pinned to the code it
   had when it was loaded. One question to a plugin is at most 1 MB, and at most 4 plugin runs go at once.
-- **Windows.** Windows has no file and network wall, only a job object, so add-on code is refused there unless
-  the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships off); a plugin run
-  that way says so instead of claiming a wall. Nothing else on Windows changes.
-- **Hand-placed plugins stay in-process by default (decided).** "Also run plugin files I put in the plugins
-  folder myself in their own walled program" (`wallEveryPlugin`) keeps shipping off: those files are the owner's own, the switch
-  would change how existing plugins behave (Windows included), and a walled plugin loses model connections and
-  chat services. Add-ons from a package, list or draft are walled whatever the tick says.
+- **Windows.** Windows has no file and network wall, only a job object, so add-on code other people wrote is
+  refused there unless the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships
+  off; turning it on needs the owner's yes and is refused under Lockdown); a plugin run that way says so instead of
+  claiming a wall. A plugin the owner placed themselves runs there as its own program with the job object's limits.
+- **Hand-placed plugins run as their own program too (RES-251).** "Also run plugin files I put in the plugins folder
+  myself in their own walled program" (`wallEveryPlugin`) ships on: no plugin runs inside Branch unless the owner
+  chose that. Hand-placed plugins already switched on when this first started keep running as before, each recorded
+  (`grandfathered`, and `add-ons-plugin-wall-kept` on this computer), and Customize › Tools › Plugins lists them once
+  with **Wall it** beside each. A walled plugin brings no model connections or chat services, since those live inside
+  Branch; the owner lets one plugin run inside (`insideBranch`, set by `POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
+  "Where it runs") or switches the wall off for all. Either is less careful, so it needs the owner's yes
+  (`confirmLoosening`) and is refused under Lockdown; walling a plugin always goes through. A walled plugin is held to the same add-on
+  interface version as one inside. Add-ons from a package, list or draft are walled whatever the tick says.
 - **Branch as a plugin.** A `.branch-export.json` file is trusted only for folders Branch remembers writing, so a
   record planted in a folder cannot make Branch remove or overwrite the owner's files. A folder with a file the
   owner changed stays Branch's until everything it wrote is gone.

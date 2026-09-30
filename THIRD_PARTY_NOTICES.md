@@ -3580,6 +3580,16 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 The Claude subscription context windows in `src/providers/claude-models.ts` (200K behind a relay, 1M on the `[1m]` route of the known long-context models, none for Haiku) follow Hermes Agent's DirectSDK plugin `model_catalog.py` and `directsdk_setup.py` (reading the plan and model picker from Claude Code's `initialize` answer), under the MIT licence text given above for that plugin, and OpenClaw's `extensions/anthropic/cli-backend.ts` (https://github.com/openclaw/openclaw, MIT, Copyright (c) 2026 OpenClaw Foundation), which selects the 1M window with the same `[1m]` suffix.
 
+### Helper lifecycle (ideas only), MIT and Apache-2.0
+
+`src/helper-tree.ts` and the helper start, stop and limit in `src/runtime.ts` (`delegateBackground`, `cancel`, `stopHelpers`) were written for Branch after reading these projects; no code was copied.
+
+- Hermes Agent (https://github.com/NousResearch/hermes-agent, commit a9a5424, Copyright (c) 2025 Nous Research, MIT): a child registered with its parent before it runs, and one attached after the parent's stop landed stopped at once (`tools/delegate_tool_child_run.py`); background hand-offs refused at capacity rather than queued (`tools/delegate_tool_config.py`); the tools a child never has (`tools/delegate_tool_toolsets.py`).
+- OpenClaw (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation, MIT): a stop that walks a child's descendants (`src/agents/subagents/registry/subagent-control-kill.ts`), children at once per requester (`src/agents/spawn-plan.ts`, `src/config/agent-limits.ts`) and a reset that stops the session's children (`src/auto-reply/reply/session-reset-cleanup.ts`).
+- Codex (https://github.com/openai/codex, commit bd4204efc2, Apache-2.0): a spawn slot reserved before the child starts and given back when it ends (`codex-rs/core/src/agent/registry.rs`).
+
+The MIT licence text is given under IronClaw above. Codex is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); only its design was followed.
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
