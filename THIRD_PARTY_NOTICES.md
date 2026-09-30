@@ -3564,6 +3564,10 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Cline, Apache-2.0: asking for an MCP server's secret values
+
+The "Add your own MCP server" form (`secretRow` and `typedSecrets` in `public/app/flows/connectors.js`) asks for each secret's value, as Cline's marketplace install asks for each declared environment variable (`install.env`, https://github.com/cline/cline/blob/fef9de1665d098ef13327656669cc43783151e0b/apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts#L69-L117). The code was written for Branch, which keeps the values in its locker (`withLockerSecrets` in `src/integrations/mcp-config.ts`). Cline is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker

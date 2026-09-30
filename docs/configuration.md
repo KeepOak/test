@@ -2098,6 +2098,8 @@ For an HTTP server:
 
 These are configuration examples, not supplied servers. Use the actual version and tool names advertised by your server. A mismatch prevents startup. Stdio programs are trusted executable code and are not sandboxed by the MCP connector. Only explicitly selected credential environment variables are passed in addition to SDK platform defaults. HTTP redirects are rejected.
 
+Each name in `envKeys`, and `bearerEnv`, is looked up in the environment first and then as a secret of the same name in the default project's locker (the way chat channels find theirs), so a desktop owner who cannot set environment variables saves the value in the locker instead. A name the locker cannot hold (it takes upper-case names such as `MY_MCP_TOKEN`) is read from the environment only. `bearerEnv` may not name a saved sign-in (`OAUTH_…`), which is kept as JSON rather than a bare key. In the window, **Add your own MCP server** asks for each secret's name and value: the value goes straight into the locker under that name, is never kept with the server, written down or shown again, and an empty value keeps the one already saved.
+
 ## Usage and observability
 
 Access **Usage** in the left navigation to see your assistant's token consumption, estimated costs, and run performance. The interface shows:

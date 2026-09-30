@@ -15,7 +15,9 @@ const stdioShape = {
 };
 const httpShape = {
   transport: z.literal('http'), url: z.string().url(),
-  bearerEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
+  // A saved sign-in (OAUTH_*) is kept as JSON, not as a bare key, so it is never sent as one.
+  bearerEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)
+    .refine((name) => !/^OAUTH_/i.test(name), 'A saved sign-in (OAUTH_…) cannot be used as a key').optional(),
 };
 /** Just how to reach a server, without the allowlist a permanently configured one also needs. */
 export const McpTransportSchema = z.discriminatedUnion('transport', [
@@ -30,8 +32,40 @@ export type McpConfig = z.infer<typeof McpConfigSchema>;
 
 function credential(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
-  if (!value) throw new Error(`Missing configured MCP environment variable: ${name}`);
+  if (!value) throw new Error(`Set ${name} as an environment variable, or save a secret called ${name} in the default project.`);
   return value;
+}
+
+/** Looks up one secret by name in the locker; undefined when there is none. */
+export type SecretLookup = (name: string) => Promise<string | undefined>;
+/** The names of the credentials a server is launched with. */
+export const credentialNames = (config: McpTransportConfig): string[] =>
+  config.transport === 'stdio' ? [...config.envKeys] : config.bearerEnv ? [config.bearerEnv] : [];
+/** A lookup in the default project's locker for the owner of the moment. */
+export const lockerSecret = (
+  store: { secrets: { resolve(owner: string, project: string, names: string[], options: { purpose: string }): Promise<Record<string, string>> } },
+  owner: () => string,
+): SecretLookup => async (name) =>
+  (await store.secrets.resolve(owner(), 'default', [name], { purpose: 'MCP server' }).catch(() => ({} as Record<string, string>)))[name];
+/** Locker secret names are upper-case, environment style (src/locker.ts). */
+const lockerName = /^[A-Z][A-Z0-9_]{0,63}$/;
+
+/**
+ * The environment a server is launched with: each credential it needs comes from the environment first, then from a
+ * secret of the same name in the default project's locker, the way chat channels find theirs (bootstrap.ts
+ * `credential`). A desktop owner cannot set environment variables, so the locker is where the window saves them. The
+ * copy is only handed to the transport, which reports every value it used so it is kept out of what comes back.
+ */
+export async function withLockerSecrets(
+  config: McpTransportConfig, env: NodeJS.ProcessEnv, lookup?: SecretLookup,
+): Promise<NodeJS.ProcessEnv> {
+  const found: Record<string, string> = {};
+  for (const name of credentialNames(config)) {
+    if (env[name] || !lookup || !lockerName.test(name)) continue;
+    const value = await lookup(name).catch(() => undefined);
+    if (value) found[name] = value;
+  }
+  return Object.keys(found).length ? { ...env, ...found } : env;
 }
 
 export async function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv, policy?: { guard(base: typeof fetch): typeof fetch }) {
