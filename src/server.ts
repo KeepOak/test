@@ -3486,6 +3486,19 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   throw new HttpError(404, "Endpoint not found");
 }
 async function mcpApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
+  if (path.startsWith('/api/mcp/native/')) {
+    if (startedWithShortLivedKey() || throughDoor(request)) throw new HttpError(403, 'Native MCP settings and selections require the owner window.');
+    if (path === '/api/mcp/native/list' && request.method === 'GET') return app.mcpNative.list();
+    if (request.method !== 'POST') throw new HttpError(405, 'Native MCP interaction requires an owner action.');
+    const input = await readBody(request);
+    if (path === '/api/mcp/native/read') return app.mcpNative.read(input);
+    if (path === '/api/mcp/native/update') return app.mcpNative.update(input);
+    if (path === '/api/mcp/native/action') return app.mcpNative.action(input);
+    if (path === '/api/mcp/native/configure') { app.mcpNative.configure(input); return { saved: true }; }
+    if (path === '/api/mcp/native/search') return app.mcpNative.search(input);
+    if (path === '/api/mcp/native/pick') return app.mcpNative.pick(input);
+    throw new HttpError(404, 'Unknown native MCP interaction.');
+  }
   if (path.startsWith('/api/mcp/owner-requests')) {
     app.store.profiles.requireOwner('Server questions');
     if (startedWithShortLivedKey() || throughDoor(request))

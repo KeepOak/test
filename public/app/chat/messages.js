@@ -14,6 +14,7 @@
    Branch from here and More are chat/branches.js and chat/more.js (pass 17). */
 
 import { withBlanksFilled } from "../flows/whatcan.js";
+import { mcpMentionRows } from '../mcp-native.js';
 import { $, esc, render, renderNow, afterDraw } from "../core/dom.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
@@ -308,7 +309,7 @@ function pickSlash(i) {
 }
 
 /* ---------- "@" calls a Trunk ---------- */
-const mentionOpen = () => !!document.querySelector(".pop [data-act='mention-pick'], .pop [data-act='slash-pick']");
+const mentionOpen = () => !!document.querySelector(".pop [data-act='mention-pick'], .pop [data-act='slash-pick'], .pop [data-act='mcp-mention-open']");
 /* The prototype's @ list: this computer's Trunks, the Trunks on the owner's other computers (POST /api/reach/trunks/remote,
    which only looks, read once a minute at most and only while that part is on: beside.js remoteTrunks), and material the engine reads for an @: the project's changes
    (@diff) and a web page (@https://…). */
@@ -316,6 +317,8 @@ const mentionOpen = () => !!document.querySelector(".pop [data-act='mention-pick
 const mentionPop = () => `<p class="athint18c">${t("window.chat.composer.at-hint")}</p><div class="ph">${t("window.chat.msg.call-trunk")}</div>${E.trunks.map((tr) => `<button class="mi" type="button" data-act="mention-pick" data-v="${esc(tr.name)}">${av(tr, 22)}<span><span class="mi-t">${esc(tr.name)}</span><span class="mi-s">${esc(tr.title ?? "")}</span></span></button>`).join("")}${awayRows()}<div class="ph">${t("window.chat.msg.material")}</div>${MATERIAL().map(([v, icon, name, sub]) => `<button class="mi" type="button" data-act="mention-pick" data-v="${v}"><span class="ico">${ic(icon, "s")}</span><span><span class="mi-t">${name}</span><span class="mi-s">${sub}</span></span></button>`).join("")}`;
 const MATERIAL = () => [["diff", "branch", t("window.chat.media.changes-diff"), t("window.chat.msg.changes-sub")], ["https://", "globe", t("window.chat.msg.a-link"), t("window.chat.msg.a-link-sub")]];
 const away = { at: 0, rows: [] };
+const nativeMentionPop = mentionPop;
+function withNativeMentions() { return nativeMentionPop() + (E.profiles?.isOwner !== false ? mcpMentionRows() : ''); }
 function awayRows() {
   if (Date.now() - away.at > 60000) {
     away.at = Date.now();
@@ -340,7 +343,7 @@ export function openSkills() {
 function mentionTyped(box) {
   if (!box) return;
   const at = box.selectionStart;
-  if (/(^|\s)@\w*$/.test(box.value)) openPop($("#composer"), mentionPop(), { force: true });
+  if (/(^|\s)@\w*$/.test(box.value)) openPop($("#composer"), withNativeMentions(), { force: true });
   else if (/\s\/\w*$/.test(box.value) && skillsOn().length) openPop($("#composer"), skillsPop(), { force: true });
   else { if (mentionOpen()) closePop(); return; }
   box.focus();

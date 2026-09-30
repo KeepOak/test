@@ -443,9 +443,15 @@ export async function startMcp(
   const reopen = async () => {
     await host?.beforeRestart?.();
     await vet();
-    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.(), host?.ownerRequests);
+    const opened = await openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.(), host?.ownerRequests);
+    host?.native?.(opened.config.id, () => opened.nativeSource);
+    return opened;
   };
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.ownerRequests); // R17-S20
+  const connect = async () => {
+    const connection = await connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.ownerRequests);
+    host?.native?.(connection.id, connection.nativeSource);
+    return connection;
+  };
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -478,6 +484,7 @@ async function vetLaunch(server: unknown, host: McpHost | undefined): Promise<vo
 }
 /** What `loadIntegrations` needs to run outside servers on demand rather than at startup. */
 export interface McpHost {
+  native?: (id: string, source: () => import('./mcp-native-source.js').McpNativeSource) => void;
   ownerRequests?: McpOwnerRequests;
   appSupport?: (id: string) => boolean;
   connectWhen(): 'startup' | 'on-demand';

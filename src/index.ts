@@ -5,6 +5,7 @@ import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { McpEvents } from './mcp-events.js';
 import { ScriptedMcpApps } from './scripted-mcp-apps.js';
+import { McpNative } from './mcp-native.js';
 import { McpOwnerRequests } from "./mcp-owner-requests.js";
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
@@ -1615,7 +1616,9 @@ ${result.output || "(it said nothing)"}`;
       && runtime.checkPolicy(permission, args, context, argumentFingerprint(permission, JSON.stringify(args))).decision !== 'deny',
     url => web.policy.assertAllowed(url, 'server browser question'));
   const scriptedMcpApps = new ScriptedMcpApps(runtime);
+  const mcpNative = new McpNative(runtime, () => sessionLock.locked());
   const mcpHost = {
+    native: (id: string, source: () => import('./integrations/mcp-native-source.js').McpNativeSource) => mcpNative.bind(id, source),
     ownerRequests: mcpOwnerRequests,
     appSupport: (id: string) => scriptedMcpApps.support(id),
     connectWhen: () => readLifecycleSettings(store, store.profiles.scope()).connect,
@@ -1741,7 +1744,7 @@ ${result.output || "(it said nothing)"}`;
     /** mac3/security-check: the security self-check, its repairs, and the malware check on add-ons. */
     security,
     /** eng-connectors: the owner's own MCP servers, allowed command-line tools, and flagged replies. */
-    ownMcp, scriptedMcpApps, mcpOwnerRequests, mcpEvents,
+    ownMcp, scriptedMcpApps, mcpOwnerRequests, mcpEvents, mcpNative,
     ownClis,
     replyFlags,
     /** mac2/fly-core: the learning core's three-way switch (off, when-needed, on); it ships off. */

@@ -24,6 +24,7 @@ import { initNotices } from "./shell/notices.js";
 import { initMcpOwnerRequests } from './mcp-owner-requests.js';
 import { initScriptedMcpApps } from './scripted-mcp-apps.js';
 import { initMcpEvents } from './mcp-events.js';
+import { initMcpNative } from './mcp-native.js';
 import { initLanguage, t } from "../i18n.js";
 import { initLive, restoreOpen } from "./shell/liveupdate.js"; // hot-update: live window updates keep what is open
 
@@ -179,6 +180,7 @@ async function boot() {
   initMcpOwnerRequests();
   initScriptedMcpApps();
   initMcpEvents();
+  initMcpNative();
   initLock();
   onRender(drawShell);
   onRender(drawMain);
