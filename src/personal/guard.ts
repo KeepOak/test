@@ -4,6 +4,8 @@ import type { RunSource } from "../policy.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
 import { personalParts, personalTools } from "./settings.js";
+import { calendarWriteTools } from "./calendar-write.js";
+import { mailSendTools } from "./mail-send.js";
 
 /**
  * R17-C integration review: what keeps the owner's mail, calendar, files elsewhere, music and house
@@ -35,6 +37,10 @@ export interface PersonalHold { reason: string; onceOnly: boolean }
 
 /** Why this call must be put to the owner even where the rules would let it through, or null. */
 export function personalHold(tool: string, args: unknown, source: RunSource): PersonalHold | null {
+  if (mailSendTools.has(tool))
+    return { reason: "Send this exact mail preview? Sending always needs your one-time confirmation", onceOnly: true };
+  if (calendarWriteTools.has(tool))
+    return { reason: "Calendar changes and their meeting notifications always need your confirmation for this exact change", onceOnly: true };
   if (opensTheHouse(tool, args))
     return { reason: "Locks, doors, garage doors and alarms are always asked about, just this once", onceOnly: true };
   if (isPersonalTool(tool) && source !== "owner")

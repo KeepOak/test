@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { registerMailSending, type MailPreview } from "./mail-send.js";
+import { CalendarCreateSchema, CalendarMoveSchema, CalendarDeleteSchema, googleDayBefore, registerCalendarWrites } from "./calendar-write.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
 import { buildPlainMail, stripTags } from "./mime.js";
@@ -87,6 +89,21 @@ export class GoogleConnector {
   constructor(private readonly store: Store, private readonly owner: string, private readonly fetcher: typeof fetch,
     private readonly signIn: SignIn) {}
   private on(): void { requirePersonal(this.store, this.owner, "google"); }
+  registerSending(registry: Pick<ToolRegistry, "register">): void {
+    registerMailSending(registry, "gmail", this.store, this.signIn, (draft, unchanged) => this.sendPreview(draft, unchanged));
+  }
+  private async sendPreview(draft: MailPreview, unchanged: () => void) {
+    this.on();
+    await this.signIn.requireMailSend();
+    const raw = Buffer.from(buildPlainMail(draft), "utf8").toString("base64url");
+    const token = await this.signIn.token();
+    unchanged();
+    this.on();
+    // Token was captured before the identity recheck; never send using a replacement sign-in.
+    const made = z.object({ id: z.string() }).passthrough().parse(await signedCall(this.fetcher,
+      { token: async () => token }, "Gmail", `${gmail}/messages/send`, { method: "POST", json: { raw } }));
+    return { accepted: true, messageId: made.id, delivered: "unverified", note: "Gmail accepted the message. Recipient delivery is not verified." };
+  }
   private call(url: string, init: RequestInit & { json?: unknown } = {}): Promise<unknown> {
     this.on();
     return signedCall(this.fetcher, this.signIn, "Google", url, init);
@@ -132,12 +149,34 @@ export class GoogleConnector {
     const to = value.to ?? new Date(Date.parse(from) + 86_400_000).toISOString();
     const query = new URLSearchParams({ timeMin: from, timeMax: to, singleEvents: "true", orderBy: "startTime", maxResults: String(value.max) });
     const Time = z.object({ dateTime: z.string().optional(), date: z.string().optional() }).passthrough().optional();
-    const body = z.object({ items: z.array(z.object({ id: z.string(), summary: z.string().optional(), location: z.string().optional(),
+    const body = z.object({ items: z.array(z.object({ id: z.string(), etag: z.string().optional(), summary: z.string().optional(), location: z.string().optional(),
       start: Time, end: Time, htmlLink: z.string().optional() }).passthrough()).default([]) }).passthrough()
       .parse(await this.call(`${calendar}?${query}`));
-    return { from, to, note: outsideTextNote, events: body.items.map((event) => ({ id: event.id, title: clip(event.summary ?? "(no title)", 200),
+    return { from, to, note: outsideTextNote, events: body.items.map((event) => ({ id: event.id, etag: event.etag ?? null, title: clip(event.summary ?? "(no title)", 200),
       starts: event.start?.dateTime ?? event.start?.date ?? "", ends: event.end?.dateTime ?? event.end?.date ?? "",
       location: clip(event.location ?? "", 200) })) };
+  }
+
+  async writeCalendar(action: "create" | "move" | "delete", input: unknown) {
+    this.on();
+    await this.signIn.requireCalendarWrite();
+    if (action === "create") {
+      const v = CalendarCreateSchema.parse(input);
+      return this.call(`${calendar}?sendUpdates=all`, { method: "POST", json: {
+        summary: v.title, location: v.location, start: { dateTime: v.starts }, end: { dateTime: v.ends }, reminders: googleDayBefore,
+      } });
+    }
+    const v = action === "move" ? CalendarMoveSchema.parse(input) : CalendarDeleteSchema.parse(input);
+    const url = `${calendar}/${encodeURIComponent(v.id)}`;
+    const event = z.object({ etag: z.string(), recurringEventId: z.string().optional(), recurrence: z.array(z.string()).optional() })
+      .passthrough().parse(await this.call(url));
+    if (event.etag !== v.etag) throw new Error("This event changed. List it again and confirm the updated event.");
+    if (event.recurrence || event.recurringEventId) throw new Error("Recurring events must be changed in Google Calendar.");
+    const moved = action === "move" ? CalendarMoveSchema.parse(input) : null;
+    const json = moved ? { start: { dateTime: moved.starts }, end: { dateTime: moved.ends }, reminders: googleDayBefore } : undefined;
+    const result = await this.call(`${url}?sendUpdates=all`, { method: action === "delete" ? "DELETE" : "PATCH",
+      headers: { "if-match": v.etag }, ...(json ? { json } : {}) });
+    return { action, id: v.id, result };
   }
 
   async searchDrive(input: unknown) {
@@ -166,6 +205,8 @@ export class GoogleConnector {
 }
 
 export function registerGoogle(registry: Pick<ToolRegistry, "register">, google: GoogleConnector): void {
+  google.registerSending(registry);
+  registerCalendarWrites(registry, "gcal", (action, input) => google.writeCalendar(action, input));
   const tool = (name: string, permission: string, description: string, parameters: z.ZodType, run: (input: unknown) => Promise<unknown>) =>
     registry.register({ name, permission, description, parameters, execute: async (input) => run(input) });
   tool("gmail.search", "personal.read", "Search the owner's Gmail with Gmail's own search words (from:, subject:, is:unread, newer_than:2d).",
