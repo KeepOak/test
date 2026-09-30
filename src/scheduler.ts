@@ -16,6 +16,7 @@ import { nextCronOccurrence, nextWallOccurrence, validCron } from "./recurrence.
 import { underProject } from "./project-scope.js"; // dogfood-ux-3
 import { defaultProjectId } from "./projects.js"; // dogfood-ux-3
 import { conversationRateRefusal } from "./knobs/apply.js";
+import { ScheduleDashboardSchema, recordScheduledDashboard, scheduledDashboardPrompt } from "./scheduled-dashboards.js";
 
 const timezone = z.string().min(1).max(64).refine((zone) => {
   try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); return true; } catch { return false; }
@@ -31,6 +32,8 @@ export const ScheduleSchema = z
     dueAt: z.iso.datetime(),
     /** reminder: a note in Activity; task: run the assistant; check: run it and hand it the previous result; evaluation: run a test suite. */
     kind: z.enum(["reminder", "task", "check", "evaluation"]),
+    /** Optional local dashboard projection of this task's structured output. */
+    dashboard: ScheduleDashboardSchema.optional(),
     /** Which evaluation suite to run, for an `evaluation` schedule. */
     suite: z.string().min(1).max(64).optional(),
     /** The model choice the evaluation should use; the one in use otherwise. */
@@ -46,7 +49,7 @@ export const ScheduleSchema = z
     /** Numeric five-field cron: minute hour day-of-month month weekday. */
     cron: z.string().trim().max(100).refine(validCron, "Invalid five-field cron expression").optional(),
     timezone: timezone.optional(),
-    /** Send the finished result to a connected channel chat. */
+    /** Send the finished result to a connected channel chat; {"channel":"home","chatId":"home"} is the chat the owner chose with /sethome. */
     deliverTo: z.object({ channel: z.string().min(1).max(64), chatId: z.string().min(1).max(64) }).strict().optional(),
     /** Allow an authenticated webhook to trigger this schedule with a payload. */
     webhook: z.boolean().optional(),
@@ -70,6 +73,7 @@ export const ScheduleSchema = z
   .refine((value) => !value.monthDay || value.dailyAt, "A monthly recurrence needs a daily time")
   .refine((value) => !(value.weekdays && value.monthDay), "Choose either weekdays or a day of the month")
   .refine((value) => value.kind !== "evaluation" || !!value.suite, "An evaluation schedule needs the name of a suite")
+  .refine((value) => !value.dashboard || value.kind === "task" || value.kind === "check", "Only a task or check can write a dashboard")
   .refine((value) => !value.gate || value.kind === "task" || value.kind === "check", "Only a task or a check can have a check script");
 export type DeliveryHandler = (channel: string, chatId: string, text: string, key: string) => Promise<{ messageId?: string | undefined; queued?: number }>;
 export interface HistoryEntry { runId: string | null; status: string; startedAt: string; finishedAt?: string; trigger: string }
@@ -224,6 +228,7 @@ export class Scheduler {
     // A check script is a program on this computer: it waits for the owner's own yes, whoever asked.
     return this.store.save("schedules", context.owner, randomUUID(), {
       ...rest,
+      ...(definition.dashboard && !definition.notify ? { notify: "changes" } : {}),
       dueAt: new Date(definition.dueAt).toISOString(),
       permissions,
       // Dogfood: a list the caller named is theirs to keep; one worked out from the words is marked so it stays least.
@@ -413,7 +418,7 @@ export class Scheduler {
       // QA retest 2026-09-28 (m5): a plain schedule's turns go on in one conversation of its own, not a new one each time.
       const thread = !route && !madeBy ? this.threadFor(data) : undefined;
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
-        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[], ...(thread ? { sessionId: thread } : {}),
+        prompt: this.promptFor(data, payload) + gatePrompt(found) + scheduledDashboardPrompt(data), permissions: this.reachOf(data) as string[], ...(thread ? { sessionId: thread } : {}),
         source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
@@ -427,7 +432,8 @@ export class Scheduler {
       Object.assign(entry, { runId: run.id, status: run.status, finishedAt: new Date().toISOString() });
       route?.finished(run); // R17-A (Trunks)
       this.runtime.notifyEvent("schedule.fired", { scheduleId: record.id, runId: run.id, status: run.status, trigger });
-      const delivery = await this.deliverResult(data, run, madeBy);
+      const dashboardChanged = recordScheduledDashboard(this.store, record.owner, record.id, data, run, saidNothingNew(run.output));
+      const delivery = dashboardChanged === false && data.notify !== "always" ? null : await this.deliverResult(data, run, madeBy);
       const kept = run.status === "completed" && !saidNothingNew(run.output);
       this.store.save("schedules", record.owner, record.id, {
         ...data, runId: run.id, runCount: Number(data.runCount ?? 0) + 1, history: [...history, entry],
@@ -585,7 +591,9 @@ export class Scheduler {
       throw new Error("Permission denied: schedules.manage");
     const record = this.store.get("schedules", context.owner, id);
     if (!record || !this.visibleTo(context, record)) return { id, removed: false };
-    return { id, removed: this.store.delete("schedules", context.owner, id) };
+    const removed = this.store.delete("schedules", context.owner, id);
+    if (removed) this.store.delete("governance", context.owner, `scheduled-dashboard:${id}`);
+    return { id, removed };
   }
   /** The schedules the caller may see: all of them for the owner, and only its own for a Trunk. */
   list(context: ToolContext): SavedRecord[] {
@@ -674,7 +682,7 @@ export function registerSchedules(
   registry.register({
     name: "schedules.create",
     description:
-      "Persist a reminder, task or monitoring check with an optional interval, wall-clock weekday/monthly recurrence, or five-field cron in a timezone; optional delivery to a channel chat; and optional webhook triggering. Runs when online; missed periods coalesce into one execution. Failed tasks do not auto-retry.",
+      "Persist a reminder, task or monitoring check with an optional interval, wall-clock weekday/monthly recurrence, or five-field cron in a timezone; optional delivery to a channel chat (channel and chatId both set to home send to the owner's home chat, chosen with /sethome); and optional webhook triggering. Runs when online; missed periods coalesce into one execution. Failed tasks do not auto-retry.",
     permission: "schedules.manage",
     parameters: ScheduleSchema,
     execute: async (a, c) => scheduler.create(c, a),

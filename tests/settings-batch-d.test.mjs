@@ -142,17 +142,22 @@ test("D3 Models › Defaults: each kind of work is the engine's own setting, and
   assert.deepEqual(f.errors, []);
 });
 
-test("D4 Add a computer: each kind that is not pairing says why; rule boxes wait for words before Add a rule and Test", async (t) => {
+test("D4 Add a computer: each kind that is not pairing or SSH says why; SSH opens the saved list; rule boxes wait for words before Add a rule and Test", async (t) => {
   const f = await fixture(t);
   await signIn(f);
   await settingsPage(f.page, "computer");
   await f.page.locator('#main [data-act="comp-add"]').click();
-  for (const [kind, words] of [["sandbox", /can't make a private computer/], ["cloud", /keepoak\.com account/], ["remote", /separate safety review/]]) {
+  for (const [kind, words] of [["sandbox", /can't make a private computer/], ["cloud", /keepoak\.com account/]]) {
     const card = f.page.locator(`.dlg [data-act="comp-kind"][data-v="${kind}"]`);
     assert.equal(await card.getAttribute("aria-disabled"), "true", kind);
     assert.match(await card.getAttribute("data-tip"), words, kind);
   }
   assert.equal(await f.page.locator('.dlg [data-act="comp-add-go"][data-v="pair"]').getAttribute("aria-disabled"), null, "pairing stays live");
+  const ssh = f.page.locator('.dlg [data-act="ssh-comp-open"][data-v="remote"]');
+  assert.equal(await ssh.getAttribute("aria-disabled"), null, "SSH setup is live");
+  await ssh.click();
+  await f.page.locator(".dlg").getByText("No SSH computers added yet.").waitFor();
+  assert.equal(await f.page.locator('.dlg [data-act="ssh-comp-new"]').count(), 1, "the saved list offers Add");
   await f.page.keyboard.press("Escape");
 
   await f.page.locator('[data-act="setpage"][data-v="permissions"]').click();
