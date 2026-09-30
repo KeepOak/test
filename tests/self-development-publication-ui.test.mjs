@@ -53,3 +53,23 @@ test("SELF-026 the Inbox publishes a prepared source change only as the reviewed
   assert.deepEqual(seen.at(-1), ["publish", id, { review, title: "Remove the Export button", summary: "As Sam asked.", consent: true }]);
   assert.deepEqual(errors, []);
 });
+
+test("SELF-026 the terms form for a waiting request can be filled in: its fields are live, not greyed", async (t) => {
+  const id = "1c7f9b9f-6e8f-4f9b-8a46-4b2d3c5e6f70";
+  const request = { id, text: "Remove the Export button", status: "waiting", at: new Date().toISOString(), from: { senderName: "Sam", channel: "chat" } };
+  const diff = { files: [], untracked: [], outside: [], truncated: false, allowedPaths: [], note: "Nothing has been changed yet.", warning: null };
+  const { page, errors } = await newWindow(t, { seed(app) {
+    app.sourceRequests.list = () => [request];
+    app.sourceRequests.diff = async () => diff;
+  } });
+  await openPlace(page, "inbox", "needs");
+  await page.locator('[data-act="selfrev15"]').click();
+  await page.locator('[data-act="selfdo15"][data-v="editing"]').waitFor();
+  for (const field of ["name", "allowedPaths", "permissions", "definitionOfDone", "rollbackPlan"]) {
+    const box = page.locator(`#source-${field}`);
+    assert.equal(await box.isEnabled(), true, `${field} can be filled in`);
+    assert.equal(await box.evaluate((el) => el.classList.contains("soon")), false, `${field} is not greyed`);
+  }
+  await page.locator("#source-name").fill("remove-export");
+  assert.deepEqual(errors, []);
+});
