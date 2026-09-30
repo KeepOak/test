@@ -63,7 +63,7 @@ import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { holdTaskBrowser } from "./browser-hold.js";
 import { MiniAppSessions } from "./miniapp/sessions.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
-import { runOrigin } from "./key-context.js";
+import { runOrigin, startedWithShortLivedKey } from "./key-context.js";
 import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
 import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
@@ -1636,6 +1636,11 @@ ${result.output || "(it said nothing)"}`;
   // ── end mac7/r17-g ──
   // ── r17-h: flows and boards (src/flows-boards/). Every part ships off. ──
   const flowsBoards = new FlowsBoards({ runtime, registry, flows, knowledge, queue: runQueue, asks,
+    requireInstallOwner: () => {
+      store.profiles.requireOwner("Answering an install request");
+      if (startedWithShortLivedKey()) throw new Error("Answer install requests with the owner's full access.");
+      if (sessionLock.locked()) throw new Error("Unlock Branch before answering an install request.");
+    },
     fetch: () => web.policy.guard(globalThis.fetch), ...(process.env.BRANCH_OSV_ENDPOINT ? { osvEndpoint: process.env.BRANCH_OSV_ENDPOINT } : {}) });
   // ── end r17-h ──
   // ── R17-F: learning, deeper (src/learning-more/). Every part ships off. ──
@@ -2590,3 +2595,5 @@ export * from "./flow-yaml.js";
 export * from "./sdk-kit.js";
 export * from "./web-pages-settings.js"; // w911 (A0743, A1452) hook
 export * from "./sdk-starters.js";
+
+export * from "./scheduled-dashboards.js";
