@@ -1,4 +1,5 @@
 import { environmentTool } from "./environment.js";
+import { MobilePush } from "./mobile-push.js";
 import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
 import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
@@ -113,6 +114,7 @@ import { afterTaskMetrics, executionMetricsDeps } from "./execution-metrics.js";
 import { SessionTokens } from "./session-tokens.js";
 import { CommandSecrets, KeychainSecrets } from "./vault-sources.js";
 import { SkillRegistry } from "./registry-install.js";
+import { SkillMarketplace } from "./skill-marketplace.js";
 import { SkillPackages } from "./skill-packages.js";
 import { Plugins } from "./plugins.js";
 import { Evaluation } from "./evaluation.js";
@@ -1028,6 +1030,7 @@ export async function createBranch(options: {
   // Wave 7: one finished task's full record, in the documented trajectory shape.
   registerRunExport(registry, store, version);
   const skillRegistry = new SkillRegistry(store, runtime.owner, web.policy);
+  const skillMarketplace = new SkillMarketplace(store, runtime.owner, skillRegistry, () => sessionLock.state().locked);
   // Skill packages people can hand to each other, and single-file plugins the owner switches on.
   const skillPackages = new SkillPackages(store, runtime.owner, registry, { store, policy: web.policy, fetchImpl: web.policy.guard(globalThis.fetch) });
   skillPackages.replayRecipe = (recipe, _event, runId) => replayNamedRecipe(knowledge, store, runtime, recipe, runId);
@@ -1080,8 +1083,11 @@ export async function createBranch(options: {
   webhooks.secretFor = lockerSecret("webhook");
   // Wave 8: while Lockdown is on, no note about what happened reaches another program either.
   const notify = webhooks.notifier(runtime.owner);
+  const mobilePush = new MobilePush(store, runtime.owner, web.policy, () => !sessionLock.locked() && !lockedDown(store, runtime.owner));
+  releaseOnLock.push(async () => mobilePush.stop());
   const guardedNotify: typeof notify = (event, payload) => {
     if (!lockedDown(store, runtime.owner)) notify(event, payload);
+    try { mobilePush.notify(event, payload); } catch { /* Push cannot fail task completion. */ }
   };
   runtime.notifyEvent = guardedNotify;
   channels.deliveries.notifyEvent = guardedNotify;
@@ -1915,6 +1921,7 @@ ${result.output || "(it said nothing)"}`;
     },
     /** References, replacement dates, the use audit and the shared scrubber. */
     secrets: store.secrets,
+    mobilePush,
     /** Locking the app, by hand or after a quiet spell. */
     sessionLock,
     /** The phones holding a task's browser through the Telegram Mini App (src/miniapp/sessions.ts). */
@@ -1934,6 +1941,7 @@ ${result.output || "(it said nothing)"}`;
     hooks,
     teams,
     skillRegistry,
+    skillMarketplace,
     /** Skill packages: opening, installing and rebuilding the single file people share. */
     skillPackages,
     /** Installed packages whose tools could not be put back this time. */
@@ -2046,6 +2054,7 @@ ${result.output || "(it said nothing)"}`;
       summary: (limit?: number) => liveScoreSummary(liveScores(store, runtime.owner, limit)),
     },
     close: () => (closing ??= (async () => {
+      mobilePush.close();
       // bucket-18 (A0300): nothing is sent to GitHub while the app is closing.
       stopPullRequests();
       stopOfferingPullRequests();
