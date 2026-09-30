@@ -246,8 +246,9 @@ export class GoalMode {
         if (state.lastRunId) {
           const previous = this.store.run(state.lastRunId);
           if (!previous || previous.owner !== this.runtime.owner || previous.sessionId !== state.sessionId
-            || typeof previous.project !== "string" || !this.store.projects.list(previous.owner).some((one) => one.id === previous.project))
-            throw new Error("The goal's previous task or original project is unavailable. Reconcile its saved context before continuing; no new round was started.");
+            || typeof previous.project !== "string" || !this.store.projects.list(previous.owner).some((one) => one.id === previous.project)
+            || this.store.sessionProject(state.sessionId) !== previous.project)
+            throw new Error("The goal's previous task or original project is unavailable or its conversation changed project. Reconcile its saved context before continuing; no new round was started.");
           project = previous.project;
         } else if (state.round > 1) {
           throw new Error("The goal's previous task identity is unavailable. Reconcile its saved context before continuing; no new round was started.");
