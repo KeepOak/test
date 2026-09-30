@@ -6407,6 +6407,12 @@
   "unified-search.kind.conversation": "Conversation",
   "unified-search.kind.repository": "What it was allowed to do",
   "unified-search.kind.workflow": "Workflow",
+  "updateFailureDownload.download": "Download report",
+  "updateFailureDownload.failed": "The update from {from} to {to} did not finish.",
+  "updateFailureDownload.preparing": "Preparing report…",
+  "updateFailureDownload.title": "Update problem report",
+  "updateFailureDownload.unavailable": "The update report is unavailable.",
+  "updateFailureDownload.why": "Download the existing report with update steps and diagnostic logs. Nothing is sent automatically.",
   "updates.brand.line": "A personal assistant that runs on your own computer · open source",
   "updates.build.commit": "Built from commit",
   "updates.build.not-recorded": "not recorded",
@@ -10597,11 +10603,5 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder",
-  "updateFailureDownload.title": "Update problem report",
-  "updateFailureDownload.failed": "The update from {from} to {to} did not finish.",
-  "updateFailureDownload.why": "Download the existing report with update steps and diagnostic logs. Nothing is sent automatically.",
-  "updateFailureDownload.download": "Download report",
-  "updateFailureDownload.preparing": "Preparing report\u2026",
-  "updateFailureDownload.unavailable": "The update report is unavailable."
+  "wsedit.up": "Up one folder"
 }

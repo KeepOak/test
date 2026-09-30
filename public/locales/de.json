@@ -6407,6 +6407,12 @@
   "unified-search.kind.conversation": "Unterhaltung",
   "unified-search.kind.repository": "Was es tun durfte",
   "unified-search.kind.workflow": "Workflow",
+  "updateFailureDownload.download": "Bericht herunterladen",
+  "updateFailureDownload.failed": "Das Update von {from} auf {to} wurde nicht abgeschlossen.",
+  "updateFailureDownload.preparing": "Bericht wird erstellt…",
+  "updateFailureDownload.title": "Bericht zum Updateproblem",
+  "updateFailureDownload.unavailable": "Der Updatebericht ist nicht verfügbar.",
+  "updateFailureDownload.why": "Lade den vorhandenen Bericht mit Updateschritten und Diagnoseprotokollen herunter. Nichts wird automatisch gesendet.",
   "updates.brand.line": "Ein persönlicher Assistent, der auf deinem eigenen Computer läuft · Open Source",
   "updates.build.commit": "Gebaut aus Commit",
   "updates.build.not-recorded": "nicht erfasst",
@@ -10597,11 +10603,5 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben",
-  "updateFailureDownload.title": "Bericht zum Updateproblem",
-  "updateFailureDownload.failed": "Das Update von {from} auf {to} wurde nicht abgeschlossen.",
-  "updateFailureDownload.why": "Lade den vorhandenen Bericht mit Updateschritten und Diagnoseprotokollen herunter. Nichts wird automatisch gesendet.",
-  "updateFailureDownload.download": "Bericht herunterladen",
-  "updateFailureDownload.preparing": "Bericht wird erstellt\u2026",
-  "updateFailureDownload.unavailable": "Der Updatebericht ist nicht verf\u00fcgbar."
+  "wsedit.up": "Einen Ordner nach oben"
 }

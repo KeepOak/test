@@ -6407,6 +6407,12 @@
   "unified-search.kind.conversation": "Conversación",
   "unified-search.kind.repository": "Lo que tenía permitido hacer",
   "unified-search.kind.workflow": "Flujo de trabajo",
+  "updateFailureDownload.download": "Descargar informe",
+  "updateFailureDownload.failed": "La actualización de {from} a {to} no terminó.",
+  "updateFailureDownload.preparing": "Preparando informe…",
+  "updateFailureDownload.title": "Informe del problema de actualización",
+  "updateFailureDownload.unavailable": "El informe de actualización no está disponible.",
+  "updateFailureDownload.why": "Descarga el informe existente con los pasos de actualización y registros de diagnóstico. No se envía nada automáticamente.",
   "updates.brand.line": "Un asistente personal que funciona en tu propio equipo · código abierto",
   "updates.build.commit": "Compilada a partir del commit",
   "updates.build.not-recorded": "no registrado",
@@ -10597,11 +10603,5 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta",
-  "updateFailureDownload.title": "Informe del problema de actualizaci\u00f3n",
-  "updateFailureDownload.failed": "La actualizaci\u00f3n de {from} a {to} no termin\u00f3.",
-  "updateFailureDownload.why": "Descarga el informe existente con los pasos de actualizaci\u00f3n y registros de diagn\u00f3stico. No se env\u00eda nada autom\u00e1ticamente.",
-  "updateFailureDownload.download": "Descargar informe",
-  "updateFailureDownload.preparing": "Preparando informe\u2026",
-  "updateFailureDownload.unavailable": "El informe de actualizaci\u00f3n no est\u00e1 disponible."
+  "wsedit.up": "Subir una carpeta"
 }
