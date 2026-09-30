@@ -331,7 +331,7 @@ export const ChannelPolicySchema = z.object({
   groupAllowlist: z.array(z.string().trim().min(1).max(64)).max(200).optional(),
 }).strict();
 export type ChannelPolicy = z.infer<typeof ChannelPolicySchema>;
-export type Outcome = "replied" | "ignored" | "pairing" | "rejected" | "failed";
+export type Outcome = "replied" | "queued" | "ignored" | "pairing" | "rejected" | "failed";
 const pairSchema = z.object({
   status: z.enum(["pending", "approved"]), code: z.string().length(6), name: z.string().max(120),
   requestedAt: z.string(), approvedAt: z.string().optional(),
@@ -1731,13 +1731,17 @@ export class ChannelRouter {
     const steps = this.stepsLine(message, run, ok);
     const text = (steps ? `${steps}\n\n` : "") + quoted + said + (footer ? `\n\n${footer}` : "");
     await live?.finish(ok ? "done" : "error");
-    const delivered = await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null, turn);
+    const delivery = await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null, turn);
+    // The task's result and its reply transport are separate facts. Keep queued replies visible until accepted.
+    this.store.event(run.id, "channel.reply.delivery", { channel: message.channel, chatId: message.chatId,
+      taskStatus: run.status, ...delivery });
     // The owner's "remove the steps message after a good answer"; a failed task keeps it as the record.
-    if (ok && delivered && this.stepsDisplay(message.channel, message.chatId).cleanup) await live?.remove();
+    if (ok && delivery.outcome === "delivered" && this.stepsDisplay(message.channel, message.chatId).cleanup) await live?.remove();
     // CHAT-096: this chat's /voice choice says when a reply is spoken too (a voice note, every reply, or never).
     if (speaksHere(chatVoiceMode(this.store, this.runtime.owner, message.channel, message.chatId), !!message.voice))
       await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
-    return ok ? "replied" : "failed";
+    if (!ok) return "failed";
+    return delivery.outcome === "delivered" ? "replied" : delivery.outcome;
   }
   /**
    * hot-update: resolves once no chat's turn is still finishing (its answer written down and sent) and no send is under
@@ -1789,20 +1793,39 @@ export class ChannelRouter {
    * same trace even though the task itself has already settled. When the progress message already
    * became the reply, it is only written down.
    */
-  private async sendReply(message: InboundMessage, runId: string, text: string, placed: PlacedReply | null, turn: ChatTurnState): Promise<boolean> {
+  private async sendReply(message: InboundMessage, runId: string, text: string, placed: PlacedReply | null, turn: ChatTurnState): Promise<Pick<DeliveryReceipt, "outcome" | "delivered" | "queued" | "failed">> {
     const span = this.runtime.tracer.startAfter(runId, "delivery", `branch.delivery ${message.channel}`, {
       "branch.channel": message.channel, "branch.delivery.characters": text.length,
     });
+    const key = `reply:${runId}`;
+    const total = { outcome: "delivered" as DeliveryReceipt["outcome"], delivered: 0, queued: 0, failed: 0 };
+    const add = (receipt: Pick<DeliveryReceipt, "outcome" | "delivered" | "queued" | "failed">) => {
+      total.delivered += receipt.delivered; total.queued += receipt.queued; total.failed += receipt.failed;
+      if (receipt.outcome === "failed" || (receipt.outcome === "queued" && total.outcome !== "failed")) total.outcome = receipt.outcome;
+    };
+    const attempt = async (part: string, attemptKey: string): Promise<Pick<DeliveryReceipt, "outcome" | "delivered" | "queued" | "failed">> => {
+      try { return await this.deliver(message.channel, message.chatId, part, attemptKey, this.quoteIn(turn)); }
+      catch {
+        // Only this throwing attempt's own pending rows establish that its words were queued.
+        // Earlier pending parts cannot hide a refusal that happened before this part entered the outbox.
+        const receipt = deliveryReceipt(this.deliveries.list().filter(row => row.channel === message.channel && row.chatId === message.chatId
+          && row.key === attemptKey));
+        const queued = receipt?.outcome === "queued" && !receipt.failed;
+        return { outcome: queued ? "queued" : "failed", delivered: receipt?.delivered ?? 0,
+          queued: receipt?.queued ?? 0, failed: receipt?.failed || (queued ? 0 : 1) };
+      }
+    };
     if (placed) {
-      this.deliveries.recordSent(message.channel, message.chatId, placed.text, `reply:${runId}`, placed.messageId, message.messageId);
-      for (const [index, part] of (placed.rest ?? []).entries())
-        await this.deliver(message.channel, message.chatId, part, `reply:${runId}:rest:${index}`, this.quoteIn(turn));
-      span?.end("ok", "", { "branch.delivery.queued": 0 });
-      return true;
-    }
-    return this.deliver(message.channel, message.chatId, text, `reply:${runId}`, this.quoteIn(turn))
-      .then((sent) => { span?.end("ok", "", { "branch.delivery.queued": sent.queued }); return sent.sent; })
-      .catch((error) => { span?.end("error", error instanceof Error ? error.message : String(error)); return false; });
+      this.deliveries.recordSent(message.channel, message.chatId, placed.text, key, placed.messageId, message.messageId);
+      total.delivered = 1;
+      // Each remaining part is attempted and accounted for even if an earlier part was refused before queueing.
+      for (const [index, part] of (placed.rest ?? []).entries()) add(await attempt(part, `${key}:rest:${index}`));
+    } else add(await attempt(text, key));
+    span?.end(total.outcome === "failed" ? "error" : "ok", total.outcome === "failed" ? "The reply could not be delivered." : "", {
+      "branch.delivery.outcome": total.outcome, "branch.delivery.delivered": total.delivered,
+      "branch.delivery.queued": total.queued, "branch.delivery.failed": total.failed,
+    });
+    return total;
   }
   /**
    * At most `maxChatTasks` chats have a task working at once. No adapter waits for one message
