@@ -10,6 +10,7 @@ import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { reason } from "../core/why.js";
 import { logo } from "../core/logos.js";
 import { setLockdown, initApprovals } from "./approvals.js";
 import { t } from "../../i18n.js";
@@ -165,7 +166,7 @@ function modeMenu() {
     const blocked = choice && !choice.available ? choice.why : "";
     return `<button class="mi pm ${id === "full" ? "dz" : ""} ${blocked ? "blocked" : ""}" type="button" role="menuitemradio" aria-checked="${!locked && cur === id}" data-act="set-mode" data-v="${id}" ${blocked || locked ? "disabled" : ""}><span class="ico">${ic(icon, "s")}</span><span><span class="mi-t">${t(n)}</span><span class="mi-s">${esc(blocked || t(d))}</span></span><span class="r">${!locked && cur === id ? ic("check", "s") : `<kbd>${i + 1}</kbd>`}</span></button>`;
   }).join("");
-  return `<div class="pt">${t("mode.question")}</div>${rows}<hr><div class="row-in"><span>${t("window.chat.mode.applies")}</span><span class="seg"><button type="button" data-act="scope" data-v="here" aria-pressed="true">${t("window.chat.mode.this-conversation")}</button><button type="button" data-act="scope" data-v="everywhere" aria-pressed="false">${t("window.chat.mode.everywhere")}</button></span></div><div class="row-in"><span class="ic-t" data-css="color:var(--bad)">${ic("lock", "s")}${t("lockdown.label")}</span><input class="sw" type="checkbox" id="pm-lock2" data-sw="lock" ${locked ? "checked" : ""} aria-label="${t("lockdown.label")}"></div>`; // state: the mode it sets applies to this conversation
+  return `<div class="pt">${t("mode.question")}</div>${rows}<hr><div class="row-in"><span>${t("window.chat.mode.applies")}</span><span class="fact15-v">${t("window.chat.mode.this-conversation")}</span></div><p class="mi-s scope15">${esc(reason("scope"))}</p><div class="row-in"><span class="ic-t" data-css="color:var(--bad)">${ic("lock", "s")}${t("lockdown.label")}</span><input class="sw" type="checkbox" id="pm-lock2" data-sw="lock" ${locked ? "checked" : ""} aria-label="${t("lockdown.label")}"></div>`; // the mode it sets applies to this conversation; words, not a choice (window.why.scope)
 }
 
 /* The menu is drawn again with what was just chosen only while it is still open (its rows, `row`, are showing): a menu
