@@ -1793,6 +1793,8 @@ owner GET /api/runs/:id/receipts | here=ok remote=ok phone=ok legacy=ok person=4
 owner POST /api/runs/:id/receipts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/recording | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/recording | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/runs/:id/recording/events | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/runs/:id/recording/events | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/result | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/runs/:id/result | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/runs/:id/trace | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3985,6 +3987,8 @@ owner+lockdown GET /api/runs/:id/receipts | here=ok remote=ok phone=ok legacy=ok
 owner+lockdown POST /api/runs/:id/receipts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/recording | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/recording | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/runs/:id/recording/events | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/runs/:id/recording/events | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/result | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/runs/:id/result | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/runs/:id/trace | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6177,6 +6181,8 @@ household GET /api/runs/:id/receipts | here=ok remote=ok read=ok run=ok
 household POST /api/runs/:id/receipts | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/recording | here=ok remote=ok read=ok run=ok
 household POST /api/runs/:id/recording | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/runs/:id/recording/events | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/runs/:id/recording/events | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/result | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/runs/:id/result | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/runs/:id/trace | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8369,6 +8375,8 @@ household+lockdown GET /api/runs/:id/receipts | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/runs/:id/receipts | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/recording | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/runs/:id/recording | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/runs/:id/recording/events | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/runs/:id/recording/events | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/result | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/runs/:id/result | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/runs/:id/trace | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10561,6 +10569,8 @@ applock GET /api/runs/:id/receipts | here=423/a8f863
 applock POST /api/runs/:id/receipts | here=423/a8f863
 applock GET /api/runs/:id/recording | here=423/a8f863
 applock POST /api/runs/:id/recording | here=423/a8f863
+applock GET /api/runs/:id/recording/events | here=423/a8f863
+applock POST /api/runs/:id/recording/events | here=423/a8f863
 applock GET /api/runs/:id/result | here=423/a8f863
 applock POST /api/runs/:id/result | here=423/a8f863
 applock GET /api/runs/:id/trace | here=423/a8f863
