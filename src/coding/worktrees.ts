@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
-import { readdir } from "node:fs/promises";
-import { join, posix } from "node:path";
+import { readdir, realpath } from "node:fs/promises";
+import { isAbsolute, join, posix, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { ToolContext } from "../contracts.js";
 import type { GitRun } from "../git-checkpoint.js";
@@ -122,6 +122,10 @@ export class WorktreePlaces {
   /** Where this task works: its conversation's copy, a new copy for a helper, or null for the usual place. */
   async placeTask(run: { id: string; sessionId: string }, context: ToolContext, parent: ToolContext | undefined): Promise<TaskPlace | null> {
     const { store, owner } = this.deps;
+    if (!parent) {
+      const recovered = await this.recoverHelper(run, context);
+      if (recovered) return recovered;
+    }
     const assigned = worktreeScope() ?? this.deps.projectFolder();
     if (assigned.split(/[\\/]/).includes(WORKTREE_HOME) && !existsSync(join(this.deps.root, assigned))) {
       this.deps.note(run.id, "worktree.missing", { path: assigned });
@@ -139,6 +143,84 @@ export class WorktreePlaces {
     if (!parent) return this.forkPlace(run);
     if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).perHelper) return null;
     return this.helperPlace(run, context);
+  }
+
+  /** Reattaches only a helper copy recorded by this conversation's exact continuation lineage. */
+  private async recoverHelper(run: { id: string; sessionId: string }, context: ToolContext): Promise<TaskPlace | null> {
+    const current = this.deps.store.run(run.id);
+    if (!current) throw new Error("The task's saved workspace record is unavailable.");
+    const pending = [run.id], seen = new Set<string>();
+    const placements: { runId: string; data: Record<string, unknown> }[] = [];
+    let required = false, resumed = false;
+    const unavailable = () => new Error("The helper's recorded project copy could not be safely restored. It was not started in another folder.");
+    while (pending.length) {
+      if (seen.size >= 200) throw unavailable();
+      const id = pending.pop()!;
+      if (seen.has(id)) throw unavailable();
+      seen.add(id);
+      const saved = this.deps.store.run(id);
+      if (!saved || saved.owner !== current.owner || saved.sessionId !== current.sessionId || saved.project !== current.project) throw unavailable();
+      const events = this.deps.store.events(id);
+      const starts = events.filter((event) => event.kind === "run.started");
+      if (starts.length !== 1) throw unavailable();
+      const start = starts[0]!.data;
+      required ||= start.ownCopy === true;
+      for (const event of events) {
+        if (event.kind === "worktree.used" && ("source" in event.data || (typeof event.data.branch === "string" && event.data.branch.startsWith("branch/helper-"))))
+          placements.push({ runId: id, data: event.data });
+        if (event.kind === "worktree.removed") throw unavailable();
+      }
+      const links = [start.resumedFrom, start.originFrom].filter((value): value is string => typeof value === "string");
+      const eligible: string[] = [];
+      for (const from of links) {
+        const prior = this.deps.store.run(from);
+        // originFrom can mark a lead woken by a different helper: that is provenance, not a copy assignment.
+        if (prior && prior.owner === current.owner && prior.sessionId === current.sessionId && prior.project === current.project) eligible.push(from);
+        else if (from === start.resumedFrom) throw unavailable();
+      }
+      const next = [...new Set(eligible)];
+      if (next.length > 1) throw unavailable();
+      if (next.length) { resumed = true; pending.push(next[0]!); }
+    }
+    if (!placements.length) {
+      if (required && resumed) throw unavailable();
+      return null;
+    }
+    if (!required && !codingOn(this.deps.store, this.deps.owner, "worktrees")) throw unavailable();
+    const first = placements[0]!, data = first.data;
+    const origin = typeof data.originRunId === "string" ? data.originRunId : first.runId;
+    if (!seen.has(origin) || typeof data.path !== "string" || typeof data.source !== "string" || typeof data.branch !== "string"
+      || typeof data.base !== "string" || !/^[a-f0-9]{40,64}$/i.test(data.base)) throw unavailable();
+    const name = `helper-${short(origin)}`, branch = `branch/helper-${short(origin)}`;
+    const folder = data.source, scope = data.path;
+    if (folder.includes("\\") || isAbsolute(folder) || folder.split("/").some((part) => part === ".." || part === ".")
+      || scope !== this.scopeFor(folder, name) || data.branch !== branch) throw unavailable();
+    for (const prior of placements) {
+      const identity = prior.data;
+      if (identity.path !== scope || identity.source !== folder || identity.branch !== branch || identity.base !== data.base
+        || (typeof identity.originRunId === "string" ? identity.originRunId : prior.runId) !== origin) throw unavailable();
+    }
+    this.requireAvailableSource(scope);
+    this.helperSources.set(run.id, scope);
+    try {
+      const workspace = resolve(this.deps.root, scope), cwd = resolve(this.deps.root, folder);
+      const samePath = (left: string, right: string) => process.platform === "win32"
+        ? resolve(left).toLowerCase() === resolve(right).toLowerCase() : resolve(left) === resolve(right);
+      const root = await realpath(this.deps.root);
+      const actual = await realpath(workspace).catch(() => null);
+      const source = await realpath(cwd).catch(() => null);
+      if (!actual || !source || relative(root, actual).split(/[\\/]/).includes("..") || isAbsolute(relative(root, actual))
+        || !samePath(actual, workspace) || !samePath(source, cwd)) throw unavailable();
+      const top = await this.deps.run(workspace, ["rev-parse", "--show-toplevel"], context.signal).catch(() => null);
+      const line = await this.deps.run(workspace, ["symbolic-ref", "--quiet", "--short", "HEAD"], context.signal).catch(() => null);
+      const ancestor = await this.deps.run(workspace, ["merge-base", "--is-ancestor", data.base, "HEAD"], context.signal).catch(() => null);
+      if (top?.status !== "completed" || top.exitCode !== 0 || !top.stdout.trim() || !samePath(top.stdout.trim(), workspace)
+        || line?.status !== "completed" || line.exitCode !== 0 || line.stdout.trim() !== branch
+        || ancestor?.status !== "completed" || ancestor.exitCode !== 0) throw unavailable();
+      this.deps.note(run.id, "worktree.used", { path: scope, branch, source: folder, base: data.base, originRunId: origin, recovered: true });
+      // Keep a restored copy: its original retained work belongs to the original helper's record.
+      return { scope, workspace, release: async () => { this.helperSources.delete(run.id); } };
+    } catch (error) { this.helperSources.delete(run.id); context.signal.throwIfAborted(); throw error; }
   }
 
   private forkPlace(run: { id: string; sessionId: string }): TaskPlace | null {
