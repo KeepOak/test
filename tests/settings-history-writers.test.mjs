@@ -152,6 +152,7 @@ const unreadKeys = {
   "src/autonomy/orders.ts": "standing orders, one record each",
   "src/autonomy/procedures.ts": "procedures, one record each",
   "src/deferred.ts": "deferred work, one record each",
+  "src/channels/telegram-webhook.ts": "Telegram webhook updates waiting to be handled, not in the catalogue",
   "src/delight.ts": "the delight progress record",
   "src/feature-switch-migration.ts": "the ticked screen and Keychain switches at start-up (see above)",
   "src/learning-more/settings.ts": "the learning-more parts, none of them in the catalogue",

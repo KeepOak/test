@@ -186,6 +186,8 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // Q230, keys worked out in code: this computer's place in each chat stream and its offsets, its holds against redoing
   // a chat task, its webhook word, its MCP sign-in clients, which Trunk a flow run works as, the file-undo slots, a
   // "Watch me" under way, kept answers (a planted one comes back as if real) and the yeses carried over a restart.
+  // CHAT-020: Telegram webhook updates received here and not yet handled, replayed after a restart on this computer.
+  "telegram-webhook-inbox:",
   "channel-mark:", "channel-position:", "channel-replay:", "webhook-address:", "mcp-oauth:", "flow-run-trunk:",
   "settings-kit-file-undo-", "trunk-watch:", "cache:", "session-carry:",
   // NAS dc50a36: the memory a conversation's next turn reads, kept for that conversation here.

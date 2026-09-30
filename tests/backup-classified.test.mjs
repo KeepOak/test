@@ -61,6 +61,8 @@ const reviewedComputedKeys = new Set([
   "src/channels/catch-up.ts: key",
   "src/channels/chat-commands.ts: usageKey",
   "src/commands/steer-skill.ts: key", // CHAT-205: pinned-skill:<conversation>, the window's own skill pin
+  "src/channels/telegram-webhook.ts: id",
+  "src/channels/telegram-webhook.ts: this.key",
   "src/channels/threads.ts: chatThreadKey", // defaulttrunk: channel-session:<channel>:<chat>, the same key the router always wrote
   "src/trunks/defaults.ts: restoredTrunksKey", // defaulttrunk: only read, the Trunks a restore still holds (restore-trunks-held)
   "src/channels/router.ts: key",
@@ -181,7 +183,7 @@ test("a conversation's waiting line, a plan and a chat's link are never put in p
 /** One key each place that works out its key in code produces, and where it must land (Q230, the computed-key read). */
 const computedExamples = {
   stays: ["remote-agent:x", "deferred:x", "flow-run-limit:x", "flow-run-source:x", "flow-run-trunk:x", "move-in:x",
-    "channel-mark:telegram", "channel-position:telegram", "channel-replay:telegram:1:2", "webhook-address:slack",
+    "channel-mark:telegram", "telegram-webhook-inbox:telegram:1", "channel-position:telegram", "channel-replay:telegram:1:2", "webhook-address:slack",
     "mcp-oauth:server", "settings-kit-file-undo-1", "trunk-watch:t", "cache:abc", "session-carry:s", "plugin:p",
     "plugin-catalog:p", "safety-wasm-add-on:w", "restore-held", "restore-trunks-held", "listen-address", "memory-history-status",
     "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch"],
