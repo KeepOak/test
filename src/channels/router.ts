@@ -148,6 +148,8 @@ export interface ChannelAdapter {
    * app's settings) or has none.
    */
   setCommands?(commands: { command: string; description: string }[]): Promise<void>;
+  /** UP-CHAT-015: the picker for one direct chat only (Telegram's per-chat scope), over the one `setCommands` sets. */
+  setChatCommands?(chatId: string, commands: { command: string; description: string }[]): Promise<void>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
   /**
@@ -673,11 +675,20 @@ export class ChannelRouter {
    */
   refreshCommandMenus(): Promise<void> {
     return this.menuChain = this.menuChain.then(async () => {
-      const commands = this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
-        .map((one) => ({ command: one.name, description: one.description }));
-      const unique = [...new Map(commands.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      const listed = chatCommandsFor(commandMode(this.store, this.runtime.owner)).map((one) => ({ command: one.name, description: one.description }));
+      const all = [...new Map(listed.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      const off = this.switches().commands === "off", unique = off ? [] : all;
+      // UP-CHAT-015: as shipped (off, never moved), the owner's own paired direct chat still reads commands (`commandIn`),
+      // so its own picker lists them; once the owner moves the switch, that chat gets what every chat gets.
+      const ownerDm = off && commandsInPairedDm(this.store, this.runtime.owner) ? all : unique;
+      const owner = this.runtime.owner, named = [...ownerCommands(this.store, owner).accounts, ...platformSettings(this.store, owner).owners];
+      const accounts = [...new Map(named.map((one) => [`${one.channel}\u0000${one.sender}`, one])).values()]; // as `ownAccount` reads them
       await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
-        try { await adapter.setCommands?.(unique); }
+        try {
+          await adapter.setCommands?.(unique);
+          for (const account of accounts.filter((one) => one.channel === adapter.id && this.pair(one.channel, one.sender)?.status === "approved"))
+            await adapter.setChatCommands?.(account.sender, ownerDm);
+        }
         catch (error) { diagnose("channels", "warn", `The command menu could not be updated on ${adapter.kind}: ${error instanceof Error ? error.message : String(error)}`); }
       }));
     });
