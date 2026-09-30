@@ -8114,6 +8114,7 @@
   "window.p17d.tab-checks": "The checks",
   "window.p17d.tab-fail": "What didn’t pass",
   "window.p17d.tab-must": "What it must do",
+  "window.p17d.telegram-card-only": "This Telegram connection is managed outside the setup card, or has changed. Open its setup instead.",
   "window.p17d.ten-minutes": "10 minutes",
   "window.p17d.three-minutes": "3 minutes",
   "window.p17d.three-seconds": "3 seconds",
