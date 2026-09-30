@@ -3788,6 +3788,9 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
 
+### Gemini CLI helper evaluation case categories, Apache-2.0
+
+The explicit-delegation and trivial-task restraint cases in `data/evaluation/helpers.json` adapt the case categories in Google Gemini CLI's `evals/subagents.eval.ts` at commit `38700b4b38bf387dafded6c97c3f190d084b49e9` (https://github.com/google-gemini/gemini-cli/blob/38700b4b38bf387dafded6c97c3f190d084b49e9/evals/subagents.eval.ts). Copyright 2026 Google LLC. Licensed under Apache-2.0, whose full text appears above. Gemini's Vitest TestRig/unified-agent implementation is incompatible with Branch's declarative evaluation suite and background helper API. The prompts, child provenance projection and scorer are original Branch code; no TestRig code is copied.
 ## Hermes live-dashboard recipe (scheduled dashboard design)
 
 Reviewed `optional-skills/productivity/live-dashboard/SKILL.md` at bddd22be7c2e5f7630c3d90507e6e7280ff092e3. Its recipe informed source/timestamp state, stale last-good retention, regeneration and change notes. Branch scheduling, validators, persistence and script-free renderer are original implementation, not a port of executable upstream code. Upstream live read/verify instructions were not executed.

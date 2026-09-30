@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { TeamHandoffs, TeamHandoffRefusedError } from "./team-handoff.js";
 import { quietJobsApi } from "./scheduler.js";
+import { routineUsage, saveRoutineBudget } from "./routine-usage.js";
 import { finishChatGPTSignIn, syncChatGPTPresets } from "./chatgpt-presets.js";
 import { embedSettings, widgetOrigin } from "./embeds.js";
 import { RunInputSchema, errorText, maximumImagesPerTurn, runBodyLimit, type Run } from "./contracts.js";
@@ -149,7 +150,9 @@ import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
+import { handlesSourceDraftPath, sourceDraftApi } from "./self-development-drafts.js";
 import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
+import { sourceCiApi } from "./self-development-ci-api.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
@@ -1070,7 +1073,12 @@ async function api(
   // A change to Branch itself asked for from a chat (src/self-development-requests.ts): reading the requests
   // and answering them is the owner's alone, in the app window. Short-lived keys and household persons are
   // refused before this (src/short-lived-keys.ts, src/household-routes.ts), and each answer checks again.
+  if (handlesSourceDraftPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    return sourceDraftApi(app.sourceDrafts, request.method ?? "GET", path, () => readBody(request));
+  }
   if (handlesSourceRequestPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
     app.store.profiles.requireOwner("The list of requests to change Branch itself");
     return sourceRequestsApi(app.sourceRequests, request.method ?? "GET", path, () => readBody(request));
   }
@@ -1093,6 +1101,15 @@ async function api(
   if (handlesSourceMergePath(path)) {
     if (throughADoor(request)) throw new HttpError(403, hereOnly);
     return sourceMergeApi(app.sourceMerges, request.method ?? "GET", path, () => readBody(request));
+  }
+  if (path === "/api/self-development/ci") {
+    return sourceCiApi(app, request.method ?? "GET", throughADoor(request), () => readBody(request));
+  }
+  if (path === "/api/continuous-qa") {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    if (request.method === "GET") return app.continuousQa.status();
+    if (request.method === "POST") return app.continuousQa.configure(await readBody(request));
+    throw new HttpError(405, "Use GET or POST here.");
   }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))
@@ -1193,6 +1210,10 @@ async function api(
     return { ...listenView(app.store, app.runtime.owner, listen), note: "Saved. It takes effect the next time Branch starts." };
   }
   // mac3/never-break: the gateway switch and the changes the assistant suggested for it.
+  if (path === "/api/never-break/drill") {
+    app.store.profiles.requireOwner("The isolated recovery drill");
+    if (throughDoor(request)) throw new HttpError(403, hereOnly);
+  }
   if (handlesNeverBreakPath(path))
     return neverBreakApi(dataDir, request, path, readBody, {
       snapshot: () => snapshotData({ dataDir, database: app.store.sqlite, journal: app.neverBreak.journal.database }),
@@ -2669,6 +2690,21 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
     // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
     const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
+  }
+  const usage = /^\/api\/schedules\/([a-f0-9-]{36})\/(usage|budget)$/.exec(path);
+  if (usage) {
+    app.store.profiles.requireOwner("Your routine usage and budget");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Routine budgets belong to the owner at the app.");
+    if (!app.store.get("schedules", owner, usage[1]!)) throw new HttpError(404, "Schedule not found");
+    if (request.method === "GET" && usage[2] === "usage") return routineUsage(app.store, owner, usage[1]!);
+    if (request.method === "POST" && usage[2] === "budget") {
+      const input = await readBody(request);
+      app.store.profiles.requireOwner("Changing a routine budget");
+      if (startedWithShortLivedKey()) throw new HttpError(403, "Routine budgets belong to the owner at the app.");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing a routine budget.");
+      return saveRoutineBudget(app.store, owner, usage[1]!, input);
+    }
+    throw new HttpError(404, "Endpoint not found");
   }
   const dashboard = /^\/api\/schedules\/([a-f0-9-]{36})\/dashboard$/.exec(path);
   if (dashboard && request.method === "GET") {

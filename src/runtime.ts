@@ -1975,6 +1975,9 @@ ${run.output.slice(0, 6000)}`;
     const root = this.spendRoot.get(runId);
     return root ? [...(this.spendMembers.get(root) ?? [runId])] : [runId];
   }
+  /** Captured connection metadata for per-call estimates, with no credential access. */
+  billingKindFor: ((preset: ModelPreset) => import("./routine-usage.js").UsageKind) | undefined;
+  routineBudgetRefusal: ((runId: string, preset: ModelPreset) => string | null) | undefined;
   /** R17-S09: stops a task whose tree has reached the owner's cap; says once when the cap cannot be checked. */
   private checkSpendCap(run: Run, model: string): void {
     const family = this.spendFamily(run.id);
@@ -3970,6 +3973,9 @@ ${run.output.slice(0, 6000)}`;
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
+    const routineRefusal = this.routineBudgetRefusal?.(run.id, preset);
+    if (routineRefusal) throw new BudgetError(routineRefusal);
+    const usageKind = this.billingKindFor?.(preset) ?? null;
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
     const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
@@ -4048,6 +4054,7 @@ ${run.output.slice(0, 6000)}`;
       context.signal.throwIfAborted();
       this.store.event(run.id, "model.completed", {
         toolCalls: completion.toolCalls.length,
+        usageKind, // captured connection billing kind; plan sign-ins never imply an API charge
         estimatedInput: input,
         estimatedOutput: output,
         // mac7/empty-completion: thinking that is not part of the answer, so a round that thought

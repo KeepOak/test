@@ -41,6 +41,8 @@ export const ROUTES = {
   "/api/taste/feedback": "owner POST",
   "/api/taste/correct": "owner POST",
   "/api/taste/forget": "owner POST",
+  "/api/schedules/:id/usage": "owner GET", // routine billing metadata
+  "/api/schedules/:id/budget": "owner POST", // owner-window budget only
   "/a2a": "task POST",
   "/ap/": "prefix",
   "/ap/v1/agent/tasks": "task POST",
@@ -1117,7 +1119,9 @@ export const ROUTES = {
   "/api/second-opinion": "owner POST",
   "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
   "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
+  "/api/continuous-qa": "owner POST",
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
+  "/api/never-break/drill": "owner POST",
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
   "/api/secrets/default": "look",
@@ -1139,6 +1143,8 @@ export const ROUTES = {
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
+  "/api/self-development/requests/:id/draft": "secret-read", // the committed draft, for the owner to review before publishing
+  "/api/self-development/requests/:id/publish": "owner POST",
   "/api/sessions": "look",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
@@ -1301,6 +1307,12 @@ export const ROUTES = {
   "/api/panels/browser/stop": "owner POST",
   "/api/settings-kit/task-apply": "owner POST",
   "/api/settings-kit/task-preview": "owner POST",
+  "/api/self-development/ci": "owner POST",
+  "/api/self-development/merge/test-copy": "owner POST",
+  "/api/self-development/merge/test-copy/": "prefix",
+  "/api/self-development/merge/test-copy/cancel": "owner POST",
+  "/api/self-development/merge/test-copy/start": "owner POST",
+  "/api/self-development/merge/test-copy/status": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",

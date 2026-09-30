@@ -51,7 +51,7 @@ test("every built-in scorer decides a right answer and a wrong one", async () =>
     assert.equal(wrong.pass, false, `${spec.kind} should refuse ${bad}`);
     assert.ok(wrong.reasons.length, `${spec.kind} should say why`);
   }
-  assert.equal(scorerKinds.length, 16);
+  assert.equal(scorerKinds.length, 17);
 });
 
 test("the scorers that look at the workspace and the trajectory", async (t) => {
@@ -70,6 +70,21 @@ test("the scorers that look at the workspace and the trajectory", async (t) => {
   const overspent = await scoreOne({ kind: "budget", maxSteps: 1, maxMs: 1, maxDollars: 0.0001 }, "", { ...used, steps: 9 });
   assert.equal(overspent.pass, false);
   assert.equal(overspent.reasons.length, 3);
+});
+
+test("SELF-099: the helper scorer counts only engine-recorded helpers, not what the model claimed", async () => {
+  const spec = { kind: "helper-runs", min: 1, max: 1, completed: true, output: "42" };
+  const ran = (helpers) => ({ ...emptyTrajectory, runId: "parent", helpers });
+  const done = { runId: "child", status: "completed", output: " 42. " };
+  assert.equal((await scoreOne(spec, "42", ran([done]))).pass, true);
+  assert.equal((await scoreOne(spec, "42", emptyTrajectory)).pass, false, "no provenance read is never a pass");
+  assert.equal((await scoreOne(spec, "42", ran([{ ...done, status: "running" }]))).pass, false);
+  assert.equal((await scoreOne(spec, "42", ran([{ ...done, output: "41" }]))).pass, false);
+  assert.equal((await scoreOne(spec, "42", ran([done, { ...done, runId: "other" }]))).pass, false, "too many helpers");
+  const none = { kind: "helper-runs", min: 0, max: 0, completed: false };
+  assert.equal((await scoreOne(none, "21", ran([]))).pass, true);
+  assert.equal((await scoreOne(none, "21", ran([{ ...done, status: "failed" }]))).pass, false, "a failed helper still counts");
+  assert.throws(() => makeScorer({ kind: "helper-runs", min: 2, max: 1 }, { workspace: tmpdir() }));
 });
 
 test("the completion review catches an answer that quietly gave up", async () => {
