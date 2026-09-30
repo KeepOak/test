@@ -3532,11 +3532,13 @@ async function mcpModeApi(app: Branch, request: IncomingMessage, path: string): 
   }
   if (path === "/api/mcp/signin" && request.method === "POST") {
     app.store.profiles.requireOwner("Signing in to another AI tool's server");
-    // The address to open in the owner's own browser; the key lands in the locker, never here.
+    // The address to open in the owner's own browser; the key lands in the locker, never here. Once it is saved, one of
+    // the owner's own servers with that name is connected again with it.
     const started = await mcpSignIn(await readBody(request), {
-      store: app.store, owner: app.runtime.owner, connections: app.oauth, policy: app.web.policy,
+      store: app.store, owner: app.runtime.owner, policy: app.web.policy,
+      onSignedIn: (id) => { if (app.ownMcp.saved().some((entry) => entry.id === id)) void app.ownMcp.start(id).catch(() => undefined); },
     });
-    return { url: started.url, redirectUri: started.redirectUri, expiresInMs: started.expiresInMs };
+    return { url: started.url, redirectUri: started.redirectUri, expiresInMs: started.expiresInMs, signedIn: started.signedIn };
   }
   if (path === "/api/mcp/try" && request.method === "POST") {
     // Trying a server starts a program on this computer, or reaches out to a web address, so it

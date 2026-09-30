@@ -43,7 +43,7 @@ import { lockdownActive } from "./lockdown.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
-import { credentialNames, makeTransport, McpTransportSchema, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { credentialNames, makeTransport, McpTransportSchema, reachFor, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
 import { secretNameSchema } from "./locker.js";
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
@@ -269,7 +269,8 @@ export class OwnMcpServers {
   /** Lists what a server offers now (after the yes), keeping only what the owner's settings do not refuse outright. */
   private async listTools(entry: OwnServer): Promise<{ tools: string[]; hidden: string[]; version: string }> {
     const env = await withLockerSecrets(entry.server, this.env, this.deps.host()?.secret);
-    const { transport } = await makeTransport(entry.server, env, this.deps.policy());
+    const signIn = entry.server.transport === "http" ? this.deps.host()?.signIn?.(entry.id) : undefined;
+    const { transport } = await makeTransport(entry.server, env, reachFor(this.deps.policy(), signIn));
     const client = new (await mcpClient())({ name: "branch", version: "0.1.0" });
     try {
       await client.connect(transport as Transport, { timeout: 20000 });

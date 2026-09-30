@@ -92,6 +92,7 @@ import { SessionLock } from "./session-lock.js";
 import { Moderation } from "./moderation.js";
 import { PrivacyGuard } from "./privacy-guard.js";
 import { OAuthConnections } from "./oauth.js";
+import { signInProvider } from "./integrations/mcp-oauth.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
 import { registerAttachmentTools } from "./attachment-tools.js";
@@ -1618,6 +1619,7 @@ ${result.output || "(it said nothing)"}`;
     // mac3/security-check: a server fetched from a package registry is looked up first.
     vetLaunch: (command: string, args: readonly string[]) => security.malware.vet(command, args),
     secret: lockerSecret("MCP server"),
+    signIn: (id: string) => signInProvider(store, runtime.owner, id),
   };
   // eng-connectors: the owner's own servers (a command asks through the approval gate before it starts), the
   // command-line tools the owner allowed, and replies the owner flagged.

@@ -3568,6 +3568,10 @@ The MIT licence text is given under IronClaw above. For the Apache-2.0 projects:
 
 The "Add your own MCP server" form (`secretRow` and `typedSecrets` in `public/app/flows/connectors.js`) asks for each secret's value, as Cline's marketplace install asks for each declared environment variable (`install.env`, https://github.com/cline/cline/blob/fef9de1665d098ef13327656669cc43783151e0b/apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts#L69-L117). The code was written for Branch, which keeps the values in its locker (`withLockerSecrets` in `src/integrations/mcp-config.ts`). Cline is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 
+### Gemini CLI (Google), Apache-2.0: signing in to an MCP server
+
+`LockerAuthProvider` and `signIn` in `src/integrations/mcp-oauth.ts` implement the MCP SDK's `OAuthClientProvider` (`@modelcontextprotocol/sdk` 1.30.0, MIT, notice above; https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/client/src/client/auth.ts#L246-L330) and follow Gemini CLI's MCP sign-in in starting the callback page first and registering with its real port (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/mcp/oauth-provider.ts#L103-L130). The code was written for Branch, which keeps the identity and keys in its locker. Gemini CLI is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
