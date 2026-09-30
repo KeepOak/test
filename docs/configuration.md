@@ -1,5 +1,11 @@
 # Configuration
 
+### Weekly recap
+
+Overview shows completed Trunk tasks from the last seven days, grouped by their recorded Trunk. Helpers, engine activity, temporary chats and deleted conversations are excluded. Completion uses the retained task's finish timestamp, so work started before the week can count when it finishes during it. The scan is bounded to the latest 5,000 completed records and the card says when older records were left out. This is retained activity, not an audit of work that has been erased.
+
+There is no invented time-saving figure. Set your usual manual minutes per Trunk task on the card to get an explicitly labeled estimate of manual work avoided; clear it to show no estimate. Running time is recorded activity, not your attention time and is not treated as a saving. This estimate applies to completed Trunk tasks only. `GET /api/weekly-recap` reads the recap and `POST /api/weekly-recap` sets `{ "manualMinutesPerTask": 10 }` (0–1,440, or `null`); both belong to the owner at the app and refuse short-lived keys and household profiles. No message is sent or recurring job created.
+
 ## Practice runs in the window
 
 The Permissions page's **Practice runs** switch controls availability and defaults on. In the

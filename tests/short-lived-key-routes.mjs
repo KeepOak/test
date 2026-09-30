@@ -239,6 +239,7 @@ export const ROUTES = {
   // are the owner's alone, and every change is the owner's.
   "/api/delight": "look",
   "/api/delight/achievements": "secret-read",
+  "/api/weekly-recap": "owner GET,POST", // private counts and the owner's explicit manual-time estimate
   "/api/delight/noticed": "owner POST",
   "/api/delight/settings": "owner POST",
   "/api/delight/told": "owner POST",

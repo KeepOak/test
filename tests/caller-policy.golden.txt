@@ -412,6 +412,8 @@ owner GET /api/delight | here=ok remote=ok phone=ok legacy=ok person=401/327290 
 owner POST /api/delight | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/delight/achievements | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/delight/achievements | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/weekly-recap | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/weekly-recap | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/delight/noticed | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/delight/noticed | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/delight/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2656,6 +2658,8 @@ owner+lockdown GET /api/delight | here=ok remote=ok phone=ok legacy=ok person=40
 owner+lockdown POST /api/delight | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/delight/achievements | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/delight/achievements | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/weekly-recap | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/weekly-recap | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/delight/noticed | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/delight/noticed | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/delight/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4900,6 +4904,8 @@ household GET /api/delight | here=ok remote=ok read=ok run=ok
 household POST /api/delight | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/delight/achievements | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/delight/achievements | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/weekly-recap | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/weekly-recap | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/delight/noticed | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/delight/noticed | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/delight/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7144,6 +7150,8 @@ household+lockdown GET /api/delight | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/delight | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/delight/achievements | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/delight/achievements | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/weekly-recap | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/weekly-recap | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/delight/noticed | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/delight/noticed | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/delight/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9388,6 +9396,8 @@ applock GET /api/delight | here=423/a8f863
 applock POST /api/delight | here=423/a8f863
 applock GET /api/delight/achievements | here=423/a8f863
 applock POST /api/delight/achievements | here=423/a8f863
+applock GET /api/weekly-recap | here=423/a8f863
+applock POST /api/weekly-recap | here=423/a8f863
 applock GET /api/delight/noticed | here=423/a8f863
 applock POST /api/delight/noticed | here=423/a8f863
 applock GET /api/delight/settings | here=423/a8f863

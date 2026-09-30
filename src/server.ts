@@ -34,6 +34,7 @@ import {
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
 import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
 import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
+import { RecapSettingsSchema, weeklyRecap } from "./weekly-recap.js";
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
@@ -1343,6 +1344,17 @@ async function api(
     answer.windowBuild = liveWindowCommit() ?? ownBuild();
     for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
     return answer;
+  }
+  if (path === "/api/weekly-recap") {
+    app.store.profiles.requireOwner("The weekly recap");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "The weekly recap belongs to the owner at the app.");
+    if (request.method === "POST") {
+      const input = RecapSettingsSchema.parse(await readBody(request, 4096));
+      app.store.profiles.requireOwner("The weekly recap");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing your weekly estimate.");
+      app.store.save("settings", app.runtime.owner, "weekly_recap", input);
+    } else if (request.method !== "GET") throw new HttpError(405, "Use GET or POST");
+    return weeklyRecap(app.store, app.runtime.owner, (id) => app.trunks.records.find(id)?.name ?? null);
   }
   // FQ-collaboration.unified-search: one query across conversations, saved workflows and the
   // record of what the assistant was allowed to do. Owner-only: it reads across everything the
