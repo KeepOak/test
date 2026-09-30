@@ -155,7 +155,26 @@ test("an artifact shared after a Trunk has spoken reaches its next turn", async 
   app.trunks.rooms.send(room.id, { text: "@ann use the late brief" });
   await app.trunks.rooms.settled(room.id);
   const later = provider.requests.slice(before).flatMap((request) => request.messages).map((message) => String(message.content));
-  assert.ok(later.some((content) => content.includes("Shared artifact brief.txt:") && content.includes("late private oak plan")));
+  assert.ok(later.some((content) => /Artifact \d+: brief\.txt \(by /.test(content) && content.includes("late private oak plan")));
+});
+
+test("TRUNK-081 a long artifact shared first does not hide one shared after it", async (t) => {
+  const { app, provider } = await served(t, seesAnn);
+  on(app, "rooms");
+  const ann = app.trunks.create({ name: "Ann" }), ben = app.trunks.create({ name: "Ben" });
+  await app.trunks.introduced();
+  const room = app.trunks.rooms.create({ name: "Two briefs", members: [ann.id, ben.id] });
+  app.trunks.rooms.addArtifact(room.id, { name: "long.txt", content: "filler line\n".repeat(900) }, null);
+  app.trunks.rooms.addArtifact(room.id, { name: "short.txt", content: "the second brief" }, null);
+  const before = provider.requests.length;
+  app.trunks.rooms.send(room.id, { text: "@ann read both briefs" });
+  await app.trunks.rooms.settled(room.id);
+  const shown = provider.requests.slice(before).flatMap((request) => request.messages).map((message) => String(message.content))
+    .find((content) => content.includes("Artifact 1: long.txt"));
+  assert.ok(shown, "the room's artifacts reached Ann's turn");
+  assert.match(shown, /Artifact 2: short\.txt \(by [^)]*\)\n  the second brief/, "the later artifact is still there, whole");
+  const section = shown.slice(shown.indexOf("Shared room artifact excerpts"));
+  assert.ok(section.length <= 3500, `the artifacts stay inside their share of the context (${section.length})`);
 });
 
 test("a household artifact is visible only to turns run as that household person", async (t) => {
@@ -529,7 +548,7 @@ test("a private room admits named people and Trunks, and removal closes its hist
   assert.equal((await call(`/api/trunks/rooms/${id}/send`, { text: "@ann use the brief" })).status, 200);
   await app.trunks.rooms.settled(id);
   const prompts = provider.requests.flatMap((request) => request.messages).map((message) => String(message.content));
-  assert.ok(prompts.some((content) => content.includes("Shared artifact brief.txt:") && content.includes("private oak plan")),
+  assert.ok(prompts.some((content) => /Artifact \d+: brief\.txt \(by /.test(content) && content.includes("private oak plan")),
     "the room's agent receives its shared artifact");
 
   app.store.profiles.switch({ profileId: null });
