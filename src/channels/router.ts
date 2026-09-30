@@ -40,6 +40,8 @@ import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
+import { groupResponses, saveGroupResponses } from "./group-responses.js";
+import { ownerVouchedHere } from "./owner-dm-commands.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
@@ -197,6 +199,8 @@ export interface ChannelAdapter {
    * the app has none; typing and the reaction carry the status there.
    */
   setStatus?(chatId: string, threadId: string, words: string): Promise<void>;
+  /** After sender/policy admission only: bind a new Discord thread to this exact source message. */
+  prepareGroup?(message: InboundMessage): Promise<InboundMessage>;
   /**
    * Replaces the words of a message this adapter sent, cut to the app's own limit. An app that
    * refuses an edit because the words did not change must treat that as success (see telegram.ts).
@@ -723,7 +727,9 @@ export class ChannelRouter {
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
-    if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
+    const group = groupResponses(this.store, this.runtime.owner).groups.find((g) => g.connection === message.channel && g.chatId === message.chatId);
+    const activation = message.chatKind === "group" ? /^\/activation(?:@[\w.-]+)?\s+(mention|always)\s*$/i.exec(message.text) : null;
+    if (!activation && message.chatKind === "group" && (group?.activation ?? policy.activation) === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
     const held = platformGate(this.store, this.runtime.owner, message);
     if (held) {
@@ -741,9 +747,29 @@ export class ChannelRouter {
       return access;
     }
     this.latest.set(chatKey(message), message.messageId);
+    if (activation) {
+      const known = this.chats(this.runtime.owner).some((chat) => chat.channel === message.channel && chat.chatId === message.chatId);
+      if (!known || message.voice || message.edited || !ownerVouchedHere(this.store, this.runtime.owner, adapter.kind, message) || lockedDown(this.store, this.runtime.owner) || this.appLocked()) {
+        await adapter.send(message.chatId, "Group activation requires the live, exactly named owner in an existing approved group, with the app unlocked. Review it in Settings → Chat apps.");
+        return "rejected";
+      }
+      const settings = groupResponses(this.store, this.runtime.owner);
+      saveGroupResponses(this.store, this.runtime.owner, { groups: [...settings.groups.filter((g) => g.connection !== message.channel || g.chatId !== message.chatId),
+        { connection: message.channel, chatId: message.chatId, autoThread: group?.autoThread ?? false, activation: activation[1]!.toLowerCase() }] });
+      await adapter.send(message.chatId, `Group activation is now ${activation[1]!.toLowerCase()}. Sender and tool permissions are unchanged.`);
+      return "replied";
+    }
     // Checked without waiting, so messages from one chat still reach `answer` in the order they came.
     if (this.overCeiling(message)) return "rejected";
-    return this.answer(message);
+    let threaded = message;
+    try { if (group?.autoThread && adapter.kind === "discord" && adapter.prepareGroup) threaded = await adapter.prepareGroup(message); }
+    catch {
+      await adapter.send(message.chatId, "The Discord thread could not be created or is rate limited. No task was started; check thread permissions or retry.").catch(() => undefined);
+      return "failed";
+    }
+    if (threaded !== message && (lockedDown(this.store, this.runtime.owner) || this.appLocked() || this.adapters.get(message.channel) !== entry || this.access(message, policy) !== "allowed"
+      || !groupResponses(this.store, this.runtime.owner).groups.some((g) => g.connection === message.channel && g.chatId === message.chatId && g.autoThread))) return "rejected";
+    return this.answer(threaded);
   }
   /**
    * Batch 26 (wave 8), enforced here since wave mac2: somebody who has sent as much as the owner allows

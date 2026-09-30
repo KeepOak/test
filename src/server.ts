@@ -1,4 +1,5 @@
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
+import { groupResponses, saveGroupResponses } from "./channels/group-responses.js";
 import {
   createServer,
   type IncomingMessage,
@@ -3109,6 +3110,14 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/group-responses") {
+    if (startedWithShortLivedKey() || throughDoor(request)) throw new Error("Group response settings require the local owner window.");
+    if (request.method === "GET") return groupResponses(app.store, owner);
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST.");
+    const input = await readBody(request);
+    app.store.profiles.requireOwner("Group response settings");
+    return saveGroupResponses(app.store, owner, input, (id, thread) => app.channels.summary().channels.some((channel) => channel.id === id && (!thread || channel.kind === "discord")));
+  }
   if (path === "/api/channels/formatting") {
     if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
