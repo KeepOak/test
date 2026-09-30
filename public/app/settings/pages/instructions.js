@@ -12,6 +12,7 @@ import { markLive } from "../../core/features.js";
 import { ic, toast, openDlg, closeDlg } from "../../core/ui.js";
 import { t, language, plural } from "../../../i18n.js";
 import { say } from "../../core/words.js";
+import { gsel } from "../../core/gsel.js";
 
 /* The prototype's line for each file, by the engine's slot. */
 const ABOUT = {
@@ -40,7 +41,7 @@ function fileRow(f) {
   return `<div class="prow"><code class="if-name">${esc(nameOf(f))}</code><span class="grow"><b data-css="font-weight:500">${esc(say(ABOUT[f.slot]) ?? f.about)}</b><small>${n ? plural(n, { one: "window.settings.instructions.count-lines.one", other: "window.settings.instructions.count-lines" }) : t("agent-files.empty")}${h ? t("window.settings.instructions.value-earlier-version", { value: h }) : ""}</small></span><input class="sw" type="checkbox" data-sw="if-read" data-f="${esc(f.slot)}" ${f.setting === "off" ? "" : "checked"} aria-label="${esc(t("window.settings.instructions.read-name", { name: nameOf(f) }))}"><button class="btn sm" type="button" data-act="if-open" data-f="${esc(f.slot)}">${n ? t("prompts.action.edit") : t("agent-files.write")}</button></div>`;
 }
 
-/* "Whose files" (if-owner): Every Trunk, or one Trunk. A Trunk has one file of its own in the engine, its SOUL (its own
+/* "Whose files" (if-owner-choice): Every Trunk, or one Trunk. A Trunk has one file of its own in the engine, its SOUL (its own
    instructions, the `instructions` field of its record, which its turns carry beside the shared files); every other row
    uses the one every Trunk reads, so a Trunk's view draws those without a switch or an Edit. Saving a Trunk's SOUL is
    POST /api/trunks/<id> {instructions}; the engine keeps no earlier version of it, so its editor has no history. */
@@ -55,10 +56,9 @@ function trunkRow(f, trunk) {
 export function draw() {
   const trunk = trunkOf();
   if (!trunk) owner = "branch";
-  const chip = (v, label) => `<button class="chip6" type="button" data-act="if-owner" data-v="${esc(v)}" aria-pressed="${owner === v}">${esc(label)}</button>`;
-  const owners = chip("branch", t("window.settings.instructions.every-trunk")) + E.trunks.map((tr) => chip(tr.id, tr.name)).join("");
+  const owners = gsel({id:"if-owner-choice", label:t("window.settings.instructions.whose-files"), options:[["branch", t("window.settings.instructions.every-trunk")], ...E.trunks.map(tr => [tr.id, tr.name])], value:owner});
   return `<h1>${esc(t("settings.page.instructions"))}</h1><p class="lede">${t("window.settings.instructions.plain-files-every-trunk-reads-before")}</p>
-  <div class="fld" data-css="margin-top:6px"><span>${t("window.settings.instructions.whose-files")}</span><span class="acts" data-css="gap:6px">${owners}</span></div>
+  <div class="fld" data-css="margin-top:6px"><span>${t("window.settings.instructions.whose-files")}</span>${owners}</div>
   <div class="rows" data-css="margin-top:8px">${(files ?? []).map((f) => (trunk ? trunkRow(f, trunk) : fileRow(f))).join("")}</div>
   <p class="hint">${t("window.settings.instructions.a-file-cant-widen")}</p>`;
 }
@@ -129,12 +129,14 @@ export function load() { return loadFiles(); }
 
 export function init() {
   loadFiles();
-  on("if-owner", (el) => { owner = el.dataset.v; render(); });
   on("if-open", (el) => (trunkOf() ? openTrunkSoul(trunkOf()) : openFile(el.dataset.f)));
   on("if-save", (el) => (trunkOf() ? saveTrunkSoul(trunkOf()) : save(el.dataset.f)));
   on("if-back", (el) => putBack(el.dataset.f));
-  document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "if-read") setRead(e.target.dataset.f, e.target.checked); });
-  markLive(["if-owner", "if-open", "if-save", "if-back", "sw:if-text", "sw:if-read"]);
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "if-owner-choice") { owner = e.target.value; render(); }
+    else if (e.target.dataset?.sw === "if-read") setRead(e.target.dataset.f, e.target.checked);
+  });
+  markLive(["if-open", "if-save", "if-back", "sw:if-text", "sw:if-read", "sw:if-owner-choice"]);
 }
 
-export const live = { "if-owner": true, "if-open": true, "if-save": true, "if-back": true, "sw:if-read": true };
+export const live = { "if-open": true, "if-save": true, "if-back": true, "sw:if-read": true, "sw:if-owner-choice": true };

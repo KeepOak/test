@@ -11,7 +11,7 @@ import { fieldHelp } from "./field-help.js";
 import { t } from "../../i18n.js";
 
 let session = null, serial = 0, pending = null, started = false;
-const locked = () => document.getElementById("app")?.classList.contains("locked");
+const locked = () => ["locked", "locked-b17"].some(name => document.getElementById("app")?.classList.contains(name));
 const snapshot = () => ({ profile: E.profiles, id: activeId(), credential: token.get() });
 const valid = state => session === state && E.profiles === state.profile && activeId() === state.id && token.get() === state.credential && E.profiles?.isOwner === true && !locked();
 const word = (key, fallback) => t(key) === key ? fallback : t(key);
@@ -27,17 +27,26 @@ function input(row, i) {
   return gsel({ id, label: row.title, options: values.map(value => [String(value), String(value)]), value: String(row.field.value) });
 }
 
+function fieldRow(row, i) {
+  const { spec, field } = row, why = spec.refused || (field.pinned ? t("settings.catalogue.pinned") : "");
+  const control = why ? `<span>${esc(why)}</span>` : `${input(row, i)}<button class="btn sm" type="button" data-act="catalogue-save" data-i="${i}">${esc(t("settings.catalogue.save"))}</button>${field.kind.unset ? `<button class="btn ghost sm" type="button" data-act="catalogue-unset" data-i="${i}">${esc(field.kind.unset)}</button>` : ""}`;
+  const path = `settings-kit.${spec.key}.${field.field}`;
+  const note = [field.note, fieldHelp(path), field.kind.type === "number" ? `${field.kind.min}–${field.kind.max}` : "", spec.key === "listen-address" ? t("settings.catalogue.listen-restart") : ""].filter(Boolean).join(" ");
+  return controlRow(`<b>${esc(word(field.t, field.label))}</b><span class="right">${control}</span><small>${esc(note)}</small>`, { configPath: path, help: note, helpTitle: row.title });
+}
+
 function draw(state) {
   if (!valid(state)) return;
-  const body = state.rows.map((row, i) => {
-    const { spec, field } = row, why = spec.refused || (field.pinned ? t("settings.catalogue.pinned") : "");
-    const control = why ? `<span>${esc(why)}</span>` : `${input(row, i)}<button class="btn sm" type="button" data-act="catalogue-save" data-i="${i}">${esc(t("settings.catalogue.save"))}</button>${field.kind.unset ? `<button class="btn ghost sm" type="button" data-act="catalogue-unset" data-i="${i}">${esc(field.kind.unset)}</button>` : ""}`;
-    const path = `settings-kit.${spec.key}.${field.field}`;
-    const note = [field.note, fieldHelp(path), field.kind.type === "number" ? `${field.kind.min}–${field.kind.max}` : "", spec.key === "listen-address" ? t("settings.catalogue.listen-restart") : ""].filter(Boolean).join(" ");
-    return controlRow(`<b>${esc(row.title)}</b><span class="right">${control}</span><small>${esc(note)}</small>`, { configPath: path, help: note });
-  }).join("");
-  markLive(["catalogue-save", "catalogue-unset", ...state.rows.map((_, i) => `sw:catalogue-${serial}-${i}`)]);
-  openDlg({ title: t("settings.catalogue.title"), wide: true, body: `<p>${esc(t("settings.catalogue.count", { count: state.rows.length }))}</p>${body}` });
+  const groups = new Map();
+  state.rows.forEach((row, i) => {
+    const group = groups.get(row.spec.key) ?? { spec: row.spec, fields: [] };
+    group.fields.push(fieldRow(row, i)); groups.set(row.spec.key, group);
+  });
+  const options = [...groups].map(([key, group]) => [key, word(group.spec.t, group.spec.name)]);
+  const jump = controlRow(`<b>${esc(t("settings.catalogue.group"))}</b><span class="right">${gsel({id:"catalogue-group", label:t("settings.catalogue.group"), options, value:options[0]?.[0] ?? ""})}</span><small>${esc(t("settings.catalogue.group-about"))}</small>`);
+  const body = [...groups].map(([key, group], i) => `<section class="catalogue-group" data-catalogue-key="${esc(key)}" aria-labelledby="catalogue-heading-${serial}-${i}"><h2 tabindex="-1" id="catalogue-heading-${serial}-${i}">${esc(word(group.spec.t, group.spec.name))}</h2>${group.fields.join("")}</section>`).join("");
+  markLive(["catalogue-save", "catalogue-unset", "sw:catalogue-group", ...state.rows.map((_, i) => `sw:catalogue-${serial}-${i}`)]);
+  openDlg({ title: t("settings.catalogue.title"), wide: true, body: `<div class="catalogue-groups"><p>${esc(t("settings.catalogue.count", { count: state.rows.length }))}</p>${jump}${body}</div>` });
 }
 
 async function freshOwner(state) {
@@ -94,6 +103,11 @@ export function initCatalogueEditor() {
   on("catalogue-unset", el => save(el, true));
   on("catalogue-cancel", () => { const state = session; pending = null; if (valid(state)) draw(state); });
   on("catalogue-confirm", async () => { const change = pending; if (!change || !valid(change.state)) return; pending = null; try { await apply(change, true); } catch (error) { toast(error.message); } });
+  document.addEventListener("change", event => {
+    if (event.target.id !== "catalogue-group" || !session || !valid(session)) return;
+    const group = [...document.querySelectorAll("[data-catalogue-key]")].find(node => node.dataset.catalogueKey === event.target.value);
+    group?.querySelector("h2")?.focus({ preventScroll: true }); group?.scrollIntoView({block:"start", behavior:"auto"});
+  });
   const app = document.getElementById("app");
   if (app) new MutationObserver(() => { if (locked()) { session = null; pending = null; } }).observe(app, {attributes: true, attributeFilter: ["class"]});
 }

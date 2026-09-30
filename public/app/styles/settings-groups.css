@@ -1,0 +1,11 @@
+.catalogue-group { margin-block: 24px; padding-block-start: 8px; border-block-start: 1px solid var(--line); scroll-margin-block-start: 12px; }
+.catalogue-group h2 { margin-block: 0 8px; font-size: 16px; }
+.catalogue-group .right { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.catalogue-group .gsel, .catalogue-group input { max-width: 100%; }
+.catalogue-groups > .ctl .gsel { max-width: 100%; }
+.settings .tabs { flex-wrap: wrap; overflow-x: visible; }
+.settings .ctl .acts, .settings .ctl .seg { flex-wrap: wrap; }
+@media (max-width: 600px) {
+  .catalogue-group .ctl { grid-template-columns: minmax(0, 1fr); }
+  .catalogue-group .ctl > .right, .catalogue-group .ctl > small { grid-column: 1; justify-self: stretch; justify-content: flex-start; }
+}

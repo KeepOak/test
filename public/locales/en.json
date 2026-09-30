@@ -10449,5 +10449,7 @@
   "settings.catalogue.listen-restart": "The listener may differ from its saved preference while an environment override or Lockdown is in force. Check the Computer page for the active addresses; this editor does not restart the engine.",
   "settings.catalogue.changed": "The active profile or lock state changed. Close this editor and open it again in the owner’s profile.",
   "settings.catalogue.owner": "Open this editor in the owner’s profile with Lockdown off.",
-  "settings.catalogue.range": "Enter a number within the displayed range. Whole-number fields do not accept fractions."
+  "settings.catalogue.range": "Enter a number within the displayed range. Whole-number fields do not accept fractions.",
+  "settings.catalogue.group": "Go to a settings group",
+  "settings.catalogue.group-about": "Related controls stay together and remain visible. Choose a group to move to its controls without discarding unsaved field input."
 }
