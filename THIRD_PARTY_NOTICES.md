@@ -73,15 +73,6 @@ Branch Agent application code is MIT licensed. Distributed dependencies retain t
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
 
-## OpenClaw realtime voice adaptations
-
-`src/realtime-openai.ts` and `public/app/chat/talklive.js` adapt cancellation,
-playback truncation, the minimum played-prefix guard, and retiring output from
-`extensions/openai/realtime-voice-protocol.ts` and `realtime-voice-events.ts`
-at commit `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of
-https://github.com/openclaw/openclaw. The transport and browser integration are
-modified for Branch's existing run socket and PCM playback.
-
 ## OpenClaw Realtime GA protocol adaptations
 
 The ChatGPT subscription adapter also adapts the pinned OpenClaw Quicksilver
@@ -97,6 +88,15 @@ implementation package is bundled. The MIT notice below covers these adaptations
 `src/realtime-openai.ts` adapts beta/GA event names and the GA session shape from
 `extensions/openai/realtime-voice-events.ts` and `realtime-voice-session-policy.ts`
 at `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of https://github.com/openclaw/openclaw.
+
+## OpenClaw realtime voice adaptations
+
+`src/realtime-openai.ts` and `public/app/chat/talklive.js` adapt cancellation,
+playback truncation, the minimum played-prefix guard, and retiring output from
+`extensions/openai/realtime-voice-protocol.ts` and `realtime-voice-events.ts`
+at commit `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of
+https://github.com/openclaw/openclaw. The transport and browser integration are
+modified for Branch's existing run socket and PCM playback.
 
 MIT License
 
@@ -3379,6 +3379,10 @@ Copyright 2025 OpenAI
 ### Hermes Agent (Nous Research) and OpenClaw, MIT
 
 The command names `branch` answers to beside its own (`config`, `skin`, `cron`, `pause`, `insights`, `checkpoints`, `kanban` and the rest, listed in `src/terminal-parity.ts` and `docs/configuration.md`) were chosen after reading the command lists of Hermes Agent (https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research) and OpenClaw (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation). No code was taken from either; both are under the MIT licence, whose text is given under IronClaw above.
+
+### OpenClaw and Hermes Agent: the owner's own chat as the main session, MIT
+
+owner-dm-full (`ownerChats` in `src/channels/chat-permissions.ts`, `ownerFullFrom`/`ownerFullRun` in `src/channels/router.ts`, and the per-store check in `runOrigin`, `src/key-context.ts`) follows OpenClaw's sandbox mode "non-main" (`shouldSandboxSession` in `src/agents/sandbox/runtime-status.ts`, with the DM "main" session key in `src/routing/session-key.ts`, https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation): the owner's direct chat is the main session and runs with the full toolset on the host, while groups and other senders are held back. Hermes Agent's gateway does the same for its allowed users (`_is_user_authorized` in `gateway/authz_mixin.py`, https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research). The design was followed and the code written anew for Branch. Both are under the MIT licence, whose text is given under IronClaw above.
 
 ### Letta Code (Letta, Inc.), Apache-2.0
 

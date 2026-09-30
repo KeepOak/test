@@ -128,7 +128,9 @@ export class ChatGPTRealtimeSession extends SocketSession {
 
   protected address(): { url: string; connect: ConnectOptions } {
     return { url: `wss://api.openai.com/v1/live/${this.callId}`,
-      connect: { headers: this.headers(), what: "a ChatGPT subscription live conversation", runId: this.options.runId } };
+      connect: { headers: this.headers(), what: "a ChatGPT subscription live conversation", runId: this.options.runId,
+        // End or App lock while the address was being checked: no socket is made and no sign-in header is sent.
+        proceed: () => !this.closed && !this.options.signal.aborted } };
   }
   protected greet(): void {}
 
