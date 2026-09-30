@@ -19,7 +19,7 @@ import { mailSendTools } from "./mail-send.js";
  *   - A lock, a door, a garage door or an alarm is asked about every time, just this once, for the
  *     owner's own work too.
  */
-const personalToolNames = new Set([...personalParts.flatMap((part) => personalTools[part]), "calendars.free_slots"]);
+const personalToolNames = new Set([...personalParts.flatMap((part) => personalTools[part]), "calendars.free_slots", "personal.index.search"]);
 export const isPersonalTool = (tool: string): boolean => personalToolNames.has(tool);
 
 /** Kinds of Home Assistant device that open the house or stop it being watched. */

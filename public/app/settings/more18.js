@@ -18,6 +18,7 @@ import { ic, toast } from "../core/ui.js";
 import { ownerHere } from "../core/state.js";
 import { t } from "../../i18n.js";
 
+import { initPrivateIndex } from "./private-index.js";
 const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"], ["spotify", "personal.spotify.name", "accounts.spotify.com"]];
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
 const M = { signin: {}, busy: false, typed: {} };
@@ -65,6 +66,7 @@ export function moreSections() {
   passwordControls = SERVICES.map(([id]) => document.getElementById(`more18-${id}-secret`)).filter(Boolean);
   return `<div class="sec more18"><h2>${t("window.flows.setup.email")}</h2><p class="hint">${t("window.flows.setup.email-hint")}</p>${SERVICES.filter(([id]) => id !== "spotify").map(service).join("")}</div>`
     + `<div class="sec more18"><h2>${t("personal.spotify.name")}</h2>${service(SERVICES[2])}</div>`
+    + `<div class="sec more18"><h2>Private local search</h2><p>Opt in to a bounded, temporary local cache of selected accounts' message previews and calendar metadata.</p><button class="btn" type="button" data-act="private-index">Configure and search</button></div>`
     + `<div class="sec more18"><h2>${t("first-run-steps.restore-title")}</h2><p class="hint">${t("first-run-steps.restore-purpose")}</p>`
     + `<div class="acts"><button class="btn" type="button" data-act="more18-restore" ${M.busy ? "disabled" : ""}>${ic("folder", "s")}${M.busy ? t("first-run-steps.restore-working") : t("window.flows.setup.backup")}</button></div>`
     + `<input type="file" id="more18-file" accept=".json,application/json" hidden></div>`;
@@ -149,6 +151,7 @@ async function restore(file) {
 }
 
 export function initMore() {
+  initPrivateIndex();
   markLive(["more18-save", "more18-signin", "more18-account-add", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`, `sw:more18-${id}-account`])]);
   on("more18-save", async (el) => { if (await save(el.dataset.v)) { toast(t("accounts.saved")); await loadMore(); } });
   on("more18-signin", (el) => signIn(el.dataset.v));

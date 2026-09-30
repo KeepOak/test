@@ -99,6 +99,7 @@ async function ownKinds(app: Branch, scope: string, owner: boolean): Promise<Kin
     { kind: "files", count: files.length, bytes: files.reduce((sum, file) => sum + file.bytes, 0), where: where("attachments") },
     { kind: "recordings", count: runs.n, bytes: runs.b, where: where("branch.sqlite") },
     { kind: "receipts", count: receipts.n, bytes: receipts.b, where: where("branch.sqlite") },
+    ...(owner ? [{ kind: "private-search-cache", count: app.personal.privateIndex.cache.count(), bytes: null, where: "Process memory only; not exported" }] : []),
   ];
 }
 
@@ -409,6 +410,7 @@ async function deleteEverything(app: Branch, confirm: string) {
   catch (error) { throw new HttpError(409, errorWords(error)); }
   // The memory history is one folder, the owner's: only the owner's delete starts it again, or it would wipe theirs.
   const history = scope === owner;
+  if (history) app.personal.privateIndex.configure({ enabled: false, selections: [] });
   const theirHistory = !history && app.memoryHistory.settings(scope).mode !== "off";
   let done: { journal: Journal; conversations: number; memory: number };
   try { done = app.store.atomically(() => purge(app, scope, sessions, outside, history)); }
