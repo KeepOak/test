@@ -61,13 +61,11 @@ test("UP-UI-007: non-matching mention rows are hidden with display:none", { time
   );
 
   // Check that non-matching items have display:none
-  const hiddenItems = await page.locator('.pop [data-act="mention-pick"][hidden]').all();
-  assert.ok(hiddenItems.length > 0, "some items are hidden");
-  for (const item of hiddenItems) {
-    const computedStyle = await item.evaluate((el) => window.getComputedStyle(el).display);
-    assert.equal(computedStyle, "none",
-      `hidden mention item must have display:none (not ${computedStyle})`);
-  }
+  // Read in one step, so a redraw between reads cannot hand back a row that is no longer in the page.
+  const displays = await page.evaluate(() => [...document.querySelectorAll('.pop [data-act="mention-pick"][hidden]')]
+    .map((row) => getComputedStyle(row).display));
+  assert.ok(displays.length > 0, "some items are hidden");
+  assert.deepEqual([...new Set(displays)], ["none"], "every hidden mention row is out of the layout");
 
   // Verify that all non-matching items are not visible
   const visibleNonMatching = await page.locator('.pop [data-act="mention-pick"][hidden]:visible').count();
