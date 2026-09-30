@@ -18,7 +18,7 @@ import { discardTemp } from "./temp-dir.mjs";
 
 const stubs = {
   "app/core/dom.js": "export const $ = () => null; export const esc = (s) => String(s ?? \"\");",
-  "app/core/ui.js": `export const openDlg = (o) => globalThis.__cw.openDlg(o); export const closeDlg = () => { globalThis.__cw.closed++; globalThis.__cw.dlg = null; };
+  "app/core/ui.js": `export const openDlg = (o) => globalThis.__cw.openDlg(o); export const closeDlg = () => { globalThis.__cw.closed++; if (globalThis.__cw.dlg) globalThis.__cw.dlg.isConnected = false; globalThis.__cw.dlg = null; };
     export const dialog = () => globalThis.__cw.dlg; export const toast = (m) => globalThis.__cw.toasts.push(m); export const ic = () => "";`,
   "app/core/state.js": `export const S = globalThis.__cw.S; export const E = {}; export const refresh = () => globalThis.__cw.refresh();
     export const ownerHere = () => globalThis.__cw.owner; export const activeId = () => globalThis.__cw.profile;`,
@@ -41,7 +41,8 @@ async function wizardPage(t) {
     api: (path, body, method = body === undefined ? "GET" : "POST") => new Promise((resolve, reject) => held.push({ path, body, method, resolve, reject })),
     /* The page's refresh after the wizard closes, held open like a read so the test can change things meanwhile. */
     refresh: () => new Promise((resolve, reject) => held.push({ path: "refresh", method: "GET", resolve, reject })),
-    openDlg: (o) => { opened.push(o); cw.dlg = { wizard: o, isConnected: true }; return cw.dlg; } };
+    /* As the window's dialogs: a new one replaces (disconnects) the one open. */
+    openDlg: (o) => { opened.push(o); if (cw.dlg) cw.dlg.isConnected = false; cw.dlg = { wizard: o, isConnected: true }; return cw.dlg; } };
   globalThis.__cw = cw;
   globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && cw.locked } } : null),
     addEventListener: (type, fn, capture) => { if (capture) listeners.push({ type, fn }); } };
@@ -58,9 +59,12 @@ async function wizardPage(t) {
   };
   /* The owner closes the open dialog with its close button, or with Escape (main.js closes it after this module hears it). */
   const fire = (type, event) => { for (const one of listeners) if (one.type === type) one.fn(event); };
-  const closeButton = () => { fire("click", { target: { closest: (q) => (q.includes("dlg-close") ? {} : null) } }); cw.dlg = null; };
-  const escape = () => { fire("keydown", { key: "Escape" }); cw.dlg = null; };
-  return { page, cw, opened, asked, closeButton, escape, answer: (path, value) => settle(path, "resolve", value), fail: (path, error) => settle(path, "reject", error) };
+  const gone = () => { if (cw.dlg) cw.dlg.isConnected = false; cw.dlg = null; };
+  const closeButton = () => { fire("click", { target: { closest: (q) => (q.includes("dlg-close") ? {} : null) } }); gone(); };
+  const escape = () => { fire("keydown", { key: "Escape" }); gone(); };
+  /* Answers whatever is still waiting, so a step that should not have run cannot leave the test hanging. */
+  const drain = async () => { for (let i = 0; i < 100; i++) { while (held.length) held.shift().resolve({}); await Promise.resolve(); } };
+  return { page, cw, opened, asked, closeButton, escape, drain, answer: (path, value) => settle(path, "resolve", value), fail: (path, error) => settle(path, "reject", error) };
 }
 
 /* A Telegram-like recipe with a Create step, so Continue goes on to Save, which reads the direct-message choices. */
@@ -205,7 +209,7 @@ test("Remove with nothing changed closes the wizard and says the app was removed
 });
 
 test("a newer wizard opened while Remove was answered is not closed by the late answer", async (t) => {
-  const { page, cw, answer } = await openedWizard(t);
+  const { page, cw, answer, drain } = await openedWizard(t);
   const removing = cw.acts["chw-remove"]();
   const newer = page.openChatWizard("telegram");
   await answer("GET channel-setup/telegram", recipe);
@@ -213,16 +217,18 @@ test("a newer wizard opened while Remove was answered is not closed by the late 
   await newer;
   const current = cw.S.chw;
   await answer("DELETE channel-setup/telegram", {});
+  await drain();
   await removing;
   assert.equal(cw.closed, 0, "the newer wizard's dialog stayed open");
   assert.equal(cw.S.chw, current, "the newer wizard is still the one open");
 });
 
 test("the App lock came on while Remove was answered: nothing is closed or said over the lock", async (t) => {
-  const { cw, answer } = await openedWizard(t);
+  const { cw, answer, drain } = await openedWizard(t);
   const removing = cw.acts["chw-remove"]();
   cw.locked = true;
   await answer("DELETE channel-setup/telegram", {});
+  await drain();
   await removing;
   assert.equal(cw.closed, 0);
   assert.deepEqual(cw.toasts, []);
@@ -268,3 +274,18 @@ for (const [act, trigger, done] of [["Remove", "chw-remove", (w) => w.answer("DE
     });
   }
 }
+
+/* Remove's success closes its own wizard, never a dialog opened after the wizard was left with Escape. */
+test("the wizard was left with Escape and another dialog opened while Remove was answered: that dialog stays open", async (t) => {
+  const { cw, answer, escape, drain } = await openedWizard(t);
+  const removing = cw.acts["chw-remove"]();
+  escape();
+  const replacement = { other: true, isConnected: true };
+  cw.dlg = replacement;
+  await answer("DELETE channel-setup/telegram", {});
+  await drain();
+  await removing;
+  assert.equal(cw.dlg, replacement, "the replacement dialog is still open");
+  assert.equal(cw.closed, 0);
+  assert.deepEqual(cw.toasts, []);
+});
