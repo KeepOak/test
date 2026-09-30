@@ -4657,9 +4657,24 @@ files open as the window, so a hand-over would hit a locked file. Before the han
 written, the window reads `running.json`, asks that process to close (`taskkill /PID <pid> /T`, then
 `/T /F` if it will not), waits a bounded time for it to go and removes the note. An engine that
 still refuses is not treated as a failure: the hand-over script waits for the engine's process id
-as well as the window's, and ends it itself before mirroring anything. Nothing new is started: the
-hand-over still runs through the same hidden Windows Script Host launcher, and every tool is run
-with no window.
+as well as the window's, and ends it itself before mirroring anything. Every tool is run with no
+window.
+
+**How Windows installs an update (versioned folders).** Each version sits in a folder of its own,
+`<install>\app-<version>\`, beside the others; `current.json` names the one in use and the one
+before it. A new version is made beside the one running (Electron's own program is hard linked from
+it, never made anew), tried on a copy of the work, and put in use by one rename of `current.json`,
+so there is never a half-copied program. The version before is kept whole for going back; older
+ones are removed once nothing runs from them, so two are kept. Going back is the same rename the
+other way, and it is refused when the new version has already moved the saved work to a format the
+older one cannot read (then the new version is started again and the owner is told why). A start
+of an older version's program (an old shortcut, say) starts the version in use instead. A copy
+installed before this layout is the version before on its first update, and on the update after,
+when it is no longer needed to go back, its app is replaced by a small launcher that starts the
+version in use, so shortcuts to the top of the install keep working. The switch is run by a small
+runner: Electron's own program, linked with its files beside the update's scratch files, which runs
+the switch with no window and no Windows Script Host. A portable copy keeps its data beside the
+program, so it keeps the older swap, run by the same runner.
 
 **Checking a computer is ready.** `branch doctor --fix`, and the *Check and repair what I can*
 button, look for Git, the private browser Branch uses to read pages, a free address on this
