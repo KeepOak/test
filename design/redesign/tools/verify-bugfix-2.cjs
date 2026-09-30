@@ -46,7 +46,8 @@ async function firstRun(page) {
   const opened = await page.locator(".ob9").waitFor({ state: "visible", timeout: 8000 }).then(() => true, () => false);
   check(opened && await page.evaluate(() => navigator.webdriver) === true, "17 setup opens with navigator.webdriver set");
   check((await api("deployment/suggestion")).bar === null && await page.locator(".recbar").count() === 0, "16 before first run: no bar (GET /api/deployment/suggestion bar null)");
-  await page.locator('.ob9 [data-act="ob-close"]').click();
+  await page.keyboard.press("Escape"); // setup has no close button now: Escape leaves any step (Skip shows only after Welcome)
+  await page.locator(".ob9").waitFor({ state: "hidden", timeout: 10000 });
   await api("onboarding", { done: true });
   const bar = (await api("deployment/suggestion")).bar;
   await api("run", { prompt: "hello" }); // any engine event makes the window read its state again
@@ -140,10 +141,11 @@ async function people(page, person) {
   const card = await api("people/settings");
   check(await seg.locator(`[data-v="${card.settings.mode}"]`).getAttribute("aria-pressed") === "true", `3 Signing in shows the engine's mode (GET /api/people/settings mode: ${card.settings.mode})`);
   check(await page.locator('#main .place [aria-label="How they prove it’s them"] [data-v="pin"]').getAttribute("aria-pressed") === String(card.settings.chain.includes("pin")), "3 Signing in shows the engine's sign-in chain");
-  // unhold/people: the sign-in controls are live now (proved in verify-unhold-people.cjs); only "Lock a profile after five
-  // wrong PINs" stays greyed, because it shows what the engine always does.
+  // unhold/people: the sign-in controls are live (proved in verify-unhold-people.cjs); "Lock a profile after five wrong
+  // PINs" is what the engine always does, so it is words with no control.
   const states = await page.evaluate(() => [...document.querySelectorAll('#main .place [data-act^="si-"], #main .place input[id^="si-"]')].map((el) => [el.id || el.dataset.act, el.getAttribute("aria-disabled") === "true"]));
-  check(states.length > 0 && states.every(([id, grey]) => grey === (id === "si-lock")), "3 every sign-in control is live but the fixed PIN lockout", JSON.stringify(states.filter(([id, grey]) => grey !== (id === "si-lock"))));
+  check(states.length > 0 && states.every(([, grey]) => !grey), "3 every sign-in control is live", JSON.stringify(states.filter(([, grey]) => grey)));
+  check((await page.locator('#main .place [data-fact="si-lock"]').count()) === 1 && (await page.locator("#si-lock").count()) === 0, "3 the fixed PIN lockout is said in words, with no switch");
   await page.locator('#main .place [data-act="ptab"][data-v="people"]').click();
   const row = page.locator('#main .place [data-act="p-sel"]', { hasText: person.name });
   await row.waitFor({ timeout: 10000 });
