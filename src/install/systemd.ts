@@ -73,6 +73,8 @@ export function systemdUnit(program: ServiceProgram): string {
     "Restart=always",
     "RestartSec=10",
     `RestartPreventExitStatus=${stoppedOnPurposeCode}`,
+    // ...and counts as a clean end, so `branch quit` leaves the unit inactive rather than failed.
+    `SuccessExitStatus=${stoppedOnPurposeCode}`,
     `StandardOutput=append:${plain(logs.out)}`,
     `StandardError=append:${plain(logs.err)}`,
     "",

@@ -147,6 +147,7 @@ test("Linux: always restarted, within a start limit, except after a stop on purp
   assert.match(unit, /^Restart=always$/m);
   assert.match(unit, /^RestartSec=10$/m);
   assert.match(unit, new RegExp(`^RestartPreventExitStatus=${stoppedOnPurposeCode}$`, "m"));
+  assert.match(unit, new RegExp(`^SuccessExitStatus=${stoppedOnPurposeCode}$`, "m"), "a quit leaves the unit inactive, not failed");
   assert.match(unit, /^Environment="BRANCH_SERVICE_MANAGER=systemd"$/m);
   const target = { exitCode: undefined };
   markStoppedOnPurpose({ BRANCH_SERVICE_MANAGER: "systemd" }, target);
