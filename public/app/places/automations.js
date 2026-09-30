@@ -280,7 +280,7 @@ function checkinsTile(hb) {
    since the tile shows one line under it. */
 function gateTiles(hb) {
   const waiting = (hb?.schedules ?? []).filter((s) => s.gate && !s.gate.approved);
-  return waiting.map((s) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-script-wants-your-yes")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${t("window.places.automations.prompt-wants-to-run-command-before", { prompt: esc(s.prompt), command: `<code>${esc([s.gate.executable, ...(s.gate.args ?? [])].join(" "))}</code>` })}</p><div class="acts"><button class="btn pri sm" type="button" data-act="gate-yes" data-why="gate-script" data-id="${esc(s.id)}">${t("trunks.room.allow")}</button><button class="btn ghost sm" type="button" data-act="gate-no" data-why="gate-script" data-id="${esc(s.id)}">${t("updates.busy.cancel")}</button></div></div>`).join("");
+  return `<div class="tile"><h2>Notify me only if</h2><p>A configured command prints {"wakeAgent":false} to skip the assistant and result notification, or {"wakeAgent":true,"data":…} to continue. Existing schedule permissions and command policy still apply.</p><button class="btn" data-act="gate-edit">Set a schedule's condition</button><button class="btn" data-act="gate-enable">Enable script gates</button></div>` + waiting.map((s) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-script-wants-your-yes")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${t("window.places.automations.prompt-wants-to-run-command-before", { prompt: esc(s.prompt), command: `<code>${esc([s.gate.executable, ...(s.gate.args ?? [])].join(" "))}</code>` })}</p><p>Timeout: ${esc(s.gate.timeoutMs)} ms. Network: ${s.gate.network ? "allowed subject to command policy" : "netless"}.</p><div class="acts"><button class="btn pri sm" type="button" data-act="gate-yes" data-id="${esc(s.id)}">${t("trunks.room.allow")}</button><button class="btn ghost sm" type="button" data-act="gate-no" data-id="${esc(s.id)}">${t("updates.busy.cancel")}</button></div></div>`).join("");
 }
 
 async function saveHeartbeat(change, switchOn) {
@@ -314,7 +314,21 @@ export function init() {
     const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
     if (add) add.disabled = !e.target.value.trim();
   });
-  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
+  markLive(["gate-edit", "gate-save", "gate-enable", "gate-yes", "gate-no", "sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
+  const reloadGates = async () => { heartbeat = await api("heartbeat"); renderNow(); };
+  on("gate-enable", async () => { try { await api("heartbeat/switches", { scriptGates: "on" }); await reloadGates(); } catch (error) { toast(error.message); } });
+  for (const [action, approve] of [["gate-yes", true], ["gate-no", false]]) on(action, async (el) => {
+    try { await api(`schedules/${encodeURIComponent(el.dataset.id)}/gate`, { approve }); await reloadGates(); } catch (error) { toast(error.message); }
+  });
+  on("gate-edit", () => openDlg({ title: "Notify me only if", body: `<label for="gate-schedule">Schedule</label><select id="gate-schedule">${(heartbeat?.schedules ?? []).filter((s) => ["task", "check"].includes(s.kind)).map((s) => `<option value="${esc(s.id)}">${esc(s.prompt)}</option>`).join("")}</select><label for="gate-alias">Configured command alias</label><input class="inp" id="gate-alias" placeholder="node"><label for="gate-args">Arguments as a JSON array</label><input class="inp" id="gate-args" value="[]"><label for="gate-timeout">Timeout in milliseconds</label><input class="inp" id="gate-timeout" type="number" value="30000"><label><input type="checkbox" id="gate-network">Permit network subject to command policy</label><p>Saving pauses this schedule for your review. It cannot add command permissions to the original schedule.</p>`, foot: `<button class="btn ghost" data-act="dlg-close">Cancel</button><button class="btn pri" data-act="gate-save">Save for review</button>` }));
+  on("gate-save", async () => {
+    try {
+      const id = document.getElementById("gate-schedule")?.value;
+      const script = { executable: document.getElementById("gate-alias")?.value.trim(), args: JSON.parse(document.getElementById("gate-args")?.value ?? "[]"),
+        timeoutMs: Number(document.getElementById("gate-timeout")?.value), network: document.getElementById("gate-network")?.checked === true };
+      await api(`schedules/${encodeURIComponent(id ?? "")}/gate`, { script }); closeDlg(); await reloadGates();
+    } catch (error) { toast(error.message); }
+  });
   initRecipeRun();
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);

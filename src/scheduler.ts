@@ -219,6 +219,7 @@ export class Scheduler {
       if (!context.permissions.has("channels.send")) throw new Error("Permission denied: channels.send");
     }
     if (definition.gate && this.switches().scriptGates === "off") throw new Error(scriptsOff);
+    if (definition.gate && !permissions.includes("shell.execute")) throw new Error("A check script needs shell.execute in the schedule's original permission list.");
     // mac7/chat-source: an evaluation suite runs the owner's own saved tasks, with no way to hold them
     // to what the chat may do, so a chat message's task cannot put one on a timer.
     if (definition.kind === "evaluation" && startedFromChat(context, this.store))
@@ -320,10 +321,9 @@ export class Scheduler {
       this.store.save("schedules", record.owner, record.id, { ...data, heldBecause: null });
     return false;
   }
-  /** "When needed" runs the script for repeating jobs only; a one-off goes straight ahead. */
+  /** An explicit condition is never bypassed by recurrence mode. */
   private gateApplies(data: Record<string, unknown>): boolean {
-    if (!data.gate) return false;
-    return this.switches().scriptGates === "on" || repeating(data);
+    return !!data.gate;
   }
   /**
    * Holds a schedule back when its moment lands on a day off. "Skip" moves a repeating one on to
@@ -362,7 +362,13 @@ export class Scheduler {
     const slots = (Array.isArray(data.triggerSlots) ? data.triggerSlots as TriggerSlot[] : []).slice(-(triggerSlotLimit - 1));
     const record = { ...claimed, data: { ...data, status: restored, dueAt,
       ...(slot ? { triggerSlots: [...slots, { slot, runId: null, at: new Date().toISOString() }] } : {}) } };
-    const run = await this.execute(record, new Date(), trigger, payload, false);
+    if (record.data.gate && this.switches().scriptGates === "off") {
+      this.store.save("schedules", owner, id, record.data);
+      throw new Error(scriptsOff);
+    }
+    const passed = record.data.gate ? await this.passGate(record, new Date()) : { data: null };
+    if (!passed) throw new Error("The check did not wake this schedule. No assistant turn or result notification was sent.");
+    const run = await this.execute(record, new Date(), trigger, payload, false, passed.data);
     if (slot && run) this.noteSlotRun(owner, id, slot, run.id);
     if (!run) throw new Error("The schedule did not produce a run");
     return run;
@@ -490,7 +496,7 @@ export class Scheduler {
       save({ status: "paused", gateApproved: null, pausedBecause: awaitingApproval });
       return null;
     }
-    const outcome = await runGate(script, { cwd: this.runtime.workspace, ...(this.gateRunner ? { runner: this.gateRunner } : {}) });
+    const outcome = await this.scopedGate(record, script);
     const lastGate = { at: now.toISOString(), outcome: outcome.outcome, durationMs: outcome.durationMs, reason: outcome.outcome === "error" ? outcome.reason : null };
     if (outcome.outcome === "wake") {
       save({ lastGate, gateFailures: 0 });
@@ -517,6 +523,7 @@ export class Scheduler {
    * approval is bound to the exact program, arguments and limits, so a changed script asks again.
    */
   async approveGate(owner: string, id: string, approve: boolean): Promise<SavedRecord> {
+    this.store.profiles.requireOwner("Approving a schedule check script");
     const record = this.store.get("schedules", owner, id);
     if (!record?.data.gate) throw new Error("That schedule has no check script");
     if (record.data.status === "running") throw new Error("This schedule is running right now");
@@ -525,11 +532,39 @@ export class Scheduler {
     if (!approve)
       return this.store.save("schedules", owner, id, { ...record.data, gateApproved: null, status: "paused", pausedBecause: awaitingApproval });
     await checkGateProgram(script.executable);
+    if (!this.reachOf(record.data)?.includes("shell.execute")) throw new Error("This schedule's original scope does not permit command scripts.");
     const waiting = record.data.status === "paused" && record.data.pausedBecause === awaitingApproval;
     return this.store.save("schedules", owner, id, {
       ...record.data, gateApproved: gateFingerprint(script), gateFailures: 0,
       ...(waiting ? { status: "pending", pausedBecause: null } : {}),
     });
+  }
+  private async scopedGate(record: SavedRecord, script: GateScript) {
+    const project = typeof record.data.project === "string" ? record.data.project : defaultProjectId;
+    return underProject(project, () => this.asMaker(record.data, async () => {
+      const routed = this.routeRun(record.id);
+      if (routed && "refuse" in routed) return { outcome: "error" as const, reason: routed.refuse, durationMs: 0 };
+      const trunk = routed?.options.trunkId ?? (typeof record.data.startedBy === "string" ? record.data.startedBy : null);
+      const runner: GateRunner = async (command, limits, signal) => {
+        const call = () => this.runtime.executeTool("shell.execute", { executable: command.executable, args: command.args,
+          cwd: ".", timeoutMs: limits.timeoutMs, secrets: [], netless: !script.network },
+          { mode: "policy", source: record.data.fromChat === true ? "channel" : "schedule",
+            within: this.reachOf(record.data) ?? [], signal, approvalKey: `schedule-gate:${record.id}` });
+        const result = trunk ? await this.runtime.asTrunkWork(trunk, call) : await call();
+        return z.object({ status: z.string(), exitCode: z.number().nullable(), stdout: z.string(), stderr: z.string(), durationMs: z.number() }).parse(result);
+      };
+      return runGate(script, { cwd: this.runtime.workspace, runner: this.gateRunner ?? runner });
+    }));
+  }
+  configureGate(owner: string, id: string, input: unknown): SavedRecord {
+    this.store.profiles.requireOwner("Configuring a schedule check script");
+    const record = this.store.get("schedules", owner, id);
+    if (!record || record.data.status === "running") throw new Error("Choose a schedule that is not running.");
+    if (!["task", "check"].includes(String(record.data.kind))) throw new Error("Only task and check schedules can have a check script.");
+    if (!this.reachOf(record.data)?.includes("shell.execute")) throw new Error("This schedule's original scope does not permit command scripts.");
+    const script = GateScriptSchema.parse(input);
+    return this.store.save("schedules", owner, id, { ...record.data, gate: script, gateApproved: null,
+      status: "paused", pausedBecause: awaitingApproval });
   }
   /** Every schedule with its health, and the check-in with its own. */
   overview(owner: string) {
@@ -704,7 +739,12 @@ export async function quietJobsApi(scheduler: Scheduler, method: string, path: s
   if (path === "/api/heartbeat/check" && method === "POST") return { outcome: await scheduler.heartbeat.checkNow(owner) };
   const gate = /^\/api\/schedules\/([a-f0-9-]{36})\/gate$/.exec(path);
   if (gate && method === "POST") {
-    const { approve } = z.object({ approve: z.boolean() }).strict().parse(await body());
+    const input = await body();
+    if (typeof input === "object" && input !== null && "script" in input) {
+      const { script } = z.object({ script: GateScriptSchema }).strict().parse(input);
+      return scheduler.configureGate(owner, gate[1]!, script);
+    }
+    const { approve } = z.object({ approve: z.boolean() }).strict().parse(input);
     return scheduler.approveGate(owner, gate[1]!, approve);
   }
   return undefined;

@@ -1454,6 +1454,8 @@ async function api(
   // Wave mac2 (quiet-jobs): the check-in, and the owner's yes to a job's check script.
   if (path.startsWith("/api/heartbeat") || /^\/api\/schedules\/[a-f0-9-]{36}\/gate$/.test(path)) {
     app.store.profiles.requireOwner("Your schedules");
+    if (/^\/api\/schedules\/[a-f0-9-]{36}\/gate$/.test(path) &&
+      (throughADoor(request) || startedWithShortLivedKey() || app.sessionLock.locked())) throw new HttpError(403, "Review check scripts in the owner's unlocked local app window.");
     const answer = await quietJobsApi(app.scheduler, request.method ?? "GET", path, () => readBody(request));
     if (answer !== undefined) return answer;
     throw new HttpError(404, "Endpoint not found");
