@@ -1608,7 +1608,11 @@ ${result.output || "(it said nothing)"}`;
   // eng-connectors: whether another person's server is started as Branch starts or only when a task needs it, and
   // what it last said its tools are. The launch file's servers and the owner's own (kept in the store) share it.
   const mcpOwnerRequests = new McpOwnerRequests(store, () => runtime.owner, runtime.models,
-    () => sessionLock.locked(), url => web.policy.assertAllowed(url, 'server browser question'));
+    () => sessionLock.locked(),
+    (context, permission, args) => registry.names().includes(permission) && registry.permissionOf(permission) === permission
+      && !runtime.roleRefusal(permission, permission)
+      && runtime.checkPolicy(permission, args, context, argumentFingerprint(permission, JSON.stringify(args))).decision !== 'deny',
+    url => web.policy.assertAllowed(url, 'server browser question'));
   const scriptedMcpApps = new ScriptedMcpApps(runtime);
   const mcpHost = {
     ownerRequests: mcpOwnerRequests,

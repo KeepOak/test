@@ -5,7 +5,8 @@ import type { ClientCapabilities } from '@modelcontextprotocol/sdk/types.js';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation';
 import type { Store } from './store.js';
 import type { ModelRouter } from './models.js';
-import type { Message } from './contracts.js';
+import type { Message, ToolContext } from './contracts.js';
+import { pathToFileURL } from 'node:url';
 import { estimateTokens, ProviderStreamError } from './contracts.js';
 import { lockdownActive } from './lockdown.js';
 import { mcpValidator } from './integrations/mcp-sdk.js';
@@ -13,6 +14,7 @@ import { ElicitationOrigin, McpUrlElicitation } from './mcp-url-elicitation.js';
 
 export const McpOwnerRequestSettings = z.object({
   sampling: z.boolean().default(false), elicitation: z.boolean().default(false),
+  roots: z.boolean().default(false),
   urlElicitation: z.boolean().default(false), urlOrigins: z.array(ElicitationOrigin).max(10).default([]),
   requestsPerMinute: z.number().int().min(1).max(20).default(3),
   tokenCap: z.number().int().min(128).max(8192).default(2048),
@@ -27,7 +29,7 @@ const bounded = (preset: { provider: { name: string; keepsOwnTime?: boolean } })
 type Settings = z.infer<typeof McpOwnerRequestSettings>;
 type Answer = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> };
 interface Pending {
-  id: string; server: string; kind: 'sampling' | 'elicitation'; details: unknown;
+  id: string; server: string; kind: 'sampling' | 'elicitation' | 'roots'; details: unknown;
   owner: string; settings: string; finish: (answer: Answer) => void;
 }
 
@@ -41,6 +43,7 @@ export class McpOwnerRequests {
   private readonly rates = new Map<string, number[]>();
   constructor(private readonly store: Store, private readonly owner: () => string,
     private readonly models: ModelRouter, private readonly locked: () => boolean = () => false,
+    private readonly permitted: (context: ToolContext, permission: string, args: Record<string, unknown>) => boolean = () => false,
     vetUrl: (url: URL) => Promise<void> = async () => { throw new Error('Browser questions are unavailable.'); }) {
     this.urls = new McpUrlElicitation(owner, () => this.ready() && this.nativeOpener, vetUrl);
   }
@@ -80,13 +83,45 @@ export class McpOwnerRequests {
     return Date.now() < this.windowUntil && this.windowOwner === this.owner()
       && this.store.profiles.isOwner() && !this.locked() && !lockdownActive(this.store, this.owner());
   }
-  capabilities(server: string, _modern = false, urlReady = false): ClientCapabilities {
+  capabilities(server: string, modern = false, urlReady = false): ClientCapabilities {
     if (!this.ready()) return {};
     const settings = this.settings(server);
     return { ...(settings.sampling && settings.models.length ? { sampling: {} } : {}),
       ...(settings.elicitation || (urlReady && this.nativeOpener && settings.urlElicitation)
         ? { elicitation: { ...(settings.elicitation ? { form: {} } : {}),
-          ...(urlReady && this.nativeOpener && settings.urlElicitation ? { url: {} } : {}) } } : {}) };
+          ...(urlReady && this.nativeOpener && settings.urlElicitation ? { url: {} } : {}) } } : {}),
+      ...(modern && settings.roots ? { roots: {} } : {}) };
+  }
+  /** Embedded MRTR requests share the initiating task's exact permission and cancellation boundary. */
+  async fulfill(server: string, request: unknown, context: ToolContext, permission: string, args: Record<string, unknown>): Promise<unknown> {
+    const input = z.object({ method: z.enum(['elicitation/create', 'sampling/createMessage', 'roots/list']),
+      params: z.record(z.string(), z.unknown()).optional() }).strict().parse(request);
+    const guard = () => {
+      context.signal.throwIfAborted();
+      const run = this.store.run(context.runId);
+      if (!this.ready() || context.owner !== this.owner() || !context.permissions.has(permission) || !this.permitted(context, permission, args)
+        || !run || run.owner !== context.owner || run.status !== 'running')
+        throw new Error('The initiating task or its permission is no longer available.');
+    };
+    guard();
+    const signal = new AbortController();
+    const timer = setInterval(() => { try { guard(); } catch { signal.abort(); } }, 250);
+    timer.unref();
+    const bound = AbortSignal.any([context.signal, signal.signal]);
+    try {
+      const result = input.method === 'sampling/createMessage' ? await this.sample(server, input.params, bound, context)
+        : input.method === 'elicitation/create' ? await this.elicit(server, input.params, bound)
+        : await this.roots(server, context, bound);
+      guard(); return result;
+    } finally { clearInterval(timer); }
+  }
+  private async roots(server: string, context: ToolContext, signal: AbortSignal) {
+    const settings = this.guard(server, 'roots'), uri = pathToFileURL(context.workspace).href;
+    const answer = await this.ask(server, 'roots', { message: `Allow ${server} to see this task's workspace root?`,
+      uri, runId: context.runId }, settings, signal);
+    signal.throwIfAborted(); this.guard(server, 'roots', false);
+    if (JSON.stringify(this.settings(server)) !== JSON.stringify(settings)) throw new Error('Root settings changed.');
+    return { roots: answer.action === 'accept' ? [{ uri, name: 'Approved task workspace' }] : [] };
   }
   private guard(server: string, kind: Pending['kind'] | 'urlElicitation', spend = true): Settings {
     const settings = this.settings(server);
@@ -142,7 +177,7 @@ export class McpOwnerRequests {
     });
     return () => { closed.abort(); this.urls.cancel(server, connection); };
   }
-  private async sample(server: string, input: unknown, signal: AbortSignal) {
+  private async sample(server: string, input: unknown, signal: AbortSignal, context?: ToolContext) {
     const settings = this.guard(server, 'sampling');
     const params = z.object({ messages: z.array(z.object({ role: z.enum(['user', 'assistant']),
       content: z.object({ type: z.literal('text'), text: z.string().max(16000) }).passthrough() }).passthrough()).min(1).max(32),
@@ -155,28 +190,36 @@ export class McpOwnerRequests {
     const messages: Message[] = params.messages.map(m => ({ role: m.role, content: m.content.text }));
     if (params.systemPrompt) messages.unshift({ role: 'system', content: params.systemPrompt });
     if (Buffer.byteLength(JSON.stringify(messages)) > 32768) throw new Error('This request exceeds the input size limit.');
-    const maxTokens = Math.min(params.maxTokens, settings.tokenCap);
+    const inputTokens = estimateTokens(JSON.stringify(messages));
+    const maxTokens = Math.min(params.maxTokens, settings.tokenCap, context ? context.budget.remaining() - inputTokens : settings.tokenCap);
+    if (maxTokens < 1) throw new Error('The initiating task has no sampling budget remaining.');
     const details = { model: preset.id, modelName: preset.name, maxTokens, messages,
+      ...(context ? { parentRunId: context.runId } : {}),
       notice: 'Allow this server to send this exact text to this model using your subscription or API credit?' };
     const answer = await this.ask(server, 'sampling', details, settings, signal);
     if (answer.action !== 'accept') throw new Error('The owner declined or cancelled sampling.');
     signal.throwIfAborted(); this.guard(server, 'sampling', false);
     if (JSON.stringify(this.settings(server)) !== JSON.stringify(settings) || this.models.presets.get(preset.id) !== preset) throw new Error('Sampling settings or model changed.');
-    const result = await this.complete(server, preset.id, messages, maxTokens, signal);
+    if (context) { context.budget.step(signal); context.budget.charge(inputTokens + maxTokens); }
+    const result = await this.complete(server, preset.id, messages, maxTokens, signal, context?.runId);
     this.guard(server, 'sampling', false); signal.throwIfAborted();
     if (Buffer.byteLength(result.content) > 32768) throw new Error('Sampling response is too large.');
     if (result.toolCalls.length) throw new Error('Sampling may not invoke tools.');
     return { model: preset.model, role: 'assistant' as const, content: { type: 'text' as const, text: result.content }, stopReason: 'endTurn' };
   }
-  private async complete(server: string, presetId: string, messages: Message[], maxTokens: number, signal: AbortSignal) {
+  private async complete(server: string, presetId: string, messages: Message[], maxTokens: number, signal: AbortSignal, parentRunId?: string) {
     const preset = this.models.presets.get(presetId);
     if (!preset || !bounded(preset)) throw new Error('The approved model is unavailable.');
-    const run = this.store.createRun(this.owner(), `Approved model request from ${server}`);
+    const run = this.store.createRun(this.owner(), `Approved model request from ${server}`, undefined, false, 'mcp');
+    const settings = JSON.stringify(this.settings(server));
     const stop = new AbortController();
-    const timer = setInterval(() => { if (!this.ready() || !this.settings(server).sampling) stop.abort(); }, 500);
+    const timer = setInterval(() => {
+      if (!this.ready() || this.owner() !== run.owner || settings !== JSON.stringify(this.settings(server))
+        || this.models.presets.get(presetId) !== preset) stop.abort();
+    }, 250);
     timer.unref?.();
     try {
-      this.store.event(run.id, 'mcp.sampling', { server, model: presetId, maxTokens });
+      this.store.event(run.id, 'mcp.sampling', { server, model: presetId, maxTokens, ...(parentRunId ? { parentRunId } : {}) });
       const result = await preset.provider.complete({ messages, tools: [], maxTokens, programTools: false,
         signal: AbortSignal.any([signal, stop.signal, AbortSignal.timeout(30_000)]) });
       this.store.addUsage(run.id, estimateTokens(JSON.stringify(messages)), estimateTokens(result.content), result.usage);
@@ -199,6 +242,7 @@ export class McpOwnerRequests {
     const answer = await this.ask(server, 'elicitation', params, settings, signal);
     if (answer.action !== 'accept') return { action: answer.action };
     signal.throwIfAborted(); this.guard(server, 'elicitation', false);
+    if (JSON.stringify(this.settings(server)) !== JSON.stringify(settings)) throw new Error('Form settings changed.');
     if (!validate(answer.content ?? {}).valid) throw new Error('The answer does not fit the server form.');
     const content = z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.array(z.string())])).parse(answer.content ?? {});
     return { action: 'accept' as const, content };

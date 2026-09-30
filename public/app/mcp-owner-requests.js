@@ -53,6 +53,7 @@ function drawSettings(form, models) {
   const server = field(form, 'Server ID'); server.required = true; server.pattern = '[a-z][a-z0-9-]{0,29}';
   const sampling = field(form, 'Allow requests to a model', 'checkbox');
   const elicitation = field(form, 'Allow questions for you', 'checkbox');
+  const roots = field(form, 'Allow requests to see a task workspace root', 'checkbox');
   const urlElicitation = field(form, 'Allow browser questions in the desktop app', 'checkbox');
   const origins = field(form, 'Approved HTTPS origins, separated by commas');
   origins.placeholder = 'https://accounts.example.com';
@@ -67,6 +68,7 @@ function drawSettings(form, models) {
     try {
       const value = await api(`mcp/owner-requests/settings?server=${encodeURIComponent(server.value)}`);
       sampling.checked = value.sampling; elicitation.checked = value.elicitation;
+      roots.checked = value.roots === true;
       urlElicitation.checked = value.urlElicitation === true; origins.value = (value.urlOrigins || []).join(', ');
       rpm.value = String(value.requestsPerMinute); cap.value = String(value.tokenCap);
       for (const option of allowed.options) option.selected = value.models.includes(option.value);
@@ -77,6 +79,7 @@ function drawSettings(form, models) {
     event.preventDefault();
     try { await api('mcp/owner-requests/settings', { server: server.value, settings: {
       sampling: sampling.checked, elicitation: elicitation.checked, requestsPerMinute: Number(rpm.value),
+      roots: roots.checked,
       urlElicitation: urlElicitation.checked, urlOrigins: origins.value.split(',').map(s => s.trim()).filter(Boolean),
       tokenCap: Number(cap.value), models: [...allowed.selectedOptions].map(o => o.value) } }); toast('Saved. Reconnect this server to advertise the enabled features.'); }
     catch (error) { toast(error.message); }
@@ -121,6 +124,7 @@ function question(request) {
   title.textContent = `${request.server}: ${request.kind === 'sampling' ? 'Permission to ask a model' : 'A question for you'}`;
   const inputs = new Map();
   if (request.kind === 'sampling') body.textContent = `${request.details.notice}\nModel: ${request.details.modelName}\nOutput limit: ${request.details.maxTokens}\n${request.details.messages.map(m => `${m.role}: ${m.content}`).join('\n\n')}`;
+  else if (request.kind === 'roots') body.textContent = `${request.details.message}\n${request.details.uri}\nTask: ${request.details.runId}`;
   else body.textContent = `${request.details.message}\nYour answers will be sent to ${request.server}.`;
   form.append(title, body);
   if (request.kind === 'elicitation') for (const [name, spec] of Object.entries(request.details.requestedSchema.properties)) {
