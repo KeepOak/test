@@ -257,6 +257,11 @@ function sessions(call: Call): Reply {
   const found = id.length >= 6 ? runsHere(store, owner, call.surface).map((run) => run.sessionId).find((sessionId) => sessionId.startsWith(id)) : undefined;
   return found && mayUseConversation(store, owner, call.surface, found) ? say("Opening that conversation.", { do: "open-session", id: found }) : say("No conversation has that id.");
 }
+/** helper-lifecycle: starting afresh stops the helpers the conversation left working (read-only access stops nothing). */
+function freshConversation(call: Call): Reply {
+  if (call.sessionId && call.access !== "read") call.host.runtime.stopHelpers(call.sessionId);
+  return say("Starting a fresh conversation.", { do: "new" });
+}
 function pane(call: Call): Reply {
   const tab = ["activity", "plan", "files", "memory"].includes(call.argument) ? call.argument : undefined;
   return say("Showing or hiding the side pane.", { do: "toggle", what: "pane", on: tab ? true : null, ...(tab ? { tab } : {}) });
@@ -269,7 +274,7 @@ export const HANDLERS: Record<string, Handler> = {
   attach: () => say("Choose a file to send with your next message.", { do: "attach" }),
   export: exportConversation,
   history: (call) => say(historyLines(call.host.runtime, call.sessionId).join("\n")),
-  new: () => say("Starting a fresh conversation.", { do: "new" }),
+  new: freshConversation,
   sessions,
   go: go(""), inbox: go("inbox"), automations: go("automations"), library: go("library"),
   customize: go("customize"), settings: go("settings"),
