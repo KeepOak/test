@@ -82,7 +82,7 @@ test("Settings search and Ctrl K draw the index once per search, and a hidden ro
   assert.ok(await builds(f.page) - before <= 1, `Settings search drew the index ${await builds(f.page) - before} times for four keys`);
 
   await box.fill("");
-  await f.page.keyboard.press("Control+k");
+  await f.page.keyboard.press("ControlOrMeta+k");
   await f.page.locator("#pal-in").waitFor({ state: "visible" });
   await f.page.keyboard.type("t");
   await settled(f.page);
