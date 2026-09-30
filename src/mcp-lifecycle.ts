@@ -85,6 +85,8 @@ const summarise = (entry: Entry): string => {
 
 /** Opens outside MCP servers only when a task needs one, and closes them when the task is done. */
 export class McpConnections {
+  private readonly reloading = new Set<string>();
+  private readonly calls = new Map<string, number>();
   private readonly entries = new Map<string, Entry>();
   /** Overridden in tests so the growing wait between tries can be stepped over. */
   backoffMs = (attempt: number): number => Math.min(200 * 2 ** attempt, 5000);
@@ -141,6 +143,7 @@ export class McpConnections {
 
   /** The connection a task needs, opened now if it is not already there. */
   async acquire(runId: string, id: string, opener?: () => Promise<McpConnection>): Promise<McpConnection> {
+    if (this.reloading.has(id)) throw new Error("This server is being reloaded in the local owner window; retry after it finishes.");
     if (opener && !this.openers.has(id)) this.openers.set(id, opener);
     const entry = this.entry(id);
     if (entry.warmTimer) { clearTimeout(entry.warmTimer); entry.warmTimer = null; }
@@ -158,6 +161,22 @@ export class McpConnections {
       entry.runs.delete(runId);
       throw error;
     }
+  }
+  /** Excludes new acquisitions while the owner reloads an idle configured server. */
+  async reloadIdle<T>(id: string, work: () => Promise<T>): Promise<T> {
+    const entry = this.entries.get(id);
+    const taskLeases = [...(entry?.runs ?? [])].some((run) => run !== `mcp:${id}`);
+    // Cached definitions hold one symbolic lease; real execution is counted by call() below.
+    if (this.reloading.has(id) || entry?.opening || taskLeases || this.calls.get(id)) throw new Error("This MCP server is busy; finish its tasks before reloading.");
+    this.reloading.add(id);
+    try { return await work(); } finally { this.reloading.delete(id); }
+  }
+  /** Counts real tool calls for both eagerly connected and on-demand servers. */
+  async call(id: string, work: () => Promise<unknown>): Promise<unknown> {
+    if (this.reloading.has(id)) throw new Error("This MCP server is being reloaded; retry after it finishes.");
+    this.calls.set(id, (this.calls.get(id) ?? 0) + 1);
+    try { return await work(); }
+    finally { const left = (this.calls.get(id) ?? 1) - 1; if (left) this.calls.set(id, left); else this.calls.delete(id); }
   }
 
   private crashed(entry: Entry): void {

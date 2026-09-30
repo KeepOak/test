@@ -56,7 +56,7 @@ function catalogForRun(store: Store, context: ToolContext): SkillCatalogEntry[] 
   if (context.runId) {
     const run = store.run(context.runId);
     if (!run || run.owner !== context.owner) throw new Error("Run not found");
-    const saved = store.events(run.id).find(event => event.kind === "skills.catalog");
+    const saved = store.events(run.id).filter(event => event.kind === "skills.catalog").at(-1);
     if (saved) {
       const listed = saved.data.entries as SkillCatalogEntry[];
       if (!context.permissions.has("skills.read")) return listed;
@@ -66,6 +66,16 @@ function catalogForRun(store: Store, context: ToolContext): SkillCatalogEntry[] 
     }
   }
   return store.skills.catalog(context.owner);
+}
+/** Explicit version refresh, without activating drafts or widening a running task's permissions. */
+export function refreshSkillCatalog(store: Store, context: ToolContext): number {
+  if (!context.permissions.has("skills.read")) throw new Error("This task cannot read skills.");
+  const run = store.run(context.runId);
+  if (!run || run.owner !== context.owner || run.status !== "running") throw new Error("Select an active task in this chat.");
+  const entries = store.governanceFor(context.owner).filterCatalog(store.skills.catalog(context.owner), context.runId);
+  store.event(run.id, "skills.catalog", { entries });
+  store.event(run.id, "skills.reloaded", { versions: entries.map(({ id, version }) => ({ id, version })) });
+  return entries.length;
 }
 export function registerSkills(registry: ToolRegistry, store: Store): void {
   registry.register({

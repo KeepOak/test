@@ -46,6 +46,7 @@ import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } f
 import { ModelPicker, staleModelMenu } from "./model-picker.js";
 import { DevicePairProposals } from "./device-pair-proposals.js";
 import { installSendPolicy, sendEnabled, setSend, OwnerAllowlistProposals } from "./owner-policy-commands.js";
+import { ExtraOwnerCommands, type ExtraOwnerHost } from "./extra-owner-commands.js";
 import { listModels } from "../model-switch.js";
 
 /**
@@ -594,6 +595,7 @@ export class ChannelRouter {
     await attached.adapter.stop();
   }
   async detachAll(): Promise<void> {
+    await this.extraOwnerCommands.close();
     if (this.pump) clearInterval(this.pump);
     this.pump = undefined;
     if (this.watchdog) clearInterval(this.watchdog);
@@ -749,6 +751,11 @@ export class ChannelRouter {
     const controlled = await this.ownerPolicyLine(message);
     if (controlled) return controlled;
     if (!sendEnabled(this.store, this.runtime.owner, message.channel, message.chatId)) return "ignored";
+    if (this.extraOwnerCommands.busy(message)) {
+      if (!message.voice && /^\/(?:stop|cancel)(?:@[\w.-]+)?\s*$/i.test(message.text.trim()) && this.policyCommandAllowed(message)) this.extraOwnerCommands.stop(message);
+      await this.deliver(message.channel, message.chatId, "An answer helper is active; /stop cancels it. Wait for it before sending another task.").catch(() => undefined);
+      return "replied";
+    }
     // Checked without waiting, so messages from one chat still reach `answer` in the order they came.
     if (this.overCeiling(message)) return "rejected";
     return this.answer(message);
@@ -1052,6 +1059,11 @@ export class ChannelRouter {
     !lockedDown(this.store, this.runtime.owner) && !this.appLocked() && !isPaused(this.store, this.runtime.owner, from.channel) && this.pairProposalAccess(from));
   private readonly policyCommandsSeen = new Set<string>();
   private readonly sendRevisions = new Map<string, number>();
+  ownerExtraHost: (() => ExtraOwnerHost) | null = null;
+  readonly extraOwnerCommands = new ExtraOwnerCommands(this.runtime,
+    (m) => this.policyCommandAllowed(m) && sendEnabled(this.store, this.runtime.owner, m.channel, m.chatId),
+    (m) => this.sessionFor(m.channel, m.chatId), (m) => this.turns.get(chatKey(m))?.runId ?? undefined,
+    () => this.ownerExtraHost?.() ?? null);
   private policyCommandAllowed(message: InboundMessage): boolean {
     return message.chatKind === "direct" && !message.caughtUp && !message.voice && !message.edited
       && !message.attachments?.length && !lockedDown(this.store, this.runtime.owner) && !this.appLocked()
@@ -1073,7 +1085,7 @@ export class ChannelRouter {
     return text.length > max ? "This conversation is too long for a chat export. Use /export in the local Branch window for the complete Markdown file." : text;
   }
   private async ownerPolicyLine(message: InboundMessage): Promise<Outcome | null> {
-    const match = /^\/(allowlist|send|export-session)(?:@[\w.-]+)?(?:\s+([^\r\n]*))?\s*$/i.exec(message.text.trim());
+    const match = /^\/(allowlist|send|export-session|review|refine|moa|reload-mcp|reload-skills|login)(?:@[\w.-]+)?(?:\s+([^\r\n]*))?\s*$/i.exec(message.text.trim());
     if (!match) return null;
     if (message.caughtUp) return "ignored";
     if (!this.policyCommandAllowed(message)) {
@@ -1092,15 +1104,18 @@ export class ChannelRouter {
       if (this.sendRevisions.size > 1000) this.sendRevisions.delete(this.sendRevisions.keys().next().value!);
     }
     if (name === "send" && on) setSend(this.store, this.runtime.owner, message, true);
+    const sourceSession = this.sessionFor(message.channel, message.chatId);
     const text = name === "allowlist" ? this.ownerAllowlistProposals.request(message, argument)
       : name === "export-session" ? (argument ? "Use /export-session with no arguments, in the current owner direct chat." : this.exportCurrentChat(message))
+      : name !== "send" ? await this.extraOwnerCommands.line(name, argument, message).catch((error: unknown) => this.runtime.hideSecrets(error instanceof Error ? error.message : String(error)))
       : on ? "Outgoing messages are on for this exact chat. Previously queued messages may now be delivered."
       : off ? "Outgoing messages will be off for this exact chat after this acknowledgement. New ordinary messages are ignored; queued messages wait. Send /send on here to resume."
       : "Use /send on or /send off, for this exact direct chat only.";
     const limit = Math.min(3000, this.adapters.get(message.channel)?.adapter.maxTextLength ?? 3000);
-    const bounded = text.length > limit ? text.slice(0, Math.max(0, limit - 55)) + "\n[More sender rules in Settings → Chat apps.]" : text;
-    const session = this.sessionFor(message.channel, message.chatId), checked = await this.outboundGuard(bounded);
-    if (!checked.blocked && this.policyCommandAllowed(message) && this.sessionFor(message.channel, message.chatId) === session)
+    const bounded = text.length > limit ? text.slice(0, Math.max(0, limit - 55)) + (name === "allowlist" ? "\n[More sender rules in Settings → Chat apps.]" : "\n[Full helper output is available in Branch.]") : text;
+    const checked = await this.outboundGuard(bounded);
+    if (!checked.blocked && this.policyCommandAllowed(message) && this.sessionFor(message.channel, message.chatId) === sourceSession
+      && this.extraOwnerCommands.deliveryAllowed(message))
       await this.adapters.get(message.channel)!.adapter.send(message.chatId, checked.text, this.quoteFor(message));
     if (name === "send" && off && this.sendRevisions.get(revisionKey) === revision && this.policyCommandAllowed(message)) setSend(this.store, this.runtime.owner, message, false);
     return "replied";

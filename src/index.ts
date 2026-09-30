@@ -1622,6 +1622,7 @@ ${result.output || "(it said nothing)"}`;
   // command-line tools the owner allowed, and replies the owner flagged.
   const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
     policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+  channels.ownerExtraHost = () => ({ mcp: ownMcp, connections: mcpConnections });
   const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
   registerBudding(registry, budding);
   scheduler.onTick.add(async () => { void budding.tick().catch(() => undefined); });

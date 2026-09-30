@@ -332,6 +332,7 @@ export class OwnMcpServers {
         connections.register(id, opener);
       },
       acquire: (runId, id) => connections.acquire(runId, id),
+      ...(connections.call ? { call: (id: string, work: () => Promise<unknown>) => connections.call!(id, work) } : {}),
       forget: async (id) => { await connections.forget?.(id); },
     } };
   }
@@ -366,6 +367,17 @@ export class OwnMcpServers {
     const saved = this.update(id, { on: false });
     this.record("Tool server switched off:", entry.name, "stopped");
     return { server: this.view(saved), said: `${entry.name} is off.` };
+  }
+  /** A locally confirmed idle reload cannot overwrite a newer owner lifecycle action. */
+  async reload(id: string, authorized: () => boolean) {
+    const entry = this.find(id), before = JSON.stringify(entry);
+    if (!entry.on || !authorized()) throw new Error("This server is no longer enabled or the reload is no longer authorized.");
+    const closing = this.shut(id), generation = this.generations.get(id);
+    await closing;
+    if (this.generations.get(id) !== generation || JSON.stringify(this.find(id)) !== before || !authorized())
+      throw new Error("A newer lifecycle or source change overtook reload; no start was requested.");
+    this.update(id, { on: false });
+    return this.start(id);
   }
 
   async remove(id: string) {

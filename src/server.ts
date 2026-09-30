@@ -3110,6 +3110,14 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/native-requests" || path === "/api/channels/native-requests/confirm") {
+    if (startedWithShortLivedKey() || throughDoor(request)) throw new Error("Native chat requests require the local owner window.");
+    if (path === "/api/channels/native-requests" && request.method === "GET") return { proposals: app.channels.extraOwnerCommands.list() };
+    if (!path.endsWith("/confirm") || request.method !== "POST") throw new HttpError(405, "Use GET or POST confirm.");
+    const input = z.object({ id: z.string().regex(/^[a-f0-9]{32}$/) }).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("Confirm native chat request");
+    return app.channels.extraOwnerCommands.confirm(input.id);
+  }
   if (path === "/api/channels/owner-policy-proposals" || path === "/api/channels/owner-policy-proposals/confirm") {
     if (startedWithShortLivedKey() || throughDoor(request)) throw new Error("Chat admission requests require the local owner window.");
     if (path === "/api/channels/owner-policy-proposals" && request.method === "GET") return { proposals: app.channels.ownerAllowlistProposals.list() };
