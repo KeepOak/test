@@ -90,8 +90,9 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
   if (path === "/api/never-break/proposal/discard") { await discardProposal(dataDir); return neverBreakView(dataDir, extras.gatewayPower); }
   // The owner rolls back the last change they accepted (the journal in gateway-config.ts); timings only.
   if (path === "/api/never-break/rollback") {
-    if (!z.object({}).strict().safeParse(await readBody(request)).success) throw new NeverBreakApiError(400, "Send an empty body to roll back.");
-    try { await rollbackAccepted(dataDir); } catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
+    const body = z.object({ acceptedAt: z.iso.datetime().optional() }).strict().safeParse(await readBody(request));
+    if (!body.success) throw new NeverBreakApiError(400, "Send an empty body or the accepted change's timestamp to roll back.");
+    try { await rollbackAccepted(dataDir, body.data.acceptedAt); } catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
     return { ...(await neverBreakView(dataDir, extras.gatewayPower)), note: "Rolled back. It takes effect the next time Branch starts." };
   }
   // The window asks the engine that holds the database for a copy, before it tries an update on it.

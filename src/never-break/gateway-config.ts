@@ -216,10 +216,11 @@ async function journalChange(dataDir: string, change: AcceptedChange): Promise<v
  * and the switch and engine settings stay as they are now. Refused when the timings are no longer what
  * that change made them (something else changed them since), so a roll back never undoes a later change.
  */
-export async function rollbackAccepted(dataDir: string): Promise<GatewayConfig> {
+export async function rollbackAccepted(dataDir: string, acceptedAt?: string): Promise<GatewayConfig> {
   const changes = await readChanges(dataDir);
   const last = changes.at(-1);
   if (!last || last.rolledBackAt) throw new Error("There is no accepted change to roll back.");
+  if (acceptedAt !== undefined && last.acceptedAt !== acceptedAt) throw new Error("A different gateway change was accepted. Read the latest change before undoing it.");
   const { config: current } = await loadGatewayConfig(dataDir);
   if (JSON.stringify(timingsOf(current)) !== JSON.stringify(last.after))
     throw new Error("The gateway's settings changed after that change was accepted, so it cannot be rolled back as it was.");

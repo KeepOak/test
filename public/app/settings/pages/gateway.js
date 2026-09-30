@@ -1,4 +1,5 @@
 import { controlRow } from "../row-kit.js";
+import { gatewayDiagnostics, gatewayAcceptedChange, initGatewayHistory } from "../gateway-history.js";
 /* Settings › Gateway, 1:1 with the prototype at each level, from GET /api/never-break. "Carry on interrupted work by
    itself" is the gateway's own mode (POST /api/never-break): "on" carries interrupted work on after a restart, "when-needed"
    only offers it (src/never-break/resume.ts), so the switch saves "on" or "when-needed"; turned on while the gateway is off
@@ -61,6 +62,7 @@ async function answerProposal(use) {
 }
 
 export function init() {
+  initGatewayHistory(loadGateway);
   initMore17();
   const reading = loadGateway();
   on("gw-prop", (el) => answerProposal(el.dataset.v === "use"));
@@ -159,7 +161,7 @@ const ACTIONS = () => `<div class="acts" data-css="margin-top:16px"><button clas
 /* The gateway's own settings, as the engine holds them. */
 function technical(gw) {
   const c = gw?.config ?? {};
-  const rows = [["mode", gw?.mode], ["startSeconds", c.startSeconds], ["holdSeconds", c.holdSeconds], ["maxQuickCrashes", c.maxQuickCrashes], ["gapSeconds", c.gapSeconds]]
+  const rows = [["mode", gw?.mode], ["keepAwake", c.keepAwake], ["startSeconds", c.startSeconds], ["holdSeconds", c.holdSeconds], ["maxQuickCrashes", c.maxQuickCrashes], ["gapSeconds", c.gapSeconds], ["watchSeconds", c.watchSeconds]]
     .filter(([, v]) => v != null).map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("");
   return `<div class="sec"><h2>${t("settingsGrown.level.technical")}</h2><dl class="kv">${rows}</dl></div>`;
 }
@@ -176,7 +178,7 @@ const chatEvenMore = () => sec15(t("window.settings.gateway.chat-apps-even-more"
 export function draw() {
   const gw = gwData;
   const lev = level();
-  let html = BASE() + statusSection(gw) + modeSection(gw) + doing(gw) + proposalTile(gw) + ACTIONS();
+  let html = BASE() + statusSection(gw) + modeSection(gw) + gatewayDiagnostics(gw, D.health) + doing(gw) + proposalTile(gw) + gatewayAcceptedChange(gw) + ACTIONS();
   if (lev < 2) html += `<p class="hint">${t("window.settings.computer.switch-to-technical-bottom-left-to")}</p>`;
   else html += technical(gw);
   if (lev >= 1) html += chatMore();
