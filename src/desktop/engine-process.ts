@@ -31,6 +31,7 @@ import { z } from "zod";
 import { LiveInUseSchema } from "./engine-link.js";
 import { trustedCaptureLease } from "./capture-link.js";
 import { EnginePowerRecovery } from "./engine-power.js";
+import { startPostUpdateDoctor } from "./post-update-doctor.js";
 
 const UseWindowSchema = z.object({ appRoot: z.string().min(1).max(4096), inUse: LiveInUseSchema.nullable() }).strict();
 /** This engine's own copy of a window file (named as under public/), to tell what a live build changed. */
@@ -186,9 +187,20 @@ async function start(config: EngineConfig): Promise<void> {
   let integrationClose: (() => Promise<void>) | undefined;
   let serverClose: (() => Promise<void>) | undefined;
   let stopping: Promise<void> | undefined;
+  let closeDoctor: (() => void) | undefined;
+  let doctorStarted = false, doctorPort = 0;
+  const doctor = () => {
+    if (!config.packaged || stopping || doctorStarted || !doctorPort) return;
+    doctorStarted = true;
+    try {
+      closeDoctor = startPostUpdateDoctor({ store: branch.store, owner: branch.runtime.owner, version: branch.version,
+        workspace: branch.runtime.workspace, port: doctorPort, redact: (text) => branch.runtime.hideSecrets(text) });
+    } catch (error) { diagnose("updater", "warn", branch.runtime.hideSecrets(`The post-update doctor could not start: ${String(error)}`)); }
+  };
   const power = new EnginePowerRecovery({ checkpoint: () => { branch.store.sqlite.exec("PRAGMA wal_checkpoint(PASSIVE)"); },
     due: () => branch.scheduler.tick(), flush: () => branch.channels.flush() });
   const stop = () => (stopping ??= (async () => {
+    closeDoctor?.();
     power.close();
     try { await serverClose?.(); } finally {
       try { await integrationClose?.(); } finally { await branch.close(); }
@@ -208,11 +220,15 @@ async function start(config: EngineConfig): Promise<void> {
     if (!inUse) { dropLiveWindow(); return { changed: [], ms: 0 }; }
     return useLiveWindow(appRoot, inUse, ownWindowFile);
   });
-  link.handle("carry-on", () => resumeHandedOver({ store: branch.store, runtime: branch.runtime }).map(({ runId, resumed }) => {
-    // A chat's task is answered in that chat when it finishes here (the older engine said nothing for it).
-    void branch.channels.carryOnReply(runId, resumed).catch((error: Error) => diagnose("channels", "warn", `A chat's handed-over task could not be answered: ${error.message}`));
-    return runId;
-  }));
+  link.handle("carry-on", () => {
+    const runIds = resumeHandedOver({ store: branch.store, runtime: branch.runtime }).map(({ runId, resumed }) => {
+      // A chat's task is answered in that chat when it finishes here (the older engine said nothing for it).
+      void branch.channels.carryOnReply(runId, resumed).catch((error: Error) => diagnose("channels", "warn", `A chat's handed-over task could not be answered: ${error.message}`));
+      return runId;
+    });
+    doctor();
+    return runIds;
+  });
   // A window or helper of the app died: written into the same record of failures the engine keeps.
   link.handle("crash", (args) => {
     const report = args as { where?: unknown; message?: unknown };
@@ -249,6 +265,8 @@ async function start(config: EngineConfig): Promise<void> {
     healthKey = server.token;
     healthy = healthOf(branch, server.url, () => healthKey);
     post({ kind: "ready", url: server.url, token: server.token });
+    doctorPort = Number(new URL(server.url).port);
+    if (!config.holdHandedOver) doctor();
     // Main keeps the last count of working tasks, so a Quit still asks while the engine is too busy to answer at once.
     let told = -1;
     const tell = () => {

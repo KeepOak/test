@@ -5,13 +5,17 @@ import type { NetworkPolicy } from "./network-policy.js";
 import { catalogEntry } from "./provider-catalog.js";
 import { GeminiLiveSession } from "./realtime-gemini.js";
 import { OpenAiRealtimeSession } from "./realtime-openai.js";
-import type { RealtimeSession, RealtimeSettings, RealtimeTool } from "./realtime.js";
+import { chatgptLiveModel } from "./realtime-chatgpt.js";
+import type { RealtimeSession, RealtimeSettings, RealtimeTool, RealtimePlaybackItem } from "./realtime.js";
 import { argumentFingerprint, type Runtime } from "./runtime.js";
 import type { Store } from "./store.js";
 import type { OpenSpan } from "./tracing.js";
 import { settingsToolNames } from "./settings-kit/tools.js";
 import { voiceSettings, type VoiceSettings } from "./voice.js";
 import { audioOf } from "./voice-service.js";
+import { withAccountCall } from "./accounts/context.js";
+import { LiveAgentConsultation } from "./realtime-consultation.js";
+import { lockedDown } from "./lockdown.js";
 
 /**
  * A live conversation, as the rest of Branch sees it. It decides whether one is possible at all,
@@ -28,6 +32,8 @@ export interface LivePlan {
   reason: string;
   service: "openai" | "gemini" | null;
   model: string;
+  transport?: "webrtc";
+  answerSdp?: string;
   /** The limits this conversation would run under. */
   maxMinutes: number;
   maxDollars: number;
@@ -59,6 +65,12 @@ export function livePlanFor(settings: VoiceSettings, preset: ModelPreset | undef
     return { available: false, reason: keptHere, service: null, model: "", ...limits };
   const service = liveServiceOf(preset);
   const route = audioOf(preset?.provider);
+  if (preset?.provider.realtimeTransport === "chatgpt-webrtc" && preset.provider.realtime && !settings.liveVoiceDetection)
+    return { available: false, reason: "ChatGPT live voice requires automatic voice detection.", service: null, model: "", ...limits };
+  if (preset?.provider.realtimeTransport === "chatgpt-webrtc" && preset.provider.realtime) return {
+    available: true, service: "openai", model: chatgptLiveModel, transport: "webrtc", ...limits,
+    reason: `Live voice uses your selected ChatGPT account and stops after ${limits.maxMinutes} minutes. Branch actions use the usual approval cards. Subscription quota and dollar usage are unavailable; Branch cannot enforce the dollar limit here.`,
+  };
   if (!service || !route) return { available: false, reason: noRealtime, service: null, model: "", ...limits };
   return {
     available: true, service, model: preset?.model ?? "",
@@ -93,8 +105,16 @@ export class LiveConversation {
   private startedAt = 0;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private audioGeneration = 0;
+  private readonly opening = new AbortController();
   private span: OpenSpan | null = null;
   private readonly partial = { person: "", assistant: "" };
+  private consultation: LiveAgentConsultation | undefined;
+  private consultationInput = "";
+  private liveTranscript = "";
+  private inputGeneration = 0;
+  private consumedInputGeneration = -1;
+  private accountWatch: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly deps: LiveVoiceDeps,
@@ -107,40 +127,48 @@ export class LiveConversation {
   get spent(): number { return this.spentDollars; }
 
   /** Opens the conversation, or refuses in plain words without a byte being sent anywhere. */
-  async start(): Promise<LivePlan> {
+  async start(offer = ""): Promise<LivePlan> {
     const settings = voiceSettings(this.deps.store, this.deps.owner);
     const preset = this.deps.models.plan(this.deps.owner, this.sessionId).candidates[0];
     const plan = livePlanFor(settings, preset);
     if (!plan.available || !preset) throw new Error(plan.reason);
-    const session = this.build(settings, preset, plan.service!);
+    const session = await this.build(settings, preset, plan, offer);
+    if (this.stopped) { session.close(); throw new Error("The conversation was stopped."); }
+    this.session = session;
     this.wire(session, settings);
+    if (session.onAgentConsult && session.agentConsultResult) this.wireConsultation(session, preset);
     // The task a live conversation hangs off is made outside a model round, so it has no trace of
     // its own yet. One is started here, before the connection is opened, so the span written for
     // that connection has somewhere to hang and the whole conversation reads as one trace.
     this.span = this.deps.runtime.tracer.startRun(this.runId, "A live conversation", {
-      service: plan.service ?? "", model: preset.model,
+      service: plan.service ?? "", model: plan.model,
     });
     await session.open();
-    this.session = session;
+    if (this.stopped) { session.close(); throw new Error("The conversation was stopped."); }
     this.startedAt = Date.now();
     this.timer = setTimeout(() => this.reachedCap(`${settings.liveMaxMinutes} minutes`), settings.liveMaxMinutes * 60_000);
     this.deps.store.event(this.runId, "voice.live.started", {
-      service: plan.service, model: preset.model, maxMinutes: plan.maxMinutes, maxDollars: plan.maxDollars,
-      recordings: settings.keepLiveRecordings,
+      service: plan.service, model: plan.model, maxMinutes: plan.maxMinutes, maxDollars: plan.maxDollars,
+      recordings: plan.transport !== "webrtc" && settings.keepLiveRecordings,
     });
-    return plan;
+    return session.answerSdp ? { ...plan, answerSdp: session.answerSdp } : plan;
   }
-  private build(settings: VoiceSettings, preset: ModelPreset, service: "openai" | "gemini"): RealtimeSession {
-    const route = audioOf(preset.provider)!;
+  private async build(settings: VoiceSettings, preset: ModelPreset, plan: LivePlan, offer: string): Promise<RealtimeSession> {
     const shape: RealtimeSettings = {
-      model: preset.model,
+      model: plan.model,
       voice: settings.voiceId === "default" ? "" : settings.voiceId,
       instructions: this.instructions(),
       serverVoiceDetection: settings.liveVoiceDetection,
       tools: this.tools(),
     };
+    if (plan.transport === "webrtc" && preset.provider.realtime) {
+      if (!settings.liveVoiceDetection) throw new Error("ChatGPT live voice requires automatic voice detection.");
+      return withAccountCall({ owner: this.deps.owner, sessionId: this.sessionId, runId: this.runId }, () =>
+        preset.provider.realtime!(this.deps.policy, shape, offer, this.runId, this.opening.signal));
+    }
+    const route = audioOf(preset.provider)!;
     const options = { endpoint: route.endpoint, apiKey: route.apiKey, runId: this.runId };
-    return service === "gemini"
+    return plan.service === "gemini"
       ? new GeminiLiveSession(this.deps.policy, shape, options)
       : new OpenAiRealtimeSession(this.deps.policy, shape, options);
   }
@@ -172,7 +200,8 @@ export class LiveConversation {
   }
 
   private wire(session: RealtimeSession, settings: VoiceSettings): void {
-    session.onAudio = (pcm16) => {
+    session.onAudio = (pcm16, item) => {
+      this.out.notice("voice.live.audio", { ...item, generation: this.audioGeneration });
       this.out.audio(pcm16);
       // The sound goes to the screen and nowhere else. What follows writes down how big each piece
       // was and never the piece itself, so no path through here keeps a copy of anything spoken.
@@ -180,10 +209,30 @@ export class LiveConversation {
         this.deps.store.event(this.runId, "voice.live.audio", { bytes: pcm16.byteLength });
     };
     session.onTranscript = (part) => this.heard(part.who, part.text, part.final);
+    session.onSpeechStarted = () => this.out.notice("voice.live.speech_started", {});
     session.onToolCall = (call) => void this.useTool(call.id, call.name, call.arguments);
     session.onUsage = (usage) => this.spend(usage.inputTokens, usage.outputTokens);
     session.onError = (message) => this.out.notice("voice.live.problem", { message });
     session.onClosed = (reason) => this.finish(reason);
+  }
+
+  private wireConsultation(session: RealtimeSession, preset: ModelPreset): void {
+    const current = (): boolean => !this.stopped && this.session === session && this.deps.store.isOpen &&
+      this.deps.store.profiles.isOwner() && !this.deps.runtime.fullAccessLocked() && !lockedDown(this.deps.store, this.deps.owner) &&
+      this.deps.store.ownsSession(this.deps.owner, this.sessionId) && this.deps.store.run(this.runId)?.status === "running" &&
+      this.deps.models.plan(this.deps.owner, this.sessionId).candidates[0]?.id === preset.id &&
+      this.deps.models.presets.get(preset.id)?.provider === preset.provider && (session.consultationCurrent?.() ?? false);
+    this.consultation = new LiveAgentConsultation({ ...this.deps, runId: this.runId, sessionId: this.sessionId,
+      model: preset.id, session, current, instructions: this.instructions(),
+      transcript: () => {
+        const input = this.inputGeneration === this.consumedInputGeneration ? "" : this.partial.person || this.consultationInput;
+        this.consumedInputGeneration = this.inputGeneration;
+        this.consultationInput = "";
+        return { input, context: this.liveTranscript };
+      }, notice: (data) => this.out.notice("voice.live.consultation", data) });
+    session.onAgentConsult = ({ id, question }) => void this.consultation?.request(id, question);
+    this.accountWatch = setInterval(() => { if (!current()) this.stop("The live voice account or permission changed."); }, 200);
+    this.accountWatch.unref();
   }
 
   /**
@@ -193,8 +242,9 @@ export class LiveConversation {
    */
   private heard(who: "person" | "assistant", text: string, final: boolean): void {
     if (!text) return;
+    if (who === "person" && !this.partial.person) this.inputGeneration++;
     this.out.notice("voice.live.transcript", { who, text, final });
-    if (!final) { this.partial[who] += text; return; }
+    if (!final) { this.partial[who] = (this.partial[who] + text).slice(-8000); return; }
     // One service sends the rest of the sentence at the end, the other sends the whole of it again.
     // Joining the pieces blindly would say it twice, so a last piece that already contains what came
     // before it stands on its own.
@@ -202,6 +252,8 @@ export class LiveConversation {
     const whole = (text.startsWith(heardSoFar) ? text : heardSoFar + text).trim();
     this.partial[who] = "";
     if (!whole) return;
+    if (who === "person" && this.inputGeneration !== this.consumedInputGeneration) this.consultationInput = whole;
+    this.liveTranscript = `${this.liveTranscript}\n${who}: ${this.deps.runtime.hideSecrets(whole)}`.slice(-8000);
     // Anything the owner has saved as a password or key is taken back out before what was said
     // becomes an ordinary message, which is kept and shown like any other.
     this.deps.store.message(this.sessionId, {
@@ -301,6 +353,8 @@ export class LiveConversation {
   say(text: string): void {
     if (!this.session) throw new Error("There is no live conversation open");
     this.deps.store.message(this.sessionId, { role: "user", content: text });
+    this.inputGeneration++; this.consultationInput = text;
+    this.liveTranscript = `${this.liveTranscript}\nperson: ${this.deps.runtime.hideSecrets(text)}`.slice(-8000);
     this.session.sendText(text);
   }
   /** Bucket 17: a picture shown while talking. Only its name is written into the conversation. */
@@ -312,12 +366,15 @@ export class LiveConversation {
   }
   audio(chunk: Uint8Array): void { this.session?.sendAudio(chunk); }
   done(): void { this.session?.commit(); }
-  interrupt(): void {
-    this.session?.interrupt();
+  interrupt(playback: readonly RealtimePlaybackItem[] = []): void {
+    this.audioGeneration += 1;
+    this.session?.interrupt(playback);
     this.partial.assistant = "";
+    this.out.notice("voice.live.interrupted", { generation: this.audioGeneration });
     this.deps.store.event(this.runId, "voice.live.interrupted", {});
   }
   stop(reason = "You ended the conversation"): void {
+    this.opening.abort();
     const session = this.session;
     this.session = null;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
@@ -327,6 +384,9 @@ export class LiveConversation {
   private finish(reason: string): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.consultation?.stop(); this.consultation = undefined;
+    if (this.accountWatch) clearInterval(this.accountWatch);
+    this.accountWatch = undefined;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     const seconds = this.startedAt ? Math.round((Date.now() - this.startedAt) / 1000) : 0;
     this.deps.store.event(this.runId, "voice.live.ended", {
@@ -363,7 +423,7 @@ export class LiveConversations {
   /** Tasks made for a live conversation that has not opened yet, each with the end of its wait. */
   private readonly waiting = new Map<string, NodeJS.Timeout>();
   /** Tasks whose conversation is being opened right now. */
-  private readonly starting = new Set<string>();
+  private readonly starting = new Map<string, LiveConversation>();
   /** How long a task waits for its conversation to open (liveConnectWaitMs); read when the wait starts. */
   connectWaitMs = liveConnectWaitMs;
   constructor(private readonly deps: LiveVoiceDeps) {
@@ -383,19 +443,22 @@ export class LiveConversations {
    * `start`, not only the route that hands out a live conversation's task.
    */
   refuse: (sessionId: string) => string | null = () => null;
-  async start(runId: string, sessionId: string, out: LiveOutput): Promise<{ conversation: LiveConversation; plan: LivePlan }> {
+  async start(runId: string, sessionId: string, out: LiveOutput, offer = ""): Promise<{ conversation: LiveConversation; plan: LivePlan }> {
     const refused = this.refuse(sessionId); // phase2/rooms
     if (refused) throw new Error(refused);
     this.stop(runId);
     const conversation = new LiveConversation(this.deps, runId, sessionId, out);
-    this.starting.add(runId);
+    this.starting.set(runId, conversation);
     try {
-      const plan = await conversation.start();
+      const plan = await conversation.start(offer);
+      const changed = this.refuse(sessionId);
+      if (changed || this.starting.get(runId) !== conversation) throw new Error(changed ?? "The conversation was stopped.");
       this.open.set(runId, conversation);
       this.forget(runId); // it opened in time, so its task no longer waits
       return { conversation, plan };
+    } catch (error) { conversation.stop("The live conversation could not be opened"); throw error;
     } finally {
-      this.starting.delete(runId);
+      if (this.starting.get(runId) === conversation) this.starting.delete(runId);
     }
   }
   /**
@@ -440,16 +503,18 @@ export class LiveConversations {
     return true;
   }
   stop(runId: string, reason?: string): boolean {
-    const conversation = this.open.get(runId);
+    const conversation = this.open.get(runId) ?? this.starting.get(runId);
     if (!conversation) return false;
     this.open.delete(runId);
+    this.starting.delete(runId);
     conversation.stop(reason);
     return true;
   }
   /** Ends every live conversation: what Lock, the end of a task and closing the app all do. */
   closeAll(reason = "Branch was locked"): number {
-    const count = this.open.size;
-    for (const runId of [...this.open.keys()]) this.stop(runId, reason);
+    const keys = new Set([...this.open.keys(), ...this.starting.keys()]);
+    const count = keys.size;
+    for (const runId of keys) this.stop(runId, reason);
     this.deps.policy.closeSockets();
     return count;
   }
