@@ -9,6 +9,7 @@
 import { $, esc, render, renderNow, pressIn, whenReleased } from "../core/dom.js";
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
+import { todayActivityHTML } from "./today-activity.js";
 import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
 import { S, E, refresh, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
@@ -328,7 +329,8 @@ function tasksPop(bgListed) {
 async function openTasks(el) {
   let listed = false;
   try { listed = ((await api("commands?surface=window")).commands ?? []).some((c) => c.name === "bg"); } catch (error) { toast(error.message); }
-  openPop(el, tasksPop(listed));
+  const today = await todayActivityHTML();
+  openPop(el, tasksPop(listed) + today);
 }
 function startInBackground() {
   closePop();

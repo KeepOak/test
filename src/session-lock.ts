@@ -73,6 +73,8 @@ export class AppLockRefusal extends Error {
 interface PinRow { salt: string; pin_hash: Uint8Array; wrong: number; wait_until: number; locked_at: number | null }
 
 export class SessionLock {
+  /** Monotonic fence for work awaiting input across lock/unlock transitions. */
+  authorityRevision = 0;
   private lastActive: number;
   private lockedAt: number | null = null;
   /** Whether a PIN is set, read once and kept up to date here: every open stream asks it often. */
@@ -120,6 +122,7 @@ export class SessionLock {
   }
   /** Locks, and with a PIN set writes the lock down so a restart keeps it (Q040). */
   private markLocked(): void {
+    this.authorityRevision++;
     this.lockedAt = this.now();
     if (this.hasPin) this.store.sqlite.prepare("UPDATE app_lock_pin SET locked_at=? WHERE owner=?").run(this.lockedAt, this.owner);
   }
@@ -141,6 +144,7 @@ export class SessionLock {
       this.checkPin(pin);
     }
     const wasLocked = this.lockedAt !== null;
+    if (wasLocked) this.authorityRevision++;
     this.lockedAt = null;
     if (this.hasPin) this.store.sqlite.prepare("UPDATE app_lock_pin SET locked_at=NULL WHERE owner=?").run(this.owner);
     this.lastActive = this.now();

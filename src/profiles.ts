@@ -210,6 +210,7 @@ export class Profiles {
   }
   /** Puts the window on a profile (null: the owner), remembered across a restart while the owner's PIN is set. */
   private leaveOn(profileId: string | null): void {
+    this.authorityRevision++;
     this.current = profileId;
     // Without the owner's PIN nothing is remembered, and nothing touches the database.
     if (this.ownerPinSet) this.db.prepare("UPDATE household_owner_pin SET active_profile=? WHERE owner=?").run(profileId, this.owner);
@@ -284,6 +285,8 @@ export class Profiles {
   isOwner(): boolean {
     return this.judged() === null;
   }
+  /** Invalidates owner operations waiting on an asynchronous request body, including switch-away-and-back. */
+  authorityRevision = 0;
   /** Refuses anything only the owner may reach: their secrets, their projects, their settings. */
   requireOwner(what = "This"): void {
     if (this.judged() !== null)
