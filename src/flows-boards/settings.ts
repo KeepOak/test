@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
 import { unsetRecord } from "../ship-on.js";
+import { orchardTools } from "../orchard/model.js";
 
 /**
  * Bucket R17-H: flows and boards. Each part has the owner's three-way switch — off, when needed, on —
@@ -34,15 +35,19 @@ export const boardKey = (part: BoardPart): string => `flowboards-${part}`;
  */
 export const boardShipsOn: Partial<Record<BoardPart, BoardMode>> = {
   ...Object.fromEntries(boardParts.map((part) => [part, "when-needed"])),
-  // Kept off by the owner's rule (f), safety: the shared board stays off until its tools declare what they touch.
-  kanban: "off",
+  // Orchard (src/orchard, the owner's rule, 2026-09-27: ships on). The reason it was kept off is met: every Orchard tool
+  // declares what it touches (reach "local", target "orchard:<board or card>"). It pulls only cards the owner posted or
+  // said yes to, never while Lockdown is on or its Trunk is paused, and each runs under the owner's approval rules exactly
+  // as they are; none of (a)–(f). "When needed" like the rest: it works, and its tools wait in the index until a task
+  // calls for them, so no task carries them from its first round.
+  kanban: "when-needed",
 };
 
 /** What each part is, in the owner's words, for the cards and for a refusal. */
 export const boardLabels: Record<BoardPart, string> = {
   "time-travel": "Going back to an earlier step of a flow",
   "recipe-checks": "Checks, clean-up and retries for saved procedures",
-  kanban: "The shared board for you and the assistant",
+  kanban: "Orchard, the task board your Trunks work from",
   widgets: "Live widgets the assistant builds",
   "waiting-line": "Changing the waiting line, and what happens when you type while it works",
   focus: "Focus view",
@@ -53,7 +58,7 @@ export const boardLabels: Record<BoardPart, string> = {
 export const boardTools: Record<BoardPart, readonly string[]> = {
   "time-travel": ["flow.steps"],
   "recipe-checks": ["procedures.replay_checked"],
-  kanban: ["board.cards", "board.card_add", "board.card_move", "board.card_handoff"],
+  kanban: orchardTools,
   widgets: ["widgets.list", "widgets.propose"],
   "waiting-line": [],
   focus: [],

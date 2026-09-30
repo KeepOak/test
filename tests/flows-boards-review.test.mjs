@@ -244,7 +244,7 @@ test("review: the new look-only permissions are look-only, and the changing ones
   for (const part of ["kanban", "widgets", "install-requests"]) on(part);
   for (const permission of ["boards.read", "widgets.read", "installs.read"]) assert.equal(isReadOnlyPermission(permission), true, permission);
   for (const permission of ["boards.write", "widgets.propose", "installs.request"]) assert.equal(isReadOnlyPermission(permission), false, permission);
-  assert.equal(app.registry.permissionOf("board.cards"), "boards.read");
+  assert.equal(app.registry.permissionOf("orchard.cards"), "boards.read");
   assert.equal(app.registry.permissionOf("install.requests"), "installs.read");
 });
 
@@ -263,10 +263,10 @@ test("review: every switch is classified; the ones that reach further are never 
   for (const key of ["flowboards-recipe-checks:0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f", "flowboards-widget-ideas", "flowboards-install-list", "flowboards-busy-mode"])
     assert.equal(classify(key, "mode"), "blocked", key);
 
-  const { changes } = changesFor(app.store, app.runtime.owner, [{ key: "flowboards-kanban", field: "mode", value: "on" }]);
+  const { changes } = changesFor(app.store, app.runtime.owner, [{ key: "flowboards-kanban", field: "mode", value: "off" }]);
   applyChanges(app.store, app.runtime.owner, changes, { accept: changes.map((change) => change.id), confirmLoosening: true });
-  assert.equal(app.flowsBoards.mode("kanban"), "on");
-  assert.ok(app.registry.names().includes("board.cards"), "switched on from a settings file, the tools are there");
+  assert.equal(app.flowsBoards.mode("kanban"), "off");
+  assert.ok(!app.registry.names().includes("orchard.cards"), "switched off from a settings file, the tools are gone");
 });
 
 /* ---------- who may read ---------- */
@@ -274,16 +274,16 @@ test("review: every switch is classified; the ones that reach further are never 
 test("review: a household person's task or a chat sees none of the owner's cards, widgets, flow steps or install requests", async (t) => {
   const { app, on } = await fixture(t);
   for (const part of ["kanban", "widgets", "time-travel", "install-requests"]) on(part);
-  app.flowsBoards.kanban.add({ title: "The owner's private errand" }, "owner");
+  app.flowsBoards.orchard.add({ title: "The owner's private errand" }, { kind: "owner" });
   const chat = app.store.createRun(app.runtime.owner, "from a chat").id;
   app.store.event(chat, "channel.inbound", { channel: "telegram", chatId: "1", messageId: "1" });
-  const reads = [["board.cards", {}], ["widgets.list", {}], ["flow.steps", { runId: ownersRun(app) }], ["install.requests", {}]];
+  const reads = [["orchard.cards", {}], ["widgets.list", {}], ["flow.steps", { runId: ownersRun(app) }], ["install.requests", {}]];
   for (const [tool, args] of reads) {
     await assert.rejects(asPerson({ profileId: "kid", keyId: "k1" }, () => callAs(app, ownersRun(app), tool, args)), /owner/, `${tool} as a household person`);
     if (tool !== "install.requests") await assert.rejects(callAs(app, chat, tool, args), /owner/, `${tool} from a chat`);
   }
-  const mine = await callAs(app, ownersRun(app), "board.cards", {});
-  assert.equal(mine.lanes.todo[0].title, "The owner's private errand", "the owner's own work still reads it");
+  const mine = await callAs(app, ownersRun(app), "orchard.cards", {});
+  assert.ok(Object.values(mine.lanes).flat().some((card) => card.title === "The owner's private errand"), "the owner's own work still reads it");
 });
 
 test("review: a chat sees only the requests a chat made, never the owner's own", async (t) => {

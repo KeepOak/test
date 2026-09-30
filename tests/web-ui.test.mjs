@@ -499,6 +499,8 @@ const SHARED_WITH_FRENCH = new Set([
   "15 minutes", "Telegram", "Kit", "Note", "Instructions", "Notifications", "{n} conversation", "{n} conversations", "Photo",
   // Pets French names the same, and the keyboard's Ctrl key.
   "Fennec", "Capybara", "Koala", "Hamster", "Ctrl",
+  // Orchard and Canopy are Branch's own names for its board and its live view, as "Trunks" is; "questions" is French too.
+  "Orchard", "Canopy", "{count} questions",
 ]);
 test("Q6 French is a real translation, not the English file under another name", async (t) => {
   const english = JSON.parse(await readFile(join(PUBLIC, "locales", "en.json"), "utf8"));

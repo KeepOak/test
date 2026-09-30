@@ -482,7 +482,7 @@ const comfort: SettingSpec[] = [
   safetyPart("history-repair", "Tidying a conversation before it is sent", "guard"), // "repair" reads as safety-shaped (pair), so it is a guard
   // r17-h: going back in a flow, the shared board, the waiting line and focus view only rearrange the owner's own work.
   board("time-travel", "Going back in a flow", "automations:procedures", "plain"),
-  board("kanban", "The shared board", "automations:scheduled", "plain"),
+  board("kanban", "Orchard, the task board", "automations:scheduled", "plain"), // Orchard (src/orchard): the board the Trunks work from
   board("waiting-line", "Changing the waiting line", "automations:scheduled", "plain"),
   board("focus", "Focus view", "settings:appearance", "plain"),
   {

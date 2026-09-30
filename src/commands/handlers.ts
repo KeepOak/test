@@ -16,6 +16,7 @@ import { promptsCommand } from "./saved.js";
 import { trunkCommand } from "./trunk.js"; // R17-A
 import { accountCommand } from "./account.js"; // mac6/accounts
 import { BOARD_HANDLERS } from "../flows-boards/commands.js"; // r17-h
+import { orchard } from "../orchard/commands.js"; // Orchard
 import { AUTONOMY_HANDLERS } from "../autonomy/commands.js"; // r17-b
 import { initCommand } from "../coding/commands.js"; // mac7/r17-d
 import { REACH_HANDLERS } from "../reach/commands.js"; // r17-i
@@ -291,6 +292,7 @@ export const HANDLERS: Record<string, Handler> = {
   adapt: adaptCommand, // mac7/adapt: get what a stopped task is missing, then carry it on
   ...REACH_HANDLERS, // r17-i: /platform
   ...BOARD_HANDLERS, // r17-h: /queue, /busy, /focus, /installs
+  orchard, // Orchard: /orchard
   learn: learnCommand, // mac7/learn
   steer, skill, // CHAT-192, CHAT-205
   // CHAT-187: the terminal's own /team, /find and /channels, in the window too (the terminal keeps its own runners).

@@ -33,7 +33,7 @@ test("two ambiguous phrasings each come back as one question, with nothing plann
   assert.equal(board.planned, false);
   assert.deepEqual(board.choices.map((one) => one.setting).sort(), ["asks-project-board.mode", "flowboards-kanban.mode"]);
   assert.match(board.question, /Project boards/);
-  assert.match(board.question, /The shared board/);
+  assert.match(board.question, /Orchard/);
   assert.equal((board.question.match(/\?/g) ?? []).length, 1, "exactly one question");
   assert.equal(board.preview, undefined);
 
@@ -92,7 +92,7 @@ test("in a conversation, an ambiguous request reaches the model as a question an
       seen.push(JSON.stringify(request.messages));
       return calls++ === 0
         ? { content: "", toolCalls: [{ id: "find-call", name: "settings.find", arguments: JSON.stringify({ request: "turn on the board" }) }] }
-        : { content: "Do you mean Project boards or The shared board?", toolCalls: [] };
+        : { content: "Do you mean Project boards or Orchard?", toolCalls: [] };
     },
   };
   const { app, values } = await fixture(t, provider);

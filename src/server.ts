@@ -151,6 +151,9 @@ import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
 import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
+import { handlesOrchardPath, orchardApi, OrchardHttpError, type CardLive } from "./orchard/api.js"; // Orchard
+import { canopyView, handlesCanopyPath } from "./canopy.js"; // Canopy
+import { pickedDevice } from "./devices/tools.js"; // Canopy: the computer a conversation picked
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
 import { handlesLearnPath, learnApi, LearnHttpError } from "./learn/api.js"; // mac7/learn
@@ -4472,6 +4475,31 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           return;
         }
         // ---- end of the r17-h block ----
+        // ---- Orchard under /api/orchard (src/orchard/api.ts), and Canopy at /api/canopy (src/canopy.ts); the owner's alone. ----
+        if (handlesOrchardPath(path)) {
+          app.store.profiles.requireOwner("Orchard");
+          const answer = await orchardApi({
+            orchard: app.flowsBoards.orchard, on: () => app.flowsBoards.mode("kanban") !== "off", method: request.method ?? "GET",
+            query: new URL(request.url ?? "/", "http://local").searchParams, readBody: () => readBody(request, 131072),
+            liveOf: (runId) => cardLive(app, runId), waiting: () => waitingHere(app),
+          }, path).catch((error: unknown) => {
+            throw error instanceof OrchardHttpError ? new HttpError(error.status, error.message) : error;
+          });
+          send(response, 200, answer);
+          return;
+        }
+        if (handlesCanopyPath(path) && request.method === "GET") {
+          app.store.profiles.requireOwner("Canopy");
+          send(response, 200, canopyView({ store: app.store, owner: app.runtime.owner,
+            trunks: () => app.trunks.records.list().map((trunk) => ({ id: trunk.id, name: trunk.name, paused: trunk.paused === true })),
+            computers: () => app.trunks.computers().map((computer) => ({ ...computer, connected: app.devices.hub.connected(computer.id) })),
+            here: () => { try { return app.reachParts.machineName(); } catch { return ""; } }, // no name given yet: the window says "This computer"
+            orchard: app.flowsBoards.mode("kanban") === "off" ? null : app.flowsBoards.orchard,
+            liveOf: (runId) => cardLive(app, runId), waiting: () => waitingHere(app),
+            pickedComputer: (sessionId) => pickedDevice(app.store, app.runtime.owner, sessionId) }));
+          return;
+        }
+        // ---- end of the Orchard and Canopy block ----
         // ---- R17-F: learning, deeper under /api/learning-more (src/learning-more/api.ts); the owner's alone. ----
         if (handlesLearningMorePath(path)) {
           app.store.profiles.requireOwner("Learning, deeper");
@@ -5330,6 +5358,16 @@ export async function trajectoryOptions(app: Branch, runId: string) {
     },
   };
 }
+/** Orchard and Canopy: a task's newest three live steps, scrubbed, or null once it is gone. */
+function cardLive(app: Branch, runId: string): CardLive | null {
+  if (!app.store.run(runId)) return null;
+  const snap = app.runtime.hideSecrets(liveSteps(app.store, runId, liveDeps(app)));
+  return { status: snap.status, steps: snap.steps.slice(-3).map((step) => ({ icon: step.icon, label: step.label, state: step.state })) };
+}
+/** Every question waiting that the person at the window may answer, each with its task's parent when it is a helper's. */
+function waitingHere(app: Branch) {
+  return app.runtime.approvals.waiting().filter((asked) => mayAnswerHere(app.store, asked)).map((asked) => ({ ...asked, ...helperMark(app, asked.runId) }));
+}
 /** Live steps: the thoughts held in memory, the questions waiting, and the helpers' names (as /steps names them). */
 function liveDeps(app: Branch) {
   return { thoughtsOf: (id: string) => app.runtime.thoughtsOf(id), waiting: app.runtime.approvals.waiting(), helperName: helperNameOf(app),
@@ -5480,6 +5518,8 @@ function isExecution(request: IncomingMessage, path: string): boolean {
     || (request.method !== "GET" && handlesSafetyPath(path))
     // r17-h: every change under /api/flows-boards may start work (a flow copy, a procedure, a card's task).
     || (request.method !== "GET" && handlesFlowsBoardsPath(path))
+    // Orchard: a change may start a card's task (Grow, or the grower after a move).
+    || (request.method !== "GET" && handlesOrchardPath(path))
     // R17-F: every change under /api/learning-more may ask a model or an outside service.
     || (request.method !== "GET" && handlesLearningMorePath(path))
     // Seasons: running a night asks a model, and undo and veto change what is remembered.

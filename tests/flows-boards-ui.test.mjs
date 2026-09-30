@@ -4,7 +4,7 @@
  * control has a label and a sentence saying what it does, and focus view folds the steps away.
  *
  * Redesign: the old cards (public/flows-boards.js) are replaced by prototype.html's own places: the shared board is
- * Automations › Board (its five lanes, a card moved with "Move to"; public/app/places/automations.js) and a request for
+ * now Orchard in Automations' board tab (its five columns, a card moved with "Move to"; public/app/places/orchard.js) and a request for
  * a package or tool server is a row in Inbox › Needs you, declined with Don't while Allow stays greyed for the security
  * review (public/app/places/inbox.js). A
  * message written while a task works goes through the engine's busy send from the message box (public/app/chat/chat.js).
@@ -28,7 +28,8 @@ test("every word on the flows-and-boards cards has English and real French, and 
     const keys = [...new Set([...source.matchAll(/\bt\("([A-Za-z0-9_.-]+)"/g)].map((m) => m[1]))];
     assert.ok(keys.length > 40, `${file}: ${keys.length} keys`);
     // The same words in French on purpose: "version {version}".
-    const cognates = new Set(["window.places.automations.version-version"]);
+    // Orchard is Branch's own name for its board in every language.
+    const cognates = new Set(["window.places.automations.version-version", "window.places.orchard.tab"]);
     assert.deepEqual(keys.filter((key) => !en[key] || !fr[key] || (en[key] === fr[key] && !cognates.has(key))), [], file);
     assert.equal(/#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(/i.test(source), false, `${file}: no colour written down`);
   }
@@ -39,23 +40,23 @@ test("every word on the flows-and-boards cards has English and real French, and 
 test("the board and the install requests sit in their homes, work from the window, and nothing scrolls sideways", async (t) => {
   const { app, page, errors, call } = await newWindow(t, { width: 400, height: 900, seed: async (branch) => {
     for (const part of boardParts) branch.flowsBoards.setMode(part, { mode: "on" });
-    branch.flowsBoards.kanban.add({ title: "Rake the leaves" }, "owner");
+    branch.flowsBoards.orchard.add({ title: "Rake the leaves" }, { kind: "chat" });
     await branch.flowsBoards.installs.request({ kind: "mcp", name: "notes", server: { transport: "http", url: "https://mcp.example.com/mcp" }, why: "keep notes" }, "chat", "a chat app");
   } });
   const wide = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-  const lanes = async () => (await call("/api/flows-boards/board")).lanes;
+  const lanes = async () => (await call("/api/orchard")).lanes;
 
-  // Automations › Board: the engine's card, moved to Doing from the window.
+  // Automations › Orchard (the board's tab): a chat's card waits in Seed for the owner's yes, moved to Ripe from its menu.
   const place = await openPlace(page, "automations", "board");
-  const card = place.locator(".col15[data-col15='todo'] .card15", { hasText: "Rake the leaves" });
+  const card = place.locator(".col15[data-col15='seed'] .orc-card", { hasText: "Rake the leaves" });
   await card.waitFor({ timeout: 20000 });
-  const id = await card.getAttribute("data-card15");
-  await card.locator('[data-act="bmove15"]').click();
-  await page.locator(`.pop [data-act="bto15"][data-id="${id}"][data-v="doing"]`).click();
+  const id = await card.getAttribute("data-orc-card");
+  await card.locator('[data-act="orc-menu"]').click();
+  await page.locator(`.pop [data-act="orc-move"][data-id="${id}"][data-v="ripe"]`).click();
   let moved = false;
-  for (let i = 0; i < 100 && !moved; i++) { moved = (await lanes()).doing?.some((c) => c.id === id); if (!moved) await page.waitForTimeout(50); }
-  assert.ok(moved, "the engine has the card in Doing");
-  await place.locator(`.col15[data-col15='doing'] [data-card15="${id}"]`).waitFor({ timeout: 20000 });
+  for (let i = 0; i < 100 && !moved; i++) { moved = (await lanes()).ripe?.some((c) => c.id === id); if (!moved) await page.waitForTimeout(50); }
+  assert.ok(moved, "the engine has the card in Ripe");
+  await place.locator(`.col15[data-col15='ripe'] [data-orc-card="${id}"]`).waitFor({ timeout: 20000 });
   assert.ok(await wide() <= 0, "no sideways scrolling on the board at 400 px");
 
   // Inbox › Needs you: the request is there. Allow stays greyed for the security review (inbox.js initInbox, xdo);
