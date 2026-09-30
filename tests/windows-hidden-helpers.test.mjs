@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -77,7 +77,8 @@ async function windowsOpenedBy(start, { done, count }, watchMs = 4000) {
 
 function workspace(t) {
   const root = mkdtempSync(join(tmpdir(), "cbq-001-"));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  // A runner may still be ending when the test does: its folder is left for the temp cleanup then.
+  t.after(async () => { await sleep(1500); try { rmSync(root, { recursive: true, force: true }); } catch { /* still in use */ } });
   const script = join(root, "hand-over.cmd");
   const done = join(root, "handed-over.txt");
   writeFileSync(script, `@echo off\r\n${join(system32, "ping.exe")} -n 2 127.0.0.1 >NUL\r\n`
@@ -86,7 +87,12 @@ function workspace(t) {
 }
 
 /** The scheduler is asked for first; this makes it refuse, which is the fallback the fix is about. */
-const noScheduler = { exec: (_file, _args, _options, callback) => callback(new Error("schtasks missing")) };
+/*
+ * The runner (src/desktop/hand-over.ts) is Electron's stock program linked beside the script; this test runs under Node,
+ * so it links the Electron program the repository installs.
+ */
+const runner = { runtime: join(process.cwd(), "node_modules", "electron", "dist"), executableName: "electron.exe" };
+const noScheduler = { ...runner, exec: (_file, _args, _options, callback) => callback(new Error("schtasks missing")) };
 
 /*
  * The control: a console this test starts and means to be seen. Only that console counts, and only it is
@@ -107,7 +113,7 @@ test("the update hand-over opens no window through the scheduler, ten times over
   { skip: !onWindows }, async (t) => {
     const { script, done } = workspace(t);
     for (let attempt = 1; attempt <= 10; attempt += 1) {
-      const { opened, result } = await windowsOpenedBy(() => launchHandOver(script, 900000 + attempt, {}), { done, count: attempt });
+      const { opened, result } = await windowsOpenedBy(() => launchHandOver(script, 900000 + attempt, runner), { done, count: attempt });
       assert.equal(result, "task", `attempt ${attempt} did not take the scheduler route`);
       if (!blind) assert.deepEqual([...opened], [], `attempt ${attempt} put a window on the screen`);
     }
@@ -130,11 +136,13 @@ test("and none through the fallback either, which is where the flag was being ig
 test("one hand-over is one hand-over: no second launcher and no task left behind",
   { skip: !onWindows }, async (t) => {
     const { root, script, done } = workspace(t);
-    await launchHandOver(script, 920001, {});
+    await launchHandOver(script, 920001, runner);
     await sleep(3000);
     assert.equal(readCount(done), 1, "the work ran exactly once, not twice");
     assert.equal(taskExists("BranchAgentUpdate-920001"), false, "the scheduled task deleted itself");
-    assert.ok(existsSync(join(root, "hand-over.cmd.launch.vbs")), "the launcher it wrote is in the test's own folder");
+    const made = readdirSync(root);
+    assert.equal(made.filter((name) => /^hand-over-[0-9a-f]{8}$/.test(name)).length, 1, "its runner is in the test's own folder");
+    assert.deepEqual(made.filter((name) => /\.vbs$/i.test(name)), [], "and no Windows Script Host file is written (VBScript is going away)");
   });
 
 function readCount(file) {

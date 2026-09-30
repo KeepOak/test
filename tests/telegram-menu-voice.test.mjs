@@ -17,14 +17,15 @@ function adapterFixture(options = {}) {
   } });
   return { adapter, calls };
 }
-test("Telegram menus use separate private/group scopes and the same canonical rows", async () => {
+test("Telegram menus: one menu for every chat with the canonical rows, and the owner's own chat keeps its own", async () => {
   const { adapter, calls } = adapterFixture();
   const commands = [{ command: "new", description: "Fresh thread" }, { command: "trunk", description: "Who answers" }];
+  const owners = [...commands, { command: "status", description: "What is working" }];
   await adapter.setCommands(commands);
+  await adapter.setChatCommands("42", owners);
+  await adapter.setCommands(commands); // the menu for every chat does not replace the owner's chat's menu
   assert.deepEqual(calls.map(one => one.method), ["setMyCommands", "setMyCommands"]);
-  assert.deepEqual(calls.map(one => JSON.parse(one.body)), [
-    { commands, scope: { type: "all_private_chats" } }, { commands, scope: { type: "all_group_chats" } },
-  ]);
+  assert.deepEqual(calls.map(one => JSON.parse(one.body)), [{ commands }, { commands: owners, scope: { type: "chat", chat_id: 42 } }]);
 });
 for (const [mediaType, extension] of [["audio/ogg", "ogg"], ["audio/mpeg", "mp3"], ["audio/mp4", "m4a"]])
   test(`Telegram ${mediaType} replies are actual voice uploads with topic/reply provenance`, async () => {

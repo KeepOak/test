@@ -83,7 +83,8 @@ const challengeWords = /just a moment\.\.\.|checking your browser|verify you are
 const challengeWidget = /<iframe[^>]+src=["'][^"']*(challenges\.cloudflare\.com|hcaptcha\.com|google\.com\/recaptcha|recaptcha\.net)|class=["'][^"']*\b(cf-turnstile|h-captcha|g-recaptcha)\b/i;
 const captchaWords = /captcha|turnstile/i;
 
-function kindOf(body: string): string {
+/** Which kind of "are you a person?" check some page words describe, in the owner's words. */
+export function challengeKind(body: string): string {
   if (/turnstile|cf-chl|cf_chl|challenges\.cloudflare\.com|just a moment/i.test(body)) return "a Cloudflare check that asks whether you are a person";
   if (captchaWords.test(body)) return "a captcha";
   return "a check that asks whether you are a person";
@@ -96,16 +97,16 @@ function kindOf(body: string): string {
  */
 export function detectChallenge(status: number, body: string): string | null {
   if (challengeStatus.has(status) && (challengeWords.test(body) || challengeWidget.test(body) || captchaWords.test(body)))
-    return kindOf(body);
-  if (challengeTitle.test(body)) return kindOf(body);
-  if (challengeWidget.test(body) && readable(body).text.length < 600) return kindOf(body);
+    return challengeKind(body);
+  if (challengeTitle.test(body)) return challengeKind(body);
+  if (challengeWidget.test(body) && readable(body).text.length < 600) return challengeKind(body);
   return null;
 }
 
 /** The same check on what a browser read out of a rendered page. */
 export function detectRenderedChallenge(text: string): string | null {
-  if (/just a moment|checking your browser|verify you are (a )?human/i.test(text)) return kindOf(text);
-  if (captchaWords.test(text) && text.length < 600) return kindOf(text);
+  if (/just a moment|checking your browser|verify you are (a )?human/i.test(text)) return challengeKind(text);
+  if (captchaWords.test(text) && text.length < 600) return challengeKind(text);
   return null;
 }
 
