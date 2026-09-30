@@ -101,6 +101,7 @@ import { linkChatThreads } from "./channels/threads.js"; // defaulttrunk
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { WeatherAccess, registerWeather } from "./integrations/weather.js";
+import { MapsAccess, registerMaps } from "./integrations/maps.js";
 import { Hooks } from "./hooks.js";
 import { Teams } from "./teams.js";
 import { registerTeamGroups } from "./team-groups.js"; // RES-721
@@ -799,6 +800,8 @@ export async function createBranch(options: {
   registerWeb(registry, web, (context, info) => { if (context.runId) store.event(context.runId, "content.flagged", info); });
   web.weather = new WeatherAccess(store, runtime.owner, web);
   registerWeather(registry, store, web.weather);
+  web.maps = new MapsAccess(store, runtime.owner, web);
+  registerMaps(registry, store, web.maps);
   // ── R17-S-C (comfort): the owner's proxy and extra certificates for every call Branch makes, and
   // which ignore files hide paths from searches (src/comfort/). Both do nothing until set. ──
   const outbound = new OutboundNetwork();
@@ -968,6 +971,7 @@ export async function createBranch(options: {
   // and lets go of anything an integration was holding on the owner's behalf — above all a browser
   // of theirs a task had borrowed.
   const releaseOnLock: (() => Promise<unknown>)[] = [];
+  releaseOnLock.push(async () => { web.weather?.clear(); web.maps?.clear(); });
   /**
    * Integration review (mac7/wake-mic): what comes back by itself when the lock ends. Letting go on
    * the lock has to be answered here or it is one-way, and the owner is left with a part of Branch

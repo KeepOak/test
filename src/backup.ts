@@ -129,6 +129,8 @@ export const signInPrefixes: readonly string[] = ["remote-agent:"];
  */
 export const thisComputerSettings: readonly string[] = [
   "weather-connector", // City disclosure consent belongs to this owner's window, never a restored file.
+  "maps-connector", "maps-local-usage", // Exact-location/billing consent and request cap belong to this computer.
+  "weather-local-usage",
   "folder_trust", "folder_trust_mode", "folder-trust-real", "folder-trust-copies", "remote-agent-pairing", "remote-computers",
   "secret-commands", "keychain-entries", "reach-remote-trunks-keys",
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which

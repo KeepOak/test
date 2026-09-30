@@ -4,7 +4,7 @@ import { toast } from "../core/ui.js";
 import { ownerHere } from "../core/state.js";
 
 export function weatherSection() {
-  return `<div class="sec"><h2>City weather</h2><p class="hint">Open-Meteo is off until you enable it. The free API permits non-commercial use only. Requests share your typed city/country and provider city centre; the provider may retain request logs for 90 days. No device or precise location is collected. No routes or map search.</p>
+  return `<div class="sec"><h2>City weather</h2><p class="hint">Open-Meteo is off until you enable it. Free API: non-commercial use only. Commercial use: configure your existing paid customer plan and a locker secret name; no subscription is created. Billing and remaining provider quota are unknown. Requests share your typed city/country and provider city centre; logs may retain coordinates for 90 days. No device location is collected. Default local cap: ten HTTP attempts per UTC day, up to two per forecast.</p>
     <button class="btn" type="button" data-act="weather-settings">Enable or disable weather</button>
     <button class="btn" type="button" data-act="weather-city">Get a city forecast</button>
     <pre id="weather-result" style="white-space:pre-wrap"></pre>
@@ -15,10 +15,17 @@ on("weather-settings", async () => {
   try {
     const current = await api("weather");
     if (!ownerHere()) return;
-    const enabled = !current.settings.enabled;
-    if (enabled && !confirm("Enable for non-commercial use only? City requests go to Open-Meteo. Its logs may retain coordinates for 90 days. Data is CC BY 4.0; retain attribution. This does not enable paid or precise-location access.")) return;
-    await api("weather", { enabled, nonCommercialTermsAccepted: enabled });
-    if (ownerHere()) toast(enabled ? "Weather enabled for non-commercial city requests" : "Weather disabled");
+    if (current.settings.enabled) {
+      await api("weather", { ...current.settings, enabled: false });
+      if (ownerHere()) toast("Weather disabled"); return;
+    }
+    const access = prompt("Type non-commercial for the free API, or customer for your existing commercial Open-Meteo plan", "non-commercial");
+    if (!["non-commercial", "customer"].includes(access)) return;
+    const keySecret = access === "customer" ? prompt("Name of the existing Open-Meteo customer API key in this project's locker (never paste the key here)", "OPEN_METEO_CUSTOMER_KEY") : undefined;
+    if (access === "customer" && !keySecret) return;
+    if (!confirm(`Enable ${access} weather? I accept the selected provider terms and location disclosure. ${access === "customer" ? "I have an existing commercial plan; its billing/remaining quota are unknown and this creates no subscription." : "I will use the free service only for non-commercial purposes."} Provider logs may retain coordinates for 90 days. Ten HTTP attempts per UTC day; up to two per forecast. Retain CC BY 4.0 attribution.`) || !ownerHere()) return;
+    await api("weather", { enabled: true, access, keySecret, nonCommercialTermsAccepted: access === "non-commercial", customerPlanAccepted: access === "customer", maxCallsPerDay: 10 });
+    if (ownerHere()) toast(`Weather enabled: ${access}`);
   } catch (error) { if (ownerHere()) toast(error.message); }
 });
 on("weather-city", async () => {
