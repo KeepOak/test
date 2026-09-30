@@ -12,7 +12,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, readComfort } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
+import { settingsWindow, openSettingsPage, setLevel, assertHeadings } from "./settings-window.mjs";
 
 const REGULAR = ["hold-overnight", "comfort-method", "comfort-sound"];
 
@@ -27,9 +27,8 @@ test("DG-184 Notifications has the prototype's sections at 1440 and 400 px and e
       await openSettingsPage(page, "notifications");
       await setLevel(page, one);
       const col = page.locator(".set-col");
-      const headings = await col.locator("h1, h2, h3, h4").evaluateAll((all) => all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
       // The prototype's page has "Quiet" (days off) after "Tell me when…".
-      assert.deepEqual(headings, ["Notifications", "Tell me when…", "Quiet", "Updates"], `${width} px, ${one}`);
+      await assertHeadings(page, ["Notifications", "Tell me when…", "Quiet", "Updates"], `${width} px, ${one}`);
       assert.equal(await col.getByRole("button", { name: /^Save/ }).count(), 0, "saved as you go");
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth) <= 0, `${width} px: no sideways scrolling`);
     }

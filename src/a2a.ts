@@ -72,10 +72,17 @@ export interface A2aOptions {
   /** How long a task may run before it is stopped. */
   taskTimeoutMs: number;
 }
-export interface A2aTaskRecord { id: string; runId: string; sessionId: string; agent: string; createdAt: string; caller?: string }
+export interface A2aTaskRecord { id: string; runId: string; sessionId: string; agent: string; createdAt: string; caller?: string; interrupted?: boolean }
 
 /** How many tasks stay findable by `tasks/get` before the oldest are forgotten. */
 const maxRememberedTasks = 500;
+const taskIndexKey = "a2a-task-index";
+const TaskRecordSchema = z.object({
+  id: z.string().min(1).max(200), runId: z.string().max(200), sessionId: z.string().max(200),
+  agent: z.string().max(60), createdAt: z.string().datetime(), caller: z.string().min(1).max(200),
+  interrupted: z.boolean().optional(),
+}).strict();
+const TaskIndexSchema = z.object({ tasks: z.array(TaskRecordSchema).max(maxRememberedTasks) }).strict();
 const nowIso = () => new Date().toISOString();
 const textMessage = (text: string) => ({ role: "agent", parts: [{ type: "text", text }] });
 
@@ -107,7 +114,7 @@ export function agentCard(base: string, version: string, sharing: McpSharing, re
 }
 
 export class A2aServer {
-  /** Task id to the Branch task behind it. A restart forgets tasks that were still in flight. */
+  /** Bounded task ids retain their caller and Branch run across a restart. Work is never replayed here. */
   private readonly tasks = new Map<string, A2aTaskRecord>();
   private readonly rates = new RateLimiter();
   constructor(
@@ -117,7 +124,18 @@ export class A2aServer {
     readonly mcp: McpServer,
     readonly version: string,
     readonly options: A2aOptions = { tasksPerMinute: 20, taskTimeoutMs: 120000 },
-  ) {}
+  ) {
+    const saved = TaskIndexSchema.safeParse(this.store.get("settings", this.runtime.owner, taskIndexKey)?.data);
+    if (!saved.success) return;
+    for (const record of saved.data.tasks) {
+      const run = record.runId ? this.store.run(record.runId) : undefined;
+      this.tasks.set(record.id, { ...record, interrupted: record.interrupted || !run || run.status === "running" });
+    }
+  }
+
+  private remember(): void {
+    this.store.save("settings", this.runtime.owner, taskIndexKey, { tasks: [...this.tasks.values()] });
+  }
 
   /** Whether the owner has switched on answering other agents. Read fresh, so a change is immediate. */
   enabled(): boolean { return this.mcp.sharing().a2a; }
@@ -125,9 +143,10 @@ export class A2aServer {
 
   /** Keeps one calling agent inside its per-minute allowance; over it, the task is refused outright. */
   private checkRate(agent: string): void {
-    if (this.rates.waitMs(agent, this.options.tasksPerMinute) > 0)
+    const caller = callerKey();
+    if (this.rates.waitMs(caller, this.options.tasksPerMinute) > 0)
       throw new A2aError(-32003, `Too many tasks: ${agent} may start ${this.options.tasksPerMinute} a minute.`);
-    this.rates.record(agent);
+    this.rates.record(caller);
   }
 
   /**
@@ -136,7 +155,9 @@ export class A2aServer {
    */
   private sessionFor(sessionId: string | undefined): string | undefined {
     if (!sessionId) return undefined;
-    if (!this.store.ownsSession(this.runtime.owner, sessionId) || conversationBegunBy(this.store, sessionId) !== "a2a")
+    const caller = callerKey();
+    const mine = [...this.tasks.values()].some((record) => record.sessionId === sessionId && record.caller === caller);
+    if (!mine || !this.store.ownsSession(this.runtime.owner, sessionId) || conversationBegunBy(this.store, sessionId) !== "a2a")
       throw new A2aError(-32602, notYourConversation);
     return sessionId;
   }
@@ -152,13 +173,15 @@ export class A2aServer {
     // caller's own that is still going is refused plainly, so a task cannot be overwritten mid-way.
     const earlier = this.tasks.get(id);
     if (earlier && earlier.caller !== caller) throw new A2aError(-32002, `The task id ${id} is already in use. Send a new id.`);
-    if (earlier && (!earlier.runId || this.store.run(earlier.runId)?.status === "running"))
+    if (earlier && !earlier.interrupted && (!earlier.runId || this.store.run(earlier.runId)?.status === "running"))
       throw new A2aError(-32002, `Task ${id} is still going. Wait for it, or send a new id.`);
     const record: A2aTaskRecord = { id, runId: "", sessionId: "", agent, createdAt: nowIso(), caller };
+    this.tasks.delete(id);
     this.tasks.set(id, record);
     // Only the most recent tasks stay findable, so a long-running install does not grow without end.
     for (const oldest of [...this.tasks.keys()].slice(0, this.tasks.size - maxRememberedTasks))
       this.tasks.delete(oldest);
+    this.remember();
     return { record, prompt, sessionId };
   }
 
@@ -176,10 +199,19 @@ export class A2aServer {
       // An assistant that already had a trace open passes it on, so its work and ours are one trace.
       ...(traceparent ? { traceparent } : {}),
       signal: AbortSignal.timeout(this.options.taskTimeoutMs),
-      onStarted: (started) => { record.runId = started.id; record.sessionId = started.sessionId; this.announce(record, prompt); },
+      onStarted: (started) => {
+        record.runId = started.id; record.sessionId = started.sessionId;
+        this.remember();
+        this.announce(record, prompt);
+      },
+    }).catch((error: unknown) => {
+      record.interrupted = true;
+      this.remember();
+      throw error;
     });
     record.runId = run.id;
     record.sessionId = run.sessionId;
+    this.remember();
     return run;
   }
 
@@ -193,24 +225,27 @@ export class A2aServer {
 
   /** What a caller sees: the state of the work and, once there is one, the answer as an artifact. */
   taskView(record: A2aTaskRecord, run: Run): unknown {
-    const state = stateOf(run.status);
+    const state = record.interrupted ? "failed" : stateOf(run.status);
     const done = state === "completed";
+    const message = record.interrupted ? "This task stopped before it finished. Start a new task to continue."
+      : run.output;
     return {
       id: record.id,
       sessionId: record.sessionId,
-      status: { state, timestamp: nowIso(), ...(run.output ? { message: textMessage(run.output) } : {}) },
+      status: { state, timestamp: nowIso(), ...(message ? { message: textMessage(message) } : {}) },
       artifacts: done ? [{ name: "answer", index: 0, parts: [{ type: "text", text: run.output }] }] : [],
       metadata: { runId: run.id, agent: record.agent },
     };
   }
 
-  /** A task started earlier in this session of the app; a restart forgets the ones still running. */
+  /** A retained task, including after a restart, visible only to the caller that started it. */
   get(params: unknown): unknown {
     const { id } = TaskIdParamsSchema.parse(params);
     const record = this.mine(id);
     const run = record && this.store.run(record.runId);
-    if (!record || !run) throw unknownTask(id);
-    return this.taskView(record, run);
+    if (!record) throw unknownTask(id);
+    if (!run && !record.interrupted) throw unknownTask(id);
+    return this.taskView(record, run ?? blankRun(record, this.runtime.owner));
   }
 
   /** The task with this id if the caller asking is the one that started it; another caller's is not known to them. */
@@ -223,6 +258,7 @@ export class A2aServer {
     const { id } = TaskIdParamsSchema.parse(params);
     const record = this.mine(id);
     if (!record) throw unknownTask(id);
+    if (record.interrupted) return this.taskView(record, this.store.run(record.runId) ?? blankRun(record, this.runtime.owner));
     if (record.runId) this.runtime.cancel(record.runId);
     const run = this.store.run(record.runId);
     // A task cancelled before its run had even begun still answers as cancelled, with no answer.

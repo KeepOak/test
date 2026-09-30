@@ -5,6 +5,7 @@ import * as chat from "./chat/chat.js";
 import * as inbox from "./places/inbox.js";
 import * as automations from "./places/automations.js";
 import * as library from "./places/library.js";
+import * as seasons from "./places/seasons.js";
 import * as customize from "./places/customize.js";
 import * as team from "./places/team.js";
 import * as overview from "./places/overview.js";
@@ -13,7 +14,7 @@ import * as settings from "./settings/settings.js";
 import * as flows from "./flows/flows.js";
 import * as first from "./flows/first.js";
 
-const AREAS = { chat, inbox, automations, library, customize, team, overview, project, settings };
+const AREAS = { chat, inbox, automations, library, seasons, customize, team, overview, project, settings };
 for (const area of [...Object.values(AREAS), flows, first]) area.init?.();
 
 export const VIEWS = Object.fromEntries(Object.entries(AREAS).map(([view, area]) => [view, area.draw]));
