@@ -69,6 +69,15 @@ export async function liveAtStart(appRoot: string, log: (line: string) => void =
 /** The newest change running: the window's live build, else the engine's, else the packaged one. */
 export const runningChange = (state: LiveState, packaged: string | null): string | null => state.window?.commit ?? state.engine?.commit ?? packaged;
 
+/**
+ * A gateway change is live only where a retained gateway can take its checked code in place. Without one (the window's
+ * own engine), src/never-break/gateway.ts is loaded by main, so the change goes the packaged way, as it did before.
+ */
+export function residentGatewayOutcome(outcome: LiveOutcome, options: Pick<HotApplyOptions, "gateway">): LiveOutcome {
+  if (outcome.tier !== "gateway" || options.gateway?.prepareCode) return outcome;
+  return { tier: "shell", version: outcome.version, reason: "This copy has no retained gateway to take the new gateway code live." };
+}
+
 export function liveHooks(options: HotApplyOptions): LiveHooks {
   let state: LiveState | null = null;
   let hosted: HostedBuild<LiveOutcome> | null = null, paused = false;
@@ -87,7 +96,7 @@ export function liveHooks(options: HotApplyOptions): LiveHooks {
         builtOutput: { repo: options.repo },
       }, { log: join(options.buildDir, "live-build.log") });
       if (paused) hosted.pause(true);
-      try { return await hosted.done; } finally { hosted = null; }
+      try { return residentGatewayOutcome(await hosted.done, options); } finally { hosted = null; }
     },
     apply: async (outcome, hooks) => {
       const now = await current();
