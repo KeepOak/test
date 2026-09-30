@@ -155,18 +155,30 @@ export class WorktreePlaces {
       this.deps.note(run.id, "worktree.missing", { path: assigned });
       throw new Error("The assigned project copy is missing, so this task stopped before working in another folder.");
     }
-    if (worktreeScope() && !parent) return null;
+    if (worktreeScope() && !parent) return this.inheritedPlace(run);
     // workbench (SELF-302): a helper its lead asked to give a copy of its own gets one, whatever the switches say: the
     // switches decide what happens by default (it ships off, a whole copy on disk each time), the lead decides per helper.
     if (parent && context.ownCopy) return this.helperPlace(run, context);
     if (!codingOn(store, owner, "worktrees")) {
       if (!parent && this.forks().some((fork) => fork.sessionId === run.sessionId))
         throw new Error("This conversation is assigned to a project copy, but project copies are switched off. Enable them before continuing this conversation.");
-      return null;
+      return this.inheritedPlace(run);
     }
     if (!parent) return this.forkPlace(run);
-    if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).perHelper) return null;
+    if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).perHelper) return this.inheritedPlace(run);
     return this.helperPlace(run, context);
+  }
+
+  /** A background child can outlive its lead while using the lead's existing copy. */
+  private inheritedPlace(run: { id: string }): TaskPlace | null {
+    const scope = worktreeScope();
+    if (!scope) return null;
+    this.requireAvailableSource(scope);
+    this.helperSources.set(run.id, scope);
+    // No new worktree.used event or identity: this is an existing placement lease,
+    // not proof that the child created or owns its lead's retained recovery copy.
+    return { scope, workspace: join(this.deps.root, scope),
+      release: async () => { this.helperSources.delete(run.id); } };
   }
 
   /** Reattaches only a copy recorded by this conversation's exact continuation lineage. */
