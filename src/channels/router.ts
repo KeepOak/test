@@ -12,7 +12,7 @@ import type { PolicyRemember } from "../policy.js";
 import { Deliveries } from "./deliveries.js";
 import { audit } from "../audit.js";
 import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifacts.js";
-import { decide, readSenderAllowlist } from "./allowlist.js";
+import { decide, readSenderAllowlist, saveSenderAllowlist, type SenderAllowlist } from "./allowlist.js";
 import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
 import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
@@ -680,6 +680,14 @@ export class ChannelRouter {
   setOwnerCommandSettings(input: unknown) {
     return saveOwnerCommands(this.store, this.runtime.owner, input);
   }
+  senderAllowlist(): SenderAllowlist {
+    this.store.profiles.requireOwner("Who may message Branch");
+    return readSenderAllowlist(this.store, this.runtime.owner);
+  }
+  setSenderAllowlist(input: unknown): SenderAllowlist {
+    this.store.profiles.requireOwner("Who may message Branch");
+    return saveSenderAllowlist(this.store, this.runtime.owner, input);
+  }
   /**
    * Queues text for a chat and sends it if the channel is up. The key makes a repeat call a no-op,
    * so a task finished while the channel was down is delivered once, in order, after reconnect.
@@ -735,6 +743,7 @@ export class ChannelRouter {
     const access = this.access(message, policy);
     if (access !== "allowed") {
       if (message.caughtUp) return "ignored"; // mac6/bucket-16 integration
+      if (message.chatKind === "direct" && readSenderAllowlist(this.store, this.runtime.owner).unknown === "ignore") return "ignored";
       const text = access === "pairing"
         ? `I don't know you yet. Ask my owner to approve code ${this.pairingCode(message)} under Settings → Channels, then message me again.`
         : "This assistant is private.";
@@ -1834,7 +1843,7 @@ export class ChannelRouter {
     if (said === "allow") return "allowed";
     if (policy.allowlist.includes(message.senderId)) return "allowed";
     if (this.pair(message.channel, message.senderId)?.status === "approved") return "allowed";
-    if (list.unknown === "block") return "rejected";
+    if (list.unknown !== "pair") return "rejected";
     return policy.pairing ? "pairing" : "rejected";
   }
   private pairingCode(message: InboundMessage): string {
