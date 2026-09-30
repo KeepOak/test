@@ -184,24 +184,80 @@ function pageFonts(objects: Map<number, RawObject>, page: RawObject, budget: Bud
   return fonts;
 }
 function resourceDictionary(objects: Map<number, RawObject>, page: RawObject): string {
-  const value = dictValue(latin(page.body), "Resources") ?? "";
-  if (value.startsWith("<<")) return value;
-  const reference = referenceNumber(value);
-  return reference === null ? "" : latin(objects.get(reference)?.body ?? Buffer.alloc(0));
+  const seen = new Set<number>();
+  let current: RawObject | undefined = page;
+  for (let depth = 0; current && depth < 32 && !seen.has(current.number); depth++) {
+    seen.add(current.number);
+    const dictionary = latin(current.body), value = dictValue(dictionary, "Resources");
+    if (value !== null) {
+      if (value.startsWith("<<")) return value;
+      return latin(objects.get(referenceNumber(value) ?? -1)?.body ?? Buffer.alloc(0));
+    }
+    current = objects.get(referenceNumber(dictValue(dictionary, "Parent")) ?? -1);
+  }
+  return "";
 }
 
+interface CodeSpace { width: number; from: number; to: number }
+const codeSpaces = new WeakMap<Map<number, string>, Map<number, CodeSpace[]>>();
 /** The `bfchar` and `bfrange` entries of a ToUnicode table: which number means which letter. */
 export function parseCmap(text: string): Map<number, string> {
-  const map = new Map<number, string>();
-  for (const block of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g))
-    for (const pair of block[1]!.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g))
-      map.set(parseInt(pair[1]!, 16), hexToText(pair[2]!));
-  for (const block of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g))
-    for (const row of block[1]!.matchAll(/<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>/g)) {
-      const from = parseInt(row[1]!, 16), to = parseInt(row[2]!, 16), start = parseInt(row[3]!, 16);
-      for (let code = from; code <= to && code - from < 1024; code++) map.set(code, String.fromCodePoint(start + (code - from)));
+  const map = new Map<number, string>(), spaces: CodeSpace[] = [], inferred: CodeSpace[] = [];
+  const range = (low: string, high: string): CodeSpace => ({ width: low.length / 2, from: parseInt(low, 16), to: parseInt(high, 16) });
+  for (const block of text.matchAll(/begincodespacerange([\s\S]*?)endcodespacerange/g))
+    for (const row of block[1]!.matchAll(/<([0-9a-fA-F]{2,8})>\s*<([0-9a-fA-F]{2,8})>/g)) {
+      if (row[1]!.length % 2 === 0 && row[1]!.length === row[2]!.length) spaces.push(range(row[1]!, row[2]!));
     }
+  for (const block of text.matchAll(/beginbfchar([\s\S]*?)endbfchar/g))
+    for (const pair of block[1]!.matchAll(/<([0-9a-fA-F]{2,8})>\s*<([0-9a-fA-F]+)>/g)) {
+      map.set(parseInt(pair[1]!, 16), hexToText(pair[2]!));
+      inferred.push(range(pair[1]!, pair[1]!));
+    }
+  for (const block of text.matchAll(/beginbfrange([\s\S]*?)endbfrange/g))
+    for (const row of block[1]!.matchAll(/<([0-9a-fA-F]{2,8})>\s*<([0-9a-fA-F]{2,8})>\s*(<([0-9a-fA-F]+)>|\[([^\]]*)\])/g)) {
+      const { from, to } = range(row[1]!, row[2]!);
+      inferred.push(range(row[1]!, row[2]!));
+      const array = row[5] === undefined ? null : [...row[5].matchAll(/<([0-9a-fA-F]+)>/g)].map(item => item[1]!);
+      const destination = row[4] ? Buffer.from(row[4], "hex") : null;
+      for (let code = from; code <= to && code - from < 1024; code++) {
+        const value = array ? array[code - from] : destination?.toString("hex");
+        if (value === undefined) break;
+        map.set(code, hexToText(value));
+        if (destination) incrementDestination(destination);
+      }
+    }
+  codeSpaces.set(map, indexedSpaces(spaces.length ? spaces : inferred));
   return map;
+}
+/** Merge ranges by byte width so decoding does not scan every mapping for every character. */
+function indexedSpaces(spaces: CodeSpace[]): Map<number, CodeSpace[]> {
+  const index = new Map<number, CodeSpace[]>();
+  for (const space of spaces.sort((a, b) => a.width - b.width || a.from - b.from)) {
+    if (!Number.isInteger(space.width) || space.width < 1 || space.width > 4 || space.to < space.from) continue;
+    const ranges = index.get(space.width) ?? [], last = ranges.at(-1);
+    if (last && space.from <= last.to + 1) last.to = Math.max(last.to, space.to);
+    else ranges.push({ ...space });
+    index.set(space.width, ranges);
+  }
+  return index;
+}
+function containsCode(ranges: CodeSpace[], code: number): boolean {
+  let low = 0, high = ranges.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >>> 1, range = ranges[middle]!;
+    if (code < range.from) high = middle - 1;
+    else if (code > range.to) low = middle + 1;
+    else return true;
+  }
+  return false;
+}
+/** Adapted from pdf.js CMap.mapBfRange (Apache-2.0): increment bytes, not a Unicode scalar.
+ * Multi-unit UTF-16 destinations remain strings, so a ligature cannot throw fromCodePoint. */
+function incrementDestination(destination: Buffer): void {
+  for (let at = destination.length - 1; at >= 0; at--) {
+    destination[at] = (destination[at]! + 1) & 0xff;
+    if (destination[at] !== 0) break;
+  }
 }
 const hexToText = (hex: string): string => {
   let out = "";
@@ -293,7 +349,7 @@ function apply(
   if (operator === "T*") { state.lineY -= 12; return newLine(state); }
   if (!["TJ", "Tj", "'", '"'].includes(operator)) return;
   if (operator === "'" || operator === '"') { state.lineY -= 12; newLine(state); }
-  const text = drawnText(operands, state.font);
+  const text = drawnText(operands, state.font, operator === "TJ");
   if (!text) return;
   pieces.push({ y: state.y, x: state.x, text });
   state.x += text.length;
@@ -302,20 +358,37 @@ const newLine = (state: TextState): void => { state.x = state.lineX; state.y = s
 const lastName = (operands: PdfToken[]): string =>
   operands.flatMap((token) => (token.kind === "name" ? [token.text] : [])).at(-1) ?? "";
 /** The letters one drawing instruction puts on the page, from its literal and hex strings. */
-function drawnText(operands: PdfToken[], font: Map<number, string>): string {
+function drawnText(operands: PdfToken[], font: Map<number, string>, spacedArray: boolean): string {
   let out = "";
+  let gap = false;
   for (const token of operands) {
-    if (token.kind === "string")
-      out += font.size ? mapCodes([...unescapeLiteral(token.text)].map((c) => c.charCodeAt(0)), font) : unescapeLiteral(token.text);
-    else if (token.kind === "hex") out += mapCodes(hexCodes(token.text, font), font);
+    // pdf.js SPACE_IN_FLOW_MIN_FACTOR (0.102), adapted to TJ's thousandths of the font size.
+    if (token.kind === "number" && spacedArray) { if (token.value <= -102) gap = true; continue; }
+    let text = "";
+    if (token.kind === "string") {
+      const bytes = unescapeLiteral(token.text);
+      text = font.size ? mapCodes(hexCodes(Buffer.from(bytes, "latin1").toString("hex"), font), font) : bytes;
+    } else if (token.kind === "hex") text = mapCodes(hexCodes(token.text, font), font);
+    if (!text) continue;
+    if (gap && out && !/\s$/.test(out) && !/^\s/.test(text)) out += " ";
+    out += text; gap = false;
   }
   return out;
 }
+/** Adapted from pdf.js CMap.readCharCode (Apache-2.0): match declared ranges, up to four bytes. */
 const hexCodes = (hex: string, font: Map<number, string>): number[] => {
-  const clean = hex.replace(/\s+/g, "");
-  const width = font.size && [...font.keys()].some((code) => code > 255) ? 4 : 2;
+  const clean = hex.replace(/\s+/g, ""), spaces = codeSpaces.get(font);
   const codes: number[] = [];
-  for (let at = 0; at < clean.length; at += width) codes.push(parseInt(clean.slice(at, at + width).padEnd(width, "0"), 16));
+  for (let at = 0; at < clean.length;) {
+    let width = 2, code = parseInt(clean.slice(at, at + 2).padEnd(2, "0"), 16);
+    for (let bytes = 1; bytes <= 4 && at + bytes * 2 <= clean.length; bytes++) {
+      const candidate = parseInt(clean.slice(at, at + bytes * 2), 16);
+      if (containsCode(spaces?.get(bytes) ?? [], candidate)) {
+        width = bytes * 2; code = candidate; break;
+      }
+    }
+    codes.push(code); at += width;
+  }
   return codes;
 };
 /** A table entry where the file gave one, otherwise the number read as ordinary Latin text. */

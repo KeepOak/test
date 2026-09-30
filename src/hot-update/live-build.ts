@@ -90,12 +90,18 @@ export async function buildLive(run: Run, plan: LivePlan): Promise<LiveOutcome> 
   }
   const engine = classify({ changed: sinceEngine, read, manifest });
   const window = classify({ changed: sinceWindow, read, manifest });
+  // A main-process file can reach the engine's or the window's list without reaching the shell's (the running engine or
+  // window is from a different change than the packaged app). It still needs main to load it, and a live update's list
+  // only carries window, engine and gateway parts, so the whole update goes the packaged way instead of being refused.
+  const mainFile = [...engine.files, ...window.files].find((file) => file.part === "shell");
+  if (mainFile) return { tier: "shell", version, reason: `${mainFile.path} is loaded by the app's main process` };
   const parts = new Set<Part>([...engine.parts].filter((part) => part !== "window"));
   if (window.parts.has("window")) parts.add("window");
   const tier: Exclude<Part, "shell"> | null = parts.has("gateway") ? "gateway" : parts.has("engine") ? "engine" : parts.has("window") ? "window" : null;
   if (!tier) return { tier: "none", version };
   // The live build answers to its own version, as a packaged Beta build of this change would.
   await stampDevVersion(source, fetched.committedAt, plan.commit);
-  const staged = await stageLive({ source, appRoot: plan.appRoot, commit: plan.commit, version, withEngine: tier !== "window" });
+  const ancestors = tier === "window" ? [] : (await git(["rev-list", "--max-count=2000", plan.commit])).trim().split(/\s+/);
+  const staged = await stageLive({ source, appRoot: plan.appRoot, commit: plan.commit, version, withEngine: tier !== "window", ancestors });
   return { tier, version, parts, dir: staged.dir, manifest: staged.manifest, digest: staged.digest, changed: [...engine.files, ...window.files] };
 }
