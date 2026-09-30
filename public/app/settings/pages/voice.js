@@ -18,6 +18,7 @@ import { ctl, ctlSeg } from "../parts.js";
 import { voice17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { calls17d } from "../../chat/calls17d.js"; // pass 17 part D §2 (greyed)
+import { piperCard, initPiper } from "../piper.js";
 
 const V = { settings: null, comfort: null, dictation: null, dictationHow: "", wake: null, voices: [], brief: null };
 
@@ -134,11 +135,12 @@ async function saveAloud(v) {
 
 export function draw() {
   const lv = level();
-  return `<h1>${t("field.voice")}</h1><p class="lede">${t("window.settings.voice.talking-to-branch-voice-stays-on")}</p>${talking()}${speakingBack()}${lv >= 1 ? listeningMore() : ""}${voice17(lv)}${lv >= 1 ? calls17d() : ""}`;
+  return `<h1>${t("field.voice")}</h1><p class="lede">${t("window.settings.voice.talking-to-branch-voice-stays-on")}</p>${talking()}${speakingBack()}${piperCard(V.settings)}${lv >= 1 ? listeningMore() : ""}${voice17(lv)}${lv >= 1 ? calls17d() : ""}`;
 }
 
 export function init() {
   loadVoice();
+  initPiper(() => V.settings, (settings) => { V.settings = settings; });
   on("ptt-key", () => captureKey());
   on("aloud15", (el) => saveAloud(el.dataset.v));
   on("v-voice", (el) => saveVoice(el.dataset.v));
@@ -157,4 +159,4 @@ export function init() {
 
 export function load() { stopCapture(); return loadVoice(); }
 
-export const live = { "ptt-key": true, aloud15: true, "v-voice": true, "sw:v-dict": true, "sw:f15-wake-word": true, "sw:f15-silence": true, "sw:f15-spoken-morning-brief": true };
+export const live = { "piper-save": true, "ptt-key": true, aloud15: true, "v-voice": true, "sw:v-dict": true, "sw:f15-wake-word": true, "sw:f15-silence": true, "sw:f15-spoken-morning-brief": true };

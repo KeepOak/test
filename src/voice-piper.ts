@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { lstat, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
@@ -15,6 +15,7 @@ export function findPiper(choice: PiperChoice): PiperFound | null {
   const model = choice.localVoiceModel || process.env.PIPER_VOICE || "";
   if (!executable || !isAbsolute(executable) || !isAbsolute(model) || !model.endsWith(".onnx")) return null;
   try {
+    if (![executable, model, `${model}.json`].every(path => statSync(path).isFile())) return null;
     accessSync(executable, constants.X_OK);
     accessSync(model, constants.R_OK);
     accessSync(`${model}.json`, constants.R_OK);
