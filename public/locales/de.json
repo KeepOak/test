@@ -10691,5 +10691,19 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "keepoak.disconnect": "Trennen",
+  "keepoak.connect": "KeepOak-Konto verbinden",
+  "keepoak.enable": "KeepOak-Verbindung aktivieren",
+  "keepoak.connected": "Mit KeepOak verbunden",
+  "keepoak.off": "KeepOak-Verbindung ist aus",
+  "keepoak.ready": "Bereit zum Verbinden",
+  "keepoak.profile-only": "Nur dein Profil wird angefordert. Computer, Relay, Team, Synchronisierung und Sicherung bleiben nicht verfügbar. Unterhaltungen, Erinnerungen und Schlüssel werden nicht hochgeladen.",
+  "keepoak.profile": "Kontoprofil lesen",
+  "keepoak.enter-code": "Diesen Code bei KeepOak eingeben",
+  "keepoak.open": "keepoak.com/activate öffnen",
+  "keepoak.waiting": "Warten auf deine Zustimmung bei KeepOak.",
+  "keepoak.expired": "Der Anmeldecode ist abgelaufen. Starte erneut.",
+  "keepoak.enable-first": "Aktiviere die Verbindung vor der Anmeldung.",
+  "keepoak.disconnected": "Getrennt. Deine Daten auf beiden Seiten bleiben erhalten."
 }

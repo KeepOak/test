@@ -73,7 +73,9 @@ function settingsSec() {
 export function draw() {
   let html = `<h1>${t("delight.ach.title")}</h1>`;
   if (!view?.on) return html + (view ? `<p class="lede">${t("window.settings.achievements.private-to-you-never-nagging")}</p>${settingsSec()}` : "");
-  const list = view.list ?? [];
+  const all = view.list ?? [];
+  const list = all.filter((a) => !a.bonus);
+  const bonuses = all.filter((a) => a.bonus);
   const kinds = ["All", ...new Set(list.map((a) => a.kind))];
   if (!kinds.includes(category)) category = "All";
   const shown = category === "All" ? list : list.filter((a) => a.kind === category);
@@ -81,6 +83,7 @@ export function draw() {
   // The quiet switch stays at the top, where it is while they are off, rather than below all 505 (the lead's call).
   html += settingsSec();
   html += `<div class="ach-sum">${tierChips(list)}</div>`;
+  if (bonuses.length) html += `<div class="sec"><h2>${t("window.settings.achievements.connection-bonuses")}</h2><p class="hint">${t("window.settings.achievements.bonuses-outside-rank", { earned: bonuses.filter((a) => a.got).length, total: bonuses.length })}</p><div class="achs">${bonuses.map(card).join("")}</div></div>`;
   html += `<div class="tabs" role="tablist" data-css="margin-top:6px">${kinds.map((k) => `<button class="tab" role="tab" type="button" aria-selected="${category === k}" data-act="achcat" data-v="${esc(k)}">${esc(k === "All" ? t("look.filter.all") : say(k))}</button>`).join("")}</div>`;
   html += `<div class="achs">${shown.map(card).join("")}</div>`;
   return html;

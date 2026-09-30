@@ -14,8 +14,9 @@ import type { OwnMcpServers } from "./mcp-own-servers.js";
 import type { OwnClis } from "./own-clis.js";
 import type { ReplyFlags } from "./reply-flags.js";
 import type { Store } from "./store.js";
+import { keepoakApi, type KeepOakHost } from "./keepoak-api.js";
 
-export interface ConnectorsHost {
+export interface ConnectorsHost extends KeepOakHost {
   store: Store; version: string; ownMcp: OwnMcpServers; ownClis: OwnClis; replyFlags: ReplyFlags;
 }
 
@@ -83,6 +84,7 @@ async function flagsApi(app: ConnectorsHost, request: IncomingMessage, path: str
 }
 
 export async function connectorsApi(app: ConnectorsHost, request: IncomingMessage, path: string): Promise<unknown> {
+  if (path === "/api/keepoak" || path.startsWith("/api/keepoak/")) return keepoakApi(app, request, path);
   if (path === "/api/release-notes" && request.method === "GET") return notesFor(app.version);
   if (path.startsWith("/api/mcp/")) return serversApi(app, request, path);
   if (path === "/api/clis" || path.startsWith("/api/clis/")) return clisApi(app, request, path);
