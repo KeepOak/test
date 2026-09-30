@@ -1153,13 +1153,16 @@ export class ChannelRouter {
     // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
     // held back when the owner turned steering off, and answered as the next turn if the task never read it.
     if (command.name === "steer" && turn && command.argument.trim()) return this.joinTurn(turn, { ...message, text: command.argument.trim() });
-    // A side question, folding and a question for the handbook all ask the model, so they count
-    // against the chats working at once (`/help` and `/help all` only list).
+    // Side questions, folding, handbook questions and workspace diffs count against the chats
+    // working at once (`/help` and `/help all` only list).
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
-    const asks = command.name === "btw" || command.name === "compact" || question;
+    const asks = command.name === "btw" || command.name === "compact" || command.name === "diff" || question;
     const work = () => runChatCommand(command, {
       runtime: this.runtime, channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
+      ownerDm: ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message),
+      diffRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "diff", command.argument),
+      maxReplyChars: this.adapters.get(channel)?.adapter.maxTextLength ?? 3500,
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
       dropWaiting: () => {
         if (!turn || turn.runId) return false;
