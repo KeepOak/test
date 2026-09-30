@@ -5,6 +5,7 @@ import { ImapClient, type MailMessage, type MailServer } from "../channels/mail-
 import type { WorkspaceFiles } from "../files.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
+import type { ConnectionHealth } from "./probe.js";
 import { attachmentsOf, mimeParts, textOf } from "./mime.js";
 import { clip, outsideTextNote, partSettings, requirePersonal, savePartSettings, secretNameSchema } from "./settings.js";
 
@@ -82,16 +83,25 @@ export class MailSearch {
   save(input: unknown) { return savePartSettings(this.deps.store, this.deps.owner, settingsKey, MailSearchSettingsSchema, input); }
 
   /** Opens the inbox, does one thing, and always closes it again. */
-  private async withInbox<T>(work: (client: MailClient) => Promise<T>): Promise<T> {
+  private async withInbox<T>(work: (client: MailClient) => Promise<T>, readOnly = false): Promise<T> {
     requirePersonal(this.deps.store, this.deps.owner, "mail-search");
     const settings = this.settings();
     if (!settings.host || !settings.user) throw new Error("Give the mail server and the user name on the inbox card first.");
     await this.deps.assertHost(settings.host, settings.port);
     const client = this.imap({ host: settings.host, port: settings.port, user: settings.user, password: await this.deps.secret(settings.passwordName) });
     try {
-      await client.connect();
+      await client.connect(readOnly);
       return await work(client);
     } finally { await client.close().catch(() => undefined); }
+  }
+
+  /** An authenticated EXAMINE reads inbox metadata only; no search, message fetch or flag writes. */
+  async test(): Promise<ConnectionHealth> {
+    requirePersonal(this.deps.store, this.deps.owner, "mail-search");
+    let ok = false, reason: string | null = null;
+    try { await this.withInbox(async () => { ok = true; }, true); }
+    catch { reason = "Inbox access could not be verified. Check the mail server, network rules and saved credentials."; }
+    return { checkedAt: new Date().toISOString(), ok, checks: [{ capability: "IMAP read-only inbox access", ok, reason }] };
   }
 
   async search(input: unknown) {

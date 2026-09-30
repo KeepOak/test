@@ -123,11 +123,14 @@ export class ImapClient {
   private counter = 0;
   constructor(private readonly server: MailServer) {}
   private get timeout(): number { return this.server.timeoutMs ?? 20000; }
-  async connect(): Promise<void> {
+  async connect(readOnly = false): Promise<void> {
     this.socket = await open(this.server, this.server.tls !== false);
     await this.socket.until((text) => (text.includes("\r\n") ? text.indexOf("\r\n") + 2 : null), this.timeout);
     await this.command(`LOGIN ${quote(this.server.user)} ${quote(this.server.password)}`);
-    await this.command("SELECT INBOX");
+    const mailbox = await this.command(readOnly ? "EXAMINE INBOX" : "SELECT INBOX");
+    // RFC 9051 §6.3.3: EXAMINE returns metadata and must confirm a read-only mailbox.
+    if (readOnly && !/^b\d+ OK \[READ-ONLY\]/im.test(mailbox))
+      throw new Error("The mail server did not confirm a read-only inbox.");
   }
   /** Reads every unread message, marks each read, and returns what was found. */
   async unread(limit = 10): Promise<MailMessage[]> {

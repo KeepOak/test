@@ -131,6 +131,10 @@ async function route(deps: PersonalHttpDeps, path: string): Promise<unknown> {
     z.object({}).strict().parse(await deps.readBody());
     return { health: await personal.home.test() };
   }
+  if (path === "/api/personal/mail/test" && post) {
+    z.object({}).strict().parse(await deps.readBody());
+    return { health: await personal.mail.test() };
+  }
   const parts: Record<string, { settings(): unknown; save(input: unknown): unknown }> = {
     "/api/personal/x": personal.x, "/api/personal/home": personal.home, "/api/personal/chat-files": personal.chatFiles,
     "/api/personal/mail": personal.mail, "/api/personal/brief": personal.brief,

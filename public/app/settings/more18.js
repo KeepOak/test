@@ -20,7 +20,7 @@ import { t } from "../../i18n.js";
 
 const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"], ["spotify", "personal.spotify.name", "accounts.spotify.com"]];
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
-const M = { signin: {}, busy: false, typed: {}, checking: {}, home: null, homeHealth: null };
+const M = { signin: {}, busy: false, typed: {}, checking: {}, home: null, mail: null, connectorHealth: {} };
 const typed = (id, saved) => esc(M.typed[id] ?? saved ?? "");
 /* Reuse the password controls during a draw of Accounts: a late read must not discard input. No secret goes into
    markup or draft state, and these transient node references are released at the end of that same draw. */
@@ -40,28 +40,29 @@ export async function loadMore() {
     try { M.signin[service] = await api(`personal/signin/${service}`); } catch (error) { toast(error.message); delete M.signin[service]; }
   }));
   try { M.home = await api("personal/home"); } catch { M.home = null; }
-  M.homeHealth = null;
+  try { M.mail = await api("personal/mail"); } catch { M.mail = null; }
+  M.connectorHealth = {};
   renderNow();
 }
 
-/* The Home Assistant check reads only the authenticated API availability message. */
-function homeCheck() {
-  if (!M.home?.settings?.url) return "";
-  const checks = M.homeHealth?.checks ?? [];
-  return `<div class="sec more18"><h2>${t("personal.home.title")}</h2><button class="btn sm" type="button" data-act="more18-home-test" ${M.checking.home ? "disabled" : ""}>${t(M.checking.home ? "live.working" : "action.test-this-connection")}</button>`
+/* Saved token/password connections have explicit metadata checks independent of configuration. */
+function connectorCheck(id, name, configured) {
+  if (!configured) return "";
+  const checks = M.connectorHealth[id]?.checks ?? [];
+  return `<div class="sec more18"><h2>${t(name)}</h2><button class="btn sm" type="button" data-act="more18-connector-test" data-v="${id}" ${M.checking[id] ? "disabled" : ""}>${t(M.checking[id] ? "live.working" : "action.test-this-connection")}</button>`
     + `<div aria-live="polite">${checks.map((check) => `<p class="hint">${esc(check.capability)} · ${esc(t(check.ok ? "flowsBoards.recipes.passed" : "task.failed"))}${check.reason ? ` · ${esc(check.reason)}` : ""}</p>`).join("")}</div></div>`;
 }
 
-async function testHome() {
-  if (!ownerHere() || M.checking.home) return;
-  M.checking.home = true;
-  M.homeHealth = null;
+async function testConnector(id) {
+  if (!ownerHere() || !["home", "mail"].includes(id) || M.checking[id]) return;
+  M.checking[id] = true;
+  delete M.connectorHealth[id];
   renderNow();
   try {
-    const result = await api("personal/home/test", {});
-    if (ownerHere()) M.homeHealth = result.health;
+    const result = await api(`personal/${id}/test`, {});
+    if (ownerHere()) M.connectorHealth[id] = result.health;
   } catch (error) { toast(error.message); }
-  finally { M.checking.home = false; renderNow(); }
+  finally { M.checking[id] = false; renderNow(); }
 }
 
 function service([id, name]) {
@@ -96,7 +97,8 @@ export function moreSections() {
   passwordControls = SERVICES.map(([id]) => document.getElementById(`more18-${id}-secret`)).filter(Boolean);
   return `<div class="sec more18"><h2>${t("window.flows.setup.email")}</h2><p class="hint">${t("window.flows.setup.email-hint")}</p>${SERVICES.filter(([id]) => id !== "spotify").map(service).join("")}</div>`
     + `<div class="sec more18"><h2>${t("personal.spotify.name")}</h2>${service(SERVICES[2])}</div>`
-    + homeCheck()
+    + connectorCheck("home", "personal.home.title", M.home?.settings?.url)
+    + connectorCheck("mail", "personal.mail.title", M.mail?.settings?.host && M.mail?.settings?.user)
     + `<div class="sec more18"><h2>${t("first-run-steps.restore-title")}</h2><p class="hint">${t("first-run-steps.restore-purpose")}</p>`
     + `<div class="acts"><button class="btn" type="button" data-act="more18-restore" ${M.busy ? "disabled" : ""}>${ic("folder", "s")}${M.busy ? t("first-run-steps.restore-working") : t("window.flows.setup.backup")}</button></div>`
     + `<input type="file" id="more18-file" accept=".json,application/json" hidden></div>`;
@@ -155,11 +157,11 @@ async function restore(file) {
 }
 
 export function initMore() {
-  markLive(["more18-save", "more18-signin", "more18-test", "more18-home-test", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`])]);
+  markLive(["more18-save", "more18-signin", "more18-test", "more18-connector-test", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`])]);
   on("more18-save", async (el) => { if (await save(el.dataset.v)) { toast(t("accounts.saved")); await loadMore(); } });
   on("more18-signin", (el) => signIn(el.dataset.v));
   on("more18-test", (el) => testConnection(el.dataset.v));
-  on("more18-home-test", () => testHome());
+  on("more18-connector-test", (el) => testConnector(el.dataset.v));
   on("more18-restore", () => document.getElementById("more18-file")?.click());
   document.addEventListener("input", (e) => { if (/^more18-\w+-client$/.test(e.target?.id ?? "")) M.typed[e.target.id] = e.target.value; }); // never the secret
   document.addEventListener("change", (e) => {
