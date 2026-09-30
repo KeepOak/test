@@ -283,7 +283,7 @@ import { Coding } from "./coding/index.js"; // mac7/r17-d: coding polish
 import { worktreeScope } from "./coding/worktrees.js"; // mac7/r17-d
 import type { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
 // PLAT-191: parts of Branch built the first time they are needed, with their tools listed from cards until then.
-import { personalMode, personalParts, personalTools } from "./personal/settings.js";
+import { listedPersonalTools, personalMode, personalParts, personalTools } from "./personal/settings.js";
 import { loadNow } from "./load-now.js";
 import { listFromCards } from "./tool-cards.js";
 import { unsetConnectorTools } from "./personal/settings.js"; // ships-on sweep
@@ -1527,7 +1527,7 @@ ${result.output || "(it said nothing)"}`;
     built.tunnel.localAddress = localAddress;
     return built;
   };
-  listFromCards(registry, personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
+  listFromCards(registry, listedPersonalTools((part) => personalMode(store, runtime.owner, part) !== "off"),
     () => void personal());
   releaseOnLock.push(async () => { await personalBuilt?.close(); }); // locking Branch stops the tunnel and forgets spoken answers
   // ── end R17-C ──

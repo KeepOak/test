@@ -82,6 +82,13 @@ export const personalTools: Record<PersonalPart, readonly string[]> = {
   "mail-search": ["mail.search", "mail.attachments", "mail.save_attachment"],
   tunnel: [],
 };
+/** Tools that span parts, listed while any of their parts is on (calendar-availability.ts). */
+export const crossPartTools: Record<string, readonly PersonalPart[]> = { "calendars.free_slots": ["google", "microsoft"] };
+/** Every personal tool listed while `isOn` says its part is on. */
+export const listedPersonalTools = (isOn: (part: PersonalPart) => boolean): string[] => [
+  ...personalParts.filter(isOn).flatMap((part) => personalTools[part]),
+  ...Object.keys(crossPartTools).filter((name) => crossPartTools[name]!.some(isOn)),
+];
 
 /** For src/feature-switches.ts: each part with tools — its settings record, why it is loaded, and its tools. */
 export const personalToolFeatures: readonly (readonly [string, string, readonly string[], PersonalMode])[] = personalParts
