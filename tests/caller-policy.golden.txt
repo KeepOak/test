@@ -54,6 +54,7 @@
 # f8d913 A short-lived key cannot change where the history of what is remembered is kept. Do that in the app window.
 # fb6b79 Your chat apps belongs to the owner. Switch back to the owner's profile to use it.
 # fe8f97 A short-lived key cannot read an update's problem or make its file. Do that in the app window.
+owner GET /api/monitors/:id/prices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner GET /api/panels/browser/demonstration | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/panels/browser/demonstration | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/panels/browser/network | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -2320,6 +2321,7 @@ owner GET /api/workspace-editor/save | here=ok remote=ok phone=ok legacy=ok pers
 owner POST /api/workspace-editor/save | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd22c7 run=401/dd22c7 nobody=401/40daee
 owner GET /api/workspace-editor/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd22c7 run=401/dd22c7 nobody=401/40daee
 owner POST /api/workspace-editor/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd22c7 run=401/dd22c7 nobody=401/40daee
+owner+lockdown GET /api/monitors/:id/prices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown GET /api/panels/browser/demonstration | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/panels/browser/demonstration | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/panels/browser/network | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4586,6 +4588,7 @@ owner+lockdown GET /api/workspace-editor/save | here=ok remote=ok phone=ok legac
 owner+lockdown POST /api/workspace-editor/save | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd22c7 run=401/dd22c7 nobody=401/40daee
 owner+lockdown GET /api/workspace-editor/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd22c7 run=401/dd22c7 nobody=401/40daee
 owner+lockdown POST /api/workspace-editor/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/dd22c7 run=401/dd22c7 nobody=401/40daee
+household GET /api/monitors/:id/prices | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household GET /api/panels/browser/demonstration | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household POST /api/panels/browser/demonstration | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/panels/browser/network | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
@@ -6852,6 +6855,7 @@ household GET /api/workspace-editor/save | here=400/f6e21c remote=400/f6e21c rea
 household POST /api/workspace-editor/save | here=400/f6e21c remote=400/f6e21c read=401/dd22c7 run=401/dd22c7
 household GET /api/workspace-editor/settings | here=400/f6e21c remote=400/f6e21c read=401/dd22c7 run=401/dd22c7
 household POST /api/workspace-editor/settings | here=400/f6e21c remote=400/f6e21c read=401/dd22c7 run=401/dd22c7
+household+lockdown GET /api/monitors/:id/prices | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown GET /api/panels/browser/demonstration | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/panels/browser/demonstration | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/panels/browser/network | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
@@ -9118,6 +9122,7 @@ household+lockdown GET /api/workspace-editor/save | here=400/f6e21c remote=400/f
 household+lockdown POST /api/workspace-editor/save | here=400/f6e21c remote=400/f6e21c read=401/dd22c7 run=401/dd22c7
 household+lockdown GET /api/workspace-editor/settings | here=400/f6e21c remote=400/f6e21c read=401/dd22c7 run=401/dd22c7
 household+lockdown POST /api/workspace-editor/settings | here=400/f6e21c remote=400/f6e21c read=401/dd22c7 run=401/dd22c7
+applock GET /api/monitors/:id/prices | here=423/a8f863
 applock GET /api/panels/browser/demonstration | here=423/a8f863
 applock POST /api/panels/browser/demonstration | here=423/a8f863
 applock GET /api/panels/browser/network | here=423/a8f863

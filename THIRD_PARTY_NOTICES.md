@@ -3858,6 +3858,12 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 
 Source: https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/agent/insights.py
 
+## Price-watch condition recipe
+
+The listed Hermes `product-price-monitor` skill was read at commit `7327624d3500d4bbc9ad58b0a75c324a306d882a` (MIT). Its threshold/drop, successful-baseline, retained-good-observation and duplicate-alert shape informed the implementation. It is a recipe, not an executable price parser: `src/monitor-price.ts` and the Branch integration are original code, not a claimed source-code port.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/7327624d3500d4bbc9ad58b0a75c324a306d882a/skills/productivity/product-price-monitor/SKILL.md
+
 ### Branch builds Branch (P0 fixes): Hermes Agent (MIT); Codex (Apache-2.0)
 
 - `boundSummaryInput` in `src/compaction-input.ts`, which holds a fold's input to its room by keeping 45% from the start and 55% from the end with a marker naming how much of the middle was left out, is adapted from `_bound_summary_input` in Hermes Agent's `agent/context_compressor.py` (https://github.com/NousResearch/hermes-agent, commit 7083a524a, Copyright (c) 2025 Nous Research, MIT; the licence text is given under IronClaw above).

@@ -16,6 +16,7 @@
  * ":id" stands for any task, conversation or item id.
  */
 export const ROUTES = {
+  "/api/monitors/:id/prices": "owner GET", // owner price history; Trunk tool reads stay creator-bound
   "/api/taste": "prefix",
   "/api/panels/browser/demonstration": "owner POST",
   "/api/panels/browser/network": "owner POST",
