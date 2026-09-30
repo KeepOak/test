@@ -150,6 +150,10 @@ import { LiveConversations } from "./realtime-voice.js";
 import { liveRefusal } from "./live-refusal.js"; // phase2/rooms
 import { registerModelSwitch } from "./model-switch.js";
 import { registerSettingsTools } from "./settings-kit/tools.js";
+import { registerUpdateTool } from "./comfort/update-tool.js";
+import { newestPassing } from "./comfort/update-now.js";
+import { ownBuild } from "./hot-update/window-files.js";
+import { primaryRepo } from "./desktop/repo-pair.js"; // the repository updates come from
 import { registerHelpSearch } from "./help-search.js";
 import { settingsKitWriters } from "./settings-kit/writers.js";
 import { GitTools } from "./integrations/git.js";
@@ -2077,6 +2081,11 @@ ${result.output || "(it said nothing)"}`;
   };
   // Changing Branch's own settings by asking, saved through the same writers as the window's (src/settings-kit/tools.ts).
   registerSettingsTools(registry, store, () => settingsKitWriters(branch));
+  // Branch's own updates, asked about or asked for by the owner (src/comfort/update-tool.ts).
+  const updateFacts = { version: String(createRequire(import.meta.url)("../package.json").version), commit: ownBuild,
+    newestPassing: newestPassing(primaryRepo) };
+  registerUpdateTool(registry, store, updateFacts);
+  channels.updateFacts = updateFacts;
   registerHelpSearch(registry); // what Branch knows about itself, from its own handbook
   // Wave 9: a graph flow left working when the app closed picks up at the box after the last one
   // that finished, with the state exactly as that box left it. Nothing is started again from the

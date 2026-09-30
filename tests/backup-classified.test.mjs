@@ -148,7 +148,9 @@ const reviewedComputedKeys = new Set([
   "src/tool-report.ts: catalogHealthId",
   "src/tool-usage.ts: id",
   "src/trunks/settings.ts: trunkKey",
-  "src/trunks/teach.ts: watchKey"
+  "src/trunks/teach.ts: watchKey",
+  // Not a key: the tool's group ("settings") and the first words of its description, which the scan reads as one.
+  "src/comfort/update-tool.ts: the"
 ]);
 
 const classified = (id) => staysOnThisComputer(id) || heldForTheOwner(id) || id in travelsWithBackup;

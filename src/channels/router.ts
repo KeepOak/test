@@ -42,6 +42,8 @@ import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
+import { requestInstallNow } from "../comfort/update-now.js";
+import { updateStatus, type UpdateFacts } from "../comfort/update-tool.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
@@ -1042,6 +1044,10 @@ export class ChannelRouter {
     // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
     if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
       return { name: "new", argument: "" };
+    // Branch's own updates: the router's own command, answered only in the owner's own paired chat (updateCommand),
+    // whatever the commands switch says, and not one of the shared table's (src/commands/catalog.ts).
+    const update = message.voice ? null : /^\/update(?:@[a-z0-9_]+)?(?:\s+(install))?\s*$/i.exec(message.text.trim());
+    if (update) return { name: "update", argument: (update[1] ?? "").toLowerCase() };
     const setting = this.switches().commands;
     // As shipped, the owner's own paired direct chat reads commands even with the switch off (chat-live-settings.ts).
     // Only an account the owner named as their own (Commands from your own chat, or /platform's owners) counts:
@@ -1152,8 +1158,41 @@ export class ChannelRouter {
   }
   // ---- chat-live (wave mac2): one task per chat, notes steer it, commands control it ----------
   /** Carries out a chat command and sends its answer back. */
+  /** Branch's own version and updates, for `/update` (src/comfort/update-tool.ts); set by createBranch. */
+  updateFacts: UpdateFacts | null = null;
+  /**
+   * `/update`: which Branch runs, the newest version that passed its checks and why an update waits, with an "Install
+   * now" button; `/update install` asks for the update (src/comfort/update-now.ts). Only the owner's own paired direct
+   * chat, and never under Lockdown or while the app is locked.
+   */
+  private async updateCommand(message: InboundMessage, argument: string): Promise<Outcome> {
+    const { channel, chatId } = message, owner = this.runtime.owner;
+    const own = message.chatKind === "direct" && message.caughtUp !== true && this.pair(channel, message.senderId)?.status === "approved"
+      && this.ownAccount(channel, message.senderId) && this.senderAllowed(channel, message.senderId);
+    const key = `update:${chatId}:${message.messageId}`;
+    const say = (text: string) => this.deliver(channel, chatId, text, key, message.messageId).catch(() => undefined);
+    if (!own) { await say("Only the owner, in their own paired chat, can ask about Branch's updates here."); return "replied"; }
+    if (lockedDown(this.store, owner) || this.appLocked()) { await say("Branch's updates are not asked about from a chat while Lockdown is on."); return "replied"; }
+    if (!this.updateFacts) { await say("This copy of Branch cannot say anything about its updates."); return "replied"; }
+    if (argument.trim().toLowerCase() === "install") {
+      requestInstallNow(this.store, owner, `chat:${channel}`);
+      const now = await updateStatus(this.store, owner, this.updateFacts);
+      await say(`Asked: Branch installs the newest version at the next safe moment, checked on a copy of your work first. ${now.words}`);
+      return "replied";
+    }
+    const now = await updateStatus(this.store, owner, this.updateFacts);
+    const adapter = this.adapters.get(channel)?.adapter;
+    const checked = await this.outboundGuard(now.words);
+    if (adapter?.sendButtons && !checked.blocked && !now.installRequested) {
+      const sent = await adapter.sendButtons(chatId, checked.text, [{ label: "Install now", value: "/update install" }], message.messageId).then(() => true, () => false);
+      if (sent) return "replied";
+    }
+    await say(adapter?.sendButtons ? now.words : `${now.words} Send /update install to install it now.`);
+    return "replied";
+  }
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
+    if (command.name === "update") return this.updateCommand(message, command.argument);
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
     // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
