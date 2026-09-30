@@ -3438,6 +3438,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 The second model that reviews tool calls in `src/approval-reviewer.ts` — deciding whether a tool that does not say only reads, and checking a risky call against the owner's own rules with its arguments treated as untrusted data — follows the ideas of Goose's `crates/goose/src/permission/permission_judge.rs` and `crates/goose/src/security/adversary_inspector.rs` (https://github.com/block/goose) and Codex's `codex-rs/core/src/guardian/` (https://github.com/openai/codex, Copyright 2025 OpenAI), both licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). It was written afresh; no code was copied.
 
+### Cline, Apache-2.0: asking for an MCP server's secret values
+
+The "Add your own MCP server" form (`secretRow` and `typedSecrets` in `public/app/flows/connectors.js`) asks for each secret's value, as Cline's marketplace install asks for each declared environment variable (`install.env`, https://github.com/cline/cline/blob/fef9de1665d098ef13327656669cc43783151e0b/apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts#L69-L117). The code was written for Branch, which keeps the values in its locker (`withLockerSecrets` in `src/integrations/mcp-config.ts`). Cline is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
 ### Goose (Block, Inc.), Apache-2.0
 
 The malware check on add-ons in `src/security-audit/malware-check.ts` and the command-line reading in `src/security-audit/package-launch.ts` are adapted from Goose's `crates/goose/src/agents/extension_malware_check.rs` (https://github.com/block/goose): the OSV query and its pages, refusing only `MAL-` advisories, and finding the package an `npx` or `uvx` command would fetch. Changes: written in TypeScript, sent through Branch's network policy, `pipx run`, `bunx`, `pnpm dlx` and `uv tool run` added, and answers remembered for a while. Used under the Apache License, Version 2.0:
@@ -3563,10 +3567,6 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 - `readback.ts` follows the ideas of ZeroClaw's Markdown memory (`crates/zeroclaw-memory/src/markdown.rs`, https://github.com/zeroclaw-labs/zeroclaw, commit 3df68fb, MIT or Apache-2.0) and nanobot's "dream" tidy template (`nanobot/templates/agent/dream.md`, https://github.com/HKUDS/nanobot, commit 2fb1659, MIT).
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-
-### Cline, Apache-2.0: asking for an MCP server's secret values
-
-The "Add your own MCP server" form (`secretRow` and `typedSecrets` in `public/app/flows/connectors.js`) asks for each secret's value, as Cline's marketplace install asks for each declared environment variable (`install.env`, https://github.com/cline/cline/blob/fef9de1665d098ef13327656669cc43783151e0b/apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts#L69-L117). The code was written for Branch, which keeps the values in its locker (`withLockerSecrets` in `src/integrations/mcp-config.ts`). Cline is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
