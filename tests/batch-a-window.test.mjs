@@ -234,3 +234,19 @@ test("Settings › General's shared commands switch shows this window's on, and 
   assert.equal((await call("/api/commands?surface=phone")).mode, "off", "the phone's stay off");
   assert.deepEqual(errors, []);
 });
+
+test("a paused task's card says what Resume does before the owner presses it", async (t) => {
+  let sid;
+  const { page, errors } = await newWindow(t, { seed: (app) => {
+    const run = app.store.createRun(app.runtime.owner, "Tidy the notes folder");
+    sid = run.sessionId;
+    app.store.message(sid, { role: "user", content: run.prompt });
+    app.store.finish(run.id, "interrupted", "Paused after this step. Nothing is lost.");
+  } });
+  await chat(page, sid);
+  const card = page.locator('#main .lw-chat').first();
+  await card.waitFor({ timeout: 20000 });
+  assert.match(await card.innerText(), /Resume starts a new task using this conversation’s saved messages/);
+  assert.equal(await card.locator('[data-act="lw-resume"]').count(), 1);
+  assert.deepEqual(errors, []);
+});

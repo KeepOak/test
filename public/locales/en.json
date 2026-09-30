@@ -6719,6 +6719,7 @@
   "window.chat.bg.finished": "{count} finished in the background",
   "window.chat.bg.hint": "Start one with {code} or + › Run in the background. Up to three at once.",
   "window.chat.bg.ready": "Finished · ready to read",
+  "window.chat.bg.resume-explanation": "Resume starts a new task using this conversation’s saved messages. An action without a saved result may already have happened.",
   "window.chat.bg.run": "Run it in the background",
   "window.chat.bg.running": "{count} in the background",
   "window.chat.bg.title": "Running in the background",

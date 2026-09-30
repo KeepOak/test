@@ -6719,6 +6719,7 @@
   "window.chat.bg.finished": "{count} im Hintergrund fertig",
   "window.chat.bg.hint": "Starte eine mit {code} oder + › Im Hintergrund ausführen. Bis zu drei gleichzeitig.",
   "window.chat.bg.ready": "Fertig · bereit zum Lesen",
+  "window.chat.bg.resume-explanation": "Fortsetzen startet eine neue Aufgabe mit den gespeicherten Nachrichten dieser Unterhaltung. Eine Aktion ohne gespeichertes Ergebnis kann bereits stattgefunden haben.",
   "window.chat.bg.run": "Im Hintergrund ausführen",
   "window.chat.bg.running": "{count} im Hintergrund",
   "window.chat.bg.title": "Läuft im Hintergrund",
