@@ -8,7 +8,7 @@ import { attachToRunning, type RunningInstance } from "./running.js";
 /**
  * After an update or a rollback, a Branch that was running as a background service is started again
  * through that service's own manager. Closing it for the swap is a polite exit, and neither launchd
- * (`KeepAlive{SuccessfulExit:false}`) nor systemd (`Restart=on-failure`) restarts a polite exit, so
+ * (`KeepAlive{SuccessfulExit:false}`) nor systemd (a stop on purpose exits 78, `RestartPreventExitStatus=78`) restarts it, so
  * without this the service stayed down until the next sign-in, and the watch that rolls a bad version
  * back never ran.
  */
