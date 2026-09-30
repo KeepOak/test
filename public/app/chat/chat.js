@@ -131,7 +131,11 @@ const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
 const acts = (m) => (viewingHelper() ? "" : msgActs(m));
 /* dogfood D15: a Trunk's routine is asked with "[Trunk @handle] " in front, for the scheduler; the thread shows its words. */
 const ownWords = (words) => String(words ?? "").replace(/^\[Trunk @[a-z0-9-]{1,60}\] /, "");
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(ownWords(m.content))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
+/* QA retest 2026-09-28 pass 2: the engine writes "[attached file: name (kind)]" after the words so the model knows a file
+   came with them (src/runtime.ts attachmentsNote); the file's own row is drawn under the bubble, so the bubble leaves the
+   note out rather than saying it twice. A message with no file rows keeps every word. */
+const withoutFileNote = (m, words) => (m.attachments?.length ? words.replace(/\s*\[attached files?: [^\]\n]*\]\s*$/, "") : words);
+function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(withoutFileNote(m, ownWords(m.content)))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
