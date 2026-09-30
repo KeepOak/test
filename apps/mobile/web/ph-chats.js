@@ -16,10 +16,37 @@ import { switchesNow } from "/ph-switches.js";
 const C = { results: null, searched: "", pending: "", draft: "", attach: [], timer: 0 };
 let phoneFrame = null;
 let phoneViewEpoch = 0;
+let livePhoneView = null;
+function stopPhoneView() {
+  phoneViewEpoch++; clearTimeout(livePhoneView?.timer); clearInterval(livePhoneView?.watch);
+  livePhoneView = null; phoneFrame = null;
+}
+function viewCurrent(live) {
+  return livePhoneView === live && live.epoch === phoneViewEpoch && P.scr === "chat" && P.chat === live.session
+    && !document.hidden && Date.now() < live.until;
+}
+async function refreshPhoneView(live) {
+  if (!viewCurrent(live)) { if (livePhoneView === live) { stopPhoneView(); draw(); } return; }
+  try {
+    const view = await get("/api/phone/trunk-view", `session=${encodeURIComponent(live.session)}&kind=private-desktop`);
+    if (!viewCurrent(live)) return;
+    if (view.readonly !== true || view.kind !== "private-desktop" || !Number.isFinite(view.expiresAt)
+      || !Number.isInteger(view.revision) || live.revision !== undefined && live.revision !== view.revision)
+      throw new Error("Private computer view changed. Request a new owner grant.");
+    live.until = Math.min(live.until, view.expiresAt); live.revision = view.revision;
+    if (!viewCurrent(live)) { stopPhoneView(); draw(); return; }
+    phoneFrame = { frame: privateImage(view.raw), kind: view.kind, expiresAt: live.until, session: live.session };
+    const image = document.querySelector("[data-phone-private-frame]");
+    if (image) image.src = phoneFrame.frame; else draw();
+    live.timer = setTimeout(() => refreshPhoneView(live), 2500); // One request at a time; no queued frame backlog.
+  } catch (error) {
+    if (livePhoneView === live) { stopPhoneView(); draw(); toast(error.message); }
+  }
+}
 function phoneView() {
   if (!trunkOf(P.chat)) return "";
   const view = phoneFrame?.session === P.chat && phoneFrame.expiresAt > Date.now() ? phoneFrame : null;
-  return `<section><p>Read-only view requires the owner’s local, expiring grant.</p><button type="button" data-act="ph-view" data-v="private-desktop">Refresh this Trunk’s private computer</button><button type="button" data-act="ph-view" data-v="browser">Refresh Trunk browser</button><button type="button" data-act="ph-view" data-v="computer">Refresh shared computer</button><button type="button" data-act="ph-view-close">Hide view</button>${view?.frame ? `<img src="${esc(view.frame)}" alt="Read-only ${esc(view.kind)} snapshot" style="max-width:100%"><p>Snapshot; refresh to see changes. No control permission.</p>` : ""}</section>`;
+  return `<section><p>Read-only view requires the owner’s local, expiring grant.</p><button type="button" data-act="ph-view-live" ${livePhoneView ? "disabled" : ""}>Start private Trunk live refresh</button><button type="button" data-act="ph-view" data-v="private-desktop">Refresh this Trunk’s private computer once</button><button type="button" data-act="ph-view" data-v="browser">Refresh Trunk browser</button><button type="button" data-act="ph-view" data-v="computer">Refresh shared computer</button><button type="button" data-act="ph-view-close">Stop and hide view</button>${livePhoneView ? "<p>Live refresh: at least 2.5 seconds between frames, up to five minutes while this chat is visible. No input permission.</p>" : ""}${view?.frame ? `<img ${livePhoneView ? "data-phone-private-frame" : ""} src="${esc(view.frame)}" alt="Read-only ${esc(view.kind)} snapshot" style="max-width:100%"><p>${livePhoneView ? "Automatically refreshing private desktop." : "Snapshot; refresh to see changes."} No control permission.</p>` : ""}</section>`;
 }
 function privateImage(raw) {
   if (raw?.format !== "rgbx" || !Number.isInteger(raw.width) || !Number.isInteger(raw.height)
@@ -171,9 +198,17 @@ export async function attachFiles(list) {
   draw();
 }
 export function initChats() {
-  on("ph-view-close", () => { phoneViewEpoch++; phoneFrame = null; draw(); });
+  on("ph-view-close", () => { stopPhoneView(); draw(); });
+  on("ph-view-live", () => {
+    stopPhoneView();
+    if (P.scr !== "chat" || !P.chat || !trunkOf(P.chat) || document.hidden) return;
+    const live = {session: P.chat, epoch: phoneViewEpoch, until: Date.now() + 5 * 60000, timer: 0, watch: 0};
+    livePhoneView = live;
+    live.watch = setInterval(() => { if (!viewCurrent(live) && livePhoneView === live) { stopPhoneView(); draw(); } }, 250);
+    draw(); void refreshPhoneView(live);
+  });
   on("ph-view", async el => {
-    const session = P.chat, epoch = ++phoneViewEpoch; phoneFrame = null; draw();
+    stopPhoneView(); const session = P.chat, epoch = phoneViewEpoch; draw();
     try {
       const view = await get("/api/phone/trunk-view", `session=${encodeURIComponent(session)}&kind=${el.dataset.v}`);
       if (P.chat !== session || document.hidden || epoch !== phoneViewEpoch) return;
@@ -182,7 +217,8 @@ export function initChats() {
       setTimeout(() => { if (epoch === phoneViewEpoch && phoneFrame?.session === session) { phoneFrame = null; draw(); } }, Math.min(10000, Math.max(0, view.expiresAt - Date.now())));
     } catch (error) { toast(error.message); }
   });
-  document.addEventListener("visibilitychange", () => { if (document.hidden) { phoneViewEpoch++; phoneFrame = null; draw(); } });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { stopPhoneView(); draw(); } });
+  window.addEventListener("pagehide", stopPhoneView);
   on("ph-cf", (el) => { P.chatF = el.dataset.v; draw(); });
   on("new", () => { P.chat = null; C.attach = []; go("chat"); });
   on("ph-sheet", (el) => { P.sheet = el.dataset.v || null; draw(); });

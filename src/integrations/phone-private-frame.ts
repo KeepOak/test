@@ -1,6 +1,18 @@
 import type { PrivateDesktops } from './private-desktops.js';
 import { openPrivateRfb, type PrivateRfbStream } from './private-rfb-stream.js';
 const active = new Set<string>();
+function phonePixels(pixels: Buffer, width: number, height: number) {
+  const scale = Math.min(1, 640 / width, 400 / height);
+  const w = Math.max(1, Math.floor(width * scale)), h = Math.max(1, Math.floor(height * scale));
+  const small = Buffer.alloc(w * h * 4);
+  try {
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const source = (Math.min(height - 1, Math.floor(y / scale)) * width + Math.min(width - 1, Math.floor(x / scale))) * 4;
+      pixels.copy(small, (y * w + x) * 4, source, source + 4);
+    }
+    return { width: w, height: h, pixels: small.toString('base64'), format: 'rgbx' as const };
+  } finally { small.fill(0); }
+}
 
 /** One bounded full frame from an already-running private desktop. No input API is exposed. */
 export async function phonePrivateFrame(desktops: PrivateDesktops, owner: string, trunk: string, valid: () => boolean) {
@@ -36,7 +48,7 @@ export async function phonePrivateFrame(desktops: PrivateDesktops, owner: string
     }, () => { if (!complete) stop(); }, abort.signal);
     await frame;
     if (!valid()) throw new Error('Private phone view ended.');
-    return { width, height, pixels: pixels.toString('base64'), format: 'rgbx' as const };
+    return phonePixels(pixels, width, height);
   } finally {
     active.delete(scope); clearInterval(clock); clearTimeout(timeout); unsubscribe(); abort.abort(); stream?.close(); pixels.fill(0); covered.fill(0);
   }
