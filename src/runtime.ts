@@ -1955,6 +1955,12 @@ ${run.output.slice(0, 6000)}`;
     if (!parent) this.drainFollowUps(run.sessionId);
     return settled;
   }
+  /**
+   * A run made on a task's behalf outside its own loop (a list filter's decision): it keeps the task's privacy (a task
+   * that stays on this computer keeps it here too) and its spending counts against the task's cap. Left when it ends.
+   */
+  joinSideRun(runId: string, parentRunId: string): void { this.joinSpend(runId, parentRunId); }
+  leaveSideRun(runId: string): void { this.leaveSpend(runId); }
   /** R17-S09: a sub-task's spending counts against the task at the top of its tree. */
   private joinSpend(runId: string, parentRunId: string | undefined): void {
     if (parentRunId && this.staysHere.has(parentRunId)) this.staysHere.add(runId);
@@ -2732,7 +2738,7 @@ ${run.output.slice(0, 6000)}`;
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
-  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget; runId: string }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
   /**
    * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
    * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
@@ -2749,7 +2755,7 @@ ${run.output.slice(0, 6000)}`;
     const lines = found.items.map((item) => (typeof item === "string" ? item : JSON.stringify(item) ?? ""));
     try {
       // The task's own Stop and budget: a filter never runs on after the task stops, nor past what it may spend.
-      const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget });
+      const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget, runId: run.id });
       if (!said) return result;
       if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
       const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);

@@ -65,8 +65,12 @@ const SHAPES = {
 type Raw = { answer?: boolean; choice?: string; score?: number; keep?: number[]; confidence: number; why?: string };
 
 /** Asks one shaped question of one connection (src/runtime.ts `shaped`, with no tools). */
-/** The task a decision is made for: its Stop and its budget reach the decision too. */
-export interface DecisionOrigin { signal: AbortSignal; budget: Budget }
+/**
+ * The task a decision is made for: its Stop and its budget reach the decision too, and its run (given by the runtime,
+ * never by a request) makes the decision's own run part of the task: it stays on this computer when the task must, and
+ * its spending counts against the task's cap.
+ */
+export interface DecisionOrigin { signal: AbortSignal; budget: Budget; runId: string }
 export type DecisionAsk = (text: string, shape: AnswerShape, preset: ModelPreset, origin?: DecisionOrigin) => Promise<ShapedAnswer>;
 
 export interface DecisionResult {

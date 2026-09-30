@@ -630,6 +630,7 @@ export async function createBranch(options: {
   const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset, origin) => {
     // Temporary, so a decision never adds a conversation to the list.
     const run = store.createRun(runtime.owner, "Making a small decision", undefined, true, "owner");
+    if (origin) runtime.joinSideRun(run.id, origin.runId);
     let answer: ShapedAnswer | undefined;
     try {
       // A decision made for a task stops with it and is paid from its budget (a list filter); any other has a minute.
@@ -637,6 +638,7 @@ export async function createBranch(options: {
       answer = await runtime.shaped(run, runtime.context({ runId: run.id, permissions: [], signal, ...(origin ? { budget: origin.budget } : {}) }), text, shape, preset);
       return answer;
     } finally {
+      if (origin) runtime.leaveSideRun(run.id);
       store.finish(run.id, answer?.status === "resolved" ? "completed" : "failed", answer?.status === "refused" ? answer.reason : "");
     }
   });

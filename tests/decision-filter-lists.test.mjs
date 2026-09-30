@@ -100,3 +100,44 @@ test("a list filter stops with its task and is paid from the task's budget", asy
   assert.equal(aborted, true, "the filter's model call was stopped with the task");
   await running.catch(() => undefined);
 });
+
+test("a list filter's decision is part of its task: it stays on this computer when the task must, and counts toward its spending", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-filter-family-"));
+  const seen = { elsewhere: 0, here: 0, family: null };
+  const answer = (request) => {
+    const keep = [...request.messages.at(-1).content.matchAll(/^(\d+)\. (.*)$/gm)].filter(([, , line]) => /invoice/i.test(line)).map(([, n]) => Number(n));
+    return { content: JSON.stringify({ keep, confidence: 0.9 }), toolCalls: [] };
+  };
+  const task = { name: "scripted", async complete(request) {
+    if (!request.messages.some((m) => m.role === "tool")) return { content: "", toolCalls: [{ id: "s1", name: "archive.search", arguments: "{}" }] };
+    return { content: "done", toolCalls: [] };
+  } };
+  let app;
+  const here = { name: "openai-compatible", embeddings: () => ({ endpoint: "http://127.0.0.1:11434/v1", apiKey: "" }), async complete(request) {
+    // The task itself is kept here too once it holds personal details; only the filter's question is counted.
+    if (!/Keep every line/.test(request.messages.at(-1).content)) return { content: "done", toolCalls: [] };
+    seen.here++;
+    const side = app.store.runs(app.runtime.owner).find((run) => run.prompt === "Making a small decision" && run.status === "running");
+    const parent = app.store.runs(app.runtime.owner).find((run) => run.prompt.startsWith("Find the overdue"));
+    seen.family = side && parent ? app.runtime["spendFamily"](parent.id).includes(side.id) : null;
+    return answer(request);
+  } };
+  const elsewhere = { name: "scripted", async complete(request) { seen.elsewhere++; return answer(request); } };
+  app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), presets: [
+    { id: "task", name: "Task model", model: "task-1", provider: task },
+    { id: "here", name: "On this computer", model: "small-1", provider: here },
+    { id: "elsewhere", name: "Elsewhere", model: "remote-1", provider: elsewhere }] });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.runtime.models.configure(app.runtime.owner, { activePreset: "task" });
+  app.decisionModels.configure({ model: "elsewhere" });
+  app.registry.register({ name: "archive.search", permission: "files.read", description: "stand-in mail search",
+    parameters: z.object({}).strict(), execute: async () => ({ query: "invoice", results }) });
+  // The task has personal details the owner keeps on this computer (as routing marks such a task).
+  const filter = app.runtime.listFilter;
+  app.runtime.listFilter = (rule, lines, origin) => { app.runtime["staysHere"].add(origin.runId); return filter(rule, lines, origin); };
+  const run = await app.runtime.run({ prompt: "Find the overdue invoice in my mail", permissions: ["files.read"] });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(seen.elsewhere, 0, "a task kept on this computer never sends its list to a connection elsewhere");
+  assert.equal(seen.here, 1, "the model here decided instead");
+  assert.equal(seen.family, true, "the decision's run counts toward the task's spending while it runs");
+});
