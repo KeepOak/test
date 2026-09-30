@@ -1192,14 +1192,21 @@ async function api(
     return { ...listenView(app.store, app.runtime.owner, listen), note: "Saved. It takes effect the next time Branch starts." };
   }
   // mac3/never-break: the gateway switch and the changes the assistant suggested for it.
-  if (path === "/api/never-break/drill") {
+  /* SELF-052: asked before the body is read and again after it, just before launch, since a profile switch, a door
+     or App lock can arrive while the body is pending (src/never-break/api.ts drillAllowed). */
+  const drillAllowed = (): void => {
     app.store.profiles.requireOwner("The isolated recovery drill");
     if (throughDoor(request)) throw new HttpError(403, hereOnly);
-  }
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before running the recovery drill.");
+    // The request stream itself ends once its body is read; the connection closing is what cancels it.
+    if (request.socket?.destroyed !== false) throw new HttpError(409, "The recovery drill request was cancelled.");
+  };
+  if (path === "/api/never-break/drill") drillAllowed();
   if (handlesNeverBreakPath(path))
     return neverBreakApi(dataDir, request, path, readBody, {
       snapshot: () => snapshotData({ dataDir, database: app.store.sqlite, journal: app.neverBreak.journal.database }),
       telegram: app.neverBreak.telegram,
+      drillAllowed,
       ...(gatewayPower ? { gatewayPower } : {}),
     }).catch((error: unknown) => {
       throw error instanceof NeverBreakApiError ? new HttpError(error.status, error.message) : error;

@@ -57,6 +57,12 @@ export interface NeverBreakExtras {
   snapshot?: () => Promise<string>;
   /** The Telegram setup card's state, and saving its switch and token. */
   telegram?: { view: () => Record<string, unknown>; save: (input: unknown) => Promise<void> };
+  /**
+   * Throws unless the isolated recovery drill may start now: the owner's profile, this computer's own window, App lock
+   * off and the request still open. Asked after the body has been read, immediately before launch; with no check the
+   * drill is refused.
+   */
+  drillAllowed?: () => void;
 }
 
 export async function neverBreakApi(dataDir: string, request: IncomingMessage, path: string, readBody: Read,
@@ -76,6 +82,8 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
   if (path === "/api/never-break/drill") {
     if (!z.object({ confirm: z.literal(true) }).strict().safeParse(await readBody(request)).success)
       throw new NeverBreakApiError(400, "Confirm the isolated recovery drill.");
+    if (!extras.drillAllowed) throw new NeverBreakApiError(403, "The isolated recovery drill runs only from the owner's window.");
+    extras.drillAllowed();
     try { return { drill: await runRecoveryDrill(dataDir) }; }
     catch (error) { throw new NeverBreakApiError(409, errorText(error)); }
   }
