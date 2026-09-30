@@ -1955,6 +1955,12 @@ ${run.output.slice(0, 6000)}`;
     if (!parent) this.drainFollowUps(run.sessionId);
     return settled;
   }
+  /**
+   * A run made on a task's behalf outside its own loop (a list filter's decision): it keeps the task's privacy (a task
+   * that stays on this computer keeps it here too) and its spending counts against the task's cap. Left when it ends.
+   */
+  joinSideRun(runId: string, parentRunId: string): void { this.joinSpend(runId, parentRunId); }
+  leaveSideRun(runId: string): void { this.leaveSpend(runId); }
   /** R17-S09: a sub-task's spending counts against the task at the top of its tree. */
   private joinSpend(runId: string, parentRunId: string | undefined): void {
     if (parentRunId && this.staysHere.has(parentRunId)) this.staysHere.add(runId);
@@ -2718,7 +2724,7 @@ ${run.output.slice(0, 6000)}`;
             if (outOfSteps(context, outcome.reason)) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
             throw outcome.reason;
           }
-          const call = group[at]!, result = await this.filteredList(run, call, outcome.value);
+          const call = group[at]!, result = await this.filteredList(run, context, call, outcome.value);
           const message: Message = { role: "tool", toolCallId: call.id, content: this.clipped(run, call, JSON.stringify(result)) };
           messages.push(message); ids.push(null);
           this.store.message(run.sessionId, message);
@@ -2732,14 +2738,14 @@ ${run.output.slice(0, 6000)}`;
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
-  listFilter: ((rule: string, lines: string[]) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"]; dryRun?: boolean }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
   /**
    * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
    * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
    * so the owner still sees every line, and Look inside says what was kept (list.filtered). Anything that goes wrong,
    * or a model that is not sure, leaves the list whole.
    */
-  private async filteredList(run: Run, call: ToolCall, result: unknown): Promise<unknown> {
+  private async filteredList(run: Run, context: ToolContext, call: ToolCall, result: unknown): Promise<unknown> {
     if (!this.listFilter || !/(^|\.|_)(search|list|glob|grep|find|inbox|messages|results)/i.test(call.name)) return result;
     // A tool's answer reaches the task wrapped ({ ok, result }); the list is inside it, and the wrapper is kept.
     const wrapped = !!result && typeof result === "object" && "ok" in result && "result" in result;
@@ -2748,7 +2754,10 @@ ${run.output.slice(0, 6000)}`;
     if (!found || found.items.length < 2) return result;
     const lines = found.items.map((item) => (typeof item === "string" ? item : JSON.stringify(item) ?? ""));
     try {
-      const said = await this.listFilter(run.prompt, lines);
+      // The task's own Stop and budget: a filter never runs on after the task stops, nor past what it may spend.
+      const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget, runId: run.id,
+        ...(context.trunk ? { trunk: context.trunk } : {}), ...(context.trunkKeys ? { trunkKeys: context.trunkKeys } : {}),
+        ...(context.dryRun ? { dryRun: true } : {}) });
       if (!said) return result;
       if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
       const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);
@@ -4046,7 +4055,8 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}),
         // An installed program answering as the model (Claude Code, Codex) keeps its own tools only for the owner's own
         // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
-        ...(runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
+        // A shaped answer asked with no tools of Branch's (a decision) is words only, whoever asked it.
+        ...(runOrigin(this.store, run.id).source === "owner" && !(shape && !context.permissions.size) ? {} : { programTools: false }) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
