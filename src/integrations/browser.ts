@@ -3,6 +3,7 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
+import { browserPaintWake } from './browser-paint-wake.js';
 import { z } from 'zod';
 import { instructionsRemovedNote, withoutInstructions } from '../content-guard.js';
 import { carriedData } from '../egress-guard.js';
@@ -1139,6 +1140,16 @@ export class BranchBrowser {
     const filled = entry.filled.get(seen.page)?.boxes ?? [];
     const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
     return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
+  }
+  /** A paint signal for an already open Branch page. It never returns CDP image data. */
+  async paintWake(owner: string, runId: string, signal: AbortSignal, painted: () => void, readable: () => boolean) {
+    const key = this.key({ owner, runId }), entry = this.sessions.get(key), page = entry?.session.watched()?.page;
+    if (!entry || !page || entry.session.isBorrowed() || entry.session.isRecording() || entry.held) return null;
+    const url = page.url(), epoch = entry.control?.view().epoch;
+    const current = () => !signal.aborted && readable() && this.sessions.get(key) === entry
+      && entry.session.watched()?.page === page && !page.isClosed() && page.url() === url
+      && entry.control?.view().epoch === epoch && entry.control?.view().state !== 'stopped';
+    return browserPaintWake(page, painted, signal, current);
   }
   /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
   private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
