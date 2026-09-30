@@ -4,6 +4,7 @@
    /api/conversation-mode/settings). Lockdown is the engine's own switch (POST /api/lockdown, on and off; see approvals.js). */
 
 import { esc, applyCss } from "../core/dom.js";
+import { pluginModelLabels } from "./plugin-window.js";
 import { ic, openPop, closePop, mi, toast } from "../core/ui.js";
 import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
@@ -73,7 +74,7 @@ export function chips() {
   const m = current(), mode = modeNow(), p = PMODES.find(([id]) => id === mode);
   const none = !E.state?.activeModel || m.id === "none"; // no model set up: plain words, no letter tile standing in for a logo
   const low = accountLow(); // parity B1 (shell-042): the prototype's .low7 dot and tip
-  const model = `<button type="button" class="chip-c${low ? " low7" : ""}" data-act="modelmenu2" data-tip="${t(low ? "window.chat.low.tip" : "window.chat.mode.model-tip")}">${none ? "" : logo(m.provider, m.name, 18)}<span class="lbl">${none ? t("window.chat.mode.no-model") : esc(m.name)}${!none && m.account ? " · " + esc(m.account) : ""}${m.reasoning ? " · " + esc(String(m.reasoning).toLowerCase()) : ""}</span>${ic("down", "s")}</button>`;
+  const model = `<button type="button" class="chip-c${low ? " low7" : ""}" data-act="modelmenu2" data-tip="${t(low ? "window.chat.low.tip" : "window.chat.mode.model-tip")}">${none ? "" : logo(m.provider, m.name, 18)}<span class="lbl">${none ? t("window.chat.mode.no-model") : esc(m.name)}${!none && m.account ? " · " + esc(m.account) : ""}${m.reasoning ? " · " + esc(String(m.reasoning).toLowerCase()) : ""}</span>${pluginModelLabels()}${ic("down", "s")}</button>`;
   const label = mode === "lock" ? t("lockdown.label") : mode === "follow" ? M.mode?.following?.label ?? "" : p ? t(p[1]) : "";
   const modeChip = `<button type="button" class="chip-c ${mode === "full" ? "full" : ""} ${mode === "lock" ? "lockd" : ""}" data-act="modemenu2" data-tip="${t("window.chat.mode.mode-tip")}">${ic(mode === "lock" ? "lock" : p?.[3] ?? "shield")}<span class="lbl">${esc(label)}</span>${ic("down", "s")}</button>`;
   return model + modeChip;
