@@ -56,6 +56,19 @@ adoption/rollback refreshes gateway readiness so public requests wait for the se
 Isolated tests cover engine crash replacement, shell close/rejoin, live module/draft/caret retention,
 active-task drain/adoption and failed-page rollback. Packaged installation, Windows job escape,
 gateway implementation replacement and overlapping shell handoff remain draft acceptance work.
+
+Compatible changes to `src/never-break/gateway.ts` can replace the resident gateway's methods from
+a manifest-checked live build. The listener, proof door, held proof connections, tunnels, worker,
+waiters and timers stay on the same object. A candidate is prepared before engine transfer and
+adopted only after the successor engine proves itself; renderer refusal restores the old methods
+before engine rollback. Start-up restores compatible code from the engine's checked live build.
+The owner stop wrapper remains resident so closing the gateway still releases its desktop broker.
+
+`gatewayCodeContract` must change whenever resident fields, private brands, callback assumptions
+or lifecycle invariants change. A changed contract, method layout or stable stop wrapper is refused
+as a live update and requires a packaged restart. Shared gateway dependencies still keep their
+main-process classification. This method-replacement path has not received installed continuity
+acceptance; compatibility must be reviewed along with every gateway change.
 Native capture through a detached broker is refused until the shell's ownership can be proved.
 
 The owner can enable **Keep awake** in Settings. The retained gateway asks Electron to prevent app

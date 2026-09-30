@@ -1,9 +1,11 @@
 import { Gateway, type GatewayOptions } from "../never-break/gateway.js";
 import { DesktopGatewayWorker, type DesktopWorkerOptions } from "./gateway-worker.js";
 import { desktopGatewayConfig } from "./gateway-mode.js";
+import { restoreGatewayCode } from "./gateway-code.js";
 
 export interface DesktopGatewayOptions {
   dataDir: string;
+  appRoot?: string;
   engineFile: string;
   port: number;
   version: string;
@@ -36,6 +38,6 @@ export async function startDesktopGateway(options: DesktopGatewayOptions): Promi
     ...(options.onWorker ? { onWorker: options.onWorker } : {}),
     ...(options.onOwnerOff ? { onOwnerOff: options.onOwnerOff } : {}),
   }, options.close ?? (async () => undefined));
-  try { await gateway.start(); return gateway; }
+  try { if (options.appRoot) await restoreGatewayCode(options.appRoot, gateway); await gateway.start(); return gateway; }
   catch (error) { await gateway.stop().catch(() => undefined); throw error; }
 }
