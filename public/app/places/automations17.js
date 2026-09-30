@@ -18,6 +18,7 @@
      greyed for the security review; the engine has no route that runs the hook checks. */
 
 import { esc, renderNow } from "../core/dom.js";
+import { selectField } from "../core/gsel.js";
 import { S, level } from "../core/state.js";
 import { startConversation } from "../chat/chat.js";
 import { ic, toast, openDlg, closeDlg } from "../core/ui.js";
@@ -168,7 +169,7 @@ function registerDemos() {
 /* Days off: the owner's own list (GET /api/calendar daysOff), and Add a day off puts the date in the box on it. The
    calendar record is saved whole, as read (POST /api/calendar). */
 const fieldRow = (id, label, input) => `<div class="ctl" data-css="margin-top:12px"><b>${esc(label)}</b><span class="right">${input}</span><small></small></div>`;
-const pickField = (id, label, options) => fieldRow(id, label, `<select class="inp" id="${id}" aria-label="${esc(label)}">${options.map(([v, words]) => `<option value="${esc(v)}">${esc(words)}</option>`).join("")}</select>`);
+const pickField = (id, label, options) => fieldRow(id, label, selectField({ id, label, options }));
 async function openHolidays() {
   const { settings } = await api("calendar");
   shown.calendar = settings;

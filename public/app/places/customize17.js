@@ -15,6 +15,7 @@
      engine refuses in its own words while sharing with other assistants is off). No key or token is ever shown. */
 
 import { esc, renderNow } from "../core/dom.js";
+import { selectField } from "../core/gsel.js";
 import { E, level, refresh } from "../core/state.js";
 import { toast, openDlg, dialog } from "../core/ui.js";
 import { api, token } from "../core/api.js";
@@ -82,12 +83,12 @@ async function openSpec(id) {
 function helperRows(id) {
   if (!helpers) return "";
   const saved = helpers.specialists?.[id] ?? null, choice = helpers.choices.find((c) => c.model === saved?.model);
-  const models = helpers.choices.map((c) => `<option value="${esc(c.model)}" ${c.model === saved?.model ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  const model = `<div class="ctl"><b>${t("window.places.customize17.helper-model")}</b><span class="right"><select class="inp" data-sw="spec-model" data-id="${esc(id)}" aria-label="${t("window.places.customize17.helper-model")}"><option value="" ${saved ? "" : "selected"}>${t("window.places.customize17.helper-model-usual")}</option>${models}</select></span><small>${t("window.places.customize17.helper-model-sub")}</small></div>`;
+  const models = [["", t("window.places.customize17.helper-model-usual")], ...helpers.choices.map((c) => [c.model, c.name])];
+  const model = `<div class="ctl"><b>${t("window.places.customize17.helper-model")}</b><span class="right">${selectField({ sw: "spec-model", label: t("window.places.customize17.helper-model"), options: models, value: saved?.model ?? "", attrs: `data-id="${esc(id)}"` })}</span><small>${t("window.places.customize17.helper-model-sub")}</small></div>`;
   if (!choice?.accounts.length) return model;
   const picked = saved.accountRef?.account ?? "";
-  const accounts = choice.accounts.map((a) => `<option value="${esc(a.id)}" ${a.id === picked ? "selected" : ""}>${esc(a.label)}</option>`).join("");
-  return model + `<div class="ctl"><b>${t("window.places.customize17.helper-account")}</b><span class="right"><select class="inp" data-sw="spec-account" data-id="${esc(id)}" aria-label="${t("window.places.customize17.helper-account")}"><option value="" ${picked ? "" : "selected"}>${t("window.places.customize17.helper-account-usual")}</option>${accounts}</select></span><small>${t("window.places.customize17.helper-account-sub")}</small></div>`;
+  const accounts = [["", t("window.places.customize17.helper-account-usual")], ...choice.accounts.map((a) => [a.id, a.label])];
+  return model + `<div class="ctl"><b>${t("window.places.customize17.helper-account")}</b><span class="right">${selectField({ sw: "spec-account", label: t("window.places.customize17.helper-account"), options: accounts, value: picked, attrs: `data-id="${esc(id)}"` })}</span><small>${t("window.places.customize17.helper-account-sub")}</small></div>`;
 }
 /* A new model starts on that connection's usual account; an account is always one of the chosen model's own. */
 async function saveHelper(el) {

@@ -1,4 +1,5 @@
 import { esc } from "../core/dom.js";
+import { selectField } from "../core/gsel.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -19,7 +20,7 @@ function choose(el) {
   const change = changes.find((row) => row.worktree === el.dataset.worktree);
   if (!change) return;
   review = null;
-  openDlg({ title: t("selfMerge.title"), body: `<p>${t("selfMerge.explain")}</p><p><code>${esc(change.worktree)}</code></p><label>${t("selfMerge.repository")}<select id="self-merge-repo">${change.repositories.map((repo) => `<option>${esc(repo)}</option>`).join("")}</select></label><label>${t("selfMerge.number")}<input id="self-merge-number" type="number" min="1" step="1"></label>`,
+  openDlg({ title: t("selfMerge.title"), body: `<p>${t("selfMerge.explain")}</p><p><code>${esc(change.worktree)}</code></p><label>${t("selfMerge.repository")}${selectField({ id: "self-merge-repo", label: t("selfMerge.repository"), options: change.repositories.map((repo) => [repo, repo]) })}</label><label>${t("selfMerge.number")}<input id="self-merge-number" type="number" min="1" step="1"></label>`,
     foot: `<button class="btn" type="button" data-act="self-merge-runner">${t("selfMerge.runner")}</button><button class="btn pri" type="button" data-act="self-merge-read" data-worktree="${esc(change.worktree)}">${t("selfMerge.read")}</button>` });
 }
 function diffHtml(diff) {
