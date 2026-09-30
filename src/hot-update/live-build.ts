@@ -96,6 +96,7 @@ export async function buildLive(run: Run, plan: LivePlan): Promise<LiveOutcome> 
   if (!tier) return { tier: "none", version };
   // The live build answers to its own version, as a packaged Beta build of this change would.
   await stampDevVersion(source, fetched.committedAt, plan.commit);
-  const staged = await stageLive({ source, appRoot: plan.appRoot, commit: plan.commit, version, withEngine: tier !== "window" });
+  const ancestors = tier === "window" ? [] : (await git(["rev-list", "--max-count=2000", plan.commit])).trim().split(/\s+/);
+  const staged = await stageLive({ source, appRoot: plan.appRoot, commit: plan.commit, version, withEngine: tier !== "window", ancestors });
   return { tier, version, parts, dir: staged.dir, manifest: staged.manifest, digest: staged.digest, changed: [...engine.files, ...window.files] };
 }

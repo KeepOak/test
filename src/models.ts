@@ -101,7 +101,7 @@ export interface CapabilityPlan extends ModelPlan {
 }
 
 /** mac5/providers: true for a saved connection whose service has ended the route it used. */
-function isRetiredConnection(preset: ModelPreset | undefined): boolean {
+export function isRetiredConnection(preset: ModelPreset | undefined): boolean {
   return (preset?.provider as { retired?: unknown } | undefined)?.retired === true;
 }
 

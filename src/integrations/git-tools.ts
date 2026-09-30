@@ -210,6 +210,10 @@ export function ownerGitHubConnection(registry: ToolRegistry): GitHubAccess {
   if (!github || !registry.names().includes("github.checks")) throw new Error("Connect GitHub in Settings before reviewing a merge.");
   return github;
 }
+/** The saved connection a queued publication reconciles through: the one the GitHub tools use, while they are offered. */
+export function githubAccessForPublication(registry: ToolRegistry): GitHubAccess | null {
+  return registry.names().includes("github.open_pull_request") ? githubConnections.get(registry) ?? null : null;
+}
 export function registerGitHubProject(registry: ToolRegistry, github: GitHubAccess, git?: GitTools): void {
   githubConnections.set(registry, github);
   registry.register({
@@ -226,10 +230,12 @@ export function registerGitHubProject(registry: ToolRegistry, github: GitHubAcce
   });
   registry.register({
     name: "github.wait_for_checks", permission: "github.manage",
-    description: "Wait for every check on a pull request's exact latest commit to finish, then say passed, failed or still pending. Queued, running or not-yet-reported checks never count as passed. Call again while it says pending; merge only after it says passed.",
+    description: "Wait for every check on a pull request's exact latest commit to finish, then say passed, failed, still pending or merged. Queued, running or not-yet-reported checks never count as passed, and a pull request in GitHub's merge queue is pending until the queue merges it. Call again while it says pending; merge only after it says passed.",
     parameters: z.object({ repo: repositoryPath, number: z.number().int().positive(),
-      /** How long to wait in this call; keep it under the tool time limit (90 seconds unless the owner raised it). */
-      seconds: z.number().int().min(0).max(3600).default(75) }).strict(),
+      /** How long to wait in this call, up to ten minutes: CI and a merge queue can each take half an hour. */
+      seconds: z.number().int().min(0).max(600).default(300) }).strict(),
+    // selfdev (SELF-022): it only looks, so one call may wait its ten minutes past the owner's tool time limit.
+    waitsUpToMs: 630_000,
     execute: (input, context: ToolContext) => github.waitForChecks(input, context.signal),
   });
   // selfdev (SELF-306): why a check failed, and running failed jobs again.
@@ -300,7 +306,7 @@ export function registerGitHub(registry: ToolRegistry, github: GitHubAccess, git
   });
   registry.register({
     name: "github.merge_pull_request", permission: "github.manage",
-    description: "Merge a pull request, only when every check on its exact latest commit has finished and passed (run github.wait_for_checks first). The merge is pinned to that commit. A change to Branch itself is finished with branch.finish_source_change instead.",
+    description: "Merge a pull request, only when every check on its exact latest commit has finished and passed (run github.wait_for_checks first). The merge is pinned to that commit. When the base merges only through GitHub's merge queue, the commit joins the queue instead; wait with github.wait_for_checks until it says merged. A change to Branch itself is finished with branch.finish_source_change instead.",
     parameters: z.object({ repo: repositoryPath, number: z.number().int().positive() }).strict(),
     target: (args) => `merge pull request #${String(args.number)} on ${String(args.repo)} into its base`,
     execute: (input) => github.mergeChecked(input.repo, input.number),
