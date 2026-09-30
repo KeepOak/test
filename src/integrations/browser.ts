@@ -3,7 +3,9 @@ import { mkdir, open, rm, stat } from 'node:fs/promises';
 import { dirname, join as joinPath } from 'node:path';
 import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
+import { browserPaintWake } from './browser-paint-wake.js';
 import { z } from 'zod';
+import { WatchConditionSchema } from './browser-watch-condition.js';
 import { instructionsRemovedNote, withoutInstructions } from '../content-guard.js';
 import { carriedData } from '../egress-guard.js';
 import type { ToolRegistry } from '../registry.js';
@@ -667,6 +669,55 @@ export class BranchBrowser {
       return { skill: known.skill, reading: name, ...await extractSchema(page, reading, (await this.pageSecrets(context, page)).hidden) };
     });
   }
+  /** Wait for one explicit text condition, then preserve this exact page for the owner to take over. */
+  async watchChange(input: z.infer<typeof WatchConditionSchema>, context: ToolContext) {
+    const entry = this.entry(context), page = entry.session.watched()?.page;
+    if (!page) throw new Error('Open the task browser page before starting a watch.');
+    const url = page.url(), beforeEpoch = entry.control?.view().epoch;
+    const scoped = () => {
+      context.signal.throwIfAborted();
+      const run = this.store?.run(context.runId);
+      if (!this.store || !run || !['running', 'needs_input'].includes(run.status) || !this.store.profiles.isOwner() || this.store.profiles.scope() !== context.owner
+        || run.owner !== context.owner || !this.store.ownsSession(context.owner, run.sessionId)
+        || this.store.runs(context.owner).find(one => one.sessionId === run.sessionId)?.id !== run.id)
+        throw new Error('This task no longer owns the current conversation.');
+      if (entry.borrowed || entry.session.isBorrowed() || entry.held || entry.session.isRecording()
+        || entry.session.watched()?.page !== page || page.isClosed() || page.url() !== url)
+        throw new Error('This exact task page is no longer available for handoff.');
+      if (entry.profile && isTrunkProfile(entry.profile) && entry.profile !== trunkProfileName(context.trunk ?? ''))
+        throw new Error('This browser profile belongs to another Trunk.');
+      if (entry.control && (entry.control.binding.owner !== context.owner || entry.control.binding.conversation !== run.sessionId
+        || entry.control.binding.profile !== entry.profile)) throw new Error('This browser binding no longer matches the task.');
+      return run;
+    };
+    scoped();
+    let observed = false;
+    try {
+      await this.operation(context, async (working, check) => {
+        scoped(); check();
+        if (working !== page) throw new Error('The task page changed before the watch.');
+        const matches = page.getByText(input.text, { exact: true }), locator = matches.first();
+        if (await matches.count() > 1) throw new Error('The watched text is ambiguous on this page.');
+        const initial = await locator.isVisible();
+        if (initial === (input.state === 'appears')) return { observed: false };
+        await locator.waitFor({ state: input.state === 'appears' ? 'visible' : 'hidden', timeout: input.timeoutMs });
+        if (await matches.count() > 1 || await locator.isVisible() !== (input.state === 'appears'))
+          throw new Error('The watched text became ambiguous or changed again.');
+        check(); scoped(); observed = true;
+        return { observed: true };
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TimeoutError') { scoped(); return { changed: false, handedOff: false }; }
+      throw error;
+    }
+    const run = scoped();
+    if (!observed) return { changed: false, handedOff: false, alreadyMatched: true };
+    if (entry.control && entry.control.view().epoch !== beforeEpoch) throw new Error('Browser control changed during the watch.');
+    const control = entry.control ?? this.adoptRun(context.owner, run.sessionId, context.runId, '');
+    await control.offerToOwner(control.view().epoch, context.runId, () => { scoped(); });
+    return { changed: true, handedOff: true, browserId: control.id, conversation: run.sessionId,
+      note: 'The recorded text condition changed. This page is kept for your Take over; no owner input grant was issued.' };
+  }
   /** The page's accessibility tree, with every value a box holds that the assistant must not read taken out (pageSecrets). */
   async snapshot(context: ToolContext) {
     return this.operation(context, async page => {
@@ -1255,6 +1306,16 @@ export class BranchBrowser {
     return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed,
       needs, ...(downloads ? { downloads } : {}) };
   }
+  /** A paint signal for an already open Branch page. It never returns CDP image data. */
+  async paintWake(owner: string, runId: string, signal: AbortSignal, painted: () => void, readable: () => boolean) {
+    const key = this.key({ owner, runId }), entry = this.sessions.get(key), page = entry?.session.watched()?.page;
+    if (!entry || !page || entry.session.isBorrowed() || entry.session.isRecording() || entry.held) return null;
+    const url = page.url(), epoch = entry.control?.view().epoch;
+    const current = () => !signal.aborted && readable() && this.sessions.get(key) === entry
+      && entry.session.watched()?.page === page && !page.isClosed() && page.url() === url
+      && entry.control?.view().epoch === epoch && entry.control?.view().state !== 'stopped';
+    return browserPaintWake(page, painted, signal, current);
+  }
   /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
   private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
     const state = await Promise.race([tab.evaluate(() => document.readyState).catch(() => 'complete'),
@@ -1590,6 +1651,9 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
   registry.register({ name: 'browser.wait', permission: 'browser.read',
     description: 'Wait for some words or an element to appear, for words to go (textGone), for the address to contain some words (url), or for the page to stop loading things.',
     parameters: WaitSchema, execute: (a, c) => browser.wait(a, c) });
+  registry.register({ name: 'browser.watch_change', permission: 'browser.read', target: host,
+    description: 'Watch exact visible text appear or disappear in this task page for at most a minute; when it changes, keep the page for the owner to Take over. Already matched conditions and timeouts do not hand it over. This is a foreground text watch, not a scheduled or arbitrary page-change monitor.',
+    parameters: WatchConditionSchema, execute: (a, c) => browser.watchChange(a, c) });
   registry.register({ name: 'browser.extract', permission: 'browser.read',
     description: 'Pull rows out of a table or a repeated block of cards as untrusted data. Give the selector for one row, and optionally a name for each column.',
     parameters: ExtractSchema, execute: (a, c) => browser.extract(a, c) });

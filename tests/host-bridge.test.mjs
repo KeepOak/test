@@ -142,9 +142,11 @@ test("host-bridge: the owner's own deny rule for remote.run is honoured, and ssh
   assert.equal(ssh.calls.length, 0, "a denied remote.run never reached OpenSSH");
 });
 
-test("host-bridge: with no rule of the owner's, the card asks first and only runs once confirmed", async (t) => {
+test("host-bridge: with no rule of the owner's, for an owner who keeps commands asking, the card asks first and only runs once confirmed", async (t) => {
   const { app, ssh } = await fixture(t);
-  // The default approval settings ask before a program runs on another computer.
+  // Owner ruling 2026-09-30: commands no rule covers ship as "allow"; this owner keeps them asking.
+  const { savePolicy } = await import("../dist/policy.js");
+  savePolicy(app.store, app.runtime.owner, { unmatchedCommands: "ask" });
   const asked = await run(app, { computer: "tower", program: "make", args: ["build"] });
   assert.equal(asked.status, "asked");
   assert.match(asked.question, /remote\.run/);
