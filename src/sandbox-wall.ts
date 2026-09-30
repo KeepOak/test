@@ -3,6 +3,7 @@ import type { ToolContext, ToolTarget } from "./contracts.js";
 import { judgeTargets } from "./policy-targets.js";
 import { evaluatePolicy, isReadOnlyPermission, type Policy } from "./policy.js";
 import { resourceOf } from "./policy-resources.js";
+import { fencedFolders } from "./trunks/shell-fence.js";
 import { wallApplies, wallNetworkFor, wallSettings, type SandboxChoice, type WallContext, type WallQuestion } from "./sandbox.js";
 
 /**
@@ -80,7 +81,8 @@ export function wallContextFor(call: WallCall): { osSandbox?: WallContext } {
   return { osSandbox: {
     network: wallNetworkFor(settings.network, call.choice),
     keySites: settings.keySites,
-    unreadable: [...settings.unreadable, ...(edge.dataDir ? [edge.dataDir] : []), ...(call.untouchable?.noRead ?? [])],
+    // A Trunk's program never reads another Trunk's folder (src/trunks/shell-fence.ts).
+    unreadable: [...settings.unreadable, ...(edge.dataDir ? [edge.dataDir] : []), ...(call.untouchable?.noRead ?? []), ...fencedFolders(context)],
     readOnly: [...(call.untouchable?.noChange ?? [])],
     answer, granted, spend: (kind, target) => { approvals.revoke(sessionId, kind, target); },
     ...(edge.siteCheck ? { siteCheck: edge.siteCheck } : {}),

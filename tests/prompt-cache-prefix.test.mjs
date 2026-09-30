@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { createBranch } from "../dist/index.js";
 import { cacheHistory } from "../dist/providers/claude-subscription-admission.js";
 import { anthropicBody } from "../dist/providers.js";
+import { setEnvironmentClock } from "../dist/environment.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 test("every round of one task starts with the previous round's exact tools, instructions and messages", async (t) => {
@@ -56,6 +57,49 @@ test("every round of one task starts with the previous round's exact tools, inst
       assert.equal(unmarked(next).startsWith(unmarked(previous.slice(0, history - 1))), true, `round ${at + 1}'s wire body keeps round ${at}'s cached front`);
     }
   }
+});
+
+test("turns a minute apart send the same cached front: the clock gives the hour, recalled facts and passages ride in the turn", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-cache-turns-"));
+  const requests = [];
+  const provider = { name: "scripted", async complete(request) {
+    requests.push(JSON.parse(JSON.stringify({ tools: request.tools, messages: request.messages })));
+    return { content: "Noted.", toolCalls: [] };
+  } };
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  let now = Date.parse("2026-09-29T12:30:00Z");
+  setEnvironmentClock(() => new Date(now));
+  t.after(async () => { setEnvironmentClock(null); await app.close(); await discardTemp(root); });
+  await app.registry.execute("memory.put", { text: "my favourite colour is teal", source: "owner" }, app.runtime.context());
+  app.runtime.documents = { contextFor: async (_owner, question) => ({ text: `[1] a passage for ${question}`, sources: ["note.pdf"] }) };
+  // Each turn recalls a fact and brings passages, the per-turn context that used to sit in the cached front.
+  const first = await app.runtime.run({ prompt: "Suggest a colour for the boat." });
+  now += 60_000;
+  await app.runtime.run({ prompt: "Suggest a colour for the car.", sessionId: first.sessionId });
+  now += 60_000;
+  await app.runtime.run({ prompt: "Suggest a colour for the house.", sessionId: first.sessionId });
+  assert.equal(requests.length, 3);
+  const wire = requests.map((request) => anthropicBody({ ...request, maxTokens: 1024 }, "claude"));
+  for (const at of [1, 2])
+    assert.equal(JSON.stringify(wire[at].system), JSON.stringify(wire[0].system), `turn ${at + 1} sends turn 1's instructions, byte for byte`);
+  // The tool list is the catalog's pick from the conversation's words (src/tool-loading.ts), which settles after the
+  // first turn; from then on the whole front is the same.
+  assert.equal(JSON.stringify(wire[2].tools), JSON.stringify(wire[1].tools), "turn 3 sends turn 2's tools, byte for byte");
+  // The history up to turn 2's cache mark is the start of turn 3's history, byte for byte (the mark itself moves on).
+  const marked = wire[1].messages.findLastIndex((message) => message.content.some((block) => block.cache_control));
+  assert.ok(marked >= 0, "turn 2 marks its history");
+  const unmarked = (messages) => JSON.stringify(messages).replaceAll(',"cache_control":{"type":"ephemeral"}', "");
+  assert.equal(unmarked(wire[2].messages.slice(0, marked + 1)), unmarked(wire[1].messages.slice(0, marked + 1)));
+  assert.match(wire[0].system[0].text, /Local time: [^()]*\d{2}:00 to \d{2}:00 \(/, "the hour, not the minute");
+  // What moved out still reaches the model: each turn's own facts and passages, next to its question.
+  for (const request of requests) {
+    const asked = request.messages.findLastIndex((m) => m.role === "user" && !m.from);
+    const notes = request.messages.slice(asked - 2, asked + 1);
+    assert.deepEqual(notes.map((m) => m.from ?? m.role), ["branch", "branch", "user"]);
+    assert.match(notes[0].content, /own documents/);
+    assert.match(notes[1].content, /teal/);
+  }
+  assert.equal(app.store.messages(first.sessionId).some((m) => /own documents|teal/.test(m.content)), false, "none of it stored");
 });
 
 test("the relay marks the history just before the newest user turn, and leaves anything else as it was", () => {

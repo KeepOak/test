@@ -329,7 +329,8 @@ async function linuxWindows(exec: PosixExec, xdotool: string, signal: AbortSigna
 }
 
 /** The steps Linux takes for one action. */
-export async function runLinux(exec: PosixExec, xdotool: string, action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+export async function runLinux(exec: PosixExec, xdotool: string, action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal, xwininfo: string | null = null): Promise<Record<string, unknown>> {
+  if (action === 'pointer' || action === 'hold-key' || action === 'cursor' || action === 'release') return linuxPointer(exec, xdotool, action, payload, signal, xwininfo);
   if (action === 'windows') return { windows: await linuxWindows(exec, xdotool, signal) };
   if (action === 'open') {
     if (!payload.path) throw unavailableOnLinux('Starting a program by name');
@@ -362,4 +363,140 @@ export function posixAvailability(platform: string, env: NodeJS.ProcessEnv, loca
   if (!env.DISPLAY) return 'There is no desktop session here, so there is no screen for Branch to use.';
   if (!locate('xdotool')) return 'Using the screen and keyboard on Linux needs xdotool, which is not installed on this computer.';
   return null;
+}
+
+/* ------------------------------------------------------------------ Linux pointer (computer-control) */
+
+const xButtons: Record<string, string> = { left: '1', middle: '2', right: '3' };
+const wheelButtons: Record<string, string> = { up: '4', down: '5', left: '6', right: '7' };
+const button = (value: unknown): string => xButtons[String(value ?? 'left')] ?? '1';
+const heldKeys = (value: unknown): string[] =>
+  (Array.isArray(value) ? value : []).filter((key): key is string => key === 'ctrl' || key === 'shift' || key === 'alt');
+
+/** A window's place and size, from `xdotool getwindowgeometry --shell`. */
+export function parseShellGeometry(output: string): { x: number; y: number; width: number; height: number } {
+  const value = (name: string) => Number(new RegExp(`^${name}=(-?\\d+)$`, 'm').exec(output)?.[1] ?? NaN);
+  return { x: value('X'), y: value('Y'), width: value('WIDTH'), height: value('HEIGHT') };
+}
+
+/**
+ * Brings the window to the front and checks that it is the active window before anything is pressed: X11 has no
+ * reliable "what is on top at this spot", and the active window is what receives the press. Gives back its geometry.
+ */
+/**
+ * Where a window's own area starts on the screen. `xdotool getwindowgeometry` counts a window manager's frame offset
+ * twice for a framed window, so `xwininfo` (x11-utils) is asked when this computer has it; without it the xdotool
+ * answer stands, which is right for a window with no frame.
+ */
+export function parseXwininfo(output: string): { x: number; y: number } | null {
+  const x = /Absolute upper-left X:\s*(-?\d+)/.exec(output)?.[1], y = /Absolute upper-left Y:\s*(-?\d+)/.exec(output)?.[1];
+  return x !== undefined && y !== undefined ? { x: Number(x), y: Number(y) } : null;
+}
+async function windowBox(exec: PosixExec, xdotool: string, xwininfo: string | null, id: string, signal: AbortSignal): Promise<{ x: number; y: number; width: number; height: number }> {
+  const box = parseShellGeometry((await exec(xdotool, ['getwindowgeometry', '--shell', id], signal)).stdout);
+  if (xwininfo) {
+    const info = await exec(xwininfo, ['-id', id], signal);
+    const origin = info.exitCode === 0 ? parseXwininfo(info.stdout) : null;
+    if (origin) return { ...box, ...origin };
+  }
+  return box;
+}
+async function frontWindow(exec: PosixExec, xdotool: string, id: string, signal: AbortSignal, xwininfo: string | null = null): Promise<{ x: number; y: number; width: number; height: number }> {
+  const raised = await exec(xdotool, ['windowactivate', '--sync', id], signal);
+  if (raised.exitCode !== 0) throw new Error('That window is no longer open.');
+  const active = (await exec(xdotool, ['getactivewindow'], signal)).stdout.trim();
+  if (active !== id) throw new Error('Another window is in front of that one, so nothing was done. Bring it up first.');
+  const box = await windowBox(exec, xdotool, xwininfo, id, signal);
+  if (![box.x, box.y, box.width, box.height].every(Number.isFinite) || box.width < 1) throw new Error('That window is no longer open.');
+  return box;
+}
+
+/** A spot in window pixels: a point, or the middle of the window. Names and refs need an accessibility tree Linux lacks here. */
+function linuxSpot(at: unknown, box: { width: number; height: number }): { x: number; y: number } {
+  const spot = (at ?? {}) as { point?: { x: number; y: number }; name?: string; ref?: string };
+  if (spot.name || spot.ref) throw unavailableOnLinux('Pointing at something by its name or ref');
+  const x = spot.point ? Math.round(spot.point.x) : Math.floor(box.width / 2), y = spot.point ? Math.round(spot.point.y) : Math.floor(box.height / 2);
+  if (!(x >= 0 && y >= 0 && x < box.width && y < box.height)) throw new Error('That spot is outside the window. Nothing was done.');
+  return { x, y };
+}
+
+/** The xdotool steps for one pointer verb, after the window was checked to be in front. */
+export function xdotoolPointerArgs(payload: Record<string, unknown>, id: string, box: { width: number; height: number }): string[] {
+  const kind = String(payload.kind), mods = heldKeys(payload.modifiers);
+  const down = mods.flatMap((key) => ['keydown', key]), up = mods.flatMap((key) => ['keyup', key]);
+  const move = (at: { x: number; y: number }) => ['mousemove', '--window', id, String(at.x), String(at.y)];
+  if (kind === 'click') {
+    const count = String(Math.max(1, Math.min(3, Number(payload.count) || 1)));
+    return [...move(linuxSpot(payload.at, box)), ...down, 'click', '--repeat', count, '--delay', '80', button(payload.button), ...up];
+  }
+  if (kind === 'move') return move(linuxSpot(payload.at, box));
+  if (kind === 'down') return [...(payload.atCurrent ? [] : move(linuxSpot(payload.at, box))), 'mousedown', button(payload.button)];
+  if (kind === 'up') {
+    const at = payload.at as { point?: unknown } | undefined;
+    return [...(at?.point ? move(linuxSpot(at, box)) : []), 'mouseup', button(payload.button)];
+  }
+  if (kind === 'drag') {
+    return [...move(linuxSpot(payload.from, box)), ...down, 'mousedown', button(payload.button), 'sleep', '0.05',
+      ...move(linuxSpot(payload.to, box)), 'sleep', '0.05', 'mouseup', button(payload.button), ...up];
+  }
+  if (kind === 'scroll') {
+    const wheel = wheelButtons[String(payload.direction)];
+    if (!wheel) throw new Error('Scroll up, down, left or right.');
+    const steps = String(Math.max(1, Math.min(10, Number(payload.amount) || 3)));
+    return [...move(linuxSpot(payload.at, box)), ...down, 'click', '--repeat', steps, '--delay', '30', wheel, ...up];
+  }
+  throw new Error(`Unknown pointer action: ${kind}`);
+}
+
+/** Pointer verbs, holding keys, where the pointer is, and letting go, on an X11 desktop. */
+export async function linuxPointer(exec: PosixExec, xdotool: string, action: DesktopAction, payload: Record<string, unknown>, signal: AbortSignal, xwininfo: string | null = null): Promise<Record<string, unknown>> {
+  const run = async (args: string[]) => {
+    const outcome = await exec(xdotool, args, signal);
+    if (outcome.exitCode !== 0) throw new Error(outcome.stderr.includes('BadWindow') ? 'That window is no longer open.' : 'xdotool could not do that on this computer.');
+    return outcome.stdout;
+  };
+  if (action === 'release') {
+    const buttons = (Array.isArray(payload.buttons) ? payload.buttons : []).map(button);
+    const keys = Array.isArray(payload.chords) ? payload.chords.map((chord) => xdotoolHoldChord(String(chord))) : [];
+    await run([...buttons.flatMap((b) => ['mouseup', b]), ...keys.flatMap((k) => ['keyup', k]), ...(buttons.length || keys.length ? [] : ['getmouselocation'])]);
+    return { released: true };
+  }
+  if (action === 'cursor') {
+    const where = parseShellGeometry((await run(['getmouselocation', '--shell'])).replace(/^SCREEN=.*$/m, ''));
+    const at = [where.x, where.y];
+    if (!payload.handle) return { at };
+    const box = await windowBox(exec, xdotool, xwininfo, windowId(payload.handle), signal);
+    const inside = at[0]! >= box.x && at[1]! >= box.y && at[0]! < box.x + box.width && at[1]! < box.y + box.height;
+    return { at, window: [at[0]! - box.x, at[1]! - box.y], inside };
+  }
+  const id = windowId(payload.handle);
+  const box = await frontWindow(exec, xdotool, id, signal, xwininfo);
+  if (action === 'hold-key') {
+    const chord = xdotoolHoldChord(String(payload.chord));
+    const ms = Math.max(100, Math.min(10000, Number(payload.ms) || 500));
+    await run(['keydown', chord]);
+    try { await new Promise((done) => setTimeout(done, ms)); } finally { await exec(xdotool, ['keyup', chord], AbortSignal.timeout(5000)); }
+    return { held: ms };
+  }
+  await run(xdotoolPointerArgs(payload, id, box));
+  if (payload.kind === 'move') await new Promise((done) => setTimeout(done, Math.max(0, Math.min(10000, Number(payload.hoverMs) || 0))));
+  const spot = payload.kind === 'drag' ? payload.to : payload.at;
+  const point = (spot as { point?: { x: number; y: number } } | undefined)?.point;
+  const at = point ? [box.x + point.x, box.y + point.y] : [box.x + Math.floor(box.width / 2), box.y + Math.floor(box.height / 2)];
+  return { how: String(payload.kind), at };
+}
+
+const xdotoolHeld: Record<string, string> = {
+  ctrl: 'ctrl', control: 'ctrl', shift: 'shift', alt: 'alt', enter: 'Return', return: 'Return', tab: 'Tab', esc: 'Escape',
+  escape: 'Escape', backspace: 'BackSpace', delete: 'Delete', del: 'Delete', home: 'Home', end: 'End', pageup: 'Prior',
+  pagedown: 'Next', up: 'Up', down: 'Down', left: 'Left', right: 'Right', space: 'space', insert: 'Insert',
+};
+/** A chord to hold ("shift", "ctrl+a") as xdotool names it; only keys Branch may press. */
+export function xdotoolHoldChord(chord: string): string {
+  return chord.toLowerCase().split('+').map((part) => part.trim()).filter(Boolean).map((part) => {
+    if (xdotoolHeld[part]) return xdotoolHeld[part]!;
+    if (/^f([1-9]|1[0-2])$/.test(part)) return part.toUpperCase();
+    if (/^[a-z0-9]$/.test(part)) return part;
+    throw new Error('That is not a key Branch knows how to hold.');
+  }).join('+');
 }

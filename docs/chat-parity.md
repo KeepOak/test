@@ -315,7 +315,7 @@ proved against stand-in adapters and providers; real account connections remain 
 ### Voice notes in (transcribed) and out (spoken replies)
 | | H in / out | O in / out | B today |
 |---|---|---|---|
-| TG | ✅ / ✅ voice bubble | ✅ / ? | ✅ in; ◐ out: `sendAudio` (an audio file, not a voice bubble) |
+| TG | ✅ / ✅ voice bubble | ✅ / ? | ✅ in/out: `sendVoice` for Opus OGG, MP3, M4A; WAV sent as a file |
 | DC | ✅ / ✅ (voice channels) | ✅ / ✅ | ✅ in; — out |
 | SL | ✅ / ? | ? | — |
 | WA | ✅ / ✅ | ✅ / ◐ calls, experimental | ✅ in; — out |
@@ -325,6 +325,10 @@ proved against stand-in adapters and providers; real account connections remain 
 | EM, SMS | — | — | — |
 
 ### Photos, files and documents, in and out
+Telegram's voice upload follows the [Bot API](https://core.telegram.org/bots/api#sendvoice); unsupported speech
+formats are delivered as files. Stand-in tests prove upload fields, topic/reply targeting, size rejection, secret
+scrubbing and a lock that starts during speech generation. Actual Telegram playback remains an account check.
+
 | | H | O | B today (in / out) |
 |---|---|---|---|
 | TG | ✅ | ✅ | ✅ / ✅ `sendDocument` (photos go out as documents) |
@@ -362,7 +366,7 @@ proved against stand-in adapters and providers; real account connections remain 
 ### Slash commands and menus
 | | H | O | B today |
 |---|---|---|---|
-| TG | ✅ `setMyCommands` menu, inline picker | ✅ menu plus custom entries | ◐ typed commands: on as shipped in the owner's own paired DM (#653, #706), elsewhere behind the commands switch; no `setMyCommands` menu yet (#590, draft) |
+| TG | ✅ `setMyCommands` menu, inline picker | ✅ menu plus custom entries | ✅ `setMyCommands` private/group menus follow the catalog and switches; intrinsic `/new` and `/trunk` remain listed. Typed commands: on as shipped in the owner's own paired DM (#653, #706), elsewhere behind the commands switch |
 | DC | ✅ native slash commands | ✅ | ✅ Branch's commands in Discord's own picker, built from the one command table and empty while commands are off (#670) |
 | SL | ✅ native slash commands, `!cmd` in threads | ✅ | ✅ one `/branch <command>` slash command in the wizard's manifest, since many plain names are Slack's own (#670) |
 | Others | ✅ typed | ✅ typed | ◐ typed, under the same rules as TG; `/approve` and `/deny` always (#658) |
@@ -478,6 +482,33 @@ Piece 5 builds this. Its rules:
 - Stop from both sides, and an idle stop;
 - every action audited;
 - stand-in-desktop tests only.
+
+The authorization foundation is implemented in `channels/screen-sessions.ts` and `telegram-init-data.ts`.
+It binds a pending direct-chat request to Telegram's signed user, refuses group/catch-up requests and launch replay,
+and asks for fresh local-window confirmation or the rate-limited App lock PIN without unlocking the app. Confirmation
+and launch freshness are checked again after asynchronous startup. Its key authorizes only this controller, expires
+after five minutes, and is kept only as a hash; one minute without owner input stops the session. Frames do not extend
+that minute. Stop cancels in-flight capture/input and closes the reader and notice. Typed text, PINs, launch proof and
+keys stay out of its audit. These are stand-in lifecycle and cryptographic tests, not a connected Mini App or native
+desktop proof. The owner-DM command, door endpoint, actual desktop input port and chat/Mini App UI remain pending;
+`liveScreenDoorRefusal` continues to protect every existing generic screen route.
+
+### Who answers each chat
+
+Settings → Chat apps → Who answers here chooses a Trunk for a whole app or one known chat. Resolution is exact chat,
+then its parent where the adapter defines one (Telegram topic or Slack thread), then the whole app, then the default
+Trunk. Matrix room host colons and Discord IDs are not guessed as parent addresses. An explicit default choice stops
+inheritance; removing the choice follows the app again.
+
+`/trunk` shows who answers. Only an explicitly named, currently paired owner account in a vouched direct chat can
+see the roster or change it using `/trunk <name|@handle>`, `/trunk default`, or `/trunk inherit`. The command works
+while program execution and command menus are off. Group, caught-up, unpaired, blocked, locked and unvouched messages
+cannot change routes. The owner account IDs come from the saved owner-chat account choices in Settings.
+
+Changing a route keeps earlier conversations and starts a fresh thread. Affected running chats must finish or stop
+first; their route changes roll back. Removed Trunk routes are cleaned up, including a removed Trunk's late-finishing
+task, so it cannot restore the old thread. Reach and pause restrictions remain enforced. Engine and headless window
+checks use stand-ins; no real chat accounts were exercised.
 
 ### Commands in the owner's paired DM
 

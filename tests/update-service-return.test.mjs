@@ -1,7 +1,7 @@
 /**
  * A Branch that was working in the background comes back by itself after `branch update --yes` and
  * after `branch rollback --yes` (src/install/service-return.ts). Closing it for the swap is a polite
- * exit, which neither launchd's KeepAlive{SuccessfulExit:false} nor systemd's Restart=on-failure
+ * exit, which neither launchd's KeepAlive{SuccessfulExit:false} nor systemd (exit 78, RestartPreventExitStatus=78)
  * restarts, so before this the service stayed down until the next sign-in and the watch that rolls a
  * bad version back never ran. When the new version does not come up, the version before is put back
  * and started instead: the owner is never left with no Branch running.

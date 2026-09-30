@@ -46,7 +46,9 @@ export const OffersSchema = z.object({ type: z.literal("offers"), offers: z.arra
 
 /** Anything the device may send after the hello. */
 export const NodeFrameSchema = z.discriminatedUnion("type", [ResultSchema, OffersSchema,
-  z.object({ type: z.literal("pong"), at: z.number() }).strict()]);
+  z.object({ type: z.literal("pong"), at: z.number() }).strict(),
+  // computer-control: Stop was pressed on the device's own notice (or it could not show one): the owner's hold ends.
+  z.object({ type: z.literal("hold-stopped"), reason: z.string().max(200) }).strict()]);
 export type NodeFrame = z.infer<typeof NodeFrameSchema>;
 
 /** Everything Branch sends to a device. */
@@ -56,7 +58,9 @@ export type HubFrame =
   | { type: "enabled"; enabled: string[]; folder: string | null }
   | { type: "invoke"; id: string; capability: string; args: Record<string, unknown>; deadline: number }
   | { type: "ping"; at: number }
-  | { type: "bye"; reason: string };
+  | { type: "bye"; reason: string }
+  /** computer-control: the owner takes over this device from Branch's view (on), or lets go (off). */
+  | { type: "driving"; on: boolean; owner: string };
 
 export const newNonce = (): string => randomBytes(32).toString("base64url");
 export const newInvokeId = (): string => randomBytes(16).toString("hex");

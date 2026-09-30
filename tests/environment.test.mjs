@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
-import { chatAppName, currentHost, environmentFacts, environmentLine, setWindowShown, systemName } from "../dist/environment.js";
+import { chatAppName, currentHost, environmentFacts, environmentLine, setEnvironmentClock, setWindowShown, systemName } from "../dist/environment.js";
 
 test("the operating system is named as people know it", () => {
   assert.equal(systemName({ platform: "win32", type: "Windows_NT", release: "10.0.26200", version: "Windows 10 Home" }), "Windows 11 Home (10.0.26200)");
@@ -31,12 +31,21 @@ test("where Branch runs comes from the process itself", () => {
 
 test("the line names the computer, the app it runs in, the window, the chat app and the local time, and no folder", () => {
   const facts = { device: "LEGION", system: "Windows 11 Home (10.0.26200)", host: "desktop", window: "hidden", channel: "Telegram",
-    time: "Sun, 27 Sept 2026, 20:14", timeZone: "America/New_York" };
+    time: "Sun, 27 Sept 2026, 20:14", hour: "Sun, 27 Sept 2026, 20:00 to 21:00", timeZone: "America/New_York" };
   const line = environmentLine(facts);
   assert.match(line, /"LEGION" \(Windows 11 Home \(10\.0\.26200\)\)/);
   assert.match(line, /desktop app, its window hidden/);
   assert.match(line, /came in on Telegram/);
-  assert.match(line, /20:14 \(America\/New_York\)/);
+  assert.match(line, /Sun, 27 Sept 2026, 20:00 to 21:00 \(America\/New_York\)/);
+  // The hour, never the minute: the line sits in the part of the request a prompt cache keeps.
+  assert.doesNotMatch(line, /20:14/);
+  assert.equal(environmentLine({ ...facts, time: "Sun, 27 Sept 2026, 20:59" }), line, "the same bytes all hour");
+  setEnvironmentClock(() => new Date(2026, 8, 27, 23, 41));
+  try {
+    const late = environmentFacts();
+    assert.match(late.hour, /^Sun, 27 Sept? 2026, 23:00 to 00:00$/);
+    assert.match(late.time, /23:41/, "environment.about still has the minute");
+  } finally { setEnvironmentClock(null); }
   assert.match(environmentLine({ ...facts, host: "gateway", window: null, channel: null }), /background gateway \(no window\).*Branch's own window or API/);
   const real = environmentLine(environmentFacts("Telegram"));
   assert.ok(real.includes(hostname()), "the real computer's name");
@@ -74,6 +83,9 @@ test("a chat's task is told where Branch runs and which app the message came in 
   assert.equal(about.channel, "Telegram");
   assert.ok(about.cores >= 1 && about.memoryGb >= 0);
   assert.ok(!result.content.includes(homedir()), "no folder path");
+  // The system line gives only the hour, so a question about the time is offered the tool with the minute.
+  await app.runtime.run({ prompt: "What time is it?" });
+  assert.ok(requests.at(-1).tools.some((tool) => tool.name === "environment.about"), "a time question gets environment.about");
   const own = await app.runtime.run({ prompt: "hello" });
   assert.equal(own.status, "completed");
   assert.match(requests.at(-1).messages.filter((m) => m.role === "system").at(-1).content, /Branch's own window or API/);

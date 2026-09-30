@@ -270,6 +270,6 @@ test("the desktop app hands in the same network parts as branch start", async ()
   const call = main.slice(main.indexOf("const branch = await createBranch({"));
   assert.match(call.slice(0, call.indexOf("});")), /^\s*findComputers: realDeviceNetwork\(\),/m, "the desktop's own engine gets the network parts");
   assert.match(main, /import \{ realDeviceNetwork \} from "\.\.\/devices\/network\.js";/);
-  const cli = await readFile(new URL("../src/cli.ts", import.meta.url), "utf8");
+  const cli = await readFile(new URL("../src/cli-program.ts", import.meta.url), "utf8");
   assert.match(cli, /command === "start" \? \{ findComputers: realDeviceNetwork\(\) \}/, "and branch start, which the background engine runs");
 });

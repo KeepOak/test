@@ -250,6 +250,8 @@ test("Telegram end to end: the steps, code blocks, (×2), a quiet message, the r
 
 test("a group gets the short message: no steps, no paths, no commands", async (t) => {
   const { app, bot, provider } = await fixture(t);
+  // A group has the owner's files only when a line names its chat app (src/channels/chat-permissions.ts forChatKind).
+  app.channels.setPermissionSettings({ extras: true, rules: [{ channel: "telegram", sender: "*", allow: ["files.read"] }] });
   bot.say("check the notes", { id: -100, type: "group", title: "Team" });
   await until(() => provider.gate, "the model is writing the answer");
   await until(() => bot.state.sent.length && bot.state.edits.length, "the progress message was edited");

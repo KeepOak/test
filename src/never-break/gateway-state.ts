@@ -75,3 +75,29 @@ export async function clearCrashes(dataDir: string): Promise<void> {
   if (!before?.crashes.length) return;
   await writeState(dataDir, { ...before, crashes: [] });
 }
+
+/**
+ * UP-PLATFORM-002, the restart storm: every start after an unclean stop is written down (in a file of its own, so an
+ * older version reading `gateway-state.json` after a rollback is not confused). Three within ten minutes means
+ * whatever starts Branch (the scheduled task, systemd, launchd) keeps starting a gateway that keeps dying; that is
+ * said once per ten minutes. After OpenClaw's `src/daemon/restart-storm.ts` (https://github.com/openclaw/openclaw, MIT):
+ * the same threshold, window and once-per-window warning.
+ */
+export const restartsFile = "gateway-restarts.json";
+export const restartStorm = { threshold: 3, windowMs: 10 * 60_000 };
+const RestartsSchema = z.object({ restarts: z.array(z.number()).max(20), warnedAt: z.number().nullable() }).strict();
+
+/** Writes this unclean start down; answers the warning to show, or null. Never throws. */
+export async function recordUncleanStart(dataDir: string, at = Date.now()): Promise<string | null> {
+  const file = join(dataDir, restartsFile);
+  let saved: z.infer<typeof RestartsSchema> = { restarts: [], warnedAt: null };
+  try { saved = RestartsSchema.parse(JSON.parse(await readFile(file, "utf8"))); } catch { /* none yet, or unreadable */ }
+  const inWindow = (time: number) => time <= at && at - time < restartStorm.windowMs;
+  const restarts = [...saved.restarts.filter(inWindow), at].slice(-20);
+  const warned = saved.warnedAt !== null && inWindow(saved.warnedAt);
+  const storm = restarts.length >= restartStorm.threshold && !warned;
+  await writeAtomic(file, JSON.stringify({ restarts, warnedAt: storm ? at : saved.warnedAt })).catch(() => undefined);
+  if (!storm) return null;
+  return `Branch's background engine stopped unexpectedly and was started again ${restarts.length} times in the last ten minutes. `
+    + "Something keeps making it stop, so Branch may be unavailable for a minute at a time until that is fixed.";
+}

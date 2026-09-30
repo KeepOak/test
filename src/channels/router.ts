@@ -1,4 +1,5 @@
 import { randomBytes, randomInt } from "node:crypto";
+import { setTimeout as pause } from "node:timers/promises";
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { z } from "zod";
 import type { Store } from "../store.js";
@@ -19,13 +20,13 @@ import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatSte
 import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
 import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
-import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
+import { readChatIntake, albumWaitMs, splitPieceChars, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
 import { chatLiveSwitches, commandsInPairedDm, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
 import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAllowed, chatExtraPermissions,
   chatApprovablePermissions, standingYesInWindow,
-  readChatPermissionSettings as chatPermissionSettings,
+  readChatPermissionSettings as chatPermissionSettings, forChatKind,
   saveChatPermissionSettings, type ChatPermissionSettings } from "./chat-permissions.js";
 import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
@@ -39,6 +40,7 @@ import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
+import { channelRoutes, saveChannelRoute, routeFor, ChannelRouteError } from "./routes.js";
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
@@ -148,6 +150,8 @@ export interface ChannelAdapter {
    * app's settings) or has none.
    */
   setCommands?(commands: { command: string; description: string }[]): Promise<void>;
+  /** UP-CHAT-015: the picker for one direct chat only (Telegram's per-chat scope), over the one `setCommands` sets. */
+  setChatCommands?(chatId: string, commands: { command: string; description: string }[]): Promise<void>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
   /**
@@ -228,6 +232,11 @@ export interface ChannelAdapter {
    */
   miniAppUser?(initData: string): MiniAppUser;
   stop(): Promise<void>;
+  /**
+   * Taken out for good (removed, or replaced by a connection with another token), unlike stop() when Branch closes:
+   * drops what the app saved about its incoming messages (Telegram's inbox), so none of their words are kept.
+   */
+  forget?(): void;
 }
 /**
  * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
@@ -332,6 +341,7 @@ interface ChatTurnState extends ChatTurn {
   waiters: ((outcome: Outcome) => void)[];
   live: LiveStatus | null;
   reply: ReplyStream | null;
+  routingAtStart: string | null;
   /** Whether this answer's messages quote the person's message (src/channels/reply-style.ts). */
   quote: QuoteState;
 }
@@ -407,6 +417,7 @@ export class ChannelRouter {
    * `createBranch` connects it; on its own no chat is bound.
    */
   bindingFor: (channel: string, chatId: string) => string | null = () => null;
+  routingTrunks: () => { id: string; name: string; handle: string }[] = () => [];
   /** The Trunk a chat with no binding starts its thread with: the default Trunk. `createBranch` connects it. */
   defaultTrunk: () => string | null = () => null;
   /** Like trunkReach, for a Trunk a new thread is about to start with. */
@@ -416,6 +427,20 @@ export class ChannelRouter {
   /** The Trunk a chat's next new thread goes to. */
   chatTrunk(channel: string, chatId: string): string | null {
     return this.bindingFor(channel, chatId) ?? this.defaultTrunk();
+  }
+  routeSettings(input: unknown, actor = this.runtime.owner) {
+    return saveChannelRoute({ store: this.store, owner: this.runtime.owner,
+      kindOf: channel => this.adapters.get(channel)?.adapter.kind ?? null,
+      activeChatIds: channel => [...this.turns.values()].flatMap(turn => turn.messages[0]?.channel === channel ? [turn.messages[0].chatId] : []),
+      busy: (channel, chatId) => this.turns.has(`${channel}\u0001${chatId}`),
+      requireTrunk: (channel, trunkId) => {
+        if (!this.routingTrunks().some(trunk => trunk.id === trunkId)) throw new ChannelRouteError("Choose an existing Trunk.");
+        const refusal = this.trunkIdReach(channel, trunkId);
+        if (refusal) throw new ChannelRouteError(refusal);
+      } }, input, actor);
+  }
+  routing() {
+    return { routes: channelRoutes(this.store, this.runtime.owner), trunks: this.routingTrunks() };
   }
   // ---- end defaulttrunk ----
   /**
@@ -529,26 +554,67 @@ export class ChannelRouter {
    */
   /**
    * CHAT-134: one beat of the watchdog. A beat that comes far later than it should means this computer slept: every
-   * connection is then started again at once (a socket or long poll from before a sleep usually never says it died),
-   * rather than waiting for "stalled after" to pass. Otherwise the usual stall check.
+   * connection is then looked at at once (a socket or long poll from before a sleep usually never says it died), rather
+   * than waiting for "stalled after" to pass. Otherwise the usual stall check.
    */
   async watchTick(now = Date.now()): Promise<void> {
     const slept = this.lastBeat !== 0 && now - this.lastBeat > Math.max(60_000, this.watchdogMs * 4);
     this.lastBeat = now;
-    if (slept && this.intake().watchdog) await this.wake();
+    if (slept) await this.wake();
     else await this.checkStalled(now);
   }
   private lastBeat = 0;
-  /** After a sleep: every connected app that can start again does, each on its own so one failure stops no other. */
-  async wake(): Promise<void> {
-    await Promise.allSettled([...this.adapters].map(async ([id, { adapter }]) => {
-      if (!adapter.restart) return;
-      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
-      this.watch.set(id, state);
-      try { await adapter.restart(this.handlerFor()); state.lastRestartAt = Date.now(); state.problem = null; }
-      catch (error) { state.problem = `${adapter.kind} could not reconnect after this computer woke: ${error instanceof Error ? error.message : String(error)}`; }
-      if (this.adapters.get(id)?.adapter !== adapter) await adapter.stop().catch(() => undefined);
-    }));
+  /**
+   * UP-PLATFORM-003: after a sleep (the system said it resumed, or a watchdog beat came far too late), one bounded look
+   * per connected app. An app its service reaches within `wakeProbeMs` of waking is left alone; one that stays silent
+   * (a socket or long poll from before the sleep that never said it died) is started again, retried with backoff, each
+   * app on its own so one failure stops no other. The resume signal and the late beat usually both come, so calls
+   * within `wakeHoldoffMs` of one another are one wake. Only with Staying connected's watchdog on.
+   * After hermes-agent's post-resume sweep (apps/desktop/electron/remote-liveness.ts, MIT, Nous Research).
+   */
+  wake(): Promise<void> {
+    if (this.waking) return this.waking;
+    if (!this.watchdogOn() || Date.now() - this.wokeAt < this.wakeHoldoffMs) return Promise.resolve();
+    const since = this.wokeAt = Date.now();
+    return this.waking = Promise.allSettled([...this.adapters].map(async ([id, { adapter }]) => {
+      if (adapter.restart && !(await this.heardSince(id, adapter, since))) await this.reconnect(id, adapter);
+    })).then(() => undefined).finally(() => { this.waking = null; });
+  }
+  /** Longer than any app's own contact beat (Matrix's 30 s sync, Telegram's 25 s poll, the 20 s socket pings). */
+  wakeProbeMs = 45_000;
+  /** The first wait between reconnect attempts after a wake; it doubles each time, three attempts in all. */
+  wakeRetryMs = 2_000;
+  wakeHoldoffMs = 15_000;
+  private waking: Promise<void> | null = null;
+  private wokeAt = 0;
+  private watchdogOn(): boolean {
+    try { return this.intake().watchdog; } catch { return false; }
+  }
+  private attached(id: string, adapter: ChannelAdapter): boolean { return this.adapters.get(id)?.adapter === adapter; }
+  /** The bounded look: true once the app's service reached it after `since`, or once it was taken out meanwhile. */
+  private async heardSince(id: string, adapter: ChannelAdapter, since: number): Promise<boolean> {
+    if (!adapter.lastContact) return false; // an app that cannot say is started again, as every app was before
+    const end = Date.now() + this.wakeProbeMs, step = Math.max(5, Math.min(500, this.wakeProbeMs / 20));
+    for (;;) {
+      if (!this.attached(id, adapter) || adapter.lastContact() > since) return true;
+      if (Date.now() >= end) return false;
+      await pause(step);
+    }
+  }
+  /** A stale app is started again, up to three times with doubling waits; the last failure goes on its card. */
+  private async reconnect(id: string, adapter: ChannelAdapter): Promise<void> {
+    const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+    this.watch.set(id, state);
+    let failure: string | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await pause(this.wakeRetryMs * 2 ** (attempt - 1));
+      if (!this.attached(id, adapter)) return;
+      try { await adapter.restart!(this.handlerFor()); failure = null; state.lastRestartAt = Date.now(); state.problem = null; break; }
+      catch (error) { failure = error instanceof Error ? error.message : String(error); }
+    }
+    if (failure !== null) state.problem = `${adapter.kind} could not reconnect after this computer woke: ${failure}`;
+    // Taken out while it was being started again: stop what the restart began, or a second poller would keep running.
+    if (!this.attached(id, adapter)) await adapter.stop().catch(() => undefined);
   }
   async checkStalled(now = Date.now()): Promise<void> {
     const intake = this.intake();
@@ -589,6 +655,7 @@ export class ChannelRouter {
     this.adapters.delete(id);
     this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
+    try { attached.adapter.forget?.(); } catch { /* the saved rows are tidied when this connection is next opened */ }
   }
   async detachAll(): Promise<void> {
     if (this.pump) clearInterval(this.pump);
@@ -667,11 +734,26 @@ export class ChannelRouter {
    */
   refreshCommandMenus(): Promise<void> {
     return this.menuChain = this.menuChain.then(async () => {
-      const commands = this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
-        .map((one) => ({ command: one.name, description: one.description }));
-      const unique = [...new Map(commands.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      // #603's /new and /trunk are part of the thread model and work even while chat commands are off, so the picker
+      // always offers them; the table's commands join them only while chat commands are on.
+      const always = [{ command: "new", description: "Start a fresh thread and keep earlier conversations" },
+        { command: "trunk", description: "Which Trunk answers here" }];
+      const listed = chatCommandsFor(commandMode(this.store, this.runtime.owner)).map((one) => ({ command: one.name, description: one.description }));
+      const valid = (list: { command: string; description: string }[]) =>
+        [...new Map(list.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      const all = valid([...always, ...listed]);
+      const off = this.switches().commands === "off", unique = off ? valid(always) : all;
+      // UP-CHAT-015: as shipped (off, never moved), the owner's own paired direct chat still reads commands (`commandIn`),
+      // so its own picker lists them; once the owner moves the switch, that chat gets what every chat gets.
+      const ownerDm = off && commandsInPairedDm(this.store, this.runtime.owner) ? all : unique;
+      const owner = this.runtime.owner, named = [...ownerCommands(this.store, owner).accounts, ...platformSettings(this.store, owner).owners];
+      const accounts = [...new Map(named.map((one) => [`${one.channel}\u0000${one.sender}`, one])).values()]; // as `ownAccount` reads them
       await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
-        try { await adapter.setCommands?.(unique); }
+        try {
+          await adapter.setCommands?.(unique);
+          for (const account of accounts.filter((one) => one.channel === adapter.id && this.pair(one.channel, one.sender)?.status === "approved"))
+            await adapter.setChatCommands?.(account.sender, ownerDm);
+        }
         catch (error) { diagnose("channels", "warn", `The command menu could not be updated on ${adapter.kind}: ${error instanceof Error ? error.message : String(error)}`); }
       }));
     });
@@ -780,17 +862,21 @@ export class ChannelRouter {
    */
   private async voiceReply(message: InboundMessage, text: string, replyTo: string | undefined): Promise<void> {
     const adapter = this.adapters.get(message.channel)?.adapter;
-    if (!adapter?.sendVoice) return;
-    const checked = await this.outboundGuard(text);
+    if (!adapter?.sendVoice || !this.liveOn() || !this.senderAllowed(message.channel, message.senderId)) return;
+    const checked = await this.outboundGuard(this.hideLeaks(text));
     if (checked.blocked) return;
     const spoken = await this.speakReply(checked.text);
-    if (!spoken) return;
+    if (!spoken || !this.liveOn() || !this.senderAllowed(message.channel, message.senderId)) return;
     await adapter.sendVoice(message.chatId, spoken.bytes, spoken.mediaType, replyTo);
   }
   /** The conversation this chat is carrying on, when there is one. */
   private sessionFor(channel: string, chatId: string): string | undefined {
     const owner = this.runtime.owner;
-    const saved = this.store.get("settings", owner, `channel-session:${channel}:${chatId}`)?.data as { sessionId?: string } | undefined;
+    const saved = this.store.get("settings", owner, `channel-session:${channel}:${chatId}`)?.data as Partial<ChatThread> | undefined;
+    if (saved?.trunkId && !saved.linked && saved.trunkId !== this.chatTrunk(channel, chatId)) {
+      freshThread(this.store, owner, channel, chatId);
+      return undefined;
+    }
     return saved?.sessionId && this.store.ownsSession(owner, saved.sessionId) ? saved.sessionId : undefined;
   }
 
@@ -1033,6 +1119,8 @@ export class ChannelRouter {
   }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
+    const routing = !message.voice && /^\/trunk(?:@[a-z0-9_]+)?(?:\s+(.*))?\s*$/i.exec(message.text.trim());
+    if (routing) return { name: "trunk", argument: routing[1]?.trim() ?? "" };
     // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
     if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
       return { name: "new", argument: "" };
@@ -1060,7 +1148,7 @@ export class ChannelRouter {
   private chatPermissions(from?: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): string[] {
     const settings = chatPermissionSettings(this.store, this.runtime.owner);
     const extra = from ? chatExtraPermissions(settings, from.channel, from.senderId) : [];
-    const allowed = chatPermissionsAllowed(this.runtime.registry.permissions(), extra);
+    const allowed = forChatKind(chatPermissionsAllowed(this.runtime.registry.permissions(), extra), settings, from);
     // The one exception to "a chat never runs a program": the owner's own account, in a direct chat, on an app that
     // proves who sent it, with the part on (src/channels/owner-commands.ts). Every command still asks.
     return from && this.ownerCommandsFrom(from) && this.runtime.registry.permissions().includes(commandPermission)
@@ -1150,6 +1238,11 @@ export class ChannelRouter {
     const { channel, chatId } = message;
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
+    if (command.name === "trunk") {
+      const reply = this.routeCommand(message, command.argument);
+      await this.deliver(channel, chatId, reply, `route:${chatId}:${message.messageId}`, message.messageId).catch(() => undefined);
+      return "replied";
+    }
     // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
     // held back when the owner turned steering off, and answered as the next turn if the task never read it.
     if (command.name === "steer" && turn && command.argument.trim()) return this.joinTurn(turn, { ...message, text: command.argument.trim() });
@@ -1171,6 +1264,28 @@ export class ChannelRouter {
     const reply = asks ? await this.withSlot(work) : await work();
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
     return "replied";
+  }
+  private routeCommand(message: InboundMessage, argument: string): string {
+    const adapter = this.adapters.get(message.channel)?.adapter;
+    const own = !!adapter && ownerCommandsHere({ ...ownerCommands(this.store, this.runtime.owner), on: true },
+      { ...message, kind: adapter.kind }, lockedDown(this.store, this.runtime.owner) || this.appLocked())
+      && this.pair(message.channel, message.senderId)?.status === "approved" && this.senderAllowed(message.channel, message.senderId);
+    if (!argument) {
+      const id = this.chatTrunk(message.channel, message.chatId), trunk = this.routingTrunks().find(one => one.id === id);
+      const bound = adapter ? routeFor(this.store, this.runtime.owner, message.channel, message.chatId, adapter.kind) : null;
+      const current = `${trunk?.name ?? "The default Trunk"} answers here${bound ? " (chosen for this chat)" : " (default)"}.`;
+      return own ? `${current}\nSend /trunk <name>, /trunk default, or /trunk inherit.\n${this.routingTrunks().map(one => `${one.name} (@${one.handle})`).join("\n")}` : current;
+    }
+    if (!own) return "Change who answers in Branch's window, or from an approved account in your own paired direct chat.";
+    const reserved = argument.toLowerCase();
+    const chosen = this.routingTrunks().filter(one => [one.id.toLowerCase(), one.name.toLowerCase(), one.handle.toLowerCase()]
+      .includes(reserved.replace(/^@/, "")));
+    if (!["default", "inherit"].includes(reserved) && chosen.length !== 1) return "Choose one Trunk by its exact name or @handle. Send /trunk to see the list.";
+    try {
+      this.routeSettings({ channel: message.channel, scope: message.chatId,
+        trunkId: reserved === "default" ? "default" : reserved === "inherit" ? null : chosen[0]!.id }, `paired owner on ${message.channel}`);
+      return "Saved who answers here. Your next message starts a fresh thread; the earlier conversation stays in history.";
+    } catch (error) { return error instanceof Error ? error.message : "Could not save who answers here."; }
   }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
   ownerDmHost: (() => CommandHost) | null = null;
@@ -1246,7 +1361,8 @@ export class ChannelRouter {
     // With no split wait, a turn gathering only for an album takes only that album's photos (Codex P2).
     const first = turn.messages[0], sameAlbum = !!message.groupId && message.groupId === first?.groupId;
     const joins = this.switches().steering === "on"
-      || (message.senderId === first?.senderId && !message.caughtUp && (this.intake().splitWaitMs > 0 || sameAlbum));
+      || (message.senderId === first?.senderId && !message.caughtUp
+        && ((this.intake().splitWaitMs > 0 && (first?.text.length ?? 0) >= splitPieceChars) || sameAlbum));
     if (turn.phase === "gathering" && joins && fitsTurn(turn.messages, message)) {
       turn.messages.push(message);
       return new Promise((resolve) => turn.waiters.push(resolve));
@@ -1312,7 +1428,7 @@ export class ChannelRouter {
     const messages = followUp ? all.filter((m, index) => index === 0 || fitsTurn(all.slice(0, index), m)) : all;
     const notes = all.filter((m) => !messages.includes(m)).map((message) => ({ text: message.text, message }));
     const turn: ChatTurnState = { phase: "gathering", runId: null, startedAt: Date.now(), passed: 0, dropped: false,
-      messages, notes, waiters: [], live: null, reply: null, quote: this.quoteStateFor(first, () => turn.messages) };
+      messages, notes, waiters: [], live: null, reply: null, routingAtStart: null, quote: this.quoteStateFor(first, () => turn.messages) };
     turn.live = this.liveFor(first, () => turn.runId, turn);
     turn.reply = this.replyFor(first, turn);
     this.turns.set(key, turn);
@@ -1339,7 +1455,7 @@ export class ChannelRouter {
   private async carryTurn(message: InboundMessage, runId: string): Promise<Outcome> {
     const key = chatKey(message);
     const turn: ChatTurnState = { phase: "running", runId, startedAt: Date.now(), passed: 0, dropped: false,
-      messages: [message], notes: [], waiters: [], live: null, reply: null, quote: this.quoteStateFor(message, () => turn.messages) };
+      messages: [message], notes: [], waiters: [], live: null, reply: null, routingAtStart: null, quote: this.quoteStateFor(message, () => turn.messages) };
     turn.live = this.liveFor(message, () => turn.runId);
     turn.reply = this.replyFor(message);
     this.turns.set(key, turn);
@@ -1374,14 +1490,16 @@ export class ChannelRouter {
   }
   /**
    * How long a new turn gathers before it runs: the steering window ("on"), the owner's "Wait for messages split in
-   * two", and at least `albumWaitMs` for a photo that came in an album while albums are joined. `mergeWindowMs` 0 turns
-   * all gathering off (tests that want each message on its own).
+   * two" after a message long enough to be a split one's first piece, and at least `albumWaitMs` for a photo that came
+   * in an album while albums are joined. `mergeWindowMs` 0 turns all gathering off (tests that want each message on its
+   * own). chat-speed: every other message starts at once; the owner's "Hi" waited a whole second here.
    */
   private gatherMs(first: InboundMessage): number {
     if (this.mergeWindowMs <= 0) return 0;
     const intake = this.intake(), steering = this.switches().steering === "on" ? this.mergeWindowMs : 0;
     if (first.caughtUp) return steering; // messages fetched after a restart are old ones, each already whole
-    return Math.max(steering, intake.splitWaitMs, first.groupId && intake.albums ? albumWaitMs : 0);
+    const split = first.text.length >= splitPieceChars ? intake.splitWaitMs : 0;
+    return Math.max(steering, split, first.groupId && intake.albums ? albumWaitMs : 0);
   }
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
@@ -1408,6 +1526,8 @@ export class ChannelRouter {
       const sessionId = this.sessionFor(message.channel, message.chatId);
       // defaulttrunk: a chat with no conversation yet starts its one thread with the Trunk it is routed to.
       const trunkId = sessionId ? null : this.chatTrunk(message.channel, message.chatId);
+      const linked = this.store.get("settings", this.runtime.owner, `channel-session:${message.channel}:${message.chatId}`)?.data as Partial<ChatThread> | undefined;
+      turn.routingAtStart = linked?.linked ? null : sessionId ? this.trunkOfConversation(sessionId) : trunkId;
       // R17-A (Trunks): a chat linked to a Trunk's conversation is answered only where that Trunk may reach.
       const trunkRefusal = sessionId ? this.trunkReach(message.channel, sessionId) : trunkId ? this.trunkIdReach(message.channel, trunkId) : null;
       if (trunkRefusal) {
@@ -1456,6 +1576,8 @@ export class ChannelRouter {
             waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
           turn.runId = started.id;
           turn.startedAt = Date.now();
+          // chat-speed: when the reply's first words were in the chat, beside when the model wrote them (first_words).
+          if (turn.reply) turn.reply.onFirstShown = () => this.store.event(started.id, "channel.first_shown", { ms: Date.now() - receivedAt });
           live?.thinking();
           if (turn.dropped) this.runtime.cancel(started.id);
           this.passNotes(turn);
@@ -1512,6 +1634,8 @@ export class ChannelRouter {
     saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
       ...(trunkId ? { trunkId } : {}) });
+    if (turn.routingAtStart && turn.routingAtStart !== this.chatTrunk(message.channel, message.chatId))
+      freshThread(this.store, this.runtime.owner, message.channel, message.chatId);
     // hot-update: a newer engine took this task over and carries it on; its answer goes to the chat from there
     // (carryOnReply), so nothing is said from here: no "could not finish", and no second answer.
     if (run.status === "interrupted" && this.handedOver(run.id)) { live?.cancel(); turn.reply?.cancel(); return "replied"; }

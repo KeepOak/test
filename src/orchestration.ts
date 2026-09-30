@@ -87,7 +87,8 @@ export interface ConductOptions {
   /** True for a specialist's sub-task: it never plans or reviews on its own. */
   delegated?: boolean;
   /** FQ-routing.isolated-agents: whose memory the reviewer may see, the same as the task's own snapshot. */
-  memory?: { scope: string; agent?: string | undefined };
+  /** Whose remembered facts a reviewer reads; null when the task was given none (a group chat's). */
+  memory?: { scope: string; agent?: string | undefined } | null;
   /**
    * mac7/smoke-fixes (B5): nobody can be asked while this task runs — a script's `branch run`, a
    * schedule, a trigger, another AI tool. "Show me the plan first" then finishes with the plan as
@@ -420,7 +421,8 @@ export class RunConductor {
     return { role: "user", content: `A reviewer checked your answer and asked for these changes:\n${verdict.fixes.map((fix, i) => `${i + 1}. ${fix}`).join("\n")}\nApply them and give the answer again.` };
   }
   private async critique(answer: string): Promise<{ verdict: "accept" | "revise"; fixes: string[] }> {
-    const memory = this.deps.store.review.sessionSnapshot(this.options.memory?.scope ?? this.deps.owner, this.run.sessionId, this.options.memory?.agent);
+    const memory = this.options.memory === null ? { count: 0, text: "" }
+      : this.deps.store.review.sessionSnapshot(this.options.memory?.scope ?? this.deps.owner, this.run.sessionId, this.options.memory?.agent);
     const body = [
       `Task: ${this.run.prompt.slice(0, 2000)}`,
       this.options.checks ? `Conditions the answer must meet: ${JSON.stringify(this.options.checks)}` : "",

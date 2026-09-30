@@ -13,7 +13,10 @@ import { realScreenAllowed, realScreenMarker } from "./real-screen.mjs";
 
 const here = new URL(".", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 /** What a test that touches the real screen contains: starting Notepad, a Windows Forms window, keys sent to it, a picture of it. */
-const realScreen = new RegExp(["notepad", "\\.exe", "|System\\.Windows\\.", "Forms|CopyFrom", "Screen|Send", "Keys|user", "32\\.dll"].join(""), "i");
+const screenWords = new RegExp(["notepad", "\\.exe", "|System\\.Windows\\.", "Forms|CopyFrom", "Screen|user", "32\\.dll"].join(""), "i");
+// Windows' own SendKeys is matched with its capital S only: a paired computer's plain `sendKeys` value is not it.
+const sendKeys = new RegExp(["\\bSend", "Keys\\b"].join(""));
+const realScreen = { test: (text) => screenWords.test(text) || sendKeys.test(text) };
 
 function testFiles(folder) {
   return readdirSync(folder).flatMap((name) => {
@@ -112,9 +115,10 @@ test("every real-screen program start in the engine asks the guard first", () =>
   before(script, "async run(action: DesktopAction", "new ShellProcess(");
   before(script, "const boundedRunner = (standIns: boolean): PosixExec", "new ShellProcess(");
   before(script, "liveProcess(target?: NativeCaptureTarget", "executable: this.executable");
+  before(script, "private helper(limit: number): DesktopHelper", "executable: this.executable");
   before(src("integrations/desktop-banner.ts"), "async show(onStop: () => void)", "spawn(");
   // Only the Mac/Linux runner passes its program, so only there may a test's stand-in run; the Windows places never.
-  assert.deepEqual(script.match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()", "assertRealScreenAllowed()", "assertRealScreenAllowed(standIns ? executable : undefined)"]);
+  assert.deepEqual(script.match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()", "assertRealScreenAllowed()", "assertRealScreenAllowed()", "assertRealScreenAllowed(standIns ? executable : undefined)"]);
   // ...and only when the code that built the runner handed in its own program finder, which Branch itself never does:
   // its one screen runner is built with no Mac/Linux options at all.
   assert.match(script, /this\.posix\.exec \?\? boundedRunner\(this\.posix\.locate !== undefined\)/);
@@ -125,7 +129,9 @@ test("every real-screen program start in the engine asks the guard first", () =>
   assert.doesNotMatch(src("integrations/desktop.ts"), /new DesktopScriptRunner\([^)]/, "the default runner is built with nothing handed in");
   assert.deepEqual(src("integrations/desktop-banner.ts").match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()"]);
   const spawns = (script.match(/\bspawn\(|new ShellProcess\(/g) ?? []).length;
-  assert.equal(spawns, 3, "no other place in the runner starts a program; a new one needs the guard too");
-  const liveStart = script.slice(script.indexOf("private async start(signal: AbortSignal): Promise<ChildProcess>"));
-  assert.ok(liveStart.indexOf("await this.command()") < liveStart.indexOf("spawn("), "the live reader starts only the command it was handed, which the guarded factory builds");
+  assert.equal(spawns, 4, "no other place in the runner starts a program; a new one needs the guard too");
+  // The live reader and the resident helper each start only the command they were handed, which a guarded factory builds.
+  const starts = script.split("private async start(signal: AbortSignal): Promise<ChildProcess>").slice(1);
+  assert.equal(starts.length, 2);
+  for (const start of starts) assert.ok(start.indexOf("await this.command()") < start.indexOf("spawn("), "only the command it was handed");
 });
