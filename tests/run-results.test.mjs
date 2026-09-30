@@ -12,6 +12,7 @@ import { signIn } from "./new-window-places.mjs";
 import { discardTemp } from "./temp-dir.mjs";
 import { Receipts } from "../dist/receipts.js";
 import { runResult } from "../dist/results.js";
+import { audit } from "../dist/audit.js";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
@@ -80,8 +81,11 @@ test("Q52 the checks it ran and the reviewer's verdict, and how far its own chan
   const result = await runResult(receipts, run, events);
   assert.deepEqual(result.checked.map(({ kind, passed }) => [kind, passed]), [["project check", false], ["project check", true], ["review", true]]);
   assert.deepEqual(result.ownChange, { codeChanged: true, tests: "passed", review: "not opened", merged: "unknown", inRelease: "unknown" });
-  const opened = await runResult(receipts, run, [...events.slice(0, 4), ev("pull_request.opened", { url: "https://example.test/pr/1" })]);
+  const opened = await runResult(receipts, run, [...events.slice(0, 4),
+    ev("pull_request.opened", { repository: "KeepOak/Branch-Agent", number: 1, address: "https://github.com/KeepOak/Branch-Agent/pull/1" })]);
   assert.deepEqual([opened.ownChange.tests, opened.ownChange.review], ["failed", "pending"], "the last check counts; a PR is a review pending");
+  const unnamed = await runResult(receipts, run, [...events.slice(0, 4), ev("pull_request.opened", { url: "https://example.test/pr/1" })]);
+  assert.equal(unnamed.ownChange.review, "not opened", "a note with no repository and number is not a pull request");
   const untested = await runResult(receipts, run, [ev("tool.started", { id: "p2", name: "branch.prepare_source_change" })]);
   assert.deepEqual([untested.ownChange.codeChanged, untested.ownChange.tests], [false, "not run"]);
 });
@@ -133,3 +137,56 @@ test("Q52 a real task that writes a file: the result names it, proven, and the A
   assert.deepEqual(errors, []);
 });
 
+
+test("SELF-028 a pull request is only the opening tool's own repository and number", async () => {
+  const { pullRequestReference } = await import("../dist/self-development-results.js");
+  const repo = "KeepOak/Branch-Agent";
+  assert.deepEqual(pullRequestReference(repo, { number: 7, address: "https://github.com/KeepOak/Branch-Agent/pull/7" }),
+    { repository: repo, number: 7, address: "https://github.com/KeepOak/Branch-Agent/pull/7" });
+  // The computer's own gh answers with the address only; the number is read from it.
+  assert.deepEqual(pullRequestReference(repo, { url: "https://github.com/keepoak/branch-agent/pull/12?x=1#top" }),
+    { repository: repo, number: 12, address: "https://github.com/keepoak/branch-agent/pull/12" });
+  assert.deepEqual(pullRequestReference(undefined, { repository: repo, number: 3 }), { repository: repo, number: 3, address: null });
+  for (const [why, repository, result] of [
+    ["an address on another repository", repo, { number: 7, address: "https://github.com/someone/else/pull/7" }],
+    ["a number the address does not say", repo, { number: 8, address: "https://github.com/KeepOak/Branch-Agent/pull/7" }],
+    ["an address that is not https", repo, { url: "http://github.com/KeepOak/Branch-Agent/pull/7" }],
+    ["an address carrying a sign-in", repo, { url: "https://user:pass@github.com/KeepOak/Branch-Agent/pull/7" }],
+    ["an address that is not a pull request", repo, { url: "https://github.com/KeepOak/Branch-Agent/issues/7" }],
+    ["no number at all", repo, { title: "Branch: fix" }],
+    ["a number that is not a whole positive number", repo, { number: -1 }],
+    ["a repository that is not owner/name", "KeepOak/Branch-Agent/extra", { number: 7 }],
+    ["no repository", undefined, { number: 7 }],
+  ]) assert.equal(pullRequestReference(repository, result), null, `accepted ${why}`);
+});
+
+test("SELF-028 \"merged repo#n\" comes only from a merge tool's result or the owner's merge record", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-results-merged-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const owner = app.runtime.owner, sha = "a".repeat(40), repository = "KeepOak/Branch-Agent";
+  const task = { ...app.store.createRun(owner, "fix Branch"), status: "completed" };
+  const opened = [ev("tool.started", { id: "p1", name: "branch.prepare_source_change" }),
+    ev("pull_request.opened", { repository, number: 42, address: "https://github.com/KeepOak/Branch-Agent/pull/42", branch: "b", base: "main", files: 1 })];
+  const merged = async (events) => (await runResult(receipts, task, [...opened, ...events], app.store)).ownChange.merged;
+  assert.equal(await merged([]), "unknown", "an opened pull request is not a merge");
+  // Anything but a merge tool's own result with its commit leaves it unknown.
+  assert.equal(await merged([await done("m1", "github.merge_pull_request", { merged: true, repository, number: 42 })]), "unknown", "no commit");
+  assert.equal(await merged([await done("m2", "web.fetch", { merged: true, sha, repository, number: 42 })]), "unknown", "not a merge tool");
+  assert.equal(await merged([ev("pull_request.opened", { repository, number: 42, merged: true, sha })]), "unknown", "the task's own note");
+  assert.equal(await merged([ev("model.completed", { content: "Merged KeepOak/Branch-Agent#42." })]), "unknown", "the model's words");
+  const fromTool = await runResult(receipts, task, [...opened, await done("m3", "github.merge_pull_request", { merged: true, sha, repository, number: 42 })], app.store);
+  assert.equal(fromTool.ownChange.merged, "merged keepoak/branch-agent#42");
+  assert.deepEqual([fromTool.pullRequests[0].mergeEvidence, fromTool.pullRequests[0].mergeSha], ["tool result", sha]);
+  // The owner's merge record counts only for a pull request this task opened, and only a merge.
+  const record = (subject, outcome) => audit(app.store, owner, { action: "self_development.merge", actor: owner, subject,
+    reason: "test", source: "owner", outcome });
+  record(`${repository}#99 ${sha}`, "merged");
+  record(`${repository}#42 ${sha}`, "approved");
+  assert.equal(await merged([]), "unknown", "another pull request's merge, or an approval, is not this one's merge");
+  record(`${repository}#42 ${"b".repeat(40)}`, "merged");
+  const fromAudit = await runResult(receipts, task, opened, app.store);
+  assert.equal(fromAudit.ownChange.merged, "merged keepoak/branch-agent#42");
+  assert.deepEqual([fromAudit.pullRequests[0].mergeEvidence, fromAudit.pullRequests[0].reviewedHead], ["owner audit", "b".repeat(40)]);
+  assert.equal(fromAudit.ownChange.inRelease, "unknown", "a merge is not a release");
+});

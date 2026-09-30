@@ -1,17 +1,21 @@
 import type { Event, Run } from "./contracts.js";
 import { classifyToolEvent, type Receipts, type ToolOutcomeKind } from "./receipts.js";
+import { sourceChangeMetrics, taskPullRequests, type PullRequestResult } from "./self-development-results.js";
+import { pricingSettings } from "./pricing.js";
+import type { Store } from "./store.js";
 
 /**
  * Q52: what a finished task made and how that was checked, told only from what its own record shows: each file it
  * wrote or changed and each artifact it kept, with the proof its tool's receipt gives (checked and confirmed, no
  * proof kept, changed after it was done...); the project checks it ran and the reviewer's verdict; and, when it
- * worked on Branch's own source, how far that change has got. Nothing here records a review's outcome, a merge or
- * a release, so those read "unknown" rather than a guess.
+ * worked on Branch's own source, how far that change has got. Only explicit tool results or owner merge audit
+ * entries establish a merge; a proposal never establishes checks, independent review or installation.
  */
 export interface Made { kind: "file" | "artifact"; path: string; tool: string; created: boolean; proof: ToolOutcomeKind | "not recorded" }
 export interface Checked { kind: "project check" | "review"; passed: boolean; detail: string }
-export interface OwnChange { codeChanged: boolean; tests: "passed" | "failed" | "not run"; review: "pending" | "not opened"; merged: "unknown"; inRelease: "unknown" }
-export interface RunResult { runId: string; status: Run["status"]; made: Made[]; checked: Checked[]; ownChange: OwnChange | null }
+export interface OwnChange { codeChanged: boolean; tests: "passed" | "failed" | "not run"; review: "pending" | "not opened"; merged: "unknown" | `merged ${string}`; inRelease: "unknown" }
+export interface RunResult { runId: string; status: Run["status"]; made: Made[]; checked: Checked[]; ownChange: OwnChange | null;
+  pullRequests: PullRequestResult[]; selfDevelopmentMetrics: ReturnType<typeof sourceChangeMetrics> | null }
 
 const artifactOf = (result: unknown): { path: string } | null => {
   const value = result && typeof result === "object" ? result as Record<string, unknown> : null;
@@ -21,7 +25,7 @@ const artifactOf = (result: unknown): { path: string } | null => {
 const ENDS = new Set(["tool.completed", "tool.failed", "tool.stalled"]);
 const samePath = (a: string, b: string) => a.replace(/\\/g, "/").replace(/^\.\//, "") === b.replace(/\\/g, "/").replace(/^\.\//, "");
 
-export async function runResult(receipts: Receipts, run: Run, events: Event[]): Promise<RunResult> {
+export async function runResult(receipts: Receipts, run: Run, events: Event[], store?: Store): Promise<RunResult> {
   const open = new Map<string, { name: string; path?: string | undefined }>(), ended = new Map<string, Event>();
   const changes: { path: string; tool: string; id: string; created: boolean }[] = [];
   for (const event of events) {
@@ -58,19 +62,25 @@ export async function runResult(receipts: Receipts, run: Run, events: Event[]): 
     if (event.kind === "code.check") checked.push({ kind: "project check", passed: event.data.ok === true, detail: String(event.data.status ?? "") });
     if (event.kind === "verify.verdict") checked.push({ kind: "review", passed: event.data.verdict === "accept", detail: String(event.data.verdict ?? "") });
   }
-  return { runId: run.id, status: run.status, made, checked, ownChange: ownChange(events, made, checked) };
+  const audits = store?.audit.list(run.owner, { action: "self_development.merge", from: run.createdAt, limit: 1000 }) ?? [];
+  const pullRequests = taskPullRequests(events, audits), change = ownChange(events, made, checked, pullRequests);
+  const overrides = store ? pricingSettings(store, run.owner).overrides : {};
+  return { runId: run.id, status: run.status, made, checked, ownChange: change, pullRequests,
+    selfDevelopmentMetrics: change ? sourceChangeMetrics(run, events, pullRequests.filter((request) => /\/branch-agent$/i.test(request.repository)), overrides) : null };
 }
 
 /** Branch's own source: only when the task prepared a change to it or opened a pull request for one. */
-function ownChange(events: Event[], made: Made[], checked: Checked[]): OwnChange | null {
+function ownChange(events: Event[], made: Made[], checked: Checked[], requests: PullRequestResult[]): OwnChange | null {
   const prepared = events.some((event) => event.kind === "tool.started" && event.data.name === "branch.prepare_source_change");
-  const opened = events.some((event) => event.kind === "pull_request.opened");
+  const sourceRequests = requests.filter((request) => /\/branch-agent$/i.test(request.repository));
+  const opened = sourceRequests.some((request) => request.openedAt !== null);
   if (!prepared && !opened) return null;
   const check = checked.filter((one) => one.kind === "project check").at(-1);
   return {
     codeChanged: made.some((one) => one.kind === "file"),
     tests: check ? (check.passed ? "passed" : "failed") : "not run",
     review: opened ? "pending" : "not opened",
-    merged: "unknown", inRelease: "unknown",
+    merged: sourceRequests.some((request) => request.state === "merged") ? `merged ${sourceRequests.filter((request) => request.state === "merged").map((request) => request.key).join(", ")}` : "unknown",
+    inRelease: "unknown",
   };
 }

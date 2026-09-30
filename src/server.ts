@@ -1754,7 +1754,7 @@ async function api(
     }
     if (request.method === "GET" && match[2] === "receipts") return receiptsView(app, run.id);
     // Q52: what the task made and how that was checked, from its own record (src/results.ts).
-    if (request.method === "GET" && match[2] === "result") return runResult(app.store.receipts, run, app.store.events(run.id));
+    if (request.method === "GET" && match[2] === "result") return runResult(app.store.receipts, run, app.store.events(run.id), app.store);
     if (request.method === "GET" && !match[2])
       return {
         run,

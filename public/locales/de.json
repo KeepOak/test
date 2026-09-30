@@ -9850,6 +9850,8 @@
   "window.settings.permissions.off-means-every-message-waits-for": "Aus heißt, jede Nachricht wartet auf dein Ja.",
   "window.settings.permissions.one-switch-that-stops-every-trunk": "Ein Schalter, der jeden Trunk davon abhält, etwas zu senden, zu ändern oder auszugeben.",
   "window.settings.permissions.open-windows-settings": "Windows-Einstellungen öffnen",
+  "window.settings.permissions.ordinary-settings-scope": "Nur Einstellungen aus dem Katalog. Änderungen, die Schutzmaßnahmen verringern, benötigen weiter eine Bestätigung; angeheftete Einstellungen bleiben unverändert.",
+  "window.settings.permissions.ordinary-settings-without-asking": "Branch darf normale Einstellungen ohne Nachfrage ändern",
   "window.settings.permissions.photos-and-scanning-a-code": "Fotos und Code-Scannen",
   "window.settings.permissions.pin-a-setting": "Einstellung anheften",
   "window.settings.permissions.pin-ssh-hosts": "SSH-Hosts festlegen",
