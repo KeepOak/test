@@ -1016,6 +1016,7 @@ export async function createBranch(options: {
     for (const release of releaseOnLock) void release().catch(() => undefined);
   };
   releaseOnLock.push(async () => runtime.keepAlive.stop()); // R17-050 (integration review): locking Branch stops cache pings
+  releaseOnLock.push(async () => channels.stopMessageSends("Branch was locked; nothing was changed.")); // an own-message edit or delete on its way out stops
   // Signing in to outside services the ordinary way, with the answer coming back to this computer.
   const oauth = new OAuthConnections(runtime.owner, store.secrets, web.policy, web.policy.guard(globalThis.fetch));
   // accounts-wizard-plans: the coding assistants and the Gemini sign-in the owner added come back (src/accounts/saved-sign-ins.ts).
