@@ -231,7 +231,7 @@ async function loadByTrunk() {
   renderNow();
 }
 function spendRow(r, most) {
-  const name = r.trunk ? r.trunk.name : t("window.settings.usage.by-you");
+  const name = r.agent ? r.agent.name : r.trunk ? r.trunk.name : t("window.settings.usage.by-you");
   const cost = r.cost === null ? t("window.settings.usage.by-plan") : `$${r.cost.toFixed(2)}${r.unpricedTasks ? ` ${t("window.settings.usage.by-plus-plan", { count: r.unpricedTasks })}` : ""}`;
   const accounts = r.accounts.map((a) => `${a.label} (${a.calls})`).join(", ");
   return `<div class="brow spend-row"><span><b>${esc(name)}</b></span><span class="track"><u data-css="width:${Math.max(3, Math.round((r.tasks / most) * 100))}%"></u></span><span class="v">${esc(cost)}</span><small class="spend-sub">${esc(t("window.settings.usage.by-tasks", { count: r.tasks, tokens: r.tokens.toLocaleString() }))}${accounts ? ` · ${esc(accounts)}` : ""}</small></div>`;

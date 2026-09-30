@@ -12,6 +12,8 @@ export const UsageByTrunkRequestSchema = z.object({ days: z.coerce.number().int(
 
 export interface TrunkSpend {
   trunk: { id: string; name: string } | null;
+  /** A helper's specialist/mode as recorded when it started; null for the owner's and Trunks' tasks. */
+  agent: { id: string; name: string } | null;
   tasks: number; tokens: number;
   /** Dollars for the tasks that have a price; null when none has one. */
   cost: number | null;
@@ -32,6 +34,18 @@ export interface UsageByTrunkDeps {
 /** Most tasks counted, so a very busy stretch never makes the page slow. */
 const cap = 3000;
 
+function spendIdentity(deps: UsageByTrunkDeps, events: ReturnType<Store["events"]>): { key: string; trunk: TrunkSpend["trunk"]; agent: TrunkSpend["agent"] } {
+  const start = events.find((event) => event.kind === "run.started")?.data;
+  const helper = typeof start?.parentRunId === "string" && !!start.parentRunId && start.parentRunId !== "learning";
+  const turn = events.find((event) => event.kind === "trunk.turn")?.data;
+  const trunkId = typeof turn?.trunkId === "string" ? turn.trunkId : "";
+  const trunk = trunkId ? { id: trunkId, name: deps.trunkName(trunkId) ?? trunkId } : null;
+  if (!helper) return { key: trunkId ? `trunk:${trunkId}` : "owner", trunk, agent: null };
+  const id = typeof start?.agent === "string" && start.agent ? start.agent : "helper";
+  const name = typeof start?.agentName === "string" && start.agentName ? start.agentName : id;
+  return { key: `helper:${trunkId}:${id}`, trunk, agent: { id, name } };
+}
+
 export function usageByTrunk(deps: UsageByTrunkDeps, input: unknown): { days: number; since: string; rows: TrunkSpend[]; counted: number; capped: boolean } {
   const { days } = UsageByTrunkRequestSchema.parse(input ?? {});
   const since = new Date((deps.now?.() ?? Date.now()) - days * 86_400_000).toISOString();
@@ -41,11 +55,9 @@ export function usageByTrunk(deps: UsageByTrunkDeps, input: unknown): { days: nu
   const rows = new Map<string, TrunkSpend>();
   for (const id of counted) {
     const events = deps.store.events(id);
-    const turn = events.find((event) => event.kind === "trunk.turn");
-    const trunkId = turn ? String((turn.data as { trunkId?: unknown }).trunkId ?? "") : "";
-    const key = trunkId || "owner";
-    let row = rows.get(key);
-    if (!row) rows.set(key, row = { trunk: trunkId ? { id: trunkId, name: deps.trunkName(trunkId) ?? trunkId } : null, tasks: 0, tokens: 0, cost: null, unpricedTasks: 0, accounts: [] });
+    const identity = spendIdentity(deps, events);
+    let row = rows.get(identity.key);
+    if (!row) rows.set(identity.key, row = { trunk: identity.trunk, agent: identity.agent, tasks: 0, tokens: 0, cost: null, unpricedTasks: 0, accounts: [] });
     row.tasks += 1;
     const usage = deps.store.usage(id);
     row.tokens += (usage.reportedInput || usage.estimatedInput || 0) + (usage.reportedOutput || usage.estimatedOutput || 0);
@@ -62,7 +74,7 @@ export function usageByTrunk(deps: UsageByTrunkDeps, input: unknown): { days: nu
   }
   const list = [...rows.values()].map((row) => ({ ...row, cost: row.cost === null ? null : Math.round(row.cost * 10_000) / 10_000,
     accounts: row.accounts.sort((a, b) => b.calls - a.calls) }));
-  // The owner's own first, then Trunks by how much they did.
-  list.sort((a, b) => Number(a.trunk !== null) - Number(b.trunk !== null) || b.tasks - a.tasks);
+  // The owner's own first, then Trunks and helpers by how much they did.
+  list.sort((a, b) => Number(a.trunk !== null || a.agent !== null) - Number(b.trunk !== null || b.agent !== null) || b.tasks - a.tasks);
   return { days, since, rows: list, counted: counted.length, capped };
 }
