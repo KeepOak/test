@@ -158,6 +158,7 @@ export class Store {
         UPDATE messages SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=new.id; END;`);
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS events_run_kind ON events(run_id, kind, id)"); // exact task attribution without repeated history scans
     this.conversations = new ConversationMarks(this.db, () => this.clock());
     ensureThreadTable(this.db); // defaulttrunk: which Trunk each conversation is with (src/trunks/threads.ts), read by history
     ensureForgotten(this.db);
@@ -194,7 +195,8 @@ export class Store {
       .prepare("PRAGMA table_info(usage)")
       .all()
       .map((row) => row.name);
-    for (const column of ["attempts", "unreported_calls", "incomplete_calls"])
+    // Prompt-cache reads and writes, as parts of reported_input, so each can be priced at its own rate (src/pricing.ts).
+    for (const column of ["attempts", "unreported_calls", "incomplete_calls", "reported_cached_input", "reported_cache_write", "reported_cache_write_hour"])
       if (!usageColumns.includes(column))
         this.db.exec(
           `ALTER TABLE usage ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`,
@@ -226,8 +228,8 @@ export class Store {
     return this.library.search(owner, input, this.hiddenSessions().slice(0, 500), agent);
   }
   /** The recent conversations with what was last said in each, for picking one up on a phone. */
-  recentSessions(owner: string, limit?: number) {
-    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500));
+  recentSessions(owner: string, limit?: number, offset = 0) {
+    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500), undefined, offset);
   }
   /** A project's conversations, newest first, in the same shape as recentSessions (src/session-library.ts projectOf). */
   projectSessions(owner: string, project: string, limit = 100) {
@@ -934,18 +936,21 @@ export class Store {
     runId: string,
     estimatedInput: number,
     estimatedOutput: number,
-    reported?: { input: number; output: number },
+    reported?: { input: number; output: number; cachedInput?: number | undefined; cacheWrite?: number | undefined; cacheWrite1h?: number | undefined },
     completed = true,
   ): void {
     this.db
       .prepare(
-        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
+        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reported_cached_input=reported_cached_input+?,reported_cache_write=reported_cache_write+?,reported_cache_write_hour=reported_cache_write_hour+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
       )
       .run(
         estimatedInput,
         estimatedOutput,
         reported?.input ?? 0,
         reported?.output ?? 0,
+        reported?.cachedInput ?? 0,
+        reported?.cacheWrite ?? 0,
+        reported?.cacheWrite1h ?? 0,
         reported ? 1 : 0,
         reported ? 1 : 0,
         completed ? 1 : 0,
@@ -959,6 +964,9 @@ export class Store {
       estimatedOutput: Number(r?.estimated_output ?? 0),
       reportedInput: Number(r?.reported_input ?? 0),
       reportedOutput: Number(r?.reported_output ?? 0),
+      reportedCachedInput: Number(r?.reported_cached_input ?? 0),
+      reportedCacheWrite: Number(r?.reported_cache_write ?? 0),
+      reportedCacheWrite1h: Number(r?.reported_cache_write_hour ?? 0),
       reports: Number(r?.reports ?? 0),
       attempts: Number(r?.attempts ?? 0),
       unreportedCalls: Number(r?.unreported_calls ?? 0),
