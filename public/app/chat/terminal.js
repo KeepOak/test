@@ -54,7 +54,8 @@ const MARK = { done: "check", practice: "check", failed: "x", refused: "x", stop
 function allowedBy(entry) {
   if (entry.allowed === "rules") return t("window.chat.term.allowed-rules");
   const owner = E.profiles?.owner?.name;
-  return entry.allowed === "owner" && owner ? t("window.chat.term.approved-by", { name: owner }) : "";
+  if (entry.allowed !== "owner") return "";
+  return owner ? t("window.chat.term.approved-by", { name: owner }) : t("window.chat.term.approved-owner");
 }
 
 function row(entry) {
