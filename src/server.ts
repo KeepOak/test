@@ -1080,7 +1080,7 @@ async function api(
     if (request.method === "POST" && path === "/api/weather") {
       const input = await readBody(request);
       if (!app.store.profiles.isOwner() || app.sessionLock.locked()) throw new HttpError(403, "Owner window required");
-      return { settings: recordedWrite(app.store, app.runtime.owner, byCard("weather-connector"), ["weather-connector"], () => weather.configure(input)) };
+      return { settings: weather.configure(input) };
     }
     if (request.method === "POST" && path === "/api/weather/forecast")
       return app.runtime.executeTool("weather.forecast", await readBody(request), { mode: "owner", source: "owner" });
