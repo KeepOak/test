@@ -167,6 +167,7 @@ export const ROUTES = {
   "/api/channel-setup/": "prefix",
   "/api/channel-setup/sample": "look",
   "/api/channel-setup/sample/check": "owner POST",
+  "/api/channel-setup/sample/link": "owner POST", // a bridge on this computer: its pairing code (WhatsApp, personal number)
   "/api/channels": "look",
   "/api/channels/addresses": "secret-read",
   "/api/channels/addresses/rotate": "owner POST",

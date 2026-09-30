@@ -292,6 +292,8 @@ owner GET /api/channel-setup/sample | here=ok remote=ok phone=ok legacy=ok perso
 owner POST /api/channel-setup/sample | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/c2fa05 run=401/c2fa05 nobody=401/40daee
 owner GET /api/channel-setup/sample/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/channel-setup/sample/check | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/c2fa05 run=401/c2fa05 nobody=401/40daee
+owner GET /api/channel-setup/sample/link | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/channel-setup/sample/link | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/c2fa05 run=401/c2fa05 nobody=401/40daee
 owner GET /api/channels | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/channels | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/channels/addresses | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -2540,6 +2542,8 @@ owner+lockdown GET /api/channel-setup/sample | here=ok remote=ok phone=ok legacy
 owner+lockdown POST /api/channel-setup/sample | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/c2fa05 run=401/c2fa05 nobody=401/40daee
 owner+lockdown GET /api/channel-setup/sample/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/channel-setup/sample/check | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/c2fa05 run=401/c2fa05 nobody=401/40daee
+owner+lockdown GET /api/channel-setup/sample/link | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/channel-setup/sample/link | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/c2fa05 run=401/c2fa05 nobody=401/40daee
 owner+lockdown GET /api/channels | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/channels | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/channels/addresses | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4788,6 +4792,8 @@ household GET /api/channel-setup/sample | here=400/c77c55 remote=400/c77c55 read
 household POST /api/channel-setup/sample | here=400/c77c55 remote=403/4bac86 read=401/c2fa05 run=401/c2fa05
 household GET /api/channel-setup/sample/check | here=400/c77c55 remote=400/c77c55 read=400/c77c55 run=400/c77c55
 household POST /api/channel-setup/sample/check | here=400/c77c55 remote=403/4bac86 read=401/c2fa05 run=401/c2fa05
+household GET /api/channel-setup/sample/link | here=400/c77c55 remote=400/c77c55 read=400/c77c55 run=400/c77c55
+household POST /api/channel-setup/sample/link | here=400/c77c55 remote=403/4bac86 read=401/c2fa05 run=401/c2fa05
 household GET /api/channels | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household POST /api/channels | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household GET /api/channels/addresses | here=400/fb6b79 remote=403/4bac86 read=401/86eff9 run=401/86eff9
@@ -7036,6 +7042,8 @@ household+lockdown GET /api/channel-setup/sample | here=400/c77c55 remote=400/c7
 household+lockdown POST /api/channel-setup/sample | here=400/c77c55 remote=403/4bac86 read=401/c2fa05 run=401/c2fa05
 household+lockdown GET /api/channel-setup/sample/check | here=400/c77c55 remote=400/c77c55 read=400/c77c55 run=400/c77c55
 household+lockdown POST /api/channel-setup/sample/check | here=400/c77c55 remote=403/4bac86 read=401/c2fa05 run=401/c2fa05
+household+lockdown GET /api/channel-setup/sample/link | here=400/c77c55 remote=400/c77c55 read=400/c77c55 run=400/c77c55
+household+lockdown POST /api/channel-setup/sample/link | here=400/c77c55 remote=403/4bac86 read=401/c2fa05 run=401/c2fa05
 household+lockdown GET /api/channels | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household+lockdown POST /api/channels | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household+lockdown GET /api/channels/addresses | here=400/fb6b79 remote=403/4bac86 read=401/86eff9 run=401/86eff9
@@ -9284,6 +9292,8 @@ applock GET /api/channel-setup/sample | here=423/a8f863
 applock POST /api/channel-setup/sample | here=423/a8f863
 applock GET /api/channel-setup/sample/check | here=423/a8f863
 applock POST /api/channel-setup/sample/check | here=423/a8f863
+applock GET /api/channel-setup/sample/link | here=423/a8f863
+applock POST /api/channel-setup/sample/link | here=423/a8f863
 applock GET /api/channels | here=423/a8f863
 applock POST /api/channels | here=423/a8f863
 applock GET /api/channels/addresses | here=423/a8f863

@@ -908,6 +908,26 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
+### The home chat, what is working, and naming a conversation (the chat-parity build)
+
+Three commands Hermes Agent and OpenClaw have, on the one command table:
+
+- **`/sethome`** (Hermes). The home chat is the one chat that results sent "home" go to: a schedule, heartbeat,
+  watch or morning brief whose `deliverTo` is `{"channel": "home", "chatId": "home"}`. Home is read when each
+  one is sent, so moving it moves them all; with no home a delivery fails with "No chat is set as home yet".
+  Choosing it is the owner's. At the window, phone or terminal, `/sethome` says where home is,
+  `/sethome <chat app> [chat]` chooses a chat that has talked to Branch (the latest one on that app when no chat
+  is named), and `/sethome off` forgets it. In a chat, `/sethome` (or `/sethome off`) is taken only in a direct
+  chat from one of your own chat accounts (the exact list `/platform` uses, or the paired accounts marked as yours
+  under Settings › Chat apps › Commands from your own chat, whether or not running commands is on), and before any other command
+  is read; from anybody else, or in a group, it is an ordinary message, and one sent while Branch was closed is
+  let go.
+- **`/agents`** (`/tasks`, `/subagents`; Hermes `/agents`, OpenClaw `/subagents` and `/tasks`): every task working
+  now, with the helpers each one started listed under it. In a chat, only that chat's own tasks.
+- **`/title <name>`** (`/name`, `/rename`; Hermes `/title`, OpenClaw `/name`): names the conversation it is typed
+  in, as renaming it from the window's menu does, from a chat too.
+- **`/commands`**: every command the surface can use, as `/help all`.
+
 ### The window's commands from your own chat (CHAT-185)
 
 From one of your own chat accounts (the `/platform` list, or the paired accounts marked as yours under Settings ›
@@ -932,8 +952,8 @@ task a chat message starts is marked as coming from a chat (`source: "channel"` 
 record), and so is everything it starts: a helper it hands work to, a side question (`/btw`, `/compact`,
 `/help <question>`), a prompt step of a workflow it runs, and the same task carried on after a restart
 (with the same tools it had). No setting makes a chat account count as you. The one list of your own
-chat accounts (under reach, for `/platform pause|resume|status`) is used only for that command and
-lends those accounts nothing else. What that means:
+chat accounts (under reach, for `/platform pause|resume|status` and `/sethome`) is used only for those
+two commands and lends those accounts nothing else. What that means:
 
 - **Your approval rules are held to "Ask before changes"**, as they are for a schedule or another AI
   tool: your standing yeses do not reach a chat's task, so a change it wants waits for a yes. The chat
@@ -1140,6 +1160,8 @@ Save the mailbox password as `EMAIL_PASSWORD` and give both servers:
 ```
 
 Built on Node's own TLS with no mail library: a small IMAP4rev1 reader (`LOGIN`, `SELECT INBOX`, `SEARCH UNSEEN`, `FETCH`, `STORE \Seen`) looks for unread mail every `pollSeconds`, answers it, and marks it read so it is never answered twice; a small SMTP sender (implicit TLS, `AUTH PLAIN` then `AUTH LOGIN`, `8BITMIME`) sends the reply threaded onto the original with `In-Reply-To` and `References` and a `Re:` subject. `allowlist` holds sender addresses. `tls: false` on a server connects in the clear and upgrades with `STARTTLS` when the server offers it, which is only sensible for a mail server on this computer. **Plain text only**: attachments, HTML mail and multipart bodies are not read or sent, and quoted history below an "On … wrote:" line is trimmed from the question. An address longer than 60 characters is shortened to a stable `who:<hash>` handle, because a chat id may hold 64 characters; such an address therefore cannot be put on the `allowlist` by address, and has to pair with a code instead. The first look at the inbox does not hold up starting, so a mail server that is unreachable shows as **reconnecting** with the reason rather than stopping Branch.
+
+Email channels require authenticated sender domains by default (`requireAuthenticatedSender: true`). The first `Authentication-Results` header must report DMARC pass, or SPF/DKIM pass with an exactly matching From domain. Missing, malformed or ambiguous results are ignored before pairing, approvals or task dispatch. Your receiving provider must remove forged authentication headers and prepend its own verdict; set `trustedAuthservIds` to its exact authentication server names, for example `["mx.example.com"]`. Only the first header is considered, even with pins. `requireAuthenticatedSender: false` explicitly opts out for a mailbox whose sender identity is established separately. These checks authenticate the sender domain; the existing address allowlist and pairing still control who may use Branch. Messages ignored by this check are marked read by the ordinary inbox poll and receive no reply. Hosted mailbox proof is still required before relying on a configuration.
 
 ## Connections: the other chat services
 
@@ -1654,8 +1676,8 @@ means this wave added it (behind its switch, off); **not built** gives the reaso
 
 ## Setting up a chat app in one command
 
-*mac7/connect.* For every chat app Branch supports (55 of them, counted from the code: the nine with a
-type of their own, the ten team-chat services in `data/channels.json`, and the 36 wave mac3 services in
+*mac7/connect.* For every chat app Branch supports (56 of them, counted from the code: the nine with a
+type of their own, the ten team-chat services in `data/channels.json`, and the 37 added services in
 `src/channels/connectors.ts`), one command gets the official app, opens the page that makes the bot,
 takes the token without showing it, checks it with the app's own service, keeps it in the locker, and
 switches the app on if you say so:
@@ -1831,6 +1853,7 @@ says so.
 | KOOK (`kook`) | yes; switched on from it | Windows: download page; Mac: download page; Linux: download page | `https://developer.kookapp.cn/app/index` | `KOOK_BOT_TOKEN` | GET `https://www.kookapp.cn/api/v3/user/me` |
 | WeChat Official Account (`wechat-mp`) | yes; switched on from it | Windows: winget `Tencent.WeChat`; Mac: cask `wechat`; Linux: download page | `https://mp.weixin.qq.com/` | `WECHAT_MP_APP_SECRET`, `WECHAT_MP_TOKEN`, `WECHAT_MP_AES_KEY`; plus appId | none |
 | WeCom app (`wecom-app`) | yes; switched on from it | Windows: winget `Tencent.WeCom`; Mac: download page; Linux: download page | `https://work.weixin.qq.com/wework_admin/frame#apps` | `WECOM_APP_SECRET`, `WECOM_APP_TOKEN`, `WECOM_APP_AES_KEY`; plus corpId, agentId | none |
+| WhatsApp (personal number) (`whatsapp-web`) | yes; switched on from it | Windows: download page; Mac: cask `whatsapp`; Linux: download page | none (plain steps) | `WAHA_API_KEY`; plus server | none |
 
 <!-- channel-setup-table:end -->
 
@@ -6138,6 +6161,29 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
   sentence the settings screen shows.
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
+
+### WhatsApp with a personal number, through a bridge you run
+
+The official WhatsApp Business Cloud API (the WhatsApp card) needs a business number and Meta's app review. For a
+personal number Branch talks to **WAHA** (github.com/devlikeapro/waha, Apache-2.0), a WhatsApp Web bridge you install
+and run yourself with Docker on this computer, the way Signal works through signal-cli: Branch ships none of it.
+**This automates a personal number through an unofficial client, which WhatsApp's terms do not allow, so the number
+can be banned.** Use a spare number; the official Cloud API has no such risk. It is off until you set it up.
+
+The setup (WhatsApp (personal number) in Customize › Channels) says the risk first, then:
+installing Docker (Docker Desktop needs administrator rights), running
+`docker run -d --restart unless-stopped -p 127.0.0.1:3000:3000 -e WAHA_API_KEY=… --name waha devlikeapro/waha`,
+typing its address and pasting the key, and a **Link** step that shows the code the bridge makes, to scan with
+WhatsApp › Settings › Linked devices (`POST /api/channel-setup/whatsapp-web/link`: owner only, this computer only,
+never returns the key). Only a loopback address is accepted for the bridge (127.0.0.1, localhost, ::1): it is a
+program on this computer, so the network settings are not asked about that one address. Messages arrive over the
+bridge's socket (`/ws?session=…&events=message`) and replies go out with `POST /api/sendText`; a direct chat is always
+answered, a group when the assistant's number is @mentioned or one of its messages is replied to, and its own
+messages and status updates are never read. Pairing codes and the allowlist apply as on every app.
+Pictures, videos, files and voice notes sent to the number come in too: the bridge downloads them, and Branch fetches
+each one from the bridge alone (same address, with its key, no redirects, at most 20 MB) only once the message has
+earned an answer; a voice note is transcribed as on the other apps. Files go out through the bridge's `sendImage`
+(JPEG and PNG) and `sendFile`, and a spoken reply through `sendVoice` as a voice note, at most 16 MB each.
 
 ### Files and voice in the other chat apps (CHAT-094, 104, 105)
 

@@ -1,5 +1,21 @@
 # Third-party notices
 
+### OpenClaw Telegram inbound locations
+
+`src/channels/telegram-location.ts` adapts `extractTelegramLocation` from `extensions/telegram/src/bot/body-helpers.ts` and location text formatting from `src/channels/location.ts` in [OpenClaw](https://github.com/openclaw/openclaw), Copyright (c) 2026 OpenClaw Foundation, under the MIT License. Its Telegram venue precedence, live-pin detection, coordinate precision and accuracy formatting are retained; the implementation uses Branch's schemas and quotes venue labels as sender-provided material. The OpenClaw MIT license is reproduced elsewhere in this document.
+
+### Hermes chat progress level command
+
+`verboseInChat` in `src/channels/steps-display.ts` adapts the level cycle in `gateway/slash_commands.py` and override precedence in `gateway/display_config.py` from [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch persists the level per direct chat rather than per platform and supports its own four display levels.
+
+### Hermes Signal monospace formatting
+
+`src/channels/signal-format.ts` adapts code-block extraction, formatting marker removal and `MONOSPACE` style ranges from `gateway/platforms/signal_format.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch uses JavaScript's UTF-16 offsets and its existing progress spans, and sends signal-cli's `textStyle` parameters. OpenClaw `extensions/signal/src/format.ts` was reviewed but depends on its shared markdown renderer, which is not included here.
+
+### Hermes email sender authentication
+
+`src/channels/mail-auth.ts` ports the comment/quote-aware Authentication-Results clause and property parsing and sender-authentication decision from `plugins/platforms/email/adapter.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/plugins/platforms/email/adapter.py), Copyright (c) 2025 Nous Research, MIT. Branch considers only the first header, uses exact optional authserv-id pins, and uses exact domain alignment for SPF/DKIM fallback. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
 ### MCP tool error feedback
 
 `src/integrations/mcp-errors.ts` adapts Gemini CLI's MCP tool error-result handling, with Branch's
