@@ -5,9 +5,20 @@ import { EnginePowerRecovery, followPower } from "../dist/desktop/engine-power.j
 test("suspend checkpoints saved work; resume wakes due schedules and existing queued deliveries once", async () => {
   const calls = []; let due;
   const power = new EnginePowerRecovery({ checkpoint: () => calls.push("checkpoint"),
-    due: () => { calls.push("due"); return new Promise((resolve) => { due = resolve; }); }, flush: async () => { calls.push("flush"); } });
+    due: () => { calls.push("due"); return new Promise((resolve) => { due = resolve; }); }, flush: async () => { calls.push("flush"); },
+    reconnect: () => { calls.push("reconnect"); return new Promise(() => {}); } });
   assert.equal(power.suspend(), true); const first = power.resume(), second = power.resume(); assert.equal(first, second);
-  due(); assert.equal(await first, true); assert.deepEqual(calls, ["checkpoint", "checkpoint", "due", "flush"]);
+  due(); assert.equal(await first, true, "a chat app's look that never ends does not hold up the resume");
+  assert.deepEqual(calls, ["checkpoint", "checkpoint", "reconnect", "due", "flush"]);
+});
+
+test("a failed look at the chat apps after waking is logged, and due work carries on", async () => {
+  const logged = [];
+  const power = new EnginePowerRecovery({ checkpoint: () => {}, due: async () => {}, flush: async () => {},
+    reconnect: async () => { throw new Error("router closed"); }, log: (line) => logged.push(line) });
+  assert.equal(await power.resume(), true);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(logged.join(" "), /Chat apps after waking: router closed/);
 });
 
 test("closing an engine during resume prevents delivery from the departed chain", async () => {

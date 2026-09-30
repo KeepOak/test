@@ -401,7 +401,7 @@ function undelivered<Row extends Record<string, unknown>>(row: Row): Row | null 
   try { message = JSON.parse(row.data); } catch { return null; }
   if (!message || typeof message !== "object" || Array.isArray(message)) return null;
   const kept = message as Record<string, unknown>;
-  if (kept.status !== "pending") return row;
+  if (kept.status !== "pending" && kept.status !== "attempting") return row;
   return { ...row, data: JSON.stringify({ ...kept, status: "dead", lastError: "Restored from a backup and not sent. Retry it to send it." }) } as Row;
 }
 

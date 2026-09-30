@@ -187,7 +187,8 @@ async function start(config: EngineConfig): Promise<void> {
   let serverClose: (() => Promise<void>) | undefined;
   let stopping: Promise<void> | undefined;
   const power = new EnginePowerRecovery({ checkpoint: () => { branch.store.sqlite.exec("PRAGMA wal_checkpoint(PASSIVE)"); },
-    due: () => branch.scheduler.tick(), flush: () => branch.channels.flush() });
+    due: () => branch.scheduler.tick(), flush: () => branch.channels.flush(), reconnect: () => branch.channels.wake(),
+    log: (line) => { console.error(line); diagnose("channels", "warn", line); } });
   const stop = () => (stopping ??= (async () => {
     power.close();
     try { await serverClose?.(); } finally {
