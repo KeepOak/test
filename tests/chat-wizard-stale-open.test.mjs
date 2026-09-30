@@ -6,7 +6,8 @@
    Mutations: drop `dialog() === opened` -> the newer-dialog cases fail; drop the close/Escape count -> the closed-dialog
    cases fail; drop unlocked() from opening() -> the lock cases fail; drop `S.view === view` -> the page case fails; drop
    the check after the setup read -> the first lock and page cases fail; drop unlocked() or the view from currentWizard ->
-   the Save step cases fail; drop the currentWizard checks in remove() -> the Remove cases fail. */
+   the Save step cases fail; drop the currentWizard checks in remove() -> the Remove cases fail; drop the closeWizard()
+   check after the refresh -> the late-toast cases fail. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -19,7 +20,7 @@ const stubs = {
   "app/core/dom.js": "export const $ = () => null; export const esc = (s) => String(s ?? \"\");",
   "app/core/ui.js": `export const openDlg = (o) => globalThis.__cw.openDlg(o); export const closeDlg = () => { globalThis.__cw.closed++; globalThis.__cw.dlg = null; };
     export const dialog = () => globalThis.__cw.dlg; export const toast = (m) => globalThis.__cw.toasts.push(m); export const ic = () => "";`,
-  "app/core/state.js": `export const S = globalThis.__cw.S; export const E = {}; export const refresh = async () => {};
+  "app/core/state.js": `export const S = globalThis.__cw.S; export const E = {}; export const refresh = () => globalThis.__cw.refresh();
     export const ownerHere = () => globalThis.__cw.owner; export const activeId = () => globalThis.__cw.profile;`,
   "app/core/api.js": "export const api = (path, body, method) => globalThis.__cw.api(path, body, method);",
   "app/core/actions.js": "export const on = (name, fn) => { globalThis.__cw.acts[name] = fn; };",
@@ -38,6 +39,8 @@ async function wizardPage(t) {
   const held = [], opened = [], listeners = [];
   const cw = { S: { view: "customize" }, owner: true, profile: null, locked: false, toasts: [], acts: {}, dlg: null, closed: 0,
     api: (path, body, method = body === undefined ? "GET" : "POST") => new Promise((resolve, reject) => held.push({ path, body, method, resolve, reject })),
+    /* The page's refresh after the wizard closes, held open like a read so the test can change things meanwhile. */
+    refresh: () => new Promise((resolve, reject) => held.push({ path: "refresh", method: "GET", resolve, reject })),
     openDlg: (o) => { opened.push(o); cw.dlg = { wizard: o, isConnected: true }; return cw.dlg; } };
   globalThis.__cw = cw;
   globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && cw.locked } } : null),
@@ -194,6 +197,7 @@ test("Remove with nothing changed closes the wizard and says the app was removed
   const { cw, answer } = await openedWizard(t);
   const removing = cw.acts["chw-remove"]();
   await answer("DELETE channel-setup/telegram", {});
+  await answer("refresh");
   await removing;
   assert.equal(cw.closed, 1);
   assert.equal(cw.S.chw, null);
@@ -232,3 +236,35 @@ test("a Remove that fails after the owner moved to another page shows no error t
   await removing;
   assert.deepEqual(cw.toasts, []);
 });
+
+/* After Remove or Save the wizard closes and the page is read again; the toast after that read shows only if nothing
+   newer happened while it was read. The refresh is held open here, and the window changes meanwhile. */
+const LATE = [
+  ["the App lock came on", (w) => { w.cw.locked = true; }],
+  ["the owner moved to another page", (w) => { w.cw.S.view = "chat"; }],
+  ["another person's profile was switched to", (w) => { w.cw.profile = "p-2"; }],
+  ["another dialog was opened", (w) => { w.cw.dlg = { other: true, isConnected: true }; }],
+  ["a newer wizard was started", (w) => { void w.page.openChatWizard("telegram"); }],
+];
+for (const [act, trigger, done] of [["Remove", "chw-remove", (w) => w.answer("DELETE channel-setup/telegram", {})], ["Save", "chw-save", async () => {}]]) {
+  test(`${act} with nothing changed during the page's refresh says what happened once it is read`, async (t) => {
+    const world = await openedWizard(t);
+    const acting = world.cw.acts[trigger]();
+    await done(world);
+    await world.answer("refresh");
+    await acting;
+    assert.equal(world.cw.toasts.length, 1);
+  });
+  for (const [what, change] of LATE) {
+    test(`${what} during the page's refresh after ${act}: the late toast is not shown`, async (t) => {
+      const world = await openedWizard(t);
+      const acting = world.cw.acts[trigger]();
+      await done(world);
+      await world.asked("refresh");
+      change(world);
+      await world.answer("refresh");
+      await acting;
+      assert.deepEqual(world.cw.toasts, []);
+    });
+  }
+}
