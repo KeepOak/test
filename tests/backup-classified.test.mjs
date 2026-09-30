@@ -42,6 +42,7 @@ const notSettings = new Set(["[page]", "crashes", "help.", "installed_skills", "
  */
 const reviewedComputedKeys = new Set([
   "src/channels/topic-command.ts: key",
+  "src/channels/thread-lifecycle.ts: keyFor",
   "src/a2a-client.ts: recordId",
   "src/runtime.ts: marked",
   "src/registry-install.ts: pinKey",
@@ -190,7 +191,7 @@ const computedExamples = {
     "mcp-oauth:server", "settings-kit-file-undo-1", "trunk-watch:t", "cache:abc", "session-carry:s", "plugin:p",
     "plugin-catalog:p", "plugin-version:p:h", "plugin-review:p", "plugin-evaluation:p:e", "add-on-version:a:h",
     "add-on-candidate:a:h", "safety-wasm-add-on:w", "restore-held", "restore-trunks-held", "listen-address", "memory-history-status",
-    "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch", "topic-request:telegram:1:2"],
+    "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch", "topic-request:telegram:1:2", "chat-session-lifecycle:telegram:1"],
   held: ["account-session:s", "add-on-export:a", "add-on-list:a", "add-on:a", "add-on-pipelines:a", "asks-hindsight",
     "asks-nodes-list", "autonomy-loop:s", "autonomy-heartbeat:s", "autonomy-subgoals:s", "browser-container",
     "channel-session:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",

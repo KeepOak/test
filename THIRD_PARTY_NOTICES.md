@@ -3728,6 +3728,14 @@ MIT License
 
 Copyright (c) 2025 Nous Research
 
+## OpenClaw chat session lifecycle helpers
+
+The off-value aliases, bare-hour duration behavior and earliest idle/max-age expiry calculation in `src/channels/thread-lifecycle.ts` are adapted from OpenClaw `src/auto-reply/reply/commands-session.ts`, https://github.com/openclaw/openclaw/blob/main/src/auto-reply/reply/commands-session.ts (MIT). Branch uses its own saved threads, scoped sessions and next-message reset behavior.
+
+MIT License
+
+Copyright (c) 2026 OpenClaw Foundation
+
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
 in the Software without restriction, including without limitation the rights

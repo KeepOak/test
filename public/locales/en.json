@@ -1313,6 +1313,7 @@
   "commands.preset": "when Branch checks with you before doing something",
   "commands.prompts": "your saved prompts and procedures; with a name, one of them in the message box",
   "commands.queue": "the messages waiting in this conversation; reword, move or take one out",
+  "commands.session": "this chat's chosen idle and age limits; expired conversations stay in history",
   "commands.sessions": "earlier conversations; with a number, carry one on",
   "commands.settings": "the Settings pages, by name",
   "commands.skill": "pin a skill to this conversation so it applies to every turn; on its own, which one is pinned",

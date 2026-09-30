@@ -39,6 +39,8 @@ import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
+import { expireChatThread } from "./thread-lifecycle.js";
+import { startedWithShortLivedKey } from "../key-context.js";
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
@@ -329,6 +331,7 @@ interface TurnNote { text: string; message: InboundMessage; passed?: boolean; la
 interface ChatTurnState extends ChatTurn {
   phase: "gathering" | "running";
   dropped: boolean;
+  sessionResetReason?: string;
   messages: InboundMessage[];
   notes: TurnNote[];
   waiters: ((outcome: Outcome) => void)[];
@@ -1203,6 +1206,7 @@ export class ChannelRouter {
           return this.adapters.get(channel)!.adapter.createDirectTopic!(chatId, checked.text);
         },
       } : {}),
+      sessionRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "session", command.argument),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
       dropWaiting: () => {
         const active = turn ?? side;
@@ -1451,6 +1455,15 @@ export class ChannelRouter {
       if (kind === "model.started") turn.reply?.round();
     });
     try {
+      // CHAT-082: only a live owner DM may detach its expired route, never running or approval-waiting work.
+      const previousSession = this.sessionFor(message.channel, message.chatId);
+      if (this.store.profiles.isOwner() && !startedWithShortLivedKey()
+        && ownerDmHere(this.store, this.runtime.owner, this.adapters.get(message.channel)?.adapter.kind ?? "", message)
+        && (!previousSession || !this.trunkReach(message.channel, previousSession))
+        && !ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "session", "")) {
+        const reason = expireChatThread(this.store, this.runtime.owner, message.channel, message.chatId);
+        if (reason) turn.sessionResetReason = reason;
+      }
       const sessionId = this.sessionFor(message.channel, message.chatId);
       // defaulttrunk: a chat with no conversation yet starts its one thread with the Trunk it is routed to.
       const trunkId = sessionId ? null : this.chatTrunk(message.channel, message.chatId);
@@ -1511,7 +1524,8 @@ export class ChannelRouter {
           turn.reply?.text(delta);
         },
       });
-      const outcome = await this.finishTurn(turn, run, heard.quoted);
+      const reset = turn.sessionResetReason ? `Started a fresh conversation because this chat reached its ${turn.sessionResetReason}. The earlier conversation is kept in history.\n\n` : "";
+      const outcome = await this.finishTurn(turn, run, reset + heard.quoted);
       this.store.event(run.id, "channel.sent", { ms: Date.now() - receivedAt });
       return outcome;
     } catch (error) {

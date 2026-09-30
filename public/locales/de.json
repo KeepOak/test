@@ -1313,6 +1313,7 @@
   "commands.preset": "wann Branch bei dir nachfragt, bevor es etwas tut",
   "commands.prompts": "deine gespeicherten Prompts und Prozeduren; mit einem Namen einer davon im Nachrichtenfeld",
   "commands.queue": "die wartenden Nachrichten dieser Unterhaltung; umformulieren, verschieben oder herausnehmen",
+  "commands.session": "die gewählten Leerlauf- und Altersgrenzen dieses Chats; abgelaufene Unterhaltungen bleiben im Verlauf",
   "commands.sessions": "frühere Unterhaltungen; mit einer Nummer eine fortsetzen",
   "commands.settings": "die Einstellungsseiten, per Name",
   "commands.skill": "eine Fähigkeit an dieses Gespräch heften, damit sie in jeder Runde gilt; allein, welche angeheftet ist",

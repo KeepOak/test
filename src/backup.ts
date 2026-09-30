@@ -199,7 +199,9 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // yes to opening them again, so a file must never write one.
   "desktop-apps-used:",
   // CHAT-081: a /topic request's outcome, kept so an uncertain Telegram write is never sent twice; this computer's chat record.
-  "topic-request:"];
+  "topic-request:",
+  // CHAT-082: a chat's idle and age limits, set from the owner's own direct chat; this computer's chat record.
+  "chat-session-lifecycle:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**
