@@ -158,7 +158,7 @@ function memoryLeaves(app: Branch, scope: string, owner: boolean): Leaves[] {
       id: `memory:native:${entry.id}`, kind: "memory", name: owner ? `${entry.settings.provider} at ${hostOf(entry.settings.url)}` : "",
       sends: "Bounded, scrubbed text from the owner's lasting app/CLI question and reply is synced for native untrusted recall, alongside accepted facts. No attachments, image-reference metadata, tool receipts or accepted fact records are uploaded. Turning it off keeps earlier context there; Delete everything journals all recorded Branch namespaces, and missing admin capability or changed credentials keeps cleanup pending.", page: owner ? "library" : null,
     })),
-    ...(vectors && leavesHere(vectors.vectorsUrl)
+    ...(vectors && (vectors.vectorsRemoteBehindLoopback || leavesHere(vectors.vectorsUrl))
       ? [{ id: "knowledge:vectors", kind: "memory", name: owner ? hostOf(vectors.vectorsUrl) : "", sends: "Document and question embedding vectors, passage identifiers and fingerprints go to the vector service you chose. Branch sends no passage text to this store. Changing or removing the connection leaves old vectors there; Delete everything retries cleanup only while that same connection is selected.", page: owner ? "library" : null }] : []),
     ...(app.memory.backend.isOutside(scope) && leavesHere(service.url)
       ? [{ id: "memory:outside", kind: "memory", name: hostOf(service.url), sends: sends.memory, page: owner ? "advanced" : null }] : []),

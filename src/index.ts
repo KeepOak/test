@@ -1309,7 +1309,9 @@ ${result.output || "(it said nothing)"}`;
   releaseOnLock.push(async () => nativeMemory.cancel());
   knowledgeBases.vectorServiceDependencies = {
     fetchFor: (endpoint) => onThisComputer(endpoint) ? embeddingLocalFetch(endpoint) : guardedFetch,
-    current: (owner, settings) => JSON.stringify(knowledgeBases.vectorStoreSettings(owner)) === JSON.stringify(settings),
+    current: (owner, settings) => owner === runtime.owner && store.profiles.scope() === owner && store.profiles.isOwner()
+      && !sessionLock.locked() && !lockedDown(store, owner)
+      && JSON.stringify(knowledgeBases.vectorStoreSettings(owner)) === JSON.stringify(settings),
     assertAllowed: (endpoint, target) => { if (onThisComputer(endpoint)) assertLocalRuntimeAllowed(web.policy, new URL(target)); else web.policy.assertAllowed(target); },
     key: async (owner, settings) => {
       const current = knowledgeBases.vectorStoreSettings(owner);
@@ -2381,6 +2383,7 @@ export * from "./embeddings.js";
 export * from "./vector-store.js";
 export * from "./vector-store-file.js";
 export * from "./vector-store-remote.js";
+export * from "./vector-store-pinecone.js";
 export * from "./native-memory.js";
 export * from "./native-memory-clients.js";
 export * from "./retrieval-filters.js";

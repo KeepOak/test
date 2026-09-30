@@ -1,5 +1,27 @@
 # Third-party notices
 
+## Pinecone TypeScript client — native serverless vector data plane (Apache-2.0)
+
+`src/vector-store-pinecone.ts` adapts actual Pinecone TypeScript SDK request construction,
+namespace pagination and delete-all helpers from immutable revision
+`fca1f72ba40a2a7b2ea57f841d7b4424c8eeb017`:
+
+- [VectorOperationsApi.ts](https://github.com/pinecone-io/pinecone-ts-client/blob/fca1f72ba40a2a7b2ea57f841d7b4424c8eeb017/src/pinecone-generated-ts-fetch/db_data/apis/VectorOperationsApi.ts)
+  and its IndexDescription/ListResponse/FetchResponse/QueryResponse/DeleteRequest types define
+  native data-plane paths, HTTP methods, payloads, Api-Key and X-Pinecone-Api-Version headers.
+- [vectorOperationsProvider.ts](https://github.com/pinecone-io/pinecone-ts-client/blob/fca1f72ba40a2a7b2ea57f841d7b4424c8eeb017/src/data/vectors/vectorOperationsProvider.ts),
+  [list.ts](https://github.com/pinecone-io/pinecone-ts-client/blob/fca1f72ba40a2a7b2ea57f841d7b4424c8eeb017/src/data/vectors/list.ts),
+  [deleteAll.ts](https://github.com/pinecone-io/pinecone-ts-client/blob/fca1f72ba40a2a7b2ea57f841d7b4424c8eeb017/src/data/vectors/deleteAll.ts),
+  and upsert/query/fetch/describeIndexStats helpers supply existing-host and native namespace flow.
+
+Modified for Branch: use only the owner-selected existing data-plane host, require compatible
+dense cosine dimensions, generate owner/model-version/dimension namespaces, validate passage
+scope, bound pagination/responses/batches, inject policy and pinned locker references, and
+verify namespace-only cleanup through the durable deletion journal. No text or integrated
+embedding API is used; no control-plane index creation/deletion or dependency is added.
+The original Apache-2.0 license is retained in `licenses/pinecone-ts-client-APACHE-2.0.txt`.
+Service compatibility remains unvalidated; no service calls were run in this delivery.
+
 ## Native memory lifecycle — Hermes Agent (MIT), Mem0 and Honcho Python (Apache-2.0)
 
 `src/native-memory.ts` and `src/native-memory-clients.ts` adapt actual source helpers:

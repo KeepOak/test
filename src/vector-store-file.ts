@@ -5,6 +5,7 @@ import { z } from "zod";
 import { errorText } from "./contracts.js";
 import { SqliteVectors, type VectorBackend } from "./vector-store.js";
 import { ChromaVectors, QdrantVectors } from "./vector-store-remote.js";
+import { PineconeVectors } from "./vector-store-pinecone.js";
 
 /**
  * Somewhere else to keep the lists of numbers: a database file of your own choosing, anywhere on
@@ -26,19 +27,21 @@ import { ChromaVectors, QdrantVectors } from "./vector-store-remote.js";
  */
 export const VectorStoreSettingsSchema = z.object({
   /** External services are opt-in; the built-in database remains the default. */
-  vectorsIn: z.enum(["database", "file", "qdrant", "chroma"]).default("database"),
+  vectorsIn: z.enum(["database", "file", "qdrant", "chroma", "pinecone"]).default("database"),
   /** The full path of that file, such as `D:/branch/vectors.db`. Only read when `vectorsIn` is `file`. */
   vectorsFile: z.string().trim().max(400).default(""),
   vectorsUrl: z.string().trim().max(500).default(""),
+  vectorsRemoteBehindLoopback: z.boolean().default(false),
   vectorsSecret: z.string().trim().max(200).regex(/^([A-Z][A-Z0-9_]*)?$/).default(""),
   /** Captured when the owner saves the connection; changing the active project never changes its key. */
   vectorsProject: z.string().trim().max(100).default(""),
-  vectorsHeader: z.enum(["", "api-key", "x-chroma-token", "Authorization"]).default(""),
+  vectorsHeader: z.enum(["", "api-key", "Api-Key", "x-chroma-token", "Authorization"]).default(""),
   vectorsTimeoutMs: z.number().int().min(500).max(30000).default(8000),
   chromaTenant: z.string().trim().min(1).max(120).default("default_tenant"),
   chromaDatabase: z.string().trim().min(1).max(120).default("default_database"),
 }).strict();
 export type VectorStoreSettings = z.infer<typeof VectorStoreSettingsSchema>;
+export const externalVectorStore = (settings: VectorStoreSettings): boolean => ["qdrant", "chroma", "pinecone"].includes(settings.vectorsIn);
 export interface VectorServiceDependencies {
   fetchFor(endpoint: string): typeof fetch;
   key(owner: string, settings: VectorStoreSettings): Promise<string>;
@@ -84,16 +87,19 @@ export const cannotOpen = (path: string, reason: string): string =>
 export function chooseVectorStore(
   settings: VectorStoreSettings, shipped: VectorBackend, remote?: { owner: string; dependencies: VectorServiceDependencies },
 ): { backend: VectorBackend; note: string } {
-  if (settings.vectorsIn === "qdrant" || settings.vectorsIn === "chroma") {
+  if (externalVectorStore(settings)) {
     if (!remote || !settings.vectorsUrl) return { backend: shipped, note: "The chosen vector service needs an address and guarded connection; vectors are kept in this computer's database for now." };
     try {
       const config = { url: settings.vectorsUrl, fetch: remote.dependencies.fetchFor(settings.vectorsUrl),
         active: () => remote.dependencies.current(remote.owner, settings),
         assertAllowed: (target: string) => remote.dependencies.assertAllowed(settings.vectorsUrl, target),
-        timeoutMs: settings.vectorsTimeoutMs, header: settings.vectorsHeader || (settings.vectorsIn === "qdrant" ? "api-key" : "x-chroma-token"),
+        timeoutMs: settings.vectorsTimeoutMs, header: settings.vectorsHeader || (settings.vectorsIn === "chroma" ? "x-chroma-token" : "api-key"),
+        remoteBehindLoopback: settings.vectorsRemoteBehindLoopback,
+        ...(settings.vectorsIn === "pinecone" ? { headers: { "X-Pinecone-Api-Version": "2026-07" } } : {}),
         tenant: settings.chromaTenant, database: settings.chromaDatabase,
         ...(settings.vectorsSecret ? { key: () => remote.dependencies.key(remote.owner, settings) } : {}) };
-      return { backend: settings.vectorsIn === "qdrant" ? new QdrantVectors(config) : new ChromaVectors(config), note: "" };
+      const backend = settings.vectorsIn === "pinecone" ? new PineconeVectors(config) : settings.vectorsIn === "qdrant" ? new QdrantVectors(config) : new ChromaVectors(config);
+      return { backend, note: "" };
     } catch (error) { return { backend: shipped, note: `The vector service could not be configured: ${errorText(error).slice(0, 160)}. Vectors stay in this computer's database.` }; }
   }
   if (settings.vectorsIn !== "file") return { backend: shipped, note: "" };

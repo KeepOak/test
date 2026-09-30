@@ -11,6 +11,9 @@ export interface VectorServiceConfig {
   fetch: typeof fetch;
   timeoutMs: number;
   header: string;
+  /** Fixed native protocol headers, never credentials. */
+  headers?: Readonly<Record<string, string>>;
+  remoteBehindLoopback?: boolean;
   key?: () => Promise<string>;
   active: () => boolean;
   assertAllowed: (target: string) => void;
@@ -46,7 +49,7 @@ function groups(owner: string, records: VectorRecord[]): Map<string, VectorRecor
 }
 
 /** Common bounded transport. No adapter has an unguarded/default fetch or reads a credential itself. */
-abstract class RemoteVectors implements VectorBackend {
+export abstract class RemoteVectors implements VectorBackend {
   abstract readonly name: string;
   protected readonly base: string;
   constructor(protected readonly config: VectorServiceConfig) {
@@ -55,15 +58,15 @@ abstract class RemoteVectors implements VectorBackend {
     this.base = url.href.replace(/\/+$/, "");
   }
   protected async request(method: string, path: string, body?: unknown, missing = false): Promise<unknown> {
-    if (keptOnThisComputer() && !onThisComputer(this.base)) throw new Error("This task stays on this computer, so its vectors were not sent to an outside service");
+    if (keptOnThisComputer() && (this.config.remoteBehindLoopback || !onThisComputer(this.base))) throw new Error("This task stays on this computer, so its vectors were not sent to an outside service");
     if (!this.config.active()) throw new Error("This vector connection was changed or removed, so no request was sent");
     this.config.assertAllowed(this.base + path);
-    const headers: Record<string, string> = { "content-type": "application/json" };
+    const headers: Record<string, string> = { ...this.config.headers, "content-type": "application/json" };
     if (this.config.key) headers[this.config.header] = await this.config.key();
-    if (!this.config.active()) throw new Error("This vector connection was changed or removed, so no request was sent");
-    this.config.assertAllowed(this.base + path);
+    this.current(path);
     const response = await this.config.fetch(this.base + path, { method, headers, redirect: "error",
       signal: AbortSignal.timeout(this.config.timeoutMs), ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    try { this.current(path); } catch (error) { await response.body?.cancel(); throw error; }
     if (missing && response.status === 404) { await response.body?.cancel(); return undefined; }
     if (!response.ok) { await response.body?.cancel(); throw Object.assign(new Error(`The vector service refused a ${method} request (${response.status})`), { status: response.status }); }
     if (!response.body) return undefined;
@@ -78,8 +81,14 @@ abstract class RemoteVectors implements VectorBackend {
         chunks.push(part.value);
       }
     } finally { await reader.cancel().catch(() => {}); }
+    this.current(path);
     const text = Buffer.concat(chunks).toString("utf8");
     return text.trim() ? JSON.parse(text) as unknown : undefined;
+  }
+  private current(path: string): void {
+    if (!this.config.active()) throw new Error("The selected vector connection changed while its request was running");
+    if (keptOnThisComputer() && (this.config.remoteBehindLoopback || !onThisComputer(this.base))) throw new Error("This task now stays on this computer");
+    this.config.assertAllowed(this.base + path);
   }
   abstract upsert(owner: string, records: VectorRecord[]): Promise<number>;
   abstract removeDocument(owner: string, collection: string, docId: string): Promise<number>;
@@ -89,6 +98,9 @@ abstract class RemoteVectors implements VectorBackend {
   abstract clearOwner(owner: string): Promise<number>;
   abstract fingerprints(owner: string, collection: string, model: string): Promise<Map<string, string>>;
 }
+export { ownerPrefix as vectorOwnerPrefix, generationPrefix as vectorGenerationPrefix, namespace as vectorNamespace,
+  branchNamespace as branchVectorNamespace, pointId as vectorPointId, payloadSchema as vectorPayloadSchema,
+  payload as vectorPayload, validateRecords as validateVectorRecords, groups as vectorGroups };
 
 const qdrantFilter = (owner: string, collection?: string, docId?: string) => ({ must: [
   { key: "owner", match: { value: owner } },
