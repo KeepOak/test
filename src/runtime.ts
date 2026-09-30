@@ -2521,7 +2521,8 @@ ${run.output.slice(0, 6000)}`;
     // mac7/smoke-fixes (B5): nobody can be asked about the plan. A chat app is a person who can
     // answer, so it is not one of them (nobodyToAskAboutPlan in src/coding/project-tests.ts).
     const conductor = this.orchestration.conductor(run,
-      { ...conduct, ...planned, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
+      { ...conduct, ...planned, signal: context.signal, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
+        checkLifecycle: () => this.checkPaused(run.id),
         memory: { scope: memoryScope(this.store, context), agent: memoryAgent(context) } },
       (aside) => this.aside(run, context, route, aside));
     const opening = await this.openConductor(run, conductor);
