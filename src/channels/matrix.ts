@@ -1,3 +1,4 @@
+import { matrixPictureContent } from "./matrix-picture.js";
 import { randomUUID } from "node:crypto";
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
@@ -43,9 +44,12 @@ const eventSchema = z.object({
 }).passthrough();
 const syncSchema = z.object({
   next_batch: z.string(),
+  account_data: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
   rooms: z.object({
     join: z.record(z.string(), z.object({
       timeline: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
+      state: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
+      summary: z.object({ "m.joined_member_count": z.number().int().min(0).optional() }).passthrough().optional(),
     }).passthrough()).default({}),
   }).passthrough().optional(),
 }).passthrough();
@@ -63,6 +67,12 @@ export class MatrixAdapter implements ChannelAdapter {
   private loop: Promise<void> | null = null;
   private since: string | undefined;
   private encryptedSeen = 0;
+  readonly pictureViewOnly = true;
+  private readonly directPeers = new Map<string, string | null>();
+  private readonly encryptedRooms = new Set<string>();
+  private privacyOverflow = false;
+  private readonly memberCounts = new Map<string, number>();
+  private readonly pictures = new Map<string, { eventId: string; roomId: string; peer: string }>();
   /** Who wrote each recent message read here, so only its own sender's edit of it counts. */
   private readonly authors = new Map<string, string>();
   /** Room ids are longer than the delivery ledger allows, so long ones get a short handle. */
@@ -139,6 +149,7 @@ export class MatrixAdapter implements ChannelAdapter {
     const body = syncSchema.parse(await response.json());
     const first = this.since === undefined;
     this.since = body.next_batch;
+    this.roomPrivacy(body);
     const messages: InboundMessage[] = [];
     for (const [roomId, room] of Object.entries(body.rooms?.join ?? {}))
       for (const event of room.timeline?.events ?? []) {
@@ -148,6 +159,36 @@ export class MatrixAdapter implements ChannelAdapter {
         if (inbound && !first) messages.push(inbound);
       }
     return messages;
+  }
+  /** Only this account's direct-room data plus a known two-member room can select the direct-chat path. */
+  private roomPrivacy(body: z.infer<typeof syncSchema>): void {
+    const direct = body.account_data?.events.find(event => event.type === "m.direct");
+    if (direct) {
+      this.directPeers.clear();
+      const parsed = z.record(z.string(), z.array(z.string().max(500)).max(1000)).safeParse(direct.content);
+      if (parsed.success) for (const [peer, rooms] of Object.entries(parsed.data).slice(0, 1000)) {
+        if (peer === this.options.userId) continue;
+        for (const room of rooms) {
+          if (this.directPeers.size >= 1000 && !this.directPeers.has(room)) continue;
+          const before = this.directPeers.get(room);
+          this.directPeers.set(room, before === undefined || before === peer ? peer : null);
+        }
+      }
+    }
+    for (const [roomId, room] of Object.entries(body.rooms?.join ?? {})) {
+      const events = [...room.state?.events ?? [], ...room.timeline?.events ?? []];
+      if (events.some(event => event.type === "m.room.encryption" || event.type === "m.room.encrypted")) {
+        if (this.encryptedRooms.size >= 1000 && !this.encryptedRooms.has(roomId)) this.privacyOverflow = true;
+        else this.encryptedRooms.add(roomId);
+      }
+      const count = room.summary?.["m.joined_member_count"];
+      if (count !== undefined) this.memberCounts.set(roomId, count);
+      else if (room.timeline?.limited === true || events.some(event => event.type === "m.room.member")) this.memberCounts.delete(roomId);
+    }
+    while (this.memberCounts.size > 1000) this.memberCounts.delete(this.memberCounts.keys().next().value!);
+  }
+  private directRoom(roomId: string): boolean {
+    return !this.privacyOverflow && !!this.directPeers.get(roomId) && this.memberCounts.get(roomId) === 2 && !this.encryptedRooms.has(roomId);
   }
   /** Questions a 👍 / 👎 annotation may answer, by the question's own event id (src/channels/reaction-answers.ts). */
   private readonly answers = new ReactionAnswers();
@@ -165,7 +206,7 @@ export class MatrixAdapter implements ChannelAdapter {
     const said = this.answers.read(relates.data.event_id, chatId, senderId, relates.data.key);
     if (!said) return null;
     if (chatId !== roomId) this.rooms.set(chatId, roomId);
-    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId, senderName: sender, text: said, addressed: true,
+    return { channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId, senderId, senderName: sender, text: said, addressed: true,
       messageId: handle(event.event_id ?? randomUUID(), "msg") };
   }
   /**
@@ -202,7 +243,7 @@ export class MatrixAdapter implements ChannelAdapter {
     }
     const name = this.options.userId.split(":")[0]!.replace(/^@/, "");
     return {
-      channel: this.id, chatId, chatKind: "group", chatTitle: roomId,
+      channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId,
       senderId: handle(sender, "who"), senderName: sender, text,
       addressed: text.includes(this.options.userId) || text.includes(name),
       messageId,
@@ -233,6 +274,15 @@ export class MatrixAdapter implements ChannelAdapter {
   readonly maxFileBytes = 50 * 1024 * 1024;
   /** CHAT-105: a file into the room, uploaded to this homeserver first, as a picture, video, audio or file. */
   async sendFile(chatId: string, file: OutgoingFile): Promise<string | undefined> {
+    const uri = await this.uploadFile(file);
+    const kind = attachmentKind(file.mediaType);
+    const msgtype = file.mediaType.startsWith("audio/") ? "m.audio" : kind === "picture" ? "m.image" : kind === "video" ? "m.video" : "m.file";
+    const eventId = await this.put(chatId, { msgtype, body: file.name, url: uri, info: { mimetype: file.mediaType, size: file.bytes.byteLength },
+      ...(file.voice ? { "org.matrix.msc3245.voice": {}, "org.matrix.msc1767.audio": {} } : {}) });
+    if (file.caption) await this.send(chatId, file.caption);
+    return eventId ? handle(eventId, "msg") : undefined;
+  }
+  private async uploadFile(file: OutgoingFile): Promise<string> {
     const upload = await this.fetch(`${this.base}/_matrix/media/v3/upload?filename=${encodeURIComponent(file.name)}`, {
       method: "POST", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": file.mediaType },
       body: new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), redirect: "error", signal: AbortSignal.timeout(120000),
@@ -240,12 +290,47 @@ export class MatrixAdapter implements ChannelAdapter {
     if (upload.status === 413) throw new Error("The Matrix homeserver said the file is too large");
     if (!upload.ok) throw new Error(`The Matrix homeserver refused the file (${upload.status})`);
     const { content_uri: uri } = z.object({ content_uri: z.string().regex(/^mxc:\/\//) }).passthrough().parse(await upload.json());
-    const kind = attachmentKind(file.mediaType);
-    const msgtype = file.mediaType.startsWith("audio/") ? "m.audio" : kind === "picture" ? "m.image" : kind === "video" ? "m.video" : "m.file";
-    const eventId = await this.put(chatId, { msgtype, body: file.name, url: uri, info: { mimetype: file.mediaType, size: file.bytes.byteLength },
-      ...(file.voice ? { "org.matrix.msc3245.voice": {}, "org.matrix.msc1767.audio": {} } : {}) });
-    if (file.caption) await this.send(chatId, file.caption);
-    return eventId ? handle(eventId, "msg") : undefined;
+    return uri;
+  }
+  /** Recheck current membership and encryption before and after an upload. */
+  private async pictureRoom(chatId: string, expectedPeer?: string): Promise<{ roomId: string; peer: string }> {
+    const roomId = this.rooms.get(chatId) ?? chatId, peer = this.directPeers.get(roomId);
+    if (!peer || (expectedPeer && peer !== expectedPeer) || !this.directRoom(roomId)) throw new Error("Matrix pictures require a known unencrypted direct room.");
+    const base = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}`;
+    const options = { headers: { authorization: `Bearer ${this.options.accessToken}` }, redirect: "error" as const, signal: AbortSignal.timeout(20000) };
+    const members = await this.fetch(`${base}/joined_members`, options);
+    if (!members.ok) throw new Error("Matrix could not verify the picture audience.");
+    const joined = z.object({ joined: z.record(z.string(), z.unknown()) }).parse(await members.json()).joined;
+    if (Object.keys(joined).length !== 2 || !(this.options.userId in joined) || !(peer in joined)) throw new Error("Matrix pictures are limited to two-member direct rooms.");
+    const encryption = await this.fetch(`${base}/state/m.room.encryption`, options);
+    const missing = encryption.status === 404 && z.object({ errcode: z.literal("M_NOT_FOUND") }).passthrough().safeParse(await encryption.json()).success;
+    if (!missing || !this.directRoom(roomId) || this.directPeers.get(roomId) !== peer) throw new Error("Matrix pictures require a currently unencrypted direct room.");
+    return { roomId, peer };
+  }
+  private async pictureContent(chatId: string, file: OutgoingFile): Promise<{ roomId: string; peer: string; content: Record<string, unknown> }> {
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.mediaType) || !file.bytes.byteLength || file.bytes.byteLength > 2 * 1024 * 1024)
+      throw new Error("Matrix live pictures must be supported images of at most 2 MB.");
+    const { roomId, peer } = await this.pictureRoom(chatId), url = await this.uploadFile(file);
+    if ((await this.pictureRoom(chatId, peer)).roomId !== roomId) throw new Error("The Matrix picture audience changed.");
+    return { roomId, peer, content: matrixPictureContent(file, url) };
+  }
+  /** View-only: Matrix has no inline owner browser control buttons. */
+  async sendPicture(chatId: string, file: OutgoingFile, _buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const { roomId, peer, content } = await this.pictureContent(chatId, file), reply = replyToMessageId ? this.received.get(replyToMessageId) : undefined;
+    const eventId = await this.put(chatId, { ...content, ...(reply?.roomId === roomId ? { "m.relates_to": { "m.in_reply_to": { event_id: reply.eventId } } } : {}) });
+    if (!eventId) throw new Error("Matrix did not identify the picture it sent.");
+    const short = handle(eventId, "msg"); this.pictures.set(short, { roomId, eventId, peer });
+    if (this.pictures.size > 200) this.pictures.delete(this.pictures.keys().next().value!);
+    return short;
+  }
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, _buttons: { label: string; value: string }[]): Promise<void> {
+    const original = this.pictures.get(messageId), roomId = this.rooms.get(chatId) ?? chatId;
+    if (!original || original.roomId !== roomId) throw new Error("Matrix: that picture was not sent in this room.");
+    if (this.directPeers.get(roomId) !== original.peer) throw new Error("The Matrix direct-room peer changed.");
+    const { content, peer } = await this.pictureContent(chatId, file);
+    if (peer !== original.peer) throw new Error("The Matrix direct-room peer changed.");
+    if (!await this.put(chatId, { ...content, body: `* ${content.body}`, "m.new_content": content,
+      "m.relates_to": { rel_type: "m.replace", event_id: original.eventId } })) throw new Error("Matrix did not identify the picture edit.");
   }
   /** CHAT-094: a spoken reply, as an audio message clients show as a voice message. */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string): Promise<string | undefined> {
@@ -345,7 +430,7 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!value) return null;
     const chatId = handle(roomId, "room");
     if (chatId !== roomId) this.rooms.set(chatId, roomId);
-    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
+    return { channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
       text: value, addressed: true, messageId: handle(event.event_id ?? randomUUID(), "msg") };
   }
   /** Questions this adapter asked with reactions: the question's event, and what each reaction on it answers. */

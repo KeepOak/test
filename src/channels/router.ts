@@ -226,6 +226,8 @@ export interface ChannelAdapter {
   // ---- A picture kept up to date in place (the live browser in a chat, SCREEN-103/104) -------------
   // Both or neither. A failure must throw. `buttons` go under the picture and come back as a press, like sendButtons'.
   /** Sends a picture (shown inline, not as a document) with its caption and buttons; returns its message id. */
+  /** This adapter shows pictures without inline owner controls. */
+  readonly pictureViewOnly?: boolean;
   sendPicture?(chatId: string, file: OutgoingFile, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
   /** Replaces the picture, caption and buttons of a message `sendPicture` made. */
   editPicture?(chatId: string, messageId: string, file: OutgoingFile, buttons: ApprovalButton[]): Promise<void>;
@@ -1794,7 +1796,7 @@ export class ChannelRouter {
     const progress = switches.steps === "off" || (message.chatKind === "group" ? display.groups !== "off" : display.detail !== "off");
     // Pictures of Branch's browser while the task works in it: a direct chat only, where the owner has them on.
     const pictures = message.chatKind === "direct" && switches.steps !== "off" && display.pictures !== "off" && !!adapter.sendFile && !adapter.paidPerMessage;
-    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf(), adapter.kind === "telegram") : undefined;
+    const pictureButtons = pictures && this.browserHold && adapter.sendPicture && !adapter.pictureViewOnly ? () => this.holdButtons(runOf(), adapter.kind === "telegram") : undefined;
     const picture = pictures ? async () => {
       const runId = runOf(), seen = runId ? await this.browserPicture(runId) : null;
       if (!seen) return null;
