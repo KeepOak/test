@@ -111,7 +111,8 @@ function routineFor(store: Store, owner: string, runId: string): string | null {
     const parent = typeof started?.parentRunId === "string" && started.parentRunId ? started.parentRunId : started?.resumedFrom;
     const routineParent = events.find((event) => event.kind === "routine.parent")?.data.runId;
     const next = typeof parent === "string" && parent ? parent : routineParent;
-    if (typeof next !== "string" || !next) return null;
+    // A learning pass (src/skill-authoring.ts learningTask) names the engine's "learning" marker, not a task: never a routine's.
+    if (typeof next !== "string" || !next || next === "learning") return null;
     runId = next;
   }
   throw new Error("The routine's task ancestry exceeds the supported depth");
