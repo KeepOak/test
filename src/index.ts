@@ -3,6 +3,7 @@ import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks
 import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
+import { McpEvents } from './mcp-events.js';
 import { ScriptedMcpApps } from './scripted-mcp-apps.js';
 import { McpOwnerRequests } from "./mcp-owner-requests.js";
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
@@ -1631,6 +1632,7 @@ ${result.output || "(it said nothing)"}`;
   // command-line tools the owner allowed, and replies the owner flagged.
   const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
     policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+  const mcpEvents = new McpEvents(store, runtime, triggers, ownMcp, web.policy);
   const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
   registerBudding(registry, budding);
   scheduler.onTick.add(async () => { void budding.tick().catch(() => undefined); });
@@ -1737,7 +1739,7 @@ ${result.output || "(it said nothing)"}`;
     /** mac3/security-check: the security self-check, its repairs, and the malware check on add-ons. */
     security,
     /** eng-connectors: the owner's own MCP servers, allowed command-line tools, and flagged replies. */
-    ownMcp, scriptedMcpApps, mcpOwnerRequests,
+    ownMcp, scriptedMcpApps, mcpOwnerRequests, mcpEvents,
     ownClis,
     replyFlags,
     /** mac2/fly-core: the learning core's three-way switch (off, when-needed, on); it ships off. */
@@ -2014,6 +2016,7 @@ ${result.output || "(it said nothing)"}`;
       knowledgeBases.vectors.close?.();
       skillPackages.stop();
       mcpServer.close();
+      mcpEvents.close();
       asks.close(); // mac6/bucket-23: live pages stop asking their tools again
       people.close(); // stops voiding one-time codes on Lockdown
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
