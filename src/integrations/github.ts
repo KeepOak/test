@@ -44,6 +44,12 @@ export class GitHubAccess {
   }
   get tokenSecret(): string { return this.config.tokenSecret; }
 
+  /** Authenticated account metadata only; no repository contents or identity leave this check.
+   * https://docs.github.com/en/rest/users/users#get-the-authenticated-user */
+  async checkAccount(): Promise<void> {
+    z.object({ id: z.number().int().positive(), login: z.string().min(1) }).parse(await this.request("GET", "user"));
+  }
+
   /** One REST call: the network policy decides whether the address may be reached at all. */
   private async request(method: string, path: string, body?: unknown, beforeSend?: () => void): Promise<unknown> {
     const token = await this.token();

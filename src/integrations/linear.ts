@@ -32,6 +32,12 @@ export class LinearAccess {
   }
   get tokenSecret(): string { return this.config.tokenSecret; }
 
+  /** Read only the authenticated viewer's id, then discard it.
+   * https://linear.app/developers/graphql */
+  async checkAccount(): Promise<void> {
+    z.object({ viewer: z.object({ id: z.string().min(1) }) }).parse(await this.query("query BranchConnectionCheck { viewer { id } }", {}));
+  }
+
   /** One query: the network policy decides whether the address may be reached at all. */
   private async query(query: string, variables: Record<string, unknown>): Promise<Record<string, unknown>> {
     const token = await this.token();

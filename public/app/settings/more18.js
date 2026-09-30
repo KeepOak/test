@@ -20,7 +20,7 @@ import { t } from "../../i18n.js";
 
 const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"], ["spotify", "personal.spotify.name", "accounts.spotify.com"]];
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
-const M = { signin: {}, busy: false, typed: {}, checking: {}, home: null, mail: null, connectorHealth: {} };
+const M = { signin: {}, busy: false, typed: {}, checking: {}, home: null, mail: null, accounts: [], connectorHealth: {} };
 const typed = (id, saved) => esc(M.typed[id] ?? saved ?? "");
 /* Reuse the password controls during a draw of Accounts: a late read must not discard input. No secret goes into
    markup or draft state, and these transient node references are released at the end of that same draw. */
@@ -41,6 +41,7 @@ export async function loadMore() {
   }));
   try { M.home = await api("personal/home"); } catch { M.home = null; }
   try { M.mail = await api("personal/mail"); } catch { M.mail = null; }
+  try { M.accounts = (await api("connectors/accounts")).accounts ?? []; } catch { M.accounts = []; }
   M.connectorHealth = {};
   renderNow();
 }
@@ -54,12 +55,13 @@ function connectorCheck(id, name, configured) {
 }
 
 async function testConnector(id) {
-  if (!ownerHere() || !["home", "mail"].includes(id) || M.checking[id]) return;
+  if (!ownerHere() || !["home", "mail", "github", "linear"].includes(id) || M.checking[id]) return;
   M.checking[id] = true;
   delete M.connectorHealth[id];
   renderNow();
   try {
-    const result = await api(`personal/${id}/test`, {});
+    const endpoint = ["github", "linear"].includes(id) ? `connectors/accounts/${id}/test` : `personal/${id}/test`;
+    const result = await api(endpoint, {});
     if (ownerHere()) M.connectorHealth[id] = result.health;
   } catch (error) { toast(error.message); }
   finally { M.checking[id] = false; renderNow(); }
@@ -99,6 +101,7 @@ export function moreSections() {
     + `<div class="sec more18"><h2>${t("personal.spotify.name")}</h2>${service(SERVICES[2])}</div>`
     + connectorCheck("home", "personal.home.title", M.home?.settings?.url)
     + connectorCheck("mail", "personal.mail.title", M.mail?.settings?.host && M.mail?.settings?.user)
+    + M.accounts.filter((id) => ["github", "linear"].includes(id)).map((id) => connectorCheck(id, id === "github" ? "GitHub" : "Linear", true)).join("")
     + `<div class="sec more18"><h2>${t("first-run-steps.restore-title")}</h2><p class="hint">${t("first-run-steps.restore-purpose")}</p>`
     + `<div class="acts"><button class="btn" type="button" data-act="more18-restore" ${M.busy ? "disabled" : ""}>${ic("folder", "s")}${M.busy ? t("first-run-steps.restore-working") : t("window.flows.setup.backup")}</button></div>`
     + `<input type="file" id="more18-file" accept=".json,application/json" hidden></div>`;

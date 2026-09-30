@@ -14,9 +14,11 @@ import type { OwnMcpServers } from "./mcp-own-servers.js";
 import type { OwnClis } from "./own-clis.js";
 import type { ReplyFlags } from "./reply-flags.js";
 import type { Store } from "./store.js";
+import type { IssueAccess } from "./integrations/issue-tools.js";
 
 export interface ConnectorsHost {
   store: Store; version: string; ownMcp: OwnMcpServers; ownClis: OwnClis; replyFlags: ReplyFlags;
+  issues?: IssueAccess | null;
 }
 
 const serverAction = /^\/api\/mcp\/servers\/([a-z][a-z0-9-]{0,29})\/(start|stop|remove)$/;
@@ -79,6 +81,17 @@ async function flagsApi(app: ConnectorsHost, request: IncomingMessage, path: str
 }
 
 export async function connectorsApi(app: ConnectorsHost, request: IncomingMessage, path: string): Promise<unknown> {
+  if (path === "/api/connectors/accounts" && request.method === "GET") {
+    app.store.profiles.requireOwner("Your connected account checks");
+    return { accounts: (app.issues?.available() ?? []).filter((id) => id === "github" || id === "linear") };
+  }
+  const check = /^\/api\/connectors\/accounts\/(github|linear)\/test$/.exec(path);
+  if (check && request.method === "POST") {
+    app.store.profiles.requireOwner("Checking your connected account");
+    Empty.parse(await readBody(request));
+    if (!app.issues) throw new HttpError(409, "No issue tracker accounts are configured.");
+    return { health: await app.issues.checkAccount(check[1] as "github" | "linear") };
+  }
   if (path === "/api/release-notes" && request.method === "GET") return notesFor(app.version);
   if (path.startsWith("/api/mcp/")) return serversApi(app, request, path);
   if (path === "/api/clis" || path.startsWith("/api/clis/")) return clisApi(app, request, path);
