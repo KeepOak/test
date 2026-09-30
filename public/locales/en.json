@@ -1306,6 +1306,7 @@
   "commands.model": "which model answers; /model on its own lists them",
   "commands.new": "start a fresh conversation",
   "commands.pane": "show or hide the side pane",
+  "commands.personality": "choose the reply tone for this chat's next task",
   "commands.plan": "turn a short plan first on or off",
   "commands.platform": "pause a chat app so its messages are let go, or turn it back on",
   "commands.preset": "when Branch checks with you before doing something",

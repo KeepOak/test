@@ -1307,6 +1307,7 @@
   "commands.model": "le modèle qui répond ; /model seul les énumère",
   "commands.new": "commencer une nouvelle conversation",
   "commands.pane": "afficher ou masquer le volet latéral",
+  "commands.personality": "choisir le ton des réponses pour la prochaine tâche de ce chat",
   "commands.plan": "activer ou désactiver un court plan préalable",
   "commands.platform": "mettre une messagerie en pause pour ignorer ses messages, ou la réactiver",
   "commands.preset": "quand Branch vous consulte avant d'agir",

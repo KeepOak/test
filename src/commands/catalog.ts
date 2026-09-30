@@ -78,7 +78,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("temporary", ["incognito"], "[on|off]", "a conversation that is not remembered; set it before the first message", [...W, "terminal"], "look", was("terminal")),
   entry("attach", ["image"], "<file>", "send a file or picture with your next message", [...W, "terminal"], "look", was("terminal")),
   entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
-  entry("personality", [], "[none|helpful|concise|technical|creative|teacher]", "choose the reply tone for this chat's next task", ["chat"], "owner"),
+  entry("personality", [], "[none|helpful|concise|technical|creative|teacher]", "choose the reply tone for this chat's next task", ["chat"], "look"), // owner-approved 2026-09-30: the runner holds it to the owner's own direct chat, like /diff and /topic
   entry("export", ["save"], "[file]", "save this conversation as a Markdown file", [...W, "terminal"], "look", was("terminal")),
   entry("new", ["clear", "reset"], "", "start a fresh conversation", ["window", "phone", "terminal", "chat"], "look", { ...was("terminal", "chat"), newAliases: added(["clear"], "chat") }),
   entry("sessions", ["resume"], "[id]", "earlier conversations; with a number, carry one on", [...W, "terminal"], "look", was("terminal")),
