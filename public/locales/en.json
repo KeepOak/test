@@ -8930,6 +8930,8 @@
   "window.rooms.drop.with": "Open a room with {name}",
   "window.rooms.talk.everyone": "Everyone answers",
   "window.rooms.talk.only": "Only {name}",
+  "window.schedule-gateway.unknown": "Gateway supervision could not be confirmed for these schedules.",
+  "window.schedule-gateway.unwatched": "Scheduled work depends on this engine staying running. This engine is not running through the gateway.",
   "window.sessions.showOlder": "Show older",
   "window.settings.accounts.accounts-signed-in": "accounts signed in",
   "window.settings.accounts.add-an-account": "Add an account",
