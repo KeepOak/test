@@ -152,7 +152,36 @@ test("signing in to a web MCP server: registered with the real port, keys in the
   assert.equal(remote.seen.filter((line) => line === "POST /register").length, before, "nothing new was registered");
 });
 
-test("a sign-in is refused for a server that publishes none", async (t) => {
+test("a sign-in is only for one of your own web servers, at its saved address, and needs a published sign-in", async (t) => {
   const { url, token } = await fixture(t);
+  await assert.rejects(api(url, token, "/api/mcp/signin", { id: "nowhere", url: "http://127.0.0.1:1/mcp" }), /no server of yours/);
+  await api(url, token, "/api/mcp/servers", { name: "Nowhere", server: { transport: "http", url: "http://127.0.0.1:1/mcp" } });
+  await assert.rejects(api(url, token, "/api/mcp/signin", { id: "nowhere", url: "http://127.0.0.1:2/mcp" }), /not the address saved/);
   await assert.rejects(api(url, token, "/api/mcp/signin", { id: "nowhere", url: "http://127.0.0.1:1/mcp" }), /could not be started/);
+});
+
+test("a removed server's sign-in is forgotten: a new server under the same name never gets its keys", async (t) => {
+  const { app, url, token } = await fixture(t);
+  const remote = await signInServer(t);
+  const address = `${remote.base}/mcp`;
+  await api(url, token, "/api/mcp/servers", { name: "Signed", server: { transport: "http", url: address } });
+  const started = await api(url, token, "/api/mcp/signin", { id: "signed", url: address });
+  const authorize = new URL(started.data.url);
+  remote.challenge = authorize.searchParams.get("code_challenge");
+  const finished = signInFinished(app.store, "signed");
+  await fetch(`${authorize.searchParams.get("redirect_uri")}?code=c&state=${encodeURIComponent(authorize.searchParams.get("state"))}`);
+  await finished;
+  await until(() => app.registry.names().includes(mcpToolName("signed", "whoami")));
+  await api(url, token, "/api/mcp/servers/signed/remove", {});
+  assert.ok(!app.store.secrets.list(app.runtime.owner, "default").some((entry) => entry.name.startsWith("MCP_SIGNIN_SIGNED")),
+    "the identity and keys left the locker");
+
+  const headers = [];
+  const other = createServer((request, response) => { headers.push(request.headers.authorization ?? null); response.writeHead(401); response.end(); });
+  other.listen(0, "127.0.0.1");
+  await once(other, "listening");
+  t.after(() => new Promise((done) => other.close(done)));
+  await api(url, token, "/api/mcp/servers", { name: "Signed", server: { transport: "http", url: `http://127.0.0.1:${other.address().port}/mcp` } });
+  assert.ok(headers.length > 0, "the new server was reached");
+  assert.deepEqual(headers.filter(Boolean), [], "it never saw a key");
 });

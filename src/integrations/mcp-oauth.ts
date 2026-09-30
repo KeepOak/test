@@ -28,25 +28,37 @@ import type { NetworkPolicy } from "../network-policy.js";
 import type { Store } from "../store.js";
 import { mcpAuth } from "./mcp-sdk.js";
 
-/** Not secret: the callback address the identity was registered with, and whether a sign-in is needed again. */
+/**
+ * Not secret: the server address the sign-in belongs to, the callback address the identity was registered with, and
+ * whether a sign-in is needed again.
+ */
 const settingsKey = (id: string): string => `mcp-oauth:${id}`;
 /** Locker names for one server's sign-in: its client identity and its keys. */
 const lockerName = (id: string, part: "CLIENT" | "TOKENS"): string => `MCP_SIGNIN_${id.toUpperCase().replace(/-/g, "_")}_${part}`;
 
-interface Kept { redirectUrl?: string; needsSignIn?: boolean }
+interface Kept { serverUrl?: string; redirectUrl?: string; needsSignIn?: boolean }
 const kept = (store: Store, owner: string, id: string): Kept =>
   (store.get("settings", owner, settingsKey(id))?.data as Kept | undefined) ?? {};
 const keep = (store: Store, owner: string, id: string, patch: Kept): void =>
   void store.save("settings", owner, settingsKey(id), { ...kept(store, owner, id), ...patch });
 
-/** Whether this server has been signed in to, so its connections should carry the saved keys. */
-export function hasSignIn(store: Store, owner: string, id: string): boolean {
+/**
+ * Whether this server, at this address, has been signed in to, so its connections should carry the saved keys. Keys
+ * are bound to the address they were issued for: a server later saved under the same name elsewhere never gets them.
+ */
+export function hasSignIn(store: Store, owner: string, id: string, serverUrl: string): boolean {
+  if (kept(store, owner, id).serverUrl !== serverUrl) return false;
   return store.secrets.list(owner, "default").some((entry) => entry.name === lockerName(id, "TOKENS"));
+}
+/** Forgets a server's sign-in: its identity and keys in the locker, and what was noted about it. */
+export function forgetSignIn(store: Store, owner: string, id: string): void {
+  for (const part of ["CLIENT", "TOKENS"] as const) store.secrets.remove(owner, "default", lockerName(id, part));
+  store.delete("settings", owner, settingsKey(id));
 }
 /** Whether a background connection found that the sign-in no longer works. */
 export const needsSignIn = (store: Store, owner: string, id: string): boolean => kept(store, owner, id).needsSignIn === true;
 
-interface Interactive { redirectUrl: string; state: string; onRedirect: (url: URL) => void; scope?: string }
+interface Interactive { serverUrl: string; redirectUrl: string; state: string; onRedirect: (url: URL) => void; scope?: string }
 
 /**
  * The SDK's `OAuthClientProvider`, kept in the locker. With `interactive` it belongs to one sign-in the owner started;
@@ -55,6 +67,8 @@ interface Interactive { redirectUrl: string; state: string; onRedirect: (url: UR
 export class LockerAuthProvider implements OAuthClientProvider {
   private verifier = "";
   private discovery: OAuthDiscoveryState | undefined;
+  /** The keys, read from the locker once and kept here, since the SDK asks for them on every request. */
+  private cached: OAuthTokens | undefined;
   constructor(private readonly store: Store, private readonly owner: string, private readonly id: string,
     private readonly interactive?: Interactive) {}
 
@@ -76,12 +90,14 @@ export class LockerAuthProvider implements OAuthClientProvider {
     if (info.client_secret) this.store.secrets.scrubber.remember(`${lockerName(this.id, "CLIENT")}_SECRET`, info.client_secret);
     await this.write("CLIENT", info);
   }
-  tokens(): Promise<OAuthTokens | undefined> { return this.read<OAuthTokens>("TOKENS"); }
+  async tokens(): Promise<OAuthTokens | undefined> { return this.cached ??= await this.read<OAuthTokens>("TOKENS"); }
   async saveTokens(tokens: OAuthTokens): Promise<void> {
+    this.cached = tokens;
     this.store.secrets.scrubber.remember(lockerName(this.id, "TOKENS"), tokens.access_token);
     if (tokens.refresh_token) this.store.secrets.scrubber.remember(`${lockerName(this.id, "TOKENS")}_REFRESH`, tokens.refresh_token);
     await this.write("TOKENS", tokens);
-    keep(this.store, this.owner, this.id, { needsSignIn: false, ...(this.interactive ? { redirectUrl: this.interactive.redirectUrl } : {}) });
+    keep(this.store, this.owner, this.id, { needsSignIn: false,
+      ...(this.interactive ? { redirectUrl: this.interactive.redirectUrl, serverUrl: this.interactive.serverUrl } : {}) });
   }
   redirectToAuthorization(url: URL): void {
     if (this.interactive) { this.interactive.onRedirect(url); return; }
@@ -97,7 +113,7 @@ export class LockerAuthProvider implements OAuthClientProvider {
   discoveryState(): OAuthDiscoveryState | undefined { return this.discovery; }
   invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): void {
     if (scope === "all" || scope === "client") this.store.secrets.remove(this.owner, "default", lockerName(this.id, "CLIENT"));
-    if (scope === "all" || scope === "tokens") this.store.secrets.remove(this.owner, "default", lockerName(this.id, "TOKENS"));
+    if (scope === "all" || scope === "tokens") { this.cached = undefined; this.store.secrets.remove(this.owner, "default", lockerName(this.id, "TOKENS")); }
     if (scope === "all" || scope === "verifier") this.verifier = "";
     if (scope === "all" || scope === "discovery") this.discovery = undefined;
   }
@@ -114,9 +130,9 @@ export class LockerAuthProvider implements OAuthClientProvider {
   }
 }
 
-/** What a connection to this server carries: the saved sign-in, or nothing when it was never signed in to. */
-export function signInProvider(store: Store, owner: string, id: string): OAuthClientProvider | undefined {
-  return hasSignIn(store, owner, id) ? new LockerAuthProvider(store, owner, id) : undefined;
+/** What a connection to this server carries: the saved sign-in for this address, or nothing. */
+export function signInProvider(store: Store, owner: string, id: string, serverUrl: string): OAuthClientProvider | undefined {
+  return hasSignIn(store, owner, id, serverUrl) ? new LockerAuthProvider(store, owner, id) : undefined;
 }
 
 export const McpSignInSchema = z.object({
@@ -170,7 +186,7 @@ export async function signIn(
   const port = await listenOnLoopback(server);
   const redirectUri = `http://127.0.0.1:${port}/oauth/callback`, state = base64url(randomBytes(24));
   let authorizeAt: URL | undefined;
-  const provider = new LockerAuthProvider(deps.store, deps.owner, parsed.id, { redirectUrl: redirectUri, state,
+  const provider = new LockerAuthProvider(deps.store, deps.owner, parsed.id, { serverUrl: parsed.url, redirectUrl: redirectUri, state,
     onRedirect: (url) => { authorizeAt = url; }, ...(parsed.scopes.length ? { scope: parsed.scopes.join(" ") } : {}) });
   const fetchFn = deps.policy.guard(deps.fetchImpl ?? globalThis.fetch);
   const { auth } = await mcpAuth();

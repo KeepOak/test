@@ -433,7 +433,7 @@ export async function startMcp(
 ): Promise<(() => Promise<void>) | null> {
   // Credentials the environment does not have come from the locker, looked up again for every start.
   const given = env, transportConfig = McpConfigSchema.parse(server);
-  const guard = reachFor(policy, transportConfig.transport === 'http' ? host?.signIn?.(transportConfig.id) : undefined);
+  const guard = reachFor(policy, transportConfig.transport === 'http' ? host?.signIn?.(transportConfig.id, transportConfig.url) : undefined);
   const credentials = () => withLockerSecrets(transportConfig, given, host?.secret);
   env = await credentials();
   // mac3/security-check: a server fetched from a package registry is looked up in the malware list
@@ -486,7 +486,7 @@ export interface McpHost {
   /** A credential the environment does not have, looked up in the default project's locker. */
   secret?: SecretLookup;
   /** The saved sign-in for a web server the owner signed in to (src/integrations/mcp-oauth.ts), or undefined. */
-  signIn?: (id: string) => OAuthClientProvider | undefined;
+  signIn?: (id: string, url: string) => OAuthClientProvider | undefined;
   cache: McpToolCache;
   /** Checks made before a server's program is started again, after a crash or on demand (src/mcp-own-servers.ts); throws to refuse. */
   beforeRestart?: () => void | Promise<void>;
