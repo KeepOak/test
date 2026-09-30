@@ -1156,7 +1156,7 @@ ${result.output || "(it said nothing)"}`;
   const screenWatches = new ScreenWatches(store, (region) => desktop.captureRegion(region),
     () => desktop.enabled(runtime.owner), deliverMessage, watchTrunks);
   registerScreenWatches(registry, screenWatches);
-  const brief = new MorningBrief(store, monitors, documents, deliverMessage);
+  const brief = new MorningBrief(store, monitors, documents, deliverMessage, web);
   registerBrief(registry, brief);
   // Sending on the assistant's own initiative: one message to several chats, and the brief on demand.
   registerChannelTools(registry, channels, brief, store.profiles);
