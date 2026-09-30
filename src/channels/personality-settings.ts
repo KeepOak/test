@@ -37,7 +37,8 @@ const templates: Record<Tone, string> = {
 /** A fixed presentation hint, snapshotted per task; follow only its own same-session resumption chain. */
 export function chatPersonalityForRun(store: Store, owner: string, runId: string): string {
   const origin = runOrigin(store, runId), session = store.run(runId)?.sessionId;
-  if (origin.source !== "channel" || origin.shortLivedKey || origin.personProfileId || origin.lentTo || !session) return "";
+  // The owner's own direct chat with full access on is read as the owner (runOrigin ownerChat); its tone still applies.
+  if ((origin.source !== "channel" && !origin.ownerChat) || origin.shortLivedKey || origin.personProfileId || origin.lentTo || !session) return "";
   const seen = new Set<string>();
   for (let id: unknown = runId; typeof id === "string" && !seen.has(id) && seen.size < 8;) {
     seen.add(id);
