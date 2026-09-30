@@ -13,10 +13,11 @@ import type { BranchPluginProvider } from "./provider-plugins.js";
 import type { BranchPluginChannel } from "./channels/connectors.js";
 // ── bucket-15: the add-on interface version (src/add-ons/sdk.ts). ──
 import { checkApiVersion } from "./add-ons/sdk.js";
+import { PluginPageSlots, type BranchPluginPage } from './plugin-page-slots.js';
 
 /**
  * Plugins are single files a developer drops into the `plugins` folder beside the private data.
- * A plugin may add tools and may react to events; it may not add screens to the app. Nothing a
+ * A plugin may add tools, react to events, and declare bounded HTML in named no-script page slots. Nothing a
  * plugin brings is loaded until the owner switches it on, and every tool it adds still needs the
  * permission the plugin declared, checked the same way every built-in tool is checked. That
  * permission check keeps a plugin in bounds; RES-251: a plugin runs as its own walled program (src/add-ons/walled-plugin.ts)
@@ -50,6 +51,8 @@ export interface BranchPlugin {
   /** bucket-15: what the loader left out, in plain words (a walled plugin has no model connections). */
   notes?: string[];
   tools?: BranchPluginTool[]; hooks?: BranchPluginHook[];
+  /** Plain HTML in named no-script frames; requires the owner's ui.contribute grant. */
+  uiPages?: BranchPluginPage[];
   /** Ways of talking to a model this plugin brings; see src/provider-plugins.ts. */
   providers?: BranchPluginProvider[];
   /** Chat services this plugin brings; see src/channels/connectors.ts. */
@@ -103,6 +106,7 @@ export interface PluginIsolation {
 
 export class Plugins {
   private readonly loaded = new Map<string, Loaded>();
+  private readonly pageSlots = new PluginPageSlots();
   private readonly lifecycle = new Set<string>();
   private readonly lifecycleGeneration = new Map<string, number>();
   holdLifecycle(id: string): () => void {
@@ -248,10 +252,15 @@ export class Plugins {
       for (const provider of plugin.providers ?? []) this.providers?.register(id, provider);
       // A chat service is only made available to connect; no chat starts answering by itself.
       for (const channel of plugin.channels ?? []) this.channels?.register(id, channel);
+      if (plugin.uiPages?.length) {
+        if (grant.permissions.includes('ui.contribute')) leftOut.push(...this.pageSlots.register(id, summary.name, plugin.uiPages));
+        else leftOut.push('UI pages need the owner-granted ui.contribute permission.');
+      }
     } catch (error) {
       for (const name of toolNames) this.registry.unregister(name);
       this.providers?.forget(id);
       this.channels?.forget(id);
+      this.pageSlots.forget(id);
       throw error;
     }
     for (const hook of plugin.hooks ?? [])
@@ -263,12 +272,20 @@ export class Plugins {
   }
   /** Takes a plugin out of this running copy without changing the owner's choice. */
   private unload(id: string): void {
+    this.pageSlots.forget(id);
     const entry = this.loaded.get(id);
     for (const name of entry?.toolNames ?? []) this.registry.unregister(name);
     for (const stop of entry?.stopHooks ?? []) stop();
     // Its model connections go with it, along with every preset made from them.
     if (entry) { this.providers?.forget(id); this.channels?.forget(id); }
     this.loaded.delete(id);
+  }
+  /** Current owner-session data only, rechecking enablement and the original manifest grant. */
+  pageContributions(sessionId: string) {
+    this.store.profiles.requireOwner('Plugin UI pages');
+    if (!this.store.ownsSession(this.owner, sessionId)) throw new Error('Conversation not found');
+    return this.pageSlots.list(sessionId, id => this.loaded.has(id) && this.saved(id)?.enabled === true
+      && this.saved(id)?.grant?.permissions.includes('ui.contribute') === true);
   }
   /** Switches a plugin off: its tools leave the catalog, its hooks stop, and it stays off next time. */
   /** RES-251: loads a switched-on plugin again, with the grant the owner gave, so a change of where it runs takes hold. */

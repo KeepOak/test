@@ -1060,6 +1060,18 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path.startsWith('/api/sandbox-ui/')) {
+    app.store.profiles.requireOwner('Sandboxed UI pages');
+    if (startedWithShortLivedKey() || throughDoor(request)) throw new HttpError(403, 'Open sandboxed UI pages in the local owner window.');
+    const list = /^\/api\/sandbox-ui\/plugins\/([a-f0-9-]{36})$/.exec(path);
+    if (list && request.method === 'GET') return { pages: app.sandboxUi.pluginPages(list[1]!) };
+    if (path === '/api/sandbox-ui/canvas' && request.method === 'POST') return app.sandboxUi.open(await readBody(request, 4096));
+    if (path === '/api/sandbox-ui/close' && request.method === 'POST') {
+      const { capability } = z.object({ capability: z.string().uuid() }).strict().parse(await readBody(request, 4096));
+      app.sandboxUi.close(capability); return { closed: true };
+    }
+    throw new HttpError(404, 'UI page endpoint not found');
+  }
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
   if (handlesMiscPath(path))
@@ -4044,6 +4056,11 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // already is. The frame is always local, so the gate costs nothing and the address — whose
       // whole secret is the address — is not offered to the private network.
       if (fromThisComputer(request.socket?.remoteAddress, request.headers) && mcpAppPage(request, response, path)) return;
+      if (fromThisComputer(request.socket?.remoteAddress, request.headers) && path.startsWith('/sandbox-ui/')) {
+        const id = path.slice('/sandbox-ui/'.length);
+        const page = request.method === 'GET' && /^[a-f0-9-]{36}$/.test(id) ? app.sandboxUi.page(id) : null;
+        response.writeHead(page ? 200 : 404, page?.headers ?? { 'cache-control': 'no-store' }); response.end(page?.body ?? 'UI page unavailable'); return;
+      }
       // Wave 8: an artifact out of a reply, in that same frame. Its address is not used up by the
       // first fetch, so the frame may reload and "open larger" may show the same one again.
       // mac7/bind (integration review): the same gate the live surface gets just below, and for the

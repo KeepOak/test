@@ -9,6 +9,7 @@ import { on } from "../core/actions.js";
 import { ic, av, toast, faceOf } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { text, plain } from "./markdown.js";
+import { canvasAction } from './sandbox-ui.js';
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, readyWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
@@ -296,7 +297,7 @@ function replyRow(T, m, i, info, index, marks) {
   const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i, face) : replyBubble(T, m, info, index.get(m));
   if (choice) { T.lastRole = "choice"; T.lastWho = null; }
   const run = ends && T.run && !LIVE.includes(T.run.status) ? T.run : null;
-  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked, face) + marks.after(m));
+  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + canvasAction(m) + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked, face) + marks.after(m));
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the
