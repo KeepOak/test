@@ -13,11 +13,15 @@ Access migration is a compatibility projection, not a destructive database edit:
 - The permission remains `mcp.<server>.<sha256(originalTool)[0:16]>`. Existing saved
   grants, schedules, delegated permission sets and resumed tasks therefore keep
   exactly the same permission identity; no access is broadened by rewriting names.
-- Once a configured or cached tool's name has been computed, policy evaluates each
-  rule against both spellings. The first matching rule still wins, with unchanged
+- Once a configured or cached tool's name has been computed, policy evaluates old
+  rules against the legacy identity. The first matching rule still wins, with unchanged
   targets, resources, Trunk scope and read/change restrictions. Old exact and
   wildcard rules (including hash-prefix patterns) keep their original coverage.
-- Newly saved rules may use readable names. Old stored calls remain dispatchable
+- Newly saved rules explicitly starting with `mcp__` use the readable identity.
+  General wildcards such as `*read*` or `mcp*a*` retain their legacy hash coverage;
+  they cannot gain coverage merely because a readable tool name includes those
+  words. Use `mcp__*read*` to intentionally target readable MCP names.
+  Old stored calls remain dispatchable
   through registry lookup aliases; only the readable name is listed to the model.
 - Source metadata identifies the server for context modes, tool removal and MCP
   app events instead of parsing the callable spelling.

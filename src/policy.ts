@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { mcpPolicyNames } from "./integrations/mcp-tool-names.js";
+import { mcpPolicyName } from "./integrations/mcp-tool-names.js";
 import { audit } from "./audit.js";
 import { globMatches, isCommandTool, ResourceMatcherSchema, resourceMatches, tidyPath, type PolicyResource } from "./policy-resources.js";
 import { commandPrefix, exactCommandPattern, plainWords } from "./command-prefix.js";
@@ -310,7 +310,7 @@ function ruleCovers(rule: PolicyRule, request: PolicyRequest): boolean {
   if (rule.trunk !== undefined && rule.decision === "allow" && rule.trunk !== request.trunk) return false;
   if (rule.applies === "changes" && request.readOnly) return false;
   if (rule.applies === "reads" && !request.readOnly) return false;
-  if (!mcpPolicyNames(request.tool).some(name => globMatches(rule.tool, name))) return false;
+  if (!globMatches(rule.tool, mcpPolicyName(rule.tool, request.tool))) return false;
   if (!matchesTarget(rule.match, request) && !namesWholeCall(rule, request)) return false;
   if (!rule.resource && rule.decision === "allow" && rule.match !== "*" && !commandTargetTrusted(request)) return false;
   return rule.resource ? resourceMatches(rule.resource, request.resource, rule.decision) : true;

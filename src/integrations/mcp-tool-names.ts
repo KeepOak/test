@@ -25,10 +25,13 @@ export function mcpToolName(server: string, tool: string): string {
   return name;
 }
 
-/** Both spellings are judged against each rule, preserving rule order and wildcard scope. */
-export function mcpPolicyNames(name: string): readonly string[] {
-  const other = identities.get(name) ?? callable.get(name);
-  return other ? [name, other] : [name];
+/**
+ * Existing patterns match only the original identity, so readable words cannot
+ * expand an old wildcard's scope. New rules opt in with the explicit mcp__ prefix.
+ */
+export function mcpPolicyName(pattern: string, name: string): string {
+  if (pattern.startsWith('mcp__')) return callable.get(name) ?? name;
+  return identities.get(name) ?? name;
 }
 
 /** Old stored tool calls remain callable, without listing a duplicate to the model. */
