@@ -8141,6 +8141,14 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | `keepLiveRecordings` | Note in the task's record how much sound a live conversation carried — the size of each piece and nothing else. The sound itself is never kept either way. |
 | `liveView` | `off` (the default) or `on`. On: Talk live opens a view of its own, like the voice modes of ChatGPT and Codex: a circle that moves with the real sound going up and coming back, what each side says as it is said, Mute (the sound stops leaving this computer), Show the chat, and End; the send button offers Talk live while the message box is empty. A question the assistant asks mid-conversation folds the view away so its card can be answered. The microphone is asked for only when you press Talk live. Off: Talk live is the plain button it always was. Talk live is never offered in a room or a conversation a Trunk answers in. |
 
+Local faster-whisper captions and completed recordings prefer the installed package's Silero VAD.
+The existing offline worker keeps the VAD and speech model warm, excludes neural-classified silence,
+and preserves 400 ms of speech padding. If its local VAD asset or runtime cannot load, recognition
+continues without neural filtering and the Voice status reports that fallback after first use.
+No model or package is fetched. Installed sherpa VAD dictation also accepts complete Whisper ONNX
+bundles (`<name>-encoder[.int8].onnx`, matching decoder, `<name>-tokens.txt`, `silero_vad.onnx`)
+alongside transducer bundles. An explicitly named streaming program still wins.
+
 ### The rest
 
 - **Connections** (`src/connections-preset.ts`): `activePreset` is which connection answers by

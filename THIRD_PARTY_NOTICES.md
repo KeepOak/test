@@ -1,5 +1,40 @@
 # Third-party notices
 
+## Installed faster-whisper and Silero VAD integration
+
+`src/voice-whisper.ts` calls the installed faster-whisper local VAD and timestamp APIs,
+inspected at `ed9a06cd89a93e47838f564998a6c09b655d7f43` of
+https://github.com/SYSTRAN/faster-whisper (`faster_whisper/vad.py`, `transcribe.py`).
+Silero's MIT license was inspected at `1e261b036686cd0017d500ee96acd1c4ba572a9d`
+of https://github.com/snakers4/silero-vad. No inference implementation, ONNX model or
+Python dependency is bundled or downloaded; the existing external worker uses the
+owner's installed package asset and remains offline. The wrapper adapts faster-whisper's
+speech-span concatenation before language detection; it imports NumPy already required
+by that installed library.
+
+MIT License
+
+Copyright (c) 2023 SYSTRAN
+Copyright (c) 2020-present Silero Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
