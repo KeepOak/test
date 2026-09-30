@@ -1003,6 +1003,8 @@ to be able to change your local copy but never publish it, and now it cannot do 
 below allows it — unlike commands and your devices, which a line can never allow. This is a change: before, a chat's task was given everything except
 a named few, so anything nobody had thought of was handed over. It is now the other way round.
 
+**Who may message Branch.** The owner's `GET /api/channels/allowlist` and `POST /api/channels/allowlist` read and change the shared sender list. `unknown: "pair"` offers unapproved senders a code; `"block"` refuses them with a private-assistant reply; `"ignore"` refuses them and leaves unauthorized direct chats unanswered, without creating a pairing request. Groups keep the existing refusal reply. Existing approved pairings and allow rules still work, and explicit block rules win. For example, `{"unknown":"ignore"}` changes only that choice; rules not supplied stay as they are. The default remains `"pair"`. Changing the list requires the owner's full app access; no chat command changes it.
+
 **Your own chats have your full access.** One chat counts as you: an account you named as your own
 (Customize → Chat apps → Commands from your own chat, or `/platform`), writing to Branch one to one, on an
 app whose servers vouch for who sent it (Telegram, Discord, Slack, Matrix; never email, SMS or a webhook).
