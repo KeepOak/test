@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, readFile, rm, writeFile } from "node:fs/promises";
 import { join, win32 } from "node:path";
@@ -10,13 +10,13 @@ import { runTool, systemTool, type RunTool } from "./windows.js";
  * it stops by accident: a minute later, up to three times. A gateway that ends on purpose (another copy already runs,
  * the owner switched it off) exits cleanly and is left alone.
  *
- * Where `schtasks` is refused (some managed or locked-down accounts answer "Access is denied"), a shortcut in the
- * person's own Startup folder starts the same program at sign-in instead. Nothing restarts it there, but it starts.
+ * Where Task Scheduler refuses (some managed or locked-down accounts get E_ACCESSDENIED, "Access is denied"), a
+ * shortcut in the person's own Startup folder starts the same program at sign-in instead. Nothing restarts it there,
+ * but it starts.
  *
  * The task's settings follow OpenClaw's `src/daemon/schtasks-xml.ts` and the fallback decision its
- * `shouldFallbackToStartupEntry` (`src/daemon/schtasks-layout.ts`), https://github.com/openclaw/openclaw, MIT; the
- * localized "access is denied" words follow Hermes Agent's `hermes_cli/gateway_windows.py`,
- * https://github.com/NousResearch/hermes-agent, MIT.
+ * `shouldFallbackToStartupEntry` (`src/daemon/schtasks-layout.ts`), https://github.com/openclaw/openclaw, MIT. The
+ * refusal is told by its HRESULT, not by schtasks' words, which are in the computer's own language.
  */
 export const gatewayTaskName = "Branch Agent daemon";
 export const gatewayFlag = "--branch-gateway";
@@ -86,26 +86,50 @@ export function gatewayTaskXml(input: GatewayTaskInput): string {
 </Task>`;
 }
 
-/** `schtasks /XML` reads UTF-16 little-endian with a byte-order mark on every language of Windows. */
+/** Task Scheduler reads the XML as UTF-16 little-endian with a byte-order mark on every language of Windows. */
 export const taskXmlBytes = (xml: string): Buffer => Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(xml, "utf16le")]);
 
-export const createTaskArgs = (xmlPath: string, name = gatewayTaskName) => ["/Create", "/F", "/TN", name, "/XML", xmlPath];
 export const runTaskArgs = (name = gatewayTaskName) => ["/Run", "/TN", name];
 export const deleteTaskArgs = (name = gatewayTaskName) => ["/Delete", "/F", "/TN", name];
 export const queryTaskArgs = (name = gatewayTaskName) => ["/Query", "/TN", name];
 
-/** schtasks' "access is denied" in the languages Hermes Agent lists, and a few more whose words are plain ASCII. */
-const accessDenied = new RegExp([
-  "access is denied", "acceso denegado", "zugriff verweigert", "acc[eè]s refus[eé]", "accesso negato", "acesso negado",
-  "přístup byl odepřen", "拒绝访问", "拒絕存取", "アクセスが拒否されました", "액세스가 거부되었습니다",
-].join("|"), "i");
+/** Windows PowerShell 5.1, which every Windows 10 and 11 has, at its fixed place. */
+export const powershellPath = (systemRoot?: string) => systemTool(win32.join("WindowsPowerShell", "v1.0", "powershell.exe"), systemRoot);
+const psText = (value: string) => `'${value.replace(/'/g, "''")}'`;
+
+/**
+ * Registers the task through Task Scheduler's own interface (the one schtasks uses), from PowerShell. schtasks answers
+ * every failure with exit code 1 and a sentence in the computer's language; this prints the failure's HRESULT, so a
+ * refusal is told apart by number on every language of Windows (`hresult=0x80070005`, E_ACCESSDENIED).
+ * RegisterTask: 6 is create-or-update, 3 is the signed-in person's own interactive token.
+ */
+export function registerTaskArgs(xmlPath: string, name = gatewayTaskName): string[] {
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "try {",
+    "$s=New-Object -ComObject Schedule.Service; $s.Connect()",
+    `[void]$s.GetFolder('\\').RegisterTask(${psText(name)}, [IO.File]::ReadAllText(${psText(xmlPath)}), 6, $null, $null, 3)`,
+    // PowerShell wraps a failed call (MethodInvocationException, 0x80131501); the innermost exception is the real one.
+    "} catch { $e=$_.Exception; while ($e.InnerException) { $e=$e.InnerException }",
+    "[Console]::Error.WriteLine(('hresult=0x{0:X8} {1}' -f $e.HResult, $e.Message)); exit 1 }",
+  ].join("\n");
+  return ["-NoProfile", "-NonInteractive", "-Command", script];
+}
+
+/** E_ACCESSDENIED (0x80070005), the "Access is denied" that some managed or locked-down accounts get. */
+export const accessDeniedHresult = 0x80070005;
+
+/** The HRESULT `registerTaskArgs` printed on failure, or null when it printed none (PowerShell itself failed). */
+export function failureHresult(error: unknown): number | null {
+  const found = /hresult=0x([0-9a-f]{8})/i.exec(error instanceof Error ? error.message : String(error));
+  return found ? Number.parseInt(found[1]!, 16) : null;
+}
 
 /** Refused, or stuck until it was stopped: the Startup folder is used instead. Any other failure is a real problem. */
 export function shouldFallBackToStartup(error: unknown): boolean {
-  const cause = (error as { cause?: { killed?: boolean; code?: unknown; signal?: unknown } } | null)?.cause;
+  const cause = (error as { cause?: { killed?: boolean; code?: unknown } } | null)?.cause;
   if (cause?.killed || cause?.code === "ETIMEDOUT") return true;
-  const detail = error instanceof Error ? error.message : String(error);
-  return accessDenied.test(detail) || /timed out|produced no output/i.test(detail);
+  return failureHresult(error) === accessDeniedHresult;
 }
 
 /** The person's own Startup folder: what is there starts when they sign in, with no administrator rights. */
@@ -127,7 +151,7 @@ export const powershellShortcut: WriteShortcut = (shortcut) => new Promise((reso
     + "$l.Arguments=$env:BRANCH_LNK_ARGS;$l.WorkingDirectory=$env:BRANCH_LNK_DIR;$l.Description=$env:BRANCH_LNK_WHAT;$l.Save()";
   const env = { ...process.env, BRANCH_LNK: shortcut.path, BRANCH_LNK_TARGET: shortcut.target, BRANCH_LNK_ARGS: shortcut.arguments,
     BRANCH_LNK_DIR: shortcut.workingDirectory, BRANCH_LNK_WHAT: shortcut.description };
-  execFile(systemTool(win32.join("WindowsPowerShell", "v1.0", "powershell.exe")), ["-NoProfile", "-NonInteractive", "-Command", script],
+  execFile(powershellPath(), ["-NoProfile", "-NonInteractive", "-Command", script],
     { env, windowsHide: true, timeout: 30000 }, (error, _out, stderr) =>
       error ? reject(new Error(`The Startup shortcut could not be written: ${(stderr || error.message).trim().slice(0, 300)}`)) : resolve());
 });
@@ -160,7 +184,7 @@ export interface RegisterInput extends GatewayTaskInput {
 }
 
 /**
- * Registers the task, or where schtasks is refused, the Startup shortcut (only when starting at sign-in is wanted:
+ * Registers the task, or where Task Scheduler refuses, the Startup shortcut (only when starting at sign-in is wanted:
  * without it there is nothing a shortcut could do). Answers how the gateway is looked after now.
  */
 export async function registerGatewayTask(input: RegisterInput, deps: GatewayTaskDeps = {}): Promise<GatewaySupervision> {
@@ -168,7 +192,7 @@ export async function registerGatewayTask(input: RegisterInput, deps: GatewayTas
   const run = deps.run ?? runTool, xmlPath = join(input.dataDir, "gateway-task.xml");
   await writeFile(xmlPath, taskXmlBytes(gatewayTaskXml(input)));
   try {
-    await run(schtasks(deps), createTaskArgs(xmlPath));
+    await run(powershellPath(deps.systemRoot), registerTaskArgs(xmlPath));
     await rm(startupShortcutPath(deps.env), { force: true }).catch(() => undefined); // the task starts it now
     return "task";
   } catch (error) {
@@ -196,6 +220,34 @@ export async function gatewaySupervision(deps: GatewayTaskDeps = {}): Promise<Ga
 export async function runGatewayTask(deps: GatewayTaskDeps = {}): Promise<void> {
   await (deps.run ?? runTool)(schtasks(deps), runTaskArgs());
 }
+
+export interface StartAgainDeps extends GatewayTaskDeps {
+  /** Starts a program on its own, with no window and nothing of this process's kept open (tests hand in a stand-in). */
+  start?: (file: string, args: string[], env: NodeJS.ProcessEnv) => void;
+}
+
+/**
+ * After an update or a rollback (src/install/service-return.ts): the gateway is started again through its task; where
+ * only the Startup shortcut looks after it (Task Scheduler refused the task), the app's gateway is started directly,
+ * as the shortcut would at the next sign-in. Anything else is left to the caller as the task's own failure.
+ */
+export async function startGatewayAgain(executable: string, deps: StartAgainDeps = {}): Promise<"task" | "direct"> {
+  try { await runGatewayTask(deps); return "task"; }
+  catch (error) {
+    if (!isAppProgram(executable) || !(await exists(startupShortcutPath(deps.env)))) throw error;
+    const env: NodeJS.ProcessEnv = { ...(deps.env ?? process.env) };
+    delete env.ELECTRON_RUN_AS_NODE; // the gateway is the app itself, never its runtime run as Node
+    delete env.NODE_OPTIONS;
+    (deps.start ?? startDetached)(executable, [gatewayFlag], env);
+    return "direct";
+  }
+}
+
+const startDetached = (file: string, args: string[], env: NodeJS.ProcessEnv): void => {
+  const child = spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true, cwd: win32.dirname(file) });
+  child.on("error", () => undefined);
+  child.unref();
+};
 
 interface Marker { hash: string; kind: GatewaySupervision }
 

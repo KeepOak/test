@@ -2,6 +2,7 @@ import { runTool, systemTool, type RunTool } from "./windows.js";
 import { launchctl, launchdDomain, launchdLabel } from "./launchd.js";
 import { systemctl, systemdUnitName } from "./systemd.js";
 import { daemonTaskName } from "./daemon.js";
+import { startGatewayAgain, type StartAgainDeps } from "./gateway-task.js";
 import { runningNow } from "./quit.js";
 import { attachToRunning, type RunningInstance } from "./running.js";
 
@@ -19,7 +20,17 @@ export function serviceRestartCommand(platform: NodeJS.Platform, uid = process.g
   throw new Error("Starting the background service again is not available on this kind of computer.");
 }
 
-export async function restartService(platform: NodeJS.Platform = process.platform, run: RunTool = runTool): Promise<void> {
+/**
+ * Windows: through the gateway's task, or, where only its Startup shortcut looks after it, by starting the installed
+ * app's gateway directly (src/install/gateway-task.ts `startGatewayAgain`). `executable` is the app's own program: the
+ * running `branch` command's runtime (the app run as Node), or the program BRANCH_EXECUTABLE names.
+ */
+export async function restartService(platform: NodeJS.Platform = process.platform, run: RunTool = runTool,
+  windows: StartAgainDeps & { executable?: string } = {}): Promise<void> {
+  if (platform === "win32") {
+    await startGatewayAgain(windows.executable ?? process.env.BRANCH_EXECUTABLE ?? process.execPath, { run, ...windows });
+    return;
+  }
   const [tool, args] = serviceRestartCommand(platform);
   await run(tool, args);
 }

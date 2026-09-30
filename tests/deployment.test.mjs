@@ -229,7 +229,8 @@ test("the background gateway is a restart-on-failure sign-in task running the ap
   const calls = [], xml = [];
   const fake = async (file, args) => {
     calls.push({ file, args });
-    if (args[0] === "/Create") xml.push(await readFile(args[args.indexOf("/XML") + 1]));
+    const path = /ReadAllText\('([^']+)'\)/.exec(args.at(-1) ?? "")?.[1];
+    if (path) xml.push(await readFile(path));
     return "";
   };
   await writeFile(join(root, "branch-daemon.vbs"), "left by an earlier version");
@@ -243,8 +244,9 @@ test("the background gateway is a restart-on-failure sign-in task running the ap
   const deps = { run: fake, env: { APPDATA: appData }, writeShortcut: async (link) => { shortcuts.push(link); } };
   const report = await daemonCommand("install", options, deps);
   assert.equal(report.installed, true);
-  assert.equal(calls[0].file, "C:\\Windows\\System32\\schtasks.exe");
-  assert.deepEqual(calls[0].args.slice(0, 4), ["/Create", "/F", "/TN", daemonTaskName]);
+  // Registered through Task Scheduler's own interface, so a refusal has a number and not only words (gateway-task.ts).
+  assert.equal(calls[0].file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.ok(calls[0].args.at(-1).includes(`RegisterTask('${daemonTaskName}'`));
   const text = xml[0].subarray(2).toString("utf16le");
   assert.deepEqual([...xml[0].subarray(0, 2)], [0xff, 0xfe], "the XML is UTF-16 with its byte-order mark");
   assert.match(text, /<Command>C:\\App\\Branch Agent\.exe<\/Command>\s*<Arguments>--branch-gateway<\/Arguments>/, "the app itself, no script host");

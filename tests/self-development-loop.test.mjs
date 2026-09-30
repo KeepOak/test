@@ -341,7 +341,7 @@ test("selfdev, Beta: after the swap the new version must say its engine is up, o
   const start = beta.indexOf("starting new version"), wait = beta.indexOf(`if exist "${marker}" goto upcheck`);
   assert.ok(beta.includes(`del /q "${marker}"`) && beta.indexOf(`del /q "${marker}"`) < start && start < wait, "a file left by the check is removed before the start; the wait comes after it");
   assert.match(beta, /:upcheck\nrunning\nif not errorlevel 1 goto done\ngoto restore/);
-  assert.match(beta, /did not say it was up; ending it[^\n]*\ntaskkill\.exe \/IM "b\.exe"[^\n]*\nsleep 2\ngoto restore/);
+  assert.match(beta, /did not say it was up; ending it[^\n]*\ncall :taskoff\ntaskkill\.exe \/IM "b\.exe"[^\n]*\nsleep 2\ngoto restore/);
   const stable = windowsSwap(plan).join("\n");
   assert.doesNotMatch(stable, /upcheck|started-/, "Stable keeps the check it had");
 });
