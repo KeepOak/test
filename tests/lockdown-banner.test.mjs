@@ -44,3 +44,16 @@ test("with Lockdown off and an App lock set, no red Lockdown banner shows; with 
   assert.deepEqual(on, { chat: 1, customize: 1, library: 1 }, "the banner shows everywhere while Lockdown is on");
   assert.deepEqual(errors, []);
 });
+
+test("PLAT-146 Ctrl+Shift+L turns Lockdown on from the window, and pressing it again never turns it off", async (t) => {
+  const { page, call } = await newWindow(t);
+  assert.equal((await call("/api/lockdown")).on, false, "control: Lockdown is off");
+  await page.locator("#prompt").click();
+  await page.keyboard.press("ControlOrMeta+Shift+L");
+  for (let i = 0; i < 50 && !(await call("/api/lockdown")).on; i++) await page.waitForTimeout(100);
+  assert.equal((await call("/api/lockdown")).on, true, "the shortcut turned Lockdown on");
+  await page.locator(".lock-banner").first().waitFor({ state: "visible", timeout: 20000 });
+  await page.keyboard.press("ControlOrMeta+Shift+L");
+  await page.waitForTimeout(500);
+  assert.equal((await call("/api/lockdown")).on, true, "pressing it again leaves Lockdown on");
+});
