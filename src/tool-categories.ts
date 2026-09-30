@@ -38,6 +38,7 @@ const permissionCategories: Record<string, ToolCategory> = {
 /** The few tools whose permission does not say enough on its own. */
 const toolOverrides: Record<string, ToolCategory> = {
   "browser.navigate": "browse", "browser.click": "browse", "browser.fill": "browse", "browser.upload": "browse",
+  "browser.download": "browse", "browser.permission": "browse",
   "browser.keys": "browse", "browser.select": "browse", "browser.hover": "browse", "browser.history": "browse",
   "github.open_pull_request": "message", "github.create_issue": "message", "issues.comment": "message",
   "channels.notify": "message", "user.ask": "read",

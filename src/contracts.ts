@@ -352,6 +352,8 @@ export class Budget {
   }
 }
 export interface ToolContext {
+  /** Engine cleanup only: preserve a bounded category-held browser while its task waits for an answer. */
+  waitingForInput?: boolean;
   owner: string;
   workspace: string;
   runId: string;

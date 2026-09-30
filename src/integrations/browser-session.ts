@@ -76,6 +76,8 @@ async function bypassEveryFrame(root: CDPSession): Promise<void> {
   await root.send('Target.setAutoAttach', stopped);
 }
 export interface SessionOptions {
+  /** Recognized risky dialog words only tighten: dismiss it and report an owner handoff. */
+  holdDialog?: ((message: string) => boolean) | undefined;
   /** Cookies and site storage from a saved sign-in, used for this run's window only. */
   storageState?: StorageState | undefined;
   /** Saves a file the website sent; anything it rejects is reported and the file is dropped. */
@@ -407,7 +409,8 @@ export class BrowserSession {
       // R17-S19: the owner may have message boxes accepted (OK) rather than dismissed (Cancel).
       // Integration review: a box that asks for typing (prompt) is always dismissed, so nothing is ever
       // typed or confirmed into it; only alert, confirm and "leave this page?" may be accepted.
-      const accept = this.options.dialogAnswer?.() === 'accept' && dialog.type() !== 'prompt';
+      const held = this.options.holdDialog?.(dialog.message()) === true;
+      const accept = !held && this.options.dialogAnswer?.() === 'accept' && dialog.type() !== 'prompt';
       void (accept ? dialog.accept() : dialog.dismiss()).catch(() => undefined);
     });
     page.on('download', download => this.pending.push(this.collect(download)));

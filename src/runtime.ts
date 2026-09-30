@@ -90,6 +90,7 @@ import { alreadyRunResult, approvedWork, notRunResult, type ApprovedWork } from 
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
 import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation } from "./comfort/browser-safety.js"; // R17-S19
+import { browserCategoryHold } from "./browser-action-categories.js";
 // mac5/manual-actions: the gate for tools run outside a conversation.
 import { gateToolUse, type ToolGateOptions } from "./tool-gate.js";
 import * as safetyExtras from "./safety-extras/hooks.js"; // mac7/r17-g: the safety extras' hooks
@@ -2123,7 +2124,7 @@ ${run.output.slice(0, 6000)}`;
       output = silent;
     }
     try {
-      await this.registry.finishRun(context);
+      await this.registry.finishRun({ ...context, waitingForInput: status === "needs_input" });
     } catch (error) {
       this.store.event(run.id, "run.cleanup_failed", {
         error: errorText(error),
@@ -4275,14 +4276,15 @@ ${run.output.slice(0, 6000)}`;
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
     // R17-S-C integration review: with "confirm sensitive browser steps" on, those are once-only questions too.
-    const hold = personal ?? (holdsBrowserStep(this.store, this.owner, tool) ? { reason: browserConfirmationHold, onceOnly: true } : null)
+    const category = browserCategoryHold(tool, context, args);
+    const hold = category ?? personal ?? (holdsBrowserStep(this.store, this.owner, tool) ? { reason: browserConfirmationHold, onceOnly: true } : null)
       ?? this.scriptHold(tool, context.runId) // mac7/residuals (4b)
       // P17-D §3: every browser step of a learning task asks, once, never answered by a standing or earlier yes.
       ?? (learning && permission.startsWith("browser.") ? { reason: learningHold, onceOnly: true as const } : null)
       ?? (fullAccess ? null : newAppHold(this.store, this.owner, tool, args, context.trunk)) // unhold-control
       // Dogfood D4: screen use still asks outside a checked local owner's selected Full Access.
       ?? (screenHeld ? { reason: screenHoldReason, onceOnly: false as const } : null);
-    const held = (personal || screenHeld || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
+    const held = (category || personal || screenHeld || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
     const guarded = held === "allow" && lockdownActive(this.store, this.owner) && !lowersRiskOnly(tool) ? "ask" : held; // mac7/lockdown-fix
     if (hold?.onceOnly && guarded === "ask" && fingerprint) this.approvals.holdOnce(fingerprint, hold.reason);
     // --- end R17-C ---

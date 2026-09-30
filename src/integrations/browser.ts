@@ -7,7 +7,8 @@ import { z } from 'zod';
 import { instructionsRemovedNote, withoutInstructions } from '../content-guard.js';
 import { carriedData } from '../egress-guard.js';
 import type { ToolRegistry } from '../registry.js';
-import type { ToolContext } from '../contracts.js';
+import { NeedsInputError, type ToolContext } from '../contracts.js';
+import { observeBrowserCategory, ownerHandoffCategories, browserCategories, browserDialogHandoff, withBrowserCategory, type BrowserCategory } from '../browser-action-categories.js';
 import type { RunArtifacts } from '../artifacts.js';
 import { BrowserSession, type BrowserRequest, type DownloadRecord } from './browser-session.js';
 import { BrowserProfiles, profileNameSchema, trunkProfileName, isTrunkProfile, type StorageState } from './browser-profiles.js';
@@ -93,6 +94,10 @@ interface RunEntry {
   detach: () => void;
   origins: Set<string>;
   actions: number;
+  pendingDownloads?: Map<string, Download>;
+  categoryWaiting?: boolean;
+  categoryExpiry?: ReturnType<typeof setTimeout>;
+  pendingHandoff?: BrowserCategory;
   host: string;
   profile: string | null;
   /** The numbers handed out to the things on the pages this task has looked at. */
@@ -203,6 +208,8 @@ export class BranchBrowser {
   tracer: BrowserTracer | undefined;
   /** The settings store, so "let Branch use my browser" can be read again before every attach. */
   store: Store | undefined;
+  private actionRegistry: ToolRegistry | undefined;
+  setActionRegistry(registry: ToolRegistry): void { this.actionRegistry = registry; }
   /** Opens a connection to the owner's own browser. Replaced in tests by one they start themselves. */
   connect: typeof attach = attach;
   /** w911 (A2019) hook: the browser sandbox (Docker or a remote Playwright server); unset means this computer only. */
@@ -312,8 +319,19 @@ export class BranchBrowser {
     const session: BrowserSession = new BrowserSession(
       () => this.sandbox?.pick(context.owner, !!session.options.storageState) ?? (this.starting ??= this.launch()),
       request => this.guardRequest(request, created), redirectHops);
-    session.options.saveDownload = download => this.saveDownload(download);
+    session.options.saveDownload = async download => {
+      const pending = created!.pendingDownloads ??= new Map<string, Download>();
+      if (pending.size >= 10) { await download.cancel(); throw new Error('Too many downloads are waiting for owner confirmation.'); }
+      const pendingId = randomUUID(); pending.set(pendingId, download);
+      this.keepCategoryWindow(context, created!);
+      return { file: '', bytes: 0, from: download.url(), pendingId, needsConfirmation: true };
+    };
     session.options.dialogAnswer = () => this.care(context.owner).dialogs; // R17-S19
+    session.options.holdDialog = message => {
+      const category = browserDialogHandoff(message);
+      if (!category || !created) return false;
+      created.pendingHandoff = category; return true;
+    };
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
     created = { session, origins: new Set(), actions: 0, host: '', profile: null,
@@ -537,6 +555,10 @@ export class BranchBrowser {
         return action(page, () => { write?.check(); signal.throwIfAborted(); });
       }), graceMs);
       const events = entry.session.takeEvents();
+      if (entry.pendingHandoff) {
+        const category = entry.pendingHandoff; entry.pendingHandoff = undefined;
+        this.handoffCategory(context, category);
+      }
       // A message box's words are page text and a download's source is an address: scrubbed the same way.
       const dialogs = events.dialogs.map(box => ({ ...box, message: hidden === null ? '' : scrubText(box.message, hidden) }));
       const downloads = events.downloads.map(file => ({ ...file, from: scrubAddress(file.from, hidden) }));
@@ -597,7 +619,11 @@ export class BranchBrowser {
       const origin = new URL(url).origin;
       if (!entry.origins.has(origin) && entry.origins.size >= this.config.maxOriginsPerRun)
         throw new Error(originStop(this.config.maxOriginsPerRun));
-      await page.goto(url, { waitUntil: 'domcontentloaded' });
+      try { await page.goto(url, { waitUntil: 'domcontentloaded' }); }
+      catch (error) {
+        if (error instanceof Error && /\bERR_CERT_[A-Z_]+\b/.test(error.message)) this.handoffCategory(context, 'security-warning');
+        throw error;
+      }
       // Counted only once the page really opened, so a refused address costs the task nothing.
       entry.origins.add(origin);
       // mac7/vault-autofill: an address, not something somebody put on a page for Branch to press.
@@ -655,16 +681,79 @@ export class BranchBrowser {
     const entry = this.entry(context), typed = entry.borrowed ? entry.typed : null;
     return { hidden: await secretValues(page, this.filledOn(context, page), typed), typed };
   }
+  /** Direct owner input has its own exact capability; an agent must stop or ask for a detected category. */
+  private keepCategoryWindow(context: Pick<ToolContext, 'owner' | 'runId'>, entry: RunEntry): void {
+    entry.categoryWaiting = true;
+    if (entry.categoryExpiry) return;
+    entry.categoryExpiry = setTimeout(() => {
+      entry.categoryWaiting = false; entry.categoryExpiry = undefined;
+      void this.closeRun(context).catch(() => undefined);
+    }, 10 * 60_000);
+    entry.categoryExpiry.unref();
+  }
+  private handoffCategory(context: ToolContext, category: BrowserCategory): never {
+    const entry = this.entry(context), conversation = this.store?.run(context.runId)?.sessionId;
+    this.keepCategoryWindow(context, entry);
+    if (conversation && !entry.borrowed && !entry.held && !entry.session.isRecording())
+      this.adoptRun(context.owner, conversation, context.runId, 'category-handoff');
+    throw new NeedsInputError(`This browser step involves ${category}. Take over the browser and complete or dismiss it yourself, then hand it back. Branch will not automate this step.`);
+  }
+  private async guardCategory(page: Page, target: Locator | null, tool: string, args: unknown, context: ToolContext): Promise<void> {
+    const token = (context as ToolContext & { [ownerCommandScope]?: object })[ownerCommandScope];
+    if (token && this.ownerCommands.has(token)) return;
+    const url = page.url(), observation = await observeBrowserCategory(page, target);
+    const category = observation.category;
+    if (!category) return;
+    this.keepCategoryWindow(context, this.entry(context));
+    if (ownerHandoffCategories.has(category)) this.handoffCategory(context, category);
+    const registry = this.actionRegistry;
+    if (!registry?.judgeStep || !registry.takeStepYeses) throw new Error('Browser category confirmation is unavailable; this step was not performed.');
+    // Bind the yes to this document and category, not a broad website or a previous conversation grant.
+    const index = observation.document * 10 + browserCategories.indexOf(category);
+    const used = withBrowserCategory(context, category, () => registry.judgeStep!(tool, args, context, new URL(url).host, index));
+    if (page.url() !== url || await page.evaluate(() => Math.floor(performance.timeOrigin)) !== observation.document)
+      throw new Error('The browser document changed. Review this category action again.');
+    if (used && !registry.takeStepYeses([used], context)) throw new Error('That browser confirmation was already used. Ask again.');
+  }
+  /** The pending browser download is saved only after the tool's exact once-only approval. */
+  pendingDownloadHost(id: string, context: ToolContext): string | null {
+    const download = this.sessions.get(this.key(context))?.pendingDownloads?.get(id);
+    if (!download) return null;
+    try { return new URL(download.url()).host; } catch { return null; }
+  }
+  async confirmedDownload(id: string, context: ToolContext) {
+    return this.operation(context, async (_page, check) => {
+      const pending = this.entry(context).pendingDownloads, download = pending?.get(id);
+      if (!download) throw new Error('That pending browser download is no longer available.');
+      check(); pending!.delete(id);
+      try { return await this.saveDownload(download); }
+      finally { await download.cancel().catch(() => undefined); }
+    });
+  }
+  /** A named permission for the current exact origin in Branch's private context only. */
+  async confirmedPermission(origin: string, permission: 'camera' | 'microphone' | 'geolocation', context: ToolContext) {
+    return this.operation(context, async (page, check) => {
+      if (this.entry(context).borrowed) throw new Error('Change permissions in your own browser yourself; Branch only grants them in its private browser.');
+      if (new URL(page.url()).origin !== origin) throw new Error('The page is no longer on the origin you approved.');
+      check();
+      try { await page.context().grantPermissions([permission], { origin }); check(); }
+      catch (error) { await page.context().clearPermissions().catch(() => undefined); throw error; }
+      return { origin, permission, granted: true, lifetime: 'this private browser context' };
+    });
+  }
   async click(role: 'button' | 'link', name: string, context: ToolContext) {
     this.entry(context).pressed = true; // mac7/vault-autofill: wherever this lands came off a page
     return this.operation(context, async page => {
-      await page.getByRole(role, { name, exact: true }).click();
+      const target = page.getByRole(role, { name, exact: true });
+      await this.guardCategory(page, target, 'browser.click', { role, name }, context);
+      await target.click();
       return { url: page.url(), clicked: name };
     }, 500);
   }
   async fill(label: string, value: string, context: ToolContext) {
     return this.operation(context, async (page, check) => {
       const locator = page.getByLabel(label, { exact: true });
+      await this.guardCategory(page, locator, 'browser.fill', { label, value }, context);
       if ((await locator.getAttribute('type'))?.trim().toLowerCase() === 'password')
         throw new Error('Password fields require a dedicated credential integration');
       check();
@@ -720,11 +809,16 @@ export class BranchBrowser {
     });
   }
   async keys(input: z.infer<typeof KeysSchema>, context: ToolContext) {
-    return this.operation(context, async (page, check) => { check(); return pressKeys(page, input); });
+    return this.operation(context, async (page, check) => {
+      const focused = page.locator(':focus');
+      await this.guardCategory(page, await focused.count() === 1 ? focused : null, 'browser.keys', input, context);
+      check(); return pressKeys(page, input);
+    });
   }
   async select(input: z.infer<typeof SelectSchema>, context: ToolContext) {
     return this.operation(context, async (page, check) => {
       const element = await this.found(context, page, input);
+      await this.guardCategory(page, element, 'browser.select', input, context);
       check();
       return { url: page.url(), ...await chooseOption(element, input) };
     });
@@ -804,12 +898,13 @@ export class BranchBrowser {
     // Dogfood D4: a key on the page itself (Escape on a cookie wall), in Branch's own browser and nowhere else.
     if (input.action === 'press') {
       const key = pageKey(input.value);
-      return this.operation(context, async page => { await page.keyboard.press(key); return { url: page.url(), action: 'press', key }; });
+      return this.operation(context, async page => { await this.guardCategory(page, null, 'browser.act', input, context); await page.keyboard.press(key); return { url: page.url(), action: 'press', key }; });
     }
     return this.operation(context, async (page, check) => {
       const found = await healResolve(page, input, 2000,
         { keyOf: id => entry.marks.keyOf(id), liveKey: id => liveMarkKey(page, id) });
       check();
+      await this.guardCategory(page, found.locator, 'browser.act', input, context);
       if (input.action === 'fill') {
         if ((await found.locator.getAttribute('type'))?.trim().toLowerCase() === 'password')
           throw new Error('Password fields require a dedicated credential integration');
@@ -1234,9 +1329,14 @@ export class BranchBrowser {
     };
   }
 
-  async closeRun(context: Pick<ToolContext, 'owner' | 'runId'>): Promise<void> {
+  async closeRun(context: Pick<ToolContext, 'owner' | 'runId' | 'waitingForInput'>): Promise<void> {
     const key = this.key(context), entry = this.sessions.get(key);
     if (!entry || entry.held) return; // w911 (A1726): a benchmark window is closed by the benchmark
+    if (entry.categoryWaiting && context.waitingForInput) return;
+    if (entry.categoryExpiry) clearTimeout(entry.categoryExpiry);
+    entry.categoryExpiry = undefined; entry.categoryWaiting = false;
+    for (const download of entry.pendingDownloads?.values() ?? []) await download.cancel().catch(() => undefined);
+    entry.pendingDownloads?.clear();
 
     if (entry.control) {
       this.controls.finishRun(context.owner, context.runId);
@@ -1367,8 +1467,18 @@ export function pageKey(value: string | undefined): string {
   return found === 'Space' ? ' ' : found;
 }
 export function registerBrowser(registry: ToolRegistry, browser: BranchBrowser): void {
+  browser.setActionRegistry(registry);
   registry.onRunFinished(context => browser.closeRun(context));
   const host = (_a: unknown, c: ToolContext) => browser.hostFor(c);
+  registry.register({ name: 'browser.download', permission: 'browser.interact',
+    description: 'Save one pending browser download, identified by pendingId in the downloads result. Requires owner confirmation just this once; existing file type and size limits still apply.',
+    parameters: z.object({ id: z.string().uuid() }).strict(),
+    execute: (a, c) => browser.confirmedDownload(a.id, c), target: (a, c) => browser.pendingDownloadHost(a.id, c) });
+  registry.register({ name: 'browser.permission', permission: 'browser.interact',
+    description: 'Ask the owner before granting camera, microphone or geolocation to the exact current HTTPS origin in Branch’s private browser. Never changes permissions in a borrowed browser.',
+    parameters: z.object({ origin: z.string().url().refine(value => { try { const url = new URL(value); return url.protocol === 'https:' && url.origin === value; } catch { return false; } }),
+      permission: z.enum(['camera', 'microphone', 'geolocation']) }).strict(),
+    execute: (a, c) => browser.confirmedPermission(a.origin, a.permission, c), target: a => new URL(a.origin).host });
   registry.register({ name: 'browser.owner_input', permission: 'browser.interact',
     description: 'Page input reserved for the owner window holding the browser controls.', parameters: OwnerInputSchema,
     execute: (input, context) => browser.ownerInput(input, context), target: host });
