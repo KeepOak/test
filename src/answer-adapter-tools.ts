@@ -6,7 +6,7 @@ import { AdaptAnswerInput } from './answer-adapters.js';
 export function registerAnswerAdapters(registry: ToolRegistry, runtime: Runtime): void {
   registry.register({
     name: 'answers.adapt', permission: 'specialists.use',
-    description: 'Ask this task’s model for typed output using chat, JSON or XML fields. Supply declared input/output fields and optional typed demonstrations. Uses the task budget with no tools; a malformed answer gets at most one formatting repair.',
+    description: 'Ask this task’s model for typed chat, JSON or XML output. Declare primitive or nested object fields (objects require fields), primitive/object arrays, optional and nullable flags, and optional typed demonstrations. Uses the task budget with no tools; at most one formatting repair.',
     parameters: AdaptAnswerInput,
     execute: (input, context) => runtime.adapted(context, input),
   });
