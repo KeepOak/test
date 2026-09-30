@@ -86,6 +86,8 @@ async function configuredApp(options: Parameters<typeof createBranch>[0]) {
       app.channelHost,
     );
     app.browser = integrations.hosted.browser ?? null;
+    // UP-SCREEN-004: a check a browser step met reaches the owner's webhooks and chats as a question does.
+    if (app.browser) app.browser.notify = (kind, data) => app.runtime.notifyEvent(kind, data);
     app.studies.browser = integrations.hosted.browser; // w911 (A1726) hook: MiniWoB studies open their page in this browser
     app.reach = { browserOrigins: integrations.hosted.browserOrigins ?? [], browserAnyWebsite: integrations.hosted.browserAnyWebsite === true,
       commandsMayReachInternet: integrations.hosted.commandsNetless !== true };

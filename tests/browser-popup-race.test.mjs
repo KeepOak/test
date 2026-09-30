@@ -20,7 +20,7 @@ function fakePage(name) {
     isClosed: () => page.closes > 0,
     opener: async () => null,
     url: () => "about:blank",
-    route: async () => {}, unroute: async () => {}, addInitScript: async () => {},
+    route: async () => {}, unroute: async () => {}, addInitScript: async () => {}, routeWebSocket: async () => {},
   });
   return page;
 }

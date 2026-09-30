@@ -3656,3 +3656,20 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+
+### Browser P0s (UP-SCREEN-001, -003, -004): Hermes Agent (MIT); Playwright (Apache-2.0), Stagehand and browser-use (MIT), ideas only
+
+- The "are you a person?" title phrases in `src/integrations/browser-challenge.ts` are a subset of `_BOT_DETECTION_TITLE_PATTERNS` in Hermes Agent's `tools/browser_tool.py` (https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/browser_tool.py), used under the MIT licence below.
+- Letting a page's WebSockets through a route that checks each address, then `connectToServer()`, follows Playwright MCP's allowlist route in `packages/playwright-core/src/tools/backend/context.ts` (https://github.com/microsoft/playwright/blob/0bd86d523fef2a1d134c528998e727b38a6963a8/packages/playwright-core/src/tools/backend/context.ts, Apache-2.0). Written afresh; no code was copied.
+- Healing an action from a fresh look at the page rather than from the first near match follows `selfHealAction` in Stagehand's `packages/extension/services/actService.ts` (https://github.com/browserbase/stagehand/blob/ad2bf12ea7abd95bb1d6f3a59600842a0954fffb/packages/extension/services/actService.ts, MIT). Written afresh; no code was copied.
+- Holding a task on an event until a check is finished follows `wait_if_captcha_solving` in browser-use's `browser_use/browser/watchdogs/captcha_watchdog.py` (https://github.com/browser-use/browser-use/blob/4cbe921673b48a488f5415d9159249afd12a625b/browser_use/browser/watchdogs/captcha_watchdog.py, MIT). Their cloud solver was not taken: Branch never solves or works around a check. Written afresh; no code was copied.
+
+Hermes Agent, used under the MIT licence:
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.

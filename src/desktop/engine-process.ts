@@ -223,6 +223,8 @@ async function start(config: EngineConfig): Promise<void> {
     const integrations = await loadIntegrations(branch.registry, process.env.BRANCH_INTEGRATIONS, process.env, branch.secretsFor, branch.channelHost);
     integrationClose = integrations.close;
     branch.browser = integrations.hosted.browser ?? null;
+    // UP-SCREEN-004: a check a browser step met reaches the owner's webhooks and chats as a question does.
+    if (branch.browser) branch.browser.notify = (kind, data) => branch.runtime.notifyEvent(kind, data);
     branch.studies.browser = integrations.hosted.browser;
     branch.issues = integrations.hosted.issues ?? null;
     // The firewall card says what the browser may open, as the command-line launch does (src/cli.ts).
