@@ -229,6 +229,20 @@ export class KookChannel implements ChannelAdapter {
     const parsed = z.object({ msg_id: z.string() }).passthrough().safeParse(data);
     return parsed.success ? parsed.data.msg_id : undefined;
   }
+  async react(chatId: string, messageId: string, emoji: string, previous?: string): Promise<void> {
+    const match = /^([uc]):([\w-]{1,40})$/.exec(chatId);
+    if (!match || !/^[\w-]{1,80}$/.test(messageId)) throw new Error("Invalid KOOK reaction destination.");
+    const convert = (value: string) => {
+      // KOOK's built-in emoji IDs are single code points; use a wrench for the tool-work status.
+      if (value === "\u{1F468}\u200D\u{1F4BB}") return "[#128295;]";
+      const points = Array.from(value).filter((point) => point.codePointAt(0) !== 0xfe0f);
+      if (points.length !== 1) throw new Error("KOOK status reactions require a single Unicode emoji.");
+      return `[#${points[0]!.codePointAt(0)};]`;
+    };
+    const path = match[1] === "u" ? "/direct-message" : "/message";
+    if (previous && previous !== emoji) await this.call(`${path}/delete-reaction`, { method: "POST", json: { msg_id: messageId, emoji: convert(previous) } });
+    await this.call(`${path}/add-reaction`, { method: "POST", json: { msg_id: messageId, emoji: convert(emoji) } });
+  }
 }
 
 function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }

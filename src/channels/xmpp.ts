@@ -64,6 +64,7 @@ interface Session {
 }
 
 export class XmppChannel implements ChannelAdapter {
+  private readonly chatStates = new Map<string, "active" | "composing">();
   readonly id: string;
   readonly kind = "xmpp";
   readonly maxTextLength = 3500;
@@ -225,6 +226,10 @@ export class XmppChannel implements ChannelAdapter {
     if (type !== "get" && type !== "set") return;
     const to = iq.attrs.from ? ` to='${escapeAttr(iq.attrs.from)}'` : "";
     if (type === "get" && child(iq, "ping", NS.ping)) { this.write(`<iq type='result' id='${escapeAttr(id)}'${to}/>`); return; }
+    if (type === "get" && child(iq, "query", "http://jabber.org/protocol/disco#info")) {
+      this.write(`<iq type='result' id='${escapeAttr(id)}'${to}><query xmlns='http://jabber.org/protocol/disco#info'><feature var='http://jabber.org/protocol/chatstates'/></query></iq>`);
+      return;
+    }
     // RFC 6120 section 8.4: a request nobody here understands is answered with an error, never ignored.
     this.write(`<iq type='error' id='${escapeAttr(id)}'${to}><error type='cancel'><service-unavailable xmlns='${NS.stanzas}'/></error></iq>`);
   }
@@ -237,6 +242,14 @@ export class XmppChannel implements ChannelAdapter {
   }
 
   private onStanzaMessage(stanza: XmlElement): void {
+    const from = splitJid(stanza.attrs.from ?? "")[0].toLowerCase();
+    if (from && stanza.attrs.type === "chat" && !child(stanza, "delay", "urn:xmpp:delay")) {
+      const state = stanza.children.find((c) => c.attrs.xmlns === "http://jabber.org/protocol/chatstates");
+      if (state) {
+        if (this.chatStates.size >= 1000 && !this.chatStates.has(from)) this.chatStates.delete(this.chatStates.keys().next().value!);
+        if (!this.chatStates.has(from)) this.chatStates.set(from, "active");
+      } else if (child(stanza, "body")) this.chatStates.delete(from);
+    }
     const inbound = this.inbound(stanza);
     if (inbound) void this.onMessage(inbound).catch(() => undefined);
   }
@@ -277,8 +290,18 @@ export class XmppChannel implements ChannelAdapter {
     const to = this.ids.long(chatId);
     const type = this.rooms.has(to.toLowerCase()) ? "groupchat" : "chat";
     const id = `branch-${Date.now().toString(36)}-${++this.counter}`;
-    this.write(`<message to='${escapeAttr(to)}' type='${type}' id='${id}'><body>${escapeText(text.slice(0, this.maxTextLength))}</body></message>`);
+    const active = this.chatStates.has(to.toLowerCase()) ? "<active xmlns='http://jabber.org/protocol/chatstates'/>" : "";
+    this.write(`<message to='${escapeAttr(to)}' type='${type}' id='${id}'><body>${escapeText(text.slice(0, this.maxTextLength))}</body>${active}</message>`);
+    if (active) this.chatStates.set(to.toLowerCase(), "active");
     return id;
+  }
+  async sendTyping(chatId: string): Promise<void> {
+    if (!this.session || this.state.state !== "connected") throw new Error("XMPP is not connected.");
+    const to = this.ids.long(chatId), key = to.toLowerCase();
+    // Only direct peers that negotiated states; no room-wide presence disclosure or repeated composing stanza.
+    if (!this.chatStates.has(key) || this.rooms.has(key) || this.chatStates.get(key) === "composing") return;
+    this.write(`<message to='${escapeAttr(to)}' type='chat'><composing xmlns='http://jabber.org/protocol/chatstates'/></message>`);
+    this.chatStates.set(key, "composing");
   }
 }
 
