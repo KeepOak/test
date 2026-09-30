@@ -190,8 +190,10 @@ function toolsTab() {
   const k = T9.k, items = itemsOf(k), sel = items.find((x) => x.id === T9.sel) ?? items[0];
   const nav = KINDS.map(([id, label, icon, desc]) => `<button type="button" data-act="t9-kind" data-v="${id}" aria-current="${k === id}">${ic(icon, 's')}<span><b>${esc(say(label))}</b><small>${esc(say(desc))}</small></span><em>${itemsOf(id).filter((x) => x.on).length}</em></button>`).join("");
   const [act, words] = ADD[k], label = say(words);
+  const ownerRequests = k === "mcp" && E.profiles?.isOwner !== false
+    ? `<button type="button" class="btn sm t9-addbtn" data-act="mcp-owner-requests">${esc(t("window.mcp-asks.title"))}</button>` : "";
   const rows = items.map((x) => `<button type="button" class="t9-item" data-act="t9-sel" data-v="${esc(x.id)}" aria-current="${sel?.id === x.id}"><span class="ico-tile t9i" data-css="width:32px;height:32px">${ic(x.icon ?? KINDS.find(([id]) => id === k)[2], 's')}</span><span class="grow"><b>${esc(x.name)}</b><small>${esc(x.sub)}</small></span>${mark(x)}</button>`).join("");
-  return `<div class="t9"><nav class="t9-nav" aria-label="${t("window.places.customize.kinds-of-tools")}">${nav}<button type="button" class="btn pri t9-addbtn" data-act="${act}" data-v="${k}">${ic('plus', 's')}${label}</button></nav>
+  return `<div class="t9"><nav class="t9-nav" aria-label="${t("window.places.customize.kinds-of-tools")}">${nav}<button type="button" class="btn pri t9-addbtn" data-act="${act}" data-v="${k}">${ic('plus', 's')}${label}</button>${ownerRequests}</nav>
     <div class="t9-list">${k === "skills" && sel?.id !== LEARN_ID ? learnTile() : ""}${learnedCard()}${rows}${suggested()}</div>${sel ? detail(k, sel) : ""}</div>${toolsSection(k, sel?.id)}`;
 }
 

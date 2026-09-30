@@ -1,13 +1,13 @@
 import { api } from './core/api.js';
 import { toast } from './core/ui.js';
+import { on } from './core/actions.js';
+import { markLive } from './core/features.js';
 import { t } from '../i18n.js';
 
 /** A visible, local owner form is the heartbeat; closing it immediately stops renewing capability. */
 export function initMcpOwnerRequests() {
-  const button = document.createElement('button');
-  button.type = 'button'; button.className = 'btn sm'; button.textContent = t('window.mcp-asks.title');
-  button.addEventListener('click', open);
-  document.body.append(button);
+  markLive(['mcp-owner-requests']);
+  on('mcp-owner-requests', open);
 }
 async function open() {
   const panel = document.createElement('dialog');
