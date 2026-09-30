@@ -373,6 +373,30 @@ export class AccountsService {
       provider.complete({ messages: [{ role: "user", content: "Reply with the single word: ok" }], tools: [], signal, maxTokens: 16 }));
   }
 
+  /** One bounded setup hello through exactly this account; never pool/fallback routing. */
+  async hello(pool: string, account: string, guard: () => void) {
+    guard();
+    const preset = [...this.deps.models.presets.values()].find(one => this.poolFor(one)?.pool === pool);
+    const found = preset ? this.poolFor(preset) : null;
+    const listed = this.usablePool(pool)?.accounts.find(one => one.id === account && !one.disabled);
+    const primary = account === primaryAccount && !this.pool(pool);
+    if (!preset || !found || !listed && !primary) throw new Error("This enabled model account is not available. Add or sign in to it again.");
+    if (listed && this.capReached(pool, listed)) throw new Error("This account has reached its spending cap.");
+    const own = await this.providerFor(pool, found.kind, preset, account);
+    guard();
+    if (this.pool(pool) && !this.usablePool(pool)?.accounts.some(one => one.id === account && !one.disabled))
+      throw new Error("This account was disabled or removed. Choose an enabled account.");
+    const started = this.now();
+    const completion = await (own ?? unwrapProvider(preset.provider)).complete({
+      messages: [{ role: "user", content: "Reply with the single word OK." }], tools: [], maxTokens: 16,
+      signal: AbortSignal.timeout(30000),
+    });
+    guard();
+    if (!completion.content.trim()) throw new Error("The model returned no greeting. Choose another model or retry.");
+    if (listed) this.record(pool, listed, preset.model, completion);
+    return { ok: true, pool, account, accountLabel: listed?.label ?? "Primary account", presetId: preset.id, presetName: preset.name,
+      model: preset.model, reply: completion.content.slice(0, 80), ms: this.now() - started };
+  }
   /** Forgets the connections built for one account, after its key changed or it was removed. */
   dropBuilt(pool: string, account: string): void {
     for (const key of [...this.built.keys()]) if (key.startsWith(`${pool}\u0000`) && key.endsWith(`\u0000${account}`)) this.built.delete(key);

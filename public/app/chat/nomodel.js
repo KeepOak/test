@@ -6,6 +6,15 @@ import { esc } from "../core/dom.js";
 import { E } from "../core/state.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { run } from "../core/actions.js";
+
+export function recoverNoModel(error) {
+  if (E.profiles?.isOwner === false) return;
+  const words = String(error?.message ?? "");
+  if (!E.state?.modelNeeded && !words.includes("No model yet. Choose one in setup or in Settings › Models.")) return;
+  const button = document.createElement("button"); button.dataset.v = "1";
+  run(E.state?.onboarding?.done ? "addacct" : "onboard", button);
+}
 
 export function noModelRow() {
   const words = E.state?.modelNeeded;
