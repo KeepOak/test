@@ -1140,6 +1140,11 @@ export const ROUTES = {
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
   "/api/sessions": "look",
+  "/api/profile-gateways": "prefix",
+  "/api/profile-gateways/:id": "owner POST",
+  "/api/profile-gateways/:id/start": "owner POST",
+  "/api/profile-gateways/:id/stop": "owner POST",
+  "/api/profile-gateways/:id/route": "owner POST",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
   "/api/sessions/:id/branch": "other POST", // pass 17: a named path of the conversation, copied like duplicate
@@ -1360,6 +1365,8 @@ export const OUTBOUND = [
   // /api/workflows/:id, /api/audit), not a route of its own beyond /api/search, which src/server.ts defines.
   /^src\/unified-search\.ts$/,
   /^src\/never-break\/gateway\.ts$/, /^src\/commands\/catalog\.ts$/,
+  // PLAT-184: an isolated profile gateway's own worker routes, called by this engine; not routes of this one.
+  /^src\/profile-gateways\.ts$/,
   /^src\/channel-setup\/cli\.ts$/, // mac7/connect: `branch connect` calls the Set up routes of the running Branch
   // r17-i: callers of other computers' routes and of the relay's, not routes of this one.
   /^src\/reach\/(machines|remote-trunks|relay|continuity)\.ts$/,
