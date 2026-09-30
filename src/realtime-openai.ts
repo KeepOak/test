@@ -16,6 +16,8 @@ export interface OpenAiRealtimeOptions {
   endpoint: string;
   apiKey: string;
   runId?: string | null;
+  /** Legacy preview models still use beta; gpt-realtime models use the GA session shape. */
+  protocol?: "beta" | "ga";
 }
 
 /** OpenAI wants each tool as a flat entry with its schema under `parameters`. */
@@ -25,6 +27,8 @@ const asTool = (tool: RealtimeTool): Record<string, unknown> => ({
 
 export class OpenAiRealtimeSession extends SocketSession {
   readonly service = "openai" as const;
+  private get ga(): boolean { return this.options.protocol === "ga" ||
+    (this.options.protocol !== "beta" && /^gpt-realtime(?:-|$)/.test(this.settings.model)); }
   constructor(policy: NetworkPolicy, settings: RealtimeSettings, private readonly options: OpenAiRealtimeOptions) {
     super(policy, settings);
   }
@@ -36,13 +40,14 @@ export class OpenAiRealtimeSession extends SocketSession {
     return {
       url: url.href,
       connect: {
-        headers: { authorization: `Bearer ${this.options.apiKey}`, "openai-beta": "realtime=v1" },
+        headers: { authorization: `Bearer ${this.options.apiKey}`, ...(this.ga ? {} : { "openai-beta": "realtime=v1" }) },
         what: "a live voice conversation with your model provider",
         runId: this.options.runId ?? null,
       },
     };
   }
   protected greet(): void {
+    if (this.ga) { this.greetGa(); return; }
     this.send({
       type: "session.update",
       session: {
@@ -57,6 +62,19 @@ export class OpenAiRealtimeSession extends SocketSession {
         tool_choice: "auto",
       },
     });
+  }
+  /** GA shape adapted from OpenClaw realtime-voice-session-policy.ts, 1794d8b4ef8 (MIT). */
+  private greetGa(): void {
+    this.send({ type: "session.update", session: {
+      type: "realtime", model: this.settings.model, output_modalities: ["audio"],
+      instructions: this.settings.instructions.slice(0, 8000),
+      audio: {
+        input: { format: { type: "audio/pcm", rate: 24000 }, transcription: { model: "whisper-1" },
+          turn_detection: this.settings.serverVoiceDetection ? { type: "server_vad" } : null },
+        output: { format: { type: "audio/pcm", rate: 24000 }, ...(this.settings.voice ? { voice: this.settings.voice } : {}) },
+      },
+      tools: this.settings.tools.map(asTool), tool_choice: "auto",
+    } });
   }
   sendAudio(chunk: Uint8Array): void {
     this.send({ type: "input_audio_buffer.append", audio: toBase64(chunk) });
@@ -93,11 +111,14 @@ export class OpenAiRealtimeSession extends SocketSession {
   }
   protected receive(message: Record<string, unknown>): void {
     const type = textAt(message["type"]);
-    if (type === "response.audio.delta") { this.onAudio(fromBase64(textAt(message["delta"]))); return; }
-    if (type === "response.audio_transcript.delta")
+    // Beta and GA names adapted from OpenClaw realtime-voice-events.ts, 1794d8b4ef8 (MIT).
+    if (["response.audio.delta", "response.output_audio.delta", "conversation.output_audio.delta"].includes(type))
+      { this.onAudio(fromBase64(textAt(message["delta"]) || textAt(message["data"]))); return; }
+    if (["response.audio_transcript.delta", "response.output_audio_transcript.delta", "response.text.delta",
+      "response.output_text.delta", "conversation.output_transcript.delta"].includes(type))
       { this.onTranscript({ who: "assistant", text: textAt(message["delta"]), final: false }); return; }
-    if (type === "response.audio_transcript.done")
-      { this.onTranscript({ who: "assistant", text: textAt(message["transcript"]), final: true }); return; }
+    if (["response.audio_transcript.done", "response.output_audio_transcript.done", "response.text.done", "response.output_text.done"].includes(type))
+      { this.onTranscript({ who: "assistant", text: textAt(message["transcript"]) || textAt(message["text"]), final: true }); return; }
     if (type === "conversation.item.input_audio_transcription.completed")
       { this.onTranscript({ who: "person", text: textAt(message["transcript"]), final: true }); return; }
     if (type === "response.function_call_arguments.done") {
