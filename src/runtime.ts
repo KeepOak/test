@@ -1222,6 +1222,7 @@ export class Runtime {
       // FQ-routing.isolated-agents: pass the agent from executeTool options to memory.put and other scope-aware tools.
       ...(options.agent ? { agent: options.agent } : {}),
     });
+    if (options.appCaller) context.appCaller = true;
     this.store.event(run.id, "tool.started", { name, manual: true });
     let result: unknown;
     let failure: unknown;
@@ -4993,7 +4994,9 @@ ${run.output.slice(0, 6000)}`;
     if (!this.registry.isExternal(call.name)) return;
     const app = mcpAppIn(result);
     if (!app) return;
-    this.store.event(context.runId, "mcp.app", { tool: call.name, server: call.name.split(".")[1] ?? call.name, ...app });
+    this.store.event(context.runId, "mcp.app", { tool: call.name,
+      server: this.registry.sourceOf(call.name)?.replace(/^mcp:/, "") ?? call.name.split(".")[1] ?? call.name,
+      input: call.arguments, result, ...app });
   }
   /**
    * hardening-3: a model's call read once — the arguments cleaned of keys the tool does not take

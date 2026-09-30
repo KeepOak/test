@@ -142,7 +142,7 @@ export class ToolRegistry {
   descriptions(permissions: ReadonlySet<string>, options: { diet?: boolean } = {}): ToolDescription[] {
     return [...this.tools.values()]
       .sort((a, b) => this.firstSeen.get(a.name)! - this.firstSeen.get(b.name)!)
-      .filter((t) => permissions.has(t.permission))
+      .filter((t) => t.modelVisible !== false && permissions.has(t.permission))
       .map((t) => {
         const described: ToolDescription = {
           name: t.name,
@@ -335,6 +335,7 @@ export class ToolRegistry {
     context.signal.throwIfAborted();
     const tool = this.tools.get(name);
     if (!tool) throw new Error(`Unknown tool: ${name}`);
+    if (tool.modelVisible === false && !context.appCaller) throw new Error('This tool is available only through its server app.');
     if (!context.permissions.has(tool.permission))
       throw new Error(`Permission denied: ${tool.permission}`);
     context.budget.step(context.signal);

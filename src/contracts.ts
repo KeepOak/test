@@ -352,6 +352,8 @@ export class Budget {
   }
 }
 export interface ToolContext {
+  /** Set only by the MCP Apps host after owner confirmation; app-only tools stay unavailable to the model. */
+  appCaller?: boolean;
   owner: string;
   workspace: string;
   runId: string;
@@ -459,6 +461,9 @@ export interface ToolDefinition<T = unknown> {
   group?: string;
   /** From a connected server, a plugin or a skill package: its description is somebody else's text. */
   external?: boolean;
+  /** MCP Apps visibility, kept independently from the permission needed to execute the tool. */
+  appCallable?: boolean;
+  modelVisible?: boolean;
   /** Where it came from ("plugin:<id>"; a server's tools are known by their names), for the owner's context modes. */
   source?: string;
   /**

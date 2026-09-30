@@ -430,6 +430,8 @@ export async function startMcp(
   registry: ToolRegistry, server: unknown, env: NodeJS.ProcessEnv,
   policy: NetworkPolicy | undefined, host: McpHost | undefined,
 ): Promise<(() => Promise<void>) | null> {
+  const configured = McpConfigSchema.parse(server);
+  if (host?.appSupport?.(configured.id)) server = { ...configured, apps: true };
   const guard = policy ? { guard: (base: typeof fetch) => policy.guard(base) } : undefined;
   // mac3/security-check: a server fetched from a package registry is looked up in the malware list
   // before it is added, and again before it is opened later (src/security-audit/malware-check.ts).
@@ -475,6 +477,7 @@ async function vetLaunch(server: unknown, host: McpHost | undefined): Promise<vo
 }
 /** What `loadIntegrations` needs to run outside servers on demand rather than at startup. */
 export interface McpHost {
+  appSupport?: (id: string) => boolean;
   connectWhen(): 'startup' | 'on-demand';
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
