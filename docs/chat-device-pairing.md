@@ -1,6 +1,6 @@
 # Device pairing requested from chat
 
-Type `/pair phone [device name]` or `/pair computer [device name]` in an approved account the owner explicitly marked as their own, in a direct chat. Group, voice, edited and catch-up messages cannot request pairing. Branch must be unlocked and outside Lockdown, and current sender access must allow the request.
+Type `/pair phone [device name]` or `/pair computer [device name]` in an approved account the owner explicitly marked as their own, in a direct chat on a transport whose servers vouch for senders (the existing `ownerDmHere` contract). Email, SMS and posted webhooks cannot request pairing. Group, voice, edited and catch-up messages cannot request pairing. Branch must be unlocked and outside Lockdown, and current sender access must allow the request.
 
 The request expires after two minutes and does not create a code, key, device record or invitation. The local owner window offers **Create invitation here**, showing the channel, direct chat, sender and intended device kind/name. This uses the existing `/api/devices/invite` route with a one-time proposal identifier. The server checks expiry, original sender approval/owner identity/current access, local-window origin and target kind again. The proposal identifier is not a device credential and is never returned to chat.
 

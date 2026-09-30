@@ -1038,7 +1038,8 @@ export class ChannelRouter {
     && this.pairProposalAccess(proposal));
   private pairProposalAccess(proposal: { channel: string; senderId: string }): boolean {
     const attached = this.adapters.get(proposal.channel);
-    return !!attached && this.access(proposal, attached.policy) === "allowed";
+    return !!attached && ownerDmHere(this.store, this.runtime.owner, attached.adapter.kind, { ...proposal, chatKind: "direct" })
+      && this.access(proposal, attached.policy) === "allowed";
   }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {
