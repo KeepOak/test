@@ -38,6 +38,7 @@ import { t, language } from "../../i18n.js";
 import { gsel } from "../core/gsel.js";
 import { embeddingSourceRow } from "./embedding-source.js";
 import { vectorSourceRow } from "./vector-source.js";
+import { nativeMemorySourceRow } from "./native-memory-source.js";
 
 const L = { labels: { catalog: [], labels: [] }, label: null, graph: null, names: [], kg: null, links: [], problem: "", picture: { topics: [], docs: [], edges: [] } };
 const askable = (d) => Boolean(d.filePath || d.uploaded) && /\.(csv|tsv|json|xlsx)$/i.test(d.filePath ?? d.name);
@@ -219,7 +220,7 @@ const MANAGE = [
   ["sources", "retry", ["Bring things in from other services", "Keeps a copy of chosen items from Drive, Notion or a notes vault, in sync.", "See sources"]],
   ["pages", "doc", ["Kept answers and long articles", "An answer you like becomes a page you can reopen; a long article is written section by section.", "See pages"]],
 ];
-export const manageSection = () => (level() >= 1 ? `<div class="sec x15-sec"><h2>${t("window.places.library17.managing-what-it-reads")}</h2><div class="rows">${embeddingSourceRow()}${vectorSourceRow()}${MANAGE.map(([k, i, w]) => demoPlace17(k, i, w)).join("")}</div></div>` : "");
+export const manageSection = () => (level() >= 1 ? `<div class="sec x15-sec"><h2>${t("window.places.library17.managing-what-it-reads")}</h2><div class="rows">${embeddingSourceRow()}${vectorSourceRow()}${nativeMemorySourceRow()}${MANAGE.map(([k, i, w]) => demoPlace17(k, i, w)).join("")}</div></div>` : "");
 
 /* ---------- Memory › How it learns ---------- */
 const LEARN = [

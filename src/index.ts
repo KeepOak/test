@@ -218,6 +218,7 @@ import { MemoryHistory, registerMemoryHistory } from "./memory-git.js";
 import { EphemeralDocuments, EphemeralRetriever, registerEphemeralDocuments } from "./memory-ephemeral.js";
 import { CachedEmbeddings, asEmbeddings, onThisComputer } from "./embeddings.js";
 import { assertLocalRuntimeAllowed, localRuntimeFetch } from "./local-policy.js";
+import { NativeMemory } from "./native-memory.js";
 import { MemoryConsolidation } from "./memory-consolidate.js";
 import { PracticeWorkspace } from "./practice-workspace.js";
 import { ProviderPlugins } from "./provider-plugins.js";
@@ -1276,6 +1277,22 @@ ${result.output || "(it said nothing)"}`;
   const knowledgeBases = new KnowledgeBases(store, files, runtime.models,
     { charge: (runId, tokens) => store.addUsage(runId, tokens, 0, undefined, false) }, undefined, guardedFetch);
   knowledgeBases.embeddingSources.localFetch = embeddingLocalFetch;
+  const nativeMemory = new NativeMemory(store, runtime.owner, {
+    fetchFor: (endpoint) => onThisComputer(endpoint) ? embeddingLocalFetch(endpoint) : guardedFetch,
+    assertAllowed: (endpoint, target) => { if (onThisComputer(endpoint)) assertLocalRuntimeAllowed(web.policy, new URL(target)); else web.policy.assertAllowed(target); },
+    locked: () => sessionLock.locked(), scrub: (text) => redactLeaksIn(runtime.hideSecrets(text)).value,
+    key: async (settings) => {
+      if (!settings.secret) return "";
+      if (!settings.secretProject || !store.projects.list(runtime.owner).some((project) => project.id === settings.secretProject))
+        throw new Error("The original native memory locker project is unavailable");
+      const key = (await store.secrets.resolve(runtime.owner, settings.secretProject, [settings.secret],
+        { purpose: `Native ${settings.provider} memory context` }))[settings.secret]!;
+      if (!key) throw new Error("The original native memory locker reference is unavailable");
+      return settings.provider === "honcho" ? `Bearer ${key}` : key;
+    },
+  });
+  runtime.nativeMemoryHooks = nativeMemory;
+  releaseOnLock.push(async () => nativeMemory.cancel());
   knowledgeBases.vectorServiceDependencies = {
     fetchFor: (endpoint) => onThisComputer(endpoint) ? embeddingLocalFetch(endpoint) : guardedFetch,
     current: (owner, settings) => JSON.stringify(knowledgeBases.vectorStoreSettings(owner)) === JSON.stringify(settings),
@@ -1779,6 +1796,8 @@ ${result.output || "(it said nothing)"}`;
     live,
     /** Finding, tidying and moving saved facts. */
     memory,
+    /** Native outside conversation context, alongside accepted facts and with scoped cleanup journals. */
+    nativeMemory,
     /** Documents and saved facts behind one interface, with the best answer put first. */
     retrieval,
     /** What is put in front of a task before the model reads it, in order. */
@@ -2007,6 +2026,7 @@ ${result.output || "(it said nothing)"}`;
       summary: (limit?: number) => liveScoreSummary(liveScores(store, runtime.owner, limit)),
     },
     close: () => (closing ??= (async () => {
+      nativeMemory.close();
       // bucket-18 (A0300): nothing is sent to GitHub while the app is closing.
       stopPullRequests();
       stopOfferingPullRequests();
@@ -2338,6 +2358,8 @@ export * from "./embeddings.js";
 export * from "./vector-store.js";
 export * from "./vector-store-file.js";
 export * from "./vector-store-remote.js";
+export * from "./native-memory.js";
+export * from "./native-memory-clients.js";
 export * from "./retrieval-filters.js";
 export * from "./retrieval-pipeline.js";
 export * from "./context-providers.js";
