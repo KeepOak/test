@@ -379,8 +379,10 @@ export function after(main) {
     const now = !same && $("#tl-now", box);
     if (now) box.scrollTop += now.getBoundingClientRect().top - box.getBoundingClientRect().bottom + 24;
     C.readSid = C.sessionId;
-    // A scroll box kept from the last draw already has its listener.
-    if (!heard.has(box)) box.addEventListener("scroll", () => { C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    // A scroll box kept from the last draw already has its listener. A box drawn over before the next frame is still sent
+    // the scroll queued on it, and off the page it reads 0 for everything, which looked like a reader at the end: only
+    // the box on screen says where the reader is.
+    if (!heard.has(box)) box.addEventListener("scroll", () => { if (!box.isConnected) return; C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
     heard.add(box);
     stillOutOfSight(box);
     lineAfter(box);
