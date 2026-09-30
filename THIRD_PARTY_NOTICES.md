@@ -3656,3 +3656,8 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+
+
+### Hermes weighted transcript windows (MIT approach)
+
+`public/app/chat/transcript-window.js` adapts the whole-turn weighted rendering budget and explicit earlier-page approach reviewed in pinned Hermes Agent `a9a54245b2311c705d29050b7f9868c015917aec`, `apps/desktop/src/components/assistant-ui/thread/list.tsx` and `transcript-window.tsx`. Branch uses its own DOM/state/scroll integration, including rooms, helper steps and prior Trunk conversations. The full Nous Research MIT copyright, permission and disclaimer are retained in the Hermes Agent entry above. No dependencies were added.

@@ -10421,5 +10421,7 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "conversation.render.earlier": "Show earlier · {count} earlier entries",
+  "conversation.render.latest": "View latest · {count} new entries"
 }

@@ -10422,5 +10422,7 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "conversation.render.earlier": "Afficher avant · {count} entrées précédentes",
+  "conversation.render.latest": "Voir les dernières · {count} nouvelles entrées"
 }

@@ -10421,5 +10421,7 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "conversation.render.earlier": "Mostrar anteriores · {count} entradas anteriores",
+  "conversation.render.latest": "Ver lo último · {count} entradas nuevas"
 }

@@ -10421,5 +10421,7 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "conversation.render.earlier": "Früheres anzeigen · {count} frühere Einträge",
+  "conversation.render.latest": "Neueste anzeigen · {count} neue Einträge"
 }

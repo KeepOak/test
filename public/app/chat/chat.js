@@ -1,3 +1,5 @@
+import { transcriptWindow, paintWeight, initTranscriptWindow, afterTranscriptWindow } from "./transcript-window.js";
+import { privateContext } from "./scroll-follow.js";
 /* The conversation (design doc 4.1–4.4): the header (merged into the title bar on wide windows), the thread, the
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
@@ -175,20 +177,23 @@ function askCard(q) {
 const shown = (m) => m.role !== "tool" && m.role !== "system" && m.from !== "branch" && !enginePrompt(m);
 const nextShown = (list, i) => list.slice(i + 1).find(shown);
 function thread() {
-  const info = whoHere(), list = C.messages, marks = pathMarks(list), line = LINE.now;
+  const info = whoHere(), all = C.messages, marks = pathMarks(all), line = LINE.now;
+  const view = transcriptWindow(`${privateContext()}:${C.sessionId ?? "new"}:messages`, all,
+    (m) => m.role === "user" && steerWords(m) === null && !chatSteerOf(m), paintWeight, FIND.on);
+  const list = view.items;
   /* Each reply's place among the replies, counted as the engine counts them for `authors`. */
   const index = new Map();
   let replies = 0;
-  for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
+  for (const m of all) { index.set(m, replies); if (countsAsReply(m)) replies++; }
   const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: line ? firstTimed(list) : null, used: new Set(), decided: new Set(), failed: new Set(), placed: new Set() };
   /* A room is drawn as the prototype's group conversation (chat/roomlook.js) once its record is read; its asks still follow. */
-  const inRoom = roomThread(info, list, C.sessionId);
+  const inRoom = roomThread(info, all, C.sessionId, FIND.on);
   if (inRoom !== null) T.out.push(inRoom);
   else list.forEach((m, i) => {
     if (!shown(m) || T.used.has(m)) return;
-    if (m.role === "user") userRow(T, m, i, marks);
+    if (m.role === "user") userRow(T, m, i + view.start, marks);
     else if (m.toolCalls?.length) toolRow(T, m, info, index);
-    else replyRow(T, m, i, info, index, marks);
+    else replyRow(T, m, i + view.start, info, index, marks);
     if (m.at) T.prev = m;
   });
   flushSteps(T);
@@ -199,8 +204,8 @@ function thread() {
   const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
   /* pass 18b: a room member's conversation, view only, is its messages alone; its questions are answered in the room. */
-  if (viewingHelper()) return marks.start + T.out.join("");
-  return summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + computerCard(C.messages) + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending || cardResumes() ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing;
+  if (viewingHelper()) return (inRoom === null ? view.controls : "") + marks.start + T.out.join("");
+  return (inRoom === null ? view.controls : "") + summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + computerCard(C.messages) + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending || cardResumes() ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing;
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -384,6 +389,7 @@ export function after(main) {
     stillOutOfSight(box);
     lineAfter(box);
   }
+  afterTranscriptWindow();
   applyFind();
   frameAfter(); // pass 18a: the helpers frame's clock, and the character window above it
   loadDictation();
@@ -919,6 +925,7 @@ export function init() {
   initBeside();
   initMessages({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
   initScrollFollow(() => C);
+  initTranscriptWindow(() => C);
   initMore({ state: () => C });
   initLeaveOut({ state: () => C, reopen: openConversation });
   initBranches({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
