@@ -42,6 +42,8 @@ export const PoolUpdateSchema = z.object({
   strategy: z.enum(strategies).optional(),
   autoSwitch: z.boolean().optional(),
   defaultAccount: accountName.nullable().optional(),
+  /** MODEL-050: helpers per account at once before the next helper takes another account. */
+  jobsPerAccount: z.number().int().min(1).max(16).optional(),
 }).strict();
 export const NoticeSchema = z.object({ pool: poolName }).strict();
 export const RemoveSchema = z.object({ pool: poolName, account: accountName }).strict();
@@ -139,6 +141,7 @@ async function replaceKey(service: AccountsService, pool: Pool, account: string,
   await service.deps.store.locker.set(service.deps.owner, keyProject(pool.pool), keyName(account), key);
   service.dropBuilt(pool.pool, account);
   service.statesOf(pool.pool).delete(account);
+  service.rests.forget(service.deps.owner, pool.pool, account); // a new key starts with no rest
 }
 
 export function updatePool(service: AccountsService, input: unknown) {
@@ -154,6 +157,7 @@ export function updatePool(service: AccountsService, input: unknown) {
     if (asked.defaultAccount) accountIn(pool, asked.defaultAccount);
     pool.defaultAccount = asked.defaultAccount;
   }
+  if (asked.jobsPerAccount !== undefined) pool.jobsPerAccount = asked.jobsPerAccount;
   save(service, settings);
   return viewPool(service, pool);
 }
@@ -172,6 +176,7 @@ export async function removeAccount(service: AccountsService, input: unknown) {
   service.dropBuilt(pool.pool, asked.account);
   service.statesOf(pool.pool).delete(asked.account);
   service.ledger.forget(service.deps.owner, pool.pool, asked.account);
+  service.rests.forget(service.deps.owner, pool.pool, asked.account);
   note(service, `${account.label} (${pool.pool})`, "An account was removed and its key or sign-in taken out of the locker", "removed");
   return viewPool(service, pool);
 }
