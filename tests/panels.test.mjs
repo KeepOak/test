@@ -94,6 +94,9 @@ test("a real task's command waiting on a yes shows in Terminal with the command 
       : { content: "done", toolCalls: [] };
   } };
   const { app } = await world(t, provider);
+  // Owner ruling 2026-09-30: commands no rule covers ship as "allow"; this owner keeps them asking, so one waits.
+  const { savePolicy } = await import("../dist/policy.js");
+  savePolicy(app.store, app.runtime.owner, { unmatchedCommands: "ask" });
   // The command tool comes with the terminal integration, so a stand-in of it is registered and given to the task: a
   // tool that is not there, or not the task's, is refused without a question (#498), and this one must be asked about.
   const { z } = await import("zod");
