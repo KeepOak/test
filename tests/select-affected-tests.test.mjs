@@ -262,3 +262,20 @@ test("Windows computer control runs Windows on a pull request; a file most tests
   assert.ok(checkedIn.platformSourceTests >= 1 && checkedIn.platformSourceTests < checkedIn.hubTests);
   assert.equal(checkedIn.prLinuxShards, 2);
 });
+
+/* A script sends the whole lane in selectImpact, so its own tests were missing from a pull request's light run
+   (scripts/run-tests.mjs ran only leak-guard). Mutation: drop the script reach group → red. */
+test("a changed script runs the tests that import or run it on a pull request", () => {
+  const files = {
+    "scripts/run-tests.mjs": "export const lanes = 1;",
+    "tests/run-tests.test.mjs": 'import { lanes } from "../scripts/run-tests.mjs";',
+    "tests/other.test.mjs": "",
+    "tests/leak-guard.test.mjs": "",
+  };
+  const small = buildGraph(Object.keys(files), (file) => files[file]);
+  const smallGroups = { shared: ["tests/run-tests.test.mjs", "tests/other.test.mjs", "tests/leak-guard.test.mjs"], browser: [] };
+  const result = selectImpact([{ status: "M", paths: ["scripts/run-tests.mjs"] }], { config, graph: small, groups: smallGroups, weights: {} });
+  assert.equal(result.mode, "full");
+  const light = lightRun(result, { config, graph: small, groups: smallGroups, weights: {}, files: ["scripts/run-tests.mjs"], wholeSeconds: 1 });
+  assert.deepEqual(light.tests, ["tests/leak-guard.test.mjs", "tests/run-tests.test.mjs"]);
+});

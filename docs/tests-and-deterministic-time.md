@@ -38,7 +38,11 @@ Windows and macOS run on a pull request only when it touches their own code (`pl
 most `platformSourceTests` (5) tests import, their own test files, or a test helper those tests use. Local voice runs
 on a pull request only when the change reaches `tests/voice-local-whisper.test.mjs`. verify-suite is
 red unless the plan ran and every planned share passed, and on a push it also requires the whole suite, so promote
-moves `mac/cross-platform` only to a commit the whole suite passed. The downloads and the phone apps are built only
+moves `mac/cross-platform` only to a commit the whole suite passed. A push to `redesign/window` lands the commit a
+merge-queue group already tested with the whole suite, so it reuses that green run (`scripts/ci-reuse.mjs`: the same
+commit, or a commit with the same tree) instead of running the suite a second time; verify-suite names the run it
+reused, and the push run still ends green, so promote and the Beta updater (`newestGreen` in
+`src/desktop/dev-build.ts`) find the same commit. Without such a run the whole suite runs. The downloads and the phone apps are built only
 for a release tag or by hand (`package.yml`, `mobile.yml`), and release publication still requires the exact
 commit's `Checks` success.
 

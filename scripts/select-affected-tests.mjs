@@ -281,8 +281,9 @@ export const VOICE_TEST = "tests/voice-local-whisper.test.mjs";
 
 /**
  * A pull request into a partial base is light: at most `prLinuxShards` Linux shares of the tests nearest the change
- * (the changed tests, what the change reaches by name, mapping or graph, the tests near a src/ change, then every
- * browser test for a page change), cut to fit those shares. The merge queue runs the whole suite on every system
+ * (the changed tests, what the change reaches by name, mapping or graph, the tests that import or run a changed script
+ * or other non-product file, the tests near a src/ change, then every browser test for a page change), cut to fit those
+ * shares. The merge queue runs the whole suite on every system
  * before anything lands, so the pull request's run is a fast signal, not the gate.
  */
 export function lightRun(result, { config, graph, groups, weights, files, wholeSeconds }) {
@@ -291,13 +292,17 @@ export function lightRun(result, { config, graph, groups, weights, files, wholeS
   const inLinux = (list) => [...list].filter((file) => linux.has(file));
   const changedTests = inLinux(files.filter(isTest));
   const near = inLinux(nearTests(graph, files, config.hubTests));
+  // A script, workflow or package file sends the whole lane in selectImpact, so its graph reach is not in `reached`:
+  // scripts/run-tests.mjs reaches tests/run-tests.test.mjs, a workflow the test that reads it.
+  const outside = files.filter((file) => !file.startsWith("src/") && !TESTS_OR_PUBLIC.test(file) && !matches(file, config.ignored));
+  const scripts = inLinux(reachedTests(graph, outside).tests);
   const browser = result.browser ? inLinux(groups.browser) : [];
   const budget = (config.prLinuxShards * wholeSeconds) / LINUX_SHARES;
-  const pick = lightSelection([changedTests, result.reached, near, browser], inLinux(config.always), weights, budget);
+  const pick = lightSelection([changedTests, result.reached, scripts, near, browser], inLinux(config.always), weights, budget);
   const reasons = [...result.reasons];
   if (result.mode === "full") reasons.push(`A pull request runs the tests nearest its change on at most ${config.prLinuxShards} Linux shares; the merge queue runs the whole suite.`);
   if (pick.dropped.length) reasons.push(`${pick.dropped.length} more test files this change reaches are left for the merge queue (the ${config.prLinuxShards}-share budget).`);
-  const voice = [changedTests, result.reached, near].some((list) => list.includes(VOICE_TEST));
+  const voice = [changedTests, result.reached, scripts, near].some((list) => list.includes(VOICE_TEST));
   return { ...result, mode: "partial", reasons, tests: pick.tests, predictedSeconds: pick.predictedSeconds,
     left: pick.dropped.length, voice, maxLinux: config.prLinuxShards };
 }
