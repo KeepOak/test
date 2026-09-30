@@ -1683,6 +1683,8 @@ owner GET /api/remove-branch/plan | here=ok remote=ok phone=ok legacy=ok person=
 owner POST /api/remove-branch/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/b8f61d run=401/b8f61d nobody=401/40daee
 owner GET /api/recordings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/recordings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/b59fce run=401/b59fce nobody=401/40daee
+owner GET /api/recordings/restart | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/recordings/restart | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/recipes/:id/steps | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/recipes/:id/steps | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/reflection | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3877,6 +3879,8 @@ owner+lockdown GET /api/remove-branch/plan | here=ok remote=ok phone=ok legacy=o
 owner+lockdown POST /api/remove-branch/plan | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/b8f61d run=401/b8f61d nobody=401/40daee
 owner+lockdown GET /api/recordings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/recordings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/b59fce run=401/b59fce nobody=401/40daee
+owner+lockdown GET /api/recordings/restart | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/recordings/restart | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/recipes/:id/steps | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/recipes/:id/steps | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/reflection | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6071,6 +6075,8 @@ household GET /api/remove-branch/plan | here=400/f6e21c remote=400/f6e21c read=4
 household POST /api/remove-branch/plan | here=400/f6e21c remote=400/f6e21c read=401/b8f61d run=401/b8f61d
 household GET /api/recordings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/recordings | here=400/f6e21c remote=400/f6e21c read=401/b59fce run=401/b59fce
+household GET /api/recordings/restart | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/recordings/restart | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/recipes/:id/steps | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/recipes/:id/steps | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/reflection | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8265,6 +8271,8 @@ household+lockdown GET /api/remove-branch/plan | here=400/f6e21c remote=400/f6e2
 household+lockdown POST /api/remove-branch/plan | here=400/f6e21c remote=400/f6e21c read=401/b8f61d run=401/b8f61d
 household+lockdown GET /api/recordings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/recordings | here=400/f6e21c remote=400/f6e21c read=401/b59fce run=401/b59fce
+household+lockdown GET /api/recordings/restart | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/recordings/restart | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/recipes/:id/steps | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/recipes/:id/steps | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/reflection | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10459,6 +10467,8 @@ applock GET /api/remove-branch/plan | here=423/a8f863
 applock POST /api/remove-branch/plan | here=423/a8f863
 applock GET /api/recordings | here=423/a8f863
 applock POST /api/recordings | here=423/a8f863
+applock GET /api/recordings/restart | here=423/a8f863
+applock POST /api/recordings/restart | here=423/a8f863
 applock GET /api/recipes/:id/steps | here=423/a8f863
 applock POST /api/recipes/:id/steps | here=423/a8f863
 applock GET /api/reflection | here=423/a8f863

@@ -983,6 +983,7 @@ export const ROUTES = {
   "/api/remove-branch": "owner POST",
   "/api/remove-branch/plan": "owner POST",
   "/api/recordings": "owner POST",
+  "/api/recordings/restart": "owner POST", // RES-512: a new task from a checked event log, after the owner's yes
   "/api/recipes/:id/steps": "owner POST", // finish-soon-a: a saved recipe's steps moved or taken out, a new version to verify
   "/api/reflection": "look",
   "/api/reflection/batches/:id/accept": "other POST",
