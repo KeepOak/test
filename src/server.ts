@@ -120,6 +120,7 @@ import { tryServer } from "./mcp-workbench.js";
 import { securityCheckApi } from "./security-audit/api.js";
 import { signIn as mcpSignIn } from "./integrations/mcp-oauth.js";
 import { AppResourceSchema, appHeaders, appPage, type AppResource } from "./mcp-apps.js";
+import { scriptedProxyHeaders } from './scripted-mcp-proxy.js';
 // mac2/fly-core-2: the learning core's owner routes.
 import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "./fly-core-api.js";
 // Wave 8: artifacts out of a reply, shown in the same locked-down frame an MCP app gets.
@@ -3484,6 +3485,23 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   throw new HttpError(404, "Endpoint not found");
 }
 async function mcpApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
+  if (path.startsWith('/api/mcp/scripted-app/')) {
+    app.store.profiles.requireOwner('Interactive server pages');
+    if (startedWithShortLivedKey() || throughDoor(request) || !fromThisComputer(request.socket?.remoteAddress, request.headers))
+      throw new HttpError(403, 'Open interactive server pages in the local owner window.');
+    if (request.method !== 'POST') throw new HttpError(405, 'Use POST for interactive server pages.');
+    const input = await readBody(request, 32000);
+    if (path === '/api/mcp/scripted-app/enable') { app.scriptedMcpApps.enable(input); return { saved: true }; }
+    if (path === '/api/mcp/scripted-app/open') return app.scriptedMcpApps.open(input);
+    if (path === '/api/mcp/scripted-app/propose') return app.scriptedMcpApps.propose(input);
+    if (path === '/api/mcp/scripted-app/call') return app.scriptedMcpApps.call(input);
+    if (path === '/api/mcp/scripted-app/decline') { app.scriptedMcpApps.decline(input); return { declined: true }; }
+    if (path === '/api/mcp/scripted-app/close') {
+      const { capability } = z.object({ capability: z.string().uuid() }).strict().parse(input);
+      app.scriptedMcpApps.close(capability); return { closed: true };
+    }
+    throw new HttpError(404, 'Unknown interactive server page request.');
+  }
   const extra = await mcpModeApi(app, request, path);
   if (extra !== undefined) return extra;
   if (path === "/api/mcp/settings") {
@@ -3552,13 +3570,13 @@ async function mcpModeApi(app: Branch, request: IncomingMessage, path: string): 
   if (path === "/api/mcp/apps" && request.method === "GET") {
     const sessionId = new URL(request.url ?? "/", "http://127.0.0.1").searchParams.get("session") ?? "";
     const scope = app.store.profiles.scope();
-    const apps: { server: string; uri: string; html: string; runId: string }[] = [];
+    const apps: { server: string; uri: string; html: string; runId: string; tool: string }[] = [];
     for (const run of app.store.runs(scope).slice(0, 12)) {
       if (sessionId && run.sessionId !== sessionId) continue;
       for (const event of app.store.events(run.id))
         if (event.kind === "mcp.app")
           apps.push({ server: String(event.data.server ?? "a server"), uri: String(event.data.uri ?? ""),
-            html: String(event.data.html ?? ""), runId: run.id });
+            html: String(event.data.html ?? ""), runId: run.id, tool: String(event.data.tool ?? '') });
       if (apps.length >= 5) break;
     }
     return { apps: apps.slice(0, 5) };
@@ -4048,6 +4066,11 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // mac7/channel-leaks: and only to a caller on this very computer, as the artifact page below
       // already is. The frame is always local, so the gate costs nothing and the address — whose
       // whole secret is the address — is not offered to the private network.
+      if (fromThisComputer(request.socket?.remoteAddress, request.headers) && path.startsWith('/mcp-app-sandbox/')) {
+        const nonce = path.slice('/mcp-app-sandbox/'.length);
+        const page = request.method === 'GET' && /^[a-f0-9-]{36}$/.test(nonce) ? app.scriptedMcpApps.proxy(nonce) : null;
+        response.writeHead(page ? 200 : 404, scriptedProxyHeaders); response.end(page ?? 'This app proxy has expired.'); return;
+      }
       if (fromThisComputer(request.socket?.remoteAddress, request.headers) && mcpAppPage(request, response, path)) return;
       // Wave 8: an artifact out of a reply, in that same frame. Its address is not used up by the
       // first fetch, so the frame may reload and "open larger" may show the same one again.
