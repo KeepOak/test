@@ -97,6 +97,22 @@ MIT License
 
 Copyright (c) 2025 Nous Research
 
+## OpenClaw Realtime GA protocol adaptations
+
+The ChatGPT subscription adapter also adapts the pinned OpenClaw Quicksilver
+wire, audio-only SDP admission, sideband event and context append contracts
+(`extensions/openai/realtime-quicksilver-wire.ts`, `realtime-sdp-offer.ts`,
+`realtime-quicksilver-events.ts`, `realtime-quicksilver-protocol.ts`,
+`realtime-quicksilver-delegation-controller.ts`, `realtime-quicksilver-bridge-delegation.ts`).
+Branch adapts consultation generation/cancellation and bounded transcript admission
+to its existing delegated runtime and approval cards. OAuth is
+resolved by Branch's existing selected-account adapter; no account data or upstream
+implementation package is bundled. The MIT notice below covers these adaptations.
+
+`src/realtime-openai.ts` adapts beta/GA event names and the GA session shape from
+`extensions/openai/realtime-voice-events.ts` and `realtime-voice-session-policy.ts`
+at `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of https://github.com/openclaw/openclaw.
+
 ## OpenClaw realtime voice adaptations
 
 `src/realtime-openai.ts` and `public/app/chat/talklive.js` adapt cancellation,

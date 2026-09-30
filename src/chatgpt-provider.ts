@@ -7,6 +7,9 @@ import { restoreToolNames, wireName } from "./providers.js";
 import { chatgptAccountId, chatgptDefaults, type ChatGPTAuth } from "./chatgpt-auth.js";
 import { refuseSignInForTrunk } from "./accounts/context.js"; // mac7/lockdown-fix
 import type { CodexImageEndpoint } from "./media-codex-images.js";
+import { audioOnlySdp, chatgptCallUrl, ChatGPTRealtimeSession } from "./realtime-chatgpt.js";
+import type { NetworkPolicy } from "./network-policy.js";
+import type { RealtimeSession, RealtimeSettings } from "./realtime.js";
 
 /** Models the ChatGPT subscription route serves; the first is the suggested default. */
 export const chatgptModels = [
@@ -39,6 +42,7 @@ export class ChatGPTProvider implements Provider {
    * `input_image` part with a data URL), so a screenshot pasted in the window is shown rather than kept unseen.
    */
   readonly acceptsImages = true;
+  readonly realtimeTransport = "chatgpt-webrtc" as const;
   private readonly apiBase: string;
   private readonly userAgent: string;
   private readonly fetch: typeof fetch;
@@ -64,6 +68,18 @@ export class ChatGPTProvider implements Provider {
     return { endpoint: this.apiBase, token, accountId, originator: chatgptDefaults.originator, userAgent: this.userAgent };
   }
   supportsImages(): boolean { return true; }
+  async realtime(policy: NetworkPolicy, settings: RealtimeSettings, offer: string, runId: string, signal: AbortSignal): Promise<RealtimeSession> {
+    refuseSignInForTrunk();
+    audioOnlySdp(offer);
+    try {
+      await policy.assertAllowed(new URL(chatgptCallUrl), "a ChatGPT live conversation");
+      if (signal.aborted) throw new Error("Stopped");
+      const token = await this.auth.accessToken();
+      const accountId = chatgptAccountId(token);
+      if (!accountId || signal.aborted) throw new Error("No selected account");
+      return new ChatGPTRealtimeSession(policy, settings, { token, accountId, offer, runId, signal, fetch: this.fetch });
+    } catch { throw new Error("The selected ChatGPT account could not open live voice."); }
+  }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: a ChatGPT sign-in answers a Trunk only for work the owner is behind
     const stream = new ResponsesStream(request.onTextDelta ?? (() => {}), request.onReasoningDelta);
