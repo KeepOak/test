@@ -64,5 +64,5 @@ export function installChannelFormatting(adapter: ChannelAdapter, mode: () => "n
     ? { ...value, plain: true, spans: undefined } : value;
   const words = (text: string, value?: MessageFormat) => mode() === "plain" ? plainChatText(text, value?.spans) : text;
   adapter.send = (chat, text, reply, value) => send(chat, words(text, value), reply, format(value));
-  if (edit) adapter.edit = (chat, message, text, value) => edit(chat, message, words(text, value), format(value));
+  if (edit) adapter.edit = (chat, message, text, value, gate) => edit(chat, message, words(text, value), format(value), gate);
 }

@@ -47,7 +47,7 @@ import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { expireChatThread } from "./thread-lifecycle.js";
 import { recordChatPersonality } from "./personality-settings.js";
-import { lockedDown } from "../lockdown.js";
+import { lockedDown, onLockdownChange } from "../lockdown.js";
 import { requestInstallNow } from "../comfort/update-now.js";
 import { updateStatus, type UpdateFacts } from "../comfort/update-tool.js";
 import { ownerChatMark, setOwnerChatCheck } from "../key-context.js"; // owner-dm-full
@@ -220,12 +220,12 @@ export interface ChannelAdapter {
    * refuses an edit because the words did not change must treat that as success (see telegram.ts).
    * Absent means there is no progress message and replies are not streamed.
    */
-  edit?(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void>;
+  edit?(chatId: string, messageId: string, text: string, format?: MessageFormat, gate?: SendGate): Promise<void>;
   /**
    * Removes a message this adapter sent (the owner's "remove the steps message after a good answer",
    * src/channels/steps-display.ts `cleanup`). Absent means this app cannot, and the message stays.
    */
-  deleteMessage?(chatId: string, messageId: string): Promise<void>;
+  deleteMessage?(chatId: string, messageId: string, gate?: SendGate): Promise<void>;
   // ---- R17-C (R17-022): a file delivered into the chat as the app's own attachment -------------
   // Absent means "this app cannot". A failure must throw. Only `chat.send_file`
   // (src/personal/chat-files.ts) calls it, after the owner, recipient, size and leak checks.
@@ -402,9 +402,20 @@ function fitName(prefix: string, name: string): string {
   return prefix + name.slice(0, Math.max(1, room - extension.length)) + extension;
 }
 
+/**
+ * An owner's edit or delete of Branch's own sent message, on its way out. The adapter calls `check` at its last step
+ * before sending, and hands `signal` to the request itself: the task's Stop, the App lock, Lockdown or the chat app
+ * being disconnected abort it, so nothing is sent after the owner's access ended. A request the app already took is
+ * not claimed undone.
+ */
+export interface SendGate { signal: AbortSignal; check(): void }
+
 export class ChannelRouter {
   private readonly adapters = new Map<string, { adapter: ChannelAdapter; policy: ChannelPolicy }>();
   private readonly messageActions = new Set<string>();
+  /** Own-message edits and deletes on their way out, with the chat app each goes through. */
+  private readonly messageSends = new Map<AbortController, string>();
+  private readonly stopLockdownWatch: () => void;
   /** PR #289: the question each chat was last shown (its conversation and fingerprint), so a typed "y" answers that one and no other. */
   private readonly shownInChat = new Map<string, { sessionId: string; fingerprint: string }>();
   private readonly shownCommands = new Map<string, string>();
@@ -505,6 +516,13 @@ export class ChannelRouter {
     this.deliveries.splitting = () => this.switches().splitting;
     // owner-dm-full: the owner's own verified direct chat is the owner along its whole task (src/key-context.ts).
     setOwnerChatCheck(store, (runId) => this.ownerFullRun(runId));
+    this.stopLockdownWatch = onLockdownChange((changed, owner, on) => {
+      if (on && changed === store && owner === runtime.owner) this.stopMessageSends("Lockdown came on; nothing was changed.");
+    });
+  }
+  /** Aborts own-message edits and deletes still on their way out: all of them, or those through one chat app. */
+  stopMessageSends(reason: string, channel?: string): void {
+    for (const [sending, through] of this.messageSends) if (channel === undefined || through === channel) sending.abort(new Error(reason));
   }
   async attach(adapter: ChannelAdapter, policy: ChannelPolicy): Promise<void> {
     if (this.adapters.has(adapter.id)) throw new Error(`Channel ${adapter.id} is already attached`);
@@ -650,6 +668,7 @@ export class ChannelRouter {
     const attached = this.adapters.get(id);
     if (!attached) return;
     this.adapters.delete(id);
+    this.stopMessageSends("That chat app was disconnected; nothing was changed.", id);
     this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
   }
@@ -662,6 +681,8 @@ export class ChannelRouter {
       await Promise.allSettled([...this.adapters.values()].map(({ adapter }) => this.presence(adapter, presenceWords.offline)));
     const stops = [...this.adapters.values()].map(({ adapter }) => adapter.stop());
     this.adapters.clear();
+    this.stopMessageSends("Branch's chat apps were disconnected; nothing was changed.");
+    this.stopLockdownWatch();
     await Promise.allSettled(stops);
   }
   /** Sends every due chunk on every connected channel, one flush at a time. */
@@ -870,6 +891,9 @@ export class ChannelRouter {
     const key = JSON.stringify([channel, chatId, messageId]);
     if (this.messageActions.has(key)) throw new Error("Another action is already changing that message. Wait for it to finish.");
     this.messageActions.add(key);
+    const sending = new AbortController();
+    this.messageSends.set(sending, channel);
+    const gate = this.messageGate(context, channel, attached, AbortSignal.any([context.signal, sending.signal]));
     try {
       let replacement: string | undefined;
       if (action === "edit") {
@@ -879,18 +903,27 @@ export class ChannelRouter {
         if (checked.text.length > Math.min(adapter.maxTextLength ?? 4096, 4096)) throw new Error("The replacement is too long for one message; shorten it before editing.");
         replacement = checked.text;
       } else if (!adapter.deleteMessage) throw new Error("This chat app cannot delete Branch's messages.");
-      this.requireMessageActionOwner(context);
-      // The chat app may have been detached, or replaced by a new connection, while the text was checked: only the exact
-      // connection that was looked up may act, and the stopped one never does.
-      if (this.adapters.get(channel) !== attached) throw new Error("That chat app changed while the message was being checked; nothing was changed.");
+      gate.check();
       if (context.dryRun) return { channel, chatId, messageId, action, confirmed: false, dryRun: true, wouldChange: replacement ?? "delete own message" };
-      if (action === "edit") await adapter.edit!(chatId, messageId, replacement!);
-      else await adapter.deleteMessage!(chatId, messageId);
+      if (action === "edit") await adapter.edit!(chatId, messageId, replacement!, undefined, gate);
+      else await adapter.deleteMessage!(chatId, messageId, gate);
       const saved = this.deliveries.recordMessageAction(row.id, action, replacement);
       audit(this.store, this.runtime.owner, { action: "channel.message", actor: this.runtime.owner, subject: `${channel}:${chatId}:${messageId}`,
         reason: `Owner-requested ${action} of a recorded own sent message`, outcome: action === "edit" ? "edited" : "deleted" });
       return { channel, chatId, messageId, action, confirmed: true, at: action === "edit" ? saved.editedAt : saved.deletedAt };
-    } finally { this.messageActions.delete(key); }
+    } finally { this.messageActions.delete(key); this.messageSends.delete(sending); }
+  }
+  /**
+   * The owner's authority and the exact chat app connection, checked again at the adapter's last step before sending.
+   * The chat app may have been detached, or replaced by a new connection, while the text was checked: only the exact
+   * connection that was looked up may act, and the stopped one never does.
+   */
+  private messageGate(context: ToolContext, channel: string, attached: unknown, signal: AbortSignal): SendGate {
+    return { signal, check: () => {
+      if (this.adapters.get(channel) !== attached) throw new Error("That chat app changed while the message was being checked; nothing was changed.");
+      this.requireMessageActionOwner(context);
+      signal.throwIfAborted();
+    } };
   }
   async handle(message: InboundMessage): Promise<Outcome> {
     const entry = this.adapters.get(message.channel);
