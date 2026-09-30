@@ -111,9 +111,14 @@ async function applyChecked(options: HotApplyOptions, outcome: Exclude<LiveOutco
     // EngineHost has rolled a failed engine check back before this runs. Window-only failures still use the old engine.
     const restoredVersion = now.engine?.version ?? options.gateway?.packagedVersion;
     if (outcome.tier !== "window" && restoredVersion) options.gateway?.ready(restoredVersion, true);
-    await options.host()?.call("use-window", { appRoot: options.appRoot, inUse: now.window ?? now.engine }, 60_000);
-    await options.recoverWindow();
-    if (outcome.tier !== "window" && restoredVersion) options.gateway?.ready(restoredVersion);
+    // The previous engine is running again either way, so the gateway goes back to passing requests on even when the
+    // window cannot be restored: left provisional, it held every request that was not the window's own for good.
+    try {
+      await options.host()?.call("use-window", { appRoot: options.appRoot, inUse: now.window ?? now.engine }, 60_000);
+      await options.recoverWindow();
+    } finally {
+      if (outcome.tier !== "window" && restoredVersion) options.gateway?.ready(restoredVersion);
+    }
     if (error instanceof WindowUpdateDeferred) throw new UpdateDeferredError(error.message);
     throw error;
   }

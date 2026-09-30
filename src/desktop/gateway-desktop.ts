@@ -12,6 +12,7 @@ import type { LiveHooks } from "./updater.js";
 import type { Gateway } from "../never-break/gateway.js";
 import type { EngineHost } from "./engine-host.js";
 import { GatewayPowerPolicy } from "./gateway-power.js";
+import { diagnose } from "../diagnostic-log.js";
 import { brokerRequest } from "./gateway-engine.js";
 import { gatewayUpdates } from "./gateway-updates.js";
 import { requestUpdateBackup } from "../install/background-engine.js";
@@ -63,6 +64,12 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
       port: await rememberedPort(join(dataDir, "local-port.json")), version: app.getVersion(),
       close: async () => { power.close(); await control.close(); },
       onOwnerOff: () => { void gateway?.stop().finally(() => app.exit(0)); },
+      // Owner's PC 2026-09-29: this gateway's engine stops and restarts (the watchdog's among them) went nowhere; they
+      // now go to the activity log main opened (main.ts startDetachedGateway), with the reason when there is one.
+      onWorker: (event) => {
+        if (event.kind === "ready") diagnose("gateway", "info", "The engine is ready", { fields: { pid: event.ready.pid, version: event.ready.version } });
+        else diagnose("gateway", "error", event.why ?? "The engine stopped unexpectedly", { fields: { code: event.code, signal: event.signal, tripped: event.tripped } });
+      },
       worker: (env, ready, checking) => retainedDesktopWorker(options, env, ready, checking, owner.control, (hooks, next) => { live = hooks; host = next; },
         () => { void gateway?.stop().finally(() => app.exit(0)); }, power) });
   } catch (error) { power.close(); await control.close().catch(() => undefined); throw error; }
