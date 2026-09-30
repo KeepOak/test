@@ -21,6 +21,7 @@ import { $, esc, renderNow } from "../core/dom.js";
 import { E, S, ownerHere, ownName, roleLabel, projectName, activeId } from "../core/state.js";
 import { ic, openDlg, closeDlg, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
+import { sessionPrincipal } from "../core/session-pages.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { ctl, ctlSeg } from "../settings/parts.js";
@@ -302,6 +303,7 @@ function personUsageRows() {
   return `<section class="sec"><h2>${esc(t("window.places.team.person-usage-title", { days: report.days }))}</h2><p class="hint">${esc(t("window.places.team.person-usage-note"))}</p>${coverage}${rows || `<p class="hint">${esc(t("window.places.team.person-usage-empty"))}</p>`}</section>`;
 }
 function usageTab() {
+  keepUsageScoped();
   if (READ.has("usage") && !(D.glance?.rows ?? []).length && !D.personUsage?.rows?.length) return personUsageRows() + empty18("team:usage");
   return `${personUsageRows()}<p class="hint" data-css="margin:0 0 10px">${t("window.places.team.each-persons-own-model-accounts")}</p><div class="lims flat" data-css="margin-top:14px">${(D.glance?.rows ?? []).map(limitRow).join("")}</div>`;
 }
@@ -338,18 +340,37 @@ async function readTeams() {
   return { teams, tasks };
 }
 /* A tab's own data, read when it is switched to; answers whether anything changed. Only the owner reads any of it. */
+/* The usage report is the owner's, as read for one person at the window: kept with who read it and dropped once someone
+   else is at the window or the app locks. An answer is taken only while the read that asked is still the newest, for the
+   same person, unlocked, on the same place and tab, so an older answer arriving late never replaces a newer report. */
+let usageRead = 0, usageFor = null;
+const appLocked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
+function keepUsageScoped() {
+  if (usageFor === null || (usageFor === sessionPrincipal(E.profiles) && ownerHere() && !appLocked())) return;
+  usageRead += 1; usageFor = null; D.glance = null; D.personUsage = null; READ.delete("usage");
+}
+/* Answers false only when the answer came too late to be taken. */
+async function readUsage() {
+  const mine = ++usageRead, who = sessionPrincipal(E.profiles), view = S.view, tab = S.tabs.team;
+  const current = () => mine === usageRead && sessionPrincipal(E.profiles) === who && ownerHere() && !appLocked()
+    && S.view === view && S.tabs.team === tab;
+  try {
+    const [glance, usage] = await Promise.all([api("usage/glance"), api("usage?range=30d&people=1")]);
+    if (!current()) return false;
+    D.glance = glance; D.personUsage = usage.byPerson ?? null; usageFor = who; READ.add("usage");
+  } catch (error) { if (!current()) return false; toast(error.message); }
+  return true;
+}
 export async function readTab(tab) {
-  if (!ownerHere()) return false;
+  if (tab === "usage") keepUsageScoped();
+  if (!ownerHere() || (tab === "usage" && appLocked())) return false;
   const before = JSON.stringify(D), had = READ.has(tab);
+  if (tab === "usage") return (await readUsage()) && (JSON.stringify(D) !== before || !had);
   try {
     if (tab === "shared") D.links = (await api("shares")).shares ?? [];
     else if (tab === "groups") D.projects = (await api("projects")).all ?? [];
     else if (tab === "agents") Object.assign(D, await readTeams());
     else if (tab === "activity") D.audit = await readAudit();
-    else if (tab === "usage") {
-      const [glance, usage] = await Promise.all([api("usage/glance"), api("usage?range=30d&people=1")]);
-      D.glance = glance; D.personUsage = usage.byPerson ?? null;
-    }
     READ.add(tab);
   } catch (error) { toast(error.message); }
   return JSON.stringify(D) !== before || !had;
