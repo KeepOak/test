@@ -3301,6 +3301,10 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 }
 /* area: p17 settings (prototype patch17b: rule tester, network sentences, why is this set, move in, compare, savings) */
 .lead-b17{margin:0;color:var(--ink-2);font-size:13.5px;line-height:1.5}
+/* SELF-309: a published page and the list of them (places/pages19.js). */
+.page19{max-height:62vh;overflow:auto;margin-top:10px}
+pre.page19{white-space:pre-wrap;font:inherit}
+.rows button.prow{width:100%;text-align:left;background:none;border:0;font:inherit;color:inherit;cursor:pointer}
 .why-b17 .grow{display:grid;gap:2px;min-width:0}
 .why-b17 small{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere}
 .s3-b17{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0}
