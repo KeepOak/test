@@ -8,7 +8,7 @@
      instructions" shows only while the engine reads them that way (GET /api/coding, mentions). */
 
 import { $, $$, esc, onRender, applyCss, render } from "../core/dom.js";
-import { S } from "../core/state.js";
+import { S, E } from "../core/state.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, mi, openDlg, closeDlg, closePop, toast, dialog } from "../core/ui.js";
@@ -76,7 +76,8 @@ function writeFile() {
    version to pick (window state); Make it again asks for another in the conversation. Save to Library and Use as
    background stay greyed: the engine already keeps every picture in Library › Made for you and has no saving of its own,
    and it has no background of the owner's own to set. */
-const P = { urls: new Map(), loading: new Set(), pick: new Map() };
+const P = { urls: new Map(), loading: new Map(), pick: new Map() };
+let mediaScope = null, mediaGeneration = 0;
 function madePicture(call, messages) {
   if (call.name !== "media.image") return null;
   const answer = messages.find((x) => x.role === "tool" && x.toolCallId === call.id);
@@ -87,17 +88,22 @@ function madePicture(call, messages) {
 }
 async function pictureUrl(path) {
   if (P.urls.has(path) || P.loading.has(path)) return;
-  P.loading.add(path);
+  const generation = mediaGeneration, abort = new AbortController();
+  P.loading.set(path, abort);
   try {
     const auth = token.get();
-    const response = await fetch(`/api/artifacts/file?path=${encodeURIComponent(path)}`, { cache: "no-store", headers: auth ? { authorization: "Bearer " + auth } : {} });
+    const response = await fetch(`/api/artifacts/file?path=${encodeURIComponent(path)}`, { cache: "no-store", headers: auth ? { authorization: "Bearer " + auth } : {}, signal: abort.signal });
     if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || String(response.status));
-    P.urls.set(path, URL.createObjectURL(await response.blob()));
+    const blob = await response.blob();
+    if (generation !== mediaGeneration) return;
+    P.urls.set(path, URL.createObjectURL(blob));
     render();
-  } catch (error) { toast(error.message); } finally { P.loading.delete(path); }
+  } catch (error) { if (generation === mediaGeneration && error.name !== "AbortError") toast(error.message); }
+  finally { if (P.loading.get(path) === abort) P.loading.delete(path); }
 }
 /** The picture cards under a reply whose tool calls made pictures. */
 export function pictureCards(m, messages) {
+  ensureMediaScope();
   const all = messages.flatMap((x) => (x.toolCalls ?? []).map((c) => madePicture(c, messages))).filter(Boolean);
   return (m.toolCalls ?? []).map((c) => madePicture(c, messages)).filter(Boolean).map((pic) => {
     const versions = all.filter((p) => p.prompt === pic.prompt).slice(-4);
@@ -118,6 +124,7 @@ const playable = (a) => a && (a.kind === "sound" || a.kind === "video" || /^(aud
 
 /* The rows under a message for each sound or video it carries; `session` is the conversation it belongs to. */
 export function mediaRows(m, session = S.chat) {
+  ensureMediaScope();
   if (!session || !Array.isArray(m.attachments)) return "";
   return m.attachments.filter(playable).map((a) => {
     const key = `${session}/${a.id}`;
@@ -146,6 +153,7 @@ function mediaCard(key) {
 /* Redraws one card where it stands; a video keeps its own element, moved back into the new poster. */
 function repaint(key) {
   const st = M.get(key);
+  if (!st) return;
   for (const node of $$(`[data-m15="${CSS.escape(key)}"]`)) {
     const focused = node.contains(document.activeElement) ? document.activeElement.dataset.act : null;
     const holder = document.createElement("div");
@@ -163,9 +171,9 @@ function mountVideo(card, st) {
   if (poster && st.el.parentNode !== poster) poster.prepend(st.el);
 }
 
-async function fileOf(st) {
+async function fileOf(st, signal) {
   const auth = token.get();
-  const response = await fetch(`/api/attachments/file?session=${encodeURIComponent(st.session)}&id=${encodeURIComponent(st.id)}`, { cache: "no-store", headers: auth ? { authorization: "Bearer " + auth } : {} });
+  const response = await fetch(`/api/attachments/file?session=${encodeURIComponent(st.session)}&id=${encodeURIComponent(st.id)}`, { cache: "no-store", headers: auth ? { authorization: "Bearer " + auth } : {}, signal });
   if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || String(response.status));
   return response.blob();
 }
@@ -185,21 +193,39 @@ async function peaksOf(blob) {
 async function load(key) {
   const st = M.get(key);
   if (!st || st.el || st.loading) return st?.loading;
+  const generation = mediaGeneration;
+  st.abort = new AbortController();
   st.loading = (async () => {
-    const blob = await fileOf(st);
+    const blob = await fileOf(st, st.abort.signal);
+    if (generation !== mediaGeneration) return;
     st.url = URL.createObjectURL(blob);
     if (st.kind === "audio") st.peaks = await peaksOf(blob);
+    if (generation !== mediaGeneration) return;
     const el = document.createElement(st.kind === "video" ? "video" : "audio");
     el.preload = "metadata";
     el.playsInline = true;
-    el.src = st.url;
-    await new Promise((done, fail) => { el.addEventListener("loadedmetadata", done, { once: true }); el.addEventListener("error", () => fail(new Error(el.error?.message || "error")), { once: true }); });
-    st.dur = el.duration;
     st.el = el;
+    const ready = new Promise((done, fail) => {
+      st.cancelMetadata = () => fail(new DOMException("Media no longer shown", "AbortError"));
+      el.addEventListener("loadedmetadata", done, { once: true });
+      el.addEventListener("error", () => fail(new Error(el.error?.message || "error")), { once: true });
+    });
+    el.src = st.url;
+    await ready;
+    st.cancelMetadata = null;
+    if (generation !== mediaGeneration) return;
+    st.dur = el.duration;
     for (const kind of ["play", "pause", "timeupdate", "ended"]) el.addEventListener(kind, () => repaint(key));
     repaint(key);
   })();
-  try { await st.loading; } catch (error) { toast(error.message); } finally { st.loading = null; }
+  try { await st.loading; }
+  catch (error) {
+    if (generation === mediaGeneration) {
+      releaseMediaState(st);
+      if (error.name !== "AbortError") toast(error.message);
+    }
+  }
+  finally { st.loading = null; st.cancelMetadata = null; }
 }
 
 async function playPause(el) {
@@ -238,10 +264,11 @@ function mountMedia() {
 /* Pictures show in the thread; any other file is a chip that saves it (GET /api/attachments/file, handed over as a download
    for anything that could carry script). The same route serves the desktop app, which lets only this page's own downloads
    through, with the system's save dialog (src/desktop/main.ts). */
-const F = { urls: new Map(), loading: new Set() };
+const F = { urls: new Map(), loading: new Map() };
 const SHOWN = /^image\/(png|jpeg|webp|gif)$/;
 const fsize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 export function fileRows(m, session = S.chat) {
+  ensureMediaScope();
   if (!session || !Array.isArray(m.attachments)) return "";
   const rest = m.attachments.filter((a) => !playable(a));
   if (!rest.length) return "";
@@ -256,10 +283,16 @@ export function fileRows(m, session = S.chat) {
 }
 async function pictureOf(key, session, id) {
   if (F.loading.has(key)) return;
-  F.loading.add(key);
-  try { F.urls.set(key, URL.createObjectURL(await fileOf({ session, id }))); render(); }
+  const generation = mediaGeneration, abort = new AbortController();
+  F.loading.set(key, abort);
+  try {
+    const blob = await fileOf({ session, id }, abort.signal);
+    if (generation !== mediaGeneration) return;
+    F.urls.set(key, URL.createObjectURL(blob)); render();
+  }
   /* Said once: a picture that cannot be opened (a household profile cannot open the owner's files) is not asked for again. */
-  catch (error) { F.urls.set(key, ""); toast(error.message); } finally { F.loading.delete(key); }
+  catch (error) { if (generation === mediaGeneration && error.name !== "AbortError") { F.urls.set(key, ""); toast(error.message); } }
+  finally { if (F.loading.get(key) === abort) F.loading.delete(key); }
 }
 async function saveFile(el) {
   try {
@@ -270,6 +303,33 @@ async function saveFile(el) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 60000);
   } catch (error) { toast(error.message); }
+}
+
+/* Conversation-owned caches have no reason to keep blobs or decoders after navigation.
+   Generation checks also prevent a completed old request from restoring a released cache. */
+function releaseMediaState(st) {
+  st.abort?.abort(); st.cancelMetadata?.();
+  if (st.el) { st.el.pause(); st.el.removeAttribute("src"); st.el.load(); st.el.remove(); }
+  if (st.url) URL.revokeObjectURL(st.url);
+  st.el = null; st.url = null; st.peaks = null; st.dur = null;
+}
+function releaseMedia() {
+  mediaGeneration++;
+  const states = [...M.values()];
+  M.clear();
+  for (const st of states) releaseMediaState(st);
+  for (const cache of [P, F]) {
+    for (const abort of cache.loading.values()) abort.abort();
+    for (const url of cache.urls.values()) if (url) URL.revokeObjectURL(url);
+    cache.loading.clear(); cache.urls.clear();
+  }
+  P.pick.clear();
+}
+function ensureMediaScope() {
+  const scope = JSON.stringify([S.view, S.chat, E.profiles?.active?.id ?? null]);
+  if (scope === mediaScope) return;
+  releaseMedia();
+  mediaScope = scope;
 }
 
 /* ---------- @ references in the draft ---------- */
@@ -311,7 +371,9 @@ export function initMedia() {
   on("mplay15", (el) => playPause(el));
   on("mseek15", (el, event) => seek(el, event));
   on("matrm15", (el) => removeMaterial(el));
-  onRender(() => queueMicrotask(mountMedia));
+  onRender(() => { ensureMediaScope(); queueMicrotask(mountMedia); });
+  addEventListener("pagehide", () => { releaseMedia(); mediaScope = null; });
+  addEventListener("pageshow", (event) => { if (event.persisted) render(); });
   document.addEventListener("keydown", (e) => {
     const track = e.target.closest?.(".m-wave15, .m-track15");
     if (!track || !["ArrowLeft", "ArrowRight"].includes(e.key)) return;
