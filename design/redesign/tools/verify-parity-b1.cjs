@@ -494,7 +494,7 @@ async function fresh(page) {
   check(await page.locator('.pop [data-act="skills15"]').count() === 1, "the + menu draws without a model");
   await page.keyboard.press("Escape");
   await page.locator('[data-act="modemenu2"]').click();
-  check(await page.locator('.pop [data-act="scope"]').count() === 2 && await page.locator('.pop [data-act="scope"][aria-disabled="true"]').count() === 2, "the mode menu's Applies to is drawn and greyed");
+  check(await page.locator('.pop [data-act="scope"]').count() === 0 && await page.locator(".pop .scope15").count() === 1, "the mode menu's Applies to says this conversation, in words");
   await page.keyboard.press("Escape");
   await shot(page, "10-fresh");
 }

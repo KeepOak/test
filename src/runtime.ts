@@ -21,6 +21,7 @@ import { practiceRunsEnabled } from "./practice-runs.js";
 import { CliAgentProvider } from "./providers/cli-agent.js";
 import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
+import { chatPersonalityForRun } from "./channels/personality-settings.js";
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
@@ -95,7 +96,7 @@ import { canonicalArguments } from "./loop-guard.js";
 import { alreadyRunResult, approvedWork, notRunResult, type ApprovedWork } from "./approved-call.js"; // QA R1
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
-import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation } from "./comfort/browser-safety.js"; // R17-S19
+import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation, withDownloadQuestion, withNewSiteQuestion } from "./comfort/browser-safety.js"; // R17-S19
 // mac5/manual-actions: the gate for tools run outside a conversation.
 import { gateToolUse, type ToolGateOptions } from "./tool-gate.js";
 import * as safetyExtras from "./safety-extras/hooks.js"; // mac7/r17-g: the safety extras' hooks
@@ -1884,6 +1885,7 @@ ${run.output.slice(0, 6000)}`;
         this.helperModels.set(run.id, connection.preset);
         this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
       }
+      if (!parent && !context.isolated && !sealed) instructions += chatPersonalityForRun(this.store, this.owner, run.id);
       const work = async (working: ToolContext) => {
         if (approved) await this.runApproved(run, working, approved); // QA R1
         return this.loop(run, working, instructions, options.onTextDelta, {
@@ -2716,7 +2718,7 @@ ${run.output.slice(0, 6000)}`;
             if (outOfSteps(context, outcome.reason)) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
             throw outcome.reason;
           }
-          const call = group[at]!, result = outcome.value;
+          const call = group[at]!, result = await this.filteredList(run, call, outcome.value);
           const message: Message = { role: "tool", toolCallId: call.id, content: this.clipped(run, call, JSON.stringify(result)) };
           messages.push(message); ids.push(null);
           this.store.message(run.sessionId, message);
@@ -2728,6 +2730,38 @@ ${run.output.slice(0, 6000)}`;
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
+  }
+  /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
+  listFilter: ((rule: string, lines: string[]) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  /**
+   * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
+   * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
+   * so the owner still sees every line, and Look inside says what was kept (list.filtered). Anything that goes wrong,
+   * or a model that is not sure, leaves the list whole.
+   */
+  private async filteredList(run: Run, call: ToolCall, result: unknown): Promise<unknown> {
+    if (!this.listFilter || !/(^|\.|_)(search|list|glob|grep|find|inbox|messages|results)/i.test(call.name)) return result;
+    // A tool's answer reaches the task wrapped ({ ok, result }); the list is inside it, and the wrapper is kept.
+    const wrapped = !!result && typeof result === "object" && "ok" in result && "result" in result;
+    const inner = wrapped ? (result as { result: unknown }).result : result;
+    const found = longestList(inner);
+    if (!found || found.items.length < 2) return result;
+    const lines = found.items.map((item) => (typeof item === "string" ? item : JSON.stringify(item) ?? ""));
+    try {
+      const said = await this.listFilter(run.prompt, lines);
+      if (!said) return result;
+      if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
+      const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);
+      if (keep.length === lines.length) return result;
+      const dropped = lines.length - keep.length, kept = keep.map((i) => found.items[i]);
+      this.store.event(run.id, "list.filtered", { tool: call.name, kept: keep.length, dropped, total: lines.length, model: said.model.name, local: said.model.local });
+      const setAside = { lines: dropped, note: `${dropped} of ${lines.length} lines were set aside as not needed for this task by ${said.model.name}. The owner still sees them all; ask the tool again, more narrowly, if one is missing.` };
+      const shown = found.key === null ? { items: kept, setAside } : { ...(inner as Record<string, unknown>), [found.key]: kept, setAside };
+      return wrapped ? { ...(result as Record<string, unknown>), result: shown } : shown;
+    } catch (error) {
+      this.store.event(run.id, "list.filter_failed", { tool: call.name, total: lines.length, reason: errorText(error) });
+      return result;
+    }
   }
   /**
    * mac7/speed: one tool call, from the journal entry to the result. This is exactly the path a
@@ -4239,13 +4273,19 @@ ${run.output.slice(0, 6000)}`;
     // R17-S19: with "confirm sensitive browser steps" on, those steps ask every time (src/comfort/browser-safety.ts).
     // mac7/outside-resume: held by the task's own record too, so work carried on from outside stays held.
     const held = source !== "owner" ? source : this.recordedSource(runId) ?? "owner";
-    return withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner);
+    const policy = withDownloadQuestion(withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner), this.store, this.owner);
+    // An address the owner opens by hand in their own browser view is their own choice, never asked about as a new site.
+    return runId && this.ownerDriven.has(runId) ? policy : withNewSiteQuestion(policy, this.store, this.owner);
   }
+  /** Runs the owner's own browser controls make for one hand-pressed step (src/browser-control-api.ts). */
+  readonly ownerDriven = new Set<string>();
   /** Redesign phase 1: the owner's policy as this task's conversation has narrowed or widened it. */
   private conversationPolicy(runId?: string): Policy {
     const saved = readPolicy(this.store, this.owner);
     const mode = this.heldConversationMode(saved, runId);
-    return mode ? policyForMode(saved, mode, lockdownActive(this.store, this.owner), this.registry.outboundTools()) : saved; // Q59
+    const held = mode ? policyForMode(saved, mode, lockdownActive(this.store, this.owner), this.registry.outboundTools()) : saved; // Q59
+    // Owner ruling 2026-09-30: commands no rule covers run for the owner; a household person's or short-lived key's task still asks.
+    return runId && this.store.run(runId) && !this.ownersOwnTask(runId) ? { ...held, unmatchedCommands: "ask" } : held;
   }
   /** The mode this task's conversation holds it to, or null when it follows the owner's setting. */
   private heldConversationMode(saved: Policy, runId?: string): ConversationMode | null {
@@ -4268,7 +4308,9 @@ ${run.output.slice(0, 6000)}`;
       if (seen.has(id)) continue;
       seen.add(id);
       const start = this.store.events(id).find((event) => event.kind === "run.started")?.data;
-      if (!start || this.store.run(id)?.owner !== this.owner || start.callerKind !== "owner-here"
+      // owner-dm-full: the owner's own verified direct chat (no request behind it, so "system") counts as the owner here.
+      const here = start?.callerKind === "owner-here" || (start?.callerKind === "system" && runOrigin(this.store, id).ownerChat === true);
+      if (!start || this.store.run(id)?.owner !== this.owner || !here
         || start.callerDoor || start.source !== "owner" || start.shortLivedKey || start.shortLivedKeyId
         || start.personProfileId || start.lentTo || start.dryRun) return null;
       for (const next of [start.parentRunId, start.resumedFrom, start.originFrom]) if (typeof next === "string") queue.push(next);
@@ -4294,6 +4336,25 @@ ${run.output.slice(0, 6000)}`;
     // selfdev: a Trunk's keys mean a Trunk's turn; only the owner's designated default Trunk (their own assistant) keeps the owner's mode.
     if (context.trunkKeys && !this.ownersDefaultRoot(root.id)) return null;
     return `${this.owner} (Full Access in conversation ${root.sessionId})`;
+  }
+  /**
+   * Owner ruling (2026-09-30, "loosen up security on everything"): the owner's own task in a conversation they set to
+   * Full access. Full access asks nothing but the dangerous commands Hermes Agent asks about (src/safety-extras/
+   * dangerous-commands.ts), as OpenClaw's `tools.exec.mode: "full"` and Hermes's CLI do for their owner. It is the mode
+   * the conversation is held to (never a household person's, a short-lived key's, a paired device's, a chat app's or
+   * a schedule's), with Lockdown and the App lock still able to take it away. `ownerFullAccessFor` stays the stricter
+   * test for attributing an unattended merge or network reach to the owner.
+   */
+  ownerFullMode(context: ToolContext): boolean {
+    const run = this.store.run(context.runId), caller = currentCaller();
+    if (!run || run.owner !== this.owner || context.owner !== this.owner || context.dryRun || this.fullAccessLocked()
+      || lockdownActive(this.store, this.owner) || !this.store.profiles.isOwner() || currentPerson() || throughPairedDoor()
+      || startedWithShortLivedKey() || caller.throughDoor || caller.household || caller.appLocked
+      || this.sourceOf(context) !== "owner" || !this.ownersOwnTask(run.id) || this.learningOf(run.id)) return false;
+    // Started at this computer's own window (or by the engine for it), never through a door or from another computer.
+    const started = this.store.events(run.id).find((event) => event.kind === "run.started")?.data;
+    if (!started || started.callerDoor || !["owner-here", "system"].includes(String(started.callerKind ?? "system"))) return false;
+    return this.heldConversationMode(readPolicy(this.store, this.owner), run.id) === "full";
   }
   /** selfdev: the task's root ran as the owner's designated default Trunk, in its own (not a room's) conversation, checked now. */
   private ownersDefaultRoot(rootId: string): boolean {
@@ -4397,6 +4458,9 @@ ${run.output.slice(0, 6000)}`;
     if (!runId) return null;
     if (this.recordedSources.has(runId)) return this.recordedSources.get(runId) ?? null;
     const found = outsideSourceOf(this.store, runId);
+    // owner-dm-full: a task from the owner's own verified direct chat is the owner's only while that chat still is (the
+    // switch on, no Lockdown or App lock, the account still named), so it is read afresh at every step, never kept.
+    if (!found && runOrigin(this.store, runId).ownerChat) return found;
     if (this.recordedSources.size >= 500) this.recordedSources.clear();
     this.recordedSources.set(runId, found);
     return found;
@@ -4481,8 +4545,12 @@ ${run.output.slice(0, 6000)}`;
     // owner did not start is asked about, and a lock or door always is, just this once — whatever the rules say.
     // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
     // the owner's external program sign-in and keeps its own once-only question.
-    const fullAccess = this.ownerFullAccessFor(context) !== null;
-    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
+    // Owner ruling 2026-09-30: under Full access none of these extra questions is put; only Hermes's dangerous commands ask,
+    // and a settings change that takes a protection away (the command scan among them) asks once, as Hermes Agent asks
+    // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
+    const fullAccess = this.ownerFullMode(context);
+    const loosening = fullAccess ? settingsHold(tool, args) : null;
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
@@ -4749,10 +4817,10 @@ ${run.output.slice(0, 6000)}`;
     // — work the agreed plan did not mention, and a command that already failed being tried again.
     const patternNo = decision === "deny" ? null : this.patternRefusal(call, context); // eng-trunk-controls
     if (patternNo) return { refusal: { ok: false, error: patternNo }, ...held };
-    const aside = decision === "deny" ? null
+    // selfdev (owner ruling 09-27, widened 09-30): the owner's selected Full Access never asks these asides.
+    const aside = decision === "deny" || this.ownerFullMode(context) ? null
       : this.offPlanQuestion(context, { label, target, readOnly })
-        // selfdev (owner ruling 09-27): the owner's selected Full Access never asks, so a corrected command just runs.
-        ?? (this.ownerFullAccessFor(context) !== null ? null : this.retriedCommandQuestion(call, args, context))
+        ?? this.retriedCommandQuestion(call, args, context)
         ?? this.patternAside(call, context); // eng-trunk-controls
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));
@@ -5480,4 +5548,14 @@ export { argumentFingerprint };
 function stepFingerprint(tool: string, index: number, target: string | undefined, argumentBytes: string): string {
   const parts = ["browser.flow step", index, tool, target ?? "", canonicalArguments(argumentBytes)];
   return argumentFingerprint(tool, parts.join("\u0000"));
+}
+
+/** models-ui: the list a tool's answer holds: the answer itself, or its longest list-valued field. */
+function longestList(result: unknown): { key: string | null; items: unknown[] } | null {
+  if (Array.isArray(result)) return { key: null, items: result };
+  if (!result || typeof result !== "object") return null;
+  let best: { key: string; items: unknown[] } | null = null;
+  for (const [key, value] of Object.entries(result as Record<string, unknown>))
+    if (Array.isArray(value) && (!best || value.length > best.items.length)) best = { key, items: value };
+  return best;
 }

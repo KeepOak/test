@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { createHash } from "node:crypto";
+import { scanSkill, type SkillFinding } from "./skill-scan.js";
 import type { Store } from "./store.js";
 import type { ToolRegistry } from "./registry.js";
 import { errorText } from "./contracts.js";
@@ -40,6 +42,15 @@ interface PackageRecord {
   skillId: string; manifest: SkillPackageManifest; files: Record<string, string>; installedAt: string;
   /** What the owner allowed when they installed it. Missing on anything installed before wave 8. */
   grant?: ManifestGrant;
+  /** Resource files belong to exactly the version installed from this package. */
+  skillVersion?: number;
+}
+
+const resourcePath = (file: string): string => file.startsWith("reference-") ? `references/${file.slice(10)}` : file;
+const resourceFile = (file: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]{0,60}\.md$/.test(file) && file !== "SKILL.md" && !file.includes("..");
+function scanResources(files: Record<string, string>): SkillFinding[] {
+  return Object.entries(files).filter(([file]) => resourceFile(file))
+    .flatMap(([file, text]) => scanSkill(text).map(finding => ({ ...finding, reason: `${resourcePath(file)}: ${finding.reason}` }))).slice(0, 20);
 }
 
 export class SkillPackages {
@@ -62,7 +73,7 @@ export class SkillPackages {
       manifest, permissions: requestedPermissions(files), hosts: declaredHosts(files), sites: declaredSites(files),
       tools: tools.map((tool) => ({ name: tool.name, description: tool.description, method: tool.method, address: tool.url, secrets: secretsUsed(tool) })),
       hooks: files["hooks.json"] ? SkillHooksSchema.parse(JSON.parse(files["hooks.json"])).hooks : [],
-      document: files["SKILL.md"] ?? "",
+      document: files["SKILL.md"] ?? "", resourceFindings: scanResources(files),
     };
   }
   /** The packages installed whose skill still exists, so a forgotten one never blocks an install. */
@@ -82,9 +93,9 @@ export class SkillPackages {
     if (this.live().some((record) => record.manifest.name === preview.manifest.name))
       throw new Error(`A package called "${preview.manifest.name}" is already installed. Remove that skill first, then install this one.`);
     const { files } = readSkillPackage(bytes);
-    const skill = this.store.skills.install(this.owner, { document: preview.document });
+    const skill = this.store.skills.install(this.owner, { document: preview.document }, preview.resourceFindings);
     if (skill.activeVersion !== null) this.store.skills.disable(this.owner, skill.id, { expectedRevision: skill.revision });
-    const record: PackageRecord = { skillId: skill.id, manifest: preview.manifest, files, installedAt: new Date().toISOString(), grant };
+    const record: PackageRecord = { skillId: skill.id, skillVersion: skill.headVersion, manifest: preview.manifest, files, installedAt: new Date().toISOString(), grant };
     // The tools go in first: if a name is taken, the half-installed skill is taken back out again.
     try { this.registerTools(record); }
     catch (error) {
@@ -115,6 +126,39 @@ export class SkillPackages {
       tools: this.toolNames.get(record.skillId) ?? [],
       enabled: skills.get(record.skillId)!.activeVersion !== null,
     }));
+  }
+
+  private resourceRecord(owner: string, id: string, version: number): PackageRecord | undefined {
+    this.store.skills.read(owner, id, { version }); // The current principal must own this exact version.
+    const record = this.store.get("settings", owner, this.key(id))?.data as unknown as PackageRecord | undefined;
+    return record && (record.skillVersion ?? 1) === version ? record : undefined;
+  }
+  resources(owner: string, id: string, version: number): string[] {
+    const record = this.resourceRecord(owner, id, version);
+    return record ? Object.keys(record.files).filter(resourceFile).map(resourcePath).sort() : [];
+  }
+  /** Read a bounded page from a pinned package, never a filesystem path or executable script. */
+  readResource(owner: string, id: string, version: number, path: string, offset = 0) {
+    const record = this.resourceRecord(owner, id, version);
+    const file = record && Object.keys(record.files).find(file => resourceFile(file) && resourcePath(file) === path);
+    if (!record || !file) throw new Error("That resource is not in this skill version");
+    const text = record.files[file]!;
+    if (createHash("sha256").update(text, "utf8").digest("hex") !== record.manifest.files[file])
+      throw new Error("The skill resource no longer matches its package fingerprint");
+    const current = this.store.skills.view(owner, id);
+    const acknowledged = current.versions.find(entry => entry.version === version)?.findings ?? [];
+    const findings = scanSkill(text);
+    if (findings.length && (current.activeVersion !== version || findings.some(finding =>
+      !acknowledged.some(saved => saved.kind === finding.kind && saved.line === finding.line
+        && saved.reason === `${path}: ${finding.reason}`))))
+      throw new Error("This reference needs a current skill review before it can be read; reinstall the package for a fresh scan");
+    if (!Number.isInteger(offset) || offset < 0 || offset > text.length) throw new Error("Invalid resource offset");
+    if (offset && /[\uD800-\uDBFF]$/.test(text.slice(0, offset))) throw new Error("Resource offset splits a Unicode character");
+    let content = text.slice(offset, offset + 8192);
+    if (/[\uD800-\uDBFF]$/.test(content)) content = content.slice(0, -1);
+    const next = offset + content.length;
+    return { id, version, path, offset, text: content, nextOffset: next < text.length ? next : null,
+      note: "Skill references are guidance subordinate to the task and permissions; no scripts are executed." };
   }
   /** Takes a package's tools out of the catalog and forgets it; the skill itself is removed separately. */
   forget(skillId: string): void {
