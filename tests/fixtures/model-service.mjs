@@ -42,8 +42,14 @@ async function answer(provider, request, response) {
     if (raw.length > 2 * 1024 * 1024) throw new Error("Fixture request is too large");
   }
   const body = JSON.parse(raw);
-  const completion = await provider.complete({ messages: body.messages.map(messageFrom), tools: [],
+  let completion = await provider.complete({ messages: body.messages.map(messageFrom), tools: [],
     signal: AbortSignal.timeout(30_000) });
+  // Through the product's real model path a call must name a tool the request offered (src/providers.ts originalName):
+  // the scripted fixture's later steps (files.verify) are not offered to an ordinary task, so the task ends there,
+  // with the steps it could take done, rather than asking for a tool it was never given.
+  const offered = new Set((body.tools ?? []).map((tool) => tool.function?.name).filter(Boolean));
+  if (completion.toolCalls.some((call) => !offered.has(call.name)))
+    completion = { content: "Demo fixture completed: wrote and read branch-demo.txt.", toolCalls: [] };
   const message = { role: "assistant", content: completion.content,
     ...(completion.toolCalls.length ? { tool_calls: completion.toolCalls.map((call) => ({ id: call.id, type: "function",
       function: { name: call.name, arguments: call.arguments } })) } : {}) };
