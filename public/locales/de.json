@@ -9089,7 +9089,7 @@
   "window.settings.appearance.your-own": "Deins",
   "window.settings.appearance.your-themes": "Deine Designs",
   "window.settings.computer.a-github-action-and-a-gitlab": "Eine GitHub Action und eine GitLab-Komponente.",
-  "window.settings.computer.a-plan-can-be-tried-compared": "Ein Plan kann ausprobiert, verglichen und zusammengeführt werden; eine abgezweigte Unterhaltung bekommt ihre eigene Kopie.",
+  "window.settings.computer.a-plan-can-be-tried-compared": "Parallel arbeitende Helfer bekommen je eine eigene Kopie eines Git-Projekts, die entfernt wird, wenn sie fertig sind. Eine abgezweigte Unterhaltung bekommt nur dann eine Kopie, wenn Abzweigungen eingeschaltet sind.",
   "window.settings.computer.a-right-click-in-chrome-or": "Ein Rechtsklick in Chrome oder Edge schickt die Seite an einen Trunk. Schaltet sich ein, wenn die Browsererweiterung installiert ist.",
   "window.settings.computer.a-sealed-box-keeps-scripts-away": "Eine versiegelte Box hält Skripte von deinen Dateien fern, außer eine Aufgabe braucht sie.",
   "window.settings.computer.a-step-by-step-trace-you": "Ein Schritt-für-Schritt-Trace, den du abspielen kannst.",

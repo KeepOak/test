@@ -9089,7 +9089,7 @@
   "window.settings.appearance.your-own": "Your own",
   "window.settings.appearance.your-themes": "Your themes",
   "window.settings.computer.a-github-action-and-a-gitlab": "A GitHub Action and a GitLab component.",
-  "window.settings.computer.a-plan-can-be-tried-compared": "A plan can be tried, compared and merged; a forked conversation gets its own copy.",
+  "window.settings.computer.a-plan-can-be-tried-compared": "Helpers working side by side each get their own copy of a Git project, removed when they finish. A forked conversation gets a copy only when forks are switched on.",
   "window.settings.computer.a-right-click-in-chrome-or": "A right-click in Chrome or Edge sends the page to a Trunk. Turns on when the browser extension is installed.",
   "window.settings.computer.a-sealed-box-keeps-scripts-away": "A sealed box keeps scripts away from your files unless a task needs them.",
   "window.settings.computer.a-step-by-step-trace-you": "A step-by-step trace you can replay.",
