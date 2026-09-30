@@ -242,12 +242,12 @@ export class Flows {
    * Starts a graph flow and hands back the task id straight away, before a single box has run, so
    * the page can open the run socket and watch the boxes happen rather than asking over and over.
    */
-  startGraph(id: string, input: Record<string, unknown> = {}, within?: readonly string[], source: RunSource = "owner"): GraphRunStart {
+  startGraph(id: string, input: Record<string, unknown> = {}, within?: readonly string[], source: RunSource = "owner", signal?: AbortSignal): GraphRunStart {
     const definition = this.definitionOf(id);
     const started = this.graphs.begin(definition, input, { source });
     // mac7/lockdown-fix: a flow a task sets going through its own tool keeps to that task's tools.
     // mac7/outside-resume: and is held as that task is, when it came from outside.
-    this.follow(started.runId, this.graphs.work(started.runId, started.compiled, { source, ...(within ? { within } : {}) }));
+    this.follow(started.runId, this.graphs.work(started.runId, started.compiled, { source, ...(within ? { within } : {}), ...(signal ? { signal } : {}) }));
     return { runId: started.runId, flowId: id, status: "running", name: definition.name };
   }
   /** Whether a saved flow is drawn as a graph rather than kept as a list of steps. */
@@ -326,7 +326,7 @@ export class Flows {
         description: `Runs the saved flow "${flow.name}".`.slice(0, 200),
         parameters: zodForShape(flow.definition.input) as z.ZodType<Record<string, unknown>>,
         execute: async (value, context) => this.settled(this.startGraph(flow.id, value, this.workflows.taskLimit(context), // mac7/lockdown-fix
-          heldSource(context, this.store)).runId), // mac7/outside-resume
+          heldSource(context, this.store), context.signal).runId), // mac7/outside-resume
       });
       published.push(name);
     }

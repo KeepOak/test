@@ -195,12 +195,14 @@ export class FlowGraphRunner {
       this.writeNode(runId, seq, node, "done", result.output);
       this.store.event(runId, "flow.node.finished", { node: node.id, name: node.name, seq, output: result.output.slice(0, 500),
         ...(result.childRunId ? { childRunId: result.childRunId } : {}) /* bucket 13: run monitor */ });
+      if (options.signal?.aborted) return this.view(runId);
       const step = this.chooseNext(node, result, compiled, loops, limit);
       if ("refusal" in step) return this.stop(runId, "failed", step.refusal);
       at = step.to; loops = step.loops;
       this.save(runId, { next_node: at, state: JSON.stringify(state), loops: JSON.stringify(loops) });
       recordFlowStep(this.store, { runId, owner: this.owner, seq, nodeId: node.id, name: node.name, nextNode: at }, state, loops); // r17-h
     }
+    if (options.signal?.aborted) return this.view(runId);
     this.save(runId, { status: "completed", state: JSON.stringify(state) });
     // mac7/lockdown-fix (integration review): a finished run cannot be carried on, so its limit goes,
     // unless its steps were kept: going back to one makes a copy that must keep the same limit.
