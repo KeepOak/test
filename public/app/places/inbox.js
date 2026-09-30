@@ -393,6 +393,7 @@ async function allowAll() {
 }
 
 export function init() {
+  initScheduleFailures();
   initAutonomyInbox();
   initDemo17();
   initInbox17();
