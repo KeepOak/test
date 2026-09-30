@@ -333,6 +333,7 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 // questions at once, and what each project has cost.
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
+import { handlesLocalIndexPath, localIndexApi, LocalIndexApiError } from "./personal/local-index.js"; // RES-718
 import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { audit, csvCell } from "./audit.js";
@@ -1105,6 +1106,12 @@ async function api(
     return webPagesApi({ store: app.store, owner: app.runtime.owner, requireOwner: (what) => app.store.profiles.requireOwner(what) },
       request.method ?? "GET", () => readBody(request)).catch((error: unknown) => {
       throw error instanceof WebPagesApiError ? new HttpError(error.status, error.message) : error;
+    });
+  // RES-718: the local index of the owner's mail and calendars: its switch and days, bringing it up to date, deleting it.
+  if (handlesLocalIndexPath(path))
+    return localIndexApi({ index: app.localIndex, requireOwner: (what) => app.store.profiles.requireOwner(what) },
+      request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
+      throw error instanceof LocalIndexApiError ? new HttpError(error.status, error.message) : error;
     });
   // RES-719: GitLab set up in the window: its switch, the token checked and kept in the locker, and taking it out.
   if (handlesGitLabPath(path))

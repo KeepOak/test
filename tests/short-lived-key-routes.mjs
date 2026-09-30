@@ -776,6 +776,9 @@ export const ROUTES = {
   "/api/learn/switch": "owner POST",
   "/api/learn/tour": "other POST",
   "/api/lockdown": "owner POST",
+  "/api/local-index": "owner POST", // RES-718: the local index of mail and calendars, its switch and days
+  "/api/local-index/delete": "owner POST", // RES-718: every row of the index deleted
+  "/api/local-index/update": "owner POST", // RES-718: brought up to date now (reads the owner's mail)
   // mac7/bind (integration review): where Branch's own door listens. Reading it tells a caller
   // where to knock, so looking is the owner's alone as much as moving it is.
   "/api/listen": "owner GET,POST",

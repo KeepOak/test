@@ -9972,6 +9972,27 @@ through your network rules.
 | Searching the email inbox | `mail.search`, `mail.attachments`, `mail.save_attachment` | The email channel's mailbox (server, user, and the saved password's name). Search by sender, subject, words, dates or unread, with plain-ASCII words; open a message and its attached files; save one into the workspace's `mail-attachments` folder, never over an existing file. Nothing is marked read or sent. |
 | A public address for webhooks | — | Starts *your* tunnel program — `cloudflared`, `tailscale funnel` (without `--bg`, so nothing stays configured) or `ngrok` — pointed at a small door on this computer that only passes `/webhooks/chat/…`, `/webhooks/whatsapp/…`, `/hooks/…` and `POST /api/triggers/<id>/fire`, with any key, cookie or origin removed. The window is never on the internet. Lockdown refuses to start it; locking or closing Branch stops it. |
 
+**A local index of mail and calendars (RES-718).** Settings › Advanced › "A local index of mail and calendars" keeps a
+copy of your inbox (the email channel's, over IMAP), Gmail, Outlook and your Google and Outlook calendars on this
+computer, so `index.search` (behind `index.read`, which only looks, on this computer) answers "find the email about the
+lease" without asking each server. It **ships on** ("when needed"), 90 days back: a capped index of your own mail on
+your own disk is none of the off-reasons, and it runs only for sources already connected and switched on. Switch it off
+in the same row, and delete what it holds there.
+
+While on:
+- Every half hour (or at **Update now**) it brings each source up to date, only through that part's own connector. The
+  part's own switch, its sign-in and Lockdown still decide, and a source that is switched off or signed out has its rows
+  dropped at the next run.
+- It keeps 30, 90 or 365 days back (events up to 60 days ahead too), at most 200 new items a source a run and 20,000
+  rows in all. For each item it keeps the sender, the subject, the date and at most 2,000 characters of text.
+- A message it already holds is never fetched again.
+- **Delete the index** removes every row after a yes. Your mail and calendars themselves are not touched.
+- The rows are a cache that can be rebuilt, so no backup carries them. The switch itself waits for your yes on a restore.
+
+Messages from chat apps are not copied here; they are already in Branch's own history. Routes: `GET/POST
+/api/local-index` (`{ mode?, days? }`), `POST /api/local-index/update` and `POST /api/local-index/delete`, each change the
+owner's only.
+
 Each connector hands its text to the model marked as somebody else's words: information, never instructions. A task started
 by a chat message gets none of these tools, so somebody you have paired cannot read your mail, hear your day, or
 switch things in your house.
