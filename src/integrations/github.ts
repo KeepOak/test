@@ -1,5 +1,6 @@
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
+import { matchingPublication, publicationLookupPath, type PublicationLookup } from "../self-development-publication-lookup.js";
 import { scrubSecrets } from "../locker.js";
 import { applyContentPolicy, detectInjection } from "../content-guard.js";
 import type { NetworkPolicy } from "../network-policy.js";
@@ -43,9 +44,12 @@ export class GitHubAccess {
     this.config = GitHubConfigSchema.parse(input);
   }
   get tokenSecret(): string { return this.config.tokenSecret; }
+  async findPublication(input: PublicationLookup, signal: AbortSignal): Promise<unknown | null> {
+    return matchingPublication(input, await this.request("GET", publicationLookupPath(input), undefined, undefined, signal));
+  }
 
   /** One REST call: the network policy decides whether the address may be reached at all. */
-  private async request(method: string, path: string, body?: unknown, beforeSend?: () => void): Promise<unknown> {
+  private async request(method: string, path: string, body?: unknown, beforeSend?: () => void, signal?: AbortSignal): Promise<unknown> {
     const token = await this.token();
     const url = new URL(path.replace(/^\//, ""), this.config.apiBase.replace(/\/?$/, "/"));
     await this.policy.assertAllowed(url, "GitHub address");
@@ -53,7 +57,7 @@ export class GitHubAccess {
     let response: Response;
     try {
       response = await this.fetchImpl(url, {
-        method, redirect: "error", signal: AbortSignal.timeout(this.config.timeoutMs),
+        method, redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.config.timeoutMs)]) : AbortSignal.timeout(this.config.timeoutMs),
         headers: {
           authorization: `Bearer ${token}`, accept: "application/vnd.github+json",
           "user-agent": this.userAgent, "x-github-api-version": "2022-11-28",
@@ -68,7 +72,8 @@ export class GitHubAccess {
       throw new GitHubUnreachable(`GitHub could not be reached just now (${why.slice(0, 160)}).`);
     }
     const text = scrubSecrets((await response.text()).slice(0, this.config.maxBytes), { [this.config.tokenSecret]: token });
-    if (!response.ok) throw response.status >= 500 ? new GitHubUnreachable(explainGitHub(response.status, text)) : new Error(explainGitHub(response.status, text));
+    if (!response.ok) throw Object.assign(response.status >= 500 ? new GitHubUnreachable(explainGitHub(response.status, text))
+      : new Error(explainGitHub(response.status, text)), { status: response.status });
     return text ? JSON.parse(text) : {};
   }
 

@@ -165,7 +165,8 @@ function factsWords(field: FieldSpec): string {
 }
 type Preview = { setting: string; name: string; label: string; from: Value; to: Value; lessCareful: boolean; looser?: string; pinned: boolean };
 export type Clarified =
-  | { status: "ask"; question: string; choices: Choice[]; planned: false }
+  | { status: "ask"; question: string; choices: Choice[]; planned: false;
+      missingCapability?: { tool: "seasons.request_setting"; request: string; note: string } }
   | { status: "ready"; setting: string; preview: Preview[]; useTool: "settings.change" | "settings.loosen" }
   | { status: "unchanged"; setting: string; note: string; refused: string[] };
 
@@ -179,7 +180,9 @@ export function clarifyRequest(store: Store, owner: string, input: { request: st
   const choices = (list: readonly Candidate[]): Choice[] => list.slice(0, 20)
     .map((one) => ({ setting: idOf(one), name: nameOf(one), value: currentValue(store, owner, one.spec, one.field), ...numberFacts(one.field) }));
   if (negated(input.request)) return { status: "ask", question: negatedQuestion(store, owner, found), choices: choices(found), planned: false };
-  if (found.length !== 1) return { status: "ask", question: questionFor(input.request, found), choices: choices(found), planned: false };
+  if (found.length !== 1) return { status: "ask", question: questionFor(input.request, found), choices: choices(found), planned: false,
+    ...(!found.length && namingWords(input.request).length ? { missingCapability: { tool: "seasons.request_setting" as const, request: input.request,
+      note: "If the owner asked to add this missing setting, preserve their task with this tool. A failed name match alone does not authorize building it; check settings.list first." } } : {}) };
   const [only] = found as [Candidate];
   const setting = idOf(only), now = currentValue(store, owner, only.spec, only.field);
   if (asked === undefined)
