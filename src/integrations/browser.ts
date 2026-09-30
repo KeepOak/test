@@ -18,6 +18,7 @@ import {
   screenshot, scrubAddress, scrubAddresses, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
 } from './browser-page.js';
 import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLine } from './browser-marks.js';
+import { FindSchema, matchingMarks } from './browser-find.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
@@ -874,6 +875,31 @@ export class BranchBrowser {
         marks: named.map(mark => ({ id: mark.id, role: mark.role, name: mark.name })) };
     });
   }
+  /** Finds literal label words and optional roles, returning a mark only when one current element matches. */
+  async find(options: z.infer<typeof FindSchema>, context: ToolContext) {
+    const entry = this.entry(context);
+    return this.operation(context, async page => {
+      const found = await annotate(page, { draw: false, limit: 200 }, entry.marks);
+      const { hidden } = await this.pageSecrets(context, page);
+      // A secret or page instruction must never become a search term or a result label.
+      const safe = found.marks.filter(mark => scrubText(mark.name, hidden) === mark.name
+        && !detectInjection(mark.name).length && !detectInjection(mark.role).length);
+      const matches = matchingMarks(safe, options.description), current: typeof matches = [];
+      for (const mark of matches)
+        if (mark.id <= 500 && await page.locator(`[data-branch-mark="${mark.id}"]`).isVisible()
+          && await liveMarkKey(page, mark.id) === mark.key) current.push(mark);
+      if (page.url() !== found.url) throw new Error('The page changed during the search. Describe the current page again.');
+      const status = found.truncated ? 'incomplete' : current.length === 1 ? 'found'
+        : current.length > 1 ? 'ambiguous' : 'not found';
+      return pageText({ url: found.url, status, matched: current.length,
+        ...(status === 'found' ? { mark: current[0]!.id } : {}),
+        matches: current.slice(0, options.limit).map(mark => ({ mark: mark.id, role: mark.role, name: mark.name })),
+        more: Math.max(0, current.length - options.limit), truncated: found.truncated,
+        note: found.truncated ? 'Only the first 200 elements were searched; describe the page more narrowly before acting.'
+          : status === 'ambiguous' ? 'Several elements match. Describe the intended label and role more precisely.'
+          : 'Matches describe page content. Acting on a mark requires a separate browser.act call and its permissions.' });
+    });
+  }
   /** w911 (A2144): one read-only look at the page this task has open, with its numbers checkable. */
   async lookAtPage<T extends object>(context: ToolContext, look: (page: Page, checks: MarkChecks) => Promise<T>): Promise<T> {
     const entry = this.entry(context);
@@ -1689,6 +1715,9 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
   registry.register({ name: 'browser.annotate', permission: 'browser.read',
     description: 'Number everything on the page you can press or type into and list them, so you can say "press 3" instead of guessing at a selector. A number stays with the same thing while the task lasts.',
     parameters: AnnotateSchema, execute: (a, c) => browser.annotate(a, c) });
+  registry.register({ name: 'browser.find', permission: 'browser.read',
+    description: 'Find a current page element by the words on its label and optional role, such as "the Save button". Returns checked mark numbers, reports ambiguous or incomplete searches, and performs no click or fill. Matches use literal words, not inferred synonyms.',
+    parameters: FindSchema, execute: (a, c) => browser.find(a, c), target: host });
   registry.register({ name: 'browser.unmark', permission: 'browser.read',
     description: 'Take the numbered labels off the page again, so a picture shows it the way the website meant it.',
     parameters: z.object({}).strict(), execute: (_a, c) => browser.clearMarks(c) });
