@@ -55,3 +55,24 @@ test("End during the offer's gathering stops the tracks and the peer without wai
   assert.deepEqual(browser.tracks.map((track) => track.stopped), [true]);
   assert.equal(browser.peers[0].closed, true);
 });
+
+test("an ended call that finishes late never erases the setup of the call that replaced it", async () => {
+  fakeBrowser();
+  const { openingSlot } = await import(`../public/app/chat/talkpeer.js?slot=${Date.now()}`);
+  const slot = openingSlot();
+  const closed = [];
+  let callA = true;
+  const releaseA = slot.own(() => closed.push("A"), () => callA);
+  callA = false; slot.stop();                             // End on A while its capture is pending
+  const releaseB = slot.own(() => closed.push("B"), () => true); // B starts and owns the slot
+  releaseA();                                             // A's setup returns afterwards
+  slot.stop();                                            // End (or Lock) on B
+  assert.deepEqual(closed, ["A", "B"], "B's capture is still closed at once");
+  releaseB();
+  slot.stop();
+  assert.deepEqual(closed, ["A", "B"], "nothing is closed twice");
+  slot.own(() => closed.push("stale"), () => false);
+  assert.deepEqual(closed, ["A", "B", "stale"], "a setup whose call has already ended is closed, not stored");
+  slot.stop();
+  assert.equal(closed.length, 3);
+});
