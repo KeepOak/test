@@ -440,9 +440,9 @@ export async function startMcp(
   const reopen = async () => {
     await host?.beforeRestart?.();
     await vet();
-    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
+    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.(), host?.workspace, host?.injection);
   };
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injection); // R17-S20
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injection, host?.workspace); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -452,6 +452,7 @@ export async function startMcp(
   // `connectMcp`: the same connection, without a second registration to collide with the first.
   // Every open after that is a program started again (its first call, or after a crash or a warm close): the same checks.
   host.connections.register(id, reopen); // R17-S20
+  let release: () => void = () => undefined;
   const names = registerCachedMcp(registry, server, host.cache.read(id), async () => {
     // Opened through the manager, so keep-warm, the cap and the retries all apply to it. What it
     // says its tools are NOW, and the credentials it was opened with, travel back with it: the
@@ -459,13 +460,14 @@ export async function startMcp(
     const opened = await host.connections.acquire(`mcp:${id}`, id) as unknown as LiveMcp & { found?: LiveMcp['tools'] };
     // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
-      ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
-  }, host.injection);
+      ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}),
+      ...(opened.onToolsChanged ? { onToolsChanged: opened.onToolsChanged } : {}) };
+  }, host.injection, close => { release = close; });
   if (!names.length) {
     const connection = await connect();
     return connection.close;
   }
-  return async () => { for (const name of names) registry.unregister(name); };
+  return async () => { release(); for (const name of names) registry.unregister(name); };
 }
 /** mac3/security-check: asks the malware check about a server started from a package, if there is one. */
 async function vetLaunch(server: unknown, host: McpHost | undefined): Promise<void> {
@@ -485,6 +487,8 @@ export interface McpHost {
   startupTimeoutMs?: () => number;
   /** How text that reads like instructions is handled in a server's answers (the web setting); "redact" when unset. */
   injection?: () => 'warn' | 'redact' | 'block';
+  /** Only the workspace the current owner permits, never additional filesystem roots. */
+  workspace?: () => string;
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
     acquire(runId: string, id: string): Promise<{ close(): Promise<void> }>;
     /** Forgets a server the owner switched off or removed (src/mcp-own-servers.ts). */

@@ -7,3 +7,4 @@ export const mcpClient = async () => (await import('@modelcontextprotocol/sdk/cl
 export const mcpStdio = () => import('@modelcontextprotocol/sdk/client/stdio.js');
 export const mcpHttp = async () => (await import('@modelcontextprotocol/sdk/client/streamableHttp.js')).StreamableHTTPClientTransport;
 export const mcpValidator = async () => (await import('@modelcontextprotocol/sdk/validation/ajv')).AjvJsonSchemaValidator;
+export const mcpTypes = () => import('@modelcontextprotocol/sdk/types.js');
