@@ -14,19 +14,38 @@ import { openSettingFor } from "./places.mjs";
 import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
 
 /* The new window: the prototype draws the step limit as Settings › Models › Budgets, "Most steps in one task", at
-   Advanced. It must show what the engine keeps, and a change typed there must reach the engine. */
+   Advanced. It must show what the engine keeps, and a change typed there must reach the engine. Auto and No limit are
+   plain choices beside the box (the owner, 2026-09-29: a task on a ChatGPT plan should never stop for its budget). */
 test("Models › Budgets' Most steps in one task shows the engine's value, and a change reaches the engine", async (t) => {
   const { app, page, errors } = await settingsWindow(t, { name: "knobs-ui" });
-  assert.equal(readKnobs(app.store, "local", "limits").maxSteps, 60, "as shipped");
+  const limits = () => readKnobs(app.store, "local", "limits");
+  const until = async (check) => { for (let tries = 0; tries < 50 && !check(); tries++) await page.waitForTimeout(100); };
+  assert.equal(limits().maxSteps, null, "as shipped: auto");
   await openSettingsPage(page, "models");
   await setLevel(page, "advanced");
   const steps = page.getByRole("textbox", { name: "Most steps in one task", exact: true });
+  const stepChoices = page.getByRole("group", { name: "Most steps in one task", exact: true });
   await steps.waitFor();
-  assert.equal(await steps.inputValue(), "60", "the box shows what the engine keeps");
+  assert.equal(await steps.inputValue(), "", "no figure of the owner's own");
+  assert.equal(await stepChoices.getByRole("button", { name: "Auto", exact: true }).getAttribute("aria-pressed"), "true");
   await steps.fill("25");
   await steps.press("Enter");
-  for (let tries = 0; tries < 50 && readKnobs(app.store, "local", "limits").maxSteps !== 25; tries++) await page.waitForTimeout(100);
-  assert.equal(readKnobs(app.store, "local", "limits").maxSteps, 25, "the change reached the engine");
+  await until(() => limits().maxSteps === 25);
+  assert.equal(limits().maxSteps, 25, "the change reached the engine");
+  await stepChoices.getByRole("button", { name: "No limit", exact: true }).click();
+  await until(() => limits().maxSteps === "none");
+  assert.equal(limits().maxSteps, "none", "No limit reached the engine");
+  await page.waitForTimeout(300);
+  assert.equal(await stepChoices.getByRole("button", { name: "No limit", exact: true }).getAttribute("aria-pressed"), "true", "and is shown pressed");
+  assert.equal(await steps.inputValue(), "");
+
+  const tokens = page.getByRole("group", { name: "Tokens per task", exact: true });
+  await tokens.getByRole("button", { name: "No limit", exact: true }).click();
+  await until(() => limits().maxTaskTokens === "none");
+  assert.equal(limits().maxTaskTokens, "none", "Tokens per task has No limit too");
+  await tokens.getByRole("button", { name: "Auto", exact: true }).click();
+  await until(() => limits().maxTaskTokens === null);
+  assert.equal(limits().maxTaskTokens, null, "and goes back to auto");
   assert.deepEqual(errors, []);
 });
 

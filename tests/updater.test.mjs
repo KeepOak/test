@@ -352,7 +352,8 @@ test("an install held for its hand-over refuses a second one until it is release
  */
 test("the Update button holds the claim through the hand-over and gives it back only on failure", async () => {
   const ipc = await readFile(new URL("../src/desktop/updater-ipc.ts", import.meta.url), "utf8");
-  const handler = ipc.slice(ipc.indexOf('ipcMain.handle("branch:update-install"'), ipc.indexOf('ipcMain.handle("branch:open-external"'));
+  // One install for the Update button and the app's own update loop alike (installNow), which the handler calls.
+  const handler = ipc.slice(ipc.indexOf("const installNow = "), ipc.indexOf('ipcMain.handle("branch:open-external"'));
   // A confirmed move to another Dev line of work is passed beside it (src/desktop/update-readiness.ts confirmedChange).
   assert.match(handler, /updater\.install\(\{ hold: true(?:, automatic: automatic === true)?(?: \}|, \.\.\.\(confirmed \? \{ confirm: confirmed \} : \{\}\) \})\)/, "the handler asks for the claim to be held");
   const failure = handler.slice(handler.indexOf("} catch (error) {"));
