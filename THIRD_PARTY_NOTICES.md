@@ -3314,6 +3314,10 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+### Hermes Agent (Nous Research), MIT, and Gemini CLI (Google), Apache-2.0: MCP output as outside text
+
+`guardResult`, the description guard in `definition` and `failureText` in `src/integrations/mcp.ts` follow Hermes Agent's scan of MCP tool descriptions for injection patterns (https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py#L15-L41, Copyright (c) 2025 Nous Research, MIT) and Gemini CLI's hand-over of an MCP tool's error content to the model (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-tool.ts#L455-L477, Apache-2.0). The code was written for Branch around its own guard (`src/content-guard.ts`). The MIT licence text is given under IronClaw above; Gemini CLI is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
 ### PicoClaw, MIT
 
 `src/channels/deltachat.ts` follows the JSON-RPC call sequence and message fields in PicoClaw's `pkg/channels/deltachat` (https://github.com/sipeed/picoclaw). Used under the MIT licence:
@@ -3563,10 +3567,6 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 - `readback.ts` follows the ideas of ZeroClaw's Markdown memory (`crates/zeroclaw-memory/src/markdown.rs`, https://github.com/zeroclaw-labs/zeroclaw, commit 3df68fb, MIT or Apache-2.0) and nanobot's "dream" tidy template (`nanobot/templates/agent/dream.md`, https://github.com/HKUDS/nanobot, commit 2fb1659, MIT).
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-
-### Hermes Agent (Nous Research), MIT, and Gemini CLI (Google), Apache-2.0: MCP output as outside text
-
-`guardResult`, the description guard in `definition` and `failureText` in `src/integrations/mcp.ts` follow Hermes Agent's scan of MCP tool descriptions for injection patterns (https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py#L15-L41, Copyright (c) 2025 Nous Research, MIT) and Gemini CLI's hand-over of an MCP tool's error content to the model (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-tool.ts#L455-L477, Apache-2.0). The code was written for Branch around its own guard (`src/content-guard.ts`). The MIT licence text is given under IronClaw above; Gemini CLI is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
