@@ -9,6 +9,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolDefinition, ToolContext } from '../contracts.js';
 import { McpConfigSchema, makeTransport, type McpConfig } from './mcp-config.js';
+import type { McpOwnerRequests } from '../mcp-owner-requests.js';
 
 export const mcpToolName = (id: string, tool: string): string =>
   `mcp.${id}.${createHash('sha256').update(tool).digest('hex').slice(0, 16)}`;
@@ -177,12 +178,15 @@ export async function openMcp(
   policy?: { guard(base: typeof fetch): typeof fetch }, cache?: McpToolCache,
   /** R17-S20: how long the server may take to start and list its tools (Settings › Connections). */
   startupTimeoutMs = 10000,
+  ownerRequests?: McpOwnerRequests,
 ) {
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
   const { transport, secrets } = await makeTransport(config, env, policy);
-  const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' });
+  const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' },
+    { capabilities: ownerRequests?.capabilities(config.id) ?? {} });
   try {
+    await ownerRequests?.install(client, config.id);
     // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
     await client.connect(transport as Transport, { timeout: startupTimeoutMs });
     if (client.getServerVersion()?.version !== config.expectedVersion)
@@ -235,9 +239,10 @@ export async function connectMcp(
   policy?: { guard(base: typeof fetch): typeof fetch }, cache?: McpToolCache, startupTimeoutMs?: number,
   /** How to open the same server again after a crash; the plain open when not given. */
   reopen?: () => Promise<Awaited<ReturnType<typeof openMcp>>>,
+  ownerRequests?: McpOwnerRequests,
 ) {
-  const first = await openMcp(input, env, policy, cache, startupTimeoutMs);
-  const live = restarting(first, reopen ?? (() => openMcp(input, env, policy, cache, startupTimeoutMs)));
+  const first = await openMcp(input, env, policy, cache, startupTimeoutMs, ownerRequests);
+  const live = restarting(first, reopen ?? (() => openMcp(input, env, policy, cache, startupTimeoutMs, ownerRequests)));
   const opened = { ...first, call: live.call, close: live.close };
   try {
     const definitions = opened.found.map(tool => definition(opened.call, opened.config, tool, opened.secrets));
