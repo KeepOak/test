@@ -431,3 +431,15 @@ test("overlapping deliveries: a late success never undoes a switch-off, an edit,
   assert.equal(now.failureCount, 5, "nor clear the newer failures");
   assert.equal(now.url, "https://hooks.example/new", "nor put back the address from before the edit");
 });
+
+test("a slow failed delivery that finishes after a newer success does not count against the webhook", async (t) => {
+  const { app, context } = await fixture(t);
+  const endpoint = await fakeEndpoint(t, (entry) => ({ status: entry.raw.toString("utf8").includes("slow-run") ? 500 : 200 }));
+  const webhook = app.webhooks.create(context, { name: "Mostly fine", url: endpoint.url, events: ["run.completed"] });
+  app.webhooks.retryDelays = [150, 150];
+  const slow = app.webhooks.deliver("local", webhook.id, "run.completed", { runId: "slow-run" });
+  await app.webhooks.deliver("local", webhook.id, "run.completed", { runId: "fast-run" });
+  await slow;
+  assert.equal(app.webhooks.get("local", webhook.id).failureCount, 0, "the older failure ended before the newer success counted");
+  assert.equal(app.webhooks.get("local", webhook.id).enabled, true);
+});
