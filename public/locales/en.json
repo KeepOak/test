@@ -4456,6 +4456,8 @@
   "recordings.saved": "Saved.",
   "recordings.switch": "Recordings of tasks",
   "recordings.title": "Watch a task again",
+  "release-notes.edition": "This build includes the release notes for {version}.",
+  "release-notes.installed-build": "Installed build: Branch {version}",
   "repeat.intro": "Choose a rhythm and see it written out in plain words before you use it.",
   "repeat.preview": "It would happen {words}.",
   "repeat.title": "How often should it repeat?",
