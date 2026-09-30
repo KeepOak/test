@@ -889,6 +889,8 @@ export class Runtime {
     this.queueGuard(waiting.sessionId);
     // Validate before settling: an unavailable scope leaves the handoff unanswered.
     const scope = this.deferredScope(waiting.runId, waiting.sessionId);
+    if (this.trunkShape({ prompt: "", sessionId: waiting.sessionId }) !== null || currentAccountCall()?.trunk !== undefined)
+      throw new Error("This handed-over job remains unanswered because its current Trunk credential scope cannot be reconciled with the original task.");
     const entry = this.deferrals.settle(id, answer);
     if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool, kind: entry.kind, ...(action ? { action } : {}) });
     // mac7/outside-resume: the answer carries the task that handed the step over on, as that task.
@@ -1723,6 +1725,10 @@ ${run.output.slice(0, 6000)}`;
     const budget = parent?.budget ?? new Budget(options.budget ?? knobs.taskBudget(this.store, this.owner)); // R17-S09
     // ── R17-A (Trunks): a Trunk's turn carries its own instructions, memory scope, tools and model. ──
     const trunk = parent ? null : this.trunkShape(options);
+    // Default owner Trunks can carry credential keys without a context.trunk identity.
+    // This queue cannot prove their saved key/route scope, so never adopt current keys.
+    if (options.deferredFrom && (trunk !== null || currentAccountCall()?.trunk !== undefined))
+      throw new Error("This handed-over task cannot continue under a current Trunk credential scope. Reconcile its original credential authority first.");
     // eng-trunk-controls: a paused Trunk starts nothing new, whoever asks; said in words, above the first await.
     const paused = trunk ? this.trunkPaused(trunk.trunkId) : null;
     if (paused) throw new Error(paused);
@@ -1872,8 +1878,8 @@ ${run.output.slice(0, 6000)}`;
       permissions: [...context.permissions].sort(),
       // Only an ordinary root can be reconstructed by this deferred queue. Helpers, scoped
       // memory, borrowed copies and other execution shapes require their original placement.
-      deferredScope: { version: 1, workspace: this.workspace, root: !parent && context.depth === 0 && !context.agent
-        && !context.trunk && !context.isolated && !context.ownCopy && !options.lentTo
+      deferredScope: { version: 2, workspace: this.workspace, root: !parent && context.depth === 0 && !context.agent
+        && !context.trunk && context.trunkKeys === undefined && !context.isolated && !context.ownCopy && !options.lentTo
         && context.workspace === this.workspace && (context.source ?? "owner") === "owner"
         && !currentPerson() && !startedWithShortLivedKey() && !options.originFrom
         && !options.resumeFrom && !options.continuing, dryRun: context.dryRun === true },
@@ -2114,7 +2120,7 @@ ${run.output.slice(0, 6000)}`;
       ? value as Record<string, unknown> : null;
     if (!run || run.owner !== this.owner || run.sessionId !== sessionId
       || !saved
-      || saved.version !== 1 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
+      || saved.version !== 2 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
       || !Array.isArray(started?.permissions) || !started.permissions.every((permission) => typeof permission === "string")
       || events.some((event) => event.kind === "worktree.used" || event.kind === "worktree.inherited"))
       throw new Error("This handed-over task cannot continue safely because its saved effective scope or workspace cannot be recovered. The job remains unanswered; reconcile its original task first.");
