@@ -64,7 +64,7 @@ async function readPicture(parts: Parts, context: ToolContext, id: string) {
   if (!found || !current.data.image) return { available: false, reason: "The original picture is no longer available in its conversation" };
   const image = current.data.image;
   return { available: true, name: found.name, mediaType: found.mediaType,
-    open: `/api/attachments/file?session=${encodeURIComponent(image.sessionId)}&id=${encodeURIComponent(image.attachmentId)}`,
+    open: `/api/attachments/file?${new URLSearchParams({ session: image.sessionId, id: image.attachmentId })}`,
     retention: "The original stays with its conversation. This link still requires the authenticated attachment viewer." };
 }
 
