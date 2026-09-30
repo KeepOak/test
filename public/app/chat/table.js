@@ -79,7 +79,7 @@ function enhance(table) {
   const state = choice(key), wrap = node("div", "reply-table"), controls = node("div", "acts");
   const label = node("label", "hint", t("replyTable.filter")), input = node("input", "inp");
   input.type = "search"; input.maxLength = 200; input.name = `reply-table-${hash(key)}`;
-  input.dataset.replyTableFilter = "true"; input.setAttribute("aria-label", t("replyTable.filter"));
+  input.dataset.sw = "reply-table-filter"; input.dataset.replyTableFilter = "true"; input.setAttribute("aria-label", t("replyTable.filter"));
   label.append(input);
   const reset = node("button", "btn ghost sm", t("replyTable.reset"));
   reset.type = "button"; reset.dataset.act = "reply-table-reset";
@@ -99,7 +99,7 @@ function enhance(table) {
 }
 const recordOf = (el) => records.get(el.closest(".reply-table")?.querySelector("table"));
 if (globalThis.document) {
-  markLive(["reply-table-sort", "reply-table-reset"]);
+  markLive(["reply-table-sort", "reply-table-reset", "sw:reply-table-filter"]);
   on("reply-table-sort", (el) => {
     const record = recordOf(el); if (!record) return;
     const column = Number(el.dataset.column);
