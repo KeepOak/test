@@ -481,6 +481,7 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .pop .gateway-activity14 li{display:grid;gap:3px;padding:6px 0;font-size:12.5px;overflow-wrap:anywhere}
 .pop .gateway-activity14 time{font-size:11px;color:var(--ink-3)}
 .mi{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border-radius:9px;text-align:left;font-size:13.5px}
+.mi[hidden]{display:none}
 .mi:hover,.mi:focus-visible{background:var(--fill)}
 .mi .ico{color:var(--ink-3);display:grid}
 .mi .r{margin-left:auto;color:var(--ink-3);font-size:12px;display:flex;align-items:center;gap:6px}

@@ -33,3 +33,45 @@ test("UP-UI-007: @ in the middle of a message filters, moves with the arrows, an
   assert.equal(await page.locator('.pop [data-act="mention-pick"]').count(), 0, "the list closed");
   assert.deepEqual(errors, []);
 });
+
+test("UP-UI-007: non-matching mention rows are hidden with display:none", { timeout: 180000 }, async (t) => {
+  const { page, errors } = await newWindow(t);
+  const box = page.locator("#prompt");
+  await box.waitFor();
+
+  // Type @ to open mention picker
+  await box.fill("test ");
+  await box.evaluate((el) => el.setSelectionRange(5, 5));
+  await page.keyboard.type("@");
+
+  // Wait for mention list to appear
+  const shownItems = shown(page);
+  await shownItems.first().waitFor();
+
+  // Get total count of mention items
+  const totalBefore = await page.locator('.pop [data-act="mention-pick"]').count();
+  assert.ok(totalBefore > 1, "multiple mention items exist");
+
+  // Type a filter that matches only one item
+  await page.keyboard.type("d");
+
+  // Wait for filtering to apply
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.pop [data-act="mention-pick"]')].filter((n) => !n.hidden).length === 1
+  );
+
+  // Check that non-matching items have display:none
+  const hiddenItems = await page.locator('.pop [data-act="mention-pick"][hidden]').all();
+  assert.ok(hiddenItems.length > 0, "some items are hidden");
+  for (const item of hiddenItems) {
+    const computedStyle = await item.evaluate((el) => window.getComputedStyle(el).display);
+    assert.equal(computedStyle, "none",
+      `hidden mention item must have display:none (not ${computedStyle})`);
+  }
+
+  // Verify that all non-matching items are not visible
+  const visibleNonMatching = await page.locator('.pop [data-act="mention-pick"][hidden]:visible').count();
+  assert.equal(visibleNonMatching, 0, "non-matching mention items are not visible");
+
+  assert.deepEqual(errors, []);
+});
