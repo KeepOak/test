@@ -7,6 +7,7 @@ import { mergePassages, noSuchRetriever, orderedStages, pipelineFor, rerankStage
   RetrievalPipelineSettingsSchema, type NamedPipeline, type RetrievalPipelineSettings,
   type StageReport } from "./retrieval-pipeline.js";
 import type { Store } from "./store.js";
+import { embeddingRerank, type LocalRerankSource } from "./retrieval-embedding.js";
 
 /**
  * One way of finding passages, whatever they are made of. The document library and the saved facts
@@ -14,7 +15,7 @@ import type { Store } from "./store.js";
  * small interface, and anything that wants passages asks a retriever rather than one library.
  *
  * On top of that sits a second pass that puts the best answer first. By default that is done here
- * on this computer by counting words, which costs nothing and always gives the same order. The
+ * by the owner's local passage reader when available, with word counts as its fallback. The
  * owner can instead have the model read the top twenty and pick the best five; that is one extra
  * request per search, so it stays off until they turn it on.
  */
@@ -35,12 +36,14 @@ export interface Retriever {
 }
 
 export const RerankSettingsSchema = z.object({
-  /** "words" counts matching words here; "model" asks the model to choose. */
+  /** "words" uses the local passage reader first, then word counts; "model" asks the model to choose. */
   mode: z.enum(["words", "model"]).default("words"),
   /** How many passages the second pass looks at. */
   candidates: z.number().int().min(2).max(50).default(20),
   /** How many it keeps. */
   keep: z.number().int().min(1).max(20).default(5),
+  /** Cosine relevance floor for local embeddings only; word and model scores have different scales. */
+  relevanceThreshold: z.number().min(-1).max(1).default(0.1),
 }).strict();
 export type RerankSettings = z.infer<typeof RerankSettingsSchema>;
 
@@ -133,7 +136,7 @@ export class MemoryRetriever implements Retriever {
 export interface RetrievalResult {
   passages: RetrievedPassage[];
   /** How the second pass ordered them, and how many model requests it took (0 or 1). */
-  reranked: RerankSettings["mode"];
+  reranked: RerankSettings["mode"] | "embeddings";
   rerankCalls: number;
   note: string;
   /** Which named order ran. "default" is every retriever at once, the way it has always worked. */
@@ -145,6 +148,10 @@ export interface RetrievalResult {
 /** Every retriever together, with the second pass applied once over their combined answers. */
 export class Retrieval {
   private readonly retrievers: Retriever[] = [];
+  private readonly localReranks = new Set<AbortController>();
+  /** Installed by the factory: the independently chosen, guarded local embedding source. */
+  localEmbeddingSource: (owner: string) => LocalRerankSource | null = () => null;
+  cancelLocalReranks(): void { for (const pending of this.localReranks) pending.abort(); this.localReranks.clear(); }
   constructor(private readonly store: Store, private readonly owner: string, private readonly models?: ModelRouter) {}
   add(retriever: Retriever): void { this.retrievers.push(retriever); }
   list(): { id: string; label: string }[] { return this.retrievers.map((r) => ({ id: r.id, label: r.label })); }
@@ -212,7 +219,21 @@ export class Retrieval {
       const chosen = await modelRerank(this.models, owner, query, candidates, settings.keep, signal ?? AbortSignal.timeout(20000));
       return { passages: chosen.passages, reranked: "model", rerankCalls: chosen.calls, note: chosen.note, pipeline: "default", stages: [] };
     }
+    const local = settings.mode === "words" ? await this.localRerank(owner, query, candidates, settings, signal) : null;
+    if (local !== null) return { passages: local, reranked: "embeddings", rerankCalls: 0, note: "", pipeline: "default", stages: [] };
     return { passages: lexicalRerank(query, candidates, settings.keep), reranked: "words", rerankCalls: 0, note: "", pipeline: "default", stages: [] };
+  }
+  private async localRerank(owner: string, query: string, candidates: RetrievedPassage[], settings: RerankSettings,
+    signal?: AbortSignal): Promise<RetrievedPassage[] | null> {
+    const abort = new AbortController();
+    const bounded = AbortSignal.any([abort.signal, AbortSignal.timeout(10000), ...(signal ? [signal] : [])]);
+    this.localReranks.add(abort);
+    try {
+      const source = this.localEmbeddingSource(owner);
+      if (!source) return null;
+      return await embeddingRerank(query, candidates, settings.keep, settings.relevanceThreshold, source, bounded);
+    } catch { signal?.throwIfAborted(); return null; }
+    finally { this.localReranks.delete(abort); }
   }
   /** Puts an already-found list in the best order, for the libraries that search on their own. */
   async order(owner: string, query: string, passages: RetrievedPassage[], signal?: AbortSignal): Promise<RetrievedPassage[]> {

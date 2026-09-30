@@ -674,12 +674,12 @@ export class KnowledgeBases {
   }
   /** The second pass from wave 6, when one is set, then as many answers as the caller asked for. */
   private async bestFirst(owner: string, query: string, hits: KnowledgeHit[], limit: number, signal?: AbortSignal): Promise<KnowledgeHit[]> {
-    if (!this.reranker || hits.length < 2) return hits.slice(0, limit);
+    if (!this.reranker || !hits.length) return hits.slice(0, limit);
     const keyed = new Map(hits.map((hit) => [`knowledge:${hit.collection}:${hit.chunkId}`, hit]));
     const ordered = await this.reranker(owner, query,
       [...keyed].map(([key, hit]) => ({ key, source: hit.documentName, text: hit.text, score: hit.score, from: "knowledge" })), signal)
       .catch(() => null);
-    if (!ordered?.length) return hits.slice(0, limit);
+    if (ordered === null) return hits.slice(0, limit);
     return ordered.flatMap((passage) => { const hit = keyed.get(passage.key); return hit ? [hit] : []; }).slice(0, limit);
   }
 

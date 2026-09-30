@@ -476,7 +476,7 @@ export class DocumentLibrary {
     const ordered = await this.reranker(owner, query,
       [...keyed].map(([key, row]) => ({ key, source: row.source, text: row.text, score: row.score, from: "documents" })), signal)
       .catch(() => null);
-    if (!ordered?.length) return results.slice(0, 3);
+    if (ordered === null) return results.slice(0, 3);
     return ordered.flatMap((passage) => { const row = keyed.get(passage.key); return row ? [row] : []; }).slice(0, 3);
   }
 }

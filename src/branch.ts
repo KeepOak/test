@@ -219,6 +219,7 @@ import { MemoryMirror, readOnlyRefusal, registerMemoryMirror } from "./memory-mi
 import { MemoryHistory, registerMemoryHistory } from "./memory-git.js";
 import { EphemeralDocuments, EphemeralRetriever, registerEphemeralDocuments } from "./memory-ephemeral.js";
 import { CachedEmbeddings, asEmbeddings, onThisComputer } from "./embeddings.js";
+import { localRerankSource } from "./retrieval-embedding.js";
 import { assertLocalRuntimeAllowed, localRuntimeFetch } from "./local-policy.js";
 import { NativeMemory } from "./native-memory.js";
 import { MemoryConsolidation } from "./memory-consolidate.js";
@@ -1296,6 +1297,14 @@ ${result.output || "(it said nothing)"}`;
   const knowledgeBases = new KnowledgeBases(store, files, runtime.models,
     { charge: (runId, tokens) => store.addUsage(runId, tokens, 0, undefined, false) }, undefined, guardedFetch);
   knowledgeBases.embeddingSources.localFetch = embeddingLocalFetch;
+  retrieval.localEmbeddingSource = (owner) => localRerankSource(knowledgeBases.embeddingSources, owner, {
+    allowed: () => owner === runtime.owner && store.profiles.scope() === owner && store.profiles.isOwner()
+      && !sessionLock.state().locked && !lockedDown(store, owner) && !startedWithShortLivedKey(),
+    policy: () => JSON.stringify(web.policy.settings()),
+    fetchFor: (connection) => connection.fetchImpl ?? embeddingLocalFetch(connection.endpoint),
+    assertAllowed: (target) => assertLocalRuntimeAllowed(web.policy, target),
+  });
+  releaseOnLock.push(async () => retrieval.cancelLocalReranks());
   const nativeMemory = new NativeMemory(store, runtime.owner, {
     fetchFor: (endpoint) => onThisComputer(endpoint) ? embeddingLocalFetch(endpoint) : guardedFetch,
     assertAllowed: (endpoint, target) => { if (onThisComputer(endpoint)) assertLocalRuntimeAllowed(web.policy, new URL(target)); else web.policy.assertAllowed(target); },
