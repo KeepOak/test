@@ -200,7 +200,10 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   "desktop-apps-used:",
   // RES-408: the last check of a personal sign-in (src/personal/signin.ts): this computer's own recent result, gone in
   // 15 minutes; a file putting one in place would show a connection as working that was never checked here.
-  "personal-connection-health:"];
+  "personal-connection-health:",
+
+  // CHAT-041: how much of each step one chat is shown (/verbose), set from that chat here.
+  "chat-steps-detail:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**
@@ -273,6 +276,8 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // Q230: a chat made known for sends, a plan the next message carries on, a project's every-turn instructions and
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
   "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
+  // CHAT-096: a chat's /voice choice; "always" speaks every reply there, which a paid speech service charges for.
+  "channel-voice:",
   "skill-origin:", "skill-package:",
   // #890: an API skill learned from a browser recording names an outside address and the request it sends.
   "captured-api-skill:",

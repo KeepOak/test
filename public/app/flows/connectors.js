@@ -69,7 +69,7 @@ function ownServer(entry = null) {
   const reach = entry?.command ? entry.command.join(" ") : entry?.address ?? "";
   openDlg({ title: t("window.flows.conn.own-mcp"),
     body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><label class="fld"><span>${t("window.flows.conn.secrets")}</span><input class="inp" id="mcp-secrets"></label><p class="hint" id="mcp-asks" data-css="margin:0" ${entry && web ? "hidden" : ""}>${t("window.flows.conn.asks-before-it-starts")}</p><div id="mcp-test"></div>`,
-    foot: `<button class="btn" type="button" data-act="mcp-test">${t("window.flows.conn.test")}</button><button class="btn pri" type="button" data-act="mcp-save">${t("window.flows.conn.add-server")}</button>` });
+    foot: `<label class="fld"><span>Call timeout (seconds without progress)</span><input class="inp" id="mcp-timeout" type="number" min="1" max="3600" step="1" value="30"></label><button class="btn" type="button" data-act="mcp-test">${t("window.flows.conn.test")}</button><button class="btn pri" type="button" data-act="mcp-save">${t("window.flows.conn.add-server")}</button>` });
 }
 /* Words on one line, a "quoted part" kept whole. */
 const words = (line) => [...line.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
@@ -84,7 +84,8 @@ function typedServer() {
 async function saveServer() {
   const name = ($("#mcp-name")?.value ?? "").trim();
   try {
-    const added = await api("mcp/servers", { name, server: typedServer(), ...(CAT.entry ? { catalogue: CAT.entry.id } : {}) });
+    const callTimeoutSeconds = Number($("#mcp-timeout")?.value);
+    const added = await api("mcp/servers", { name, server: typedServer(), callTimeoutSeconds, ...(CAT.entry ? { catalogue: CAT.entry.id } : {}) });
     closeDlg();
     showTool("mcp", added.server.id);
     await reloadTools();
@@ -171,7 +172,7 @@ const ADD = { mcp: connectorCatalogue, skills: addSkill, clis: addCliDialog, age
 const entryOf = (id) => CAT.list.flatMap((g) => g.connectors).find((c) => c.id === id) ?? null;
 
 export function init() {
-  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
+  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "sw:mcp-timeout", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
   on("ag-add", () => agentCard());
   on("ag-go", () => addAgent());
   /* A plugin has no add form the engine backs yet: the button opens that kind in Customize. */

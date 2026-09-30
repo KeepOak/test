@@ -17,6 +17,7 @@ import { chatPermissionsOf } from "../dist/channels/router.js";
 import { chatSafePermissions, chatExtraPermissions, neverFromChat, neverFromChatFamilies,
   grantableToChat, chatApprovablePermissions } from "../dist/channels/chat-permissions.js";
 import { isReadOnlyPermission } from "../dist/policy.js";
+import { groupAllowed } from "../dist/channels/allowlist.js";
 import { changesFor, applyChanges, resetProposals } from "../dist/settings-kit/changes.js";
 
 /** A chat app stand-in: it only has to take a reply. */
@@ -513,4 +514,31 @@ test("a line for one chat app does nothing on another app with the same sender i
 test("Q187: preparing a change to Branch's own source is never handed to a chat, whatever a line says", () => {
   assert.equal(grantableToChat("git.remote"), false);
   assert.ok(neverFromChat.includes("git.remote"));
+});
+
+// CHAT-125: which groups may use a connection at all.
+
+test("a group list: absent keeps today's rule, empty admits none, * admits all, and a Telegram group takes in its topics", () => {
+  assert.equal(groupAllowed(undefined, "telegram", "-100"), true, "no list is the existing behaviour");
+  assert.equal(groupAllowed([], "telegram", "-100"), false);
+  assert.equal(groupAllowed(["*"], "slack", "C1"), true);
+  assert.equal(groupAllowed(["-100"], "telegram", "-100:7"), true, "a Telegram group's number takes in its topics");
+  assert.equal(groupAllowed(["-100:7"], "telegram", "-100:8"), false, "one topic is only that topic");
+  assert.equal(groupAllowed(["C1"], "slack", "C1:thread"), false, "other apps' thread addresses match exactly");
+});
+
+test("a group not on the connection's list is ignored before anything runs, and a direct chat is untouched", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-chat-groups-"));
+  let asked = 0;
+  const provider = { name: "scripted", complete: async () => { asked += 1; return { content: "Hi.", toolCalls: [] }; } };
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.channels.mergeWindowMs = 0;
+  const chat = fakeChat();
+  await app.channels.attach(chat.adapter, { activation: "always", pairing: true, allowlist: ["owner"], groupAllowlist: ["team-room"] });
+  assert.equal(await app.channels.handle(message("hello", { chatId: "other-room", chatKind: "group" })), "ignored");
+  assert.equal(asked, 0, "nothing was asked of the model for a group nobody chose");
+  assert.equal(chat.sent.length, 0, "and nothing was said there, not even a pairing code");
+  assert.equal(await app.channels.handle(message("hello", { chatId: "team-room", chatKind: "group" })), "replied");
+  assert.equal(await app.channels.handle(message("hello")), "replied", "a direct chat does not need the group list");
 });
