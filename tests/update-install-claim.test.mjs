@@ -31,8 +31,10 @@ test("a failed install releases the claim for a retry", async () => {
   assert.deepEqual(await claim.run(() => ({}), () => false, async () => ({ state: "applying" })), { state: "applying" });
 });
 
-test("the updater IPC routes installs through the claim", () => {
+test("the updater IPC and the app's own update loop route installs through the claim", () => {
   const source = readFileSync(new URL("../src/desktop/updater-ipc.ts", import.meta.url), "utf8");
-  assert.match(source, /ipcMain\.handle\("branch:update-install"[\s\S]*?installClaim\.run\(/);
+  assert.match(source, /const installNow = [\s\S]*?installClaim\.run\(/);
+  assert.match(source, /ipcMain\.handle\("branch:update-install"[\s\S]*?return installNow\(/);
+  assert.match(source, /install: async \(\) => \{ await installNow\(true, null\); \}/);
   assert.match(source, /ipcMain\.handle\("branch:update-check"[\s\S]*?installClaim\.active/);
 });

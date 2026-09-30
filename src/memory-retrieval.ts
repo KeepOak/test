@@ -15,7 +15,7 @@ import type { Store } from "./store.js";
  * connected provider offers embeddings and the owner has not turned that off, also compared by
  * meaning; the two orders are combined the way document search combines them. How useful a fact
  * has been (how recent it is, how often it has been drawn on, whether the owner confirmed it)
- * then decides the order the assistant sees.
+ * then nudges that order, never more than a little (`rerankBoost`): relevance decides.
  */
 export const MemoryRetrievalSettingsSchema = z.object({
   /** Compare facts by meaning as well as by their words. Off means word search only. */
@@ -25,8 +25,9 @@ export const MemoryRetrievalSettingsSchema = z.object({
 export type MemoryRetrievalSettings = z.infer<typeof MemoryRetrievalSettingsSchema>;
 export interface MemoryHit {
   record: MemoryRecord;
-  /** Combined rank from the searches that found it, weighted by how useful the fact has been. */
+  /** Its place in the combined order from the searches that found it, nudged by how useful the fact has been. */
   score: number;
+  /** The nudge: between about 0.92 and 1.21 (`rerankBoost`). */
   importance: number;
   matched: "words" | "meaning" | "both";
 }
@@ -51,6 +52,28 @@ export function importanceOf(record: MemoryRecord, uses: number, now: number = D
   const recency = 0.2 + Math.exp(-ageDays / 30);
   const ownerConfirmed = record.revision > 1 || !record.data.sourceRunId;
   return Number((recency * (1 + Math.log1p(Math.max(0, uses))) * (ownerConfirmed ? 1.5 : 1)).toFixed(6));
+}
+
+/*
+ * Search order, adapted from hindsight's combined scoring (`apply_combined_scoring` in
+ * hindsight-api-slim/hindsight_api/engine/search/reranking.py, https://github.com/vectorize-io/hindsight/blob/60f06e1deed805100145108e09c2bb279c3ff063/hindsight-api-slim/hindsight_api/engine/search/reranking.py,
+ * MIT, Copyright (c) 2025 Vectorize AI, Inc.; THIRD_PARTY_NOTICES.md). Search used to multiply the fused rank score,
+ * whose best and next-best differ by under 2%, by `importanceOf`, which spans about 36 times: a fact drawn on often
+ * outranked the one that answered the question, and being shown made it count as used again. Now relevance comes
+ * first and each other signal moves a score by at most `alpha / 2` of it, the way hindsight does.
+ */
+const recencyAlpha = 0.2, useAlpha = 0.1, confirmedAlpha = 0.1;
+/** Relevance with no cross-encoder: the fused order itself, spread from 1.0 (best) to 0.1 (last), as hindsight's passthrough reranker seeds it. */
+export const orderScore = (rank: number, count: number): number => 1 - (0.9 * rank) / Math.max(1, count - 1);
+/** How fresh a fact is, in [0.1, 1] with 0.5 neutral: hindsight's default straight line over a year. */
+export const recencySignal = (ageDays: number): number => Math.max(0.1, Math.min(1, 1 - Math.max(0, ageDays) / 365));
+/** How often it was drawn on, in [0.5, 1]: hindsight's proof-count curve (1 use is neutral, about 150 uses is the most). */
+export const useSignal = (uses: number): number => uses >= 1 ? Math.min(1, Math.max(0, 0.5 + Math.log(uses) / 10)) : 0.5;
+/** The bounded nudge for one fact: at most +21% when fresh, used a great deal and confirmed, at least about -8%. */
+export function rerankBoost(record: MemoryRecord, uses: number, now: number = Date.now()): number {
+  const recency = recencySignal((now - Date.parse(record.updatedAt)) / 86_400_000);
+  const confirmed = record.revision > 1 || !record.data.sourceRunId ? 1 : 0.5;
+  return (1 + recencyAlpha * (recency - 0.5)) * (1 + useAlpha * (useSignal(uses) - 0.5)) * (1 + confirmedAlpha * (confirmed - 0.5));
 }
 
 export class MemoryRetrieval {
@@ -173,12 +196,12 @@ export class MemoryRetrieval {
     const words = this.wordMatches(owner, query).filter((id) => byId.has(id));
     const meaning = (await this.meaningMatches(owner, query, signal)).filter((id) => byId.has(id));
     if (!words.length && !meaning.length) return [];
-    const fused = fuseRanks([words, meaning].filter((list) => list.length));
-    const uses = this.useCounts(owner);
-    const ordered = [...fused.entries()].map(([id, rank]) => {
-      const record = byId.get(id)!, importance = importanceOf(record, uses.get(id) ?? 0);
+    const fused = [...fuseRanks([words, meaning].filter((list) => list.length)).entries()].sort((a, b) => b[1] - a[1]);
+    const uses = this.useCounts(owner), now = Date.now();
+    const ordered = fused.map(([id], rank) => {
+      const record = byId.get(id)!, importance = rerankBoost(record, uses.get(id) ?? 0, now);
       const matched = words.includes(id) && meaning.includes(id) ? "both" : meaning.includes(id) ? "meaning" : "words";
-      return { record, importance, score: Number((rank * importance).toFixed(6)), matched } as MemoryHit;
+      return { record, importance: Number(importance.toFixed(6)), score: Number((orderScore(rank, fused.length) * importance).toFixed(6)), matched } as MemoryHit;
     }).sort((a, b) => b.score - a.score);
     const hits = bounded(ordered, limit);
     this.noteUse(owner, hits.map((hit) => hit.record.id));

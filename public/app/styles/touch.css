@@ -1,0 +1,9 @@
+/* area: touch screens (UP-UI-052). Under a finger, a text box is never under 16px, so an iPhone does not zoom the page when
+   one is focused (the message box is 15px, Settings boxes 13px), and the buttons pressed most are at least 44px to tap.
+   The two code boxes drawn larger keep their size. Adapted from OpenClaw's coarse-pointer rule
+   (ui/src/styles/settings-controls.css, MIT); see THIRD_PARTY_NOTICES.md. */
+@media (pointer:coarse){
+  input:not([type="checkbox"],[type="radio"],[type="range"],[type="color"],[type="file"],.pinbox *,.code12 *),textarea,select{font-size:16px!important}
+  .c-btn,.send{min-width:44px;min-height:44px}
+  .btn,.set-hit{min-height:44px}
+}

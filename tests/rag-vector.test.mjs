@@ -303,7 +303,8 @@ test("R3 an attached knowledge base reaches the model before the task, with numb
   provider.requests.length = 0;
   const run = await app.runtime.run({ prompt: "How much paid leave is there?", permissions: [] });
   assert.equal(run.status, "completed");
-  const system = provider.requests[0].filter((message) => message.role === "system").map((message) => message.content).join("\n");
+  // Passages travel with the question, as Branch's own note in the turn (src/runtime.ts intoTurn).
+  const system = provider.requests[0].filter((message) => message.role === "system" || message.from === "branch").map((message) => message.content).join("\n");
   assert.match(system, /twenty days of paid leave/);
   assert.match(system, /Sources in your knowledge bases/);
   const event = app.store.events(run.id).find((item) => item.kind === "documents.retrieved");

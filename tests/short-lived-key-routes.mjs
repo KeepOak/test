@@ -16,6 +16,31 @@
  * ":id" stands for any task, conversation or item id.
  */
 export const ROUTES = {
+  "/api/taste": "prefix",
+  "/api/panels/browser/demonstration": "owner POST",
+  "/api/panels/browser/network": "owner POST",
+  "/api/plugin-catalog/add-ons/lists/stage-update": "owner POST",
+  "/api/plugin-catalog/evaluate": "owner POST",
+  "/api/plugin-catalog/status": "owner POST",
+  "/api/plugin-catalog/promote": "owner POST",
+  "/api/plugin-catalog/restore": "owner POST",
+  "/api/reach/continuity": "secret-read",
+  "/api/reach/continuity/start": "owner POST",
+  "/api/reach/continuity/prepare": "owner POST",
+  "/api/reach/continuity/preview": "owner POST",
+  "/api/reach/continuity/retry": "owner POST",
+  "/api/reach/continuity/inspect": "owner POST",
+  "/api/reach/continuity/reclaim": "owner POST",
+  "/api/reach/continuity/receive": "task POST",
+  "/api/reach/continuity/status": "task POST",
+  "/api/reach/continuity/release": "task POST",
+  "/api/self-development/publications": "secret-read",
+  "/api/self-development/publications/cancel": "owner POST",
+  "/api/self-development/publications/retry": "owner POST",
+  "/api/taste/preferences": "secret-read",
+  "/api/taste/feedback": "owner POST",
+  "/api/taste/correct": "owner POST",
+  "/api/taste/forget": "owner POST",
   "/a2a": "task POST",
   "/ap/": "prefix",
   "/ap/v1/agent/tasks": "task POST",
@@ -914,6 +939,8 @@ export const ROUTES = {
   "/api/plugin-catalog/add-ons/pipelines/valves": "owner POST",
   "/api/plugin-catalog/add-ons/remove": "owner POST",
   "/api/plugin-catalog/add-ons/settings": "owner POST",
+  "/api/plugin-catalog/add-ons/inside": "owner POST", // RES-251: one plugin inside Branch or walled
+  "/api/plugin-catalog/add-ons/kept": "owner POST", // RES-251: keep the plugins kept running as before
   "/api/plugin-catalog/add-ons/switch": "owner POST",
   "/api/plugin-catalog/forget": "owner POST",
   "/api/plugin-catalog/inspect": "owner POST",
@@ -1321,14 +1348,14 @@ export const OUTBOUND = [
   /^src\/channels\/(?!parity-api\.ts)/, /^src\/providers\//,
   /^src\/(local-models|tracing-export|voice|provider-batch)\.ts$/,
   // Callers of our own routes, and the route description, rather than the routes themselves.
-  /^src\/(cli|cli-attach|api-openapi|short-lived-keys|household-routes)\.ts$/, /^src\/install\//, /^src\/desktop\//,
+  /^src\/(cli|cli-program|cli-attach|api-openapi|short-lived-keys|household-routes)\.ts$/, /^src\/install\//, /^src\/desktop\//,
   // FQ-collaboration.unified-search: builds links to already-classified routes (/api/sessions/:id,
   // /api/workflows/:id, /api/audit), not a route of its own beyond /api/search, which src/server.ts defines.
   /^src\/unified-search\.ts$/,
   /^src\/never-break\/gateway\.ts$/, /^src\/commands\/catalog\.ts$/,
   /^src\/channel-setup\/cli\.ts$/, // mac7/connect: `branch connect` calls the Set up routes of the running Branch
   // r17-i: callers of other computers' routes and of the relay's, not routes of this one.
-  /^src\/reach\/(machines|remote-trunks|relay)\.ts$/,
+  /^src\/reach\/(machines|remote-trunks|relay|continuity)\.ts$/,
   // mac7/usage-bar: OpenRouter's own documented /api/v1/key, called outwards; not a route of ours.
   /^src\/usage-limits-openrouter\.ts$/,
   // selfdev: GitHub Enterprise's own /api/v3 and /api/graphql addresses, called outwards; not routes of ours.

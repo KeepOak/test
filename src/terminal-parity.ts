@@ -108,3 +108,16 @@ export const TERMINAL_ALIASES: Record<string, string[]> = {
   kanban: ["inbox"], tasks: ["inbox"], webhooks: ["automations", "triggers"], hooks: ["automations", "triggers"],
   documents: ["library", "documents"], specialists: ["customize", "specialists"], connections: ["customize", "connections"],
 };
+
+/**
+ * The command line as Branch reads it: nothing at all opens the view in a terminal (and starts the
+ * web app anywhere else, as it always has), and a name brought from Hermes or OpenClaw becomes the
+ * Branch command it means.
+ */
+export function terminalArgv(args: string[], interactive: boolean): string[] {
+  if (!args.length) return [interactive ? "chat" : "start"];
+  const [first = "", ...rest] = args;
+  if (first === "mcp" && rest[0] === "serve") return ["mcp-serve", ...rest.slice(1)];
+  const alias = TERMINAL_ALIASES[first];
+  return alias ? [...alias, ...rest] : args;
+}
