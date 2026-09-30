@@ -114,10 +114,12 @@ function dashboardHtml(page: Snapshot, error: string | null): string {
     + `<table><thead><tr><th>Item</th>${headings}</tr></thead><tbody>${rows}</tbody></table>`
     + `<h2>Recent changes</h2><ul>${page.changes.map((change) => `<li>${esc(change.at)} — ${esc(change.text)}</li>`).join("")}</ul></html>`;
 }
-export function readScheduledDashboard(store: Store, owner: string, schedule: string): { html: string | null; error: string | null; checkedAt: unknown } {
+export function readScheduledDashboard(store: Store, owner: string, schedule: string): { html: string | null; error: string | null; checkedAt: unknown; exportJson: string | null } {
   store.profiles.requireOwner("Your scheduled dashboard");
   if (!store.get("schedules", owner, schedule)) throw new Error("Schedule not found");
   const record = store.get("governance", owner, recordId(schedule)), saved = snapshot(store, owner, schedule), page = saved ? clean(store, saved) : null;
   const error = typeof record?.data.error === "string" ? record.data.error : null;
-  return { html: page ? dashboardHtml(page, error) : null, error, checkedAt: record?.data.checkedAt ?? null };
+  return { html: page ? dashboardHtml(page, error) : null, error, checkedAt: record?.data.checkedAt ?? null,
+    exportJson: page ? JSON.stringify({ format: "branch-scheduled-dashboard", version: 1, snapshot: page,
+      error, checkedAt: record?.data.checkedAt ?? null, sourceVerification: "task-reported" }, null, 2) : null };
 }

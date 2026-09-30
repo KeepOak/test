@@ -10418,6 +10418,8 @@
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
   "wsedit.up": "Up one folder",
+  "scheduleddash.export-html": "Save HTML",
+  "scheduleddash.export-json": "Save JSON",
   "scheduleddash.title": "Dashboard",
   "scheduleddash.enable": "Keep the result as a dashboard",
   "scheduleddash.help": "This task will return a table with sources and timestamps on each run. No extra permissions are granted.",
