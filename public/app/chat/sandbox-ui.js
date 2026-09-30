@@ -4,6 +4,7 @@ import { api } from '../core/api.js';
 import { on } from '../core/actions.js';
 import { markLive } from '../core/features.js';
 import { toast } from '../core/ui.js';
+import { t } from '../../i18n.js';
 
 const locked = () => document.getElementById('app')?.classList.contains('locked') === true;
 const scope = () => JSON.stringify([S.view, S.chat, E.profiles, locked()]);
@@ -24,11 +25,11 @@ function contribution(entry) {
     const frame = document.createElement('iframe'); frame.title = heading.textContent;
     frame.setAttribute('sandbox', ''); frame.setAttribute('allow', denied); frame.referrerPolicy = 'no-referrer'; frame.src = entry.url;
     frame.width = '100%'; frame.height = '180'; boundary.append(frame);
-    const fail = () => { frame.remove(); const note = document.createElement('p'); note.textContent = 'This contribution could not be displayed.'; boundary.append(note); };
+    const fail = () => { frame.remove(); const note = document.createElement('p'); note.textContent = t('sandboxui.failed'); boundary.append(note); };
     const timer = setTimeout(fail, 10000);
     frame.addEventListener('load', () => clearTimeout(timer), { once: true });
     frame.addEventListener('error', () => { clearTimeout(timer); fail(); }, { once: true });
-  } catch { const note = document.createElement('p'); note.textContent = 'This contribution could not be displayed.'; boundary.append(note); }
+  } catch { const note = document.createElement('p'); note.textContent = t('sandboxui.failed'); boundary.append(note); }
   return boundary;
 }
 function mount() {
@@ -60,13 +61,13 @@ async function openCanvas(messageId) {
     const page = await api('sandbox-ui/canvas', { sessionId, messageId, scripts: false });
     if (key !== scope()) { void api('sandbox-ui/close', { capability: page.capability }).catch(() => {}); return; }
     const dialog = document.createElement('dialog'), heading = document.createElement('h2'), stage = document.createElement('div');
-    heading.textContent = 'Reply canvas'; dialog.append(heading, stage);
-    const close = document.createElement('button'); close.textContent = 'Close'; close.onclick = () => dialog.close();
-    const scripts = document.createElement('button'); scripts.textContent = 'Run isolated scripts';
+    heading.textContent = t('sandboxui.canvas'); dialog.append(heading, stage);
+    const close = document.createElement('button'); close.textContent = t('sandboxui.close'); close.onclick = () => dialog.close();
+    const scripts = document.createElement('button'); scripts.textContent = t('sandboxui.run');
     const item = { scope: key, dialog, capabilities: new Set([page.capability]), stop: () => {} }; open.add(item);
     showCanvas(stage, page, item);
     scripts.onclick = async () => {
-      if (!confirm('Run scripts from this saved reply in an isolated offline frame? It can change its own page, with no access to Branch, tools, files, browser permissions or the network.')) return;
+      if (!confirm(t('sandboxui.confirm'))) return;
       scripts.disabled = true;
       try {
         const active = await api('sandbox-ui/canvas', { sessionId, messageId, scripts: true, confirmed: true, previewCapability: page.capability }); item.capabilities.add(active.capability);
@@ -80,7 +81,7 @@ async function openCanvas(messageId) {
   } catch (error) { toast(error.message); }
 }
 function showCanvas(stage, page, item) {
-  const frame = document.createElement('iframe'); frame.title = 'Reply canvas'; frame.width = '700'; frame.height = '500';
+  const frame = document.createElement('iframe'); frame.title = t('sandboxui.canvas'); frame.width = '700'; frame.height = '500';
   frame.setAttribute('sandbox', page.scripts ? 'allow-scripts allow-same-origin' : ''); frame.setAttribute('allow', denied); frame.referrerPolicy = 'no-referrer';
   const bridge = event => {
     if (event.source !== frame.contentWindow || event.data?.nonce !== page.nonce || event.data.rpc?.method !== 'ui/notifications/sandbox-proxy-ready') return;
@@ -88,7 +89,7 @@ function showCanvas(stage, page, item) {
     frame.contentWindow.postMessage({ nonce: page.nonce, rpc: { jsonrpc: '2.0', method: 'ui/notifications/sandbox-resource-ready', params: { html: page.html } } }, '*');
   };
   if (page.scripts) window.addEventListener('message', bridge);
-  const timer = setTimeout(() => { frame.remove(); stage.textContent = 'This canvas expired. Reopen it to continue.'; }, 300000);
+  const timer = setTimeout(() => { frame.remove(); stage.textContent = t('sandboxui.expired'); }, 300000);
   item.stop = () => { clearTimeout(timer); window.removeEventListener('message', bridge); };
   frame.src = page.url; stage.replaceChildren(frame);
 }
