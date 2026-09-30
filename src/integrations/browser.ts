@@ -19,6 +19,7 @@ import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLi
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
+import { consentNotice, rejectConsent } from './browser-consent.js';
 import { attach, attachRefusal, attachedAddressRefusal, readAttachSettings, saveAttachSettings, type AttachedBrowser } from './browser-attach.js';
 import { startRecording } from './browser-trace.js';
 import { registerPageNotes } from './browser-notes-tool.js'; // w911 (A2144)
@@ -630,7 +631,12 @@ export class BranchBrowser {
       entry.host = new URL(url).host;
       check();
       const site = await this.quirks(context, page, url);
-      return { url: page.url(), title: await page.title(), ...(site ? { site } : {}) };
+      const consent = await consentNotice(page);
+      return { url: page.url(), title: await page.title(), ...(site ? { site } : {}),
+        ...(consent.status !== 'not-found' ? { consent, next: consent.status === 'available'
+          ? 'Use browser.act with action reject-consent to decline non-essential cookies under the interaction rules.'
+          : consent.status === 'ambiguous' ? 'Cookie choices are ambiguous; hand the page to the owner rather than accept tracking.'
+          : 'The cookie notice could not be inspected; do not assume consent was handled.' } : {}) };
     }, 0, () => this.checkAddress(url, context));
     await this.autoRecord(context, entry).catch(() => { entry.autoRecording = false; });
     return opened;
@@ -831,9 +837,14 @@ export class BranchBrowser {
    * selector given, what it is called, the words on it, then its number. The way that worked is
    * written into the task's trace.
    */
-  async act(input: HealTarget & { action: 'click' | 'fill' | 'check' | 'press'; value?: string | undefined }, context: ToolContext) {
+  async act(input: HealTarget & { action: 'click' | 'fill' | 'check' | 'press' | 'reject-consent'; value?: string | undefined }, context: ToolContext) {
     if (input.mark !== undefined && !this.care(context.owner).numberMarks) throw new Error(marksOff);
     const entry = this.entry(context);
+    if (input.action === 'reject-consent') return this.operation(context, async (page, check) => {
+      const consent = await rejectConsent(page, check);
+      if (consent.rejected) entry.pressed = true;
+      return { url: page.url(), consent };
+    });
     if (input.action === 'click') entry.pressed = true; // mac7/vault-autofill
     // Dogfood D4: a key on the page itself (Escape on a cookie wall), in Branch's own browser and nowhere else.
     if (input.action === 'press') {
@@ -1620,8 +1631,8 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
     description: 'Pull data off the page in the exact shape you name: a field list, each with where to read it and whether it is words, a number, a yes/no, a date or an address. Anything that does not fit is refused by name rather than guessed at.',
     parameters: ExtractSchemaSchema, execute: (a, c) => browser.extractShaped(a, c) });
   registry.register({ name: 'browser.act', permission: 'browser.interact',
-    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. action "press" presses one key on the page itself, named in value (Escape closes most cookie walls). This may submit data or perform an external action.',
-    parameters: z.object({ action: z.enum(['click', 'fill', 'check', 'press']),
+    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. action "press" presses one key on the page itself, named in value. action "reject-consent" needs no selector and declines non-essential cookies only when one explicit reject/necessary-only choice is recognized; it never accepts tracking. Prefer it for consent notices. This may submit data or perform an external action.',
+    parameters: z.object({ action: z.enum(['click', 'fill', 'check', 'press', 'reject-consent']),
       selector: z.string().min(1).max(300).optional(), name: z.string().min(1).max(300).optional(),
       mark: z.number().int().min(1).max(500).optional(), value: z.string().max(4000).optional() }).strict(),
     execute: (a, c) => browser.act(a, c), target: host });
