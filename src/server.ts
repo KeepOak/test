@@ -1320,7 +1320,7 @@ async function api(
   // RES-709: a piece of what the window's own microphone heard, written out on this computer (hearInWindow below).
   if (request.method === "POST" && path === "/api/voice/dictation/hear") {
     const host = { store: app.store, owner: app.runtime.owner, isOwner: app.store.profiles.isOwner(),
-      locked: app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
+      locked: app.sessionLock.locked(), isLocked: () => app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
     try { return await hearInWindow(host, request); } catch (error) {
       throw new HttpError(error instanceof HearRefused ? error.status : 400, errorText(error));
     }
