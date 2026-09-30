@@ -13,6 +13,23 @@ async function gathered(peer, quit) {
   });
 }
 
+/**
+ * The one slot for the closer of a live setup still in progress. A setup keeps its closer there only while it is still the
+ * current call, and letting go afterwards clears the slot only if it still holds that same closer, so a slower, ended call
+ * never erases the closer of the call that replaced it. `stop()` closes whatever setup is in the slot.
+ */
+export function openingSlot() {
+  let held = null;
+  return {
+    own(close, isCurrent) {
+      if (!isCurrent()) { close(); return () => {}; }
+      held = close;
+      return () => { if (held === close) held = null; };
+    },
+    stop() { const close = held; held = null; close?.(); },
+  };
+}
+
 /* `own(close)` is called before the microphone is asked for, so End or App lock at any point of the setup (the
    permission prompt, the offer, the eight-second gathering) stops the capture and the peer at once. */
 export async function openPeer({ current, desktop, muted, speaking, failed, own = () => {} }) {

@@ -19,7 +19,7 @@ import { app, av, toast, closePop } from "../core/ui.js";
 import { markLive, greyOut } from "../core/features.js";
 import { toPcm16, readAudioFrame } from "./talksound.js";
 import { t } from "../../i18n.js";
-import { openPeer } from "./talkpeer.js";
+import { openPeer, openingSlot } from "./talkpeer.js";
 
 /* phase: idle → starting (task made, socket opening) → listening ⇄ speaking → idle. `call` numbers each press, so
    whatever finishes after its call has ended (a microphone still opening) can tell it is no longer wanted. */
@@ -30,7 +30,9 @@ let hooks = { state: () => ({}), reopen: async () => {} };
 
 const fresh = () => ({ runId: null, sessionId: null, service: null, note: "", ready: false, muted: false, seconds: 0,
   timer: null, caption: "", partial: { person: "", assistant: "" }, last: "", nextAt: 0, playing: 0,
-  generation: 0, audioItem: null, sources: new Set(), heardItems: new Map(), playedMs: 0, transport: null, peer: null, opening: null });
+  generation: 0, audioItem: null, sources: new Set(), heardItems: new Map(), playedMs: 0, transport: null, peer: null });
+/* The closer of a Talk live setup still in progress (talkpeer.js openingSlot). */
+const opening = openingSlot();
 Object.assign(L, fresh());
 
 /* ---------- the view ---------- */
@@ -192,10 +194,12 @@ function connect() {
 async function beginSocket(socket, call) {
   try {
     if (L.transport === "webrtc") {
-      const peer = await openPeer({ current: () => current(call) && L.socket === socket, desktop: isDesktop,
+      const mine = () => current(call) && L.socket === socket;
+      let release = () => {};
+      const peer = await openPeer({ current: mine, desktop: isDesktop,
         muted: () => L.muted, speaking: () => setPhase("speaking"), failed: sentence => stop(sentence),
-        own: (close) => { L.opening = close; } });
-      L.opening = null;
+        own: (close) => { release = opening.own(close, mine); } });
+      release();
       if (!peer) return;
       if (!current(call) || L.socket !== socket) { peer.close(); return; }
       L.peer = peer;
@@ -267,7 +271,7 @@ function end({ say } = {}) {
   clearPlayback();
   mic?.close();
   peer?.close(); L.peer = null;
-  L.opening?.(); L.opening = null; // a capture still being set up is stopped too
+  opening.stop(); // a capture still being set up is stopped too
   if (player) void player.close();
   socket?.close();
   draw();
