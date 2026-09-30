@@ -40,7 +40,7 @@ export interface Replayed { original: string; replay: string; plan: ReplayPlan; 
  * the second answer is not shaped by the first — and comes back with both numbers, which is what
  * the screen needs to show them beside each other.
  */
-export async function replayRun(runtime: Runtime, store: Store, runId: string): Promise<Replayed> {
+export async function replayRun(runtime: Pick<Runtime, "run">, store: Store, runId: string): Promise<Replayed> {
   const plan = replayPlan(store, runId);
   const run = await runtime.run({
     prompt: plan.prompt,
