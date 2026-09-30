@@ -1141,6 +1141,10 @@ export const ROUTES = {
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
   "/api/sessions": "look",
   "/api/weather": "owner POST",
+  "/api/maps": "owner POST",
+  "/api/maps/authorize": "owner POST",
+  "/api/maps/revoke": "owner POST",
+  "/api/maps/request": "owner POST",
   "/api/weather/forecast": "owner POST",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",

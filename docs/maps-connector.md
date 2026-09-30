@@ -26,4 +26,4 @@ Primary contracts reviewed:
 - [Geoapify terms](https://www.geoapify.com/terms-and-conditions/), [privacy](https://www.geoapify.com/privacy-policy/)
 - [OpenClaw goplaces](https://github.com/openclaw/openclaw/blob/main/skills/goplaces/SKILL.md), [Hermes maps](https://github.com/NousResearch/hermes-agent/blob/main/skills/productivity/maps/SKILL.md) are requirement references, not copied code or an installed runtime.
 
-Validation is source/diff only. No tests, build, app, provider, model, database or credential execution occurred. Actual wire interoperability, provider plans and UI rendering remain unverified; this is draft source for owner review.
+Tests: `tests/maps-connector.test.mjs` (ships off, exact single-use approval). Live Geoapify calls, provider plans and the Accounts form are not exercised by tests.
