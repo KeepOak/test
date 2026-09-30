@@ -9,8 +9,13 @@ import type { ToolDefinition } from "./contracts.js";
  * One short line goes at the end of every task's system context (after everything that stays the same between turns, so
  * a service's prompt cache still holds): the computer's name, its operating system, that this is the owner's own
  * computer running Branch Agent and in what (the desktop app with its window shown or hidden, the background gateway,
- * or the command line), where the message came from, and the local time and time zone. `environment.about` gives the
- * same and a little more on request. Nothing secret, no user name and no folder path.
+ * or the command line), where the message came from, and the local date, hour and time zone. `environment.about` gives
+ * the same, the time to the minute, and a little more on request. Nothing secret, no user name and no folder path.
+ *
+ * The line names the hour, not the minute: it sits in the part of every request a service's prompt cache keeps, and a
+ * minute in it changed that part once a minute, so from one turn to the next the cache held nothing. The idea follows
+ * Hermes Agent, whose system prompt stays static between turns (agent/memory_provider.py,
+ * https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/agent/memory_provider.py#L116-L126).
  */
 export type Host = "desktop" | "gateway" | "command line";
 /** How the engine is being run, from the process itself: never guessed from settings. */
@@ -48,17 +53,27 @@ export interface EnvironmentFacts {
   host: Host;
   window: "shown" | "hidden" | null;
   channel: string | null;
+  /** To the minute, for `environment.about`. */
   time: string;
+  /** The hour it is in, as "Tue, 29 Sept 2026, 20:00 to 21:00": all the system line says (see above). */
+  hour: string;
   timeZone: string;
 }
+/** The clock the facts are read from; only a test sets another, to see two turns a minute apart. */
+let clock = (): Date => new Date();
+export function setEnvironmentClock(next: (() => Date) | null): void { clock = next ?? (() => new Date()); }
 /** The facts as they are now. `channel` is the chat app a message came in on (null in the window, or unknown). */
-export function environmentFacts(channel: string | null = null, now = new Date()): EnvironmentFacts {
+export function environmentFacts(channel: string | null = null, now = clock()): EnvironmentFacts {
   const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const time = new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", year: "numeric", month: "short", day: "numeric",
-    hour: "2-digit", minute: "2-digit", hour12: false }).format(now);
+  const format = new Intl.DateTimeFormat("en-GB", { timeZone, weekday: "short", year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false });
+  const time = format.format(now);
+  const parts = format.formatToParts(now), part = (type: string) => parts.find((one) => one.type === type)?.value ?? "";
+  const from = Number(part("hour")) % 24, pad = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
+  const hour = `${part("weekday")}, ${part("day")} ${part("month")} ${part("year")}, ${pad(from)} to ${pad((from + 1) % 24)}`;
   const host = currentHost(), shown = windowState();
   return { device: hostname(), system: systemName(), host, window: host === "desktop" && shown !== null ? (shown ? "shown" : "hidden") : null,
-    channel, time, timeZone };
+    channel, time, hour, timeZone };
 }
 const hostWords = (facts: EnvironmentFacts): string => facts.host === "gateway" ? "in the background gateway (no window)"
   : facts.host === "desktop" ? `in the desktop app${facts.window ? `, its window ${facts.window === "shown" ? "open" : "hidden"}` : ""}`
@@ -67,7 +82,7 @@ const hostWords = (facts: EnvironmentFacts): string => facts.host === "gateway" 
 export function environmentLine(facts: EnvironmentFacts): string {
   const via = facts.channel ? `This message came in on ${facts.channel}` : "This message came from Branch's own window or API";
   return `Where you are running: the owner's own computer "${facts.device}" (${facts.system}), in Branch Agent ${hostWords(facts)}. `
-    + `${via}. Local time: ${facts.time} (${facts.timeZone}). Use environment.about for more.`;
+    + `${via}. Local time: ${facts.hour} (${facts.timeZone}). Use environment.about for the exact time and more.`;
 }
 
 /** The on-request tool: the same facts and a little more (processor, memory, uptime), nothing secret. */

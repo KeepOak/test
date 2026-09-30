@@ -7,6 +7,7 @@
  * - router.ts joinTurn: drop the edited-message swap while gathering        -> "the latest version is answered" fails.
  * - router.ts handle: drop the edited-off check                             -> "switched off, an edit is let go" fails.
  * - router.ts gatherMs: drop the split wait                                  -> "joined into one turn" fails.
+ * - router.ts gatherMs: wait the split wait after every message              -> "started its turn ... ms after" fails.
  * - router.ts checkStalled: restart without waiting "reconnect after"        -> "quiet but not yet due" fails.
  * - router.ts checkStalled: never set the problem                             -> "says so on its card" fails.
  * - router.ts presence: drop the Lockdown check                               -> "nothing goes out under Lockdown" fails.
@@ -32,7 +33,7 @@ async function until(check, label, tries = 500) {
 const lastUser = (request) => String(request.messages.filter((m) => m.role === "user").at(-1)?.content ?? "");
 function scripted() {
   const model = { name: "scripted", requests: [] };
-  model.complete = async (request) => { model.requests.push(request); return { content: `Echo: ${lastUser(request)}`, toolCalls: [] }; };
+  model.complete = async (request) => { model.requests.push(Object.assign(request, { at: Date.now() })); return { content: `Echo: ${lastUser(request)}`, toolCalls: [] }; };
   return model;
 }
 async function fixture(t) {
@@ -79,6 +80,8 @@ test("what the Trunk sees ships on; presence ships off; a bad value is refused",
 
 test("Telegram: an edited message is asked for, and while it is still being gathered the latest version is answered", async (t) => {
   const { app, model } = await fixture(t);
+  // chat-speed: only a gathering turn takes an edit in place, and a short message no longer gathers unless steering is on.
+  app.channels.setSwitches({ steering: "on" });
   const { state, adapter } = await telegram(t);
   await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["42"] });
   await until(() => state.calls.some((c) => c.method === "getUpdates"), "polling");
@@ -105,16 +108,24 @@ test("switched off, an edit is let go and the first version is answered", async 
   assert.match(lastUser(model.requests[0]), /tidy the folder/);
 });
 
-test("an album's photos, and a message split in two, are joined into one turn; off, each is its own", async (t) => {
+test("an album's photos, and a message split in two, are joined into one turn; off, each is its own; a short one never waits", async (t) => {
   const { app, model } = await fixture(t);
   app.channels.mergeWindowMs = 1000; // gathering on, as shipped
   const seen = [];
   const adapter = { id: "chat", kind: "fake", botName: () => "Branch", async start() {}, async stop() {}, async send(_c, text) { seen.push(text); return "1"; } };
   await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["owner"] });
   const msg = (id, text, extra = {}) => ({ channel: "chat", chatId: "c1", chatKind: "direct", senderId: "owner", senderName: "Sam", text, addressed: true, messageId: id, ...extra });
-  await Promise.all([app.channels.handle(msg("a1", "Here is the first half of it,")), delay(200).then(() => app.channels.handle(msg("a2", "and here is the second half.")))]);
+  // An app splits only a message too long to send whole: the first piece is at least 4,000 characters (chat-speed).
+  const firstPiece = "Here is the first half of it," + " and more".repeat(500);
+  await Promise.all([app.channels.handle(msg("a1", firstPiece)), delay(200).then(() => app.channels.handle(msg("a2", "and here is the second half.")))]);
   assert.equal(model.requests.length, 1, "joined into one turn");
   assert.match(lastUser(model.requests[0]), /first half[\s\S]*second half/);
+  // chat-speed: a short message is not a split one's first piece, so it starts at once and the next is its own turn.
+  app.channels.setSwitches({ steering: "off" });
+  const quick = model.requests.length, handed = Date.now();
+  await Promise.all([app.channels.handle(msg("h1", "Hi")), delay(200).then(() => app.channels.handle(msg("h2", "there")))]);
+  assert.equal(model.requests.length - quick, 2, "two short messages are two turns");
+  assert.ok(model.requests[quick].at - handed < 300, `a short message started its turn ${model.requests[quick].at - handed} ms after it came in`);
   saveChatIntake(app.store, app.runtime.owner, { splitWaitMs: 0 });
   app.channels.mergeWindowMs = 1000;
   app.channels.setSwitches({ steering: "off" });

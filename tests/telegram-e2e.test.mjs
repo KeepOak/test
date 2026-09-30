@@ -369,6 +369,8 @@ test("the card's bot never starts from a position another bot left, so its first
   const polls = bot.state.calls.filter((c) => c.method === "getUpdates" && c.botId === "123456");
   assert.equal(polls[0].body.offset, 0, "asked from the earliest unconfirmed update, not the other bot's position");
   await until(() => app.store.get("settings", owner, "channel-position:telegram")?.data.reader === "123456", "its own position saved, named for it");
+  const kept = () => app.store.sqlite.prepare("SELECT update_id, done_at FROM telegram_inbox WHERE bot=?").all("123456");
+  await until(() => kept().some((row) => row.done_at), "the card's bot keeps its updates in the saved-work database's inbox");
 });
 
 test("a settings-file bot never starts from a position the card's bot left under the same name", async (t) => {
@@ -385,6 +387,8 @@ test("a settings-file bot never starts from a position the card's bot left under
   t.after(() => loaded.close());
   await until(() => bot.state.sent.some((sent) => sent.botId === "654321"), "the settings-file bot answered its first message");
   assert.equal(bot.state.calls.find((c) => c.method === "getUpdates" && c.botId === "654321").body.offset, 0);
+  const kept = () => app.store.sqlite.prepare("SELECT update_id, done_at FROM telegram_inbox WHERE bot=?").all("654321");
+  await until(() => kept().some((row) => row.done_at), "the settings-file bot keeps its updates in the saved-work database's inbox");
 });
 
 test("after a quiet spell Telegram may number the next update below the saved position; it is read, not lost", async (t) => {
