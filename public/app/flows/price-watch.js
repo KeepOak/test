@@ -71,7 +71,7 @@ async function showPrices(el) {
 }
 
 export function initPriceWatches() {
-  markLive(["pricewatch-new", "pricewatch-save", "pricewatch-history"]);
+  markLive(["sw:pw-item", "sw:pw-url", "sw:pw-label", "sw:pw-marker", "sw:pw-currency", "sw:pw-below", "sw:pw-decimals", "sw:pw-separator", "sw:pw-every", "pricewatch-new", "pricewatch-save", "pricewatch-history"]);
   on("pricewatch-new", () => newPriceWatch());
   on("pricewatch-save", (el) => savePriceWatch(el));
   on("pricewatch-history", (el) => showPrices(el));
