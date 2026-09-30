@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applyGatewayLive, gatewayLiveRequest, gatewayApplyOwner, tellGatewayWindow } from "../dist/desktop/gateway-live.js";
+import { applyGatewayLive, gatewayLiveRequest, gatewayApplyOwner, recoverAdoptionWindow, tellAdoptionWindow, tellGatewayWindow } from "../dist/desktop/gateway-live.js";
 import { stageLive } from "../dist/hot-update/live-folder.js";
 import { discardTemp } from "./temp-dir.mjs";
 
@@ -51,4 +51,23 @@ test("a refused or absent renderer cannot count as a completed update", async ()
   await assert.rejects(tellGatewayWindow({ current: () => null }, update), /not open/);
   await assert.rejects(tellGatewayWindow({ current: () => ({ call: async () => false }) }, update), /did not acknowledge/);
   await assert.rejects(tellGatewayWindow({ current: () => ({ call: async () => { throw new Error("storage refused"); } }) }, update), /storage refused/);
+});
+
+test("an adoption begun with no shell joined goes ahead with no window to tell; a shell that was there and refuses still fails it", async () => {
+  const update = { commit: "a".repeat(40), styles: ["app.css"], reload: false };
+  let current = null;
+  const owner = gatewayApplyOwner({ current: () => current });
+  // The gateway updating itself with no window: nothing to tell or restore, and a shell joining meanwhile is not asked.
+  const told = await owner.apply(async () => {
+    current = { call: async () => { throw new Error("a shell that joined later is never asked"); } };
+    await tellAdoptionWindow(owner.control, update);
+    await recoverAdoptionWindow(owner.control);
+    return owner.control.windowless();
+  });
+  assert.equal(told, true);
+  assert.equal(owner.control.windowless(), false, "outside an adoption there is nothing to decide");
+  // A shell joined as the adoption began: it must acknowledge, as before.
+  current = { call: async () => false };
+  await assert.rejects(owner.apply(() => tellAdoptionWindow(owner.control, update)), /did not acknowledge/);
+  await assert.rejects(owner.apply(() => recoverAdoptionWindow(owner.control)), /did not restore/);
 });

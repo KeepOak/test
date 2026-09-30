@@ -19,7 +19,7 @@ import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatSte
 import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
 import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
-import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
+import { readChatIntake, albumWaitMs, splitPieceChars, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
 import { chatLiveSwitches, commandsInPairedDm, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
@@ -148,6 +148,8 @@ export interface ChannelAdapter {
    * app's settings) or has none.
    */
   setCommands?(commands: { command: string; description: string }[]): Promise<void>;
+  /** UP-CHAT-015: the picker for one direct chat only (Telegram's per-chat scope), over the one `setCommands` sets. */
+  setChatCommands?(chatId: string, commands: { command: string; description: string }[]): Promise<void>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
   /**
@@ -228,6 +230,11 @@ export interface ChannelAdapter {
    */
   miniAppUser?(initData: string): MiniAppUser;
   stop(): Promise<void>;
+  /**
+   * Taken out for good (removed, or replaced by a connection with another token), unlike stop() when Branch closes:
+   * drops what the app saved about its incoming messages (Telegram's inbox), so none of their words are kept.
+   */
+  forget?(): void;
 }
 /**
  * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
@@ -589,6 +596,7 @@ export class ChannelRouter {
     this.adapters.delete(id);
     this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
+    try { attached.adapter.forget?.(); } catch { /* the saved rows are tidied when this connection is next opened */ }
   }
   async detachAll(): Promise<void> {
     if (this.pump) clearInterval(this.pump);
@@ -667,11 +675,20 @@ export class ChannelRouter {
    */
   refreshCommandMenus(): Promise<void> {
     return this.menuChain = this.menuChain.then(async () => {
-      const commands = this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
-        .map((one) => ({ command: one.name, description: one.description }));
-      const unique = [...new Map(commands.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      const listed = chatCommandsFor(commandMode(this.store, this.runtime.owner)).map((one) => ({ command: one.name, description: one.description }));
+      const all = [...new Map(listed.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      const off = this.switches().commands === "off", unique = off ? [] : all;
+      // UP-CHAT-015: as shipped (off, never moved), the owner's own paired direct chat still reads commands (`commandIn`),
+      // so its own picker lists them; once the owner moves the switch, that chat gets what every chat gets.
+      const ownerDm = off && commandsInPairedDm(this.store, this.runtime.owner) ? all : unique;
+      const owner = this.runtime.owner, named = [...ownerCommands(this.store, owner).accounts, ...platformSettings(this.store, owner).owners];
+      const accounts = [...new Map(named.map((one) => [`${one.channel}\u0000${one.sender}`, one])).values()]; // as `ownAccount` reads them
       await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
-        try { await adapter.setCommands?.(unique); }
+        try {
+          await adapter.setCommands?.(unique);
+          for (const account of accounts.filter((one) => one.channel === adapter.id && this.pair(one.channel, one.sender)?.status === "approved"))
+            await adapter.setChatCommands?.(account.sender, ownerDm);
+        }
         catch (error) { diagnose("channels", "warn", `The command menu could not be updated on ${adapter.kind}: ${error instanceof Error ? error.message : String(error)}`); }
       }));
     });
@@ -1246,7 +1263,8 @@ export class ChannelRouter {
     // With no split wait, a turn gathering only for an album takes only that album's photos (Codex P2).
     const first = turn.messages[0], sameAlbum = !!message.groupId && message.groupId === first?.groupId;
     const joins = this.switches().steering === "on"
-      || (message.senderId === first?.senderId && !message.caughtUp && (this.intake().splitWaitMs > 0 || sameAlbum));
+      || (message.senderId === first?.senderId && !message.caughtUp
+        && ((this.intake().splitWaitMs > 0 && (first?.text.length ?? 0) >= splitPieceChars) || sameAlbum));
     if (turn.phase === "gathering" && joins && fitsTurn(turn.messages, message)) {
       turn.messages.push(message);
       return new Promise((resolve) => turn.waiters.push(resolve));
@@ -1374,14 +1392,16 @@ export class ChannelRouter {
   }
   /**
    * How long a new turn gathers before it runs: the steering window ("on"), the owner's "Wait for messages split in
-   * two", and at least `albumWaitMs` for a photo that came in an album while albums are joined. `mergeWindowMs` 0 turns
-   * all gathering off (tests that want each message on its own).
+   * two" after a message long enough to be a split one's first piece, and at least `albumWaitMs` for a photo that came
+   * in an album while albums are joined. `mergeWindowMs` 0 turns all gathering off (tests that want each message on its
+   * own). chat-speed: every other message starts at once; the owner's "Hi" waited a whole second here.
    */
   private gatherMs(first: InboundMessage): number {
     if (this.mergeWindowMs <= 0) return 0;
     const intake = this.intake(), steering = this.switches().steering === "on" ? this.mergeWindowMs : 0;
     if (first.caughtUp) return steering; // messages fetched after a restart are old ones, each already whole
-    return Math.max(steering, intake.splitWaitMs, first.groupId && intake.albums ? albumWaitMs : 0);
+    const split = first.text.length >= splitPieceChars ? intake.splitWaitMs : 0;
+    return Math.max(steering, split, first.groupId && intake.albums ? albumWaitMs : 0);
   }
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
@@ -1456,6 +1476,8 @@ export class ChannelRouter {
             waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
           turn.runId = started.id;
           turn.startedAt = Date.now();
+          // chat-speed: when the reply's first words were in the chat, beside when the model wrote them (first_words).
+          if (turn.reply) turn.reply.onFirstShown = () => this.store.event(started.id, "channel.first_shown", { ms: Date.now() - receivedAt });
           live?.thinking();
           if (turn.dropped) this.runtime.cancel(started.id);
           this.passNotes(turn);
@@ -1512,6 +1534,9 @@ export class ChannelRouter {
     saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
       ...(trunkId ? { trunkId } : {}) });
+    // hot-update: a newer engine took this task over and carries it on; its answer goes to the chat from there
+    // (carryOnReply), so nothing is said from here: no "could not finish", and no second answer.
+    if (run.status === "interrupted" && this.handedOver(run.id)) { live?.cancel(); turn.reply?.cancel(); return "replied"; }
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
       : run.status === "cancelled" ? "Stopped."
       // owner-dm-signin: the task's own reason, scrubbed and kept short, rather than the bare status.
@@ -1535,6 +1560,51 @@ export class ChannelRouter {
     if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
     if (message.voice) await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
     return ok ? "replied" : "failed";
+  }
+  /**
+   * hot-update: resolves once no chat's turn is still finishing (its answer written down and sent) and no send is under
+   * way, or after `ms`; answers whether all were done. An engine handing over waits for this before it lets go.
+   */
+  async settle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (this.turns.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.flushing, new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, until - Date.now())); })]);
+    clearTimeout(timer);
+    return this.turns.size === 0;
+  }
+  /**
+   * The chat message a task began from, through every engine it was carried on in: each carried-on task names the one
+   * it carried on (`resumedFrom`), and only the first holds the chat's mark (`channel.inbound`).
+   */
+  private chatOrigin(runId: string): { channel?: unknown; chatId?: unknown; messageId?: unknown } | undefined {
+    let id: string | undefined = runId;
+    for (let hops = 0; id && hops < 50; hops++) {
+      const events = this.store.events(id);
+      const inbound = events.find((event) => event.kind === "channel.inbound");
+      if (inbound) return inbound.data as { channel?: unknown; chatId?: unknown; messageId?: unknown };
+      const from = events.find((event) => event.kind === "run.started")?.data.resumedFrom;
+      id = typeof from === "string" ? from : undefined;
+    }
+    return undefined;
+  }
+  private handedOver(runId: string): boolean {
+    return !!this.store.sqlite.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.handed_over' LIMIT 1").get(runId);
+  }
+  /**
+   * hot-update: a chat's task that an older engine handed to this one (src/never-break/resume.ts resumeHandedOver)
+   * answers the chat from here once it finishes, in reply to the message that started it. The older engine said
+   * nothing for it (finishTurn), and a chat app that sent its message once never sends it again.
+   */
+  async carryOnReply(runId: string, resumed: Promise<Run | undefined>): Promise<boolean> {
+    const inbound = this.chatOrigin(runId);
+    if (typeof inbound?.channel !== "string" || typeof inbound.chatId !== "string") return false;
+    const run = await resumed ?? this.store.run(runId);
+    if (!run || run.status === "interrupted") return false; // handed on again: the next engine answers it
+    const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
+      : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
+    await this.deliver(inbound.channel, inbound.chatId, said, `reply:${run.id}`, typeof inbound.messageId === "string" ? inbound.messageId : undefined);
+    return true;
   }
   /**
    * Batch 20 (wave 8): the message going back out is the last step of the task, so it hangs off the
