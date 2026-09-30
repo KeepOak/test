@@ -119,7 +119,7 @@ export const ROUTES = {
   "/api/decisions/urgency": "owner POST",
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
-  "/api/artifacts/file": "look",
+  "/api/artifacts/file": "secret-read",
   "/api/artifacts/read": "look", // dogfood-ux-2: one kept file's words, as /api/artifacts/file shows a picture
   "/api/artifacts/page": "task POST",
   "/api/artifacts/save": "task POST",
@@ -1296,6 +1296,7 @@ export const ROUTES = {
   "/api/panels/browser": "secret-read",
   "/api/panels/browser/start": "owner POST",
   "/api/panels/browser/control": "owner POST",
+  "/api/panels/browser/library": "owner POST",
   "/api/panels/browser/action": "owner POST",
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",

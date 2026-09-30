@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { BrowserHistoryRangeSchema, browserHistoryBetween, readBrowserLibrary, saveBrowserPage, changeBrowserLibrary } from './integrations/browser-library.js';
 import type { createBranch } from './index.js';
 import type { ToolContext } from './contracts.js';
 import type { BrowserBinding, BrowserControl } from './browser-control.js';
@@ -18,7 +19,7 @@ import { BrowserDemonstrations, DemonstrationError, prepareDemonstratedInput, fi
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 export const browserApiPath = '/api/panels/browser';
 export const browserApiPaths = ['/api/panels/browser', '/api/panels/browser/start', '/api/panels/browser/control',
-  '/api/panels/browser/action', '/api/panels/browser/disconnect', '/api/panels/browser/stop', '/api/panels/browser/demonstration'] as const;
+  '/api/panels/browser/library', '/api/panels/browser/action', '/api/panels/browser/disconnect', '/api/panels/browser/stop', '/api/panels/browser/demonstration'] as const;
 export const handlesBrowserApiPath = (path: string): boolean => browserApiPaths.some(value => value === path);
 const ScopeSchema = z.object({ sessionId: z.string().uuid(), profile: profileNameSchema.nullable(), clientId: z.string().uuid() }).strict();
 const BoundSchema = ScopeSchema.extend({ id: z.string().uuid(), epoch: z.number().int().min(1) });
@@ -26,9 +27,17 @@ const BoundSchema = ScopeSchema.extend({ id: z.string().uuid(), epoch: z.number(
 const StartSchema = ScopeSchema.extend({ confirmToken: z.string().uuid().optional(), runId: z.string().uuid().optional() });
 const ControlSchema = BoundSchema.extend({ operation: z.enum(['takeover', 'handback']), runId: z.string().uuid().optional(), confirmToken: z.string().uuid().optional() });
 const ActionSchema = BoundSchema.extend({ frameId: z.string().uuid(), sequence: z.number().int().min(1), tabId: z.string().uuid(),
-  tool: z.enum(['browser.navigate', 'browser.tab', 'browser.owner_input']), arguments: z.record(z.string(), z.unknown()), confirmToken: z.string().uuid().optional() });
+  tool: z.enum(['browser.navigate', 'browser.tab', 'browser.owner_input', 'browser.pdf']), arguments: z.record(z.string(), z.unknown()), confirmToken: z.string().uuid().optional() });
 const DemonstrationSchema = BoundSchema.extend({ tabId: z.string().uuid(), operation: z.enum(['start', 'preview', 'save', 'cancel']),
   name: z.string().trim().min(1).max(80).default('Learned browser workflow'), previewToken: z.string().uuid().optional() });
+const LibrarySchema = z.discriminatedUnion('operation', [
+  BoundSchema.extend({ operation: z.literal('list'), range: BrowserHistoryRangeSchema.optional() }),
+  BoundSchema.extend({ operation: z.literal('bookmark'), frameId: z.string().uuid(), tabId: z.string().uuid() }),
+  BoundSchema.extend({ operation: z.literal('remove'), entryId: z.string().uuid() }),
+  BoundSchema.extend({ operation: z.literal('clear') }),
+  BoundSchema.extend({ operation: z.literal('history'), enabled: z.boolean() }),
+]);
+
 type Scope = z.infer<typeof ScopeSchema>;
 type Bound = z.infer<typeof BoundSchema>;
 interface RequestAccess { authorize(): void; signal: AbortSignal }
@@ -204,8 +213,39 @@ export class BrowserControlApi {
     const frame: Frame = { id: randomUUID(), epoch: input.epoch, tabId,
       page: target?.page ?? null, url: target?.url ?? '', ready: !!watched?.frame, at: Date.now() };
     this.frames.set(input.id, frame); this.lease(input, control);
+    if (watched && !watched.borrowed) saveBrowserPage(this.app.store, binding.owner, this.libraryScope(binding), watched, false);
     return { status: 'ready', control: control.view(), frameId: frame.id, tabId, ready: frame.ready,
       page: watched ? { ...watched, frame: watched.frame?.toString('base64') ?? null } : null };
+  }
+  private libraryScope(binding: BrowserBinding): string {
+    const trunk = this.app.trunks.trunkForConversation(binding.conversation)?.trunkId;
+    return trunk ? `trunk:${trunk}` : `conversation:${binding.conversation}`;
+  }
+  private async library(input: z.infer<typeof LibrarySchema>, access: RequestAccess) {
+    const { binding, control } = this.bound(input, access), scope = this.libraryScope(binding);
+    const context = this.context(binding, `browser-control:${input.id}`, access.signal);
+    const check = this.manualGuard(binding, access, { confirmed: false, policy: this.policy() }, context, 'browser.snapshot', {}); check();
+    const current = () => {
+      check();
+      if (control.view().epoch !== input.epoch || scope !== this.libraryScope(binding)) throw new BrowserApiError(409, 'Browser scope changed; refresh before continuing.');
+    };
+    if (input.operation === 'list') {
+      current();
+      const library = readBrowserLibrary(this.app.store, binding.owner, scope);
+      return { status: 'library', library: input.range ? browserHistoryBetween(library, input.range) : library };
+    }
+    const writer = control.view().writer;
+    if (writer?.kind !== 'owner' || writer.id !== input.clientId) throw new BrowserApiError(409, 'Take over this browser before changing saved pages.');
+    if (input.operation === 'bookmark') {
+      const action = { ...input, sequence: control.view().sequence + 1, tool: 'browser.owner_input' as const, arguments: {} };
+      this.frame(action, control);
+      const watched = await this.browser().watchControlled(binding, input.id); current(); this.frame(action, control);
+      if (!watched || watched.borrowed || watched.url !== this.frames.get(input.id)?.url) throw new BrowserApiError(409, 'The page changed; refresh before saving it.');
+      return { status: 'library', library: saveBrowserPage(this.app.store, binding.owner, scope, watched, true) };
+    }
+    current(); this.lease(input, control);
+    const value = input.operation === 'history' ? input.enabled : input.operation === 'remove' ? input.entryId : undefined;
+    return { status: 'library', library: changeBrowserLibrary(this.app.store, binding.owner, scope, input.operation, value) };
   }
   private liveRun(binding: BrowserBinding, runId: string | undefined): string {
     const run = runId ? this.app.store.run(runId) : null;
@@ -332,6 +372,7 @@ export class BrowserControlApi {
     if (method !== 'POST') throw new BrowserApiError(405, 'Browser endpoint does not support that method.');
     if (path === `${browserApiPath}/start`) return this.start(StartSchema.parse(body), access);
     if (path === `${browserApiPath}/control`) return this.transfer(ControlSchema.parse(body), access);
+    if (path === `${browserApiPath}/library`) return this.library(LibrarySchema.parse(body), access);
     if (path === `${browserApiPath}/action`) return this.action(ActionSchema.parse(body), access);
     if (path === `${browserApiPath}/demonstration`) return this.demonstration(DemonstrationSchema.parse(body), access);
     const input = BoundSchema.parse(body), { binding, control } = this.bound(input, access); this.changed(input.id);

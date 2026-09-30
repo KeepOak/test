@@ -1598,7 +1598,9 @@ async function api(
   }
   if (request.method === "GET" && path === "/api/artifacts") {
     const type = new URL(request.url ?? "/", "http://local").searchParams.get("type") ?? "";
-    const kept = await app.artifacts.list();
+    // SCREEN-162: the same rule as the file route, so the gallery lists only files this profile can open.
+    const scope = scopeWhileUnlocked(app);
+    const kept = (await app.artifacts.list()).filter((entry) => !!scope && ownArtifact(app, scope, entry.runId));
     return { artifacts: type ? kept.filter((entry) => entry.mediaType.startsWith(`${type}/`)) : kept };
   }
   // Batch 26 (wave 8): what Windows itself allows, with the page that turns each one on.
@@ -2131,9 +2133,12 @@ async function api(
   if (request.method === "GET" && path === panelsWorkPath)
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
-  if (request.method === "GET" && path === liveStagePath)
-    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
-      new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  if (request.method === "GET" && path === liveStagePath) {
+    const query = new URL(request.url ?? "/", "http://local").searchParams;
+    const replay = query.has("step") ? { step: query.get("step"), runId: query.get("run"), planAt: query.get("plan") } : undefined;
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser,
+      plan: session => app.runtime.orchestration.plan(session), observeSteps: query.get("observe") === "steps" }, query.get("session") ?? "", replay);
+  }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))
@@ -2571,6 +2576,11 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
  * App lock: whose records an open stream or socket may still carry. Once Branch locks with a PIN set
  * the answer is nobody's, so a stream opened before the lock ends there instead of flowing on.
  */
+/** A kept file is this profile's when the task that made it is theirs, in a conversation they own. */
+const ownArtifact = (app: Branch, scope: string, runId: string): boolean => {
+  const run = app.store.run(runId);
+  return !!run && run.owner === scope && app.store.ownsSession(scope, run.sessionId);
+};
 const scopeWhileUnlocked = (app: Branch): string => (app.sessionLock.refusal("GET", "/api/events/stream") ? "" : app.store.profiles.scope());
 /** An App lock refusal answered with its own status (400, 403 or 429); anything else as it was. */
 async function appLockAnswer(step: () => Promise<unknown>): Promise<unknown> {
@@ -4945,8 +4955,9 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     const readable = () => !!scope && scopeWhileUnlocked(app) === scope && app.store.profiles.isOwner()
       && app.store.ownsSession(scope, session);
     if (!readable()) throw new HttpError(404, "Conversation not found");
-    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
-      session, response, readable);
+    // The stream is read only while the view shows the browser, so it observes plan steps as a fast read does (#996).
+    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser,
+      plan: session => app.runtime.orchestration.plan(session), observeSteps: true }, session, response, readable);
     return true;
   }
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
@@ -5024,11 +5035,15 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
   // is refused by RunArtifacts itself, and only kinds the browser can safely display are served.
   if (request.method === "GET" && path === "/api/artifacts/file") {
+    const requestingScope = scopeWhileUnlocked(app);
     const wanted = new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "";
     const entry = (await app.artifacts.list(500)).find((kept) => kept.path === wanted);
     if (!entry) throw new HttpError(404, "That file was not made by the assistant");
+    const readable = () => !!requestingScope && scopeWhileUnlocked(app) === requestingScope && ownArtifact(app, requestingScope, entry.runId);
+    if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     if (!/^(image|audio)\//.test(entry.mediaType)) throw new HttpError(415, "Only pictures and sounds are shown here");
     const bytes = await app.artifacts.read(entry.path);
+    if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     response.writeHead(200, {
       "content-type": entry.mediaType, "cache-control": "no-store",
       "x-content-type-options": "nosniff", "content-disposition": `inline; filename="${entry.name}"`,

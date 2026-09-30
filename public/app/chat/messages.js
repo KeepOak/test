@@ -30,6 +30,7 @@ import { CF } from "./comfort.js"; // message times Always: the time is on the m
 import { tasteButton, initTaste } from "./taste.js";
 
 const M = { sid: null, pins: [], followUps: [], room: null, spend: null, commands: null, slashBox: null, slashI: 0, edit: null };
+const AT = { query: null, index: 0 };
 /* What the conversation module hands over: its state, a way to send words, and a way to re-read a conversation. */
 let X = { state: () => ({ sessionId: null, messages: [] }), sendText: async () => {}, reopen: async () => {} };
 
@@ -292,12 +293,12 @@ async function slashTyped() {
   drawSlash();
 }
 
-function setBox(value) {
+function setBox(value, caret = value.length) {
   const box = $("#prompt");
   if (!box) return;
   box.value = value;
   box.focus();
-  box.setSelectionRange(value.length, value.length);
+  box.setSelectionRange(caret, caret);
   box.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
@@ -332,26 +333,67 @@ const skillsPop = () => `<div class="ph">${t("folder-trust.kind.skills")}</div>$
 export function openSkills() {
   const box = $("#prompt");
   if (!box || !skillsOn().length) return false;
+  AT.index = 0;
   openPop($("#composer"), skillsPop(), { force: true });
+  highlightMention();
   box.focus();
   return true;
 }
 
 /* The list opens over the box while the person keeps typing, so the box keeps focus and caret. */
+/* Caret-aware mention replacement/filtering follows Cline's context-mentions approach (Apache-2.0),
+   adapted to Branch Trunks; original implementation, without Cline's fzf dependency. */
+function mentionAt(box) {
+  if (!box || box.selectionStart !== box.selectionEnd) return null;
+  const end = box.selectionStart, match = box.value.slice(0, end).match(/(^|\s)@([^\s@]*)$/);
+  return match && !/^https?:/i.test(match[2]) ? { start: end - match[2].length - 1, end, query: match[2].toLocaleLowerCase() } : null;
+}
+function mentionItems() {
+  return [...document.querySelectorAll(".pop [data-act='mention-pick'], .pop [data-act='slash-pick']")].filter((item) => !item.hidden);
+}
+function highlightMention() {
+  const items = mentionItems();
+  AT.index = Math.max(0, Math.min(items.length - 1, AT.index));
+  for (const [i, item] of items.entries()) {
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", String(i === AT.index));
+    item.classList.toggle("sel6", i === AT.index);
+  }
+  items[AT.index]?.scrollIntoView({ block: "nearest" });
+}
 function mentionTyped(box) {
   if (!box) return;
   const at = box.selectionStart;
-  if (/(^|\s)@\w*$/.test(box.value)) openPop($("#composer"), mentionPop(), { force: true });
-  else if (/\s\/\w*$/.test(box.value) && skillsOn().length) openPop($("#composer"), skillsPop(), { force: true });
-  else { if (mentionOpen()) closePop(); return; }
+  const match = mentionAt(box);
+  if (match) {
+    if (AT.query !== match.query) AT.index = 0;
+    AT.query = match.query;
+    openPop($("#composer"), mentionPop(), { force: true });
+    for (const item of document.querySelectorAll(".pop [data-act='mention-pick']")) {
+      item.hidden = !!match.query && !`${item.textContent} ${item.dataset.v}`.toLocaleLowerCase().includes(match.query);
+    }
+    const pop = document.querySelector(".pop");
+    if (pop) { pop.setAttribute("role", "listbox"); pop.setAttribute("aria-label", t("window.chat.msg.call-trunk")); }
+    highlightMention();
+    if (!mentionItems().length) closePop();
+  }
+  else if (/\s\/\w*$/.test(box.value) && skillsOn().length) {
+    AT.index = 0;
+    openPop($("#composer"), skillsPop(), { force: true });
+    highlightMention();
+  }
+  else { AT.query = null; if (mentionOpen()) closePop(); return; }
   box.focus();
   box.setSelectionRange(at, at);
 }
 
 function pickMention(el) {
   const box = $("#prompt");
+  const match = mentionAt(box);
   closePop();
-  if (box) setBox(box.value.replace(/@\w*$/, "") + "@" + el.dataset.v + (el.dataset.v === "https://" ? "" : " "));
+  if (!match) return;
+  const inserted = "@" + el.dataset.v + (el.dataset.v === "https://" ? "" : " ");
+  setBox(box.value.slice(0, match.start) + inserted + box.value.slice(match.end), match.start + inserted.length);
 }
 function pickSkill(el) {
   const box = $("#prompt");
@@ -361,7 +403,7 @@ function pickSkill(el) {
 
 /* Arrows, Enter, Tab and Escape belong to an open list before the box sends anything. */
 function listKeys(e) {
-  if (e.target.id !== "prompt") return;
+  if (e.target.id !== "prompt" || e.isComposing || e.keyCode === 229) return;
   const list = $(".slash6");
   if (list) {
     const n = list.querySelectorAll("[role='option']").length;
@@ -370,7 +412,12 @@ function listKeys(e) {
     else if (e.key === "Escape") list.remove();
     else return;
   } else if (mentionOpen()) {
-    if (e.key === "Enter") document.querySelector(".pop [data-act='mention-pick'], .pop [data-act='slash-pick']")?.click();
+    const items = mentionItems();
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      if (items.length) AT.index = (AT.index + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+      highlightMention();
+    }
+    else if (e.key === "Enter" || e.key === "Tab") items[AT.index]?.click();
     else if (e.key === "Escape") closePop();
     else return;
   } else return;
@@ -561,6 +608,10 @@ export function initMessages(context) {
   on("spendmenu", (el) => openPop(el, spendPop()));
   document.addEventListener("keydown", listKeys, true);
   document.addEventListener("input", (e) => { if (e.target.id === "prompt") { M.slashI = 0; slashTyped(); mentionTyped(e.target); } });
+  document.addEventListener("click", (e) => { if (e.target.id === "prompt") mentionTyped(e.target); });
+  document.addEventListener("keyup", (e) => {
+    if (e.target.id === "prompt" && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) mentionTyped(e.target);
+  });
   document.addEventListener("branch-prompts", () => { M.commands = null; });
   /* The list closes when the box loses focus for good; a redraw that puts focus back in the box keeps it. */
   document.addEventListener("focusout", (e) => { if (e.target.id === "prompt") setTimeout(() => { if (document.activeElement?.id !== "prompt" && !document.activeElement?.closest(".slash6")) $(".slash6")?.remove(); }, 150); });
