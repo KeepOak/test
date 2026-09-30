@@ -68,6 +68,7 @@ export const STEPS_CAPS: readonly StepsCaps[] = [
   plainApp("guilded", "Guilded", 3500, { replies: true }), plainApp("revolt", "Revolt", 2000, { replies: true, edit: true, reactions: true }),
   plainApp("mumble", "Mumble", 3500), plainApp("kook", "KOOK", 4000, { replies: true, reactions: true }),
   plainApp("bluebubbles", "iMessage through BlueBubbles", 3000, { hermes: HERMES_NO_EDIT, openclaw: "final answer only" }),
+  plainApp("whatsapp-web", "WhatsApp (personal number)", 4000, { replies: true, hermes: "new through the Baileys bridge", openclaw: "final answer only" }),
   plainApp("wechat-mp", "WeChat Official Account", 600, { hermes: HERMES_NO_EDIT }),
   plainApp("wecom-app", "WeCom app", 600, { hermes: "off; native stream message type instead" }),
   plainApp("mattermost", "Mattermost", 4000, { replies: true, hermes: "new (edits in place)", openclaw: "partial draft preview" }),

@@ -27,6 +27,7 @@ import { flagOf, loadFlags } from "./flag.js";
 import { sentAt } from "./furniture.js"; // parity B1: when a message was written (GET /api/sessions/<id> messages[].at)
 import { remoteTrunks } from "./beside.js"; // E2: asked only while "Trunks on other computers" is on
 import { CF } from "./comfort.js"; // message times Always: the time is on the message itself, not in this row
+import { tasteButton, initTaste } from "./taste.js";
 
 const M = { sid: null, pins: [], followUps: [], room: null, spend: null, commands: null, slashBox: null, slashI: 0, edit: null };
 /* What the conversation module hands over: its state, a way to send words, and a way to re-read a conversation. */
@@ -68,7 +69,7 @@ export function msgActs(m) {
     return `<div class="msg-acts"><button type="button" aria-label="${t("prompts.action.edit")}" data-act="u-edit" data-mid="${esc(m.messageId)}">${ic("edit")}</button>${branch}${pinButton(m)}${sentTime(m)}</div>`;
   const run = runFor(m);
   const look = run ? `<button type="button" aria-label="${t("inspector.open")}" data-act="inspect" data-run="${esc(run.id)}">${ic("eye")}</button>` : "";
-  return `<div class="msg-acts"><button type="button" aria-label="${t("asks.examples.copy")}" data-act="copy15" data-mid="${esc(m.messageId)}">${ic("copy")}</button>${retryButton(m, held)}${look}<button type="button" aria-label="${t("settings.card.report")}" data-act="flag" data-sid="${esc(sid() ?? "")}" data-mid="${esc(m.messageId)}" aria-pressed="${!!flagOf(sid(), m.messageId)}">${ic("flag")}</button>${branch}${pinButton(m)}${sentTime(m)}</div>`;
+  return `<div class="msg-acts"><button type="button" aria-label="${t("asks.examples.copy")}" data-act="copy15" data-mid="${esc(m.messageId)}">${ic("copy")}</button>${retryButton(m, held)}${look}<button type="button" aria-label="${t("settings.card.report")}" data-act="flag" data-sid="${esc(sid() ?? "")}" data-mid="${esc(m.messageId)}" aria-pressed="${!!flagOf(sid(), m.messageId)}">${ic("flag")}</button>${tasteButton(m, sid())}${branch}${pinButton(m)}${sentTime(m)}</div>`;
 }
 /* The prototype's "Sent at" at the end of the row, from when the engine wrote the message (On hover, the engine's own
    default; Always draws it on the message instead, chat/comfort.js). */
@@ -528,6 +529,7 @@ async function usePrompt(el) {
 
 export function initMessages(context) {
   X = context;
+  initTaste();
   addMoreItem((m) => (m.role === "assistant" ? everyStepItem(runFor(m)?.id) : "")); // pass 17: More › Every step behind this reply
   markLive(["copy15", "sw:rw-text", "sw:q15", "pin15", "pinjump15", "pinlist15", "u-edit", "rw-what", "rw-go", "undo", "inspect", "slash6-pick", "prompts-fill",
     "mention-pick", "queue15", "qup15", "qrm15", "roommenu", "spendmenu", "retry15", "insp-copy", "slash-pick", "tidyconv15"]);
