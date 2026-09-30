@@ -8,9 +8,12 @@ import { t } from "../../i18n.js";
 
 let generation = 0;
 let exportPage = null;
+let refreshTimer = null;
+const stopRefresh = () => { clearTimeout(refreshTimer); refreshTimer = null; };
 const allowed = () => ownerHere() && !document.getElementById("app")?.classList.contains("locked-b17");
 async function open(el) {
   if (!allowed()) return;
+  stopRefresh();
   exportPage = null;
   const id = el.dataset.id, ticket = ++generation, profile = activeId(), view = S.view, before = dialog();
   try {
@@ -22,7 +25,27 @@ async function open(el) {
       foot: `<button class="btn sm" type="button" data-act="schedule-dashboard-export" data-format="html">${esc(t("scheduleddash.export-html"))}</button><button class="btn sm" type="button" data-act="schedule-dashboard-export" data-format="json">${esc(t("scheduleddash.export-json"))}</button><button class="btn sm" type="button" data-act="schedule-dashboard" data-id="${esc(id)}">${esc(t("scheduleddash.refresh"))}</button><button class="btn sm" type="button" data-act="dlg-close">${esc(t("delight.ach.close"))}</button>` });
     box.querySelector("#schedule-dashboard-frame").srcdoc = result.html;
     exportPage = { box, profile, view, id, html: result.html, json: result.exportJson };
+    refreshTimer = setTimeout(() => refreshDashboard(exportPage), 15000);
   } catch (error) { if (ticket === generation && allowed() && activeId() === profile && S.view === view) toast(error.message); }
+}
+const currentPage = (page) => page && exportPage === page && allowed()
+  && activeId() === page.profile && S.view === page.view && dialog() === page.box;
+async function refreshDashboard(page) {
+  refreshTimer = null;
+  if (!currentPage(page)) { if (exportPage === page) exportPage = null; return; }
+  try {
+    if (!document.hidden) {
+      const result = await api(`schedules/${encodeURIComponent(page.id)}/dashboard`);
+      if (!currentPage(page)) return;
+      if (!result.html) { exportPage = null; return; }
+      if (result.html !== page.html) page.box.querySelector("#schedule-dashboard-frame").srcdoc = result.html;
+      page.html = result.html;
+      page.json = result.exportJson;
+    }
+  } catch {
+    // A failed read keeps the displayed snapshot; it does not rerun the schedule.
+  }
+  if (currentPage(page)) refreshTimer = setTimeout(() => refreshDashboard(page), 15000);
 }
 function exportDashboard(el) {
   const page = exportPage, format = el.dataset.format;
