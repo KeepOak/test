@@ -154,12 +154,17 @@ function argument(name) {
 /** The queue's own rule was missing or broken: unlike GitHub being unreachable, this admits nothing and restarts nothing. */
 export class PolicyError extends Error {}
 
-/** prSlots from the base's tests/test-impact.json: a whole number of at least 1, or a PolicyError. */
+/** The most pull-request runs the queue supports holding runners at once; a larger prSlots is refused, not obeyed. */
+export const MAX_SLOTS = 50;
+
+/** prSlots from the base's tests/test-impact.json: a whole number from 1 to MAX_SLOTS, or a PolicyError. */
 export function readPolicy(read = () => readFileSync(join(root, "tests", "test-impact.json"), "utf8")) {
   let config;
   try { config = JSON.parse(read()); } catch (error) { throw new PolicyError(`tests/test-impact.json could not be read: ${error.message}`); }
-  if (!Number.isInteger(config?.prSlots) || config.prSlots < 1) throw new PolicyError("tests/test-impact.json has no prSlots of at least 1");
-  return config.prSlots;
+  const slots = config !== null && typeof config === "object" && !Array.isArray(config) ? config.prSlots : undefined;
+  if (!Number.isSafeInteger(slots) || slots < 1 || slots > MAX_SLOTS)
+    throw new PolicyError(`tests/test-impact.json needs prSlots as a whole number from 1 to ${MAX_SLOTS}`);
+  return slots;
 }
 
 async function main() {

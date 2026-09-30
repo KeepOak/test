@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { activeRuns, github, PolicyError, QUEUE_ACTOR, readPolicy, schedule, waitingRuns, waitingWords } from "../scripts/ci-queue.mjs";
+import { activeRuns, github, MAX_SLOTS, PolicyError, QUEUE_ACTOR, readPolicy, schedule, waitingRuns, waitingWords } from "../scripts/ci-queue.mjs";
 
 const wait = (pr, created, priority = false) => ({ pr, runId: pr * 10, created, priority });
 
@@ -173,7 +173,9 @@ test("the queue runs the base's own script and prSlots, never the pull request's
 
 test("a missing or broken queue rule admits nothing and restarts nothing; a sound one is read", () => {
   assert.equal(readPolicy(() => '{"prSlots": 3}'), 3);
-  for (const text of ["", "{", "{}", '{"prSlots": 0}', '{"prSlots": "3"}', '{"prSlots": 2.5}'])
+  assert.equal(readPolicy(() => `{"prSlots": ${MAX_SLOTS}}`), MAX_SLOTS);
+  for (const text of ["", "{", "null", "[]", "{}", '{"prSlots": null}', '{"prSlots": 0}', '{"prSlots": -2}', '{"prSlots": 3.5}',
+    '{"prSlots": "20"}', '{"prSlots": true}', '{"prSlots": [20]}', `{"prSlots": ${MAX_SLOTS + 1}}`, '{"prSlots": 1e300}'])
     assert.throws(() => readPolicy(() => text), PolicyError, text);
   assert.throws(() => readPolicy(() => { throw new Error("ENOENT"); }), PolicyError);
   const home = realpathSync(mkdtempSync(join(tmpdir(), "ci-queue-rule-")));
@@ -183,8 +185,9 @@ test("a missing or broken queue rule admits nothing and restarts nothing; a soun
     writeFileSync(join(home, "tests", "test-impact.json"), '{"prSlots": "many"}');
     const output = join(home, "out");
     writeFileSync(output, "");
-    for (const command of ["admit", "restart"]) {
-      const run = spawnSync(process.execPath, [join(home, "scripts", "ci-queue.mjs"), command, "--run=1", "--pr=2"],
+    // admit, a rerun the queue itself started (the bot's own path), and restart: none gets past a broken rule.
+    for (const [command, ...more] of [["admit"], ["admit", `--actor=${QUEUE_ACTOR}`], ["restart"]]) {
+      const run = spawnSync(process.execPath, [join(home, "scripts", "ci-queue.mjs"), command, "--run=1", "--pr=2", ...more],
         { env: { PATH: process.env.PATH, GITHUB_OUTPUT: output, GH_TOKEN: "t", GITHUB_REPOSITORY: "o/r" }, encoding: "utf8" });
       assert.equal(run.status, 1, command);
       assert.match(run.stdout, /::error title=CI queue rule missing or broken::/, command);
