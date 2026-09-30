@@ -484,6 +484,7 @@ export const ROUTES = {
   "/api/trunks/:id/retire": "owner POST",
   "/api/trunks/:id/avatar": "owner POST",
   "/api/trunks/:id/export": "look",
+  "/api/trunks/:id/inbox": "look",
   "/api/trunks/:id/keys": "look",
   "/api/trunks/:id/routines": "owner POST",
   "/api/trunks/:id/watch": "owner POST",

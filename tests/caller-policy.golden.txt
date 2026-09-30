@@ -819,6 +819,8 @@ owner GET /api/trunks/:id/avatar | here=ok remote=ok phone=ok legacy=ok person=4
 owner POST /api/trunks/:id/avatar | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/:id/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/trunks/:id/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/trunks/:id/inbox | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/trunks/:id/inbox | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/:id/keys | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/trunks/:id/keys | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/trunks/:id/routines | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3065,6 +3067,8 @@ owner+lockdown GET /api/trunks/:id/avatar | here=ok remote=ok phone=ok legacy=ok
 owner+lockdown POST /api/trunks/:id/avatar | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/:id/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/trunks/:id/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/trunks/:id/inbox | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/trunks/:id/inbox | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/:id/keys | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/trunks/:id/keys | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/trunks/:id/routines | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5311,6 +5315,8 @@ household GET /api/trunks/:id/avatar | here=400/f6e21c remote=400/f6e21c read=40
 household POST /api/trunks/:id/avatar | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/trunks/:id/export | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/trunks/:id/export | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/trunks/:id/inbox | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/trunks/:id/inbox | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/trunks/:id/keys | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/trunks/:id/keys | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/trunks/:id/routines | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7557,6 +7563,8 @@ household+lockdown GET /api/trunks/:id/avatar | here=400/f6e21c remote=400/f6e21
 household+lockdown POST /api/trunks/:id/avatar | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/:id/export | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/trunks/:id/export | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/trunks/:id/inbox | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/trunks/:id/inbox | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/:id/keys | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/trunks/:id/keys | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/trunks/:id/routines | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9803,6 +9811,8 @@ applock GET /api/trunks/:id/avatar | here=423/a8f863
 applock POST /api/trunks/:id/avatar | here=423/a8f863
 applock GET /api/trunks/:id/export | here=423/a8f863
 applock POST /api/trunks/:id/export | here=423/a8f863
+applock GET /api/trunks/:id/inbox | here=423/a8f863
+applock POST /api/trunks/:id/inbox | here=423/a8f863
 applock GET /api/trunks/:id/keys | here=423/a8f863
 applock POST /api/trunks/:id/keys | here=423/a8f863
 applock GET /api/trunks/:id/routines | here=423/a8f863
