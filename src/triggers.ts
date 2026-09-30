@@ -284,6 +284,16 @@ export class Triggers {
   logFire(triggerId: string, owner: string, runId: string | null, payloadSummary: string, status: string): void {
     this.store.logTriggerFire(triggerId, owner, runId, payloadSummary, status);
   }
+  /** Authenticated SOP ingress uses the same disabled/rate guard without starting a chat task. */
+  admitSop(owner: string, triggerId: string): void {
+    const trigger = this.get(owner, triggerId);
+    if (!trigger || trigger.sessionId) throw new Error("SOP ingress requires an unbound trigger");
+    const verdict = this.canFire(triggerId, trigger);
+    if (!verdict.allowed) throw new Error(verdict.reason);
+    const window = this.requestCounts.get(triggerId) ?? [];
+    window.push(Date.now()); this.requestCounts.set(triggerId, window);
+    this.logFire(triggerId, owner, null, "Authenticated SOP event; check the procedure for proposal or hold", "sop-authenticated-event");
+  }
 
   /**
    * Get the trigger log (limited to last 50 entries).

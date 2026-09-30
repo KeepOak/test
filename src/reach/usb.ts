@@ -90,6 +90,8 @@ export interface UsbDeps {
 }
 
 export class UsbTrigger {
+  /** Real fresh plug events only, after the existing USB opt-in and first-scan suppression. */
+  readonly onPlugged = new Set<(device: UsbDevice) => void>();
   private seen: Set<string> | null = null;
   private readonly last = new Map<string, number>();
   constructor(private readonly deps: UsbDeps) {}
@@ -143,6 +145,9 @@ export class UsbTrigger {
     const keys = new Set(now.map(keyOf));
     const fresh = this.seen ? now.filter((d) => !this.seen!.has(keyOf(d))) : [];
     this.seen = keys;
+    for (const device of fresh) for (const listener of this.onPlugged) {
+      try { listener(device); } catch { /* An event subscriber cannot disable existing USB rules. */ }
+    }
     const started: string[] = [];
     const at = this.deps.now?.() ?? Date.now();
     for (const rule of rules) {

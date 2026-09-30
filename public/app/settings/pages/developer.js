@@ -85,7 +85,7 @@ export function draw() {
     + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
     + fact15("Save task trajectories", "f15-save-task-trajectories"));
-  return html + developer17(level17());
+  return html + `<div class="sec"><h2>${esc(say("Typed tool macros"))}</h2><p>${esc(say("Check a bounded JSON package, import it as a flow, then explicitly run it with typed inputs and your usual approvals."))}</p><button class="btn" type="button" data-act="macro-import">${esc(say("Import tool macro"))}</button><button class="btn ghost" type="button" data-act="sop-library">${esc(say("Event procedures"))}</button></div>` + developer17(level17());
 }
 
 async function loadAll() {

@@ -25,6 +25,8 @@ export const GraphNodeSchema = z.object({
   id: z.string().regex(/^[a-z][a-z0-9_-]{0,39}$/, "A box's id is lower-case letters, digits and dashes"),
   name: z.string().trim().min(1).max(80),
   kind: z.enum(graphNodeKinds),
+  /** Imported tool macros opt in; older graph argument objects keep their existing semantics. */
+  argumentMode: z.literal("typed-macro").optional(),
   /** The values this box reads out of the flow's one state object. */
   input: ShapeSchema.default({}),
   /** The values this box writes back. Everything a box returns is a patch of just these. */

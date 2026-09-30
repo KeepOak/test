@@ -40,8 +40,23 @@ export async function orchestrationApi(
   // Every one of these belongs to the owner: they switch host execution on, say which programs may
   // be left running, copy a plugin in, keep a drafted skill, or answer a job handed over earlier.
   app.store.profiles.requireOwner("Flows, programs left running and the switches behind them");
+  if (path === "/api/flows/sops" && request.method === "GET") return { procedures: app.sops.list() };
+  if (path === "/api/flows/sops" && request.method === "POST") return app.sops.save(await readBody(request, 32_000));
+  const sopAction = /^\/api\/flows\/sops\/([a-f0-9-]{36})\/(enable|approve|reject|remove)$/.exec(path);
+  if (sopAction && request.method === "POST") {
+    const input = z.object({ proposalId: z.uuid().optional(), enabled: z.boolean().optional() }).strict().parse(await readBody(request, 1000));
+    const [, id, action] = sopAction;
+    if (action === "enable") { if (input.enabled === undefined) throw new Error("Choose enabled or disabled"); app.sops.enable(id!, input.enabled); }
+    if (action === "remove") app.sops.remove(id!);
+    if (action === "approve" || action === "reject") {
+      if (!input.proposalId) throw new Error("Choose an exact event proposal");
+      if (action === "approve") return app.sops.approve(id!, input.proposalId);
+      app.sops.reject(id!, input.proposalId);
+    }
+    return { ok: true };
+  }
   if (path.startsWith("/api/flows")) {
-    const answered = await flowsApi(app.flows, request, path, () => readBody(request));
+    const answered = await flowsApi(app.flows, request, path, () => readBody(request, path.startsWith("/api/flows/macros") ? 64_000 : undefined));
     return answered ?? notFound();
   }
   // Wave 8: the to-do list, and "Save as report" in its three forms.

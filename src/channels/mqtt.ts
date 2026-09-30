@@ -255,7 +255,7 @@ export class MqttChannel implements ChannelAdapter {
     if (message.qos === 1) this.write(packet(PACKET.PUBACK, 0, id16(message.packetId)));
     if (message.qos > 1 || message.retain) return; // QoS 2 was never asked for; retained is from before.
     const inbound = this.inbound(message.payload.toString("utf8"));
-    if (inbound) void this.onMessage(inbound).catch(() => undefined);
+    if (inbound) void this.onMessage({ ...inbound, mqttTopic: message.topic, mqttDuplicate: (p.flags & 8) !== 0 }).catch(() => undefined);
   }
   private inbound(payload: string): InboundMessage | null {
     const said = this.read(payload);

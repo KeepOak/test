@@ -3020,6 +3020,13 @@ async function triggerFire(app: Branch, request: IncomingMessage, triggerId: str
   }
   limit.limiter.succeed(limit.from);
 
+  // A saved SOP owns this trigger's ingress, including while disabled; no fall-through chat task.
+  if (app.sops.hasWebhook(triggerId)) {
+    try { app.triggers.admitSop(app.runtime.owner, triggerId); }
+    catch (error) { throw new HttpError(trigger.enabled ? 429 : 403, errorText(error)); }
+    return app.sops.webhook(triggerId, parsed, createHash("sha256").update(raw)
+      .update(String(request.headers["x-branch-nonce"] ?? "")).digest("hex"));
+  }
   return app.triggers.fire(app.runtime.owner, triggerId, parsed).catch((error: unknown) => {
     const message = errorText(error);
     if (message.includes("disabled")) throw new HttpError(403, message);
