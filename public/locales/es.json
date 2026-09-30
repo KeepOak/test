@@ -10597,5 +10597,10 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "replyTable.filter": "Filtrar filas",
+  "replyTable.sort": "Ordenar",
+  "replyTable.sortBy": "Ordenar por {column}",
+  "replyTable.reset": "Restablecer tabla",
+  "replyTable.count": "{shown} de {total} filas"
 }

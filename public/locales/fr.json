@@ -10597,5 +10597,10 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "replyTable.filter": "Filtrer les lignes",
+  "replyTable.sort": "Trier",
+  "replyTable.sortBy": "Trier par {column}",
+  "replyTable.reset": "R\u00e9initialiser le tableau",
+  "replyTable.count": "{shown} sur {total} lignes"
 }

@@ -10597,5 +10597,10 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "replyTable.filter": "Filter rows",
+  "replyTable.sort": "Sort",
+  "replyTable.sortBy": "Sort by {column}",
+  "replyTable.reset": "Reset table",
+  "replyTable.count": "{shown} of {total} rows"
 }

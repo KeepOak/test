@@ -10597,5 +10597,10 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "replyTable.filter": "Zeilen filtern",
+  "replyTable.sort": "Sortieren",
+  "replyTable.sortBy": "Nach {column} sortieren",
+  "replyTable.reset": "Tabelle zur\u00fccksetzen",
+  "replyTable.count": "{shown} von {total} Zeilen"
 }
