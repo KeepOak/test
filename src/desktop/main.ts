@@ -11,7 +11,9 @@ import {
   type MenuItemConstructorOptions,
   type NativeImage,
 } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // Wave 5 (deployment): portable folders, joining a background engine, opening straight to the tray.
@@ -88,10 +90,16 @@ import { readRunning, type Attachment } from "../install/running.js";
 import { moveOldEngine } from "../install/old-engine.js";
 import { desktopGatewayConfig } from "./gateway-mode.js";
 import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesktopGateway } from "./gateway-launch.js";
+import { launchSupervisedGateway, windowsGatewaySupervision } from "./gateway-supervised.js";
+import type { WriteShortcut } from "../install/gateway-task.js";
+import { keepRunningThroughErrors } from "./engine-errors.js";
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
-import { versionedLayout } from "./app-folders.js";
-import { handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
+import { rollBackPointer, versionedLayout } from "./app-folders.js";
+import { goingBackIsSafe, systemDeps } from "./version-switch.js";
+import { failureName, shellUpMarker } from "./shell-switch.js";
+import { storeMigrations } from "../never-break/migrations.js";
+import { forwardedVariable, forwardTarget, guardedForward, handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
 import { portableMarker } from "../install/layout.js";
 
 let window: BrowserWindow | undefined;
@@ -455,6 +463,7 @@ function settleVersions(): void {
   setTimeout(() => {
     void folders(app.getPath("userData")).then(({ dataDir }) => settleLayout(layout, appEntryName(process.platform), dataDir))
       .then((done) => {
+        if (done.retired) diagnose("updater", "info", "The copy installed before versioned folders is now the stable launcher");
         if (!done.pruned.length) return;
         console.log(`Removed older versions: ${done.pruned.join(", ")}`);
         diagnose("updater", "info", "Removed versions nothing runs from any more", { fields: { versions: done.pruned.join(", ") } });
@@ -524,11 +533,11 @@ const liveNote = (line: string): void => { console.error(line); diagnose("update
  * a person who updates from the window can go back afterwards. It stays `staged` until the next
  * start says the swap landed, because this process quits into the hand-over script.
  */
-function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
+function desktopRecord(dataDir: string): Pick<UpdateHooks, "record" | "dataDir"> {
   const installRoot = installedAppRoot(app.isPackaged, process.platform, process.execPath);
   // A copy that cannot update itself never hands over, so there is nothing to write down.
-  if (!installRoot) return {};
-  return { record: async (stagedDir, toVersion) => {
+  if (!installRoot) return { dataDir };
+  return { dataDir, record: async (stagedDir, toVersion) => {
     const { recordActivation } = await import("../install/headless-update.js");
     const recorded = await recordActivation({ dataDir, installRoot, stagedDir, fromVersion: app.getVersion(),
       toVersion, executableName: appEntryName(process.platform) });
@@ -553,6 +562,12 @@ async function refreshWindowsShortcuts(): Promise<void> {
     exists: existsSync,
   }).catch((error: Error) => console.error("Shortcuts:", error.message));
 }
+
+/** The gateway's Startup shortcut, where Windows refuses its scheduled task (src/install/gateway-task.ts): no VBScript. */
+const electronShortcut: WriteShortcut = async (link) => {
+  if (!shell.writeShortcutLink(link.path, "create", { target: link.target, args: link.arguments, cwd: link.workingDirectory, description: link.description }))
+    throw new Error("Windows did not write the Startup shortcut.");
+};
 
 async function start(): Promise<void> {
   const base = app.getPath("userData");
@@ -797,8 +812,12 @@ function relaunchApp(hidden = false): void {
 async function brokerOrOwnEngine(base: string, dataDir: string, workspace: string): Promise<Attachment | null> {
   try {
     // Deliberately Electron itself, not as Node: gateway-launch.ts removes ELECTRON_RUN_AS_NODE and passes its own flag.
-    return await launchDesktopGateway({ executable: process.execPath, appRoot: app.getAppPath(), packaged: app.isPackaged,
-      base, dataDir, workspace, join: () => joinBackground(dataDir) });
+    const launch = { executable: process.execPath, appRoot: app.getAppPath(), packaged: app.isPackaged,
+      base, dataDir, workspace, join: () => joinBackground(dataDir) };
+    // UP-PLATFORM-002: the installed Windows app starts it through its scheduled task, which restarts it after a crash.
+    if (!app.isPackaged || process.platform !== "win32" || testHooksOn()) return await launchDesktopGateway(launch);
+    return await launchSupervisedGateway({ ...windowsGatewaySupervision({ dataDir, executable: process.execPath }, { writeShortcut: electronShortcut }),
+      join: launch.join, direct: () => launchDesktopGateway(launch), log: (line) => console.error(line) });
   } catch (error) {
     const message = (error as Error).message;
     if (error instanceof GatewayLaunchError && !error.brokerMayRun) {
@@ -982,8 +1001,19 @@ else if (process.argv.includes(refreshShortcutsFlag)) {
   const trial = new URL("./beta-smoke-window.js", import.meta.url).href;
   void app.whenReady().then(async () => (await import(trial) as typeof import("./beta-smoke-window.js")).smokeMode(report, app.getVersion()))
     .then((code) => app.exit(code), () => app.exit(1));
-} else if (!app.requestSingleInstanceLock()) app.quit();
-else {
+} else {
+  // Versioned app folders: a start of another version of this install goes to the version in use (guarded).
+  const forward = app.isPackaged ? forwardTarget(appLayout(), appEntryName(process.platform), process.env, {
+    readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, exists: existsSync }) : null;
+  // Said once, to this start only: nothing this one starts later (the gateway, a relaunch) inherits it.
+  delete process.env[forwardedVariable];
+  if (!forward) startAsThis();
+  else void forwardToVersionInUse(forward).then((outcome) => (outcome === "went-back" ? startAsThis() : app.exit(0)), () => startAsThis());
+}
+
+/** The window's own start: one copy at a time, then the app. */
+function startAsThis(): void {
+  if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   app.on("second-instance", () => {
     window?.show();
     window?.focus();
@@ -1020,6 +1050,37 @@ else {
     });
 }
 
+/**
+ * Versioned app folders: a start of a version that is not the one in use (a shortcut, the taskbar or "start with Windows"
+ * still naming an older folder, or the version before after a switch made with no window open) starts the version in
+ * use instead, with the same arguments. A version never seen up is watched first (shell-window.ts, guardedForward).
+ */
+async function forwardToVersionInUse(target: { program: string; version: string }): Promise<"forwarded" | "went-back"> {
+  const layout = appLayout()!, exe = appEntryName(process.platform), scratch = updateScratchDir();
+  const env: NodeJS.ProcessEnv = { ...process.env, [forwardedVariable]: process.execPath };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return guardedForward(target, {
+    start: (program) => {
+      const child = spawn(program, process.argv.slice(1), { detached: true, stdio: "ignore", env });
+      child.on("error", () => undefined);
+      child.unref();
+      return child.pid ?? null;
+    },
+    up: (version) => existsSync(shellUpMarker(scratch, version)),
+    end: (pid) => new Promise((done) => execFile(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+      ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: 20_000 }, () => done())),
+    safe: async () => (await goingBackIsSafe({ dataDir: (await folders(app.getPath("userData"))).dataDir, understood: storeMigrations.at(-1)?.version ?? null },
+      { format: systemDeps("").format, note: async (line) => diagnose("updater", "warn", line) })).ok,
+    rollBack: async () => (await rollBackPointer(layout.root, exe)) !== null,
+    tell: async (tried) => {
+      await mkdir(scratch, { recursive: true });
+      await writeFile(join(scratch, failureName), JSON.stringify({ kept: app.getVersion(), tried, commit: null, at: new Date().toISOString(),
+        message: `Version ${tried} did not open its window, so Branch went back to ${app.getVersion()} by itself. Your conversations are kept. The next change is tried as soon as it lands.` }));
+    },
+    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+  });
+}
+
 /** The broker's lock is separate from its windows; closing or updating a shell leaves this owner running. */
 function startDetachedGateway(): void {
   const base = app.getPath("userData");
@@ -1029,6 +1090,12 @@ function startDetachedGateway(): void {
   app.disableHardwareAcceleration();
   if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
   let gateway: Awaited<ReturnType<typeof runDesktopGateway>> = null, ending = false;
+  // UP-PLATFORM-002: Electron's own answer to a failure nobody caught is a dialog nobody sees, with the process left
+  // hanging. It is written down and the gateway carries on; one that cannot (not running, or failing over and over)
+  // exits with a failure code, which is what makes Task Scheduler (or the next sign-in) start it again.
+  keepRunningThroughErrors(process, { healthy: async () => gateway !== null && !ending, log: (line) => console.error(line),
+    // While it is already closing on purpose, it leaves as closing does, and nothing starts it again.
+    end: (why) => { console.error(`The background engine cannot carry on (${why}); it stops so it can be started again.`); app.exit(ending ? 0 : 1); } });
   app.on("window-all-closed", () => undefined);
   app.on("before-quit", (event) => {
     if (ending) return;

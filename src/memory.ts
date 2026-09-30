@@ -4,6 +4,7 @@ import { ownersOwnTask } from "./asked-task.js"; // SELF-202: the owner's own na
 import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import { memoryAgent, readsSharedFacts, writesSharedFacts } from "./trunks/memory-scope.js"; // R17-A (Trunks)
 import { isDeepStrictEqual } from "node:util";
+import { memoryWriteRefusal } from "./content-guard.js";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import type { SavedRecord, Store } from "./store.js";
@@ -55,6 +56,16 @@ export function visibleTo(record: { data: { scope?: string } }, agent?: string):
   const scope = record.data.scope ?? "private";
   if (scope === "shared") return readsSharedFacts(agent); // R17-A: a Trunk may be set to keep to itself
   return scope === `agent:${agent}`;
+}
+/**
+ * What may be put in front of a conversation unasked (its opening snapshot, the facts recalled for its question):
+ * for an agent, what it may read; for the owner, only their own and shared facts. A Trunk's own facts stay the
+ * Trunk's context and are reached on purpose, from the Memory view or by searching.
+ */
+export function inOpeningContext(record: { data: { scope?: string } }, agent?: string): boolean {
+  if (agent) return visibleTo(record, agent);
+  const scope = record.data.scope ?? "private";
+  return scope === "private" || scope === "shared";
 }
 /**
  * FQ-routing.isolated-agents: scopes `agent`'s memory.write may change by id (update, delete, keep).
@@ -518,6 +529,9 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       const asked = ownersOwn ? store.run(context.runId)?.prompt : undefined;
       value = canonicalDetail(withImpliedDetail(value, { ownerNames: ownersOwn ? ownerNames() : [], ...(asked ? { request: asked } : {}) }));
       value = withSaidStart(value, store.run(context.runId)?.prompt);
+      // Checked on the words as they will be saved, and before a suggestion is staged, so neither way keeps them.
+      const refused = memoryWriteRefusal(value.text, value.entity, value.attribute);
+      if (refused) throw new Error(refused);
       // SELF-202: qwen2.5:7b often left the source out; the save was refused and it gave up, so nothing was remembered.
       // Where the fact came from is known here: the task, and who started it.
       const source = value.source ?? ((context.source ?? "owner") === "owner" ? "The owner said so" : `A ${context.source} message`);
@@ -583,6 +597,8 @@ export function registerMemory(registry: ToolRegistry, store: Store, retrieval?:
       const current = agent && outside ? await provider!.read(owner, value.id) : store.get("memory", owner, value.id) as MemoryRecord | undefined;
       // A fact an agent cannot find is not one it may change: nothing is staged or sent for it.
       if ((agent && !current) || !writableTo(current, agent)) throw new Error("Memory not found");
+      const refused = memoryWriteRefusal(value.text);
+      if (refused) throw new Error(refused);
       const proposal = staged(store, context, { kind: "update", memoryId: value.id, text: value.text, source: value.source });
       if (proposal) return proposal;
       if (!outside) return store.updateMemory(owner, value, context.runId);

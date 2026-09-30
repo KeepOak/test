@@ -5,6 +5,7 @@ import { posix, win32 } from "node:path";
 import { z } from "zod";
 import { autostartState, macLoginItemsLink, setAutostart, type AutostartDeps, type AutostartState, type LoginItem } from "./install/autostart.js";
 import { daemonCommand, daemonLauncherName, daemonTaskName, type DaemonAction, type DaemonOptions } from "./install/daemon.js";
+import { followSignInChoice, taskUser } from "./install/gateway-task.js";
 import { launchdLabel } from "./install/launchd.js";
 import { systemdUnitName } from "./install/systemd.js";
 import { readRunning, sessionTokenFileName } from "./install/running.js";
@@ -127,7 +128,13 @@ async function saveAutostart(context: DeploymentContext, platform: NodeJS.Platfo
   if (!program) throw new Error(`Branch has to be installed on this computer before it can ${startsBySelfWords(platform)}.`);
   if (context.loginItem) await context.loginItem.set(enabled);
   else if (platform !== "win32") throw new Error(noSignInStartHereWords);
-  else await setAutostart(enabled, { executable: program, minimized: minimized ?? true }, context.autostartDeps);
+  else {
+    await setAutostart(enabled, { executable: program, minimized: minimized ?? true }, context.autostartDeps);
+    // UP-PLATFORM-002: the gateway's scheduled task starts at sign-in only while this is on (src/install/gateway-task.ts).
+    await followSignInChoice({ executable: program, atSignIn: enabled, user: taskUser(), dataDir: context.dataDir },
+      context.autostartDeps?.run ? { run: context.autostartDeps.run } : {})
+      .catch((error: unknown) => console.error(`The background engine's scheduled task: ${error instanceof Error ? error.message : String(error)}`));
+  }
   return autostartView(context, platform, deps);
 }
 

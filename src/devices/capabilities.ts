@@ -17,6 +17,8 @@ import { z } from "zod";
 export const capabilities = [
   "camera", "screen", "location", "notify", "clipboard-read", "clipboard-write", "open-url",
   "run", "files", "speak", "listen", "canvas",
+  // computer-control: the owner uses the device's screen and keyboard from Branch's computer view. No task tool.
+  "input",
 ] as const;
 export type Capability = (typeof capabilities)[number];
 export const CapabilitySchema = z.enum(capabilities);
@@ -34,6 +36,8 @@ export interface CapabilityInfo {
   label: string;
   /** Where Branch knows how to do it. A device only offers what its own platform can. */
   platforms: readonly DevicePlatform[];
+  /** Only the owner uses it, from Branch's own window; no tool is registered for tasks. */
+  ownerOnly?: true;
 }
 
 const computers: readonly DevicePlatform[] = ["darwin", "linux", "win32"];
@@ -52,6 +56,7 @@ export const capabilityInfo: Record<Capability, CapabilityInfo> = {
   speak: { kind: "act", tool: "device.speak", label: "Say something out loud", platforms: everywhere },
   listen: { kind: "capture", tool: "device.listen", label: "Listen for a few seconds", platforms: ["darwin", "linux", "ios", "android"] },
   canvas: { kind: "act", tool: "device.canvas", label: "Show a page on the screen", platforms: ["ios", "android"] },
+  input: { kind: "act", tool: "device.input", label: "Let you use its screen and keyboard from Branch", platforms: ["linux", "win32"], ownerOnly: true },
 };
 
 /** The permission each kind of capability needs; only `devices.read` is look-only. */
@@ -61,7 +66,7 @@ export const devicePermissions: Record<CapabilityKind | "list", string> = {
 
 /** Every tool this feature registers, so the catalog can leave them out while it is off. */
 export const deviceTools: readonly string[] = ["device.list",
-  ...new Set(Object.values(capabilityInfo).map((info) => info.tool))];
+  ...new Set(Object.values(capabilityInfo).filter((info) => !info.ownerOnly).map((info) => info.tool))];
 
 /**
  * Tools that ask the owner even when no approval rule mentions them: anything that captures a

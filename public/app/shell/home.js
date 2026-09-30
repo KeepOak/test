@@ -7,7 +7,7 @@
    The panel's full-page button opens its conversation (or a new one) as the page, with the draft in the box and the
    snapshot still attached, as a chip by the box that the next message carries (chat/chat.js addSendPrefix). */
 
-import { $, esc, afterDraw, paintChanged, applyCss, render, renderNow } from "../core/dom.js";
+import { $, esc, afterDraw, paintChanged, applyCss, render, renderNow, composing } from "../core/dom.js";
 import { S, E, save, refresh, ownName, ownerHere, defaultTrunk } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -237,7 +237,7 @@ export function initHome() {
     e.target.closest("form")?.querySelector(".send")?.classList.toggle("ready", !!e.target.value.trim());
   });
   document.addEventListener("submit", (e) => { if (e.target.id === "home19-form") { e.preventDefault(); send(); } });
-  document.addEventListener("keydown", (e) => { if (e.target.id === "home19-prompt" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+  document.addEventListener("keydown", (e) => { if (e.target.id === "home19-prompt" && e.key === "Enter" && !e.shiftKey && !composing(e)) { e.preventDefault(); send(); } });
   document.addEventListener("selectionchange", notePicked);
   document.addEventListener("pointerdown", notePickedRow, true);
   document.addEventListener("focusin", notePickedRow);

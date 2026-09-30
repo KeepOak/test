@@ -57,6 +57,7 @@ const posts: Record<string, { part: AddOnPart | null; handler: Handler }> = {
   "/api/plugin-catalog/add-ons/lists/forget": always(async (a, body) => a.lists.forget(address.parse(await body()).address)),
   "/api/plugin-catalog/add-ons/lists/updates": part("lists", async (a) => ({ updates: await a.lists.updates() })),
   "/api/plugin-catalog/add-ons/lists/update": part("lists", async (a, body) => a.lists.update(idOnly.parse(await body()).id)),
+  "/api/plugin-catalog/add-ons/lists/stage-update": part("lists", async (a, body) => a.lists.stageUpdate(idOnly.parse(await body()).id)),
   "/api/plugin-catalog/add-ons/filters": part("filters", async (a, body) => a.filters.save(await body())),
   "/api/plugin-catalog/add-ons/filters/remove": always(async (a, body) => a.filters.remove(z.object({ id: FilterRuleSchema.shape.id }).strict().parse(await body()).id)),
   "/api/plugin-catalog/add-ons/filters/test": part("filters", async (a, body) => {

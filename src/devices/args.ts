@@ -28,6 +28,18 @@ export const deviceArgs = {
   listen: z.object({ seconds: z.number().int().min(1).max(30).default(5) }).strict(),
   canvas: z.object({ html: z.string().max(60000).optional(), url: Url.optional() }).strict()
     .refine((value) => Boolean(value.html) !== Boolean(value.url), "Give either a page (html) or an address (url)"),
+  // computer-control: one press, words, a key or the wheel from the owner's view, at a share of the screen last seen.
+  input: z.object({
+    action: z.enum(["click", "type", "key", "scroll"]),
+    x: z.number().min(0).max(1).optional(), y: z.number().min(0).max(1).optional(),
+    button: z.enum(["left", "right", "middle"]).default("left"),
+    count: z.number().int().min(1).max(3).default(1),
+    text: z.string().min(1).max(2000).optional(),
+    chord: z.string().trim().min(1).max(40).regex(/^[a-z0-9]+(\+[a-z0-9]+){0,3}$/i, "Name a key such as enter or ctrl+s").optional(),
+    steps: z.number().int().min(-10).max(10).refine((n) => n !== 0).optional(),
+  }).strict().refine((value) => value.action === "type" ? value.text !== undefined
+    : value.action === "key" ? value.chord !== undefined
+    : value.x !== undefined && value.y !== undefined && (value.action === "click" || value.steps !== undefined), "That input is missing what it needs"),
 } satisfies Record<Capability, z.ZodType>;
 
 export function parseDeviceArgs(capability: Capability, args: unknown): Record<string, unknown> {

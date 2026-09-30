@@ -23,6 +23,7 @@ import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./lea
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
 import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: live lines under faces, and empty lists
 import { lockdownOn } from "../chat/approvals.js";
+import { initPluginLifecycle, pluginLifecycleButton } from "./plugin-lifecycle.js";
 import { insideSection, initPluginInside, pluginInsideLive } from "./plugin-inside.js"; // RES-251
 
 function tabBar(tabs, place, current) {
@@ -155,7 +156,7 @@ function agentRules(x) {
     <div class="sec"><h2>${t("window.places.customize.rules")}</h2><dl class="kv"><dt>${t("window.places.customize.tasks-it-sends-in")}</dt><dd>${t("window.places.customize.held-to-ask-before-changes")}</dd><dt>${t("window.places.customize.what-it-gets")}</dt><dd>${t("window.places.customize.the-words-of-the-task-only")}</dd></dl></div>`;
 }
 /* What a plugin holds: the tools its inspected summary names. */
-const packOf = (x) => (x.tools.length ? `<div class="sec"><h2>${t("window.places.customize.in-this-pack")}</h2><p data-css="margin:0">${x.tools.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p></div>` : "");
+const packOf = (x) => (x.tools.length ? `<div class="sec"><h2>${t("window.places.customize.in-this-pack")}</h2><p data-css="margin:0">${x.tools.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p></div>` : "") + pluginLifecycleButton(x.id);
 /* Load tools only when needed, per server, plugin or skill: on (the engine's default) it waits in a short index until a
    task needs it; off, it goes with every request. The count is what it costs a request now, as the engine measures it.
    Changing it saves through POST /api/tools/context {source, mode} and reaches a working task from its next step. */
@@ -450,6 +451,7 @@ function redrawGrid() {
 async function reloadShown() { await reloadTools(); renderNow(); }
 
 export function init() {
+  initPluginLifecycle();
   markLive(pluginInsideLive);
   initPluginInside(reloadShown);
   markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);

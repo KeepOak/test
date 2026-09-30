@@ -139,3 +139,19 @@ test("groups keep private progress summaries and receive no draft reply", async 
   assert.ok(!calls.some(c => c.text === "The" || c.text === "The answer is"));
   assert.equal(calls.filter(c => c.op === "send" && c.text === "The answer is ready.").length, 1);
 });
+test("chat-speed: the first words go out at once, not an edit interval later; later words wait for the interval", async () => {
+  const calls = []; let shown = 0;
+  const adapter = { async send(chat, text) { calls.push(["send", text]); return "r1"; }, async edit(chat, id, text) { calls.push(["edit", text]); } };
+  const stream = new ReplyStream({ adapter, chatId: "dm", messageId: "in" }, async text => ({ text, blocked: false }), 10_000);
+  stream.onFirstShown = () => { shown++; };
+  stream.text("Hel"); await delay(20);
+  assert.deepEqual(calls, [], "half a word is held back for the scrub");
+  stream.text("lo there "); await delay(20);
+  assert.deepEqual(calls, [["send", "Hello"]], "the first whole word is in the chat without waiting ten seconds");
+  assert.equal(shown, 1);
+  stream.text("friend, how are you "); await delay(20);
+  assert.equal(calls.length, 1, "the next edit waits for the interval");
+  await stream.finish("Hello there friend, how are you?");
+  assert.deepEqual(calls.at(-1), ["edit", "Hello there friend, how are you?"]);
+  assert.equal(shown, 1, "timed once");
+});
