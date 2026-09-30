@@ -30,6 +30,7 @@ import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
+import { initApprovalKeys } from "./approval-keys.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
@@ -163,7 +164,7 @@ function askCard(q) {
   const locked = document.getElementById("app")?.classList.contains("locked"); // Lockdown keeps no standing yes either
   const standing = !q.noStanding && !q.noAlways && !q.onceOnly && q.source === "owner" && !E.profiles?.active?.id && !locked;
   const always = standing ? `<button class="btn" type="button" data-act="ask-always" ${id}>${t("window.chat.ask.always")}</button>` : "";
-  return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
+  return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask" data-approval-card tabindex="0" role="group" aria-label="${esc(t("dashboard.needs.title"))}" aria-keyshortcuts="Enter Escape"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
     ${(q.question && q.label) || q.bytes || q.jobs?.length ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${requestBody(q)}</dl>` : ""}
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
@@ -917,6 +918,7 @@ export function init() {
   initMedia();
   initBeside();
   initMessages({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
+  initApprovalKeys();
   initMore({ state: () => C });
   initLeaveOut({ state: () => C, reopen: openConversation });
   initBranches({ state: () => C, sendText: (words) => send(words), reopen: openConversation });

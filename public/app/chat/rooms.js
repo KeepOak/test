@@ -106,7 +106,7 @@ export function roomAsks(info, busy) {
     const who = trunkBy(q.memberId, info);
     const off = busy(q) ? " disabled" : "";
     const id = `data-room="${esc(info.room.id)}" data-member="${esc(q.memberId)}" data-fp="${esc(q.fingerprint || "")}"${off}`;
-    return `<div class="b"><div class="gut"></div><div>${who ? `<div class="from">${esc(who.name)}</div>` : ""}<div class="card ask" id="live-ask"><div class="card-h"><span class="q">${esc(q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
+    return `<div class="b"><div class="gut"></div><div>${who ? `<div class="from">${esc(who.name)}</div>` : ""}<div class="card ask" id="live-ask" data-approval-card tabindex="0" role="group" aria-label="${esc(t("dashboard.needs.title"))}" aria-keyshortcuts="Enter Escape"><div class="card-h"><span class="q">${esc(q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
       <div class="acts"><button class="btn pri" type="button" data-act="room-ask" data-v="allow" ${id}>${t("trunks.room.allow")}</button><button class="btn ghost" type="button" data-act="room-ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
   }).join("");
 }
@@ -136,7 +136,7 @@ function groupedAsks(info, waiting, busy) {
 function groupRow(info, q, off) {
   const who = trunkBy(q.memberId, info);
   const id = `data-room="${esc(info.room.id)}" data-member="${esc(q.memberId)}" data-fp="${esc(q.fingerprint || "")}" data-label="${esc(q.label)}" data-code="${esc(q.target || q.tool)}"${off ? " disabled" : ""}`;
-  return `<div class="g-row">${who ? av(who, 26) : ""}<span><b>${esc(who?.name ?? "")}: ${esc(q.label)}</b><code>${esc(q.target || q.tool)}</code></span><span class="acts"><button class="btn pri sm" type="button" data-act="g-ans" data-v="allow" ${id}>${t("autonomy.needs.yes")}</button><button class="btn ghost sm" type="button" data-act="g-ans" data-v="deny" ${id}>${t("autonomy.needs.no")}</button></span></div>`;
+  return `<div class="g-row" data-approval-card tabindex="0" role="group" aria-label="${esc(q.label)}" aria-keyshortcuts="Enter Escape">${who ? av(who, 26) : ""}<span><b>${esc(who?.name ?? "")}: ${esc(q.label)}</b><code>${esc(q.target || q.tool)}</code></span><span class="acts"><button class="btn pri sm" type="button" data-act="g-ans" data-v="allow" ${id}>${t("autonomy.needs.yes")}</button><button class="btn ghost sm" type="button" data-act="g-ans" data-v="deny" ${id}>${t("autonomy.needs.no")}</button></span></div>`;
 }
 function doneRow(info, a) {
   const who = trunkBy(a.member, info), yes = a.decision === "allow";
