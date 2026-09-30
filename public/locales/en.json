@@ -9835,6 +9835,8 @@
   "window.settings.permissions.off-means-every-message-waits-for": "Off means every message waits for your yes.",
   "window.settings.permissions.one-switch-that-stops-every-trunk": "One switch that stops every Trunk from sending, changing or spending anything.",
   "window.settings.permissions.open-windows-settings": "Open Windows Settings",
+  "window.settings.permissions.ordinary-settings-scope": "Only catalogue settings. Changes that reduce protections still ask, and pinned settings stay fixed.",
+  "window.settings.permissions.ordinary-settings-without-asking": "Let Branch change ordinary settings without asking",
   "window.settings.permissions.photos-and-scanning-a-code": "Photos and scanning a code",
   "window.settings.permissions.pin-a-setting": "Pin a setting",
   "window.settings.permissions.pin-ssh-hosts": "Pin SSH hosts",

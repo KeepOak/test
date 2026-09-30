@@ -9835,6 +9835,8 @@
   "window.settings.permissions.off-means-every-message-waits-for": "Desactivado significa que cada mensaje espera tu sí.",
   "window.settings.permissions.one-switch-that-stops-every-trunk": "Un solo interruptor que impide que cualquier Trunk envíe, cambie o gaste nada.",
   "window.settings.permissions.open-windows-settings": "Abrir la configuración de Windows",
+  "window.settings.permissions.ordinary-settings-scope": "Solo los ajustes del catálogo. Los cambios que reducen las protecciones siguen pidiendo confirmación y los ajustes fijados no cambian.",
+  "window.settings.permissions.ordinary-settings-without-asking": "Permitir que Branch cambie ajustes normales sin preguntar",
   "window.settings.permissions.photos-and-scanning-a-code": "Fotos y escanear un código",
   "window.settings.permissions.pin-a-setting": "Fijar un ajuste",
   "window.settings.permissions.pin-ssh-hosts": "Fijar los hosts SSH",
