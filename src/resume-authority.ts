@@ -82,7 +82,10 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
     const trunkId = agent.slice("trunk:".length);
     if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(trunkId)) unavailable();
     const record = store.get("governance", root.owner, agent);
-    if (!record || record.data.id !== trunkId || record.data.paused === true || !TrunkSchema.safeParse(record.data).success) unavailable();
+    if (!record || record.data.id !== trunkId || record.data.paused === true) unavailable();
+    // Saved records also carry lifecycle metadata outside the editable, strict core schema.
+    const core = Object.fromEntries(Object.keys(TrunkSchema.shape).map((key) => [key, record.data[key]]));
+    if (!TrunkSchema.safeParse(core).success) unavailable();
     if (lineage.some((record) => store.events(record.run.id).some((event) => event.kind === "trunk.turn" && event.data.trunkId !== trunkId))) unavailable();
   } else if (typeof agent === "string" && !agent.startsWith("mode:") && !store.get("specialists", root.owner, agent)) unavailable();
   // Explicit false never grants delegation. Practice mode and required isolation can only become stricter.
