@@ -99,7 +99,8 @@ function askOther(commit) {
 async function moveToOther(commit) {
   closeDlg();
   goingAway(); // the engine restarts into that version: the swap screen covers it
-  try { desktop = await bridge().installUpdate(false, commit); } catch (error) { goingAway(false); toast(error.message); }
+  try { desktop = await bridge().installUpdate(false, commit); if (desktop.waitingForTasks || desktop.phase === "available") goingAway(false); }
+  catch (error) { goingAway(false); toast(error.message); }
   render();
 }
 

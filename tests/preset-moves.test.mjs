@@ -302,13 +302,19 @@ test("with no list of tools to weigh it on, a preset move counts as less careful
   assert.equal(move("ask-before-changes").changes[0].loosens, false, "weighed on the tools, it only tightens");
 });
 
-test("a command no rule mentions still asks, so leaving the workspace preset for No approvals does not claim commands stop asking", async (t) => {
+test("leaving the workspace preset for No approvals says commands stop asking only when commands no rule mentions run", async (t) => {
   const { app, owner, move } = await fixture(t);
+  // Owner ruling 2026-09-30: a command no rule mentions ships as "allow", so No approvals runs it.
   savePolicy(app.store, owner, { preset: "workspace" });
-  const [change] = move("off").changes;
-  assert.equal(change.loosens, true);
-  assert.match(change.looser ?? "", /look things up/i);
-  assert.doesNotMatch(change.looser ?? "", /run commands/i);
+  const [shipped] = move("off").changes;
+  assert.equal(shipped.loosens, true);
+  assert.match(shipped.looser ?? "", /look things up/i);
+  assert.match(shipped.looser ?? "", /run commands/i);
+  // An owner who keeps those asking is not told they stop.
+  savePolicy(app.store, owner, { preset: "workspace", unmatchedCommands: "ask" });
+  const [kept] = move("off").changes;
+  assert.match(kept.looser ?? "", /look things up/i);
+  assert.doesNotMatch(kept.looser ?? "", /run commands/i);
 });
 
 test("Careful asks before every change and before web lookups, and moving to it from either neighbour loosens nothing (Q235)", async (t) => {
