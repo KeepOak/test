@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, rm, stat } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { mkdir, open, readdir, rm, stat } from 'node:fs/promises';
+import { dirname, join as joinPath } from 'node:path';
 import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
+import { browserPaintWake } from './browser-paint-wake.js';
 import { z } from 'zod';
+import { WatchConditionSchema } from './browser-watch-condition.js';
 import { instructionsRemovedNote, withoutInstructions } from '../content-guard.js';
 import { carriedData } from '../egress-guard.js';
 import type { ToolRegistry } from '../registry.js';
@@ -19,6 +21,7 @@ import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLi
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
+import { consentNotice, rejectConsent } from './browser-consent.js';
 import { attach, attachRefusal, attachedAddressRefusal, readAttachSettings, saveAttachSettings, type AttachedBrowser } from './browser-attach.js';
 import { startRecording } from './browser-trace.js';
 import { registerPageNotes } from './browser-notes-tool.js'; // w911 (A2144)
@@ -26,7 +29,9 @@ import { registerBrowserFlow } from './browser-flow.js'; // FQ-execution.browser
 import type { MarkChecks } from './browser-heal.js'; // w911 (A2144)
 import type { Store } from '../store.js';
 import { audit } from '../audit.js';
-import { browserCare, browserCareDefaults, uploadsBlocked, type BrowserCare } from '../comfort/browser-safety.js'; // R17-S19
+import { browserCare, browserCareDefaults, downloadHeld, downloadNotKnown, marksOff, uploadsBlocked, type BrowserCare } from '../comfort/browser-safety.js'; // R17-S19
+import { tmpdir } from 'node:os';
+import { copyFile } from 'node:fs/promises';
 import type { BrowserSandbox } from './browser-container.js'; // w911 (A2019) hook: import
 import type { SignInBox, SignInPage } from '../vault-autofill.js'; // mac7/vault-autofill (R17-068)
 import { whileSignInShows } from '../sign-in-showing.js'; // parity-b2 (review)
@@ -34,8 +39,8 @@ import { BrowserPinProxy, type PinRules } from './browser-pin-proxy.js';
 import { BrowserControls, type BrowserBinding, type BrowserCommand, type BrowserControl, type BrowserWrite } from '../browser-control.js';
 import { OwnerInputSchema, ownerPageInput, type OwnerInput } from './browser-owner-input.js';
 import { platformFetch } from '../pinned-fetch.js';
-import { ConsoleSchema, HistorySchema, HoverSchema, KeysSchema, NetworkSchema, ScrollSchema, SelectSchema,
-  chooseOption, goInHistory, pressKeys, scrollPage } from './browser-actions.js';
+import { ConsoleSchema, HistorySchema, HoverSchema, ImagesSchema, KeysSchema, NetworkSchema, ScrollSchema, SelectSchema,
+  chooseOption, goInHistory, listImages, pressKeys, scrollPage } from './browser-actions.js';
 import { detectInjection } from '../content-guard.js';
 import { redactLeaksIn } from '../leak-guard.js';
 
@@ -72,6 +77,11 @@ export const missingBrowser = 'The private browser Branch uses is not installed 
 export const runLimitReached = (message: string): boolean => /^This task has already (opened|taken) \d+ /.test(message);
 /** Where files a website sends are kept, inside the person's workspace. */
 export const downloadFolder = 'downloads';
+/** How long a held download (Downloads may come from › Ask each time) waits for the owner's answer. */
+const heldForMs = 3_600_000;
+/** A held file's name in the held folder: the id it was given. */
+const heldName = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+interface HeldDownload { path: string; name: string; from: string; owner: string; conversation: string; at: number; expiry: NodeJS.Timeout }
 /** What the person is told when a task has wandered too far; it stops and reports instead. */
 const originStop = (limit: number) =>
   `This task has already opened ${limit} different websites, which is as many as one task may. Stop, tell the person what you found and what you still wanted to look at, and let them decide.`;
@@ -113,6 +123,10 @@ interface RunEntry {
   pressed: boolean;
   granted?: string | undefined;
   held?: boolean | undefined;
+  /** The sites the task's pages were shown on (Downloads may come from known sites only). */
+  shown?: Set<string> | undefined;
+  /** A recording started by Settings' "Record browser tasks", kept by itself when the task ends. */
+  autoRecording?: boolean | undefined;
   /** Whether this task's Trunk's own saved sign-in was looked for (trunkProfile). */
   trunkChecked?: boolean;
   /**
@@ -141,6 +155,10 @@ export interface WatchedWindow {
   /** A JPEG of the tab being worked in, or null (a borrowed window, or no frame could be taken). */
   frame: Buffer | null;
   borrowed: boolean;
+  /** The page is asking for a person: a sign-in (a password or one-time-code box) or a "prove you're a person" check. */
+  needs?: 'sign-in' | 'captcha' | null;
+  /** Completed files, confined to this session; source addresses contain only their origin. */
+  downloads?: { file: string; bytes: number; from: string; saved: boolean }[];
 }
 /** w911 (A1726): a page Branch itself opened for a benchmark task, before the task starts. */
 export interface BenchmarkWindow {
@@ -177,6 +195,23 @@ export class BranchBrowser {
    * (src/browser-control-api.ts) to the owner's own running tasks in that conversation. Unset, none do.
    */
   sharesWith: ((owner: string, conversation: string, runId: string) => boolean) | undefined;
+  /**
+   * Downloads ask each time: files a page sent, waiting outside the workspace for the owner's yes, by id. Kept in
+   * memory for an hour (a task that stopped to ask carries on under its own conversation when the owner answers). Each
+   * one's own timer removes it when the hour is up, an older one is never kept, and closing the browser removes them all.
+   */
+  private readonly heldDownloads = new Map<string, HeldDownload>();
+  /** Held files being removed now, by id, so an answer or close that arrives meanwhile waits for the file to be gone. */
+  private readonly heldRemovals = new Map<string, Promise<void>>();
+  /**
+   * Files in the held folder this launch is not holding (an earlier launch's, or another launch's sharing the folder)
+   * are looked for from the first hold of this launch on, and each is removed once it is an hour old.
+   */
+  private heldLeftoversSwept = false;
+  /** The next look at those files, due when the youngest one left reaches the hour. */
+  private heldLeftoverTimer: NodeJS.Timeout | undefined;
+  /** Where held files wait: this computer's temporary folder, never the workspace. Replaced in tests. */
+  heldFolder = joinPath(tmpdir(), 'branch-held-downloads');
   /** Each site's small icon for the owner's tabs, as a data: address ("" while unknown or when it has none). */
   private readonly icons = new Map<string, string>();
   constructor(input: unknown) {
@@ -312,7 +347,7 @@ export class BranchBrowser {
     const session: BrowserSession = new BrowserSession(
       () => this.sandbox?.pick(context.owner, !!session.options.storageState) ?? (this.starting ??= this.launch()),
       request => this.guardRequest(request, created), redirectHops);
-    session.options.saveDownload = download => this.saveDownload(download);
+    session.options.saveDownload = download => this.saveDownload(download, context, created);
     session.options.dialogAnswer = () => this.care(context.owner).dialogs; // R17-S19
     const cancel = () => { void this.closeRun(context).catch(() => undefined); };
     context.signal.addEventListener('abort', cancel, { once: true });
@@ -344,7 +379,7 @@ export class BranchBrowser {
    * limits so far, and its next step waits for Hand back. A borrowed browser, a benchmark window and a window being
    * recorded are never taken over.
    */
-  adoptRun(owner: string, conversation: string, runId: string, clientId: string): BrowserControl {
+  async adoptRun(owner: string, conversation: string, runId: string, clientId: string): Promise<BrowserControl> {
     const key = this.key({ owner, runId }), entry = this.sessions.get(key);
     if (entry?.control) {
       if (entry.control.binding.conversation !== conversation) throw new Error('This browser belongs to another conversation.');
@@ -353,7 +388,10 @@ export class BranchBrowser {
     if (!entry || !entry.session.started()) throw new Error('That task has no browser page open.');
     if (entry.borrowed || entry.session.isBorrowed()) throw new Error('That task is working in your own browser, so there is nothing to take over here.');
     if (entry.held) throw new Error('A benchmark window cannot be taken over.');
+    // A recording Settings started is kept before the owner drives, so nothing the owner types is in it.
+    if (entry.autoRecording) await this.keepAutoRecording(runId, entry);
     if (entry.session.isRecording()) throw new Error('That task is keeping a recording of its browser. Stop the recording before taking over.');
+    if (this.sessions.get(key) !== entry || entry.control) throw new Error('That task\'s browser changed; try again.');
     const control = this.controls.adopt({ owner, conversation, profile: entry.profile }, clientId, runId, entry.session.tabs().length);
     entry.control = control;
     entry.tabIds = control.view().tabs;
@@ -593,7 +631,7 @@ export class BranchBrowser {
     const refused = entry.borrowed ? attachedAddressRefusal(url, '', this.extraRefusedHosts(context.owner)) : null;
     if (refused) throw new Error(refused);
     entry.asked = URL.canParse(url) ? new URL(url).href : url;
-    return this.operation(context, async (page, check) => {
+    const opened = await this.operation(context, async (page, check) => {
       const origin = new URL(url).origin;
       if (!entry.origins.has(origin) && entry.origins.size >= this.config.maxOriginsPerRun)
         throw new Error(originStop(this.config.maxOriginsPerRun));
@@ -605,12 +643,20 @@ export class BranchBrowser {
       // open redirect on the address means the two are different websites, and a signal that lies
       // about which website the task is on is worse than no signal at all (integration review).
       entry.typedHost = hostOf(page.url()) || hostOf(url);
+      (entry.shown ??= new Set()).add(new URL(page.url()).origin);
       entry.pressed = false;
       entry.host = new URL(url).host;
       check();
       const site = await this.quirks(context, page, url);
-      return { url: page.url(), title: await page.title(), ...(site ? { site } : {}) };
+      const consent = await consentNotice(page);
+      return { url: page.url(), title: await page.title(), ...(site ? { site } : {}),
+        ...(consent.status !== 'not-found' ? { consent, next: consent.status === 'available'
+          ? 'Use browser.act with action reject-consent to decline non-essential cookies under the interaction rules.'
+          : consent.status === 'ambiguous' ? 'Cookie choices are ambiguous; hand the page to the owner rather than accept tracking.'
+          : 'The cookie notice could not be inspected; do not assume consent was handled.' } : {}) };
     }, 0, () => this.checkAddress(url, context));
+    await this.autoRecord(context, entry).catch(() => { entry.autoRecording = false; });
+    return opened;
   }
   /** The quirks of this website, when a skill knows any, applied the moment the page has opened. */
   private async quirks(context: ToolContext, page: Page, url: string): Promise<QuirksApplied | null> {
@@ -637,6 +683,55 @@ export class BranchBrowser {
         + `It has: ${Object.keys(known.site.readings).join(', ') || 'none'}.`);
       return { skill: known.skill, reading: name, ...await extractSchema(page, reading, (await this.pageSecrets(context, page)).hidden) };
     });
+  }
+  /** Wait for one explicit text condition, then preserve this exact page for the owner to take over. */
+  async watchChange(input: z.infer<typeof WatchConditionSchema>, context: ToolContext) {
+    const entry = this.entry(context), page = entry.session.watched()?.page;
+    if (!page) throw new Error('Open the task browser page before starting a watch.');
+    const url = page.url(), beforeEpoch = entry.control?.view().epoch;
+    const scoped = () => {
+      context.signal.throwIfAborted();
+      const run = this.store?.run(context.runId);
+      if (!this.store || !run || !['running', 'needs_input'].includes(run.status) || !this.store.profiles.isOwner() || this.store.profiles.scope() !== context.owner
+        || run.owner !== context.owner || !this.store.ownsSession(context.owner, run.sessionId)
+        || this.store.runs(context.owner).find(one => one.sessionId === run.sessionId)?.id !== run.id)
+        throw new Error('This task no longer owns the current conversation.');
+      if (entry.borrowed || entry.session.isBorrowed() || entry.held || entry.session.isRecording()
+        || entry.session.watched()?.page !== page || page.isClosed() || page.url() !== url)
+        throw new Error('This exact task page is no longer available for handoff.');
+      if (entry.profile && isTrunkProfile(entry.profile) && entry.profile !== trunkProfileName(context.trunk ?? ''))
+        throw new Error('This browser profile belongs to another Trunk.');
+      if (entry.control && (entry.control.binding.owner !== context.owner || entry.control.binding.conversation !== run.sessionId
+        || entry.control.binding.profile !== entry.profile)) throw new Error('This browser binding no longer matches the task.');
+      return run;
+    };
+    scoped();
+    let observed = false;
+    try {
+      await this.operation(context, async (working, check) => {
+        scoped(); check();
+        if (working !== page) throw new Error('The task page changed before the watch.');
+        const matches = page.getByText(input.text, { exact: true }), locator = matches.first();
+        if (await matches.count() > 1) throw new Error('The watched text is ambiguous on this page.');
+        const initial = await locator.isVisible();
+        if (initial === (input.state === 'appears')) return { observed: false };
+        await locator.waitFor({ state: input.state === 'appears' ? 'visible' : 'hidden', timeout: input.timeoutMs });
+        if (await matches.count() > 1 || await locator.isVisible() !== (input.state === 'appears'))
+          throw new Error('The watched text became ambiguous or changed again.');
+        check(); scoped(); observed = true;
+        return { observed: true };
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'TimeoutError') { scoped(); return { changed: false, handedOff: false }; }
+      throw error;
+    }
+    const run = scoped();
+    if (!observed) return { changed: false, handedOff: false, alreadyMatched: true };
+    if (entry.control && entry.control.view().epoch !== beforeEpoch) throw new Error('Browser control changed during the watch.');
+    const control = entry.control ?? await this.adoptRun(context.owner, run.sessionId, context.runId, '');
+    await control.offerToOwner(control.view().epoch, context.runId, () => { scoped(); });
+    return { changed: true, handedOff: true, browserId: control.id, conversation: run.sessionId,
+      note: 'The recorded text condition changed. This page is kept for your Take over; no owner input grant was issued.' };
   }
   /** The page's accessibility tree, with every value a box holds that the assistant must not read taken out (pageSecrets). */
   async snapshot(context: ToolContext) {
@@ -701,6 +796,7 @@ export class BranchBrowser {
   }
   /** One element by selector, by name or by its number from browser.annotate, healed by name if the page changed. */
   private async found(context: ToolContext, page: Page, target: HealTarget): Promise<Locator> {
+    if (target.mark !== undefined && !this.care(context.owner).numberMarks) throw new Error(marksOff);
     const entry = this.entry(context);
     return (await healResolve(page, target, 2000, { keyOf: id => entry.marks.keyOf(id), liveKey: id => liveMarkKey(page, id) })).locator;
   }
@@ -727,6 +823,14 @@ export class BranchBrowser {
       const element = await this.found(context, page, input);
       check();
       return { url: page.url(), ...await chooseOption(element, input) };
+    });
+  }
+  /** The page's images as untrusted words: addresses without their query, and what the page says each shows. */
+  async images(input: z.infer<typeof ImagesSchema>, context: ToolContext) {
+    return this.operation(context, async page => {
+      const { hidden } = await this.pageSecrets(context, page), found = await listImages(page, input);
+      const images = found.images.map(image => ({ ...image, src: scrubAddress(image.src, hidden), alt: scrubText(image.alt, hidden) }));
+      return { ...found, images: redactLeaksIn(images).value, untrusted: true };
     });
   }
   async history(input: z.infer<typeof HistorySchema>, context: ToolContext) {
@@ -775,6 +879,7 @@ export class BranchBrowser {
    * numbers belong to the things themselves, so they survive the page redrawing itself.
    */
   async annotate(options: z.infer<typeof AnnotateSchema>, context: ToolContext) {
+    if (!this.care(context.owner).numberMarks) throw new Error(marksOff);
     const entry = this.entry(context);
     return this.operation(context, async page => {
       const found = await annotate(page, options, entry.marks);
@@ -798,8 +903,14 @@ export class BranchBrowser {
    * selector given, what it is called, the words on it, then its number. The way that worked is
    * written into the task's trace.
    */
-  async act(input: HealTarget & { action: 'click' | 'fill' | 'check' | 'press'; value?: string | undefined }, context: ToolContext) {
+  async act(input: HealTarget & { action: 'click' | 'fill' | 'check' | 'press' | 'reject-consent'; value?: string | undefined }, context: ToolContext) {
+    if (input.mark !== undefined && !this.care(context.owner).numberMarks) throw new Error(marksOff);
     const entry = this.entry(context);
+    if (input.action === 'reject-consent') return this.operation(context, async (page, check) => {
+      const consent = await rejectConsent(page, check);
+      if (consent.rejected) entry.pressed = true;
+      return { url: page.url(), consent };
+    });
     if (input.action === 'click') entry.pressed = true; // mac7/vault-autofill
     // Dogfood D4: a key on the page itself (Escape on a cookie wall), in Branch's own browser and nowhere else.
     if (input.action === 'press') {
@@ -829,14 +940,23 @@ export class BranchBrowser {
     span?.end('ok', '', { foundBy: way, attempts, healed: way !== 'selector' });
   }
   /** Sends one file from the person's workspace to a file box on the page. */
-  async upload(selector: string, path: string, context: ToolContext) {
+  /**
+   * Sends files from the workspace to a file box on the page, found by selector, by its name, or by its number from
+   * browser.annotate. A box that takes one file is given one; every file is checked inside the workspace first.
+   */
+  async upload(input: { selector?: string | undefined; name?: string | undefined; mark?: number | undefined; paths: string[] }, context: ToolContext) {
     if (!this.files) throw new Error('Sending a file to a website needs the workspace');
     return this.operation(context, async (page, check) => {
       if (this.care(context.owner).blockUploads) throw new Error(uploadsBlocked); // R17-S19
-      const target = await this.files!.checked(path);
+      const targets = [];
+      for (const path of input.paths) targets.push(await this.files!.checked(path));
+      const box = input.selector ? page.locator(input.selector).first() : await this.found(context, page, input);
+      if (targets.length > 1 && !await box.evaluate(node => (node as HTMLInputElement).multiple).catch(() => false))
+        throw new Error('That file box takes one file at a time.');
       check();
-      await page.locator(selector).first().setInputFiles(target);
-      return { uploaded: path, selector };
+      await box.setInputFiles(targets, { timeout: 5000 });
+      return { uploaded: input.paths.length === 1 ? input.paths[0] : input.paths, ...(input.selector ? { selector: input.selector } : {}),
+        ...(input.name ? { name: input.name } : {}), ...(input.mark !== undefined ? { mark: input.mark } : {}) };
     });
   }
   /**
@@ -1069,8 +1189,21 @@ export class BranchBrowser {
     });
   }
   /** Saves a file a website sent into the workspace's downloads folder, within the size and type limits. */
-  private async saveDownload(download: Download): Promise<DownloadRecord> {
+  private async saveDownload(download: Download, context: Pick<ToolContext, 'owner' | 'runId'>, entry?: RunEntry): Promise<DownloadRecord> {
+    const owner = context.owner;
     if (!this.files) throw new Error('saving files from websites needs the workspace');
+    // Settings › Permissions › Downloads may come from › Ask each time. A file the owner downloaded while driving their
+    // own browser view is their own doing and is kept at once.
+    if (this.care(owner).downloadsFrom === 'ask' && entry?.control?.view().writer?.kind !== 'owner') return this.holdDownload(download, context);
+    // Settings › Permissions › Downloads may come from: only a site this task's pages were on.
+    if (this.care(owner).downloadsFrom === 'known') {
+      let origin = '', host = '';
+      try { const from = new URL(download.url()); origin = from.origin; host = from.host; } catch { /* not an address: refused below */ }
+      // A page's own sites: where its tabs are now, and every page the task's tabs showed. A download's own address is
+      // never one of them by itself, since a file that is downloaded is never shown as a page.
+      const shown = new Set([...(entry?.shown ?? []), ...(entry?.session.tabs() ?? []).map(tab => { try { return new URL(tab.url).origin; } catch { return ''; } })]);
+      if (!origin || !shown.has(origin)) throw new Error(downloadNotKnown(host || 'an unknown place'));
+    }
     const name = safeDownloadName(download.suggestedFilename());
     const ending = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
     if (!this.config.downloadTypes.includes(ending))
@@ -1105,6 +1238,87 @@ export class BranchBrowser {
     await handle.close();
     return { file: relative, bytes, from: download.url().slice(0, 300) };
   }
+  /** Ask each time: the file is written outside the workspace, with the same name and size limits, until the owner answers. */
+  private async holdDownload(download: Download, context: Pick<ToolContext, 'owner' | 'runId'>): Promise<DownloadRecord> {
+    if (this.closed) throw new Error('the browser is closing; the file was not kept');
+    const name = safeDownloadName(download.suggestedFilename());
+    const ending = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
+    if (!this.config.downloadTypes.includes(ending)) throw new Error(`files ending in .${ending || '(nothing)'} are not saved`);
+    for (const id of [...this.heldDownloads.keys()]) this.heldEntry(id);
+    if (this.heldDownloads.size >= 20) throw new Error('twenty files are already waiting for your yes; answer those first');
+    await mkdir(this.heldFolder, { recursive: true });
+    if (!this.heldLeftoversSwept) { this.heldLeftoversSwept = true; await this.sweepHeldLeftovers(); }
+    const id = randomUUID(), path = joinPath(this.heldFolder, id);
+    const record = await this.stream(download, path, name);
+    if (this.closed) { await rm(path, { force: true }); throw new Error('the browser is closing; the file was not kept'); }
+    const conversation = this.store?.run(context.runId)?.sessionId ?? '';
+    const expiry = setTimeout(() => void this.dropHeld(id), heldForMs);
+    expiry.unref();
+    this.heldDownloads.set(id, { path, name, from: record.from, owner: context.owner, conversation, at: Date.now(), expiry });
+    return { file: '', bytes: record.bytes, from: `${record.from} — ${downloadHeld(name)}`, held: id, name };
+  }
+  /** A held file by id, or undefined once its hour is up (an expired one is removed on the way). */
+  private heldEntry(id: string): HeldDownload | undefined {
+    const held = this.heldDownloads.get(id);
+    if (!held || Date.now() - held.at <= heldForMs) return held;
+    void this.dropHeld(id);
+    return undefined;
+  }
+  /**
+   * Held files this launch has no list for (an earlier launch's list is gone with it) are removed once they are an hour
+   * old, the same hour their own launch keeps them. A younger one is looked at again when it reaches the hour.
+   */
+  private async sweepHeldLeftovers(): Promise<void> {
+    clearTimeout(this.heldLeftoverTimer);
+    this.heldLeftoverTimer = undefined;
+    if (this.closed) return;
+    const names = await readdir(this.heldFolder).catch(() => [] as string[]);
+    let next = Infinity;
+    await Promise.all(names.filter(name => heldName.test(name) && !this.heldDownloads.has(name)).map(async name => {
+      const path = joinPath(this.heldFolder, name);
+      const seen = await stat(path).catch(() => null);
+      if (!seen?.isFile()) return;
+      const left = heldForMs - (Date.now() - seen.mtimeMs);
+      if (left < 0) await rm(path, { force: true }).catch(() => undefined);
+      else next = Math.min(next, left + 1);
+    }));
+    if (next === Infinity || this.closed) return;
+    this.heldLeftoverTimer = setTimeout(() => void this.sweepHeldLeftovers(), next);
+    this.heldLeftoverTimer.unref();
+  }
+  private async dropHeld(id: string): Promise<void> {
+    const held = this.heldDownloads.get(id);
+    this.heldDownloads.delete(id);
+    if (!held) return;
+    clearTimeout(held.expiry);
+    const removal = rm(held.path, { force: true }).catch(() => undefined).finally(() => this.heldRemovals.delete(id));
+    this.heldRemovals.set(id, removal);
+    await removal;
+  }
+  /** browser.keep_download: once the owner said yes, the held file moves into the workspace; keep false throws it away. */
+  async keepDownload(input: { id: string; keep: boolean }, context: ToolContext) {
+    // An hour-old file is removed before the answer is refused, so a late yes or no leaves nothing behind.
+    const found = this.heldDownloads.get(input.id);
+    if (found && Date.now() - found.at > heldForMs) await this.dropHeld(input.id);
+    await this.heldRemovals.get(input.id);
+    const held = this.heldDownloads.get(input.id);
+    const conversation = this.store?.run(context.runId)?.sessionId ?? '';
+    if (!held || held.owner !== context.owner || held.conversation !== conversation)
+      throw new Error('No file with that id is waiting for this conversation.');
+    if (!input.keep) { await this.dropHeld(input.id); return { discarded: held.name }; }
+    if (!this.files) throw new Error('saving files from websites needs the workspace');
+    for (let attempt = 0; ; attempt++) {
+      const relative = await this.freeName(held.name), target = await this.files.checked(relative);
+      await mkdir(dirname(target), { recursive: true });
+      try { await copyFile(held.path, target, 1 /* COPYFILE_EXCL */); await this.dropHeld(input.id); return { file: relative, from: held.from }; }
+      catch (error) { if (attempt > 0 || (error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    }
+  }
+  /** Where a held file came from, so the approval names the site. */
+  heldHost(id: unknown): string {
+    const held = typeof id === 'string' ? this.heldEntry(id) : undefined;
+    try { return held ? new URL(held.from.split(' ')[0]!).host : ''; } catch { return ''; }
+  }
   /** A name inside the downloads folder that is not taken yet. */
   private async freeName(name: string): Promise<string> {
     const stop = name.lastIndexOf('.'), stem = stop > 0 ? name.slice(0, stop) : name, ending = stop > 0 ? name.slice(stop) : '';
@@ -1128,9 +1342,11 @@ export class BranchBrowser {
     if (!entry || !seen) return null;
     // A tab whose page is busy may not answer; its title is left empty after a second rather than holding up the view.
     const titleOf = (tab: Page) => Promise.race([tab.title().catch(() => ''), new Promise<string>(done => { setTimeout(() => done(''), 1000).unref?.(); })]);
+    const pageSecrets: (string[] | null)[] = [];
     const tabs = await Promise.all(seen.tabs.map(async (tab, index) => {
       const [title, hidden, extra] = await Promise.all([titleOf(tab), entry.control ? this.watchedSecrets(entry, tab) : undefined,
         entry.control ? this.tabExtras(tab) : undefined]);
+      if (hidden !== undefined) pageSecrets.push(hidden);
       return { url: hidden === undefined ? tab.url() : scrubAddress(tab.url(), hidden),
         title: hidden === undefined ? title : hidden === null ? '' : scrubText(title, hidden), active: index === seen.active, ...extra };
     }));
@@ -1138,7 +1354,24 @@ export class BranchBrowser {
     // A box a saved sign-in was typed into holds that secret whatever kind of box it is (a code goes into a plain one).
     const filled = entry.filled.get(seen.page)?.boxes ?? [];
     const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
-    return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
+    const needs = borrowed ? null : await needsPerson(seen.page);
+    const hidden = pageSecrets.length && pageSecrets.every(values => values !== null) ? pageSecrets.flatMap(values => values!) : null;
+    const downloads = entry.control ? entry.session.completedDownloads().map(record => ({
+      file: hidden === null ? '' : scrubText(record.file, hidden), bytes: record.bytes, saved: !!record.file,
+      from: scrubAddress(record.from, null),
+    })) : undefined;
+    return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed,
+      needs, ...(downloads ? { downloads } : {}) };
+  }
+  /** A paint signal for an already open Branch page. It never returns CDP image data. */
+  async paintWake(owner: string, runId: string, signal: AbortSignal, painted: () => void, readable: () => boolean) {
+    const key = this.key({ owner, runId }), entry = this.sessions.get(key), page = entry?.session.watched()?.page;
+    if (!entry || !page || entry.session.isBorrowed() || entry.session.isRecording() || entry.held) return null;
+    const url = page.url(), epoch = entry.control?.view().epoch;
+    const current = () => !signal.aborted && readable() && this.sessions.get(key) === entry
+      && entry.session.watched()?.page === page && !page.isClosed() && page.url() === url
+      && entry.control?.view().epoch === epoch && entry.control?.view().state !== 'stopped';
+    return browserPaintWake(page, painted, signal, current);
   }
   /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
   private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
@@ -1246,9 +1479,36 @@ export class BranchBrowser {
     }
 
     entry.detach();
+    await this.keepAutoRecording(context.runId, entry);
     await this.keepSignIn(context.owner, entry);
     await entry.session.close();
     if (this.sessions.get(key) === entry) this.sessions.delete(key);
+  }
+  /**
+   * Settings' "Record browser tasks": once a task's first page has opened, its window keeps a recording, as
+   * browser.recording "start" would, unless a saved sign-in's value is still typed in, the window is the owner's own,
+   * or it is the conversation's kept browser (which the owner may take over and type into). Skipped quietly then.
+   */
+  private async autoRecord(context: ToolContext, entry: RunEntry): Promise<void> {
+    if (!this.care(context.owner).recordTasks || !this.artifacts || entry.control || entry.borrowed || entry.held
+      || entry.session.isBorrowed() || entry.session.isRecording() || entry.autoRecording !== undefined) return;
+    const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
+    const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
+    if (typed.some(Boolean)) return;
+    entry.autoRecording = false;
+    await entry.session.record(startRecording);
+    entry.session.options.beforeAction = page => clearSecretValues(page);
+    entry.autoRecording = true;
+  }
+  /** A recording Settings started is kept beside the task's other files when the task ends or the owner takes over. */
+  private async keepAutoRecording(runId: string, entry: RunEntry): Promise<{ path: string } | null> {
+    if (!entry.autoRecording || !entry.session.isRecording() || !this.artifacts) return null;
+    entry.autoRecording = false;
+    try {
+      const bytes = await entry.session.keepRecording();
+      entry.session.options.beforeAction = undefined;
+      return await this.artifacts.write(runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`, 'application/zip', bytes);
+    } catch { return null; } // a recording that could not be kept never holds up the end of a task
   }
   /** A run that used a saved sign-in writes what it learned back, so the person stays signed in. */
   private async keepSignIn(owner: string, entry: RunEntry): Promise<void> {
@@ -1303,14 +1563,39 @@ export class BranchBrowser {
     });
     const results = await Promise.allSettled(pending);
     await this.starting?.catch(() => undefined);
-    await this.sandbox?.close(); // w911 (A2019) hook: closes the sandbox browser and stops its container
-    await this.browser?.close();
-    await this.pinProxy?.close();
+    try {
+      await this.sandbox?.close(); // w911 (A2019) hook: closes the sandbox browser and stops its container
+      await this.browser?.close();
+      await this.pinProxy?.close();
+    } finally {
+      clearTimeout(this.heldLeftoverTimer);
+      // Held downloads go last, once no page is left to send another: nothing waits outside the workspace after close.
+      await Promise.all([...[...this.heldDownloads.keys()].map(id => this.dropHeld(id)), ...this.heldRemovals.values()]);
+    }
     this.sessions.clear();
     this.controlled.clear();
     const failures = results.filter(result => result.status === 'rejected');
     if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Browser cleanup failed');
   }
+}
+
+/**
+ * Whether the page in front is waiting for a person rather than a task: a visible password or one-time-code box (a
+ * sign-in, which Branch never types for itself), or a "prove you're a person" check (never solved by Branch). Read
+ * only, bounded to a third of a second; a page that cannot be asked counts as needing nobody.
+ */
+export async function needsPerson(page: Page): Promise<'sign-in' | 'captcha' | null> {
+  const asked = page.evaluate(() => {
+    const shown = (element: Element): boolean => {
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+      return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const frames = [...document.querySelectorAll('iframe')].map(frame => frame.getAttribute('src') ?? '');
+    if (frames.some(src => /recaptcha|hcaptcha|challenges\.cloudflare\.com|turnstile|arkoselabs|funcaptcha/i.test(src))) return 'captcha';
+    const boxes = document.querySelectorAll('input[type="password"], input[autocomplete~="one-time-code"], input[autocomplete~="current-password"]');
+    return [...boxes].some(shown) ? 'sign-in' : null;
+  }).catch(() => null);
+  return Promise.race([asked, new Promise<null>(done => { setTimeout(() => done(null), 300).unref?.(); })]);
 }
 
 /**
@@ -1395,6 +1680,10 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
   registry.register({ name: 'browser.screenshot', permission: 'browser.read',
     description: 'Take a picture of the current page, or of one element (selector, name or number from browser.annotate). Password boxes are blacked out before the picture is taken. Use this when the page is visual and the text snapshot is not enough.',
     parameters: ScreenshotSchema, execute: (a, c) => browser.screenshot(a, c) });
+  registry.register({ name: 'browser.keep_download', permission: 'browser.interact',
+    description: 'Keep (or throw away, keep false) a file a page sent that is waiting outside the workspace because Settings says to ask each time. The owner is asked before it is kept.',
+    parameters: z.object({ id: z.string().uuid(), keep: z.boolean().default(true) }).strict(),
+    execute: (a, c) => browser.keepDownload(a, c), target: a => browser.heldHost(a.id) });
   registry.register({ name: 'browser.scroll', permission: 'browser.read',
     description: 'Scroll the page: a direction (one screen, or amount pixels), to the top or bottom, or until one element (by selector, name or number) is in view. Says where the page is and whether it reached the end.',
     parameters: ScrollSchema, execute: (a, c) => browser.scroll(a, c), target: host });
@@ -1410,6 +1699,9 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
   registry.register({ name: 'browser.history', reach: 'outbound', permission: 'browser.interact',
     description: 'Go back or forward in this tab, or reload it. Reloading a page a form opened may send that form again.',
     parameters: HistorySchema, execute: (a, c) => browser.history(a, c), target: host });
+  registry.register({ name: 'browser.images', permission: 'browser.read',
+    description: 'List the pictures on the page: address (without its query), the words the page gives for each, and its drawn size, as untrusted text. minWidth skips icons.',
+    parameters: ImagesSchema, execute: (a, c) => browser.images(a, c), target: host });
   registry.register({ name: 'browser.console', permission: 'browser.read',
     description: 'Read what the pages logged to their console and any uncaught errors, newest last, as untrusted text. Use it to see why a page misbehaves.',
     parameters: ConsoleSchema, execute: (a, c) => browser.consoleLog(a, c), target: host });
@@ -1422,13 +1714,20 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
   registry.register({ name: 'browser.wait', permission: 'browser.read',
     description: 'Wait for some words or an element to appear, for words to go (textGone), for the address to contain some words (url), or for the page to stop loading things.',
     parameters: WaitSchema, execute: (a, c) => browser.wait(a, c) });
+  registry.register({ name: 'browser.watch_change', permission: 'browser.read', target: host,
+    description: 'Watch exact visible text appear or disappear in this task page for at most a minute; when it changes, keep the page for the owner to Take over. Already matched conditions and timeouts do not hand it over. This is a foreground text watch, not a scheduled or arbitrary page-change monitor.',
+    parameters: WatchConditionSchema, execute: (a, c) => browser.watchChange(a, c) });
   registry.register({ name: 'browser.extract', permission: 'browser.read',
     description: 'Pull rows out of a table or a repeated block of cards as untrusted data. Give the selector for one row, and optionally a name for each column.',
     parameters: ExtractSchema, execute: (a, c) => browser.extract(a, c) });
   registry.register({ name: 'browser.upload', permission: 'browser.interact',
-    description: 'Send one file from the workspace to a file box on the page. This shares the file with the website.',
-    parameters: z.object({ selector: z.string().min(1).max(300), path: z.string().min(1).max(500) }).strict(),
-    execute: (a, c) => browser.upload(a.selector, a.path, c), target: host });
+    description: 'Send a file (path) or several (paths, when the box takes more than one) from the workspace to a file box on the page, found by selector, by its name, or by its number from browser.annotate. This shares the files with the website.',
+    parameters: z.object({ selector: z.string().min(1).max(300).optional(), name: z.string().min(1).max(300).optional(),
+      mark: z.number().int().min(1).max(500).optional(), path: z.string().min(1).max(500).optional(),
+      paths: z.array(z.string().min(1).max(500)).min(1).max(10).optional() }).strict()
+      .refine(a => [a.selector, a.name, a.mark].filter(v => v !== undefined).length === 1, 'Name one file box: a selector, its name or its number')
+      .refine(a => (a.path === undefined) !== (a.paths === undefined), 'Give path for one file or paths for several'),
+    execute: (a, c) => browser.upload({ selector: a.selector, name: a.name, mark: a.mark, paths: a.paths ?? [a.path!] }, c), target: host });
   registry.register({ name: 'browser.tab', permission: 'browser.interact',
     description: 'List the tabs of this task, open another one, switch to one, or close one.',
     parameters: z.object({ action: z.enum(['list', 'open', 'select', 'close']),
@@ -1459,8 +1758,8 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
     description: 'Pull data off the page in the exact shape you name: a field list, each with where to read it and whether it is words, a number, a yes/no, a date or an address. Anything that does not fit is refused by name rather than guessed at.',
     parameters: ExtractSchemaSchema, execute: (a, c) => browser.extractShaped(a, c) });
   registry.register({ name: 'browser.act', permission: 'browser.interact',
-    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. action "press" presses one key on the page itself, named in value (Escape closes most cookie walls). This may submit data or perform an external action.',
-    parameters: z.object({ action: z.enum(['click', 'fill', 'check', 'press']),
+    description: 'Press, type into or tick something, found by selector, by name, by the words on it, or by its number from browser.annotate. Several ways are tried before it gives up. action "press" presses one key on the page itself, named in value. action "reject-consent" needs no selector and declines non-essential cookies only when one explicit reject/necessary-only choice is recognized; it never accepts tracking. Prefer it for consent notices. This may submit data or perform an external action.',
+    parameters: z.object({ action: z.enum(['click', 'fill', 'check', 'press', 'reject-consent']),
       selector: z.string().min(1).max(300).optional(), name: z.string().min(1).max(300).optional(),
       mark: z.number().int().min(1).max(500).optional(), value: z.string().max(4000).optional() }).strict(),
     execute: (a, c) => browser.act(a, c), target: host });

@@ -327,9 +327,9 @@ export class RunConductor {
   lastStep(): boolean {
     return this.stage !== "steps";
   }
-  /** How many rounds this task may use; a planned task gets room for its steps. */
+  /** How many rounds this task may use; a planned task gets room for its steps, up to 40, never fewer than `base`. */
   maxRounds(base: number): number {
-    return this.steps.length ? Math.min(40, base + 4 * this.steps.length) : base;
+    return this.steps.length ? Math.max(base, Math.min(40, base + 4 * this.steps.length)) : base;
   }
   /** What to do with an answer that asked for no tools: a next message, or null when the task is done. */
   async afterAnswer(answer: string): Promise<Message | null> {
