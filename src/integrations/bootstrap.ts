@@ -5,7 +5,7 @@ import { channelPosition } from '../never-break/channel-position.js'; // mac3/ne
 import { channelMark } from '../channels/catch-up.js'; // mac6/bucket-16
 import { z } from 'zod';
 import type { ToolRegistry } from '../registry.js';
-import { McpConfigSchema } from './mcp-config.js';
+import { McpConfigSchema, withLockerSecrets, type SecretLookup } from './mcp-config.js';
 import { connectMcp, openMcp, registerCachedMcp, type LiveMcp, type McpToolCache } from './mcp.js';
 import { BranchBrowser, BrowserConfigSchema, defaultBrowserConfig, registerBrowser, type WorkspacePaths } from './browser.js';
 // mac7/vault-autofill (R17-068): filling one of the owner's saved sign-ins into the page they are on.
@@ -431,6 +431,10 @@ export async function startMcp(
   policy: NetworkPolicy | undefined, host: McpHost | undefined,
 ): Promise<(() => Promise<void>) | null> {
   const guard = policy ? { guard: (base: typeof fetch) => policy.guard(base) } : undefined;
+  // Credentials the environment does not have come from the locker, looked up again for every start.
+  const given = env, transportConfig = McpConfigSchema.parse(server);
+  const credentials = () => withLockerSecrets(transportConfig, given, host?.secret);
+  env = await credentials();
   // mac3/security-check: a server fetched from a package registry is looked up in the malware list
   // before it is added, and again before it is opened later (src/security-audit/malware-check.ts).
   // With no checker this adds nothing.
@@ -440,7 +444,7 @@ export async function startMcp(
   const reopen = async () => {
     await host?.beforeRestart?.();
     await vet();
-    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
+    return openMcp(server, await credentials(), guard, host?.cache, host?.startupTimeoutMs?.());
   };
   const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injection); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
@@ -478,6 +482,8 @@ export interface McpHost {
   connectWhen(): 'startup' | 'on-demand';
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
+  /** A credential the environment does not have, looked up in the default project's locker. */
+  secret?: SecretLookup;
   cache: McpToolCache;
   /** Checks made before a server's program is started again, after a crash or on demand (src/mcp-own-servers.ts); throws to refuse. */
   beforeRestart?: () => void | Promise<void>;

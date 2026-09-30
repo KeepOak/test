@@ -1668,11 +1668,13 @@ ${result.output || "(it said nothing)"}`;
     injection: () => web.injectionPolicy,
     // mac3/security-check: a server fetched from a package registry is looked up first.
     vetLaunch: (command: string, args: readonly string[]) => security.malware.vet(command, args),
+    secret: lockerSecret("MCP server"),
   };
   // eng-connectors: the owner's own servers (a command asks through the approval gate before it starts), the
   // command-line tools the owner allowed, and replies the owner flagged.
   const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
-    policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+    policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args),
+    saveSecret: async (name, value) => { await store.secrets.put(runtime.owner, "default", name, value); } });
   const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
   registerBudding(registry, budding);
   const sourcePublications = sourcePublicationQueue(pullRequestDeps);
