@@ -1184,6 +1184,13 @@ export class ChannelRouter {
           chatKind: message.chatKind, caughtUp: message.caughtUp === true, command: "trunk" });
         if (named.dropped) this.runtime.cancel(id);
       },
+      branchRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "branch", command.argument),
+      bindBranch: (parent, sessionId) => {
+        if (this.sessionFor(channel, chatId) !== parent || this.turns.has(chatKey(message))) return false;
+        this.link(this.runtime.owner, { channel, chatId, sessionId });
+        this.shownInChat.delete(`${channel}\u0000${chatId}`);
+        return true;
+      },
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
       dropWaiting: () => {
         const active = turn ?? side;
