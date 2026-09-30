@@ -23,6 +23,8 @@ export interface StepsCaps {
   maxText: number;
   reactions: boolean;
   typing: boolean;
+  /** A conditional typing method does not imply support in every chat on the transport. */
+  typingScope?: string;
   /** The steps message and the reply answer the person's own message (a reply or a thread) rather than float free. */
   replies: boolean;
   /** Each message costs the owner money (SMS): nothing is added that was not asked for. */
@@ -58,12 +60,13 @@ export const STEPS_CAPS: readonly StepsCaps[] = [
   plainApp("x-dm", "X direct messages", 3500), plainApp("twist", "Twist", 3500),
   plainApp("nextcloud-talk", "Nextcloud Talk", 3500, { replies: true }), plainApp("ntfy", "ntfy", 3500),
   plainApp("pushover", "Pushover", 1024), plainApp("threema", "Threema", 3500),
-  plainApp("homeassistant", "Home Assistant", 3500, { hermes: "off (batch delivery)" }), plainApp("xmpp", "XMPP", 3500),
+  plainApp("homeassistant", "Home Assistant", 3500, { hermes: "off (batch delivery)" }),
+  plainApp("xmpp", "XMPP", 3500, { typing: true, typingScope: "Negotiated direct chats only; no room typing" }),
   plainApp("mqtt", "MQTT", 3500), plainApp("keybase", "Keybase", 3500), plainApp("simplex", "SimpleX", 3500),
   plainApp("deltachat", "Delta Chat", 3500), plainApp("nostr", "Nostr", 3500, { replies: true }),
   plainApp("vk", "VK", 3500, { replies: true }), plainApp("qq-bot", "QQ bot", 3500, { replies: true }),
-  plainApp("guilded", "Guilded", 3500, { replies: true }), plainApp("revolt", "Revolt", 2000, { replies: true }),
-  plainApp("mumble", "Mumble", 3500), plainApp("kook", "KOOK", 4000, { replies: true }),
+  plainApp("guilded", "Guilded", 3500, { replies: true }), plainApp("revolt", "Revolt", 2000, { replies: true, edit: true, reactions: true }),
+  plainApp("mumble", "Mumble", 3500), plainApp("kook", "KOOK", 4000, { replies: true, reactions: true }),
   plainApp("bluebubbles", "iMessage through BlueBubbles", 3000, { hermes: HERMES_NO_EDIT, openclaw: "final answer only" }),
   plainApp("wechat-mp", "WeChat Official Account", 600, { hermes: HERMES_NO_EDIT }),
   plainApp("wecom-app", "WeCom app", 600, { hermes: "off; native stream message type instead" }),
