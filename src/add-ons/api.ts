@@ -30,6 +30,9 @@ const always = (handler: Handler): { part: null; handler: Handler } => ({ part: 
 
 const posts: Record<string, { part: AddOnPart | null; handler: Handler }> = {
   "/api/plugin-catalog/add-ons/settings": always(async (a, body) => a.save(await body())),
+  // RES-251: one hand-placed plugin inside Branch (a yes, never under Lockdown) or walled; and keeping the ones kept as before.
+  "/api/plugin-catalog/add-ons/inside": always(async (a, body) => a.setInside(await body())),
+  "/api/plugin-catalog/add-ons/kept": always(async (a, body) => { z.object({}).strict().parse((await body()) ?? {}); return a.keepGrandfathered(); }),
   "/api/plugin-catalog/add-ons/look": part("packages", async (a, body) => a.shelf.look(source.parse(await body()).source)),
   "/api/plugin-catalog/add-ons/install": part("packages", async (a, body) => {
     const input = shown.parse(await body());

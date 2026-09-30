@@ -224,7 +224,7 @@ import { lockdownActive, onLockdownChange } from "./lockdown.js";
 import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
 import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
-import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
+import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost, tokenCountsOf } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
 import { conversationBootstrapIds } from "./conversation-bootstrap.js";
 import { builtInImagePrices, imagePricedAt, knownPictureModels, mediaSettings, saveMediaSettings } from "./media-settings.js";
@@ -3308,10 +3308,8 @@ function runCost(app: Branch, runId: string) {
   const model = String(named.at(-1)?.data.model ?? "");
   if (!model) return { amount: null, currency: "USD" as const, confidence: "unknown" as const, note: "no price on file", display: "no price on file", model: null };
   const { overrides } = pricingSettings(app.store, app.runtime.owner);
-  const estimate = estimateCost(model, {
-    input: usage.reportedInput || usage.estimatedInput || 0,
-    output: usage.reportedOutput || usage.estimatedOutput || 0,
-  }, overrides);
+  // Cache reads and writes are priced at their own rates (src/pricing.ts tokenCountsOf).
+  const estimate = estimateCost(model, tokenCountsOf(usage), overrides);
   return { ...estimate, display: formatCost(estimate), model };
 }
 /**

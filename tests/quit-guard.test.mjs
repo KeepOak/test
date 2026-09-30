@@ -44,7 +44,7 @@ test("only tasks working right now count; one waiting for an answer is kept and 
 
 test("the window marks an update, a restart and `branch quit` so none of them asks", async () => {
   const main = await readFile(new URL("../src/desktop/main.ts", import.meta.url), "utf8");
-  assert.match(main, /registerUpdaterIpc\(window, url, app\.getVersion\(\), \(\) => \{ quitReason = "update"; app\.quit\(\); \}/);
+  assert.match(main, /registerUpdaterIpc\(openWindow, url, app\.getVersion\(\), \(\) => \{ quitReason = "update"; app\.quit\(\); \}/);
   assert.match(main, /app\.relaunch\([\s\S]{0,120}quitReason = "restart";\s*app\.quit\(\);/);
   assert.match(main, /quit: \(\) => \{ quitReason = "command"; app\.quit\(\); \}/);
   // The engine runs in a process of its own, so the count of working tasks is its answer (or the last count it told).

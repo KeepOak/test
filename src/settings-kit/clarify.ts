@@ -161,7 +161,8 @@ function numberFacts(field: FieldSpec): Pick<Choice, "range" | "note"> {
 function factsWords(field: FieldSpec): string {
   const range = rangeOf(field);
   if (!range) return "";
-  return ` It can be from ${range.min} to ${range.max}${range.or ? `, or ${range.or}` : ""}.${field.note ? ` ${field.note}` : ""}`;
+  const words = [range.or, range.unlimited].filter(Boolean).map((word) => `, or ${word}`).join("");
+  return ` It can be from ${range.min} to ${range.max}${words}.${field.note ? ` ${field.note}` : ""}`;
 }
 type Preview = { setting: string; name: string; label: string; from: Value; to: Value; lessCareful: boolean; looser?: string; pinned: boolean };
 export type Clarified =

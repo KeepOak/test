@@ -544,6 +544,8 @@ test("switching the plugin on in the app brings its model connection, and off ta
   const folder = join(root, "data", "plugins");
   await mkdir(folder, { recursive: true });
   await writeFile(join(folder, "echoer.mjs"), pluginSource);
+  // RES-251: a model connection lives inside Branch, so a plugin bringing one runs there only by the owner's own choice.
+  app.addOns.save({ wallEveryPlugin: false, confirmLoosening: true });
 
   assert.deepEqual(app.providerPlugins.list(), [], "nothing is brought until the owner says so");
   await app.plugins.enable("echoer");

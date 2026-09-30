@@ -32,6 +32,11 @@ export interface ChatGPTProviderOptions {
 /** Responses API over the ChatGPT subscription backend. Requests always stream; Branch identifies itself. */
 export class ChatGPTProvider implements Provider {
   readonly name = "chatgpt";
+  /**
+   * The ChatGPT plan's models take pictures as the Codex app does (codex-rs core/src/client.rs: a user message's
+   * `input_image` part with a data URL), so a screenshot pasted in the window is shown rather than kept unseen.
+   */
+  readonly acceptsImages = true;
   private readonly apiBase: string;
   private readonly userAgent: string;
   private readonly fetch: typeof fetch;
@@ -56,6 +61,7 @@ export class ChatGPTProvider implements Provider {
     if (!accountId) throw new Error("The ChatGPT sign-in does not identify its account for making pictures.");
     return { endpoint: this.apiBase, token, accountId, originator: chatgptDefaults.originator, userAgent: this.userAgent };
   }
+  supportsImages(): boolean { return true; }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: a ChatGPT sign-in answers a Trunk only for work the owner is behind
     const stream = new ResponsesStream(request.onTextDelta ?? (() => {}), request.onReasoningDelta);
@@ -111,8 +117,12 @@ export function responsesBody(request: CompletionRequest, model: string): Record
 function inputItems(message: Message): Record<string, unknown>[] {
   if (message.role === "tool")
     return [{ type: "function_call_output", call_id: message.toolCallId, output: message.content }];
-  if (message.role === "user")
-    return [{ role: "user", content: [{ type: "input_text", text: message.content }] }];
+  if (message.role === "user") {
+    const parts: Record<string, unknown>[] = [{ type: "input_text", text: message.content }];
+    for (const image of message.images ?? [])
+      parts.push({ type: "input_image", image_url: `data:${image.mediaType};base64,${image.data}` });
+    return [{ role: "user", content: parts }];
+  }
   return [
     ...(message.content ? [{ role: "assistant", content: [{ type: "output_text", text: message.content }] }] : []),
     ...(message.toolCalls ?? []).map((call) => ({
