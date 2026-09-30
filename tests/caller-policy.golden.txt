@@ -1960,6 +1960,16 @@ owner GET /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok l
 owner POST /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/purchases | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/purchases | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/purchases/authorize | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/purchases/authorize | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/purchases/quote | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/purchases/quote | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/purchases/spend | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/purchases/spend | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/purchases/complete | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/purchases/complete | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/branch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4224,6 +4234,16 @@ owner+lockdown GET /api/self-development/requests/:id/diff | here=ok remote=ok p
 owner+lockdown POST /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/purchases | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/purchases | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/purchases/authorize | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/purchases/authorize | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/purchases/quote | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/purchases/quote | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/purchases/spend | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/purchases/spend | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/purchases/complete | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/purchases/complete | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/branch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6488,6 +6508,16 @@ household GET /api/self-development/requests/:id/diff | here=400/f6e21c remote=4
 household POST /api/self-development/requests/:id/diff | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions | here=ok remote=ok read=ok run=ok
 household POST /api/sessions | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/purchases | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/purchases | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/purchases/authorize | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/purchases/authorize | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/purchases/quote | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/purchases/quote | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/purchases/spend | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/purchases/spend | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/purchases/complete | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/purchases/complete | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id | here=ok remote=ok read=ok run=ok
 household POST /api/sessions/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id/branch | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8752,6 +8782,16 @@ household+lockdown GET /api/self-development/requests/:id/diff | here=400/f6e21c
 household+lockdown POST /api/self-development/requests/:id/diff | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/sessions | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/purchases | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/purchases | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/purchases/authorize | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/purchases/authorize | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/purchases/quote | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/purchases/quote | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/purchases/spend | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/purchases/spend | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/purchases/complete | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/purchases/complete | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/sessions/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/branch | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -11016,6 +11056,16 @@ applock GET /api/self-development/requests/:id/diff | here=423/a8f863
 applock POST /api/self-development/requests/:id/diff | here=423/a8f863
 applock GET /api/sessions | here=423/a8f863
 applock POST /api/sessions | here=423/a8f863
+applock GET /api/personal/purchases | here=423/a8f863
+applock POST /api/personal/purchases | here=423/a8f863
+applock GET /api/personal/purchases/authorize | here=423/a8f863
+applock POST /api/personal/purchases/authorize | here=423/a8f863
+applock GET /api/personal/purchases/quote | here=423/a8f863
+applock POST /api/personal/purchases/quote | here=423/a8f863
+applock GET /api/personal/purchases/spend | here=423/a8f863
+applock POST /api/personal/purchases/spend | here=423/a8f863
+applock GET /api/personal/purchases/complete | here=423/a8f863
+applock POST /api/personal/purchases/complete | here=423/a8f863
 applock GET /api/sessions/:id | here=423/a8f863
 applock POST /api/sessions/:id | here=423/a8f863
 applock GET /api/sessions/:id/branch | here=423/a8f863

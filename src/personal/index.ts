@@ -16,7 +16,7 @@ import { WebhookTunnel, type TunnelSpawn } from "./tunnel.js";
 import { VoiceApprovals } from "./voice-approvals.js";
 import { registerXSearch, XSearch } from "./x-search.js";
 import { opensTheHouse, ownerOnlyTools } from "./guard.js";
-import { Purchases, QuoteInput, SpendInput } from "../purchases/index.js";
+import { Purchases, QuoteInput, SpendInput, purchaseToolNames } from "../purchases/index.js";
 import { z } from "zod";
 import { categoryOf } from "../tool-categories.js";
 import type { MailServer } from "../channels/mail-client.js";
@@ -101,6 +101,7 @@ export class Personal {
     const tools = ownerOnlyTools(registry, store, deps.requireOwner);
     this.purchases = new Purchases({ runtime, fetch: deps.fetch, secret: deps.secret, requireOwner: deps.requireOwner,
       refusal: deps.purchaseRefusal ?? deps.lockdownRefusal });
+    for (const name of purchaseToolNames) registry.unregister(name); // their cards give way to the real tools
     tools.register({ name: "payments.quote", group: "personal", permission: "personal.read", reach: "outbound", parameters: QuoteInput,
       description: "Get an untrusted bounded USD Stripe MPP charge quote from an owner-enabled exact seller origin. No wallet credential is released. Item/seller labels are user-provided, not verified inventory.",
       execute: (input, context) => this.purchases.quote(input, context) });

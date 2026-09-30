@@ -7,6 +7,8 @@ import { LinkWallet } from "./link.js";
 import { stripeChallenge, paymentCredential, type StripeChallenge } from "./mpp.js";
 
 export const purchasesKey = "purchases-link-settings";
+/** The purchase tools, registered with the personal part (src/personal/index.ts) and listed from their cards. */
+export const purchaseToolNames = ["payments.quote", "payments.spend", "payments.complete"] as const;
 const Settings = z.object({ enabled: z.boolean().default(false), freeWithoutMoneyPrompt: z.boolean().default(false),
   secretName: z.string().regex(/^[A-Z][A-Z0-9_]{0,79}$/).default("LINK_AGENT_ACCESS_TOKEN"),
   paymentMethodId: z.string().max(200).default(""), origins: z.array(z.string().url()).max(8).default([]),
