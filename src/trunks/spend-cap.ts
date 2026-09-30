@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { audit } from "../audit.js";
 import { recordedSpend } from "../knobs/apply.js";
-import { estimateCost, pricingSettings } from "../pricing.js";
+import { estimateCost, pricingSettings, tokenCountsOf } from "../pricing.js";
 import type { Store } from "../store.js";
 import type { TrunkRecords } from "./record.js";
 
@@ -78,13 +78,14 @@ export class TrunkSpendCap {
     return this.view(trunkId);
   }
 
-  /** Why the Trunk may not go on now (this month's spending reached its limit), or null. */
+  /** Why the Trunk may not go on now (spending reached its limit or cannot be fully counted), or null. */
   refusal(trunkId: string): string | null {
     const cap = this.limit(trunkId);
     if (cap === null) return null;
-    const { spentUsd } = this.spent(trunkId, false);
-    if (spentUsd < cap) return null;
+    const { spentUsd, capped } = this.spent(trunkId, false);
+    if (!capped && spentUsd < cap) return null;
     const name = this.deps.records.find(trunkId)?.name ?? "This Trunk";
+    if (capped) return `${name} stopped because this month has more tasks than its spending check can count, so it cannot confirm spending is below its limit of $${cap.toFixed(2)}. Clear the limit in Edit Trunk › Accounts to continue.`;
     return `${name} has spent about $${spentUsd.toFixed(2)} this month, which reaches its limit of $${cap.toFixed(2)}, so it stopped. Raise or clear the limit in Edit Trunk › Accounts.`;
   }
 
@@ -115,8 +116,7 @@ export function monthStart(now: number): string {
 
 /** One task's model tokens at the price of the model it last answered on; null when it has tokens and no price. */
 function taskCost(store: Store, runId: string, overrides: ReturnType<typeof pricingSettings>["overrides"]): number | null {
-  const usage = store.usage(runId);
-  const tokens = { input: usage.reportedInput || usage.estimatedInput || 0, output: usage.reportedOutput || usage.estimatedOutput || 0 };
+  const tokens = tokenCountsOf(store.usage(runId));
   if (!tokens.input && !tokens.output) return 0;
   const model = String(store.events(runId).filter((event) => event.kind.startsWith("model.") && event.data.model !== undefined).at(-1)?.data.model ?? "");
   return model ? estimateCost(model, tokens, overrides).amount : null;
