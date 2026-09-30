@@ -5729,13 +5729,14 @@ question and only runs after you say yes, and the result is shown exactly as the
 Below that, one question can be put to two models using the evaluation route where that is
 configured.
 
-**On a phone.** `/manifest.webmanifest` and `/service-worker.js` make the page installable. The
-worker keeps the app's own files (stylesheets, scripts, icons, the English words) so it opens
-quickly and shows the app rather than a browser error when the connection drops. Nothing under
-`/api/`, `/v1/` or `/webhooks/` is ever cached: your assistant is live or it is nothing, and an
-unreachable computer puts a plain banner on the screen. The worker is never registered inside the
-desktop app or when the page is opened with `?desktop=1`, and the desktop app never offers to
-install itself.
+**On a phone.** The redesigned window serves `/manifest.webmanifest` and its icons, but it
+does not register a service worker or promise an offline shell. Opening it needs a reachable
+Branch computer. If the connection drops while the window is open, live requests fail and the
+window shows its connection banner; it does not cache assistant requests or replay changes.
+The legacy `/service-worker.js` URL now only retires its own previously installed registration
+and deletes the exact historical Branch shell caches. It creates no cache or registration and
+preserves unrelated workers and caches. Retirement takes effect when the browser next checks
+that worker for an update; it cannot clear an old installation which never reconnects.
 
 **Languages.** Labels go through `t(key)` in `/i18n.js`, reading `/locales/en.json`. The rail, the
 sections, the owner menu, the message box and the screens described above are covered; the older
@@ -5747,9 +5748,10 @@ and kept in this browser, not in the workspace. Dates and numbers are written wi
 chosen language.
 
 The files `/web-ui.js`, `/web-ui.css`, `/markdown.js`, `/i18n.js`, `/inspector.js`, `/live-run.js`,
-`/conversation-facts.js`, `/playground.js`, `/service-worker.js`, `/manifest.webmanifest`,
+`/conversation-facts.js`, `/playground.js`, `/manifest.webmanifest`,
 `/locales/en.json`, `/locales/fr.json` and the app icons are served from the same local allowlist
-as the rest of the interface.
+as the rest of the interface. `/service-worker.js` is a compatibility retirement response rather
+than a static app asset.
 
 ## Knowledge bases (batch 24, wave 7)
 

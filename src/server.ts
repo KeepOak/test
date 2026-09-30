@@ -1,4 +1,5 @@
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
+import { retiredPhoneWorker } from "./retired-phone-worker.js";
 import {
   createServer,
   type IncomingMessage,
@@ -566,6 +567,13 @@ async function staticFile(
   response: ServerResponse,
   request?: IncomingMessage,
 ): Promise<boolean> {
+  // Keep the old worker URL updateable, so previously installed registrations can retire.
+  if (path === "/service-worker.js") {
+    response.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store",
+      "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
+    response.end(retiredPhoneWorker);
+    return true;
+  }
   const assets: Record<string, [string, string]> = {
     // The window (public/index.html, public/app.css; its modules and art under /app/ and /art/ are served by exact file).
     "/": ["index.html", "text/html; charset=utf-8"],
@@ -573,9 +581,8 @@ async function staticFile(
     "/fonts/archivo.woff2": ["fonts/archivo.woff2", "font/woff2"],
     "/fonts/geist.woff2": ["fonts/geist.woff2", "font/woff2"],
     "/fonts/geist-mono.woff2": ["fonts/geist-mono.woff2", "font/woff2"],
-    // The installable web app: its manifest, icons and service worker.
+    // The window's manifest and icons; no offline shell is registered.
     "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json; charset=utf-8"],
-    "/service-worker.js": ["service-worker.js", "text/javascript; charset=utf-8"],
     "/assets/icon-192.png": ["assets/icon-192.png", "image/png"],
     "/assets/icon-512.png": ["assets/icon-512.png", "image/png"],
     "/assets/icon-maskable-512.png": ["assets/icon-maskable-512.png", "image/png"],
@@ -641,7 +648,7 @@ async function staticFile(
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "content-security-policy":
-      // worker-src and manifest-src let the installable web app register its service worker.
+      // The manifest can name the web app; worker-src permits the legacy retirement update.
       // phase2/delight: blob: lets the owner's own background picture or video, kept in the window's own
       // storage, be shown without ever being sent anywhere. Only the page's own script can make one.
       // Integration review: blob: is allowed for pictures and sound/video only, never for scripts,
