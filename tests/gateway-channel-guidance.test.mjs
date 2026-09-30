@@ -27,3 +27,17 @@ test("iMessage setup is gated by the engine platform before anything is saved or
   assert.deepEqual(flagged("win32"), ["imessage"], "the catalog marks iMessage, and only iMessage, as needing a Mac");
   assert.deepEqual(flagged("darwin"), []);
 });
+
+test("the setup routes answer for the engine's own platform: a Windows engine greys iMessage in the list and its panel", async (t) => {
+  const { channelSetupApi } = await import("../dist/channel-setup/api.js");
+  const root = await mkdtemp(join(tmpdir(), "channel-setup-platform-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const deps = (platform) => ({ store: app.store, owner: "local", platform, requireOwner() {} });
+  const listed = async (platform) => (await channelSetupApi(deps(platform), "GET", "/api/channel-setup", async () => ({}))).channels
+    .filter((c) => c.needsMac).map((c) => c.id);
+  assert.deepEqual(await listed("win32"), ["imessage"]);
+  assert.deepEqual(await listed("darwin"), []);
+  const panel = await channelSetupApi(deps("linux"), "GET", "/api/channel-setup/imessage", async () => ({}));
+  assert.match(panel.unavailableReason, /Mac/);
+});

@@ -32,10 +32,10 @@ export async function channelSetupApi(deps: ChannelSetupDeps, method: string, pa
   // the panel later is the owner's without anybody having to remember.
   deps.requireOwner("Setting up chat apps");
   if (path === "/api/channel-setup") {
-    if (method === "GET") return setupList(deps.store, deps.owner);
+    if (method === "GET") return setupList(deps.store, deps.owner, deps.platform ?? process.platform);
     if (method !== "POST") throw new SetupRefusal(405, "Use GET or POST here.");
     saveSetupMode(deps.store, deps.owner, await readBody());
-    return setupList(deps.store, deps.owner);
+    return setupList(deps.store, deps.owner, deps.platform ?? process.platform);
   }
   const check = /^\/api\/channel-setup\/([a-z][a-z0-9-]{0,29})\/check$/.exec(path);
   if (check) {
@@ -50,7 +50,7 @@ export async function channelSetupApi(deps: ChannelSetupDeps, method: string, pa
     return bridgeLink(deps, link[1]!);
   }
   const panel = /^\/api\/channel-setup\/([a-z][a-z0-9-]{0,29})$/.exec(path);
-  if (panel && method === "GET") return setupPanel(deps.store, deps.owner, panel[1]!);
+  if (panel && method === "GET") return setupPanel(deps.store, deps.owner, panel[1]!, deps.platform ?? process.platform);
   if (panel && method === "DELETE") return removeSetup(deps, panel[1]!);
   throw new SetupRefusal(404, "Not found");
 }
