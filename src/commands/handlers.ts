@@ -1,3 +1,4 @@
+import { diagnostics } from "./diagnostics.js";
 import type { Runtime } from "../runtime.js";
 import type { RunSource } from "../policy.js";
 import type { FeatureMode } from "../feature-switches.js";
@@ -277,7 +278,7 @@ export const HANDLERS: Record<string, Handler> = {
   stop, status: (call) => say(statusLines(call).join("\n")), compact, usage, btw: aside, tokens, goal,
   whoami: (call) => say(whoamiLines(call).join("\n")),
   version: (call) => say(`Branch Agent ${call.host.version ?? "(version unknown)"}`),
-  health,
+  health, diagnostics,
   prompts: promptsCommand, // bucket 12
   trunk: trunkCommand, // R17-A
   account: accountCommand, // mac6/accounts
