@@ -1058,7 +1058,7 @@ async function api(
     if (request.method === "GET" && path === "/api/maps") return { settings: maps.settings() };
     if (request.method === "POST") {
       const input = await readBody(request); requireWindow();
-      if (path === "/api/maps") return { settings: recordedWrite(app.store, app.runtime.owner, byCard("maps-connector"), ["maps-connector"], () => maps.configure(input)) };
+      if (path === "/api/maps") return { settings: maps.configure(input) };
       if (path === "/api/maps/revoke") { maps.clear(); return { revoked: true }; }
       if (path === "/api/maps/request") {
         const given = z.object({ tool: z.enum(["maps.places", "maps.route", "maps.image"]), requestId: z.string().uuid() }).strict().parse(input);
