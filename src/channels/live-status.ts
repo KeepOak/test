@@ -38,6 +38,8 @@ export interface LiveTiming {
   typingEveryMs: number;
   /** Quick changes of reaction are held this long so the chat does not flicker. */
   reactEveryMs: number;
+  /** When the sparse "Still working" lines go out on a chat that cannot edit (CHAT-040); at most three. */
+  milestonesAtMs?: readonly number[] | undefined;
 }
 export const defaultLiveTiming: LiveTiming = { progressAfterMs: 4000, editEveryMs: 1500, typingEveryMs: 4000, reactEveryMs: 700 };
 export type OutboundGuard = (text: string) => Promise<{ text: string; blocked: boolean }>;
@@ -202,7 +204,7 @@ export class LiveStatus {
     if (this.progressPlanned) return;
     this.progressPlanned = true;
     if (this.target.milestones) {
-      for (const after of milestoneAfterMs) this.later(() => void this.milestone(), after);
+      for (const after of (this.timing.milestonesAtMs ?? milestoneAfterMs).slice(0, 3)) this.later(() => void this.milestone(), after);
     }
     this.later(() => {
       if (this.closed) return;
