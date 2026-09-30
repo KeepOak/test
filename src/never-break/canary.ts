@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { gatewayFile, loadGatewayConfig, writeAtomic } from "./gateway-config.js";
 import { repairRollback } from "./rollback.js";
+import { storeMigrations } from "./migrations.js";
 
 /** What `branch start` writes in self-test mode (see self-test.ts). */
 export interface SelfTestCheck { name: string; ok: boolean; detail: string }
@@ -163,7 +164,7 @@ export function updateCanary(input: UpdateCanaryInput): (stagedDir: string, vers
     if (!result.ok) throw new Error(result.detail);
     const platform = input.platform === "win32" || input.platform === "darwin" ? input.platform : "linux";
     if (input.target && !off) await writeWatch(input.dataDir, { from: input.fromVersion, to: version, target: input.target, platform,
-      executableName: input.executableName, startedAt: new Date().toISOString() });
+      executableName: input.executableName, startedAt: new Date().toISOString(), understood: storeMigrations.at(-1)?.version ?? 0 });
   };
 }
 
@@ -177,6 +178,8 @@ export const UpdateWatchSchema = z.object({
   platform: z.enum(["win32", "darwin", "linux"]),
   executableName: z.string().min(1).max(200),
   startedAt: z.iso.datetime(),
+  /** The newest data format the version updated from understands: going back is refused past it (worker-link.ts). */
+  understood: z.number().int().nonnegative().optional(),
 }).strict();
 export type UpdateWatch = z.infer<typeof UpdateWatchSchema>;
 
