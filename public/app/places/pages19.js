@@ -46,6 +46,8 @@ export async function openPage(id) {
     if (!shown || document.hidden) { if (!shown) stop(); return; }
     const again = await api(`asks/pages/${encodeURIComponent(id)}`).catch(() => null);
     if (!again || P.id !== id) return;
+    // Closed or replaced while the page was being read: never open it again.
+    if (!dialog()?.querySelector(`[data-page19="${CSS.escape(id)}"]`)) { stop(); return; }
     const seen = JSON.stringify(again.page);
     if (seen !== P.seen) { P.seen = seen; draw(again.page); }
   }, everyMs);
