@@ -3768,3 +3768,6 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `programStart` in `src/coding/hand-off.ts` starts an npm-installed Codex as its own program with the environment its npm launcher (`codex-cli/bin/codex.js`, commit d14143834) adds, as `codexBinary` in `src/asks/codex-app-server.ts` already did for the app-server.
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
+### Codex (OpenAI) refresh-token handling and Gemini CLI (Google) credential merge, Apache-2.0
+
+When a ChatGPT sign-in cannot be renewed, `src/chatgpt-auth.ts` (`refreshEnded`, `ChatGPTAuth.refresh`) decides which refusals end it the way Codex's `codex-rs/login/src/auth/manager.rs` (`classify_refresh_token_failure`, `refresh_token`) does, and reads the saved sign-in again before renewing it (https://github.com/openai/codex). `OAuthConnections.token` in `src/oauth.ts` keeps the refresh token already held when a renewal sends none, as Gemini CLI's `packages/core/src/code_assist/oauth-credential-storage.ts` (`saveCredentials`) does (https://github.com/google-gemini/gemini-cli). Both projects are licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Copyright 2025 OpenAI; Copyright 2025 Google LLC.

@@ -23,6 +23,12 @@ interface GeminiOptions {
    * ever put in the address itself, where it would end up in logs.
    */
   bearer?: boolean;
+  /**
+   * A signed-in connection asks for its token on each call (renewed first when it has run out), so a token that
+   * expires an hour after the connection was made is never sent. `apiKey` is then the first token, for the routes
+   * that read the credential without a call (speech, pictures, the model list): they get the latest token seen.
+   */
+  credential?: (() => Promise<string>) | undefined;
   /** The fetch every request goes through; the factory supplies a guarded, watched one. */
   fetchImpl?: typeof globalThis.fetch | undefined;
 }
@@ -180,8 +186,11 @@ const geminiResponse = z.object({
 export class GeminiProvider implements Provider {
   readonly name = "gemini";
 
+  /** The credential sent now: the key, or the latest sign-in token `credential` handed back. */
+  private key: string;
   constructor(private readonly options: GeminiOptions) {
     validateOptions(options);
+    this.key = options.apiKey;
   }
   get model(): string { return this.options.model; }
 
@@ -190,7 +199,7 @@ export class GeminiProvider implements Provider {
    * is handed the same details. `bearer` tells it which header to put the credential in.
    */
   audio(): { endpoint: string; apiKey: string; bearer: boolean } {
-    return { endpoint: this.options.endpoint, apiKey: this.options.apiKey, bearer: this.options.bearer === true };
+    return { endpoint: this.options.endpoint, apiKey: this.key, bearer: this.options.bearer === true };
   }
 
   /** Gemini makes pictures through the same address, asking generateContent for an image. */
@@ -198,7 +207,7 @@ export class GeminiProvider implements Provider {
     return {
       kind: "gemini",
       endpoint: this.options.endpoint,
-      apiKey: this.options.apiKey,
+      apiKey: this.key,
       bearer: this.options.bearer === true,
       defaultModel: "gemini-2.5-flash-image",
     };
@@ -206,6 +215,9 @@ export class GeminiProvider implements Provider {
 
   async complete(request: CompletionRequest): Promise<Completion> {
     if (this.options.bearer) refuseSignInForTrunk(); // mac7/lockdown-fix: Gemini signed in with Google, only for work the owner is behind
+    // provider-audit: after the Trunk check, so a Trunk never makes Branch read or renew the owner's sign-in.
+    if (this.options.credential) this.key = await this.options.credential();
+    const options = { ...this.options, apiKey: this.key };
     const systemInstruction = request.messages
       .filter((m) => m.role === "system")
       .map((m) => m.content)
@@ -241,7 +253,7 @@ export class GeminiProvider implements Provider {
       const stream = new GeminiStream(request.onTextDelta);
       try {
         await post(
-          this.options,
+          options,
           `/v1beta/models/${this.options.model}:streamGenerateContent`,
           body,
           request.signal,
@@ -255,7 +267,7 @@ export class GeminiProvider implements Provider {
 
     const response = geminiResponse.parse(
       await post(
-        this.options,
+        options,
         `/v1beta/models/${this.options.model}:generateContent`,
         body,
         request.signal,
