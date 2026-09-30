@@ -212,14 +212,44 @@ export class WorktreePlaces {
       const root = await realpath(this.deps.root);
       const actual = await realpath(workspace).catch(() => null);
       const source = await realpath(cwd).catch(() => null);
-      if (!actual || !source || relative(root, actual).split(/[\\/]/).includes("..") || isAbsolute(relative(root, actual))
-        || !samePath(actual, workspace) || !samePath(source, cwd)) throw unavailable();
+      const contained = (path: string) => {
+        const inside = relative(root, path);
+        return inside !== "" && !isAbsolute(inside) && !inside.split(/[\\/]/).includes("..");
+      };
+      let expectedSource = cwd, expectedCopy = workspace;
+      // Source preparation publishes this exact managed root through an in-workspace directory link.
+      // Resolve only that root; nested redirects still have to equal the recorded physical suffix.
+      if (scope.startsWith("branch-agent-source/.branch-worktrees/")
+        && (folder === "branch-agent-source" || folder.startsWith("branch-agent-source/.branch-worktrees/"))) {
+        const logicalRoot = resolve(this.deps.root, "branch-agent-source");
+        const managedRoot = await realpath(logicalRoot).catch(() => null);
+        if (!managedRoot || !contained(managedRoot)) throw unavailable();
+        const managedTop = await this.deps.run(logicalRoot, ["rev-parse", "--show-toplevel"], context.signal).catch(() => null);
+        const managedActual = managedTop?.status === "completed" && managedTop.exitCode === 0 && managedTop.stdout.trim()
+          ? await realpath(resolve(managedTop.stdout.trim())).catch(() => null) : null;
+        if (!managedActual || !samePath(managedActual, managedRoot)) throw unavailable();
+        expectedSource = resolve(managedRoot, relative(logicalRoot, cwd));
+        expectedCopy = resolve(managedRoot, relative(logicalRoot, workspace));
+      }
+      if (!actual || !source || !contained(actual) || (source !== root && !contained(source))
+        || !samePath(actual, expectedCopy) || !samePath(source, expectedSource)) throw unavailable();
       const top = await this.deps.run(workspace, ["rev-parse", "--show-toplevel"], context.signal).catch(() => null);
       const line = await this.deps.run(workspace, ["symbolic-ref", "--quiet", "--short", "HEAD"], context.signal).catch(() => null);
       const ancestor = await this.deps.run(workspace, ["merge-base", "--is-ancestor", data.base, "HEAD"], context.signal).catch(() => null);
-      if (top?.status !== "completed" || top.exitCode !== 0 || !top.stdout.trim() || !samePath(top.stdout.trim(), workspace)
+      if (top?.status !== "completed" || top.exitCode !== 0 || !top.stdout.trim() || !samePath(top.stdout.trim(), actual)
         || line?.status !== "completed" || line.exitCode !== 0 || line.stdout.trim() !== branch
         || ancestor?.status !== "completed" || ancestor.exitCode !== 0) throw unavailable();
+      const sourceTop = await this.deps.run(cwd, ["rev-parse", "--show-toplevel"], context.signal).catch(() => null);
+      const sourceActual = sourceTop?.status === "completed" && sourceTop.exitCode === 0 && sourceTop.stdout.trim()
+        ? await realpath(resolve(sourceTop.stdout.trim())).catch(() => null) : null;
+      if (!sourceActual || !samePath(sourceActual, source)) throw unavailable();
+      const copyCommon = await this.deps.run(workspace, ["rev-parse", "--git-common-dir"], context.signal).catch(() => null);
+      const sourceCommon = await this.deps.run(cwd, ["rev-parse", "--git-common-dir"], context.signal).catch(() => null);
+      const copyGit = copyCommon?.status === "completed" && copyCommon.exitCode === 0 && copyCommon.stdout.trim()
+        ? await realpath(resolve(workspace, copyCommon.stdout.trim())).catch(() => null) : null;
+      const sourceGit = sourceCommon?.status === "completed" && sourceCommon.exitCode === 0 && sourceCommon.stdout.trim()
+        ? await realpath(resolve(cwd, sourceCommon.stdout.trim())).catch(() => null) : null;
+      if (!copyGit || !sourceGit || !samePath(copyGit, sourceGit)) throw unavailable();
       this.deps.note(run.id, "worktree.used", { path: scope, branch, source: folder, base: data.base, originRunId: origin, recovered: true });
       // Keep a restored copy: its original retained work belongs to the original helper's record.
       return { scope, workspace, release: async () => { this.helperSources.delete(run.id); } };
