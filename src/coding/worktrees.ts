@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { z } from "zod";
 import type { ToolContext } from "../contracts.js";
@@ -52,6 +53,8 @@ export interface WorktreeDeps {
 const short = (id: string): string => id.replace(/-/g, "").slice(0, 8);
 
 export class WorktreePlaces {
+  /** Sources held by live helpers, including copies that are still being created. */
+  private readonly helperSources = new Map<string, string>();
   constructor(private readonly deps: WorktreeDeps) {}
 
   private scopeFor(folder: string, name: string): string {
@@ -99,7 +102,7 @@ export class WorktreePlaces {
   /** Where this task works: its conversation's copy, a new copy for a helper, or null for the usual place. */
   async placeTask(run: { id: string; sessionId: string }, context: ToolContext, parent: ToolContext | undefined): Promise<TaskPlace | null> {
     const { store, owner } = this.deps;
-    if (worktreeScope()) return null;
+    if (worktreeScope() && !parent) return null;
     // workbench (SELF-302): a helper its lead asked to give a copy of its own gets one, whatever the switches say: the
     // switches decide what happens by default; the lead can explicitly request a copy for one helper.
     if (parent && context.ownCopy) return this.helperPlace(run, context);
@@ -122,7 +125,18 @@ export class WorktreePlaces {
   }
 
   private async helperPlace(run: { id: string }, context: ToolContext): Promise<TaskPlace | null> {
-    const folder = this.deps.projectFolder(), cwd = join(this.deps.root, folder);
+    const folder = worktreeScope() ?? this.deps.projectFolder();
+    this.helperSources.set(run.id, folder);
+    let placed = false;
+    try {
+      const copy = await this.createHelper(run, context, folder);
+      placed = copy !== null;
+      return copy;
+    } finally { if (!placed) this.helperSources.delete(run.id); }
+  }
+
+  private async createHelper(run: { id: string }, context: ToolContext, folder: string): Promise<TaskPlace | null> {
+    const cwd = join(this.deps.root, folder);
     const head = await this.deps.run(cwd, ["rev-parse", "HEAD"], context.signal).catch(() => null);
     if (!head || head.status !== "completed" || head.exitCode !== 0) {
       // A copy asked for by name is never skipped without a word: the helper then works in the usual place.
@@ -130,22 +144,39 @@ export class WorktreePlaces {
       return null;
     }
     const name = `helper-${short(run.id)}`, branch = `branch/helper-${short(run.id)}`;
-    try { await this.deps.git.worktree({ folder: ".", action: "add", name, branch }, context.signal); }
+    try { await inWorktree(folder, () => this.deps.git.worktree({ folder: ".", action: "add", name, branch }, context.signal)); }
     catch (error) { this.deps.note(run.id, "worktree.skipped", { reason: String((error as Error).message).slice(0, 200) }); return null; }
     const scope = this.scopeFor(folder, name), workspace = join(this.deps.root, scope), base = head.stdout.trim();
-    this.deps.note(run.id, "worktree.used", { path: scope, branch });
-    return { scope, workspace, release: () => this.releaseHelper(run.id, { cwd, workspace, name, branch, base, scope }) };
+    this.deps.note(run.id, "worktree.used", { path: scope, branch, source: folder, base });
+    return { scope, workspace, release: async () => {
+      try { await this.releaseHelper(run.id, { cwd, workspace, name, branch, base, scope, folder }); }
+      finally { this.helperSources.delete(run.id); }
+    } };
+  }
+
+  private async hasChildren(scope: string, workspace: string): Promise<boolean> {
+    if ([...this.helperSources.values()].some((source) => source === scope || source.startsWith(`${scope}/`))) return true;
+    const children = await readdir(join(workspace, WORKTREE_HOME)).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : null);
+    // A kept nested copy may be ignored by Git; retain the parent even if its Git status is clean.
+    return children === null || children.length > 0;
   }
 
   /** Removes a helper's copy only on proof that it holds nothing; otherwise keeps it and says where. */
-  private async releaseHelper(runId: string, copy: { cwd: string; workspace: string; name: string; branch: string; base: string; scope: string }): Promise<void> {
+  private async releaseHelper(runId: string, copy: { cwd: string; workspace: string; name: string; branch: string; base: string; scope: string; folder: string }): Promise<void> {
     const signal = AbortSignal.timeout(60_000);
+    if (await this.hasChildren(copy.scope, copy.workspace)) {
+      this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "nested-copies" }); return;
+    }
     const dirty = await this.deps.run(copy.workspace, ["status", "--porcelain"], signal).catch(() => null);
     const ahead = await this.deps.run(copy.workspace, ["rev-list", "--count", `${copy.base}..HEAD`], signal).catch(() => null);
     const proven = dirty?.status === "completed" && dirty.exitCode === 0 && !dirty.stdout.trim()
       && ahead?.status === "completed" && ahead.exitCode === 0 && ahead.stdout.trim() === "0";
     if (!proven) { this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch }); return; }
-    await this.deps.git.worktree({ folder: ".", action: "remove", name: copy.name }, signal).catch(() => undefined);
+    if (await this.hasChildren(copy.scope, copy.workspace)) {
+      this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "nested-copies" }); return;
+    }
+    const removed = await inWorktree(copy.folder, () => this.deps.git.worktree({ folder: ".", action: "remove", name: copy.name }, signal)).catch(() => null);
+    if (!removed) { this.deps.note(runId, "worktree.kept", { path: copy.scope, branch: copy.branch, reason: "removal-failed" }); return; }
     await this.deps.run(copy.cwd, ["branch", "-D", copy.branch], signal).catch(() => undefined);
     this.deps.note(runId, "worktree.removed", { path: copy.scope });
   }

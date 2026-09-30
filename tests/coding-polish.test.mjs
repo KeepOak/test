@@ -511,3 +511,21 @@ test("the API: switches, settings and refusals in plain words", async (t) => {
   assert.deepEqual((await call("POST", "/api/coding/worktrees", { perHelper: true })).settings, { perHelper: true, forks: false });
   assert.equal(codingMode(app.store, app.runtime.owner, "worktrees"), "on", "saving a part's settings keeps its switch");
 });
+
+test("a helper's own helper gets a copy made from its parent's copy, and the parent's copy is kept while the nested one lives", needsGit, async (t) => {
+  const { app, context } = await fixture(t);
+  await repository(app);
+  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", perHelper: true });
+  const helperRun = () => app.store.createRun(app.runtime.owner, "helper").id;
+  const outer = await app.coding.placeTask({ id: helperRun(), sessionId: "x" }, context(), context());
+  assert.ok(outer && existsSync(outer.workspace), "the first helper has its own copy");
+  // Inside the first helper's copy, its own helper is given a copy of that copy, not the shared folder.
+  const inner = await app.coding.inPlace(outer.scope, () => app.coding.placeTask({ id: helperRun(), sessionId: "y" }, context({ workspace: outer.workspace }), context({ workspace: outer.workspace })));
+  assert.ok(inner, "a nested helper is placed, not left in its parent's copy");
+  assert.ok(inner.scope.startsWith(`${outer.scope}/`), `the nested copy lives inside its parent's copy (${inner.scope})`);
+  assert.ok(existsSync(inner.workspace));
+  await outer.release();
+  assert.ok(existsSync(outer.workspace), "the parent's copy is kept while a nested copy is still there");
+  await app.coding.inPlace(outer.scope, () => inner.release());
+  assert.equal(existsSync(inner.workspace), false, "the untouched nested copy is removed");
+});
