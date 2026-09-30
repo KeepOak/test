@@ -1312,6 +1312,7 @@
   "commands.preset": "quand Branch vous consulte avant d'agir",
   "commands.prompts": "vos requêtes et procédures enregistrées ; avec un nom, l'une d'elles dans la zone de message",
   "commands.queue": "les messages qui attendent dans cette conversation ; reformuler, déplacer ou en retirer un",
+  "commands.session": "les limites d'inactivité et d'âge choisies pour ce chat ; les conversations expirées restent dans l'historique",
   "commands.sessions": "conversations précédentes ; avec un numéro, en reprendre une",
   "commands.settings": "les pages des paramètres, par leur nom",
   "commands.skill": "épingler une compétence à cette conversation pour qu’elle s’applique à chaque tour ; seule, laquelle est épinglée",

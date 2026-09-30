@@ -1311,6 +1311,7 @@
   "commands.preset": "cuándo te consulta Branch antes de hacer algo",
   "commands.prompts": "tus prompts y procedimientos guardados; con un nombre, pone uno en el cuadro de mensaje",
   "commands.queue": "los mensajes que esperan en esta conversación; reformula, mueve o quita uno",
+  "commands.session": "los límites de inactividad y antigüedad elegidos para este chat; las conversaciones caducadas se quedan en el historial",
   "commands.sessions": "conversaciones anteriores; con un número, continúa una",
   "commands.settings": "las páginas de Ajustes, por nombre",
   "commands.skill": "fijar una habilidad a esta conversación para que se aplique en cada turno; sola, cuál está fijada",
