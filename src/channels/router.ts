@@ -1807,6 +1807,11 @@ export class ChannelRouter {
     } : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
       allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress, react: this.style(message).react, picture, pictureButtons,
+      milestones: adapter.kind === "whatsapp" && message.chatKind === "direct" ? () => {
+        const current = this.stepsDisplay(message.channel), toggles = this.switches();
+        return this.senderAllowed(message.channel, message.senderId) && toggles.liveStatus !== "off" && toggles.steps !== "off"
+          && current.detail !== "off" && current.noEdit !== "each";
+      } : undefined,
       ...(turn ? { quote: () => this.quoteIn(turn, "status"), adopt: () => turn.reply?.surrender() ?? Promise.resolve(null) } : {}) },
     (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
   }
