@@ -135,7 +135,7 @@ export function describeProgress(model: string, line: z.infer<typeof progressSch
 
 /** One model in memory, whichever runtime holds it. */
 export interface LoadedModel {
-  runtime: "ollama" | "lm-studio" | "llama-cpp" | "mlx";
+  runtime: "ollama" | "lm-studio" | "llama-cpp" | "mlx" | "vllm";
   name: string;
   /** What to hand back to unload it: Ollama's model name, LM Studio's instance id. */
   instanceId: string;

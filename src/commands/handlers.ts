@@ -15,6 +15,7 @@ import { helpText } from "./help-text.js";
 import { promptsCommand } from "./saved.js";
 import { trunkCommand } from "./trunk.js"; // R17-A
 import { accountCommand } from "./account.js"; // mac6/accounts
+import { analyticsLines, usageAnalytics } from "../accounts/usage-analytics.js";
 import { BOARD_HANDLERS } from "../flows-boards/commands.js"; // r17-h
 import { AUTONOMY_HANDLERS } from "../autonomy/commands.js"; // r17-b
 import { initCommand } from "../coding/commands.js"; // mac7/r17-d
@@ -24,6 +25,8 @@ import { adaptCommand } from "../adapt/commands.js"; // mac7/adapt
 import { householdHere, mayUseConversation, runsHere } from "./household.js"; // Q259
 import { skill, steer } from "./steer-skill.js"; // CHAT-192, CHAT-205
 import { conversationHolder } from "../household-approvals.js"; // Q261
+import { helperParent } from "../helper-control.js";
+import { homeLine } from "../channels/home-chat.js"; // CHAT-190
 
 /**
  * What each command does when it is carried out for a surface that has no code of its own for it:
@@ -51,7 +54,7 @@ interface GoalView { status: string; round: number; maxRounds: number; objective
 /** The goal feature (mac2/goal-undo), when this copy has it. */
 export interface GoalHost {
   /** `origin`: a goal set from a chat, whose rounds are the chat's tasks (its source and its short list of permissions). */
-  start(input: { objective: string; maxRounds?: number; sessionId?: string }, origin?: { source: "channel"; permissions: string[] }): Promise<GoalView>;
+  start(input: { objective: string; maxRounds?: number; sessionId?: string }, origin?: { source: "channel" | "owner"; permissions: string[]; chat?: OwnerChat }): Promise<GoalView>;
   status(sessionId: string): GoalView | null;
   pause(sessionId: string): GoalView;
   resume(sessionId: string): Promise<GoalView>;
@@ -76,7 +79,11 @@ export interface Call {
   mode: FeatureMode;
   /** What a task from this chat may use, for `/whoami` in a chat app. */
   permissions?: string[];
+  /** owner-dm-full: the owner's own verified direct chat with full access; what `/goal` and `/bg` start is the owner's. */
+  ownerChat?: OwnerChat;
 }
+/** owner-dm-full: the chat a command from the owner's own direct chat came from (src/key-context.ts `ownerChatMark`). */
+export interface OwnerChat { channel: string; senderId: string }
 type Handler = (call: Call) => Reply | Promise<Reply>;
 const say = (text: string, client?: ClientAction): Reply => (client ? { text, client } : { text });
 const needSession = "Start a conversation first; this command works on the conversation you are in.";
@@ -189,6 +196,7 @@ function usage(call: Call): Reply {
   lines.push(`This month (since ${month.monthStart}): ${month.currentMonthlyTokens} tokens · about $${month.estimatedCost.toFixed(2)}`
     + (month.unpricedRuns ? ` (${month.unpricedRuns} tasks had no price on file)` : "")
     + (month.stillBeingMade > 0 ? `, including about $${month.stillBeingMade.toFixed(2)} for something still being made` : "")); // hardening-3
+  lines.push(...analyticsLines(usageAnalytics(runtime.store, runtime.owner, month.monthStart.slice(0, 7))));
   return say(lines.join("\n"));
 }
 async function compact(call: Call): Promise<Reply> {
@@ -230,7 +238,9 @@ async function goal(call: Call): Promise<Reply> {
     return say(goalLine(await goals[word](call.sessionId)));
   }
   const state = await goals.start({ ...parseGoal(call.argument), ...(call.sessionId ? { sessionId: call.sessionId } : {}) },
-    call.surface === "chat" ? { source: "channel", permissions: call.permissions ?? [] } : undefined); // CHAT-185
+    call.surface !== "chat" ? undefined // CHAT-185; owner-dm-full: the owner's own chat's goal is the owner's, re-checked each step
+      : call.ownerChat ? { source: "owner", permissions: call.permissions ?? [], chat: call.ownerChat }
+      : { source: "channel", permissions: call.permissions ?? [] });
   return say(goalLine(state), state.sessionId && state.sessionId !== call.sessionId ? { do: "open-session", id: state.sessionId } : undefined);
 }
 async function health(call: Call): Promise<Reply> {
@@ -267,6 +277,39 @@ function pane(call: Call): Reply {
   return say("Showing or hiding the side pane.", { do: "toggle", what: "pane", on: tab ? true : null, ...(tab ? { tab } : {}) });
 }
 
+/**
+ * `/agents` (CHAT-196, Hermes /agents, OpenClaw /subagents and /tasks): every task working now, and under each the helpers
+ * it started (run.started `parentRunId`). A chat app sees only its own conversation's tasks and their helpers; the owner's
+ * other work is not a chat's business.
+ */
+function agents(call: Call): Reply {
+  const { store, owner } = call.host.runtime;
+  const working = runsHere(store, owner, call.surface).filter((run) => run.status === "running");
+  const parentOf = new Map(working.map((run) => [run.id, helperParent(store, run.id)]));
+  const rootOf = (id: string): string => { let at = id; for (let i = 0; i < 8 && parentOf.get(at); i++) at = parentOf.get(at)!; return at; };
+  const shown = call.surface === "chat" ? working.filter((run) => { const top = working.find((r) => r.id === rootOf(run.id)); return top?.sessionId === call.sessionId; }) : working;
+  if (!shown.length) return say(call.surface === "chat" ? "Nothing is working in this chat." : "Nothing is working right now.");
+  const tops = shown.filter((run) => !parentOf.get(run.id) || !shown.some((r) => r.id === parentOf.get(run.id)));
+  const lines: string[] = [];
+  const add = (run: (typeof shown)[number], depth: number): void => {
+    lines.push(`${"  ".repeat(depth)}${depth ? "helper " : ""}${runningLines([run])[0]!.trim()}`);
+    for (const child of shown.filter((r) => parentOf.get(r.id) === run.id)) add(child, depth + 1);
+  };
+  for (const run of tops) add(run, 0);
+  const helpers = shown.length - tops.length;
+  return say([`${tops.length} ${tops.length === 1 ? "task" : "tasks"} working${helpers ? `, with ${helpers} ${helpers === 1 ? "helper" : "helpers"}` : ""}:`, ...lines,
+    call.surface === "chat" ? "Send /stop to stop this chat's task." : "Send /stop <task> to stop one."].join("\n"));
+}
+/** `/title <name>` (CHAT-193): names the conversation this is typed in, as renaming it in the window does. */
+function title(call: Call): Reply {
+  const name = call.argument.replace(/\s+/g, " ").trim();
+  if (!name) return say("Say the name: /title <name>.");
+  if (!call.sessionId) return say(needSession);
+  const { store, owner } = call.host.runtime;
+  const saved = store.conversations.rename(owner, call.sessionId, { title: name.slice(0, 120) });
+  return say(`This conversation is called ${saved.title} now.`);
+}
+
 /** Every command a surface may hand to this file, by name. */
 export const HANDLERS: Record<string, Handler> = {
   help, model, think, preset, memory, skills,
@@ -292,6 +335,11 @@ export const HANDLERS: Record<string, Handler> = {
   ...REACH_HANDLERS, // r17-i: /platform
   ...BOARD_HANDLERS, // r17-h: /queue, /busy, /focus, /installs
   learn: learnCommand, // mac7/learn
+  // the chat-parity build (Hermes Agent and OpenClaw)
+  sethome: (call) => say(homeLine(call.host.runtime.store, call.host.runtime.owner, call.argument)), // CHAT-190; a chat's own is in chat-commands.ts
+  agents, // CHAT-196
+  title, // CHAT-193
+  commands: (call) => say(helpText(call.surface, call.mode, true), { do: "help" }), // CHAT-204
   steer, skill, // CHAT-192, CHAT-205
   // CHAT-187: the terminal's own /team, /find and /channels, in the window too (the terminal keeps its own runners).
   team: go("team"), channels: go("customize channels"),

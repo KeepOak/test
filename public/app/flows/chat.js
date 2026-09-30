@@ -22,14 +22,14 @@ let pin = "";
 const VOUCHED = ["telegram", "discord", "slack"];
 const FAMILY = { core: "window.flows.chw.popular", chat: "window.flows.chw.work-chat" };
 /* The steps are named in English in the code (BODIES, the checks below); these are the words each one shows. */
-const STEP_WORD = { Create: "action.create", Paste: "window.flows.chw.paste", Check: "safety.scan.run", Pair: "pair.step.pair", Save: "action.save" };
+const STEP_WORD = { Create: "action.create", Paste: "window.flows.chw.paste", Check: "safety.scan.run", Link: "window.flows.chw.link", Pair: "pair.step.pair", Save: "action.save" };
 
 const inputs = (c) => [...(c.fields ?? []).map((f) => ({ key: f.name, what: f.what, optional: f.optional, secret: false })),
   ...(c.paste ?? []).map((f) => ({ key: f.secret, what: f.what, optional: f.optional, secret: true }))];
 const filled = (c) => inputs(c).every((f) => f.optional || (vals[f.key] ?? "").trim());
 
 function stepsOf(c) {
-  return [c.create?.url || c.steps?.length || c.create?.how ? "Create" : null, inputs(c).length ? "Paste" : null, c.hasCheck || c.noCheck ? "Check" : null, c.pairing ? "Pair" : null, "Save"].filter(Boolean);
+  return [c.create?.url || c.steps?.length || c.create?.how ? "Create" : null, inputs(c).length ? "Paste" : null, c.hasCheck || c.noCheck ? "Check" : null, c.link === "bridge" ? "Link" : null, c.pairing ? "Pair" : null, "Save"].filter(Boolean);
 }
 
 function create(c) {
@@ -93,19 +93,40 @@ function save(c, w) {
     <div class="ctl"><b>${t("window.flows.chw.who-may")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.chw.who-may")}">${may}</span></span><small>${t("window.flows.chw.no-answer")}</small></div>${tg}${w?.result ? liveLine(c, w.result) : ""}${w?.connected ? manage17d(c, w.health) : ""}${c.setUpHere ? `<div class="acts"><button class="btn ghost sm" type="button" data-act="chw-remove">${t("window.flows.chw.remove", { name: esc(c.name) })}</button></div>` : ""}`; // pass 17 part D §8: the app's own page
 }
 
-const BODIES = { Create: create, Paste: paste, Check: check, Pair: pair, Save: save };
+/* The Link step for an app linked through a bridge on this computer (WhatsApp with a personal number): the code the
+   bridge makes, polled every few seconds from POST /api/channel-setup/<id>/link while this step is open. */
+function link(c, w) {
+  const l = w.link;
+  if (w.error) return `<div class="status" role="alert"><span class="sdot bad"></span><div><p>${esc(w.error)}</p></div></div>`;
+  if (l?.state === "linked") return `<div class="chw-ok12" role="status">${ic("check", "s")}<span><b>${t("window.flows.chw.link-done", { number: esc(l.name || l.number || "") })}</b></span></div>`;
+  if (l?.state === "scan") return `<div class="chw-create12"><div><p>${t("window.flows.chw.link-scan")}</p></div><div class="chw-qr12">${l.qr ? qr(l.qr, 200) : l.image ? `<img src="data:image/png;base64,${esc(l.image)}" width="200" height="200" alt="${t("window.core.qr.qr-code")}">` : ""}</div></div>`;
+  return `<div class="chw-ok12 run12"><span class="spin12"></span><span><b>${t("window.flows.chw.link-starting")}</b></span></div>`;
+}
+let linking = null;
+async function pollLink(w) {
+  clearTimeout(linking);
+  if (S.chw !== w || stepsOf(w.recipe)[w.step] !== "Link") return;
+  try { w.link = await api(`channel-setup/${encodeURIComponent(w.id)}/link`, {}); w.error = ""; }
+  catch (error) { w.error = error.message; }
+  if (S.chw !== w || stepsOf(w.recipe)[w.step] !== "Link") return;
+  draw();
+  if (w.link?.state !== "linked") linking = setTimeout(() => pollLink(w), 4000);
+}
+
+const BODIES = { Create: create, Paste: paste, Check: check, Link: link, Pair: pair, Save: save };
 
 function draw() {
   const w = S.chw, c = w?.recipe;
   if (!c) return;
   const steps = stepsOf(c), cur = steps[Math.min(w.step, steps.length - 1)];
   const dots = `<div class="chw-steps12">${steps.map((s, i) => `<span class="${i < w.step ? "done" : i === w.step ? "now" : ""}"><em>${i < w.step ? "✓" : i + 1}</em>${t(STEP_WORD[s])}</span>`).join("")}</div>`;
-  const canNext = !c.unavailableReason && (cur === "Paste" ? filled(c) : cur === "Check" ? !!w.result || (!c.hasCheck && !w.error) : cur === "Pair" ? /^\d{6}$/.test(w.code) : true);
+  const canNext = !c.unavailableReason && (cur === "Paste" ? filled(c) : cur === "Check" ? !!w.result || (!c.hasCheck && !w.error) : cur === "Link" ? w.link?.state === "linked" : cur === "Pair" ? /^\d{6}$/.test(w.code) : true);
   const back = w.step ? `<button class="btn ghost" type="button" data-act="chw-back">${t("action.back")}</button>` : `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`;
   const next = cur === "Save" ? `<button class="btn pri" type="button" data-act="chw-save">${t("action.save")}</button>` : `<button class="btn pri" type="button" data-act="chw-next" ${canNext ? "" : "disabled"}>${cur === "Pair" ? t("action.approve") : t("window.flows.chw.continue")}</button>`;
   const head = `<div class="chw-head12">${logo(c.id, c.name, 40)}<span><b>${esc(c.name)}</b><small>${t(FAMILY[c.family] ?? "window.flows.chw.more-apps")}${c.app?.name ? " · " + esc(c.app.name) : ""}</small></span></div>`;
+  const warning = c.warning ? `<div class="status" role="alert"><span class="sdot bad"></span><div><p>${esc(c.warning)}</p></div></div>` : "";
   const prerequisites = `<p class="hint">${esc(c.prerequisites ?? "")}</p>${c.unavailableReason ? `<p role="alert">${esc(c.unavailableReason)}</p>` : ""}`;
-  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${prerequisites}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
+  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${warning}${prerequisites}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
   if (cur === "Pair") setTimeout(() => $('.code12 input[value=""]')?.focus(), 30);
 }
 
@@ -160,6 +181,7 @@ async function next() {
   if (cur === "Pair" && !(await approve(w))) return;
   w.step = Math.min(w.step + 1, steps.length - 1);
   if (steps[w.step] === "Check") { w.result = null; w.error = ""; draw(); await runCheck(w); return; }
+  if (steps[w.step] === "Link") { w.link = null; w.error = ""; draw(); await pollLink(w); return; }
   draw();
 }
 

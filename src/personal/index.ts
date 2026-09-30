@@ -74,7 +74,7 @@ export class Personal {
   constructor(private readonly deps: PersonalDeps) {
     const { runtime, registry } = deps;
     const store = runtime.store, owner = runtime.owner;
-    const signIn = { store, owner, oauth: deps.oauth, secret: deps.secret };
+    const signIn = { store, owner, fetch: deps.fetch, oauth: deps.oauth, secret: deps.secret };
     this.signIns = { google: new SignIn(signIn, "google", "google"), microsoft: new SignIn(signIn, "microsoft", "microsoft"),
       spotify: new SignIn(signIn, "spotify", "spotify") };
     this.google = new GoogleConnector(store, owner, deps.fetch, this.signIns.google);

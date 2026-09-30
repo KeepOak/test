@@ -209,6 +209,8 @@ export interface UpdateStatus {
    * the program running now is suspended when it may be, and the next step does not start. Null while it goes on.
    */
   paused: PauseReason | null;
+  /** The owner asked this exact release to wait for tasks in the current desktop session. */
+  waitingForTasks?: boolean;
 }
 export type ProvenanceOutcome = "checked" | "not-checked" | "none";
 /**
@@ -287,6 +289,7 @@ export class Updater {
   private stages: UpdateStage[] | null = null;
   private target: UpdateTarget | null = null;
   private automatic = false;
+  private waitingForTasks = false;
   private paused: PauseReason | null = null;
   private resumed: (() => void)[] = [];
   private hosted: HostedBuild | null = null;
@@ -569,6 +572,10 @@ export class Updater {
   }
   /** Gives back a claim `install({ hold: true })` kept, when the hand-over it was kept for did not start. */
   release(): void { this.busy = false; }
+  waitForTasks(waiting: boolean, words: string): UpdateStatus {
+    this.waitingForTasks = waiting;
+    return this.set("available", words, null, this.status.release);
+  }
   /**
    * The owner is typing, or a task is working (null: neither). An install under way waits for them: the build's own
    * process holds what it runs, and the next step (the check, the safety copy, the swap) does not start until this is null.
@@ -1098,7 +1105,7 @@ export class Updater {
   private fresh(phase: UpdatePhase, message: string): UpdateStatus {
     return { phase, message, installed: this.installed, outcome: null, progress: null, release: null, bytes: null, updatedAt: new Date().toISOString(),
       stages: this.stages?.map((stage) => ({ ...stage })) ?? null, target: this.target ? { ...this.target } : null, failure: null,
-      automatic: this.stages ? this.automatic : false, paused: this.stages ? this.paused : null };
+      automatic: this.stages ? this.automatic : false, paused: this.stages ? this.paused : null, waitingForTasks: this.waitingForTasks };
   }
   /** Marks the hand-over as running once the script has been launched; the app is about to close and restart. */
   applying(): UpdateStatus {
