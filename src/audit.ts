@@ -114,6 +114,7 @@ const actionLabels: Record<AuditAction, string> = {
   "secret.used": "A saved password or key was handed to a command",
   "policy.changed": "The approval settings were changed",
   "channel.paired": "A messaging account was connected or disconnected",
+  "channel.message": "One of its own earlier chat messages was edited or deleted",
   "data.exported": "Something was exported out of the app",
   "profile.switched": "The active project was switched",
   "practice.switched": "The practice workspace was switched on or off",
