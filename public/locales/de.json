@@ -1295,6 +1295,7 @@
   "commands.improve": "den Eigentümer um eine Änderung an Branch selbst bitten; nur der Eigentümer antwortet, in der Branch-App",
   "commands.inbox": "was dich braucht, was fertig ist, und der Verlauf",
   "commands.init": "sich in diesem Projekt umsehen und seine Anweisungsdatei schreiben (AGENTS.md)",
+  "commands.insights": "die letzten 30 Tage: Tokens abgeschlossener Aufgaben, geschätzte Kosten, Modelle und Quellen",
   "commands.installs": "Anfragen für neue Pakete und Werkzeugserver; nur der Eigentümer antwortet, und nichts installiert sich selbst",
   "commands.keys": "jede Taste, auf die die Ansicht reagiert",
   "commands.learn": "eine Karte von etwas und ein geführter Rundgang, in einfachen Worten",
