@@ -124,7 +124,7 @@ export class FacebookPages {
     } catch { const failed = receipt(attempted ? "write outcome unknown; approval consumed" : "publish not attempted; approval consumed"); this.saveReceipt(failed);
       throw new Error(`${failed.status}. Page ${draft.pageId}, reviewed text SHA256 ${draft.sha256}${postId ? `, post ID ${postId}` : ""}. Inspect Meta before retrying; no automatic replay.`); }
   }
-  private saveReceipt(receipt: unknown) { this.host.store.save("governance", this.host.owner, "social-facebook-last-publish", receipt); }
+  private saveReceipt(receipt: Record<string, unknown>) { this.host.store.save("governance", this.host.owner, "social-facebook-last-publish", receipt); }
 }
 
 export function registerFacebookPages(registry: ToolRegistry, store: Store, pages: FacebookPages, readAllowed: (context: ToolContext) => boolean) {

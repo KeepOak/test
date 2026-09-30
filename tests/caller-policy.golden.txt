@@ -916,6 +916,18 @@ owner GET /api/personal/brief/play | here=ok remote=ok phone=ok legacy=ok person
 owner POST /api/personal/brief/play | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/chat-files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/chat-files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/facebook | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/facebook | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/facebook/revoke | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/facebook/revoke | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/facebook/review | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/facebook/review | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/facebook/posts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/facebook/posts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/facebook/compose | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/facebook/compose | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/facebook/publish | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/facebook/publish | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/chat-files/send | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/chat-files/send | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/google/events | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -3174,6 +3186,18 @@ owner+lockdown GET /api/personal/brief/play | here=ok remote=ok phone=ok legacy=
 owner+lockdown POST /api/personal/brief/play | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/chat-files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/chat-files | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/facebook | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/facebook | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/facebook/revoke | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/facebook/revoke | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/facebook/review | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/facebook/review | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/facebook/posts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/facebook/posts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/facebook/compose | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/facebook/compose | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/facebook/publish | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/facebook/publish | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/chat-files/send | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/chat-files/send | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/google/events | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -5432,6 +5456,18 @@ household GET /api/personal/brief/play | here=400/f6e21c remote=400/f6e21c read=
 household POST /api/personal/brief/play | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/personal/chat-files | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/chat-files | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/facebook | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/facebook | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/facebook/revoke | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/facebook/revoke | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/facebook/review | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/facebook/review | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/facebook/posts | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/facebook/posts | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/facebook/compose | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/facebook/compose | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/facebook/publish | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/facebook/publish | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/chat-files/send | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/chat-files/send | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/personal/google/events | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -7690,6 +7726,18 @@ household+lockdown GET /api/personal/brief/play | here=400/f6e21c remote=400/f6e
 household+lockdown POST /api/personal/brief/play | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/chat-files | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/chat-files | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/facebook | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/facebook | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/facebook/revoke | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/facebook/revoke | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/facebook/review | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/facebook/review | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/facebook/posts | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/facebook/posts | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/facebook/compose | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/facebook/compose | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/facebook/publish | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/facebook/publish | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/chat-files/send | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/chat-files/send | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/google/events | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -9948,6 +9996,18 @@ applock GET /api/personal/brief/play | here=423/a8f863
 applock POST /api/personal/brief/play | here=423/a8f863
 applock GET /api/personal/chat-files | here=423/a8f863
 applock POST /api/personal/chat-files | here=423/a8f863
+applock GET /api/personal/facebook | here=423/a8f863
+applock POST /api/personal/facebook | here=423/a8f863
+applock GET /api/personal/facebook/revoke | here=423/a8f863
+applock POST /api/personal/facebook/revoke | here=423/a8f863
+applock GET /api/personal/facebook/review | here=423/a8f863
+applock POST /api/personal/facebook/review | here=423/a8f863
+applock GET /api/personal/facebook/posts | here=423/a8f863
+applock POST /api/personal/facebook/posts | here=423/a8f863
+applock GET /api/personal/facebook/compose | here=423/a8f863
+applock POST /api/personal/facebook/compose | here=423/a8f863
+applock GET /api/personal/facebook/publish | here=423/a8f863
+applock POST /api/personal/facebook/publish | here=423/a8f863
 applock GET /api/personal/chat-files/send | here=423/a8f863
 applock POST /api/personal/chat-files/send | here=423/a8f863
 applock GET /api/personal/google/events | here=423/a8f863
