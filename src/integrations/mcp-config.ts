@@ -15,6 +15,8 @@ const stdioShape = {
 };
 const httpShape = {
   transport: z.literal('http'), url: z.string().url(),
+  /** Explicit preview; SDK 1.x remains the default legacy transport. */
+  protocol: z.enum(['legacy', 'stateless-preview', 'auto']).optional(),
   bearerEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
 };
 /** Just how to reach a server, without the allowlist a permanently configured one also needs. */
