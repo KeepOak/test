@@ -27,6 +27,7 @@ import { nativeFormat, pill17d, stateOf } from "../../flows/chatapps17d.js";
 import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.js";
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
+import { personalMainCard, initPersonalMain } from '../personal-main.js';
 
 const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null, watchdogLog: [] };
 const STEPS = "Show steps in chats";
@@ -67,7 +68,7 @@ export function draw() {
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>` + stepsCard(A, lv);
   if (E.profiles?.isOwner !== false && A.permissions)
     html += `<div class="rows">${sw15(OWN_FULL, OWN_FULL_SUB, A.permissions.ownerChats !== false)}</div>`;
-  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard();
+  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard() + personalMainCard();
   // Replies in each connected app: quoting your message, and the reaction on it while Branch works.
   const kinds = [...new Set(on.map(kindOf))];
   const quotes = (id) => on.some((c) => kindOf(c) === id && c.replyQuotes === true); // an app whose replies can quote
@@ -140,6 +141,7 @@ async function saveSteps(on) {
 }
 
 export function init() {
+  initPersonalMain(loadApps);
   on("ca-watchdog-log", showWatchdogLog);
   initFormatting();
   initReplyStyle();

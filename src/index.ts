@@ -1532,6 +1532,10 @@ ${result.output || "(it said nothing)"}`;
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
   channels.defaultTrunk = () => trunks.mode("trunks") === "off" ? null : trunks.defaultTrunk()?.id ?? null;
+  channels.personalMainTarget = () => {
+    const trunk = trunks.mode('trunks') === 'off' ? null : trunks.ownerDefault();
+    return trunk ? { sessionId: trunk.chatSessionId, trunkId: trunk.id } : null;
+  };
   channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
   trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
   // The migration, at every start (idempotent): conversations with no Trunk are put with one, chats' threads linked.
