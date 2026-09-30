@@ -221,6 +221,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { ChannelRouteError } from "./channels/routes.js";
 import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
 import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
@@ -3173,6 +3174,13 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     return app.channels.approve(owner, code, { firstOwner: firstOwner === true });
   }
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
+  if (request.method === "GET" && path === "/api/channels/routes") return app.channels.routing();
+  if (request.method === "POST" && path === "/api/channels/routes") {
+    if (throughDoor(request)) throw new HttpError(403, "Choose who answers in Branch's window on this computer.");
+    if (app.sessionLock.locked() || lockdownActive(app.store, owner)) throw new HttpError(423, "Unlock Branch and leave Lockdown before changing who answers.");
+    try { return { route: app.channels.routeSettings(await readBody(request)) }; }
+    catch (error) { if (error instanceof ChannelRouteError) throw new HttpError(400, error.message); throw error; }
+  }
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
   // Settings › Chat apps › Show steps in chats: detail, grouping, line length, commands, long lists, tidying up, apps
