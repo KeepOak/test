@@ -47,6 +47,7 @@ import { work, loadWork } from "./terminal.js";
 import { t } from "../../i18n.js";
 import { pickChip, computersOf, computerNamed, pickFor } from "../flows/computers17.js"; // pass 17 part D §9: the conversation's computer menu
 import { liveOf, liveError, liveLoading, watchLive } from "./stage-live.js";
+import { videoButtons, observeVideo, startVideo } from "./stage-video.js";
 import { hasOwnerBrowser, ownerBrowserHTML, ownerBrowserPip, ownerBrowserButtons, ownerBrowserHolder, watchOwnerBrowser,
   paintOwnerBrowser, initOwnerBrowser } from "./stage-browser-control.js";
 import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, setDriving } from "./stage-screen.js";
@@ -229,7 +230,7 @@ function controls(kind) {
     : browserTake(run);
   const pause = run?.status === "running" ? `<button class="btn sm" type="button" data-act="lw-pause" data-id="${esc(run.id)}">${t("goal.action.pause")}</button>` : "";
   const stop = run && STOPPABLE.has(run.status) ? `<button class="btn ghost sm" type="button" data-act="stage-stop" data-id="${esc(run.id)}">${t("dashboard.stop")}</button>` : "";
-  return take + pause + stop;
+  return take + pause + stop + (kind === "browser" ? videoButtons(live()?.browser) : "");
 }
 
 function top(kind, steps) {
@@ -386,6 +387,7 @@ export function computerCard(messages) {
 const cardKey = (v) => JSON.stringify([v?.runId, v?.status, v?.doing, v?.browser?.live, !!v?.browser?.frame, v?.browser?.url, v?.browser?.title]);
 /* A new answer: the conversation is drawn again when its card changes; otherwise only the view (a frame is painted in). */
 function onLive(before, now) {
+  void observeVideo(now);
   if (cardKey(before) !== cardKey(now)) render(); else drawStage();
 }
 function fitCards() {
@@ -552,6 +554,7 @@ async function watchRun(el) {
 }
 
 export function initStage() {
+  on("stage-video-start", () => startVideo(live()?.browser));
   markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid", "sw:st-addr"]);
   initOwnerBrowser();
   // A computer's tab (or its cell in All screens) picks it for this conversation; All screens is the view's own layout.
