@@ -275,7 +275,6 @@ class WarmCodex {
   }
   /** One turn: a new thread on Branch's model and folder, the conversation as its request, the words as they come. */
   async turn(request: CompletionRequest, thread: CodexThreadOptions, timeoutMs: number, started: number): Promise<Completion> {
-    if (request.signal.aborted) this.stop();
     request.signal.throwIfAborted();
     const key = JSON.stringify([thread.model ?? "", thread.cwd ?? ""]);
     this.active++;
@@ -295,20 +294,25 @@ class WarmCodex {
       this.rest();
     }
   }
-  /** Setup has no turn id to interrupt: stop the unresponsive server and discard all its pending RPCs. */
+  /**
+   * Setup has no turn id to interrupt. A server that does not answer in time is stopped with all its pending RPCs; a
+   * stopped request or a refused thread only ends this turn, since other conversations may be using the same server.
+   */
   private startThread(request: CompletionRequest, thread: CodexThreadOptions, timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       let settled = false;
-      const finish = (error: Error | null, id?: string): void => {
+      const finish = (error: Error | null, id?: string, unresponsive = false): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
         request.signal.removeEventListener("abort", abort);
-        if (error) { this.stop(); reject(error); }
+        if (unresponsive) this.stop();
+        if (error) reject(error);
         else resolve(id!);
       };
       const abort = (): void => finish(new Error("The request was stopped."));
-      const timer = setTimeout(() => finish(new Error("Codex took too long to start a conversation and was stopped. Ask again, or pick another model.")), timeoutMs);
+      const slow = new Error("Codex took too long to start a conversation and was stopped. Ask again, or pick another model.");
+      const timer = setTimeout(() => finish(slow, undefined, true), timeoutMs);
       timer.unref?.();
       request.signal.addEventListener("abort", abort, { once: true });
       if (request.signal.aborted) { abort(); return; }
