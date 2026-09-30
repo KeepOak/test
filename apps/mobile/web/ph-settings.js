@@ -23,7 +23,7 @@ import { THEMES } from "/theme-catalogue.js";
 import { applyTheme } from "/theme.js";
 import { phone, platform, plugin } from "/phone-common.js";
 import { APP_OFFERS } from "/phone-node.js";
-import { lendState } from "/ph-lend.js";
+import { lendState, startLending } from "/ph-lend.js";
 import { drawPanel, loadPanel } from "/phone-connect.js";
 
 const S = { lend: null, version: "" };
@@ -52,6 +52,7 @@ export function drawSettings() {
 }
 export async function loadSettings() {
   S.lend = await plugin.deviceStatus?.().catch(() => null) ?? null;
+  S.notifications = platform() === "ios" ? null : await plugin.notificationAccess?.().catch(() => null) ?? null;
   S.version = S.version || (await fetch("/app-version.json").then((r) => r.json()).then((x) => String(x.version ?? "")).catch(() => ""));
   await Promise.all([loadState(), loadReach(), loadGateway(), loadAccounts(), loadLook(), loadChannels(), loadLocal(), loadLockdown(), loadProfiles()]);
 }
@@ -89,15 +90,19 @@ function drawLocal() {
 }
 /* PH-03: what this phone does when lent, in the engine's own words for each ability (devices.cap.*). */
 const ABILITY = { camera: ["devices.cap.camera", "Take a photo with the camera"], listen: ["devices.cap.listen", "Listen for a few seconds"],
-  speak: ["devices.cap.speak", "Say something out loud"] };
+  speak: ["devices.cap.speak", "Say something out loud"], location: ["devices.cap.location", "Say where this phone is"],
+  notify: ["devices.cap.notify", "Show a notification"], "open-url": ["devices.cap.open-url", "Open an HTTPS page"],
+  "notification-read": ["phone.notification.read", "Read selected app notifications"], "notification-action": ["phone.notification.action", "Open, dismiss or reply to one notification"] };
 function drawLend() {
   const state = lendState(), never = S.lend?.never ?? [];
   const offers = (APP_OFFERS[platform() === "ios" ? "ios" : "android"] ?? []).filter((c) => !never.includes(c));
   // Each ability's switch as the computer set it, read from the live connection; while not connected nothing is claimed.
   const value = (c) => (state.connected ? (state.enabled.includes(c) ? w("accounts.switch.on", "On") : w("accounts.switch.off", "Off")) : "");
   const rows = offers.map((c) => `<div class="p-li"><span class="grow"><b>${w(...ABILITY[c])}</b></span><span class="p-val">${value(c)}</span></div>`).join("");
-  return nav(say("phone8.lend.title", "Lend this phone"), say("nav.settings", "Settings")) + `<div class="p-scroll"><p class="p-note8">${w("phone.device.pairedWith", "Lending to {address}", { address: S.lend?.origin ?? "" })}</p>${state.error ? `<p class="p-note8 subtle bad">${esc(state.error)}</p>` : ""}
-    <div class="p-list">${rows}</div><div class="p-list"><button type="button" class="p-li p-bad" data-act="lend-stop"><span class="grow"><b>${w("phone.device.forget", "Stop lending this phone")}</b></span></button></div></div>`;
+  const refusals = ["camera", "listen", "location", "notify", "open-url", ...(platform() === "ios" ? [] : ["notification-read", "notification-action"])].map(c => `<button type="button" class="p-li" data-act="phone-never" data-v="${c}" aria-pressed="${never.includes(c)}"><span class="grow">Never allow: ${w(...ABILITY[c])}</span>${never.includes(c) ? "✓" : ""}</button>`).join("");
+  const access = platform() === "ios" ? "<p>iOS does not offer other apps’ notifications.</p>" : `<section><p>Android notification access can expose private messages and verification codes. Branch reads only one named app on a confirmed request while this app is open. Reading and actions require separate computer grants. No notification is tapped automatically.</p><p>Phone opt-in: ${S.notifications?.enabled ? "On" : "Off"}; Android access: ${S.notifications?.access ? "Granted" : "Not granted"}</p><button type="button" data-act="phone-notification-access" data-v="on">Enable phone opt-in and open Android access settings</button><button type="button" data-act="phone-notification-access" data-v="off">Stop notification access in Branch</button><button type="button" data-act="phone-notification-refresh">Refresh access status</button></section>`;
+  return nav(say("phone8.lend.title", "Lend this phone"), say("nav.settings", "Settings")) + `<div class="p-scroll"><p class="p-note8">${w("phone.device.pairedWith", "Lending to {address}", { address: S.lend?.origin ?? "" })}</p>${state.error ? `<p class="p-note8 subtle bad">${esc(state.error)}</p>` : ""}${access}
+    <p class="p-note8">Camera, location, notifications and page opening also need a separate, expiring local-owner device/profile/action grant on the computer. Screen viewing never grants these actions. Lending stops when this app is hidden. Notifications need the phone’s notification switch and system permission.</p><div class="p-list">${rows}</div><p class="p-note8">These refusals only remove access. Clearing one does not create an action grant.</p><div class="p-list">${refusals}</div><div class="p-list"><button type="button" class="p-li p-bad" data-act="lend-stop"><span class="grow"><b>${w("phone.device.forget", "Stop lending this phone")}</b></span></button></div></div>`;
 }
 export const SETTINGS_PAGES = { themes: drawThemes, accounts: drawAccounts, notif: drawNotif, chatapps: drawChatApps, chatapp: drawChatApp, localm: drawLocal, lend: drawLend };
 export const SETTINGS_LOADS = { themes: loadLook, accounts: loadAccounts, chatapps: loadChannels, chatapp: () => loadPanel(P.chApp), localm: () => Promise.all([loadLocal(), loadReach()]), lend: loadSettings };
@@ -129,6 +134,20 @@ async function stopLending() {
   });
 }
 export function initSettings(onForgotten) {
+  on("phone-notification-refresh", () => attempt(async () => { await loadSettings(); draw(); }));
+  on("phone-notification-access", el => attempt(async () => {
+    await plugin.notificationAccess({ allow: el.dataset.v === "on", settings: el.dataset.v === "on" });
+    await loadSettings(); draw();
+  }));
+  on("phone-never", el => attempt(async () => {
+    const action = el.dataset.v;
+    if (!["camera", "listen", "location", "notify", "open-url", "notification-read", "notification-action"].includes(action)) return;
+    const never = S.lend?.never ?? [];
+    await plugin.deviceNever({ never: never.includes(action) ? never.filter(c => c !== action) : [...never, action] });
+    await loadSettings();
+    await startLending(() => draw());
+    draw();
+  }));
   on("ph-chf", (el) => { P.chF = el.dataset.v; draw(); });
   on("ph-ch", (el) => { P.chApp = el.dataset.v; go("chatapp"); });
   // The look and language are saved in the engine and worn by this page; neither native side has a look to set.

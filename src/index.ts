@@ -2092,6 +2092,7 @@ ${result.output || "(it said nothing)"}`;
   channelHostRef.current = branch.channelHost;
   channels.ownerDmHost = () => commandHost(runtime, branch); // CHAT-185: the owner's commands from their own chat
   runtime.ownerChatRun = (runId) => channels.ownerDmRun(runId); // owner-dm-signin: the owner's own verified DM may use their sign-in
+  devices.ownerChatRun = (runId) => channels.companionRunAllowed(runId);
   // Pictures of a chat task's own browser window, as the window's live view takes them: password and code boxes covered,
   // never a borrowed browser, never while Branch's own sign-in handling is showing.
   channels.browserPicture = async (runId) => {
