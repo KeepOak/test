@@ -338,3 +338,30 @@ test("models-ui: a helper a Trunk starts answers with the Trunk's own pick, neve
   const unpicked = { ...context, trunkKeys: { copyFromOwner: false, accounts: {} } };
   await assert.rejects(f.app.runtime.delegate("Read proof.txt", unpicked, ["files.read"], "", { model: pool }), /no account picked/);
 });
+test("models-ui: a Trunk's helper may also use the accounts the Trunk goes on to (keys.next), as its own calls do", async (t) => {
+  const f = await fixture(t, { mode: "on", runtime: true });
+  await writeFile(join(f.root, "workspace", "proof.txt"), "helper proof\n");
+  f.app.trunks.setMode("trunks", { mode: "on" });
+  const homes = () => f.launches.map((one) => one.env.CLAUDE_CONFIG_DIR);
+  /** A Trunk that does not copy the owner's accounts, with these keys, and the context its helpers start from. */
+  const trunkWith = async (name, keys) => {
+    const trunk = f.app.trunks.create({ name });
+    f.app.trunks.edit(trunk.id, { permissions: ["files.read"], keys: { copyFromOwner: false, ...keys } });
+    await f.app.trunks.introduced();
+    const parent = await f.app.runtime.run({ prompt: "Read proof.txt", permissions: ["files.read"], sessionId: trunk.chatSessionId });
+    assert.equal(parent.status, "completed", parent.output);
+    saveSessionChoice(f.app.store, f.app.runtime.owner, trunk.chatSessionId, pool, null);
+    return { ...f.app.runtime.context({ runId: parent.id }), trunk: trunk.id, trunkKeys: { copyFromOwner: false, ...keys } };
+  };
+  const ed = await trunkWith("Ed", { accounts: { [pool]: second }, next: { [pool]: [third] } });
+  f.launches.length = 0;
+  const next = await f.app.runtime.delegate("Read proof.txt", ed, ["files.read"], "", { model: pool, accountRef: { pool, account: third } });
+  assert.equal(next.status, "completed", next.output);
+  assert.ok(f.launches.length && homes().every((home) => home === f.service.homeOf(pool, third)), "the account it goes on to");
+  // No pick of its own, only an account to go on to: that one answers, not a refusal (trunkOrder, as in pool-provider.ts).
+  const flo = await trunkWith("Flo", { accounts: {}, next: { [pool]: [third] } });
+  f.launches.length = 0;
+  const first = await f.app.runtime.delegate("Read proof.txt", flo, ["files.read"], "", { model: pool });
+  assert.equal(first.status, "completed", first.output);
+  assert.ok(f.launches.length && homes().every((home) => home === f.service.homeOf(pool, third)), "the first account it goes on to");
+});
