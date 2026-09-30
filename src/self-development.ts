@@ -1,5 +1,5 @@
-import { lstat, mkdir, mkdtemp, readdir, rename, rm, rmdir } from "node:fs/promises";
-import { join } from "node:path";
+import { lstat, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
 import { githubRepositoryOf } from "./pr-hook.js";
@@ -69,47 +69,67 @@ function sourceChangeFolder(workspace: string, name: string): string {
   return join(workspace, sourceFolder, ".branch-worktrees", `self-${name}`);
 }
 
-/** Exclusive filesystem reservation shared by every preparation in this workspace, including other processes.
- * Never steal an existing lock: it may belong to a live preparation even after a long clone. */
+/** Local serialization has no on-disk reservation to survive a crash. Across processes, exclusive
+ * publication elects the clone; Git's own ref/config/worktree locks reject conflicting mutations. */
+const sourcePreparations = new Map<string, Promise<void>>();
 async function withSourcePreparation<T>(workspace: string, signal: AbortSignal, work: () => Promise<T>): Promise<T> {
-  signal.throwIfAborted();
-  const lock = join(workspace, `${sourceFolder}.prepare-lock`);
-  try { await mkdir(lock); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST")
-      throw new Error(`Another source preparation holds ${lock}, or an interrupted preparation left it behind. Nothing was changed. Retry after that preparation finishes; a leftover lock needs recovery after confirming no preparation is active.`);
-    throw error;
+  const key = await realpath(workspace);
+  const previous = sourcePreparations.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const finished = new Promise<void>((done) => { release = done; });
+  sourcePreparations.set(key, finished);
+  try {
+    await previous;
+    signal.throwIfAborted();
+    return await work();
+  } finally {
+    release();
+    if (sourcePreparations.get(key) === finished) sourcePreparations.delete(key);
   }
-  try { signal.throwIfAborted(); return await work(); }
-  finally { await rmdir(lock); } // Only our empty reservation, never recursive cleanup or another preparation's files.
 }
 
-/** Clone only in a directory this attempt created; reserve the destination without replacing any existing path. */
+/** Publish a complete attempt-owned clone with an exclusive directory link. Neither a winner nor
+ * a pre-existing checkout is replaced. The published clone stays at its original physical path. */
 async function cloneSource(deps: SelfDevelopmentDeps, repository: { repo: string; url: URL }, source: string, signal: AbortSignal): Promise<void> {
   const staging = await mkdtemp(join(deps.workspace, `${sourceFolder}.preparing-`));
+  let published = false;
   try {
     await run(deps, staging, ["clone", "--origin", "origin", repository.url.href, sourceFolder], signal, 1_800_000);
     signal.throwIfAborted();
     const clone = join(staging, sourceFolder);
-    // mkdir is exclusive even if a process not using our lock creates source between inspection and promotion.
-    // Do not rename a directory over source: POSIX rename can replace somebody else's empty directory.
-    await mkdir(source);
-    for (const name of await readdir(clone)) {
-      signal.throwIfAborted();
-      await rename(join(clone, name), join(source, name));
+    await exactSourceRoot(deps, clone, signal);
+    try {
+      await symlink(resolve(clone), source, process.platform === "win32" ? "junction" : "dir");
+      published = true;
+    } catch (error) {
+      // A competing winner (or any existing path) is inspected by ensureSource, never removed.
+      if (!(await present(source)))
+        throw new Error(`Could not publish ${sourceFolder}: this platform refused its directory link (${(error as NodeJS.ErrnoException).code ?? "unknown error"}). Nothing was installed or replaced. Allow directory links and retry, or have the owner provide a complete checkout at ${source}.`);
     }
-    // A failed promotion leaves its destination intact for recovery, rather than deleting a checkout.
-  } finally { await rm(staging, { recursive: true, force: true, maxRetries: 5 }); }
+  } finally {
+    // A crash can leave an unused attempt directory, but never a lock or a half-published source.
+    if (!published) await rm(staging, { recursive: true, force: true, maxRetries: 5 });
+  }
+}
+
+async function exactSourceRoot(deps: SelfDevelopmentDeps, source: string, signal: AbortSignal): Promise<void> {
+  const physical = await realpath(source);
+  const inside = relative(await realpath(deps.workspace), physical);
+  if (inside === ".." || inside.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`) || isAbsolute(inside))
+    throw new Error(`${source} points outside the workspace; it was preserved and will not be used for source preparation.`);
+  const top = await run(deps, source, ["rev-parse", "--show-toplevel"], signal);
+  if (!top || await realpath(resolve(top)) !== await realpath(source))
+    throw new Error(`${source} is not the exact root of its own Git checkout; it was preserved.`);
 }
 
 async function ensureSource(deps: SelfDevelopmentDeps, repository: { repo: string; url: URL }, signal: AbortSignal): Promise<string> {
   const source = join(deps.workspace, sourceFolder);
   const exists = deps.exists ?? present;
   await deps.policy.assertAllowed(repository.url, "Branch Agent source repository");
-  if (await exists(source)) {
-    if (await emptyCheckout(deps, source, signal))
-      throw new Error(`The existing ${sourceFolder} has no commit and was preserved. Recover or move that incomplete checkout before preparing a source change again.`);
-  } else await cloneSource(deps, repository, source, signal);
+  if (!(await exists(source))) await cloneSource(deps, repository, source, signal);
+  await exactSourceRoot(deps, source, signal);
+  if (await emptyCheckout(deps, source, signal))
+    throw new Error(`The existing ${sourceFolder} has no commit and was preserved. The owner must recover or move that incomplete checkout before retrying; preparing a change never removes it.`);
   const address = await run(deps, source, ["remote", "get-url", "origin"], signal);
   const origin = repositoryAddress(address);
   if (origin.repo.toLowerCase() !== repository.repo.toLowerCase())
