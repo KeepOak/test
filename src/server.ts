@@ -1599,8 +1599,13 @@ async function api(
   if (request.method === "GET" && path === "/api/artifacts") {
     const type = new URL(request.url ?? "/", "http://local").searchParams.get("type") ?? "";
     // SCREEN-162: the same rule as the file route, so the gallery lists only files this profile can open.
-    const scope = scopeWhileUnlocked(app);
-    const kept = (await app.artifacts.list()).filter((entry) => !!scope && ownArtifact(app, scope, entry.runId));
+    const requestingScope = scopeWhileUnlocked(app);
+    const all = await app.artifacts.list();
+    // Recheck that the profile scope captured at the start is still current and AppLock is not on.
+    // This matches the pattern in the /api/artifacts/file route: if scope changed during the await, refuse.
+    if (!requestingScope || scopeWhileUnlocked(app) !== requestingScope)
+      return { artifacts: [] };
+    const kept = all.filter((entry) => ownArtifact(app, requestingScope, entry.runId));
     return { artifacts: type ? kept.filter((entry) => entry.mediaType.startsWith(`${type}/`)) : kept };
   }
   // Batch 26 (wave 8): what Windows itself allows, with the page that turns each one on.
