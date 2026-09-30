@@ -1,5 +1,13 @@
 # Third-party notices
 
+### Public MCP registry discovery
+
+`src/mcp-public-registry.ts` adapts the fetch-and-sanitise discovery flow from Cline's
+`apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts` (Copyright 2026 Cline Bot Inc.,
+Apache-2.0; https://github.com/cline/cline). Branch replaces its protobuf catalog with the official
+registry response schema, checks the owner's network policy, caps response bytes, and offers no
+automatic installation. The Apache-2.0 license text is reproduced in this document.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
