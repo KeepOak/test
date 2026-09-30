@@ -106,6 +106,8 @@ export interface ChannelAdapter {
   readonly kind: string;
   /** Longest single message this channel accepts; the ledger splits replies to fit. */
   readonly maxTextLength?: number;
+  /** Create a private topic only for a vouched live owner-DM command; return its separate chat address. */
+  createDirectTopic?(chatId: string, name: string): Promise<string>;
   /** A transport may reserve space for literal-text escaping in its message limit. */
   configureFormatting?(mode: () => "native" | "plain"): void;
   /**
@@ -1160,6 +1162,15 @@ export class ChannelRouter {
     const work = () => runChatCommand(command, {
       runtime: this.runtime, channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
+      ownerDm: ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message),
+      topicRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "topic", command.argument),
+      ...(this.adapters.get(channel)?.adapter.kind === "telegram" && this.adapters.get(channel)?.adapter.createDirectTopic ? {
+        createTopic: async (name: string) => {
+          const checked = await this.outboundGuard(name);
+          if (checked.blocked) throw new Error("The topic name was held by your outgoing-message rules.");
+          return this.adapters.get(channel)!.adapter.createDirectTopic!(chatId, checked.text);
+        },
+      } : {}),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
       dropWaiting: () => {
         if (!turn || turn.runId) return false;
