@@ -46,12 +46,18 @@ async function firstRun(page) {
   const opened = await page.locator(".ob9").waitFor({ state: "visible", timeout: 8000 }).then(() => true, () => false);
   check(opened && await page.evaluate(() => navigator.webdriver) === true, "17 setup opens with navigator.webdriver set");
   check((await api("deployment/suggestion")).bar === null && await page.locator(".recbar").count() === 0, "16 before first run: no bar (GET /api/deployment/suggestion bar null)");
-  await page.locator('.ob9 [data-act="ob-close"]').click();
+  await page.keyboard.press("Escape"); // setup has no close button now: Escape leaves any step (Skip shows only after Welcome)
+  await page.locator(".ob9").waitFor({ state: "hidden", timeout: 10000 });
+  // The updates bar is offered only while "update by itself" is off (src/suggestions.ts); it ships on (install), so it
+  // is switched off here, as an owner who turned it off would have it.
+  await api("comfort", { card: "notify", values: { autoUpdate: "off" } });
   await api("onboarding", { done: true });
   const bar = (await api("deployment/suggestion")).bar;
   await api("run", { prompt: "hello" }); // any engine event makes the window read its state again
+  // The bar lives in Inbox and Overview now (places/inbox.js, overview.js recBar), not above the message box.
+  await page.locator('#side [data-act="view"][data-v="inbox"]').first().click();
   const shown = await page.locator(".recbar").first().waitFor({ state: "visible", timeout: 15000 }).then(() => true, () => false);
-  check(bar === "updates" && shown && /up to date/.test(await page.locator(".recbar").first().innerText()), `16 after first run the bar follows without a reload (engine bar: ${bar})`);
+  check(bar === "updates" && shown && /up to date/.test(await page.locator(".recbar").first().innerText()), `16 after first run the bar follows in Inbox without a reload (engine bar: ${bar})`);
 }
 
 /* 13: the chart card, Open larger, and Save to Library kept beside the task and listed in Made for you. */
@@ -60,7 +66,11 @@ async function chart(page, seed) {
   const card = page.locator("#conversation .card.art").first();
   await card.waitFor({ timeout: 10000 });
   check(await card.locator("svg rect").count() === 3 && /Cups by day/.test(await card.locator(".card-h b").innerText()), "13 a ```chart block is the chart card: three bars and its title");
-  check(await card.locator('[data-act="toast"]').filter({ hasText: "Copy code" }).getAttribute("aria-disabled") === "true", "13 Copy code stays greyed");
+  // Copy code is live: it puts the block's own code on the clipboard (chat/chart.js copyCode).
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+  await card.locator('[data-act="art-copy"]').click();
+  const copied = await until("the code copied", async () => { const text = await page.evaluate(() => navigator.clipboard.readText()).catch(() => ""); return /"title":"Cups by day"/.test(text) ? text : null; });
+  check(!!copied, "13 Copy code puts the chart's own code on the clipboard");
   await card.locator('[data-act="artbig"]').click();
   check(await page.locator(".dlg svg.chart rect").count() === 3, "13 Open larger redraws it in a dialog");
   await page.locator('.dlg [data-act="dlg-close"]').click();
@@ -98,11 +108,14 @@ async function waiting(page, seed) {
   await page.keyboard.press("Escape");
 }
 
-/* 10: with the "conversations" part off the Trunks are greyed in Who answers; on, they are not. */
+/* 10: with the "conversations" part off, Who answers offers only the default Trunk (chat/plus.js whoRows: another Trunk
+   is left out, not drawn greyed); on, the other Trunks are offered too. A Trunk of its own is made, so it is never the
+   default one (#726). */
 async function whoAnswers(page, seed) {
   const before = (await api("trunks")).modes;
   await api("trunks/switch", { part: "trunks", mode: "on" });
-  const trunk = (await api("trunks")).trunks[0] ?? (await api("trunks", { name: "Verify" })).trunk;
+  await api("trunks/switch", { part: "conversations", mode: "off" }); // it ships on now; switched off to see the refusal
+  const trunk = (await api("trunks", { name: "Verify" })).trunk;
   const refused = await api(`trunks/conversations/${seed.chartSession}`, { trunkId: trunk.id }).then(() => false, () => true);
   check((await api("trunks")).modes.conversations === "off" && refused, "10 with conversations off the engine refuses a Trunk (POST /api/trunks/conversations/<id>)");
   const row = async () => {
@@ -110,17 +123,18 @@ async function whoAnswers(page, seed) {
     await openChat(page, seed.chartSession);
     await page.waitForTimeout(500);
     await page.locator('[data-act="plusmenu"]').click();
+    const home = page.locator('.pop [data-act="who"][data-v=""]');
+    await home.waitFor({ timeout: 8000 });
     const r = page.locator(`.pop [data-act="who"][data-v="${trunk.id}"]`);
-    await r.waitFor({ timeout: 8000 });
-    const out = { trunk: await r.isDisabled(), branch: await page.locator('.pop [data-act="who"][data-v=""]').isDisabled() };
+    const out = { offered: (await r.count()) > 0 && !(await r.isDisabled()), home: !(await home.isDisabled()) };
     await page.keyboard.press("Escape");
     return out;
   };
   const off = await row();
-  check(off.trunk && !off.branch, "10 the Trunk is greyed while conversations is off; Branch is not");
+  check(!off.offered && off.home, "10 while conversations is off only the default Trunk is offered");
   await api("trunks/switch", { part: "conversations", mode: "on" });
   const on = await row();
-  check(!on.trunk, "10 with conversations on the Trunk is offered");
+  check(on.offered && on.home, "10 with conversations on the other Trunk is offered too");
   await api("trunks/switch", { part: "conversations", mode: before.conversations });
   await api("trunks/switch", { part: "trunks", mode: before.trunks });
 }
@@ -140,10 +154,11 @@ async function people(page, person) {
   const card = await api("people/settings");
   check(await seg.locator(`[data-v="${card.settings.mode}"]`).getAttribute("aria-pressed") === "true", `3 Signing in shows the engine's mode (GET /api/people/settings mode: ${card.settings.mode})`);
   check(await page.locator('#main .place [aria-label="How they prove it’s them"] [data-v="pin"]').getAttribute("aria-pressed") === String(card.settings.chain.includes("pin")), "3 Signing in shows the engine's sign-in chain");
-  // unhold/people: the sign-in controls are live now (proved in verify-unhold-people.cjs); only "Lock a profile after five
-  // wrong PINs" stays greyed, because it shows what the engine always does.
+  // unhold/people: the sign-in controls are live (proved in verify-unhold-people.cjs); "Lock a profile after five wrong
+  // PINs" is what the engine always does, so it is words with no control.
   const states = await page.evaluate(() => [...document.querySelectorAll('#main .place [data-act^="si-"], #main .place input[id^="si-"]')].map((el) => [el.id || el.dataset.act, el.getAttribute("aria-disabled") === "true"]));
-  check(states.length > 0 && states.every(([id, grey]) => grey === (id === "si-lock")), "3 every sign-in control is live but the fixed PIN lockout", JSON.stringify(states.filter(([id, grey]) => grey !== (id === "si-lock"))));
+  check(states.length > 0 && states.every(([, grey]) => !grey), "3 every sign-in control is live", JSON.stringify(states.filter(([, grey]) => grey)));
+  check((await page.locator('#main .place [data-fact="si-lock"]').count()) === 1 && (await page.locator("#si-lock").count()) === 0, "3 the fixed PIN lockout is said in words, with no switch");
   await page.locator('#main .place [data-act="ptab"][data-v="people"]').click();
   const row = page.locator('#main .place [data-act="p-sel"]', { hasText: person.name });
   await row.waitFor({ timeout: 10000 });

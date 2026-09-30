@@ -2,6 +2,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { toast } from "../core/ui.js";
 import { ownerHere } from "../core/state.js";
+import { t } from "../../i18n.js";
 
 export function weatherSection() {
   return `<div class="sec"><h2>City weather</h2><p class="hint">Open-Meteo is off until you enable it. Free API: non-commercial use only. Commercial use: configure your existing paid customer plan and a locker secret name; no subscription is created. Billing and remaining provider quota are unknown. Requests share your typed city/country and provider city centre; logs may retain coordinates for 90 days. No device location is collected. Default local cap: ten HTTP attempts per UTC day, up to two per forecast.</p>
@@ -34,7 +35,7 @@ on("weather-city", async () => {
   if (!city) return;
   const country = prompt("Two-letter country code, e.g. US or GB");
   if (!country || !ownerHere()) return;
-  if (!confirm(`Send ${city}, ${country.toUpperCase()} to Open-Meteo for a three-day forecast?`)) return;
+  if (!confirm(t("weather.confirm-city", { city, country: country.toUpperCase() }))) return;
   try {
     const answer = await api("weather/forecast", { city, country: country.toUpperCase(), days: 3 });
     if (!ownerHere()) return;

@@ -1,4 +1,5 @@
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
+import { retiredPhoneWorker } from "./retired-phone-worker.js";
 import {
   createServer,
   type IncomingMessage,
@@ -224,7 +225,7 @@ import { lockdownActive, onLockdownChange } from "./lockdown.js";
 import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
 import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
-import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost } from "./pricing.js";
+import { pricingSettings, savePricingSettings, pricingTableInUse, estimateCost, formatCost, tokenCountsOf } from "./pricing.js";
 import { usageReportRoute } from "./usage-report-api.js"; // bucket 14 (A0367)
 import { conversationBootstrapIds } from "./conversation-bootstrap.js";
 import { builtInImagePrices, imagePricedAt, knownPictureModels, mediaSettings, saveMediaSettings } from "./media-settings.js";
@@ -298,11 +299,14 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
+import { streamLiveStage } from "./live-stage-stream.js";
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { MiniAppDoor } from "./miniapp/door.js";
 import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
 import { handlesMiniAppPath, MiniAppApi } from "./miniapp/api.js";
 import { BrowserControlApi, browserApiPath, handlesBrowserApiPath, requireBrowserOwner } from "./browser-control-api.js";
+import { CapturedApiSkillsApi, capturedApiSkillsPath } from "./captured-api-skills-api.js";
+import { TasteApi, handlesTasteApiPath } from "./taste/api.js";
 import { conversationModeApi, ConversationModeError, handlesConversationModePath, modeRefusal, planAgreed } from "./conversation-mode-api.js";
 // mac7/smoke-fixes (B4): the terminal beside an open window — keys, one task's trace, the places that only look.
 import { traceReport } from "./trace-report.js";
@@ -337,6 +341,7 @@ import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
+import { readScheduledDashboard } from "./scheduled-dashboards.js";
 import { proposeTrigger } from "./trigger-words.js";
 import { ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
@@ -563,6 +568,13 @@ async function staticFile(
   response: ServerResponse,
   request?: IncomingMessage,
 ): Promise<boolean> {
+  // Keep the old worker URL updateable, so previously installed registrations can retire.
+  if (path === "/service-worker.js") {
+    response.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store",
+      "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
+    response.end(retiredPhoneWorker);
+    return true;
+  }
   const assets: Record<string, [string, string]> = {
     // The window (public/index.html, public/app.css; its modules and art under /app/ and /art/ are served by exact file).
     "/": ["index.html", "text/html; charset=utf-8"],
@@ -570,9 +582,8 @@ async function staticFile(
     "/fonts/archivo.woff2": ["fonts/archivo.woff2", "font/woff2"],
     "/fonts/geist.woff2": ["fonts/geist.woff2", "font/woff2"],
     "/fonts/geist-mono.woff2": ["fonts/geist-mono.woff2", "font/woff2"],
-    // The installable web app: its manifest, icons and service worker.
+    // The window's manifest and icons; no offline shell is registered.
     "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json; charset=utf-8"],
-    "/service-worker.js": ["service-worker.js", "text/javascript; charset=utf-8"],
     "/assets/icon-192.png": ["assets/icon-192.png", "image/png"],
     "/assets/icon-512.png": ["assets/icon-512.png", "image/png"],
     "/assets/icon-maskable-512.png": ["assets/icon-maskable-512.png", "image/png"],
@@ -638,7 +649,7 @@ async function staticFile(
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "content-security-policy":
-      // worker-src and manifest-src let the installable web app register its service worker.
+      // The manifest can name the web app; worker-src permits the legacy retirement update.
       // phase2/delight: blob: lets the owner's own background picture or video, kept in the window's own
       // storage, be shown without ever being sent anywhere. Only the page's own script can make one.
       // Integration review: blob: is allowed for pictures and sound/video only, never for scripts,
@@ -846,7 +857,8 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
   // Pass 17 (Helpers): nor a helper's. Its carry-on would start in the helper's conversation as a task of the owner's
   // own, without the narrower reach the helper was given; its question is answered and the helper is settled instead.
   const owners = asked.source === "owner" && ownersOwnTask(app.store, run.id);
-  if (owners && app.store.profiles.isOwner() && !startedWithShortLivedKey() && carryOnAllowed(app, run)) {
+  const transferred = app.reachParts.continuity.canContinueAfterApproval(run.id);
+  if ((owners || transferred) && app.store.profiles.isOwner() && !startedWithShortLivedKey() && carryOnAllowed(app, run)) {
     // The conversation busy with another task: the carry-on is not started, and this task keeps waiting (the one-time
     // yes is still there for the owner's next message), rather than being marked done with its work undone.
     // A carry-on refused as it starts (the monthly budget, the owner's inlet filter, a closing app) leaves the task waiting
@@ -855,7 +867,8 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
     // Q050: the task that asked carries on itself, told of the yes to its exact request; nothing is said in the owner's
     // name, and no second task starts. Dogfood D5: a No carries it on the same way, told of the No, so the owner gets a
     // reply and another way rather than silence.
-    const started = decision === "allow" ? app.runtime.continueAsked(run.id) : app.runtime.continueRefused(run.id, asked.fingerprint);
+    const started = transferred ? app.reachParts.continuity.continueAfterApproval(run.id, decision, asked.fingerprint)
+      : decision === "allow" ? app.runtime.continueAsked(run.id) : app.runtime.continueRefused(run.id, asked.fingerprint);
     const carry = started
       .catch((error: unknown) => { refused = true; app.store.event(run.id, "run.carry_on_refused", { reason: errorText(error).slice(0, 300) }); });
     // NAS 0adb368: a refusal as it starts (the budget, an inlet filter, a busy conversation) settles within microtasks,
@@ -867,7 +880,7 @@ async function settleAsked(app: Branch, asked: { runId: string; sessionId: strin
     app.store.finish(run.id, "cancelled", run.output);
     return "settled";
   }
-  if (decision === "allow" && owners && app.store.profiles.isOwner() && !startedWithShortLivedKey()) return "still-waiting";
+  if (decision === "allow" && (owners || transferred) && app.store.profiles.isOwner() && !startedWithShortLivedKey()) return "still-waiting";
   app.store.finish(run.id, decision === "allow" ? "completed" : "cancelled", run.output);
   return "settled";
 }
@@ -1098,6 +1111,22 @@ async function api(
   if (handlesSourceRequestPath(path)) {
     app.store.profiles.requireOwner("The list of requests to change Branch itself");
     return sourceRequestsApi(app.sourceRequests, request.method ?? "GET", path, () => readBody(request));
+  }
+  if (path === "/api/self-development/publications" || path === "/api/self-development/publications/cancel" || path === "/api/self-development/publications/retry") {
+    app.store.profiles.requireOwner("Queued source publications");
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    if (startedWithShortLivedKey() || currentPerson()) throw new HttpError(401, "Only the owner at this window may manage source publications.");
+    if (request.method === "GET" && path === "/api/self-development/publications")
+      return { publications: app.sourcePublications.list() };
+    if (request.method === "POST" && path === "/api/self-development/publications/cancel") {
+      const { id } = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(await readBody(request));
+      return { publication: app.sourcePublications.cancel(id) };
+    }
+    if (request.method === "POST" && path === "/api/self-development/publications/retry") {
+      const { id } = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(await readBody(request));
+      return { publication: await app.sourcePublications.retry(id, AbortSignal.timeout(240000)) };
+    }
+    throw new HttpError(404, "Endpoint not found");
   }
   if (handlesSourceMergePath(path)) {
     if (throughADoor(request)) throw new HttpError(403, hereOnly);
@@ -1411,7 +1440,8 @@ async function api(
   // everything else, so a paired phone can pick up what was started at the computer.
   if (request.method === "GET" && path === "/api/sessions") {
     const scope = app.store.profiles.scope();
-    const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
+    const params = new URL(request.url ?? "/", "http://x").searchParams;
+    const recent = app.store.recentSessions(scope, Number(params.get("limit") ?? 20) || 20, Number(params.get("offset") ?? 0));
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
     // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
     const away = app.store.putAwayConversations(scope, { limit: 1 });
@@ -1421,7 +1451,7 @@ async function api(
     const trunkOf = (sessionId: string) => app.store.profiles.isOwner()
       ? app.trunks.trunkForConversation(sessionId)?.trunkId ?? null
       : personal?.threads.get(sessionId)?.trunkId ?? null;
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
+    return { ...recent, profileId: app.store.profiles.active()?.id ?? null, isOwner: app.store.profiles.isOwner(), sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
       archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
@@ -1723,7 +1753,8 @@ async function api(
       // DESIGN-DIRECTION PR 1: a helper is steered by the owner or its own person only, never by a key or into Lockdown.
       const helperRefusal = helperSteerRefusal(app.store, app.runtime.owner, run.id);
       if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
-      return app.runtime.steer(run.id, text);
+      // The Steer chip's note, too late for the task to read, runs as its own next turn (the runtime says whose may).
+      return app.runtime.steer(run.id, text, undefined, { lateTurn: true });
     }
     if (request.method === "GET" && match[2] === "plan")
       return { plan: app.runtime.orchestration.plan(run.sessionId) ?? null };
@@ -2651,17 +2682,34 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   if (path === "/api/schedules" || path === "/api/schedules/") {
     app.store.profiles.requireOwner("Your schedules");
     if (request.method === "GET") return { schedules: app.store.list("schedules", owner) };
-    if (request.method === "POST") return app.scheduler.create(scheduleContext(app), await readBody(request));
+    if (request.method === "POST") {
+      const input = await readBody(request);
+      app.store.profiles.requireOwner("Creating your schedule");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a schedule.");
+      return app.scheduler.create(scheduleContext(app), input);
+    }
     throw new HttpError(404, "Endpoint not found");
   }
   // Words to a schedule (src/schedule-words.ts): a proposal only, which the owner confirms with POST /api/schedules.
   if (path === "/api/schedules/propose" && request.method === "POST") {
     app.store.profiles.requireOwner("Your schedules");
-    const proposal = await proposeSchedule(await readBody(request), { now: new Date(),
+    const input = await readBody(request);
+    app.store.profiles.requireOwner("Reading your schedule proposal");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading a schedule proposal.");
+    const proposal = await proposeSchedule(input, { now: new Date(),
       defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) });
+    app.store.profiles.requireOwner("Reading your schedule proposal");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading a schedule proposal.");
     // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
     const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
+  }
+  const dashboard = /^\/api\/schedules\/([a-f0-9-]{36})\/dashboard$/.exec(path);
+  if (dashboard && request.method === "GET") {
+    app.store.profiles.requireOwner("Your scheduled dashboard");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Scheduled dashboards belong to the owner at the app.");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch to read the dashboard.");
+    return readScheduledDashboard(app.store, owner, dashboard[1]!);
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
@@ -3148,6 +3196,12 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/allowlist") {
+    if (request.method === "GET") return { allowlist: app.channels.senderAllowlist() };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    try { return { allowlist: app.channels.setSenderAllowlist(await readBody(request)) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   if (path === "/api/channels/formatting") {
     if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
@@ -3338,10 +3392,8 @@ function runCost(app: Branch, runId: string) {
   const model = String(named.at(-1)?.data.model ?? "");
   if (!model) return { amount: null, currency: "USD" as const, confidence: "unknown" as const, note: "no price on file", display: "no price on file", model: null };
   const { overrides } = pricingSettings(app.store, app.runtime.owner);
-  const estimate = estimateCost(model, {
-    input: usage.reportedInput || usage.estimatedInput || 0,
-    output: usage.reportedOutput || usage.estimatedOutput || 0,
-  }, overrides);
+  // Cache reads and writes are priced at their own rates (src/pricing.ts tokenCountsOf).
+  const estimate = estimateCost(model, tokenCountsOf(usage), overrides);
   return { ...estimate, display: formatCost(estimate), model };
 }
 /**
@@ -3932,6 +3984,8 @@ export async function startServer(
   /** The key that counts as the owner's for this request: the phone's own when it came with one, the window's otherwise. */
   const ownerKeyFor = (request: IncomingMessage): string => (phoneKeyed.has(request) ? bearerOf(request) : token);
   const browserControls = new BrowserControlApi(app);
+  const capturedApiSkills = new CapturedApiSkillsApi(app);
+  const tasteApi = new TasteApi(app.taste);
   /** The Telegram Mini App's one way into a task's browser, with its own checks instead of a key (src/miniapp/api.ts). */
   const miniApp = new MiniAppApi(app, browserControls);
   /** A task's socket asked for with a paired phone's own key, offered the same two ways the window's key is. */
@@ -4229,7 +4283,21 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       if (executes && !place)
         throw new HttpError(429, "Too many active executions");
       try {
-        if (handlesBrowserApiPath(path)) {
+        if (handlesTasteApiPath(path)) {
+          const suppliedKey = request.headers.authorization?.replace(/^Bearer(?: |$)/, "") ?? "";
+          const authorizeTaste = () => {
+            app.store.profiles.requireOwner("Learned preferences");
+            if (key !== "window" || suppliedKey.length !== token.length || !timingSafeEqual(Buffer.from(suppliedKey), Buffer.from(token))
+              || throughDoor(request) || startedWithShortLivedKey() || currentPerson())
+              throw new HttpError(403, "Learned preferences belong to the owner at this window.");
+            if (app.sessionLock.shut()) throw new HttpError(423, "Branch is locked.");
+          };
+          authorizeTaste();
+          const input = request.method === "GET" ? Object.fromEntries(new URL(request.url ?? "/", "http://local").searchParams) : await readBody(request);
+          send(response, 200, await tasteApi.handle(app.runtime.owner, request.method ?? "GET", path, input, authorizeTaste));
+          return;
+        }
+        if (handlesBrowserApiPath(path) || path === capturedApiSkillsPath) {
           const stopped = new AbortController();
           request.once("aborted", () => stopped.abort());
           response.once("close", () => { if (!response.writableEnded) stopped.abort(); });
@@ -4241,7 +4309,11 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const input = request.method === "GET" && path === browserApiPath
             ? { sessionId: browserQuery.get("sessionId"), clientId: browserQuery.get("clientId"), profile: browserQuery.get("profile"),
               ...(browserQuery.has("id") ? { id: browserQuery.get("id"), epoch: Number(browserQuery.get("epoch")) } : {}) } : await readBody(request);
-          const answer = await browserControls.handle(request.method ?? "GET", path, input, { authorize: authorizeBrowser, signal: stopped.signal })
+          if (path === capturedApiSkillsPath && request.method !== "POST") throw new HttpError(404, "Endpoint not found");
+          const action = path === capturedApiSkillsPath
+            ? capturedApiSkills.handle(input, { authorize: authorizeBrowser, signal: stopped.signal })
+            : browserControls.handle(request.method ?? "GET", path, input, { authorize: authorizeBrowser, signal: stopped.signal });
+          const answer = await action
             .catch((error: unknown) => { if (error instanceof z.ZodError) throw error; const refused = browserControls.error(error); throw new HttpError(refused.status, refused.message); });
           send(response, 200, answer); return;
         }
@@ -4658,6 +4730,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       const key = await writeNewWindowKey(options.dataDir);
       token = key;
       browserControls.revoke();
+      capturedApiSkills.close();
       options.onWindowKey?.(key);
       for (const socket of liveConnections) if (socket !== keep && !fromThisComputer(socket.remoteAddress)) socket.destroy();
       remote.dropConnections(keep);
@@ -4834,6 +4907,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       stopDiagnosticLog(); // mac7/diagnostics
       stopWatchingLockdown();
       browserControls.close();
+      capturedApiSkills.close();
       miniApp.close();
       app.channels.miniAppUrl = undefined;
       await miniAppDoor.close();
@@ -4902,10 +4976,22 @@ async function noteFirstStart(app: Branch, dataDir: string): Promise<void> {
 }
 /** Endpoints that write the response themselves (streams and the OpenAI-style chat). */
 async function rawApi(app: Branch, request: IncomingMessage, response: ServerResponse, path: string): Promise<boolean> {
+  if (request.method === "GET" && path === liveStagePath
+    && new URL(request.url ?? "/", "http://local").searchParams.get("stream") === "1") {
+    const session = new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "";
+    if (!/^[a-f0-9-]{36}$/.test(session)) throw new HttpError(400, "Choose a conversation for the live view.");
+    const scope = scopeWhileUnlocked(app);
+    const readable = () => !!scope && scopeWhileUnlocked(app) === scope && app.store.profiles.isOwner()
+      && app.store.ownsSession(scope, session);
+    if (!readable()) throw new HttpError(404, "Conversation not found");
+    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
+      session, response, readable);
+    return true;
+  }
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {
-    await recordingApi(app, request, response, path, { readBody: () => readBody(request) });
+    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined) });
     return true;
   }
   // ---- end of the bucket 13 block ----
@@ -5455,6 +5541,7 @@ async function vetTriedServer(app: Branch, input: unknown): Promise<void> {
 }
 function isExecution(request: IncomingMessage, path: string): boolean {
   return (
+    (request.method === "POST" && (handlesTasteApiPath(path) || path === capturedApiSkillsPath || path === "/api/self-development/publications/retry")) ||
     request.method === "POST" && (["/api/run", "/api/commands/run", "/api/action", "/v1/chat/completions", "/api/restore", "/api/deployment/restore-point", "/api/deployment/close", "/a2a", "/api/tools/try", "/api/tools/forget", "/api/tools/meaning-search", "/api/tools/context", "/api/firewall/test", "/api/sandboxes", "/api/os-sandbox", "/api/limits", "/api/host-bridge/run"].includes(path) || /^\/api\/(sessions|memory|skills|chatgpt|projects|secrets|channels|teams|registry|evaluation|documents|browser|agents|plugins|local-models|connections|monitors|brief|ask-first|retrieval|issues|practice|workflows|queue|profiles|labels|shares|calendar|knowledge|tracing|rules|flows|deferred|processes|skill-revisions|plugin-catalog|developer|studies|batch|artifacts|reports|todos|obsidian|log|remotes|marks|retention|heartbeat)(\/|$)/.test(path) || /^\/api\/mcp\/(try|signin|servers)(\/|$)/.test(path) || /^\/api\/clis(\/|$)/.test(path) || /^\/api\/triggers\/[a-f0-9-]{36}\/fire$/.test(path) || /^\/api\/runs\/[a-f0-9-]{36}\/replay$/.test(path) || /^\/webhooks\/(whatsapp|chat)\//.test(path))
     // mac4/bucket-20: an Agent Protocol step, and every change under /api/interop, start or change work.
     || (request.method !== "GET" && handlesInteropPath(path))
