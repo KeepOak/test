@@ -110,7 +110,7 @@ function speakingBack() {
 function listeningMore() {
   const wake = !!V.wake && V.wake !== "off";
   return `<div class="sec x15-sec"><h2>${t("window.settings.voice.listening-more")}</h2>${ctl("f15-wake-word", t("window.settings.voice.wake-word"), t("window.settings.voice.hey-branch-heard-on-this-computer"), wake)}
-    ${num("f15-silence", t("window.settings.voice.stop-listening-after-silence"), t("window.settings.voice.for-live-dictation"), V.dictation?.silenceSeconds, "s", 'type="number" min="1" max="30" step="0.5"')}
+    ${num("f15-silence", t("window.settings.voice.stop-listening-after-silence"), t("settings.help.dictation-silence"), V.dictation?.silenceSeconds, "s", 'type="number" min="1" max="30" step="0.5"')}
     ${answerAloud()}
     ${ctl("f15-spoken-morning-brief", t("window.settings.voice.spoken-morning-brief"), t("window.settings.voice.the-written-brief-read-out"), !!V.brief && V.brief !== "off")}</div>`;
 }
