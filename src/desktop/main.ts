@@ -27,6 +27,7 @@ import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./update
 import { markStarted, UpdateDeferredError, UpdateStuckError, type Updater } from "./updater.js";
 import { updateReadiness } from "./update-readiness.js";
 import { logoShare, readTrayUsage, trayBitmap, trayTip, type TrayUsage } from "./tray-ring.js";
+import { readTrayState, trayStateBitmap, trayStateWords, type TrayState } from "./tray-state.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
 import { crashReporterPlan, diagnose } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
 import { openMainLog } from "./main-log.js";
@@ -168,14 +169,16 @@ function trayIcon(): NativeImage {
   return image;
 }
 
-/** The tray icon with its usage ring (./tray-ring.ts), at every size trayIcon() draws; the logo alone without a share. */
-function trayImageFor(usage: TrayUsage | null): NativeImage {
-  if (!usage) return trayIcon();
+/** Keep the mascot and optional usage ring at every tray scale, with a steady activity badge. */
+function trayImageFor(usage: TrayUsage | null, state: TrayState): NativeImage {
+  if (!usage && state === "idle") return trayIcon();
   const template = isTemplateTrayIcon(process.platform);
   const source = nativeImage.createFromPath(markPath(!template));
   const draw = (side: number): Buffer => {
-    const logoSide = Math.round(side * logoShare);
-    return trayBitmap(side, source.resize({ width: logoSide, height: logoSide, quality: "best" }).toBitmap(), logoSide, usage.percentLeft, template);
+    const logoSide = usage ? Math.round(side * logoShare) : side;
+    const logo = source.resize({ width: logoSide, height: logoSide, quality: "best" }).toBitmap();
+    const bitmap = usage ? trayBitmap(side, logo, logoSide, usage.percentLeft, template) : logo;
+    return trayStateBitmap(bitmap, side, state, template);
   };
   const side = trayIconSize(process.platform);
   const image = nativeImage.createFromBitmap(draw(side), { width: side, height: side });
@@ -185,21 +188,30 @@ function trayImageFor(usage: TrayUsage | null): NativeImage {
   return image;
 }
 
-/** Reads what the connection in use has left once a minute, and redraws the tray only when that changed. Nothing (above
-    all not the key) is sent while the engine is not answering at the window's address. */
-function watchTrayUsage(url: string, key: () => string, reachable: () => boolean): void {
-  let shown = "";
+/** Activity every ten seconds, usage once a minute; each read uses the proved engine connection. */
+function watchTrayUsage(url: string, key: () => string, reachable: () => boolean, call: typeof fetch): void {
+  let shown = "", busy = false, usage: TrayUsage | null = null, usageAt = 0;
   const look = async () => {
-    if (!reachable()) return;
-    const usage = await readTrayUsage(url, key()).catch(() => null);
-    const mark = usage ? `${usage.percentLeft}|${usage.label}` : "";
-    if (!tray || tray.isDestroyed() || mark === shown) return;
-    shown = mark;
-    tray.setImage(trayImageFor(usage));
-    tray.setToolTip(trayTip(usage));
+    if (busy) return;
+    busy = true;
+    try {
+      let state: TrayState = "unavailable";
+      if (reachable()) {
+        state = await readTrayState(url, key(), call).catch(() => "unavailable" as const);
+        if (Date.now() - usageAt >= 60_000) {
+          usage = await readTrayUsage(url, key(), call).catch(() => null);
+          usageAt = Date.now();
+        }
+      } else usage = null;
+      const mark = `${state}|${usage?.percentLeft ?? ""}|${usage?.label ?? ""}`;
+      if (!tray || tray.isDestroyed() || mark === shown) return;
+      shown = mark;
+      tray.setImage(trayImageFor(usage, state));
+      tray.setToolTip(`${trayTip(usage)} · ${trayStateWords(state)}`);
+    } finally { busy = false; }
   };
   void look();
-  trayTimer = setInterval(() => void look(), 60_000);
+  trayTimer = setInterval(() => void look(), 10_000);
   trayTimer.unref();
 }
 
@@ -415,7 +427,7 @@ async function createWindow(
     pageRecovery.failed();
   });
   createTray();
-  watchTrayUsage(url, key, () => access.ready());
+  watchTrayUsage(url, key, () => access.ready(), client.fetch);
 }
 
 /**
