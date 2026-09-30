@@ -137,7 +137,7 @@ interface RunEntry {
 export interface WatchedWindow {
   url: string;
   title: string;
-  tabs: { url: string; title: string; active: boolean; loading?: boolean; icon?: string }[];
+  tabs: { url: string; title: string; active: boolean; loading?: boolean; icon?: string; zoom?: number }[];
   /** A JPEG of the tab being worked in, or null (a borrowed window, or no frame could be taken). */
   frame: Buffer | null;
   borrowed: boolean;
@@ -1141,10 +1141,11 @@ export class BranchBrowser {
     return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
   }
   /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
-  private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
-    const state = await Promise.race([tab.evaluate(() => document.readyState).catch(() => 'complete'),
-      new Promise<string>(done => { setTimeout(() => done('loading'), 300).unref?.(); })]);
-    return { loading: state !== 'complete', icon: this.iconFor(tab) };
+  private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string; zoom?: number }> {
+    const state = await Promise.race([tab.evaluate(() => ({ state: document.readyState,
+      zoom: Number(getComputedStyle(document.documentElement).zoom) || 1 })).catch(() => ({ state: 'complete', zoom: null })),
+      new Promise<{ state: string; zoom: number | null }>(done => { setTimeout(() => done({ state: 'loading', zoom: null }), 300).unref?.(); })]);
+    return { loading: state.state !== 'complete', icon: this.iconFor(tab), ...(state.zoom !== null ? { zoom: state.zoom } : {}) };
   }
   /**
    * A site's icon, fetched once per site under the same network rules as every other request (the policy's own
