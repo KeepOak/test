@@ -9,7 +9,8 @@
  * again. A server the owner decides to keep is added to the connections file as before.
  */
 import { z } from "zod";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { mcpClient } from "./integrations/mcp-sdk.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
@@ -55,8 +56,8 @@ export async function tryServer(
 ): Promise<WorkbenchResult> {
   const parsed = TrySchema.parse(input);
   const where = label(parsed.server);
-  const { transport, secrets } = makeTransport(parsed.server, env, policy);
-  const client = new Client({ name: "branch-workbench", version: "1.0.0" });
+  const { transport, secrets } = await makeTransport(parsed.server, env, policy);
+  const client = new (await mcpClient())({ name: "branch-workbench", version: "1.0.0" });
   try {
     // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
     await client.connect(transport as Transport, { timeout });

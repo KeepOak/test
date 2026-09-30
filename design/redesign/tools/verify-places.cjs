@@ -356,7 +356,7 @@ async function team(page) {
 }
 
 async function run() {
-  const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+  const { chromium } = require("playwright");
   const note = JSON.parse(fs.readFileSync(NOTE, "utf8"));
   const live = await seedLive();
   const browser = await chromium.launch();

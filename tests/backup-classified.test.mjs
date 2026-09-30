@@ -42,10 +42,13 @@ const notSettings = new Set(["[page]", "crashes", "help.", "installed_skills", "
  */
 const reviewedComputedKeys = new Set([
   "src/a2a-client.ts: recordId",
+  "src/runtime.ts: marked",
   "src/registry-install.ts: pinKey",
   "src/accounts/settings.ts: sessionKey",
   "src/add-ons/export.ts: this.key",
+  "src/add-ons/index.ts: addOnSettingsKey", // RES-251: "add-ons" is held for the owner's yes (insideBranch loosens)
   "src/add-ons/lists.ts: this.key",
+  "src/add-ons/package-shelf.ts: key",
   "src/add-ons/package-shelf.ts: recordKey",
   "src/add-ons/pipelines.ts: key",
   "src/agent-export.ts: key",
@@ -56,9 +59,13 @@ const reviewedComputedKeys = new Set([
   "src/autonomy/settings.ts: autonomyKey",
   "src/autonomy/subgoals.ts: keyOf",
   "src/browser-container-api.ts: settingsKey",
+  "src/captured-api-skills.ts: key",
   "src/channels/catch-up.ts: id",
   "src/channels/catch-up.ts: key",
   "src/channels/chat-commands.ts: usageKey",
+  "src/commands/steer-skill.ts: key", // CHAT-205: pinned-skill:<conversation>, the window's own skill pin
+  "src/channels/threads.ts: chatThreadKey", // defaulttrunk: channel-session:<channel>:<chat>, the same key the router always wrote
+  "src/trunks/defaults.ts: restoredTrunksKey", // defaulttrunk: only read, the Trunks a restore still holds (restore-trunks-held)
   "src/channels/router.ts: key",
   "src/channels/webhook-address.ts: key",
   "src/coding/checklist.ts: key",
@@ -76,6 +83,8 @@ const reviewedComputedKeys = new Set([
   "src/flows-boards/recipe-checks.ts: key",
   "src/flows-boards/settings.ts: boardKey",
   "src/flows-boards/settings.ts: key",
+  "src/gitlab-connection.ts: gitlabAccountKey", // RES-719: "gitlab-account" stays on this computer (its token is in the locker)
+  "src/gitlab-connection.ts: gitlabSwitchKey", // RES-719: "gitlab-connection" waits for the owner's yes
   "src/goal-mode.ts: key",
   "src/integrations/mcp-oauth.ts: settingsKey",
   "src/interop/settings.ts: interopKey",
@@ -101,6 +110,7 @@ const reviewedComputedKeys = new Set([
   "src/plan-act.ts: key",
   "src/plan-act.ts: projectKey",
   "src/plan-act.ts: sessionKey",
+  "src/plugin-catalog.ts: key",
   "src/plugin-catalog.ts: this.key",
   "src/plugins.ts: this.key",
   "src/profile-roles.ts: this.key",
@@ -167,6 +177,7 @@ test("every place that works out a settings key in code has been read", () => {
 // NAS eba8bd8: a conversation's waiting line never travels, so a file cannot queue words to run as the owner's next task.
 test("a conversation's waiting line, a plan and a chat's link are never put in place from a file", () => {
   assert.equal(staysOnThisComputer("followups:any"), true);
+  assert.equal(staysOnThisComputer("wakeup:any"), true, "a wake-up's words never arrive from a file either");
   for (const id of ["plan:any", "channel-session:telegram:1", "project:any", "session-model:any", "slack-automations", "models"])
     assert.equal(heldForTheOwner(id) && !staysOnThisComputer(id), true, `${id} waits for the owner`);
 });
@@ -176,18 +187,19 @@ const computedExamples = {
   stays: ["remote-agent:x", "deferred:x", "flow-run-limit:x", "flow-run-source:x", "flow-run-trunk:x", "move-in:x",
     "channel-mark:telegram", "channel-position:telegram", "channel-replay:telegram:1:2", "webhook-address:slack",
     "mcp-oauth:server", "settings-kit-file-undo-1", "trunk-watch:t", "cache:abc", "session-carry:s", "plugin:p",
-    "plugin-catalog:p", "safety-wasm-add-on:w", "restore-held", "restore-trunks-held", "listen-address", "memory-history-status",
+    "plugin-catalog:p", "plugin-version:p:h", "plugin-review:p", "plugin-evaluation:p:e", "add-on-version:a:h",
+    "add-on-candidate:a:h", "safety-wasm-add-on:w", "restore-held", "restore-trunks-held", "listen-address", "memory-history-status",
     "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch"],
   held: ["account-session:s", "add-on-export:a", "add-on-list:a", "add-on:a", "add-on-pipelines:a", "asks-hindsight",
     "asks-nodes-list", "autonomy-loop:s", "autonomy-heartbeat:s", "autonomy-subgoals:s", "browser-container",
     "channel-session:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",
     "conversation-mode:s", "goal:s", "interop-fleet", "interop-handoff", "knobs-compaction", "learning-more-providers-settings",
     "model-savings-mixtures", "handoffs:x", "openapi-service:w", "profile-role:p", "personal-email-settings", "plan-act:project:p",
-    "plan-act:session:s", "pinned-skill:s", "skill-package:k", "registry-key:r", "skill-candidate:k:1", "trunks-messages", "trunks-routines",
+    "plan-act:session:s", "pinned-skill:s", "skill-package:k", "captured-api-skill:c", "registry-key:r", "skill-candidate:k:1", "trunks-messages", "trunks-routines",
     "flowboards-recipe-checks:p", "tool-meaning-search", "people-shares", "policy", "desktop-control", "wake-word",
     "live-dictation", "routing", "model-profiles", "models", "governance", "person-about:owner", "person-picture:owner"],
   travels: ["channel-usage:telegram:1", "delight-achievements", "prompt-library-items", "reflection-cursor:s",
-    "reflection-note:p", "skill-install-log", "tool_catalog_health", "ask-first"],
+    "reflection-note:p", "skill-install-log", "stays-here:s", "tool_catalog_health", "ask-first"],
 };
 const travels = (id) => id in travelsWithBackup || Object.keys(travelsWithBackup).some((key) => key.endsWith(":") && id.startsWith(key));
 

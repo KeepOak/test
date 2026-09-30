@@ -15,7 +15,7 @@ const { mkdtempSync, rmSync, writeFileSync, mkdirSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok: Boolean(ok) }); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  (" + detail + ")" : ""}`); };
@@ -30,7 +30,7 @@ const STATES = ["idle", "think", "search", "read", "work", "wait", "talk", "yay"
 
 /* WebKit (Safari, the Mac app's web view), when Playwright has it: faces move there too, in the Trunk's colour. */
 async function webkitLook(base, token, id, colour, hue) {
-  const { webkit } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+  const { webkit } = require("playwright");
   let wk;
   try { wk = await webkit.launch(); } catch (e) { check("6 WebKit available to test", false, e.message.split("\n")[0]); return; }
   const page = await wk.newPage({ viewport: { width: 1280, height: 1000 }, deviceScaleFactor: 2 });

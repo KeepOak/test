@@ -178,7 +178,7 @@ export const ReliabilityOptionsSchema = z.object({
   /** What to do after a stalled model call. */
   stallRecovery: z.enum(["retry", "fallback", "fail"]).default("retry"),
   /** Stop a single tool call after this long (5 s to 10 min). */
-  toolTimeoutMs: z.number().int().min(5000).max(600000).default(90000),
+  toolTimeoutMs: z.number().int().min(5000).max(1_800_000).default(90000),
   /** Tool results longer than this are clipped before the model sees them. */
   toolResultChars: z.number().int().min(1000).max(60000).default(12000),
   /** How long the per-conversation pace window is; normally a minute. */

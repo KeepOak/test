@@ -59,10 +59,15 @@ test("in the window, a pat says the moment's news and the label promises a tip o
   const pet = f.page.locator("#side #pet-cv");
   await pet.waitFor({ timeout: 20000 });
   assert.match(await pet.getAttribute("aria-label"), /Click for a tip\.$/, "Bronze: a tip is on offer");
-  await f.page.evaluate(() => document.getElementById("app").classList.add("locked")); // what Lockdown puts on the window
+  // Lockdown really on in the engine, and the window showing it. (Adding the "locked" class by hand raced the window's own
+  // Lockdown read, which puts the class back in step with the engine: seen on Linux CI as the Bronze tip instead.)
+  assert.equal((await f.call("/api/lockdown", { on: true })).on, true);
+  await f.page.locator("#app.locked").waitFor({ timeout: 15000 });
   await pet.click();
   await f.page.locator("#pet-say:not([hidden])").waitFor();
   assert.match(await f.page.locator("#pet-say").textContent(), /^Lockdown is on/);
+  assert.equal((await f.call("/api/lockdown", { on: false })).on, false);
+  await f.page.locator("#app:not(.locked)").waitFor({ timeout: 15000 });
   // Tips off: no tip is promised.
   await f.call("/api/onboarding", { popups: false });
   await f.page.reload();

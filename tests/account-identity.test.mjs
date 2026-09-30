@@ -23,7 +23,7 @@ const official = { loggedIn: true, authMethod: "claude.ai", apiProvider: "firstP
 const secretSentinel = "token-must-never-reach-the-window";
 const stamped = "2026-09-27T00:00:00.000Z";
 async function fixture(t) {
-  const scratch = process.platform === "win32" ? "C:/Users/bishi/AppData/Local/Temp/Codex-session-files" : tmpdir();
+  const scratch = tmpdir();
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(join(scratch, "account-identities-")), bin = join(root, "bin");
   await mkdir(bin);
@@ -83,7 +83,7 @@ test("per-profile status replaces generic labels everywhere and duplicate or sig
   assert.equal(duplicate.duplicateOf, "primary");
   assert.equal(duplicate.ready, false);
   assert.equal(pool.accounts.filter((one) => one.ready).length, 1);
-  assert.deepEqual(calls.map((one) => one.home), [null, service.homeOf("cli-claude-code", "abcd1234"), service.homeOf("cli-claude-code", "bcd12345")]);
+  assert.deepEqual(calls.map((one) => one.home), [service.primaryClaudeHome, service.homeOf("cli-claude-code", "abcd1234"), service.homeOf("cli-claude-code", "bcd12345")]);
   assert.ok(calls.every((one) => JSON.stringify(one.args) === '["auth","status"]'));
   const session = app.store.createSession(app.runtime.owner);
   const picker = viewSession(service, session.id);

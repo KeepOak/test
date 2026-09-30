@@ -1,4 +1,6 @@
+import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
+import { EditedWords } from "./edited-words.js";
 import { lookup } from "../commands/catalog.js";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
@@ -25,6 +27,8 @@ export interface SlackOptions {
   fetch?: typeof fetch;
   connect?: WebSocketConnect;
   reconnectBaseMs?: number;
+  /** How often the socket is pinged to show it is still there (20 s; tests shorten it). */
+  keepaliveMs?: number;
   /** mac6/bucket-16: every event Slack sends, for Slack-started automations (src/channels/slack-automations.ts). */
   onEvent?: (event: unknown, botUserId: string | null) => void;
 }
@@ -32,6 +36,9 @@ const eventSchema = z.object({
   type: z.string(), channel: z.string().optional(), user: z.string().optional(), text: z.string().optional(),
   ts: z.string().optional(), thread_ts: z.string().optional(), channel_type: z.string().optional(),
   subtype: z.string().optional(), bot_id: z.string().optional(),
+  /** Files shared with the message (subtype `file_share`). */
+  files: z.array(z.object({ id: z.string(), name: z.string().max(300).optional(), mimetype: z.string().max(100).optional(), size: z.number().optional(),
+    url_private_download: z.string().max(2000).optional(), url_private: z.string().max(2000).optional() }).passthrough()).optional(),
 }).passthrough();
 const envelopeSchema = z.object({
   type: z.string(), envelope_id: z.string().optional(),
@@ -46,7 +53,7 @@ const actionSchema = z.object({
   actions: z.array(z.object({ action_id: z.string(), value: z.string().optional(), action_ts: z.string().optional() }).passthrough()).min(1),
 }).passthrough();
 /** The action ids Branch's own buttons carry, so a press on some other app's button is never read as an answer. */
-const answerAction = /^branch_answer_\d$/;
+const answerAction = /^branch_answer_\d{1,2}$/;
 /** The Slack thread a reply goes to: the timestamp before any "#" a button press added; anything else is no thread. */
 const threadOf = (id: string | undefined): string | undefined => { const ts = id?.split("#")[0]; return ts && /^\d+\.\d+$/.test(ts) ? ts : undefined; };
 
@@ -78,6 +85,8 @@ const slackPlain = (text: string, format?: MessageFormat): Record<string, unknow
   ? { link_names: false, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] } : {};
 export class SlackAdapter implements ChannelAdapter {
   readonly kind = "slack";
+  /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
+  readonly listButtons = true;
   readonly id: string;
   /** Slack accepts more, but long posts are unreadable; the ledger splits at this length. */
   readonly maxTextLength = 3000;
@@ -88,6 +97,8 @@ export class SlackAdapter implements ChannelAdapter {
   private state: ChannelHealth = { state: "reconnecting", reason: "Connecting to Slack" };
   private user: { id: string; name: string } | null = null;
   private readonly seen = new Set<string>();
+  /** The words each recent message had, so an edit that changed none is not one. */
+  private readonly edits = new EditedWords();
   private stopping = false;
   private loop: Promise<void> | null = null;
   constructor(private readonly options: SlackOptions) {
@@ -98,6 +109,16 @@ export class SlackAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.user?.name ?? null; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when Slack last answered at all (any envelope, or a pong to our own ping). */
+  private contactAt = Date.now();
+  private keepalive: ReturnType<typeof setInterval> | undefined;
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled connection again, resuming the session where it can. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     const me = await this.call("auth.test", this.options.token, {}).catch(() => undefined);
     const parsed = z.object({ user_id: z.string(), user: z.string().optional() }).passthrough().safeParse(me);
@@ -108,6 +129,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   async stop(): Promise<void> {
     this.stopping = true;
+    if (this.keepalive) clearInterval(this.keepalive);
     this.socket?.close();
     await this.loop?.catch(() => undefined);
   }
@@ -117,6 +139,11 @@ export class SlackAdapter implements ChannelAdapter {
         const address = this.options.socketUrl ?? await this.open();
         const socket = await this.connect(address, { onMessage: (text) => this.receive(text, onMessage) });
         this.socket = socket;
+        this.contactAt = Date.now();
+        // A socket that went quiet after a sleep never says it closed; a ping every 20 s shows whether anyone is there.
+        if (this.keepalive) clearInterval(this.keepalive);
+        this.keepalive = setInterval(() => socket.ping?.(() => { this.contactAt = Date.now(); }), this.options.keepaliveMs ?? 20_000);
+        this.keepalive.unref?.();
         // mac7/linux-fixes: a stop that arrived while this was still being opened found nothing to
         // close, and the loop then waited for a close nobody would ask for. Let it go straight away.
         if (this.stopping) socket.close();
@@ -138,6 +165,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   /** Acknowledges the envelope first, then decides whether the event is one to answer. */
   private receive(text: string, onMessage: (message: InboundMessage) => Promise<void>): void {
+    this.contactAt = Date.now();
     const envelope = envelopeSchema.safeParse(JSON.parse(text));
     if (!envelope.success) return;
     const { envelope_id: id, payload, type } = envelope.data;
@@ -149,22 +177,48 @@ export class SlackAdapter implements ChannelAdapter {
     if (!payload?.event || (eventId && this.seen.has(eventId))) return;
     if (eventId) { this.seen.add(eventId); if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!); }
     try { this.options.onEvent?.(payload.event, this.user?.id ?? null); } catch { /* an automation never stops a reply */ } // mac6/bucket-16
+    const changed = payload.event.type === "message" && payload.event.subtype === "message_changed" ? this.changed(payload.event) : undefined;
+    if (changed !== undefined) { if (changed) void onMessage(changed).catch(() => undefined); return; }
     const inbound = this.inbound(payload.event);
-    if (inbound) void onMessage(inbound).catch(() => undefined);
+    if (inbound) { this.edits.changed(`${inbound.chatId}:${payload.event.ts ?? ""}`, payload.event.text ?? ""); void onMessage(inbound).catch(() => undefined); }
+  }
+  /**
+   * Settings › Chat apps › Edited messages: Slack says a message changed as a `message_changed` event holding the new
+   * message. Only a person's own edit that changed the words counts (a link unfolding changes none); it is read as that
+   * message again, marked edited, for the router to answer or leave as the owner chose.
+   */
+  private changed(event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const message = eventSchema.safeParse((event as Record<string, unknown>).message);
+    if (!message.success || !message.data.ts || !event.channel || !message.data.text) return null;
+    if (!this.edits.changed(`${event.channel}:${message.data.ts}`, message.data.text)) return null;
+    const inbound = this.inbound({ ...message.data, type: "message", channel: event.channel, channel_type: event.channel_type,
+      subtype: undefined });
+    return inbound ? { ...inbound, edited: true, messageId: message.data.thread_ts ?? message.data.ts } : null;
   }
   private inbound(event: z.infer<typeof eventSchema>): InboundMessage | null {
     if (!["message", "app_mention"].includes(event.type)) return null;
-    // Edits, joins and the assistant's own posts are not questions to answer.
-    if (event.subtype || event.bot_id || !event.text || !event.user || !event.channel) return null;
-    if (event.user === this.user?.id) return null;
-    if (this.options.channels?.length && !this.options.channels.includes(event.channel)) return null;
+    // Edits, joins and the assistant's own posts are not questions to answer. A shared file is a message too (subtype file_share); edits, joins and other subtypes are not.
+    const files = event.subtype === "file_share" ? (event.files ?? []).slice(0, 10) : [];
+    const user = event.user, channel = event.channel;
+    if ((event.subtype && event.subtype !== "file_share") || event.bot_id || (!event.text && !files.length) || !user || !channel) return null;
+    if (user === this.user?.id) return null;
+    if (this.options.channels?.length && !this.options.channels.includes(channel)) return null;
     const direct = event.channel_type === "im";
-    const mentioned = event.type === "app_mention" || (!!this.user && event.text.includes(`<@${this.user.id}>`));
-    const text = this.user ? event.text.replace(new RegExp(`<@${this.user.id}>`, "g"), "").trim() : event.text;
+    const said = event.text ?? "";
+    const mentioned = event.type === "app_mention" || (!!this.user && said.includes(`<@${this.user.id}>`));
+    const text = this.user ? said.replace(new RegExp(`<@${this.user.id}>`, "g"), "").trim() : said;
     return {
-      channel: this.id, chatId: event.channel, chatKind: direct ? "direct" : "group",
-      ...(direct ? {} : { chatTitle: `channel ${event.channel}` }),
-      senderId: event.user, senderName: event.user, text: text || event.text,
+      channel: this.id, chatId: channel, chatKind: direct ? "direct" : "group",
+      ...(direct ? {} : { chatTitle: `channel ${channel}` }),
+      senderId: user, senderName: user, text: text || said,
+      // CHAT-105: fetched with the bot token from Slack's own file host, only once the message is answered.
+      ...(files.length ? { attachments: files.flatMap((file) => {
+        const url = file.url_private_download ?? file.url_private;
+        if (!url) return [];
+        const mediaType = file.mimetype?.split(";")[0] ?? "application/octet-stream";
+        return [{ name: file.name ?? file.id, sourceId: file.id, mediaType, kind: attachmentKind(mediaType), ...(file.size !== undefined ? { size: file.size } : {}),
+          bytes: () => fetchCapped(this.fetch, url, { headers: { authorization: `Bearer ${this.options.token}` } }, /(^|\.)slack\.com$/i, "file", file.size ?? 0) }];
+      }) } : {}),
       addressed: direct || mentioned,
       // Replying to this id keeps the answer in the thread the question was asked in.
       messageId: event.thread_ts ?? event.ts ?? "",
@@ -175,13 +229,16 @@ export class SlackAdapter implements ChannelAdapter {
    * CHAT-062: a question with Block Kit buttons. Each button's value is the answer and the fingerprint of the exact
    * request, as on Telegram; the words stay in `text` too, for notifications and for apps that cannot show blocks.
    */
-  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
-    const words = slackText(text).slice(0, 2900);
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string,
+    format?: MessageFormat): Promise<string | undefined> {
+    // A command shown before its Yes (src/channels/owner-commands.ts) comes as a code span, fenced here like a reply's.
+    const words = slackText(text, format).slice(0, 2900);
     const result = await this.call("chat.postMessage", this.options.token, {
       channel: chatId, text: words, ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
       blocks: [
         { type: "section", text: { type: "mrkdwn", text: words } },
-        { type: "actions", elements: buttons.slice(0, 5).map((button, index) => ({
+        // A question's Yes and No, or a /model menu (Slack takes up to 25 buttons in one actions block).
+        { type: "actions", elements: buttons.slice(0, 25).map((button, index) => ({
           type: "button", action_id: `branch_answer_${index}`, value: button.value.slice(0, 2000),
           text: { type: "plain_text", text: button.label.slice(0, 75) },
           ...(button.value.startsWith("y") ? { style: "primary" } : button.value.startsWith("n") ? { style: "danger" } : {}),
@@ -293,6 +350,10 @@ export class SlackAdapter implements ChannelAdapter {
       ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
     });
     return slot.file_id;
+  }
+  /** CHAT-094: a spoken reply, as an audio file in the chat. */
+  async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
+    return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio }, replyToMessageId);
   }
   // ---- end R17-C ----
   private async call(method: string, token: string, body: unknown): Promise<unknown> {

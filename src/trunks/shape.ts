@@ -25,6 +25,14 @@ export interface TrunkRunShape {
   roomTurn: boolean;
   /** mac7/lockdown-fix: the keys it may use; a sign-in answers only work the owner is behind (trunks-use-subscriptions). */
   keys: Trunk["keys"];
+  /**
+   * defaulttrunk: the default Trunk is the owner's own assistant with a name and a face. Its turn keeps everything a
+   * conversation with no Trunk had — the owner's memory, the owner's whole set of tools, commands and tool servers,
+   * the owner's keys — and only adds who it is (its name, persona and files), its model and its style.
+   */
+  owners?: boolean;
+  /** defaulttrunk: the default Trunk with no list of its own and the ordinary style: the caller's reach is left exactly as it was. */
+  keepsReach?: boolean;
 }
 
 const mcpPermission = /^mcp\.([^.]+)\.[a-f0-9]{16}$/;
@@ -51,10 +59,12 @@ export function rosterLines(roster: readonly Trunk[], self: string): string[] {
 }
 
 /** The instructions a Trunk's own turn carries. Its SOUL text is the owner's, handed in as data. */
-export function trunkInstructions(trunk: Trunk, roster: readonly Trunk[], messaging: boolean): string {
+export function trunkInstructions(trunk: Trunk, roster: readonly Trunk[], messaging: boolean, owners = false): string {
   const lines = [
     "",
-    `You are ${trunk.name} (@${trunk.handle}), one of the owner's Trunks: a named assistant with its own conversation, memory and settings.`,
+    owners
+      ? `You are ${trunk.name} (@${trunk.handle}), the owner's own assistant and their default Trunk: every conversation that names nobody else is with you.`
+      : `You are ${trunk.name} (@${trunk.handle}), one of the owner's Trunks: a named assistant with its own conversation, memory and settings.`,
     trunk.title ? `Your role: ${trunk.title}.` : "",
     trunk.description ? `About you: ${trunk.description}` : "",
     trunk.instructions ? `Your own instructions from the owner:\n${trunk.instructions}` : "",
@@ -71,7 +81,23 @@ export function trunkInstructions(trunk: Trunk, roster: readonly Trunk[], messag
 export function shapeFor(trunk: Trunk, roster: readonly Trunk[], options: {
   available: readonly string[]; caller?: readonly string[] | undefined; messaging: boolean; sessionModel: boolean; agent: string;
   roomTurn?: boolean;
+  /** defaulttrunk: this is the default Trunk (see TrunkRunShape.owners). */
+  owners?: boolean;
 }): TrunkRunShape {
+  if (options.owners) {
+    return {
+      trunkId: trunk.id, roomTurn: options.roomTurn === true, keys: trunk.keys, agent: options.agent, owners: true,
+      keepsReach: !trunk.permissions.length && trunk.style === "default",
+      instructions: trunkInstructions(trunk, roster, options.messaging, true),
+      // Its own list, when the owner gave it one, still narrows; otherwise it has exactly what the caller allowed.
+      permissions: styledPermissions(trunk.style, trunk.permissions.length
+        ? trunk.permissions.filter((permission) => (options.caller ?? options.available).includes(permission))
+        : [...(options.caller ?? options.available)]).filter((permission) => options.messaging || permission !== "trunks.message"),
+      ...(trunk.model && !options.sessionModel ? { model: trunk.model } : {}),
+      ...(trunk.reasoning ? { reasoning: trunk.reasoning } : {}),
+      ...(trunk.style !== "default" ? { style: trunk.style } : {}),
+    };
+  }
   return {
     trunkId: trunk.id,
     roomTurn: options.roomTurn === true,

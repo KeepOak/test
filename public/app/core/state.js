@@ -6,7 +6,7 @@ import { render } from "./dom.js";
 import { t } from "../../i18n.js";
 
 const SAVED_KEY = "branch-window";
-const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden"];
+const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden", "home19", "simple", "simpleFrom", "advLevel"];
 
 export const S = {
   view: "chat",
@@ -14,6 +14,9 @@ export const S = {
   tabs: { inbox: "needs", automations: "scheduled", library: "memory", customize: "trunks" },
   setPage: "general",
   level: "regular",
+  simple: false, // RES-704: Simple on (shell/simple.js), what it put away, and the last Advanced or Technical level
+  simpleFrom: null,
+  advLevel: null,
   drafts: {},
   placesShut: false,
   theme: null,
@@ -22,6 +25,7 @@ export const S = {
   dockW: null,
   rail: false,
   sideHidden: false,
+  home19: { open: false, sid: null }, // RES-701: the Home panel open or not, and its own conversation (shell/home.js)
   signedIn: true,
 };
 
@@ -55,15 +59,23 @@ export async function refresh() {
     api("sessions?limit=50").catch(() => null),
     api("profiles").catch(() => null),
   ]);
-  E.profiles = profiles;
+  /* A read that failed keeps what the window last had. Emptied, one refused or dropped GET /api/trunks lost every Trunk
+     and the modes: "@Ada …" then found no Ada and went out as an ordinary message in a new conversation (trunks-ui on
+     CI), and the side list lost its Trunks and conversations until the next read. */
+  if (profiles) E.profiles = profiles;
   E.state = state;
-  E.trunks = trunks?.trunks ?? (Array.isArray(trunks) ? trunks : []);
-  E.trunksRead = !!trunks; // pass 18: an empty Trunks list is a welcome only when the engine answered
-  E.trunkModes = trunks?.modes ?? {};
-  E.rooms = Array.isArray(trunks?.rooms) ? trunks.rooms : [];
-  if (Array.isArray(trunks?.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
-  E.sessions = sessions?.sessions ?? [];
-  E.putAway = { archived: sessions?.archived ?? 0, deleted: sessions?.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted
+  if (trunks) {
+    E.trunks = trunks.trunks ?? (Array.isArray(trunks) ? trunks : []);
+    E.trunksRead = true; // pass 18: an empty Trunks list is a welcome only when the engine answered
+    E.trunkModes = trunks.modes ?? {};
+    E.defaultTrunkId = trunks.defaultId ?? null; // the default Trunk answers every chat nobody routed elsewhere
+    E.rooms = Array.isArray(trunks.rooms) ? trunks.rooms : [];
+    if (Array.isArray(trunks.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
+  }
+  if (sessions) {
+    E.sessions = sessions.sessions ?? [];
+    E.putAway = { archived: sessions.archived ?? 0, deleted: sessions.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted
+  }
   E.loaded = true;
   render();
 }
@@ -98,7 +110,9 @@ export const ownTrunkOf = (id) => (id ? E.trunks.find((t) => t.chatSessionId ===
 const roomOf = (id) => (id ? E.rooms.find((r) => r.sessionId === id) : undefined);
 export const ownName = (id) => ownTrunkOf(id)?.name || roomOf(id)?.name || "";
 export const roomFace = (room) => ({ kind: "room", members: (room?.members ?? []).map((m) => E.trunks.find((t) => t.id === m)).filter(Boolean) });
-export const chatFace = (id) => ownTrunkOf(id) ?? (roomOf(id) ? roomFace(roomOf(id)) : { kind: "main" });
+export const defaultTrunk = () => E.trunks.find((trunk) => trunk.id === E.defaultTrunkId);
+export const threadTrunk = (id) => E.trunks.find((trunk) => trunk.id === E.sessions.find((session) => session.sessionId === id)?.trunkId);
+export const chatFace = (id) => ownTrunkOf(id) ?? (roomOf(id) ? roomFace(roomOf(id)) : threadTrunk(id) ?? defaultTrunk() ?? { kind: "unassigned" });
 
 /* The engine's own ask that has a new Trunk introduce itself carries system: "trunk-intro" (src/trunks/index.ts). A
    conversation saved before that marker has the ask unmarked, so only a message with no marker is matched by its words. */

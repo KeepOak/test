@@ -43,6 +43,7 @@ async function setup(t) {
     return null;
   }, ({ last }) => (last?.role === "tool" ? "Done." : null)]);
   on(app);
+  app.trunks.ensureDefault(true); // These isolation tests exercise additional Trunks, never the person's default.
   const ada = app.trunks.create({ name: "Ada" }), bo = app.trunks.create({ name: "Bo" });
   for (const trunk of [ada, bo]) app.trunks.edit(trunk.id, { permissions: ["history.read"] });
   await app.trunks.introduced();

@@ -22,6 +22,7 @@ const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
 const { chromium } = require(join(__dirname, "../../../node_modules/playwright"));
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
@@ -141,7 +142,7 @@ async function french(browser) {
     await page.locator("#lang").waitFor();
   };
   await settings();
-  await page.locator("#lang").selectOption("fr");
+  await pickGsel(page.locator("#lang"), "fr");
   await until(() => page.evaluate(async () => (await import("/i18n.js")).language() === "fr"));
   const said = await page.evaluate(async (keys) => { const { t } = await import("/i18n.js"); return Object.fromEntries(keys.map((k) => [k, t(k)])); }, Object.keys(FRENCH));
   for (const [key, words] of Object.entries(FRENCH)) check(`5 French: ${key} says “${words}” through t()`, said[key] === words, said[key]);
@@ -154,7 +155,7 @@ async function french(browser) {
   check("5 French: the Tools list offers “Extension”", add.trim() === "Extension", add.trim());
   await page.keyboard.press("Escape");
   await settings();
-  await page.locator("#lang").selectOption("en");
+  await pickGsel(page.locator("#lang"), "en");
   await page.locator(".toast").filter({ hasText: "English." }).waitFor({ timeout: 10000 });
   check("5 back in English, the window says “English.” as the prototype does", true);
   check("no page errors (French)", errors.length === 0, errors.join(" | "));

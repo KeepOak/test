@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, rm, readFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
@@ -93,13 +93,15 @@ test("device sign-in stores tokens, registers ChatGPT presets and completes a to
   assert.equal(seen.polls, 3);
   const stored = JSON.parse(await readFile(vaultPath, "utf8"));
   assert.equal(stored.protected, false);
-  assert.ok(!JSON.stringify(stored).includes("refresh_1"), "tokens are not stored in clear text");
+  assert.equal(stored.sealed, true, "without the device's key storage it is sealed, not encoded");
+  assert.ok(!Buffer.from(stored.value, "base64").toString("utf8").includes("refresh_1"), "tokens cannot be read back from the file alone");
   const ids = [...app.runtime.models.presets.keys()].filter((id) => id.startsWith("chatgpt-"));
-  assert.deepEqual(ids, ["chatgpt-gpt-6-sol", "chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5"]);
+  assert.deepEqual(ids, ["chatgpt-gpt-6-sol", "chatgpt-gpt-6.1-sol", "chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5", "chatgpt-gpt-6-astra"]);
   const settings = app.runtime.models.settings("local");
   assert.equal(settings.activePreset, "chatgpt-gpt-6-sol", "ChatGPT replaces the demonstration as default, with GPT-6 Sol");
-  assert.deepEqual(settings.fallbackOrder, ["chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5"]);
-  assert.ok(![...app.runtime.models.presets.keys()].some((id) => id.includes("astra")), "the costliest model is never offered or fallen back to");
+  assert.deepEqual(settings.fallbackOrder, ["chatgpt-gpt-6.1-sol", "chatgpt-gpt-6-luna", "chatgpt-gpt-5.6-sol", "chatgpt-gpt-5.6-terra", "chatgpt-gpt-5.6-luna", "chatgpt-gpt-5.5"]);
+  assert.ok(app.runtime.models.presets.has("chatgpt-gpt-6-astra"), "Astra is available for an explicit choice");
+  assert.ok(!settings.fallbackOrder.includes("chatgpt-gpt-6-astra"), "Astra is never an automatic fallback");
   useFakeBackend(app, auth, base);
   const run = await app.runtime.run({ prompt: "save a greeting" });
   assert.equal(run.status, "completed");
@@ -122,6 +124,22 @@ test("device sign-in stores tokens, registers ChatGPT presets and completes a to
   assert.equal(second.input.at(-1).type, "function_call_output");
   assert.equal(second.input.at(-1).call_id, "call_1");
   assert.equal(app.store.usage(run.id).reportedInput, 22);
+});
+
+test("GPT-6 Astra is an explicit subscription choice and runs Branch tools without replacing the Sol default", async (t) => {
+  const { app, auth, base, seen } = await fixture(t);
+  await auth.startDeviceLogin();
+  await finishChatGPTSignIn(app.runtime.models, auth, "local", "BranchAgent/test");
+  assert.ok(app.runtime.models.presets.has("chatgpt-gpt-6-astra"));
+  useFakeBackend(app, auth, base);
+  const run = await app.runtime.run({ prompt: "save a greeting", model: "chatgpt-gpt-6-astra" });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, "Done: greeting saved");
+  const calls = seen.requests.filter((entry) => entry.url === "/codex/responses");
+  assert.equal(calls.length, 2, "Branch executed the returned tool and sent its result back");
+  assert.ok(calls.every((entry) => JSON.parse(entry.body).model === "gpt-6-astra"));
+  assert.equal(app.runtime.models.settings("local").activePreset, "chatgpt-gpt-6-sol");
+  assert.ok(!app.runtime.models.settings("local").fallbackOrder.includes("chatgpt-gpt-6-astra"));
 });
 
 test("expiring access tokens refresh once for concurrent callers; a rejected refresh signs out", async (t) => {
@@ -168,7 +186,7 @@ test("HTTP API exposes sign-in status, starts the device flow and signs out", as
   assert.equal(status.signedIn, true);
   assert.equal(status.email, "person@example.com");
   assert.ok(!JSON.stringify(status).includes("refresh_1"));
-  assert.equal((await call("state")).data.models.presets.length, 7, "the demonstration and the six ChatGPT models");
+  assert.equal((await call("state")).data.models.presets.length, 9, "the demonstration and the eight ChatGPT models");
   const out = await call("chatgpt/logout", {});
   assert.equal(out.data.signedIn, false);
   assert.equal((await call("state")).data.models.presets.length, 1);
@@ -238,4 +256,29 @@ test("the thinking's summary is passed on as it is written, and never becomes th
   ]) stream.consume(JSON.stringify(event));
   assert.deepEqual(thought, ["Checking the settings first"]);
   assert.equal(stream.result().content, "Done.");
+});
+
+/* RES-250: without the device's key storage the sign-in was kept as base64 anyone could read back. It is now sealed with
+   the locker's key; an older plain file is still read and sealed at once, and a changed file is refused.
+   Mutation: write the plain envelope again in FileTokenVault.write (src/chatgpt-auth.ts) and this goes red. */
+test("the ChatGPT sign-in file is sealed at rest, an older plain one is sealed on first read, and a changed one is refused", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-chatgpt-seal-"));
+  t.after(() => discardTemp(root));
+  const path = join(root, "chatgpt-auth.json");
+  const tokens = { accessToken: "access-seal-1", refreshToken: "refresh-seal-1", expiresAt: new Date(Date.now() + 3600e3).toISOString() };
+  const vault = new FileTokenVault(path);
+  await vault.write(tokens);
+  const sealed = JSON.parse(await readFile(path, "utf8"));
+  assert.deepEqual([sealed.protected, sealed.sealed], [false, true]);
+  assert.equal(Buffer.from(sealed.value, "base64").toString("latin1").includes("refresh-seal-1"), false, "not reversible from the file");
+  assert.deepEqual(await new FileTokenVault(path).read(), tokens, "read back with the locker key beside it");
+
+  await writeFile(path, JSON.stringify({ protected: false, value: Buffer.from(JSON.stringify(tokens)).toString("base64") }));
+  assert.deepEqual(await new FileTokenVault(path).read(), tokens, "an older plain file still signs in");
+  assert.equal(JSON.parse(await readFile(path, "utf8")).sealed, true, "and is sealed straight away");
+
+  const bytes = Buffer.from(JSON.parse(await readFile(path, "utf8")).value, "base64");
+  bytes[bytes.length - 1] ^= 1;
+  await writeFile(path, JSON.stringify({ protected: false, sealed: true, value: bytes.toString("base64") }));
+  await assert.rejects(new FileTokenVault(path).read(), /./, "a changed file is refused, not trusted");
 });

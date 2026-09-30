@@ -4,6 +4,8 @@ import { dirname } from 'node:path';
 import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
 import { z } from 'zod';
+import { instructionsRemovedNote, withoutInstructions } from '../content-guard.js';
+import { carriedData } from '../egress-guard.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolContext } from '../contracts.js';
 import type { RunArtifacts } from '../artifacts.js';
@@ -95,6 +97,8 @@ interface RunEntry {
   profile: string | null;
   /** The numbers handed out to the things on the pages this task has looked at. */
   marks: MarkRegistry;
+  /** The address the task itself asked `navigate` for, already judged (and asked about) as that tool call. */
+  asked?: string;
   /** The owner's own browser, while this task is borrowing it. */
   borrowed: AttachedBrowser | null;
   // w911 (A1726) hook: a benchmark window (see benchmarkWindow) — its one extra origin, and whether
@@ -209,6 +213,11 @@ export class BranchBrowser {
    */
   siteSkills: ((owner: string) => SiteSkills) | undefined;
 
+  /**
+   * The secret values this launch has unlocked (src/egress-guard.ts). A page the browser is sent to whose address
+   * carries one, or a card or account number (a form sent by address, a link, a redirect), is not opened.
+   */
+  egressSecrets: (() => readonly string[]) | undefined;
   /** R17-S19: the owner's browser care (Settings › Computer & browser); defaults without a store. */
   private care(owner: string): BrowserCare {
     return this.store ? browserCare(this.store, owner) : browserCareDefaults;
@@ -230,6 +239,8 @@ export class BranchBrowser {
     if (this.anyWebsite && entry?.granted !== target.origin) await this.pinRules().allowedAddresses(target, 'browser address');
     // Playwright says 'document' and Chromium's pause says 'Document'; both are the same navigation.
     if (request.resourceType.toLowerCase() !== 'document') return;
+    const carried = this.egressSecrets && request.url !== entry?.asked ? carriedData(request.url, this.egressSecrets()) : null;
+    if (carried) throw new Error(`That page's address would carry ${carried} out of Branch, so it was not opened`);
     if (entry?.granted !== target.origin && !this.anyWebsite)
       await this.policy?.assertAllowed(target, 'browser address');
     // How many different websites a task may visit is charged here, where every real navigation
@@ -581,6 +592,7 @@ export class BranchBrowser {
     // password managers apply to website names too.
     const refused = entry.borrowed ? attachedAddressRefusal(url, '', this.extraRefusedHosts(context.owner)) : null;
     if (refused) throw new Error(refused);
+    entry.asked = URL.canParse(url) ? new URL(url).href : url;
     return this.operation(context, async (page, check) => {
       const origin = new URL(url).origin;
       if (!entry.origins.has(origin) && entry.origins.size >= this.config.maxOriginsPerRun)
@@ -631,7 +643,7 @@ export class BranchBrowser {
     return this.operation(context, async page => {
       const tree = await page.locator('body').ariaSnapshot();
       const { hidden, typed } = await this.pageSecrets(context, page);
-      return { url: page.url(), accessibility: scrubSnapshot(tree, hidden, typed).slice(0, 16000) };
+      return pageText({ url: page.url(), accessibility: scrubSnapshot(tree, hidden, typed).slice(0, 16000) });
     });
   }
   /**
@@ -760,11 +772,11 @@ export class BranchBrowser {
     return this.operation(context, page => waitFor(page, options));
   }
   async extract(options: z.infer<typeof ExtractSchema>, context: ToolContext) {
-    return this.operation(context, async page => extract(page, options, (await this.pageSecrets(context, page)).hidden));
+    return this.operation(context, async page => pageText(await extract(page, options, (await this.pageSecrets(context, page)).hidden)));
   }
   /** Data in the exact shape the assistant asked for, or a refusal naming the field that did not fit. */
   async extractShaped(options: z.infer<typeof ExtractSchemaSchema>, context: ToolContext) {
-    return this.operation(context, async page => extractSchema(page, options, (await this.pageSecrets(context, page)).hidden));
+    return this.operation(context, async page => pageText(await extractSchema(page, options, (await this.pageSecrets(context, page)).hidden)));
   }
   /**
    * Numbers everything on the page that can be pressed or typed into and hands back the list. The
@@ -1494,3 +1506,9 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
 }
 
 export { trunkProfileName, isTrunkProfile, trunkProfilePrefix } from './browser-profiles.js';
+
+/** What the browser read off a page, with lines that give the assistant orders taken out (src/content-guard.ts). */
+function pageText<T extends object>(result: T): T & { note?: string } {
+  const { value, removed } = withoutInstructions(result);
+  return removed ? { ...value, note: instructionsRemovedNote(removed) } : value;
+}

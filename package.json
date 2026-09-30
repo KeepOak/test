@@ -1,6 +1,6 @@
 {
   "name": "branch-agent",
-  "version": "0.19.3",
+  "version": "0.19.4",
   "private": true,
   "description": "A local, inspectable personal assistant runtime",
   "type": "module",
@@ -33,7 +33,7 @@
     "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "build": "node scripts/build-ts.mjs && node scripts/copy-fonts.mjs && node scripts/copy-suites.mjs && node scripts/copy-data.mjs",
+    "build": "node scripts/build-ts.mjs && node scripts/ascii-dist.mjs && node scripts/copy-fonts.mjs && node scripts/copy-suites.mjs && node scripts/copy-data.mjs && node scripts/tool-cards.mjs",
     "pretest": "node -e \"require('electron')\"",
     "test": "npm run build && node scripts/run-tests.mjs",
     "start": "npm run build && node dist/cli.js start",

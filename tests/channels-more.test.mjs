@@ -270,7 +270,7 @@ test("WhatsApp: the address is verified, an unsigned message is refused, and a l
   assert.equal(sent.path, "/PN-1/messages");
   assert.equal(sent.body.to, "27123456789");
   assert.equal(sent.body.text.body, "Echo: what is the weather");
-  assert.equal(sent.body.context.message_id, "wamid.in1");
+  assert.equal(sent.body.context, undefined, "a one-to-one answer to the only message waiting does not quote it (reply-style.ts)");
   assert.equal(sent.headers.authorization, `Bearer ${whatsAppToken}`);
 
   // More than a day later WhatsApp no longer allows a free reply, so the message waits and is shown.
@@ -323,14 +323,32 @@ test("Email: a stranger is turned away, and the mail helpers read what a server 
   // The IMAP reader steps over literal blocks, so a message body cannot fake the end of an answer.
   const answer = "* 1 FETCH (BODY[HEADER] {14}\r\nb1 OK faked\r\n\r\n)\r\nb1 OK done\r\n";
   assert.equal(taggedEnd(answer, "b1"), answer.length);
-  const parsed = parseFetched(1, "* 1 FETCH (BODY[HEADER] {62}\r\nFrom: A B <a@b.com>\r\nSubject: Hi\r\nMessage-ID: <x@y>\r\n\r\n BODY[TEXT] {6}\r\nhello!)\r\nb1 OK\r\n");
+  const parsed = parseFetched(1, "* 1 FETCH (BODY[HEADER] {55}\r\nFrom: A B <a@b.com>\r\nSubject: Hi\r\nMessage-ID: <x@y>\r\n\r\n BODY[TEXT] {6}\r\nhello!)\r\nb1 OK\r\n");
   assert.equal(parsed.from, "a@b.com");
   assert.equal(parsed.fromName, "A B");
   assert.equal(parsed.subject, "Hi");
   assert.equal(parsed.text, "hello!");
+  // CHAT-003: a server may send the text before the headers (GreenMail does, about half the time), and a subject
+  // that spells a part name is only text.
+  const turned = parseFetched(1, "* 1 FETCH (BODY[TEXT] {6}\r\nhello! BODY[HEADER] {47}\r\nFrom: a@b.com\r\nSubject: BODY[TEXT] {3}\r\nabc\r\n\r\n)\r\nb1 OK\r\n");
+  assert.equal(turned.from, "a@b.com");
+  assert.equal(turned.subject, "BODY[TEXT] {3}");
+  assert.equal(turned.text, "hello!");
   assert.equal(handle("short@example.com", "who"), "short@example.com");
   assert.match(handle("a".repeat(70) + "@example.com", "who"), /^who:[0-9a-f]{32}$/);
   assert.equal(toMrkdwn("keep ```**this**``` as is"), "keep ```**this**``` as is");
+});
+
+test("a mail with accents and emoji is read whole, since IMAP counts bytes (CHAT-003)", async (t) => {
+  // Counted as characters, this body overran its literal, and the reader waited for an end that never came.
+  const body = "Ça coûte combien ? Déjà payé, naïve café 🌳🌳🌳";
+  const mailbox = await fakeImap(t, { body });
+  const client = new ImapClient({ host: "127.0.0.1", port: mailbox.port, user: "a@example.com", password: "pw", tls: false, timeoutMs: 3000 });
+  await client.connect();
+  let mail;
+  try { [mail] = await client.unread(); } finally { await client.close(); }
+  assert.equal(mail.text, body);
+  assert.equal(mail.from, "alice@example.com");
 });
 
 test("a mail server that refuses the password is reported in words the owner can act on", async (t) => {
@@ -389,7 +407,7 @@ test("a channel that is refused says so in words, and never repeats the secret i
 async function fakeImap(t, options = {}) {
   const stored = [];
   const headers = `From: ${options.from ?? "Alice <alice@example.com>"}\r\nSubject: A question\r\nMessage-ID: <first@example.com>\r\n`;
-  const body = "How much is the fee?";
+  const body = options.body ?? "How much is the fee?";
   let fetched = false;
   const server = createSocketServer((socket) => {
     socket.setEncoding("utf8");
@@ -403,7 +421,8 @@ async function fakeImap(t, options = {}) {
         if (command === "SEARCH") { socket.write(fetched ? "* SEARCH\r\n" : "* SEARCH 1\r\n"); }
         if (command === "FETCH") {
           fetched = true;
-          socket.write(`* 1 FETCH (BODY[HEADER] {${headers.length}}\r\n${headers} BODY[TEXT] {${body.length}}\r\n${body})\r\n`);
+          // IMAP counts a literal in bytes, as a real server does.
+          socket.write(`* 1 FETCH (BODY[HEADER] {${Buffer.byteLength(headers)}}\r\n${headers} BODY[TEXT] {${Buffer.byteLength(body)}}\r\n${body})\r\n`);
         }
         socket.write(`${tag} OK done\r\n`);
         if (command === "LOGOUT") socket.end();

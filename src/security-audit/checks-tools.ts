@@ -81,7 +81,7 @@ export const webChecks: SecurityCheck[] = [
       advice: "List the sites it may reach in Settings → Computer, if its work allows.",
     } : null),
   check("web.instructions-only-noted", "web", "info", "Instructions hidden in web pages are taken out, not just noted", (snapshot) =>
-    channelsOn(snapshot) && (snapshot.integrations?.web?.injection ?? "warn") === "warn" ? {
+    channelsOn(snapshot) && (snapshot.integrations?.web?.injection ?? "redact") === "warn" ? {
       detail: "Text on a web page that reads like orders to the assistant is only pointed out, and people can reach the assistant from outside.",
       advice: "Set injection to \"redact\" or \"block\" under web in the launch settings file.",
     } : null),

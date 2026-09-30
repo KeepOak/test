@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { saveReplyStyle } from "../dist/channels/reply-style.js";
 import {
   fixture, until, delay, setSwitch, assertNoSecret, httpService, pairingWalk, refusalWalk,
 } from "./channels-parity-kit.mjs";
-import { parityServices } from "../dist/channels/connectors.js";
+import { parityServices } from "../dist/channels/parity-services.js";
 import { buildParityChannel } from "../dist/channels/parity-config.js";
 import { NextcloudTalkChannel } from "../dist/channels/nextcloud-talk.js";
 import { TwilioSmsChannel } from "../dist/channels/twilio-sms.js";
@@ -65,6 +66,7 @@ test("Nextcloud Talk: history is left alone, a stranger pairs, and the answer go
   server.add("abcd1234", { actorId: "carol", message: "an old message from before Branch started" });
   const channel = talkChannel(server, ["abcd1234"]);
   await context.app.channels.attach(channel, { activation: "mention", pairing: true, allowlist: [] });
+  saveReplyStyle(context.app.store, context.app.runtime.owner, { channel: "nextcloud-talk", quote: "first" }, ["nextcloud-talk"]); // A one-to-one answer quotes only when needed (reply-style.ts); "first" checks this app's quote on the wire.
   t.after(() => channel.stop());
   await until(() => channel.health().state === "connected", "took stock");
   await until(() => server.calls.some((c) => c.query.lookIntoFuture === "1"), "asked for new messages");

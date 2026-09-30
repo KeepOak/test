@@ -21,6 +21,7 @@ import {
 import { crashVerdict, markRunning, markExited } from "../dist/never-break/gateway-state.js";
 import { contractsMeet, gatewayContract } from "../dist/never-break/contract.js";
 import { neverBreakApi } from "../dist/never-break/api.js";
+import { answerHeader, answerMark, askHeader, newBoot, proveOnce, sessionKey, watchEngine } from "../dist/engine-proof.js";
 
 const worker = resolve("tests/fixtures/never-break-worker.mjs");
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
@@ -157,6 +158,18 @@ test("requests go through to the worker, and a killed worker is replaced while t
   assert.equal(alive(first.pid), false);
 });
 
+test("selfdev: an engine restarting itself on request (exit code 75) is started again at once and is not a crash", async (t) => {
+  const { gw, events } = await gateway(t);
+  await until(() => events.some((e) => e.kind === "ready"), "the first worker");
+  const first = JSON.parse((await get(gw.url, "/api/state")).body);
+  await get(gw.url, "/api/dashboard/restart", { method: "POST", origin: gw.url, "content-type": "application/json", body: "{}" });
+  await until(() => events.filter((e) => e.kind === "ready").length >= 2, "the worker started again");
+  const second = JSON.parse((await get(gw.url, "/api/state")).body);
+  assert.notEqual(second.pid, first.pid);
+  assert.equal(events.filter((e) => e.kind === "crash").length, 0, "a restart asked for is not recorded as a crash");
+  assert.equal(gw.restarts, 0);
+});
+
 test("a request waits only so long for a worker that will not come", async (t) => {
   const { gw } = await gateway(t, { env: { FAKE_MODE: "never-ready" },
     before: (dataDir) => saveGatewayConfig(dataDir, GatewayConfigSchema.parse({ holdSeconds: 0, startSeconds: 60 })) });
@@ -199,6 +212,54 @@ test("a connection upgrade is carried through to the worker", async (t) => {
     socket.on("error", fail);
   });
   assert.match(reply, /101 Switching Protocols[\s\S]*echo:ping/);
+});
+
+test("the gateway proves itself for the desktop window, hands the worker the window key its session key stands for, and marks its answers", async (t) => {
+  const key = "e".repeat(64);
+  const { gw, events } = await gateway(t, { before: (dataDir) => writeFile(join(dataDir, "session-token"), key) });
+  await until(() => events.some((e) => e.kind === "ready"), "the worker");
+  const port = Number(new URL(gw.url).port);
+  const boot = await proveOnce(gw.url, key);
+  assert.match(boot ?? "", /^[a-f0-9]{32}$/, "the gateway, which holds the window's address, proves itself there");
+  assert.equal(await proveOnce(gw.url, "0".repeat(64)), null, "only under the window's own key");
+  const status = (path) => fetch(`${gw.url}${path}`).then(async (answer) => { await answer.body?.cancel(); return answer.status; });
+  assert.equal(await status(`/api/engine-proof?challenge=${"1".repeat(64)}`), 200, "one short proof to anybody");
+  assert.equal(await status(`/api/engine-proof?challenge=${"1".repeat(64)}&hold=1`), 404, "no held connection without the session key");
+  const watch = watchEngine(gw.url, key);
+  assert.equal(await watch.proved, boot, "the window's watch is held there, with its session key");
+  watch.close();
+  const many = await Promise.all(Array.from({ length: 80 }, () => status(`/api/engine-proof?challenge=${"1".repeat(64)}`)));
+  assert.ok(many.includes(200) && many.includes(429), "a burst of keyless questions is told to wait");
+  const session = sessionKey(key, boot);
+  const ask = newBoot();
+  const answer = await new Promise((done, fail) => {
+    const req = request({ host: "127.0.0.1", port, path: "/api/headers", headers: { authorization: `Bearer ${session}`, [askHeader]: ask } }, (response) => {
+      let body = ""; response.on("data", (c) => { body += c; }); response.on("end", () => done({ mark: response.headers[answerHeader], body: JSON.parse(body) }));
+    });
+    req.on("error", fail);
+    req.end();
+  });
+  assert.deepEqual(answer.body, { authorization: `Bearer ${key}`, ask: null }, "the worker gets the window key, and no question it would mark at its own port");
+  assert.equal(answer.mark, answerMark(session, ask, port, boot), "the answer carries the mark for the gateway's port");
+  const other = sessionKey(key, newBoot());
+  assert.equal(JSON.parse((await get(gw.url, "/api/headers", { authorization: `Bearer ${other}` })).body).authorization, `Bearer ${other}`,
+    "a key made for another process is passed on as it came, and the engine refuses it");
+  const opened = await new Promise((done, fail) => {
+    const socket = connect(port, "127.0.0.1", () => {
+      socket.write([`GET /socket HTTP/1.1`, `Host: 127.0.0.1:${port}`, "Connection: Upgrade", "Upgrade: echo", `${askHeader}: ${ask}`,
+        `Authorization: Bearer ${session}`, "", ""].join("\r\n"));
+    });
+    let text = "";
+    socket.on("data", (chunk) => {
+      text += chunk;
+      if (text.includes("\r\n\r\n") && !text.includes("echo:")) socket.write("ping");
+      if (text.includes("echo:ping")) { socket.destroy(); done(text); }
+    });
+    socket.on("error", fail);
+  });
+  assert.match(opened, /101 Switching Protocols/);
+  assert.ok(opened.includes(`${answerHeader}: ${answerMark(session, ask, port, boot)}\r\n`), "a socket's opening is marked too");
+  assert.match(opened, /echo:ping/, "and carried through as before");
 });
 
 test("asking the engine to close closes the gateway too, instead of starting it again", async (t) => {

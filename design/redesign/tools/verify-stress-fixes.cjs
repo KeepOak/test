@@ -7,7 +7,8 @@
    label or hint (screenshots go to SHOTS when given). */
 const fs = require("node:fs");
 const path = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const { PORT, TOKEN, DATA, SHOTS } = process.env;
 if (!PORT || !TOKEN || !DATA) { console.error("Set PORT, TOKEN and DATA."); process.exit(2); }
@@ -32,6 +33,10 @@ const tab = (page, place, v) => act(page, "view", { v: place, tab: v });
 const soonTip = "Coming soon";
 
 async function b001(page) {
+  // Recordings ship on now (src/run-recording.ts recordingShipsAs), so the off path is set up through the engine first.
+  await api("recordings", { mode: "off" });
+  await page.reload();
+  await page.waitForSelector("#main", { timeout: 15000 });
   await tab(page, "inbox", "history");
   const tile = page.locator('#main [data-off="recordings"]');
   check("B001 History says recordings are off, with the switch", await until(async () => (await tile.count()) === 1) && (await tile.locator('[data-act="switch-on"]').count()) === 1);
@@ -87,6 +92,10 @@ async function b004(page) {
 }
 
 async function b005(page) {
+  // Saved prompts ship on now (src/prompt-library.ts promptLibraryShipsAs): switched off through the engine first.
+  await api("prompts/settings", { mode: "off" });
+  await page.reload();
+  await page.waitForSelector("#main", { timeout: 15000 });
   await tab(page, "automations", "procedures");
   const tile = page.locator('#main [data-off="prompts"]');
   check("B005 saved prompts: off, said before the form, with the switch", await until(async () => (await tile.count()) === 1) && await page.locator('#main [data-act="prompt-new"]').isDisabled());
@@ -134,7 +143,7 @@ async function modelRowFits(page, width, scheme) {
   await sleep(400);
   const row = page.locator(".dlg .tm-model18");
   await row.scrollIntoViewIfNeeded();
-  const boxes = await row.evaluate((el) => ["b", "select", "small", ".tm-why"].map((q) => { const r = el.querySelector(q)?.getBoundingClientRect(); return r ? [r.left, r.top, r.right, r.bottom] : null; }));
+  const boxes = await row.evaluate((el) => ["b", ".gsel", "small", ".tm-why"].map((q) => { const r = el.querySelector(q)?.getBoundingClientRect(); return r ? [r.left, r.top, r.right, r.bottom] : null; }));
   const [b, sel, small, why] = boxes;
   const hit = (x, y) => x && y && x[0] < y[2] && y[0] < x[2] && x[1] < y[3] && y[1] < x[3];
   const bg = await page.locator(".dlg #tm-model-sel").evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -158,13 +167,13 @@ async function b008(page) {
   await sleep(1200);
   await act(page, "edit", { id: trunk.id });
   await act(page, "st-tab", { v: "may" });
-  const option = page.locator('.dlg #tm-model-sel option[value="cli-claude-code"]');
-  check("B008 the owner's Trunk: the sign-in model is offered, not greyed", (await option.count()) === 1 && !(await option.isDisabled()));
+  const option = (await gselChoices(page.locator(".dlg #tm-model-sel"))).find((c) => c.value === "cli-claude-code");
+  check("B008 the owner's Trunk: the sign-in model is offered, not greyed", !!option && !option.off);
   check("B008 the owner's Trunk: no reason line, nothing refused", (await page.locator(".dlg .tm-model18 .tm-why").count()) === 0);
   for (const width of [1440, 390]) for (const scheme of ["light", "dark"]) await modelRowFits(page, width, scheme);
   await page.setViewportSize({ width: 1366, height: 900 });
   await page.emulateMedia({ colorScheme: "light" });
-  await page.selectOption(".dlg #tm-model-sel", "cli-claude-code");
+  await pickGsel(page.locator(".dlg #tm-model-sel"), "cli-claude-code");
   check("B008 the owner picks it for the Trunk (GET /api/trunks model)", await until(async () => ((await api("trunks")).trunks ?? []).find((x) => x.id === trunk.id)?.model === "cli-claude-code"));
   await act(page, "dlg-close");
 
@@ -184,10 +193,10 @@ async function b008(page) {
     await page.reload();
     await page.waitForSelector("#main", { timeout: 15000 });
     await sleep(1200);
+    // A Trunk is the owner's: a household person is not given its editor, and the engine says why.
     await act(page, "edit", { id: trunk.id });
-    await act(page, "st-tab", { v: "may" });
-    check("B008 a household person's Trunk: the sign-in model greyed", await option.isDisabled());
-    check("B008 with the engine's reason and the way to add a key", ((await page.locator(".dlg .tm-model18 .tm-why").textContent()) ?? "").includes(sams.trunkUse.reason) && (await page.locator('.dlg .tm-model18 [data-act="api-key-go"]').count()) === 1);
+    check("B008 a household person: the owner's Trunk opens no editor, and says whose it is",
+      (await page.locator(".dlg .tm-model18").count()) === 0 && /belongs to the owner/.test((await page.locator(".toast").first().textContent().catch(() => "")) ?? ""));
     await act(page, "dlg-close");
     await api("profiles/switch", { profileId: null });
   }

@@ -1,7 +1,7 @@
 // Screenshots for the pass 17 look: the chat, a place (Automations) and Settings at 1440 and 390, in Daylight and
 // Moonlight, plus a popover and a dialog at 1440. Use a throwaway engine: it switches light and dark in the preferences.
 // Run: PORT=<port> TOKEN=<session token> PREFIX=before|after [OUT=<folder>] node design/redesign/tools/shots-p17-look.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const fs = require("fs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, PREFIX = process.env.PREFIX || "shot";

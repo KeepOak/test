@@ -15,6 +15,7 @@ import type { ModelPrice } from "./pricing.js";
 import type { Store } from "./store.js";
 import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 import type { UsageAggregate } from "./usage.js";
+import { countedUsageTask } from "./conversation-bootstrap.js";
 
 export const usageReportRanges = ["7d", "30d", "90d"] as const;
 export type UsageReportRange = (typeof usageReportRanges)[number];
@@ -149,7 +150,7 @@ export function peopleUsing(db: DatabaseSync, from: string, until: string, names
     `SELECT t.owner AS owner, COUNT(*) AS n,
        COALESCE(SUM(MAX(u.reported_input, u.estimated_input) + MAX(u.reported_output, u.estimated_output)), 0) AS tokens
      FROM tasks t LEFT JOIN usage u ON u.run_id = t.id
-     WHERE t.created_at >= ? AND t.created_at <= ? AND t.status NOT IN ('running','needs_input')
+     WHERE t.created_at >= ? AND t.created_at <= ? AND t.status NOT IN ('running','needs_input') AND ${countedUsageTask(db, "t")}
      GROUP BY t.owner ORDER BY n DESC, t.owner`,
   ).all(from, until) as Array<{ owner: string; n: number; tokens: number | null }>;
   return rows.map((row) => ({ name: names.get(row.owner) ?? "Someone no longer on this computer", tasks: Number(row.n), tokens: Number(row.tokens ?? 0) }))

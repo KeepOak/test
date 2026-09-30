@@ -46,7 +46,8 @@ function fakeBackend({ mode = "when-needed", fail } = {}) {
       calls.saves.push({ id, values, enable });
       if (fail) throw new Error(fail);
       return { saved: Object.keys(values).filter((name) => /^[A-Z]/.test(name)), checked: true, botName: "owner_helper_bot", checkNote: null,
-        switched: enable ?? null, connectNote: null, entry: id === "telegram" ? null : `{"type":"${id}"}`, pairing: "Send any message to your bot." };
+        switched: enable ?? null, connectNote: null, entry: id === "telegram" ? null : `{"type":"${id}"}`, pairing: "Send any message to your bot.",
+        connected: id === "telegram" ? null : true };
     },
     approvePairing: async (code) => { calls.pairings.push(code); },
   };
@@ -72,7 +73,7 @@ test("Telegram on a Mac: asks, installs with Homebrew, opens BotFather in the ap
   assert.match(said, /Paired/);
 });
 
-test("Discord on Windows uses winget and says the connections line; nothing is switched by itself", async () => {
+test("Discord on Windows uses winget and connects without a connections line; nothing is switched by itself", async () => {
   const { io, printed, ran } = fakeIo({ platform: "win32", programs: ["winget"], installedAfter: 2, answers: ["y", "", "y"], hidden: ["discord-token-1234567890"] });
   const { backend, calls } = fakeBackend();
   assert.equal(await runConnect("discord", io, backend), 0);
@@ -82,7 +83,9 @@ test("Discord on Windows uses winget and says the connections line; nothing is s
     [["url.dll,FileProtocolHandler", "https://discord.com/developers/applications?new_application=true"]]);
   assert.equal(calls.saves[0].enable, undefined, "a connections-file app is never switched from here");
   assert.equal(calls.pairings.length, 0);
-  assert.match(printed.join("\n"), /Add this to "channels" in your connections file/);
+  // CHAT-147: the running Branch connects it there and then; no connections-file line, no restart.
+  assert.match(printed.join("\n"), /Discord is connected now\. Nothing needs restarting\./);
+  assert.doesNotMatch(printed.join("\n"), /connections file/);
 });
 
 test("Slack on Linux with only Snap says sudo before asking, and opens Slack's filled-in page", async () => {
@@ -168,7 +171,7 @@ test("a refused token saves nothing and says why; an unknown app lists the real 
   const unknown = fakeIo();
   assert.equal(await runConnect("myspace", unknown.io, backend), 2);
   assert.match(unknown.printed[0], /Usage: branch connect <chat app>\nChat apps: telegram, discord, slack/);
-  assert.equal(connectUsage().split(", ").length, 55);
+  assert.equal(connectUsage().split(", ").length, 56);
 });
 
 /* ---------- integration review (adversarial pass) ---------- */

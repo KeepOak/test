@@ -90,14 +90,23 @@ async function post(
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
 }
 
-function geminiMessage(message: Message): Record<string, unknown> {
+/**
+ * Gemini matches a function's answer to its call by the function's name, so a tool result carries the name of the call
+ * it answers: found by the call's id among the calls the model made earlier in the conversation.
+ */
+export function geminiMessages(messages: readonly Message[]): Record<string, unknown>[] {
+  const names = new Map<string, string>();
+  for (const message of messages) for (const call of message.toolCalls ?? []) names.set(call.id, call.name);
+  return messages.map((message) => geminiMessage(message, message.toolCallId ? names.get(message.toolCallId) : undefined));
+}
+function geminiMessage(message: Message, calledName?: string): Record<string, unknown> {
   if (message.role === "tool") {
     return {
       role: "user",
       parts: [
         {
           functionResponse: {
-            name: message.content.split(":")[0] || "unknown",
+            name: calledName ? wireName(calledName) : "unknown",
             response: { result: message.content },
           },
         },
@@ -203,7 +212,7 @@ export class GeminiProvider implements Provider {
       .join("\n");
 
     const userMessages = request.messages.filter((m) => m.role !== "system");
-    const messages = userMessages.map(geminiMessage);
+    const messages = geminiMessages(userMessages);
 
     const tools = request.tools.length
       ? [

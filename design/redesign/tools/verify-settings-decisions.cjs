@@ -6,7 +6,7 @@
    request first while sorting is on and in the order they came while it is off, and that eleven waiting rows are asked
    about once (eight scored), not in a chain of redraws. Nothing leaves this computer. */
 const path = require("node:path");
-const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT ?? "playwright";
 const { chromium } = require(PW);
 const { start } = require(path.join(__dirname, "stub-model-decisions.cjs"));
 

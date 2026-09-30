@@ -102,15 +102,24 @@ function tryIt(el) {
   const list = W.lists ? Object.values(W.lists).flat() : [];
   const e = list.find((x) => x.kind === el.dataset.k && x.name === el.dataset.v);
   if (!e) return;
-  const fields = [...new Set([...e.ask.matchAll(/\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/g)].map((match) => match[1]))].filter((name) => name !== "today");
+  withBlanksFilled(e.name, e.ask, openDraft);
+}
+
+/**
+ * A prompt's blanks ({{input}}, {{address}}…) asked for in labelled boxes, then `then` is handed the filled text; with no
+ * blank it is handed at once. {{today}} is filled by itself. QA retest 2026-09-28 (m16): shared by What can Branch do's
+ * Try it and a saved prompt's Use (chat/messages.js), which used to put the raw {{input}} in the box.
+ */
+export function withBlanksFilled(title, body, then) {
+  const fields = [...new Set([...body.matchAll(/\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/g)].map((match) => match[1]))].filter((name) => name !== "today");
   if (fields.length) {
-    W.using = e; W.fields = fields;
+    W.using = { body, then }; W.fields = fields;
     markLive(fields.map((name) => `sw:wc-field-${name}`));
-    openDlg({ title: e.name, body: `<p class="hint">${t("window.what.fill-blanks")}</p>${fields.map((name) => `<label class="fld"><span>${esc(name === "input" ? t("window.what.your-text") : name)}</span><textarea class="inp" id="wc-field-${name}" maxlength="4000" rows="3" required></textarea></label>`).join("")}`,
+    openDlg({ title, body: `<p class="hint">${t("window.what.fill-blanks")}</p>${fields.map((name) => `<label class="fld"><span>${esc(name === "input" ? t("window.what.your-text") : name)}</span><textarea class="inp" id="wc-field-${name}" maxlength="4000" rows="3" required></textarea></label>`).join("")}`,
       foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("updates.busy.cancel")}</button><button class="btn pri" type="button" data-act="whatcan-prepare">${t("window.what.prepare-draft")}</button>` });
     return;
   }
-  openDraft(e.ask.replace(/\{\{\s*today\s*\}\}/g, new Date().toLocaleDateString("en-CA")));
+  then(body.replace(/\{\{\s*today\s*\}\}/g, new Date().toLocaleDateString("en-CA")));
 }
 
 function openDraft(text) {
@@ -125,9 +134,11 @@ function prepareDraft() {
   const missing = W.fields.find((name) => !values[name].trim());
   if (missing) { document.getElementById(`wc-field-${missing}`)?.focus(); toast(t("window.what.fill-required")); return; }
   values.today = new Date().toLocaleDateString("en-CA");
-  const text = W.using.ask.replace(/\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/g, (whole, name) => values[name] ?? whole);
+  const text = W.using.body.replace(/\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/g, (whole, name) => values[name] ?? whole);
+  const then = W.using.then;
   W.using = null;
-  openDraft(text);
+  closeDlg();
+  then(text);
 }
 
 export function initWhatCan() {

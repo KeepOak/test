@@ -7,7 +7,8 @@
    %TEMP%/claude-session-files/your-profile). Nothing launches a desktop window. */
 const { mkdirSync } = require("node:fs");
 const { join } = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
@@ -25,7 +26,7 @@ async function api(p, body) {
   return data;
 }
 const shot = (page, name) => page.screenshot({ path: join(SHOTS, `${name}.png`) });
-const greyedIn = (page, root) => page.locator(`${root} [data-act], ${root} input, ${root} select`).evaluateAll((nodes) =>
+const greyedIn = (page, root) => page.locator(`${root} [data-act], ${root} input, ${root} .gsel`).evaluateAll((nodes) =>
   nodes.filter((n) => n.getAttribute("aria-disabled") === "true" || n.classList.contains("soon") || n.disabled).map((n) => n.dataset.act || n.id || n.outerHTML.slice(0, 60)));
 
 async function signIn(browser) {
@@ -87,15 +88,15 @@ async function saves(page) {
   await shot(page, "04-emoji");
   await page.locator('#yp [data-act="yp-face"][data-v="photo"]').click();
   check("photo again: saved (GET /api/profiles)", await until(async () => (await api("profiles")).owner.avatar.face === "photo"));
-  await page.locator("#yp-tz").selectOption("Asia/Tokyo");
+  await pickGsel(page.locator("#yp-tz"), "Asia/Tokyo");
   check("time zone: saved (GET /api/profiles/owner/about)", await until(async () => (await api("profiles/owner/about")).timezone === "Asia/Tokyo"));
   const proposed = await api("schedules/propose", { edit: { prompt: "Water the plants", dailyAt: "08:00" } });
   check("time zone: schedules are proposed in it (POST /api/schedules/propose)", proposed.proposal.schedule.timezone === "Asia/Tokyo");
-  await page.locator("#yp-lang").selectOption("fr");
+  await pickGsel(page.locator("#yp-lang"), "fr");
   check("language: saved (GET /api/look language = fr)", await until(async () => (await api("look")).language === "fr"));
   check("language: Your profile is in French at once", await until(async () => (await page.locator(".dlg .dlg-h h2").innerText()) === "Votre profil"));
   await shot(page, "05-french");
-  await page.locator("#yp-lang").selectOption("en");
+  await pickGsel(page.locator("#yp-lang"), "en");
   check("language: back to English (GET /api/look)", await until(async () => (await api("look")).language === "en"));
 }
 

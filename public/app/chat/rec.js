@@ -3,8 +3,9 @@
    while the engine suggests it: GET /api/deployment/suggestion answers "background", "updates" or nothing, one at a time
    and only in the owner's window after the first run. Don't ask again is kept by the engine (POST
    /api/deployment/suggestion {id, answer: "never"}); Not now is this window's until it next opens. Yes for updates turns
-   on installing updates when idle (POST /api/comfort, card notify). Yes for background installs a system service, so it
-   stays greyed (its act has no handler) until that can be proved safe. */
+   on installing updates when idle (POST /api/comfort, card notify). Yes for background saves the same gateway choice as
+   Settings › General and › Gateway (POST /api/never-break { mode: "on" }); it never sets up a system service, and it says
+   what is really so: running now, or saved to start with the next launch. */
 
 import { render, esc } from "../core/dom.js";
 import { E, ownerHere } from "../core/state.js";
@@ -59,9 +60,18 @@ async function answer(el) {
   await readBar();
 }
 
+/* Keep Branch running: the saved gateway choice, then the actual state the engine reports (never "on" by assumption). */
+async function keepRunning() {
+  let view;
+  try { view = await api("never-break", { mode: "on" }); } catch (error) { toast(error.message); return; }
+  toast(t(view?.mode === "off" ? "gatewayChoice.off" : view?.underGateway === true ? "gatewayChoice.running" : "gatewayChoice.saved"));
+  await readBar();
+}
+
 export function initRec() {
-  markLive(["rec"]);
+  markLive(["rec", "rec-install"]);
   on("rec", (el) => answer(el));
+  on("rec-install", () => keepRunning());
   if (window.branchDesktop?.installUpdate) markLive(["install"]);
   // Remind me tomorrow puts the card below away for a day; only the desktop app draws that card (a browser has none).
   if (window.branchDesktop?.updateStatus) markLive(["upd-snooze"]);

@@ -14,18 +14,25 @@ function messagesDatabase(path) {
   const db = new DatabaseSync(path);
   db.exec(`CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT);
     CREATE TABLE chat (ROWID INTEGER PRIMARY KEY, guid TEXT, style INTEGER, display_name TEXT);
-    CREATE TABLE message (ROWID INTEGER PRIMARY KEY, handle_id INTEGER, text TEXT, attributedBody BLOB, is_from_me INTEGER);
+    CREATE TABLE message (ROWID INTEGER PRIMARY KEY, handle_id INTEGER, text TEXT, attributedBody BLOB, is_from_me INTEGER,
+      cache_has_attachments INTEGER DEFAULT 0, is_audio_message INTEGER DEFAULT 0);
+    CREATE TABLE attachment (ROWID INTEGER PRIMARY KEY, filename TEXT, mime_type TEXT, transfer_name TEXT, total_bytes INTEGER);
+    CREATE TABLE message_attachment_join (message_id INTEGER, attachment_id INTEGER);
     CREATE TABLE chat_message_join (chat_id INTEGER, message_id INTEGER);
     INSERT INTO handle VALUES (1, '+15550001111'), (2, 'friend@example.com');
     INSERT INTO chat VALUES (1, 'iMessage;-;+15550001111', 45, NULL), (2, 'iMessage;+;chat987654321', 43, 'Family');
-    INSERT INTO message VALUES (1, 1, 'an old message from before Branch started', NULL, 0);
+    INSERT INTO message (ROWID, handle_id, text, attributedBody, is_from_me) VALUES (1, 1, 'an old message from before Branch started', NULL, 0);
     INSERT INTO chat_message_join VALUES (1, 1);`);
   let next = 2;
   return {
-    say(handleId, text, { chat = 1, body = null, fromMe = 0 } = {}) {
+    say(handleId, text, { chat = 1, body = null, fromMe = 0, files = [], audio = 0 } = {}) {
       const id = next++;
-      db.prepare("INSERT INTO message VALUES (?, ?, ?, ?, ?)").run(id, handleId, text, body, fromMe);
+      db.prepare("INSERT INTO message VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, handleId, text, body, fromMe, files.length ? 1 : 0, audio);
       db.prepare("INSERT INTO chat_message_join VALUES (?, ?)").run(chat, id);
+      for (const file of files) {
+        const row = db.prepare("INSERT INTO attachment (filename, mime_type, transfer_name, total_bytes) VALUES (?, ?, ?, ?)").run(file.path, file.type, file.name ?? null, file.size ?? null);
+        db.prepare("INSERT INTO message_attachment_join VALUES (?, ?)").run(id, Number(row.lastInsertRowid));
+      }
     },
     close: () => db.close(),
   };

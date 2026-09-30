@@ -51,6 +51,8 @@ export interface StepsSource {
   pages?(limit: number, final?: "done" | "error"): RichText[];
   /** A message per step, sent and never edited (Hermes Agent's "separate"); works on an app that cannot edit too. */
   each?: boolean;
+  /** How many steps the task has taken; a task with none is never shown a steps message. */
+  count?(): number;
 }
 /** How long an app asked to be left alone (Telegram's `retry_after`, carried on the error), in ms; 0 for any other failure. */
 export function retryAfterMs(error: unknown): number {
@@ -60,9 +62,21 @@ export function retryAfterMs(error: unknown): number {
 export interface LiveTarget {
   adapter: ChannelAdapter;
   chatId: string;
-  /** The person's message: reactions go on it and the progress message replies to it. */
+  /** The person's message: reactions go on it and, unless `quote` says otherwise, the progress message replies to it. */
   messageId: string;
   reactTo?: string | undefined;
+  /**
+   * Which message the progress message quotes, asked as it is sent (src/channels/reply-style.ts): the answer's quoting
+   * rule decides, so the steps message and the reply below it never both quote. Absent means it quotes `messageId`.
+   */
+  quote?: () => string | undefined;
+  /** False when the owner switched the reaction on the person's message off for this app. */
+  react?: boolean;
+  /**
+   * A message of this answer already in the chat (the reply's first words, written before the task took a step) that
+   * the steps message takes over, so the steps stay above the answer. Null when there is none.
+   */
+  adopt?: () => Promise<string | null>;
   /** Checked before every call to the app, so Lockdown or quiet hours starting mid-task stop the status too. */
   allowed?: () => boolean;
   /**
@@ -72,7 +86,16 @@ export interface LiveTarget {
   kindsOnly?: boolean | undefined;
   /** False: no progress message at all, only typing and the reaction (the owner's "no steps in groups"). */
   progress?: boolean | undefined;
+  /**
+   * A picture of the task's browser now (a masked frame), or null when there is none to show. Set only for a direct
+   * chat whose owner has pictures on and whose app can send a file; absent, no picture is ever sent.
+   */
+  picture?: (() => Promise<{ bytes: Uint8Array; caption: string } | null>) | undefined;
+  /** The buttons under a picture kept in place (Take over, or Hand back): values the router reads back as a press. */
+  pictureButtons?: (() => { label: string; value: string; webApp?: string }[]) | undefined;
 }
+/** Pictures of the browser: the first after the first browser step, then at most one every so often, and a cap per task. */
+export const pictureTiming = { everyMs: 20_000, most: 6, inPlaceEveryMs: 4_000, inPlaceMost: 150 };
 interface Step { label: string; name: string; state: "working" | "done" | "failed" }
 /** A part that failed this many times in a row is left alone for the rest of the task. */
 const giveUpAfter = 2;
@@ -117,6 +140,8 @@ export class LiveStatus {
   /** The steps' messages have been started (with `each`, the first step may not have come yet). */
   private pagesOpen = false;
   private progressPlanned = false;
+  /** The task has worked long enough for a progress message; it opens with its first step. */
+  private due = false;
   private shown = "";
   private closed = false;
   private state: LiveState | null = null;
@@ -125,6 +150,14 @@ export class LiveStatus {
   /** The status line last asked for, so the same words are not sent again. */
   private statusShown = "";
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+  private pictures = 0;
+  private pictureAt = 0;
+  private pictureDue: ReturnType<typeof setTimeout> | null = null;
+  private pictureCaption = "";
+  /** The one picture message kept up to date in place, where the app can replace a picture (Telegram, Discord). */
+  private pictureId: string | null = null;
+  private lastPicture: { name: string; mediaType: string; bytes: Uint8Array; caption: string } | null = null;
+  private get inPlace(): boolean { return !!this.target.adapter.sendPicture && !!this.target.adapter.editPicture; }
   private typingTimer: ReturnType<typeof setInterval> | undefined;
   private editTimer: ReturnType<typeof setTimeout> | null = null;
   private reactTimer: ReturnType<typeof setTimeout> | null = null;
@@ -170,8 +203,21 @@ export class LiveStatus {
         this.keepTyping();
         this.setState(this.wanted ?? "thinking", true);
       }
-      if (this.target.progress !== false && (this.target.adapter.edit || this.stepsSource?.each)) void this.openProgress();
+      this.due = true;
+      if (this.target.progress !== false && (this.target.adapter.edit || this.stepsSource?.each) && this.hasSteps()) void this.openProgress();
     }, this.timing.progressAfterMs);
+  }
+  /**
+   * Hermes Agent sends its progress bubble only once a tool runs, and OpenClaw's quiet progress mode posts nothing for a
+   * turn without one: a task that only thinks and answers shows typing and the reaction, and then its answer, with no
+   * "Done · 0 steps" message of its own.
+   */
+  private hasSteps(): boolean {
+    if (this.stepsSource?.count) {
+      try { return this.stepsSource.count() > 0; } catch { return this.steps.length > 0; }
+    }
+    // A steps source that cannot count is shown as it always was.
+    return this.stepsSource ? true : this.steps.length > 0;
   }
   /** One stored event of the task. Tool steps go in the list; a new model round is thinking again. */
   event(kind: string, data: Record<string, unknown>): void {
@@ -184,20 +230,79 @@ export class LiveStatus {
       this.setState("tool");
       // A group's status names no file or command (Hermes Agent's "verb" live status); a direct chat's says the step.
       this.status(this.target.kindsOnly ? workingWords : statusOf(stepLabel(data)));
+      this.openIfDue();
     } else if (kind === "tool.completed" || kind === "tool.failed" || kind === "tool.stalled") {
       const step = this.steps.find((s) => s.state === "working" && s.id === id) ?? this.steps.find((s) => s.state === "working");
       if (step) step.state = kind === "tool.completed" ? "done" : "failed";
+      if (kind === "tool.completed" && step && /^browser\./.test(step.name)) this.browserStep(step.label);
     } else if (kind === "model.started") {
       // Words written before a tool call are not the reply; the next round writes that afresh.
       this.reply = "";
       this.setState("thinking");
       this.status(thinkingWords);
     } else {
-      // The steps come from the task's whole record, so anything it does may change them.
-      if (this.stepsSource) this.scheduleEdit();
+      // The steps come from the task's whole record, so anything it does may change them (an installed program's own
+      // steps arrive as program.step.* events, and may be the first step of all).
+      if (this.stepsSource) { this.openIfDue(); this.scheduleEdit(); }
       return;
     }
     this.scheduleEdit();
+  }
+  /** The task has worked long enough and now has a step to show: the progress message opens. */
+  private openIfDue(): void {
+    if (this.due && !this.progressId && this.target.progress !== false && (this.target.adapter.edit || this.stepsSource?.each) && this.hasSteps()) void this.openProgress();
+  }
+  /**
+   * A browser step finished: a picture of the page goes out now if none has for a while, otherwise once the wait is
+   * over (the newest step's words as its caption), and never more than `pictureTiming.most` for one task.
+   */
+  private browserStep(label: string): void {
+    if (!this.target.picture || (!this.target.adapter.sendFile && !this.inPlace) || this.target.kindsOnly || this.pictures >= this.mostPictures) return;
+    this.pictureCaption = label;
+    if (this.pictureDue) return;
+    const wait = Math.max(0, this.pictureAt + (this.inPlace ? pictureTiming.inPlaceEveryMs : pictureTiming.everyMs) - Date.now());
+    // The page is pictured the moment it is due (a quick task's window closes when it ends); it is sent in turn.
+    const take = () => { this.pictureDue = null; this.pictureWork = this.takePicture(); };
+    if (!this.pictureAt || wait === 0) take(); else this.pictureDue = this.later(take, wait);
+  }
+  private get mostPictures(): number { return this.inPlace ? pictureTiming.inPlaceMost : pictureTiming.most; }
+  /** The page changed hands (Take over, Hand back): the picture and its buttons are brought up to date at once. */
+  refreshPicture(): void {
+    if (this.closed || !this.target.picture || this.target.kindsOnly) return;
+    if (this.pictureDue) { clearTimeout(this.pictureDue); this.timers.delete(this.pictureDue); this.pictureDue = null; }
+    this.pictureWork = this.takePicture();
+  }
+  private quoteTarget(): string | undefined { return this.target.quote ? this.target.quote() : this.target.messageId; }
+  private pictureWork: Promise<void> | null = null;
+  private async takePicture(): Promise<void> {
+    if (this.closed || !this.permitted() || this.pictures >= this.mostPictures || Date.now() < this.pausedUntil) return;
+    this.pictures++;
+    this.pictureAt = Date.now();
+    let shot: { bytes: Uint8Array; caption: string } | null = null;
+    try { shot = await this.target.picture!(); } catch { shot = null; }
+    if (!shot?.bytes.length) { this.pictures--; return; }
+    await this.enqueue(() => this.sendPicture(shot!));
+  }
+  private async sendPicture(shot: { bytes: Uint8Array; caption: string }): Promise<void> {
+    const bytes = shot.bytes;
+    if (!this.permitted()) return;
+    // The page the picture shows, else what the step was; every word through the chat's outbound check.
+    const caption = (shot!.caption ? await this.checked(shot!.caption) : null) ?? await this.checked(statusOf(this.pictureCaption));
+    if (caption === null) return;
+    if (this.target.adapter.maxFileBytes && bytes.length > this.target.adapter.maxFileBytes) return;
+    const file = { name: "branch-browser.jpg", mediaType: "image/jpeg", bytes, caption };
+    this.lastPicture = file;
+    try {
+      if (this.inPlace) {
+        const buttons = this.closed ? [] : this.target.pictureButtons?.() ?? [];
+        if (this.pictureId) await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, buttons);
+        // Pictures follow the chat's quoting rule like the steps message (#700), not a quote on every one.
+        else this.pictureId = await this.target.adapter.sendPicture!(this.target.chatId, file, buttons, this.quoteTarget()) ?? null;
+      } else await this.target.adapter.sendFile!(this.target.chatId, file, this.quoteTarget());
+    } catch (error) {
+      const wait = retryAfterMs(error);
+      if (wait) this.pausedUntil = Date.now() + wait;
+    }
   }
   /** A piece of the reply as the model writes it. */
   text(delta: string): void {
@@ -213,6 +318,15 @@ export class LiveStatus {
    */
   async finish(outcome: "done" | "error", reply?: string): Promise<{ messageId: string; text: string } | null> {
     if (this.closed) return null;
+    // A picture already taken goes out before the reply, never after it (bounded, so a slow app never holds the reply).
+    if (this.pictureDue) { clearTimeout(this.pictureDue); this.timers.delete(this.pictureDue); this.pictureDue = null; }
+    if (this.pictureWork) await Promise.race([this.pictureWork, new Promise((done) => { setTimeout(done, 5000).unref?.(); })]);
+    this.pictureWork = null;
+    // The task is over: its last picture stays, without buttons that could no longer do anything.
+    if (this.pictureId && this.lastPicture && this.inPlace && this.permitted()) {
+      const { pictureId, lastPicture } = this;
+      await this.enqueue(() => this.target.adapter.editPicture!(this.target.chatId, pictureId, lastPicture, [])).catch(() => undefined);
+    }
     this.closed = true;
     this.stopTimers();
     this.clearStatus();
@@ -309,7 +423,7 @@ export class LiveStatus {
   }
   /** Asks for a reaction; quick changes wait a moment so only the latest one is shown. */
   private setState(state: LiveState, now = false): void {
-    if (this.closed || !this.target.adapter.react) return;
+    if (this.closed || !this.target.adapter.react || this.target.react === false) return;
     this.wanted = state;
     if (!this.awake) return;
     if (now) { void this.enqueue(() => this.applyReaction()); return; }
@@ -322,7 +436,7 @@ export class LiveStatus {
   private async applyReaction(): Promise<void> {
     const { adapter, chatId, messageId, reactTo } = this.target;
     const wanted = this.wanted;
-    if (!adapter.react || !wanted || wanted === this.state || this.failures.react >= giveUpAfter || !this.permitted()) return;
+    if (!adapter.react || this.target.react === false || !wanted || wanted === this.state || this.failures.react >= giveUpAfter || !this.permitted()) return;
     const previous = this.state ? statusEmoji[this.state] : undefined;
     try {
       await adapter.react(chatId, reactTo ?? messageId, statusEmoji[wanted], previous);
@@ -341,9 +455,19 @@ export class LiveStatus {
       const out = await this.format(rendered);
       if (out === null) return;
       try {
+        // The reply's first words are already in the chat above where this would land: they become the steps, and the
+        // reply starts again below them.
+        const adopted = await this.target.adopt?.().catch(() => null) ?? null;
+        if (adopted) {
+          this.progressId = adopted;
+          if (await this.put(out.text, out.format)) this.shown = rendered.text;
+          else this.scheduleEdit();
+          return;
+        }
         // An app that does not say which message it sent cannot have it edited; the reply still
         // comes the ordinary way, so nothing more is tried.
-        this.progressId = (await this.target.adapter.send(this.target.chatId, out.text, this.target.messageId,
+        const quote = this.target.quote ? this.target.quote() : this.target.messageId;
+        this.progressId = (await this.target.adapter.send(this.target.chatId, out.text, quote,
           Object.keys(out.format).length ? out.format : undefined)) ?? null;
         this.shown = rendered.text;
       } catch (error) {
@@ -408,8 +532,17 @@ export class LiveStatus {
       const out = await this.format(page);
       if (out === null) return false;
       try {
-        // The first message replies to the person's; the ones after it continue the list.
-        const id = await this.target.adapter.send(this.target.chatId, out.text, this.pageIds.length ? undefined : this.target.messageId,
+        // The reply's first words, already in the chat, become the first page, so the steps stay above the answer.
+        const adopted = !this.pageIds.length && !source.each ? await this.target.adopt?.().catch(() => null) ?? null : null;
+        if (adopted) {
+          this.pageIds.push(adopted);
+          this.pageShown.push(await this.putOn(adopted, out.text, out.format) ? page.text : "");
+          this.progressId ??= adopted;
+          continue;
+        }
+        // The first message quotes the person's as the answer's quoting rule says (reply-style.ts); the rest continue it.
+        const quote = this.pageIds.length ? undefined : this.target.quote ? this.target.quote() : this.target.messageId;
+        const id = await this.target.adapter.send(this.target.chatId, out.text, quote,
           Object.keys(out.format).length ? out.format : undefined);
         // An app that does not say which message it sent cannot have it edited: one message is all it gets.
         if (!id && !source.each) this.failures.edit = giveUpAfter;

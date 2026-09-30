@@ -53,6 +53,8 @@ function talkMessages(answer: unknown): TalkMessage[] {
 
 export class NextcloudTalkChannel extends PollingChannel {
   readonly kind = "nextcloud-talk";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   private readonly fetchImpl: typeof fetch;
   private readonly base: string;
   private readonly lastIds = new Map<string, number>();

@@ -81,7 +81,7 @@ export function requestHash(parts: CacheKeyParts): string {
   const shape = {
     provider: parts.provider, model: parts.model, reasoning: parts.reasoning, maxTokens: parts.maxTokens,
     messages: parts.messages.map((message) => ({
-      role: message.role, content: message.content, toolCallId: message.toolCallId ?? null,
+      role: message.role, content: message.role === "system" ? withoutClock(message.content) : message.content, toolCallId: message.toolCallId ?? null,
       toolCalls: (message.toolCalls ?? []).map((call) => ({ name: call.name, arguments: call.arguments })),
       images: (message.images ?? []).map((image) => createHash("sha256").update(image.data).digest("hex").slice(0, 16)),
     })),
@@ -103,9 +103,30 @@ export function requestHash(parts: CacheKeyParts): string {
  * reference be kept.
  */
 export function neverKeep(parts: CacheKeyParts): boolean {
-  return parts.messages.some((message) =>
+  return asksTheTime(parts) || parts.messages.some((message) =>
     (message.images?.length ?? 0) > 0 || namesSecret(message.content)
     || (message.toolCalls ?? []).some((call) => namesSecret(call.arguments) || namesSecret(call.name)));
+}
+
+/**
+ * The environment line (src/environment.ts) ends its local time with the hour and minute. The key leaves the clock
+ * out, so the same request a minute later is still the same request; the date stays in, so a new day never matches.
+ */
+export function withoutClock(content: string): string {
+  return content.replace(/(Local time: [^()\n]*?),? \d{1,2}:\d{2}( \()/g, "$1$2");
+}
+/**
+ * A question about the time or the date is never answered from, or kept in, the kept answers: its right answer
+ * changes by the minute even though the key no longer does. Read from the newest question in the request.
+ */
+const timeQuestion = /\b(what(?:'s| is)? (?:the )?(?:time|date|day)|what time|which day|today|tonight|tomorrow|yesterday|right now|now|current (?:time|date)|o'?clock|this (?:morning|afternoon|evening))\b/i;
+function asksTheTime(parts: CacheKeyParts): boolean {
+  const question = [...parts.messages].reverse().find((message) => message.role === "user");
+  return !!question && timeQuestion.test(question.content);
+}
+/** An answer that says a clock time (14:05, 2 pm, 3 o'clock) is never kept: it would be wrong a minute later. */
+export function saysAClockTime(text: string): boolean {
+  return /\b\d{1,2}:\d{2}\b|\bo'?clock\b|\b\d{1,2}\s?(?:am|pm|a\.m\.|p\.m\.)(?![a-z])/i.test(text);
 }
 /** Whether a piece of a request stands for something in the locker rather than saying it outright. */
 const namesSecret = (text: string): boolean => text.includes("secret://");
@@ -150,7 +171,7 @@ export class RequestCache {
   keep(parts: CacheKeyParts, completion: Completion): boolean {
     const settings = this.settings;
     if (!cacheApplies(cacheMode(settings), parts)) return false;
-    if (completion.toolCalls?.length) return false;
+    if (completion.toolCalls?.length || saysAClockTime(completion.content ?? "")) return false;
     this.store.save("settings", this.scope, this.key(requestHash(parts)),
       { completion: { content: completion.content, toolCalls: [] }, savedAt: new Date(this.now()).toISOString() });
     this.prune(settings.maxEntries);

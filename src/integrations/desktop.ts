@@ -12,7 +12,7 @@ import {
   DesktopClickSchema, DesktopClipboardSchema, DesktopKeySchema, DesktopOpenSchema,
   DesktopReadSchema, DesktopScreenshotSchema, DesktopTypeSchema, DesktopWindowsSchema,
 } from './desktop-config.js';
-import { DesktopScriptRunner, type LiveScreenProcess } from './desktop-script.js';
+import { DesktopScriptRunner, screenBox, type LiveScreenProcess, type ScreenBox } from './desktop-script.js';
 import { DesktopBanner } from './desktop-banner.js';
 
 /**
@@ -25,9 +25,19 @@ import { DesktopBanner } from './desktop-banner.js';
  * window it touched.
  */
 interface RunState { actions: number; stopped: boolean; controller: AbortController }
+/** Where the newest click of a task that is still going landed on the screen, and whose task it is. */
+export interface Pointer { x: number; y: number; at: string; runId: string; trunk: string | null }
+/** Said to a task whose screen action waited while the owner drove, and was stopped or ran out of time waiting. */
+export const drivingMessage = "The owner took over this computer's screen, so Branch waited and let go. Try again once they hand it back.";
 
 export class DesktopControl {
   private readonly runs = new Map<string, RunState>();
+  /** The newest click of a task, for the owner's live view to draw that Trunk's cursor. Kept in memory only. */
+  private pointerAt: Pointer | null = null;
+  /** While the owner drives ("Take over"), every screen action of every task waits here until they hand it back. */
+  private driving: { since: string; handBack: () => void; handedBack: Promise<void> } | null = null;
+  /** Branch is closing: a wait that ends because of that ends with the owner's refusal, never with the action. */
+  private closed = false;
   private readonly live = new Set<LiveFrames>();
   private readonly runner: DesktopScriptRunner;
   private readonly banner: DesktopBanner;
@@ -51,14 +61,17 @@ export class DesktopControl {
    * and by the Stop button alike.
    */
   private async begin(context: ToolContext, tool: string): Promise<AbortSignal> {
-    const settings = readDesktopSettings(this.store, context.owner);
+    let settings = readDesktopSettings(this.store, context.owner);
     if (!settings.enabled) throw new Error(switchedOffMessage);
-    // The owner's switch is not the only one: Windows has its own, and a refusal there looks like
-    // nothing happening. Ask before touching the screen, and say plainly what to turn on.
-    const windows = await this.permissions?.check('screen');
-    if (windows && !windows.allowed) throw new Error(windows.message);
     const state = this.runs.get(context.runId) ?? { actions: 0, stopped: false, controller: new AbortController() };
     this.runs.set(context.runId, state);
+    if (state.stopped) throw new Error('You pressed Stop, so Branch has let go of your screen and keyboard.');
+    await this.whileDriving(context, AbortSignal.any([context.signal, state.controller.signal]));
+    // A take-over may last hours: the permission that held before the wait is no longer authoritative.
+    const allowed = await this.permissions?.check('screen');
+    if (allowed && !allowed.allowed) throw new Error(allowed.message);
+    settings = readDesktopSettings(this.store, context.owner);
+    if (!settings.enabled) throw new Error(switchedOffMessage);
     if (state.stopped) throw new Error('You pressed Stop, so Branch has let go of your screen and keyboard.');
     if (state.actions >= settings.maxActionsPerRun) throw new Error(cappedMessage(settings.maxActionsPerRun));
     state.actions += 1;
@@ -74,6 +87,56 @@ export class DesktopControl {
   async probe(timeoutMs = 5000): Promise<number> {
     return (await this.windowList(AbortSignal.timeout(timeoutMs))).length;
   }
+  /**
+   * "Take over": the owner drives. Every task's next screen action waits (it never starts while the owner drives), and
+   * the owner's live view says "You're driving". Only the owner's own window reaches this (src/server.ts); no tool does.
+   * An action already under way when the owner takes over finishes (it is one click or key, never more).
+   */
+  takeOver(): { driving: boolean; since: string } {
+    if (!this.driving) {
+      let handBack!: () => void;
+      const handedBack = new Promise<void>((resolve) => { handBack = resolve; });
+      this.driving = { since: new Date().toISOString(), handBack, handedBack };
+    }
+    return { driving: true, since: this.driving.since };
+  }
+  /** "Hand back": the tasks waiting carry on. Only the owner's own window reaches this. */
+  handBack(): { driving: boolean } {
+    const was = this.driving;
+    this.driving = null;
+    was?.handBack();
+    return { driving: false };
+  }
+  /** Whether the owner drives this screen now. */
+  isDriving(): boolean { return this.driving !== null; }
+  /**
+   * Waits, before a screen action, for as long as the owner drives. The task's own stop, cancel or time limit ends the
+   * wait. Public for the other tools that act on this computer's apps (src/reach/background-screen.ts), so a take-over
+   * holds them too.
+   */
+  async whileDriving(context: Pick<ToolContext, 'runId'>, signal: AbortSignal): Promise<void> {
+    if (!this.driving) return;
+    this.store.event(context.runId, 'desktop.paused', { reason: 'the owner took over the screen' });
+    while (this.driving) {
+      const waiting = this.driving.handedBack;
+      await new Promise<void>((resolve, reject) => {
+        if (signal.aborted) { reject(new Error(drivingMessage)); return; }
+        const stop = () => reject(new Error(drivingMessage));
+        signal.addEventListener('abort', stop, { once: true });
+        void waiting.then(() => { signal.removeEventListener('abort', stop); resolve(); });
+      });
+    }
+    // Closing lets every wait go, but the owner never handed back: nothing waiting may act on the screen.
+    if (this.closed) throw new Error(drivingMessage);
+    this.store.event(context.runId, 'desktop.resumed', { reason: 'the owner handed the screen back' });
+  }
+  /** Where the newest click of a task that is still going landed, and whose it is; null when there is none. */
+  pointer(): Pointer | null {
+    const at = this.pointerAt;
+    const state = at ? this.runs.get(at.runId) : undefined;
+    return at && state && !state.stopped ? at : null;
+  }
+
   /** The Stop button, and the same thing the cancel route does: let go of the screen at once. */
   stop(runId: string): void {
     const state = this.runs.get(runId);
@@ -190,13 +253,16 @@ export class DesktopControl {
       privateShowing(answer.after);
       // The switch turned off while the frame was being taken: dropped, not shown.
       if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
-      return { bytes: Buffer.from(answer.data, 'base64'), type: 'image/jpeg', width: answer.width, height: answer.height };
+      return { bytes: Buffer.from(answer.data, 'base64'), type: 'image/jpeg', width: answer.width, height: answer.height, ...(answer.screen ? { screen: answer.screen } : {}) };
     }
     const temporary = await this.runner.temporaryPng(`live-${randomUUID().slice(0, 8)}`);
     try {
       const answer = await this.runner.run('screenshot', { display: 1, outPath: temporary }, signal);
       await this.assertNothingPrivateOnScreen(signal);
-      return { bytes: await readFile(temporary), type: 'image/png', width: Number(answer.width) || 0, height: Number(answer.height) || 0 };
+      // A Mac's first screen starts where clicks are counted from; its picture is the whole of it.
+      const width = Number(answer.width) || 0, height = Number(answer.height) || 0;
+      const screen = screenBox(answer.screen) ?? screenBox({ x: 0, y: 0, w: width, h: height });
+      return { bytes: await readFile(temporary), type: 'image/png', width, height, ...(screen ? { screen } : {}) };
     } finally {
       await rm(temporary, { force: true }).catch(() => undefined);
     }
@@ -243,6 +309,9 @@ export class DesktopControl {
     const { window, answer } = await this.onWindow(input.window, signal,
       (target) => this.runner.run('click', { handle: target.handle, ...where }, signal));
     this.record(context, 'desktop.click', window.title, { what: input.name ?? 'a point', how: answer.how });
+    const spot = Array.isArray(answer.at) && answer.at.length === 2 ? answer.at.map(Number) : [];
+    if (spot.length === 2 && spot.every(Number.isFinite))
+      this.pointerAt = { x: spot[0]!, y: spot[1]!, at: new Date().toISOString(), runId: context.runId, trunk: context.trunk ?? null };
     return { window: window.title, clicked: String(answer.name ?? input.name ?? 'a point'), how: String(answer.how ?? '') };
   }
 
@@ -303,11 +372,16 @@ export class DesktopControl {
 
   /** When a task ends, the notice comes down and its allowance is forgotten. */
   async closeRun(context: Pick<ToolContext, 'runId'>): Promise<void> {
+    if (this.pointerAt?.runId === context.runId) this.pointerAt = null;
     if (!this.runs.delete(context.runId)) return;
     await this.banner.hide();
   }
   async close(): Promise<void> {
     for (const frames of [...this.live]) frames.close(); // parity-b2: no live view outlives Branch
+    for (const state of this.runs.values()) state.controller.abort(new Error('Branch stopped.'));
+    this.closed = true;
+    this.handBack();
+    this.pointerAt = null;
     this.runs.clear();
     await this.banner.hide();
     await this.runner.close();
@@ -315,7 +389,7 @@ export class DesktopControl {
 }
 
 /** parity-b2: one frame of the owner's live view of this screen. */
-export interface LiveFrame { bytes: Buffer; type: string; width: number; height: number }
+export interface LiveFrame { bytes: Buffer; type: string; width: number; height: number; screen?: ScreenBox }
 /** parity-b2 (smooth): the frames of one live view, and the program behind them while it is open. */
 export interface LiveFrames { next(maxWidth: number, signal: AbortSignal): Promise<LiveFrame>; close(): void; readonly running: boolean }
 

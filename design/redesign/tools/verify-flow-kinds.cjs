@@ -7,7 +7,8 @@
 //    (GET /api/autonomy/procedures: kinds, times 5, the words, 30 minutes).
 // 3. The engine's own question about what it would repeat opens with the procedure; until it is answered the procedure
 //    does not run (POST …/run says why). flow-unatt Yes answers it (GET /api/autonomy/procedures: unattended).
-const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const { PORT, TOKEN } = process.env;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN"); process.exit(2); }
@@ -41,11 +42,12 @@ const check = (ok, what, note = "") => { console.log(`${ok ? "PASS" : "FAIL"} ${
     await page.locator(`[data-act="flow"][data-id="${procedure.id}"]`).click();
     const dlg = page.locator(".dlg");
     await dlg.locator("#fk-0").waitFor();
-    check((await dlg.locator("#fk-0 option[disabled]").count()) === 0 && (await dlg.locator("#fk-0 option").count()) === 8, "every kind of step can be picked");
+    const kinds = await gselChoices(dlg.locator("#fk-0"));
+    check(kinds.filter((c) => c.off).length === 0 && kinds.length === 8, "every kind of step can be picked");
     const add = async (kind, text) => {
       const j = await dlg.locator("[id^='fk-']").count();
       await dlg.locator('[data-act="flow-add"]').click();
-      await dlg.locator(`#fk-${j}`).selectOption(kind);
+      await pickGsel(dlg.locator(`#fk-${j}`), kind);
       await dlg.locator(`#ft-${j}`).fill(text);
       return j;
     };

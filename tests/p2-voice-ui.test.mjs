@@ -110,6 +110,9 @@ async function signedIn(t, { dictation = null } = {}) {
    fresh Branch starts with it cannot talk live: the press shows the engine's own words, sends nothing and asks for nothing. */
 test("Talk live on a connection that cannot hold one: the engine's words, the send button stays Send, and nothing asks for the microphone", async (t) => {
   const f = await signedIn(t);
+  await f.app.trunks.introduced();
+  // Setup opens the default Trunk's conversation as a completed bootstrap run.
+  const before = f.app.store.runs(f.app.runtime.owner).map((run) => run.id);
   const plan = await f.call("/api/voice/plan");
   assert.equal(plan.live.available, false);
   const talk = f.page.locator('#composer [data-act="voice"]');
@@ -119,7 +122,7 @@ test("Talk live on a connection that cannot hold one: the engine's words, the se
   await f.page.locator(".toast", { hasText: plan.live.reason }).waitFor({ timeout: 10000 });
   assert.equal(await f.page.locator("#app > .voice").count(), 0, "the live view does not open");
   assert.equal(await microphoneAsked(f.page), 0);
-  assert.equal(f.app.store.runs(f.app.runtime.owner).length, 0, "nothing was sent");
+  assert.deepEqual(f.app.store.runs(f.app.runtime.owner).map((run) => run.id), before, "Talk live did not send a run");
   assert.deepEqual(f.errors, []);
 });
 

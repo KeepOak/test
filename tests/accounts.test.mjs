@@ -19,6 +19,7 @@ import { LockerTokenVault, remainingFrom } from "../dist/accounts/chatgpt-accoun
 import { executeCommand } from "../dist/commands/execute.js";
 import { saveCommandSettings } from "../dist/commands/settings.js";
 import { lookup } from "../dist/commands/catalog.js";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import { offLimitsToShortLivedKeys } from "../dist/server.js";
 
 const POOL = "openai-test";
@@ -30,6 +31,7 @@ async function fixture(t) {
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
   service.deps.statusRun = async () => ({ code: 0, missing: false });
+  await fakeClaudeAccounts(t, service);
   let clock = Date.parse("2026-09-17T10:00:00Z");
   service.deps.now = () => clock;
   Object.defineProperty(service, "now", { value: () => clock });
@@ -83,7 +85,7 @@ test("A1 with the switch off nothing changes: the connection is registered exact
   assert.equal(fx.app.runtime.models.presets.get(POOL).provider, provider, "off again: the connection itself");
 });
 
-test("A2 a 429 is tried once more; the second rests the key for as long as Retry-After and the next key answers in the same request", async (t) => {
+test("A2 a 429 whose Retry-After is longer than a few seconds rests the key for that long and the next key answers in the same request", async (t) => {
   const fx = await fixture(t);
   const { calls } = apiConnection(fx, rateLimited);
   await turnOn(fx.service);
@@ -91,16 +93,16 @@ test("A2 a 429 is tried once more; the second rests the key for as long as Retry
   const run = await fx.app.runtime.run({ prompt: "hello" });
   assert.equal(run.status, "completed", run.output);
   assert.equal(run.output, "from the second key");
-  assert.deepEqual(calls, { first: 2, second: 1 }, "account pools: the same key once more, then the next");
+  assert.deepEqual(calls, { first: 1, second: 1 }, "a 30-second Retry-After is not waited out on the same key: the next one answers");
   assert.equal(events(fx.app, run, "model.account_resting")[0].data.reason, "rate");
   assert.equal(events(fx.app, run, "model.account")[0].data.account, second);
   assert.equal(events(fx.app, run, "model.fallback").length, 0, "no other connection was needed");
   fx.tick(29_000);
   await fx.app.runtime.run({ prompt: "again" });
-  assert.equal(calls.first, 2, "still resting: the first key is not asked again inside Retry-After");
+  assert.equal(calls.first, 1, "still resting: the first key is not asked again inside Retry-After");
   fx.tick(2_000);
   await fx.app.runtime.run({ prompt: "and again" }).catch(() => undefined);
-  assert.equal(calls.first, 4, "after Retry-After the first key is first again (and tried twice)");
+  assert.equal(calls.first, 2, "after Retry-After the first key is first again");
   const serialized = JSON.stringify(fx.app.store.events(run.id));
   assert.ok(!serialized.includes(SECOND_KEY), "the key never reaches the task's record");
 });

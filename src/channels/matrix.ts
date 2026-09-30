@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
 import { matrixHtml } from "./progress-render.js";
 import { handle } from "./email.js";
+import { ReactionAnswers } from "./reaction-answers.js";
 import { reconnectDelay } from "./ws-client.js";
 import { catchUpBatch, MarkKeeper, type ChannelMark } from "./catch-up.js"; // mac6/bucket-16
 
@@ -33,7 +35,11 @@ export interface MatrixOptions {
 }
 const eventSchema = z.object({
   type: z.string(), event_id: z.string().optional(), sender: z.string().optional(),
-  content: z.object({ msgtype: z.string().optional(), body: z.string().optional() }).passthrough().optional(),
+  content: z.object({ msgtype: z.string().optional(), body: z.string().optional(),
+    /** A file's own address on the homeserver (mxc://server/id), and what it is. */
+    url: z.string().max(500).optional(),
+    info: z.object({ mimetype: z.string().max(100).optional(), size: z.number().optional(), duration: z.number().optional() }).passthrough().optional(),
+  }).passthrough().optional(),
 }).passthrough();
 const syncSchema = z.object({
   next_batch: z.string(),
@@ -57,6 +63,8 @@ export class MatrixAdapter implements ChannelAdapter {
   private loop: Promise<void> | null = null;
   private since: string | undefined;
   private encryptedSeen = 0;
+  /** Who wrote each recent message read here, so only its own sender's edit of it counts. */
+  private readonly authors = new Map<string, string>();
   /** Room ids are longer than the delivery ledger allows, so long ones get a short handle. */
   private readonly rooms = new Map<string, string>();
   /** Original event ids are kept only for recent inbound messages, never accepted from a chat handle alone. */
@@ -69,6 +77,15 @@ export class MatrixAdapter implements ChannelAdapter {
   }
   botName(): string | null { return this.options.userId; }
   health(): ChannelHealth { return this.state; }
+  /** Staying connected: when the home server last answered a sync (an empty one counts; it answers every 30 s). */
+  private contactAt = Date.now();
+  lastContact(): number { return this.contactAt; }
+  /** The watchdog (and a wake from sleep) starts a stalled sync again from where it had got to. */
+  async restart(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+    await this.stop();
+    this.stopping = false;
+    await this.start(onMessage);
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     this.loop = this.run(onMessage);
     await Promise.race([this.loop, new Promise((resolve) => setTimeout(resolve, 50))]);
@@ -88,6 +105,7 @@ export class MatrixAdapter implements ChannelAdapter {
     for (let attempt = 0; !this.stopping; attempt++) {
       try {
         const synced = await this.sync();
+        this.contactAt = Date.now();
         const batch = resumed ? catchUpBatch(synced) : synced;
         resumed = false;
         this.state = { state: "connected", ...(this.encryptedSeen ? { reason: `${this.encryptedSeen} message(s) arrived in an encrypted room, which this assistant cannot read` } : {}) };
@@ -125,15 +143,54 @@ export class MatrixAdapter implements ChannelAdapter {
     for (const [roomId, room] of Object.entries(body.rooms?.join ?? {}))
       for (const event of room.timeline?.events ?? []) {
         if (event.type === "m.room.encrypted") { this.encryptedSeen++; continue; }
-        const inbound = this.inbound(roomId, event);
+        const inbound = event.type === "m.reaction" ? this.answer(roomId, event) : this.inbound(roomId, event);
         // The first answer carries whatever was already there; answering it would reply to history.
         if (inbound && !first) messages.push(inbound);
       }
     return messages;
   }
+  /** Questions a 👍 / 👎 annotation may answer, by the question's own event id (src/channels/reaction-answers.ts). */
+  private readonly answers = new ReactionAnswers();
+  watchAnswers(chatId: string, messageId: string, senderId: string, fingerprint: string): void {
+    const eventId = this.sent.get(messageId);
+    if (eventId) this.answers.watch(eventId, chatId, senderId, fingerprint);
+  }
+  /** An annotation on one of Branch's own questions, by the person it asked, in that room, is that question's answer. */
+  private answer(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const relates = z.object({ rel_type: z.literal("m.annotation"), event_id: z.string().max(300), key: z.string().max(40) }).passthrough()
+      .safeParse((event.content as Record<string, unknown> | undefined)?.["m.relates_to"]);
+    const sender = event.sender ?? "";
+    if (!relates.success || !sender || sender === this.options.userId) return null;
+    const chatId = handle(roomId, "room"), senderId = handle(sender, "who");
+    const said = this.answers.read(relates.data.event_id, chatId, senderId, relates.data.key);
+    if (!said) return null;
+    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId, senderName: sender, text: said, addressed: true,
+      messageId: handle(event.event_id ?? randomUUID(), "msg") };
+  }
+  /**
+   * Settings › Chat apps › Edited messages: a Matrix edit is a new event that replaces an earlier one (`m.replace`), with
+   * the new words in `m.new_content`. It is read as that earlier message again, marked edited, by the same sender only.
+   */
+  private edited(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const content = event.content as Record<string, unknown> | undefined;
+    const relates = z.object({ rel_type: z.literal("m.replace"), event_id: z.string().max(300) }).passthrough().safeParse(content?.["m.relates_to"]);
+    const fresh = z.object({ msgtype: z.literal("m.text"), body: z.string().min(1) }).passthrough().safeParse(content?.["m.new_content"]);
+    if (!relates.success || !fresh.success) return null;
+    const original = this.authors.get(relates.data.event_id);
+    if (!original || original !== event.sender) return null; // only its own sender's edit of a message this adapter read
+    const inbound = this.inbound(roomId, { ...event, event_id: relates.data.event_id, content: fresh.data });
+    return inbound ? { ...inbound, edited: true } : null;
+  }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    if (event.type === "m.room.message" && ["m.image", "m.file", "m.video", "m.audio"].includes(event.content?.msgtype ?? "")) return this.fromFile(roomId, event);
     if (event.type === "m.reaction") return this.fromReaction(roomId, event);
     if (event.type !== "m.room.message" || event.content?.msgtype !== "m.text") return null;
+    if (event.content && "m.new_content" in event.content) return this.edited(roomId, event);
+    if (event.event_id && event.sender) {
+      this.authors.set(event.event_id, event.sender);
+      if (this.authors.size > 200) this.authors.delete(this.authors.keys().next().value!);
+    }
     const text = event.content.body ?? "", sender = event.sender ?? "";
     if (!text || !sender || sender === this.options.userId) return null;
     const chatId = handle(roomId, "room");
@@ -150,6 +207,49 @@ export class MatrixAdapter implements ChannelAdapter {
       addressed: text.includes(this.options.userId) || text.includes(name),
       messageId,
     };
+  }
+  /**
+   * CHAT-105: a picture, video or file sent to the room comes in as the task's material, and an audio message as a voice
+   * note to transcribe. Fetched only once the message is answered, from this homeserver's own authenticated media.
+   */
+  private fromFile(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
+    const content = event.content!, sender = event.sender ?? "";
+    const mxc = /^mxc:\/\/([^/]+)\/([A-Za-z0-9_-]+)$/.exec(content.url ?? "");
+    if (!mxc || !sender || sender === this.options.userId) return null;
+    const chatId = handle(roomId, "room");
+    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    const mediaType = content.info?.mimetype?.split(";")[0] ?? (content.msgtype === "m.image" ? "image/jpeg" : "application/octet-stream");
+    const host = new RegExp(`^${new URL(this.base).hostname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    const bytes = () => fetchCapped(this.fetch, `${this.base}/_matrix/client/v1/media/download/${encodeURIComponent(mxc[1]!)}/${encodeURIComponent(mxc[2]!)}`,
+      { headers: { authorization: `Bearer ${this.options.accessToken}` } }, host, content.msgtype === "m.audio" ? "voice note" : "file", content.info?.size ?? 0);
+    const base = { channel: this.id, chatId, chatKind: "group" as const, chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
+      text: "", addressed: false, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+    if (content.msgtype === "m.audio")
+      return { ...base, voice: { mediaType, seconds: content.info?.duration !== undefined ? content.info.duration / 1000 : undefined, bytes } };
+    return { ...base, attachments: [{ name: content.body || "file", sourceId: mxc[2]!, mediaType, kind: attachmentKind(mediaType),
+      ...(content.info?.size !== undefined ? { size: content.info.size } : {}), bytes }] };
+  }
+  /** Matrix homeservers take 50 MB by default; one set lower refuses the upload and says so. */
+  readonly maxFileBytes = 50 * 1024 * 1024;
+  /** CHAT-105: a file into the room, uploaded to this homeserver first, as a picture, video, audio or file. */
+  async sendFile(chatId: string, file: OutgoingFile): Promise<string | undefined> {
+    const upload = await this.fetch(`${this.base}/_matrix/media/v3/upload?filename=${encodeURIComponent(file.name)}`, {
+      method: "POST", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": file.mediaType },
+      body: new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), redirect: "error", signal: AbortSignal.timeout(120000),
+    });
+    if (upload.status === 413) throw new Error("The Matrix homeserver said the file is too large");
+    if (!upload.ok) throw new Error(`The Matrix homeserver refused the file (${upload.status})`);
+    const { content_uri: uri } = z.object({ content_uri: z.string().regex(/^mxc:\/\//) }).passthrough().parse(await upload.json());
+    const kind = attachmentKind(file.mediaType);
+    const msgtype = file.mediaType.startsWith("audio/") ? "m.audio" : kind === "picture" ? "m.image" : kind === "video" ? "m.video" : "m.file";
+    const eventId = await this.put(chatId, { msgtype, body: file.name, url: uri, info: { mimetype: file.mediaType, size: file.bytes.byteLength },
+      ...(file.voice ? { "org.matrix.msc3245.voice": {}, "org.matrix.msc1767.audio": {} } : {}) });
+    if (file.caption) await this.send(chatId, file.caption);
+    return eventId ? handle(eventId, "msg") : undefined;
+  }
+  /** CHAT-094: a spoken reply, as an audio message clients show as a voice message. */
+  async sendVoice(chatId: string, audio: Uint8Array, mediaType: string): Promise<string | undefined> {
+    return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio, voice: true });
   }
   /** The events this adapter sent, by the short handle it gave them, so a message it sent can be edited (the newest 200). */
   private readonly sent = new Map<string, string>();
@@ -185,8 +285,11 @@ export class MatrixAdapter implements ChannelAdapter {
     }
     if (!response.ok) throw new Error(`Matrix refused to replace the status reaction (${response.status})`);
   }
-  async send(chatId: string, text: string, _replyTo?: string, format?: MessageFormat): Promise<string | undefined> {
-    const eventId = await this.put(chatId, MatrixAdapter.content(text.slice(0, this.maxTextLength), format));
+  async send(chatId: string, text: string, replyTo?: string, format?: MessageFormat): Promise<string | undefined> {
+    // CHAT-116: a reply quotes the person's own message (m.in_reply_to), only one received in this same room.
+    const quoted = replyTo ? this.received.get(replyTo) : undefined;
+    const inReply = quoted && quoted.roomId === (this.rooms.get(chatId) ?? chatId) ? { "m.relates_to": { "m.in_reply_to": { event_id: quoted.eventId } } } : {};
+    const eventId = await this.put(chatId, { ...MatrixAdapter.content(text.slice(0, this.maxTextLength), format), ...inReply });
     if (!eventId) return undefined;
     const short = handle(eventId, "msg");
     this.sent.set(short, eventId);

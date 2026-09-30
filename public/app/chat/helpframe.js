@@ -13,6 +13,10 @@
    - Open shows that helper's own record view only: what the parent asked for, its steps (GET /api/runs/<helper>/steps),
      its thinking and its request. The composer's place holds "View only" and one "Back to <parent>"; nothing can be
      sent. Helpers never join the sidebar (the engine keeps their conversations out of the list).
+   - The lead's workbench: the conversation's other open work shows here too, from GET /api/open-work?session=<id>
+     (read at most every two seconds, drawn again only on a change): the helpers still working that an earlier task of
+     this conversation started (read through their task's own steps, so Steer and Stop are the same), its wake-ups with
+     Cancel (DELETE /api/open-work/wakeups/<id>) and its programs left running with Stop (POST /api/processes).
    A helper is not a Trunk: it shows its specialist's face, or its parent Trunk's, dimmed and badged (never the mascot). The engine decides who may steer or stop a helper
    (src/helper-control.ts); its refusal is shown in its own words. */
 
@@ -40,10 +44,35 @@ const runsHere = () => (E.state?.runs ?? []).filter((r) => S.chat && r.sessionId
   .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
 /* The conversation's newest task (the one working now, else the last one), never a task picked in the Timeline. */
 const frameRun = () => liveRun()?.id ?? runsHere()[0]?.id ?? null;
+/* The lead's workbench: what else the conversation has going (earlier tasks' helpers, wake-ups, programs left running). */
+const OW = { sid: null, body: null, at: 0, seen: "" };
+function openWork() {
+  if (!S.chat) return null;
+  if (OW.sid !== S.chat) Object.assign(OW, { sid: S.chat, body: null, at: 0, seen: "" });
+  if (Date.now() - OW.at > 2000) {
+    const sid = S.chat;
+    OW.at = Date.now();
+    api(`open-work?session=${encodeURIComponent(sid)}`).then((body) => {
+      if (OW.sid !== sid) return;
+      OW.body = body;
+      const seen = JSON.stringify(body);
+      if (seen !== OW.seen) { OW.seen = seen; render(); }
+    }).catch(() => undefined);
+  }
+  return OW.body;
+}
+const wakeupsHere = () => openWork()?.wakeups ?? [];
+const programsHere = () => openWork()?.programs ?? [];
 function helpersHere() {
   const runId = frameRun();
   loadSteps(runId);
-  return stepsOf(runId)?.helpers ?? [];
+  const list = [...(stepsOf(runId)?.helpers ?? [])];
+  for (const other of openWork()?.helperRuns ?? []) {
+    if (other === runId) continue;
+    loadSteps(other);
+    for (const h of stepsOf(other)?.helpers ?? []) if (["run", "wait"].includes(helperState(h)) && !list.some((x) => x.runId === h.runId)) list.push(h);
+  }
+  return list;
 }
 export const helperState = (h) => (h.waiting?.length || h.status === "needs_input" ? "wait"
   : ["running", "queued"].includes(h.status) ? "run" : h.status === "completed" ? "done" : "stopped");
@@ -51,7 +80,8 @@ const RANK = { wait: 0, run: 1, done: 2, stopped: 3 };
 const sorted = (list) => list.slice().sort((a, b) => RANK[helperState(a)] - RANK[helperState(b)]);
 const active = (list) => list.filter((h) => ["wait", "run"].includes(helperState(h)));
 /** Whether the frame shows now: a helper of the newest task works or needs you (the thread's chip steps aside). */
-export const frameShowing = () => S.view === "chat" && !!S.chat && active(helpersHere()).length > 0;
+export const frameShowing = () => S.view === "chat" && !!S.chat
+  && (active(helpersHere()).length > 0 || wakeupsHere().length > 0 || programsHere().length > 0);
 
 function parent() {
   const s = E.sessions.find((x) => (x.sessionId ?? x.id) === S.chat);
@@ -119,20 +149,38 @@ function card(h) {
     <p class="job18a${F.full.has(h.runId) ? " full18" : ""}" data-act="hfjob18a" data-id="${id}">${esc(h.job)}</p>${thinking(h)}${(h.waiting ?? []).map((q) => ask(h, q)).join("")}${steerBox(h)}
     <div class="acts18a"><span class="chip18">${esc(meta(h))}</span><span class="grow"></span>${acts}<button class="btn sm" type="button" data-act="hfopen18a" data-id="${id}">${t("window.chat.hf.open")}</button></div></div>`;
 }
-/** The frame at the top of the dock; nothing while no helper of the newest task works or needs you. */
+/* A wake-up or a program left running, as one row: what it is, when, and the one thing to do with it. */
+const clockOf = (at) => { const d = new Date(at); return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
+function wakeRow(w) {
+  const time = clockOf(w.nextAt), off = F.busy.has(w.id) ? " disabled" : "";
+  const when = w.cron ? t("window.chat.hf.wakeup-cron", { time, cron: w.cron })
+    : w.everyMinutes ? t("window.chat.hf.wakeup-every", { time, minutes: w.everyMinutes }) : t("window.chat.hf.wakeup-at", { time });
+  return `<div class="hfr18a"><span class="face18 hs18c" data-css="--s:28px" aria-hidden="true">${ic("clock", "s")}</span><span class="nm18"><b>${esc(firstLine(w.message))}</b><span class="live18">${esc(when)}</span></span><button class="btn ghost sm" type="button" data-act="owcancel19" data-id="${esc(w.id)}"${off}>${t("window.chat.hf.wakeup-cancel")}</button></div>`;
+}
+function programRow(p) {
+  const off = F.busy.has(p.id) ? " disabled" : "";
+  return `<div class="hfr18a"><span class="face18 hs18c" data-css="--s:28px" aria-hidden="true">${ic("term", "s")}</span><span class="nm18"><b>${esc(p.name)}</b><span class="live18">${esc(t("window.chat.hf.program-running", { time: clockOf(p.startedAt) }))}</span></span><button class="btn ghost sm" type="button" data-act="owstop19" data-id="${esc(p.id)}"${off}>${t("dashboard.stop")}</button></div>`;
+}
+/** The frame at the top of the dock; nothing while no helper works or needs you and nothing else is open. */
 export function helpFrame() {
   if (S.view !== "chat" || !S.chat) return "";
-  const list = sorted(helpersHere()), now = active(list);
-  if (!now.length) return "";
-  const wait = list.filter((h) => helperState(h) === "wait").length, rows = now.slice(0, 3);
+  const list = sorted(helpersHere()), now = active(list), wakes = wakeupsHere(), progs = programsHere();
+  if (!now.length && !wakes.length && !progs.length) return "";
+  const wait = list.filter((h) => helperState(h) === "wait").length;
+  const others = [...wakes.map(wakeRow), ...progs.map(programRow)];
+  const rows = now.slice(0, 3), extra = others.slice(0, Math.max(0, 3 - rows.length));
   const need = wait ? ` · <span class="need18">${t(wait > 1 ? "window.chat.helpers.need-you" : "window.chat.helpers.needs-you", { count: wait })}</span>` : "";
-  const since = now.map((h) => h.startedAt).filter(Boolean).sort()[0] ?? "";
-  const more = list.length > rows.length ? `<div class="hfr18a"><button class="more18" type="button" data-act="hf18a">${t("window.chat.hf.show-all", { count: list.length })}</button></div>` : "";
+  const counts = [list.length ? plural(list.length, { one: "window.chat.helpers.count.one", other: "window.chat.helpers.count" }) + need : "",
+    wakes.length ? plural(wakes.length, { one: "window.chat.hf.wakeups.one", other: "window.chat.hf.wakeups" }) : "",
+    progs.length ? plural(progs.length, { one: "window.chat.hf.programs.one", other: "window.chat.hf.programs" }) : ""].filter(Boolean).join(" · ");
+  const since = [...now.map((h) => h.startedAt), ...progs.map((p) => p.startedAt)].filter(Boolean).sort()[0] ?? "";
+  const shown = rows.length + extra.length, all = list.length + others.length;
+  const more = all > shown ? `<div class="hfr18a"><button class="more18" type="button" data-act="hf18a">${t("window.chat.hf.show-all", { count: all })}</button></div>` : "";
   const again = document.querySelector(".hf18a") ? " again18" : ""; // drawn before: it does not rise in again on a redraw
   return `<section class="hf18a${F.open ? " open" : ""}${again}" aria-label="${t("window.chat.helpers.title")}">
-    <button class="hfh18a" type="button" data-act="hf18a" aria-expanded="${F.open}"><span class="stack18">${rows.map((h) => face(24, h)).join("")}</span><span class="grow">${plural(list.length, { one: "window.chat.helpers.count.one", other: "window.chat.helpers.count" })}${need}</span><span class="time18" data-since="${esc(since)}"></span><span class="chev18">${ic("down", "s")}</span></button>
-    ${rows.map(row).join("")}${more}
-    <div class="hfb18a"><div><div class="roster18a">${list.map(card).join("")}<p class="hint">${t("window.chat.helpers.hint")}</p></div></div></div></section>`;
+    <button class="hfh18a" type="button" data-act="hf18a" aria-expanded="${F.open}"><span class="stack18">${rows.map((h) => face(24, h)).join("")}</span><span class="grow">${counts}</span><span class="time18" data-since="${esc(since)}"></span><span class="chev18">${ic("down", "s")}</span></button>
+    ${rows.map(row).join("")}${extra.join("")}${more}
+    <div class="hfb18a"><div><div class="roster18a">${list.map(card).join("")}${others.join("")}${list.length ? `<p class="hint">${t("window.chat.helpers.hint")}</p>` : ""}</div></div></div></section>`;
 }
 
 /* The time since the first working helper started, as m:ss, written in place (no redraw). */
@@ -252,8 +300,24 @@ async function steer(el) {
   await reread();
 }
 
+/* The lead's workbench: cancel a wake-up, stop a program left running; each button waits for the engine's answer. */
+async function openWorkAct(id, work, said) {
+  if (!id || F.busy.has(id)) return;
+  F.busy.add(id);
+  renderNow();
+  try { await work(); toast(said); } catch (error) { toast(error.message); } finally { F.busy.delete(id); OW.at = 0; openWork(); renderNow(); }
+}
+const cancelWakeup = (el) => openWorkAct(el.dataset.id,
+  () => api(`open-work/wakeups/${encodeURIComponent(el.dataset.id)}?session=${encodeURIComponent(S.chat)}`, undefined, "DELETE"), t("window.chat.hf.wakeup-cancelled"));
+const stopProgram = (el) => {
+  const p = programsHere().find((x) => x.id === el.dataset.id);
+  return openWorkAct(el.dataset.id, () => api("processes", { id: el.dataset.id }), t("window.chat.hf.program-stopped", { name: p?.name ?? "" }));
+};
+
 export function initHelpFrame() {
-  markLive(["hf18a", "hfjob18a", "hfsteer18a", "hfsend18a", "hfstop18a", "hfopen18a", "voback18", "lane18b", "sw:steer18"]);
+  markLive(["hf18a", "hfjob18a", "hfsteer18a", "hfsend18a", "hfstop18a", "hfopen18a", "voback18", "lane18b", "sw:steer18", "owcancel19", "owstop19"]);
+  on("owcancel19", (el) => cancelWakeup(el));
+  on("owstop19", (el) => stopProgram(el));
   on("hf18a", () => { F.open = !F.open; renderNow(); });
   on("hfjob18a", (el) => { const id = el.dataset.id; if (F.full.has(id)) F.full.delete(id); else F.full.add(id); renderNow(); });
   on("hfsteer18a", (el) => { F.steer = F.steer === el.dataset.id ? null : el.dataset.id; if (S.view === "chat") F.open = true; renderNow(); $("#steer18")?.focus(); });
@@ -267,5 +331,5 @@ export function initHelpFrame() {
   setInterval(tick, 1000);
   /* While the frame or a helper's view shows, its helpers are read again every two seconds (the read is shared and
      throttled; the conversation is drawn again only when what the frame shows changed, chat/timeline.js). */
-  setInterval(() => { if (S.view === "chat" && !document.hidden && document.querySelector(".hf18a, .vo18")) loadSteps(frameRun()); }, 2000);
+  setInterval(() => { if (S.view === "chat" && !document.hidden && document.querySelector(".hf18a, .vo18")) { loadSteps(frameRun()); openWork(); } }, 2000);
 }

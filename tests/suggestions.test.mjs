@@ -151,25 +151,30 @@ test("first run comes first and the bar is its last question; Not now lasts unti
   assert.deepEqual(f.errors, []);
 });
 
-test.skip("the background bar comes first where Branch is installed, and Yes sets up the background engine", async (t) => {
-  // Redesign: Coming soon (rec-install), checked at fc541c24. The background bar's Yes is drawn aria-disabled, class soon
-  // (public/app/chat/rec.js: installing a system service stays greyed until it can be proved safe).
+test("the background bar's Yes saves the shared gateway choice and says what is really running, never a system service", async (t) => {
   const f = await fixture(t);
-  const asked = [];
-  await f.page.route("**/api/deployment/suggestion", (route) => route.fulfill({ json: { bar: "background" } }));
-  await f.page.route("**/api/deployment/daemon", (route) => {
-    asked.push(route.request().postDataJSON());
-    return route.fulfill({ json: { action: "install", installed: true, taskName: "Branch Agent", message: "Set up." } });
-  });
+  let offered = 0, scheduled = 0;
+  await f.page.route("**/api/deployment/suggestion", (route) => route.request().method() === "GET" && offered++ === 0
+    ? route.fulfill({ json: { bar: "background" } }) : route.continue());
+  await f.page.route("**/api/deployment/daemon", (route) => { scheduled++; return route.fulfill({ status: 403, json: { error: "Access is denied" } }); });
+  assert.equal((await f.call("/api/never-break")).body.mode, "off", "a copy with no saved choice starts off here");
   await f.open();
-  const bar = f.page.locator("#suggest-bar");
+  await f.overview();
+  const bar = f.page.locator(".recbar");
   await bar.waitFor({ state: "visible" });
-  assert.match(await bar.innerText(), /Keep Branch running in the background\?\s*Recommended/);
-  assert.match(await bar.innerText(), /Telegram/);
-  assert.deepEqual(asked, [], "nothing is set up by showing it");
-  await bar.getByRole("button", { name: "Yes", exact: true }).click();
-  await f.page.waitForFunction(() => /running in the background/.test(document.getElementById("toast")?.textContent ?? ""));
-  assert.deepEqual(asked, [{ action: "install" }]);
+  assert.match(await bar.innerText(), /Keep your Trunks running when Branch is closed\?\s*Recommended/);
+  const yes = bar.getByRole("button", { name: "Yes", exact: true });
+  assert.equal(await yes.getAttribute("aria-disabled"), null, "Yes is a live control");
+  await yes.click();
+  const said = f.page.locator(".toast").filter({ hasText: "Saved on. The gateway is not running yet" });
+  await said.waitFor();
+  const view = (await f.call("/api/never-break")).body;
+  assert.equal(view.mode, "on", "the same saved choice as Settings › General and › Gateway");
+  assert.equal(view.underGateway, false, "saved is not claimed as running");
+  assert.doesNotMatch(await said.innerText(), /running now/);
+  assert.equal((await f.call("/api/deployment/suggestion")).body.bar === "background", false, "the question is not asked again");
+  await f.page.waitForFunction(() => !/running when Branch is closed/.test(document.querySelector(".recbar")?.textContent ?? ""));
+  assert.equal(scheduled, 0, "no scheduled task is set up");
   assert.deepEqual(f.errors, []);
 });
 
@@ -195,26 +200,19 @@ test("Updates in Settings keeps Branch up to date by itself with one switch, whi
   assert.deepEqual(f.errors, []);
 });
 
-test.skip("integration review: when the background engine cannot be set up, the bar says so in plain words, never that it worked", async (t) => {
-  // Redesign: Coming soon (rec-install), checked at fc541c24. The background bar's Yes is greyed, so nothing is set up.
-  for (const reply of [
-    { json: { action: "install", installed: false, taskName: "Branch Agent", message: "Windows would not add the task." } },
-    { status: 500, json: { error: "The system list could not be read." } },
-  ]) {
-    const f = await fixture(t);
-    await f.page.route("**/api/deployment/suggestion", (route) => route.fulfill({ json: { bar: "background" } }));
-    await f.page.route("**/api/deployment/daemon", (route) => route.fulfill(reply));
-    await f.open();
-    const bar = f.page.locator("#suggest-bar");
-    await bar.waitFor({ state: "visible" });
-    const failedPlainly = () => f.page.waitForFunction(() =>
-      /could not keep running in the background/.test(document.getElementById("toast")?.textContent ?? ""),
-    null, { timeout: 20000 }).then(() => true, () => false);
-    await pressUntil(bar.getByRole("button", { name: "Yes", exact: true }), failedPlainly,
-      "the failed background setup to be reported");
-    const said = await f.page.locator("#toast").innerText();
-    assert.match(said, reply.status ? /system list could not be read/ : /Windows would not add the task/);
-    assert.doesNotMatch(said, /now keeps running/);
-    assert.deepEqual(f.errors, []);
-  }
+test("integration review: when the gateway choice cannot be saved, the bar says so in plain words, never that it worked", async (t) => {
+  const f = await fixture(t);
+  await f.page.route("**/api/deployment/suggestion", (route) => route.fulfill({ json: { bar: "background" } }));
+  await f.page.route("**/api/never-break", (route) => route.request().method() === "POST"
+    ? route.fulfill({ status: 403, json: { error: "Saving the gateway choice was denied" } }) : route.continue());
+  await f.open();
+  await f.overview();
+  const bar = f.page.locator(".recbar");
+  await bar.waitFor({ state: "visible" });
+  await bar.getByRole("button", { name: "Yes", exact: true }).click();
+  const said = f.page.locator(".toast").filter({ hasText: "Saving the gateway choice was denied" });
+  await said.waitFor();
+  assert.doesNotMatch(await said.innerText(), /Saved on|running now/);
+  assert.equal((await f.call("/api/never-break")).body.mode, "off", "nothing was saved");
+  assert.deepEqual(f.errors, []);
 });

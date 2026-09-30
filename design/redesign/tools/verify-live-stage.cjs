@@ -23,7 +23,7 @@
 const http = require("node:http");
 const { createHash } = require("node:crypto");
 const { mkdirSync } = require("node:fs");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT, TOKEN } = process.env;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }

@@ -125,7 +125,7 @@ function guardWith(t, confinement, scope = worktree) {
       registry.register({ name, permission, description: "double", parameters: z.object({ cwd: z.string().optional() }).passthrough(), execute: async () => ({}) });
     book.create("local", { taskRunId: "run-1", sourceSha: sha, worktreePath: worktree, terms: { allowedPaths: ["src/**"],
       permissions: ["shell.execute", "code.run", "process.start"], expectedTests: ["t"], definitionOfDone: "d", sideEffects: [], rollbackPlan: "r" } });
-    const guard = contractGuard({ store: { audit: log, get: () => undefined }, owner: "local", workspace, registry, book, git: async () => { throw new Error("no git"); }, confinement });
+    const guard = contractGuard({ store: { audit: log, get: () => undefined, events: () => [] }, owner: "local", workspace, registry, book, git: async () => { throw new Error("no git"); }, confinement });
     return { guard, log, workspace };
   })();
 }
@@ -134,8 +134,10 @@ test("the stand-in sandbox: available holds the command to the worktree, missing
   const yes = await guardWith(t, async () => true);
   const held = await yes.guard("shell.execute", { cwd: `${worktree}/src` }, { runId: "r" });
   assert.equal(held.writesConfinedTo, join(yes.workspace, worktree, "src"), "held to the folder it runs in");
-  for (const name of ["code.run", "process.start"])
-    await assert.rejects(yes.guard(name, { cwd: worktree }, { runId: "r" }), /cannot hold the program it starts to one folder/, name);
+  await assert.rejects(yes.guard("code.run", { cwd: worktree }, { runId: "r" }), /cannot hold the program it starts to one folder/);
+  // SELF-304: a program left running is walled by the shell the same way, so it is held to the folder it runs in too.
+  const left = await yes.guard("process.start", { cwd: `${worktree}/src` }, { runId: "r" });
+  assert.equal(left.writesConfinedTo, join(yes.workspace, worktree, "src"));
   const no = await guardWith(t, async () => false);
   await assert.rejects(no.guard("shell.execute", { cwd: `${worktree}/src` }, { runId: "r" }),
     /commands are refused on this computer: it has no sandbox that can hold a command's writes to one folder/);
@@ -230,6 +232,9 @@ test("with no project active, a command whose folder is in a worktree is still r
   const other = await guardWith(t, async () => true, "notes");
   await assert.rejects(other.guard("shell.execute", { cwd: `${worktree}/src` }, { runId: "r" }),
     /a command runs only inside the active self-development worktree/);
+  // selfdev: the task that prepared the worktree keeps its conversation's project, and may run commands in it by cwd.
+  const own = await other.guard("shell.execute", { cwd: `${worktree}/src` }, { runId: "run-1" });
+  assert.equal(own.writesConfinedTo, join(other.workspace, worktree, "src"), "held to the folder it runs in");
 });
 
 test("no formatter runs after an edit while Branch's own source is checked out", async (t) => {

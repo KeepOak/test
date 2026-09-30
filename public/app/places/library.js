@@ -22,6 +22,7 @@ import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-ux-3
 import { pendingMemories, readPendingMemories, initMemoryReview } from "./memory-review.js";
 import { seasonsTab, readSeasons, initSeasons } from "./seasons.js";
+import { lockdownOn } from "../chat/approvals.js";
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -38,6 +39,9 @@ let artsList = [];
 let findings = null;
 let tidyFailed = false;
 let docView = "list";
+/* QA retest 2026-09-28 (m11): whether a Trunk asks before it remembers anything (GET/POST /api/memory/settings
+   requireApproval); null until read, and never shown to a household person (the switch is the owner's). */
+let memSettings = null;
 
 const TIDY_SOURCE = "Suggested while tidying memory";
 const TIDY_LABEL = { merge: "Said twice", archive: "Disagree" };
@@ -55,7 +59,8 @@ function memoryTab(mem) {
   const acts = `<span class="st-acts15"><button type="button" class="btn sm" data-act="tidy15">${t("memory.card.tidy-up")}${n ? `<span class="n15">${n}</span>` : ""}</button><button type="button" class="icon-btn" aria-label="${t("window.places.library.more-for-memory")}" data-act="memmore15">${ic("more", "s")}</button></span>`;
   let html = `<div class="status memst15" data-css="margin:6px 0 10px">${cap ? ring(cap.count, cap.maxFacts) : '<span class="sdot"></span>'}<div>
       <b>${cap ? t("window.places.library.count-of-maxfacts-remembered", { count: cap.count, maxFacts: cap.maxFacts }) : plural(mem.length, { one: "window.places.library.count-things-remembered.one", other: "window.places.library.count-things-remembered" })}</b>
-      <p>${t("window.places.library.trunks-suggest-what-to-remember-and")}</p></div>${acts}</div>`;
+      <p>${t(memSettings?.requireApproval === false ? "window.places.library.remembers-when-asked" : "window.places.library.trunks-suggest-what-to-remember-and")}</p></div>${acts}</div>`;
+  if (memSettings) html += `<div class="ctl" data-css="margin:0 0 10px"><b>${t("window.places.library.ask-before-remembering")}</b><input class="sw" type="checkbox" id="mem-ask15" data-sw="mem-ask15" ${memSettings.requireApproval ? "checked" : ""} aria-label="${t("window.places.library.ask-before-remembering")}"><small>${t("window.places.library.ask-before-remembering-sub")}</small></div>`;
   html += mem.map((m, i) => `<div class="prow"><span class="ico-tile">${ic('star', 's')}</span>
         <span class="grow"><b>${inlineText(m.data?.text ?? m.data?.fact ?? m.data?.content ?? "")}</b><small>${esc([m.data?.source, when(m.updatedAt ?? m.createdAt)].filter(Boolean).join(" · "))}</small></span>
         <button class="btn ghost sm" type="button" data-act="forget" data-i="${i}" data-id="${esc(m.id || '')}">${t("window.places.library.forget")}</button></div>`).join('');
@@ -95,7 +100,7 @@ export function draw() {
     ["seasons", "Seasons", 0]
   ];
 
-  const lockBanner = E.state.lock ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
+  const lockBanner = lockdownOn() ? `<div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div>` : "";
 
   let html = `<main class="main enter11" id="main">${lockBanner}<div class="scroll"><div class="place">
     <h1>${t("place.library")}</h1><p class="lede">${t("window.places.library.what-your-trunks-remember-the-documents")}</p>
@@ -119,6 +124,10 @@ export async function after() {
   const tab = S.tabs.library || "memory";
   if (tab === "memory") {
     try { await readPendingMemories(); } catch (error) { toast(error.message); }
+    if (E.profiles?.isOwner !== false) {
+      const read = await api("memory/settings").catch(() => null);
+      if (read && JSON.stringify(read) !== JSON.stringify(memSettings)) { memSettings = read; renderNow(); }
+    }
     if (tidyFailed) return;
     let fresh = null;
     try { fresh = await api("memory/tidy"); } catch (error) { tidyFailed = true; toast(error.message); return; }
@@ -253,9 +262,16 @@ async function saveNewDoc() {
 export function init() {
   initSeasons();
   initMemoryReview();
-  markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15", "doc-new", "doc-new-save", "sw:doc-new-name", "sw:doc-new-text"]);
+  markLive(["ptab", "forget", "tidy15", "tidydo15", "memmore15", "memexp15", "memarch15", "dv15", "sw:mem-ask15", "doc-new", "doc-new-save", "sw:doc-new-name", "sw:doc-new-text"]);
   on("doc-new", () => openNewDoc());
   on("doc-new-save", () => saveNewDoc());
+  /* The whole setting is sent: the engine keeps what it is given (src/memory-review.ts configure). */
+  document.addEventListener("change", async (e) => {
+    if (e.target.id !== "mem-ask15" || !memSettings) return;
+    try { memSettings = await api("memory/settings", { ...memSettings, requireApproval: e.target.checked }); }
+    catch (error) { e.target.checked = !e.target.checked; toast(error.message); }
+    renderNow();
+  });
   /* List or Map: which way the documents are shown (window state); the Map asks the engine's map (library17.js). */
   on("dv15", (el) => { docView = el.dataset.v === "map" ? "map" : "list"; renderNow(); });
   initLibrary17();

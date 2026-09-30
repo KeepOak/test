@@ -1,6 +1,7 @@
 import { describeToolCall } from "../activity.js";
 import type { FeatureMode } from "../feature-switches.js";
 import type { Runtime } from "../runtime.js";
+import type { Run } from "../contracts.js";
 import { runOrigin } from "../key-context.js"; // bucket 19 (integration review)
 import { outsideSourceOf } from "../outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson } from "../people/context.js"; // bucket 19 (integration review)
@@ -268,7 +269,26 @@ function pruneHeldReplays(store: Store, owner: string): void {
 }
 
 // long-work: a task the owner paused waits for their Resume, a restart or not.
-const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_for_channel", "attention.needed", "run.paused"]);
+// hot-update: a task handed to a newer engine is carried on by `resumeHandedOver`, whatever the switches say.
+const settledKinds = new Set(["run.auto_resumed", "run.can_continue", "run.left_for_channel", "attention.needed", "run.paused", "run.handed_over"]);
+
+/**
+ * hot-update: tasks an engine stopped after a whole step so a newer engine could take over (`run.handed_over`). Whichever
+ * engine starts next (the new one, or the old one again when the new one failed its check) carries each on once: the
+ * carry-on is written down (`run.auto_resumed`) before it starts, so no later start carries it on a second time. No step
+ * was cut off, so nothing is checked or done again; a chat app's task is carried on too, since that app sends nothing again.
+ */
+export function resumeHandedOver(input: Pick<RecoveryInput, "store" | "runtime" | "maxAgeMs">): { runId: string; resumed: Promise<Run | undefined> }[] {
+  const since = new Date(Date.now() - (input.maxAgeMs ?? 86_400_000)).toISOString();
+  const rows = input.store.sqlite.prepare(`SELECT DISTINCT t.id AS id FROM tasks t JOIN events e ON e.run_id=t.id AND e.kind='run.handed_over'
+    WHERE t.status='interrupted' AND t.updated_at >= ? AND NOT EXISTS (SELECT 1 FROM events x WHERE x.run_id=t.id AND x.kind='run.auto_resumed')
+    ORDER BY t.created_at`).all(since) as { id: unknown }[];
+  return rows.map((row) => {
+    const runId = String(row.id);
+    input.store.event(runId, "run.auto_resumed", { steps: [], handedOver: true });
+    return { runId, resumed: input.runtime.resume(runId).catch(() => undefined) };
+  });
+}
 
 /**
  * Every task the last run of Branch left interrupted: those with a step still open in the journal,
@@ -338,7 +358,10 @@ export function releaseInterruptedSchedules(store: Store, nextTurn: (data: Recor
  * With the switch off it does nothing, which is how Branch behaved before.
  */
 export async function recoverOnStart(input: RecoveryInput & { nextTurn: (data: Record<string, unknown>, now: Date) => string }): Promise<RecoveredRun[]> {
-  if (input.mode === "off") return [];
+  // hot-update: a newer engine carries them on only once it has passed its check (main asks it to, `carryOnHandedOver`).
+  const handedOver = process.env.BRANCH_HOLD_HANDED_OVER === "1" ? [] : resumeHandedOver(input);
+  if (handedOver.length) console.log(`Carried on from the engine this one replaced: ${handedOver.length} task(s).`);
+  if (input.mode === "off") return handedOver.map(({ runId, resumed }) => ({ runId, outcome: "resumed" as const, steps: [], resumed }));
   const released = releaseInterruptedSchedules(input.store, input.nextTurn);
   const report = await recoverAfterRestart({ ...input, askOnly: input.askOnly || process.env.BRANCH_RESUME === "ask" });
   const counts = report.reduce<Record<string, number>>((all, run) => ({ ...all, [run.outcome]: (all[run.outcome] ?? 0) + 1 }), {});

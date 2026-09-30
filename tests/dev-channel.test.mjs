@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { Updater, compareVersions } from "../dist/desktop/updater.js";
-import { betaLine, buildEnv, buildDev, buildGitConfig, keyLine, packageSteps, packagesNeeded, staleOutputs, stampDevVersion } from "../dist/desktop/dev-build.js";
+import { betaLine, newestGreen, wholeSuiteWorkflow, buildEnv, buildDev, buildGitConfig, keyLine, packageSteps, packagesNeeded, staleOutputs, stampDevVersion } from "../dist/desktop/dev-build.js";
 import { protectedAreas, protectedTarget } from "../dist/never-break/protected.js";
 import { updatePlan, betaCheckEveryMs } from "../dist/comfort/auto-update.js";
 import { buildInfo } from "../scripts/package-desktop.mjs";
@@ -504,7 +504,7 @@ test("without the running change on record, its version decides whether the buil
   await control.install();
 });
 
-test("Beta looks every five minutes and, with update by itself on, installs each change once nothing is working", () => {
+test("Beta looks every minute and, with update by itself on, installs each change once nothing is working", () => {
   const saved = (releaseChannel) => ({ get: (table, _owner, key) =>
     (table === "settings" && key === "comfort-notify" ? { data: { autoUpdate: "install", releaseChannel } } : undefined) });
   const facts = { busyTasks: 0, updaterPhase: "available", now: new Date() };
@@ -514,8 +514,8 @@ test("Beta looks every five minutes and, with update by itself on, installs each
   assert.equal(updatePlan(saved("beta"), "local", { ...facts, busyTasks: 1 }).step, "nothing", "but never while a task is working");
   const looked = { get: (table, _owner, key) => (table === "settings" && key === "comfort-notify" ? { data: { autoUpdate: "check", releaseChannel: "dev" } }
     : table === "settings" && key === "comfort-update-last" ? { data: { at: new Date().toISOString() } } : undefined) };
-  assert.equal(updatePlan(looked, "local", { busyTasks: 0, updaterPhase: "current", now: new Date() }).reason, "Beta updates were looked for less than five minutes ago.");
-  assert.equal(betaCheckEveryMs, 5 * 60 * 1000);
+  assert.equal(updatePlan(looked, "local", { busyTasks: 0, updaterPhase: "current", now: new Date() }).reason, "Beta updates were looked for less than a minute ago.");
+  assert.equal(betaCheckEveryMs, 60 * 1000);
 });
 
 test("every packaged build records the change it was made from", () => {
@@ -717,4 +717,26 @@ test("a task that starts during a background build defers the install, and the s
     "the full screen, which comes up for the swap, never comes up over the owner's work for a swap that did not start");
   assert.equal(dev.status.phase, "available");
   assert.equal(await readFile(join(where.installDir, exe), "utf8"), "the installed app");
+});
+
+test("Beta takes the newest change whose whole suite passed, not the tip, asking GitHub only when the tip moves", async (t) => {
+  const GREEN = "c".repeat(40), TIP = "d".repeat(40), asked = [];
+  let answer = { workflow_runs: [{ head_sha: GREEN, head_branch: betaLine }] }, ok = true;
+  const fetch = async (url) => { asked.push(String(url)); if (!ok) return new Response("rate limited", { status: 403 }); return Response.json(answer); };
+  const green = newestGreen(fetch);
+  assert.equal(await green(repo, TIP), GREEN);
+  assert.ok(asked[0].endsWith(`/repos/${repo}/actions/workflows/${wholeSuiteWorkflow}/runs?branch=redesign%2Fwindow&event=push&status=success&per_page=1`), asked[0]);
+  assert.equal(await green(repo, TIP), GREEN);
+  assert.equal(asked.length, 1, "the same tip is not asked about again");
+  ok = false;
+  assert.equal(await green(repo, "e".repeat(40)), GREEN, "GitHub not answering keeps the last passing change");
+  ok = true; answer = { workflow_runs: [{ head_sha: "f".repeat(40), head_branch: "another-line" }] };
+  assert.equal(await green(repo, "1".repeat(40)), GREEN, "a run of another line is never taken");
+  assert.equal(await newestGreen(async () => { throw new Error("offline"); })(repo, TIP), null, "none known: the tip, as before");
+  // Through the updater: the passing change is offered and built, not the tip.
+  const where = await folders(t), tools = fakeTools(where, { head: TIP });
+  const status = await updater(where, tools, { greenCommit: async (_repo, tip) => { assert.equal(tip, TIP); return NEW; } }).check();
+  assert.equal(status.phase, "available");
+  assert.equal(status.release.commit, NEW);
+  assert.equal(status.release.tag, `dev-${NEW.slice(0, 7)}`);
 });

@@ -47,7 +47,13 @@ type Read = z.input<typeof HistoryReadSchema>;
  * step started as it, carry none of these, so a turn there is enough.
  */
 const stillChosen = (session: string): string => ` AND NOT EXISTS (SELECT 1 FROM governance g
-  WHERE g.id='trunk-conversation:'||${session} AND COALESCE(json_extract(g.data,'$.trunkId'),'')<>?)`;
+  WHERE g.id='trunk-conversation:'||${session} AND COALESCE(json_extract(g.data,'$.trunkId'),'')<>?)${stillThread(session)}`;
+/**
+ * defaulttrunk: the same for a conversation that is a thread with a Trunk (src/trunks/threads.ts): once it is another
+ * Trunk's thread, none of it is this one's to read.
+ */
+const stillThread = (session: string): string => ` AND NOT EXISTS (SELECT 1 FROM trunk_threads a
+  WHERE a.session_id=${session} AND a.trunk_id<>?)`;
 const stillSeated = (session: string): string => ` AND NOT EXISTS (SELECT 1 FROM governance r,
   json_each(r.data,'$.memberSessions') side WHERE r.id GLOB 'trunk-room:*' AND side.value=${session}
   AND NOT EXISTS (SELECT 1 FROM json_each(r.data,'$.members') seat WHERE seat.value=?))`;
@@ -62,7 +68,7 @@ export function participation(agent: string | undefined): { clause: string; args
   return {
     clause: ` AND EXISTS (SELECT 1 FROM tasks t JOIN events e ON e.run_id=t.id
       WHERE t.session_id=s.id AND e.kind='trunk.turn' AND json_extract(e.data,'$.trunkId')=?)${stillHeld("s.id")}`,
-    args: [trunkId, trunkId, trunkId, trunkId],
+    args: [trunkId, trunkId, trunkId, trunkId, trunkId],
   };
 }
 /**
@@ -75,7 +81,7 @@ export function canAccessSession(db: DatabaseSync, sessionId: string, agent: str
   const trunkId = agent.slice("trunk:".length);
   const row = db.prepare(`SELECT 1 FROM tasks t JOIN events e ON e.run_id=t.id
     WHERE t.session_id=? AND e.kind='trunk.turn' AND json_extract(e.data,'$.trunkId')=?${stillHeld("t.session_id")}`)
-    .get(sessionId, trunkId, trunkId, trunkId, trunkId);
+    .get(sessionId, trunkId, trunkId, trunkId, trunkId, trunkId);
   return !!row;
 }
 

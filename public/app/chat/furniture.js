@@ -34,11 +34,14 @@ export function stampBefore(m, prev) {
   if (Number.isNaN(d.getTime())) return "";
   const p = new Date(prev?.at ?? "");
   if (!Number.isNaN(p.getTime()) && day(p) === day(d) && d - p < 30 * 60000) return "";
+  return `<div class="stamp">${esc(stampWords(d))}</div>`;
+}
+/* A stamp's words: "Today 3:04 PM", "Yesterday 9:10 AM", else the date and the time (trunk-one-row's separators too). */
+export function stampWords(d) {
   const today = new Date(), yesterday = new Date(Date.now() - 86400000);
-  const words = day(d) === day(today) ? t("window.chat.stamp.today", { time: clock(d) })
+  return day(d) === day(today) ? t("window.chat.stamp.today", { time: clock(d) })
     : day(d) === day(yesterday) ? t("window.chat.stamp.yesterday", { time: clock(d) })
       : `${d.toLocaleDateString(language(), { month: "short", day: "numeric" })} ${clock(d)}`;
-  return `<div class="stamp">${esc(words)}</div>`;
 }
 
 /* ---------- the task behind a message ---------- */

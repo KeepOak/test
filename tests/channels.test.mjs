@@ -33,6 +33,10 @@ async function fakeTelegram(t) {
   return { state, apiBase: `http://127.0.0.1:${server.address().port}` };
 }
 let nextUpdate = 1;
+const telegramRuns = (app) => {
+  const sessions = new Set(app.store.list("settings", "local").filter((row) => row.id.startsWith("channel-session:telegram:")).map((row) => row.data.sessionId));
+  return app.store.runs("local").filter((run) => sessions.has(run.sessionId));
+};
 const update = (chat, from, text, extra = {}) => ({ update_id: nextUpdate++, message: {
   message_id: nextUpdate * 10, text, from: { id: from.id, first_name: from.name, username: from.username },
   chat, ...extra } });
@@ -81,7 +85,7 @@ test("Telegram: pairing for unknown senders, allowlist, group activation by ment
   assert.equal(state.sent[1].chat_id, 502);
   state.queue.push(update({ id: 502, type: "private" }, alice, "and three"));
   await until(() => state.sent.length === 3, "alice second reply");
-  const sessions = new Set(app.store.runs("local").map((run) => run.sessionId));
+  const sessions = new Set(telegramRuns(app).map((run) => run.sessionId));
   assert.equal(sessions.size, 1, "the same chat continues one conversation");
   assert.equal(provider.requests.at(-1).messages.filter((m) => m.role === "user").length, 2);
   // Bob is approved with his code and then answered.
@@ -90,7 +94,7 @@ test("Telegram: pairing for unknown senders, allowlist, group activation by ment
   state.queue.push(update(dm, bob, "second try"));
   await until(() => state.sent.length === 4, "bob answered after approval");
   assert.equal(state.sent[3].text, "Echo: second try");
-  assert.equal(new Set(app.store.runs("local").map((run) => run.sessionId)).size, 2, "a different chat has its own conversation");
+  assert.equal(new Set(telegramRuns(app).map((run) => run.sessionId)).size, 2, "a different chat has its own conversation");
   // Group: ignored without a mention, answered when mentioned or when replying to the bot.
   const before = state.sent.length, calls = provider.requests.length;
   state.queue.push(update(group, alice, "just chatting"));
@@ -105,7 +109,7 @@ test("Telegram: pairing for unknown senders, allowlist, group activation by ment
   await until(() => state.sent.length === before + 2, "reply-to-bot group reply");
   assert.equal(state.sent[before + 1].reply_parameters.message_id > 0, true);
   // Channel tasks never receive host command permission.
-  assert.ok(app.store.events(app.store.runs("local")[0].id).every((e) => e.kind !== "tool.started" || e.data.name !== "shell.execute"));
+  assert.ok(telegramRuns(app).every((run) => app.store.events(run.id).every((e) => e.kind !== "tool.started" || e.data.name !== "shell.execute")));
   assert.deepEqual(app.channels.remove("local", { channel: "telegram", senderId: String(bob.id) }), { removed: true });
   await adapter.stop();
 });
@@ -129,7 +133,7 @@ test("Telegram forum topics keep separate sessions and route replies to the orig
   await until(() => state.sent.length === 4, "unthreaded reply");
   assert.deepEqual(state.sent.map((reply) => [reply.chat_id, reply.message_thread_id]),
     [[-700, 7], [-700, 8], [-700, 7], [-700, undefined]]);
-  const sessions = app.store.runs("local").map((run) => run.sessionId);
+  const sessions = telegramRuns(app).map((run) => run.sessionId);
   assert.equal(new Set(sessions).size, 3);
   assert.equal(sessions.filter((session) => session === app.store.get("settings", "local", "channel-session:telegram:-700:7").data.sessionId).length, 2);
   assert.equal(provider.requests[2].messages.filter((message) => message.role === "user").length, 2);

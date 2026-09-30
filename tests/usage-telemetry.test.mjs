@@ -300,10 +300,13 @@ test.skip("U7: every word the two cards show is on file in English and in real F
 
 /* The new window: Settings › Data & usage's report is the prototype's. Since parity B5 it adds up the engine's own usage
    (GET /api/usage, public/app/settings/pages/usage.js), not the usage report, which ships when needed: "Open the report"
-   shows the task that ran, at 400 pixels, with no page errors. */
+   shows the task that ran, at 400 pixels, with no page errors. The engine's answer is held back a little, as a busy
+   machine does: pressed before it lands, the report used to add up nothing ("0" tasks) and now waits for it.
+   Mutation: in usage.js make repopen15 call openReport() without awaiting the read, and this goes red. */
 test("U8: the report lives in Data & usage and adds up the engine's own usage, at 400 pixels", async (t) => {
   const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
-  const { app, page, errors } = await settingsWindow(t, { name: "ui14", width: 400, height: 800, provider: scripted([say("done")]),
+  const slowUsage = (page) => page.route(/\/api\/usage\?range=/, async (route) => { await new Promise((done) => setTimeout(done, 800)); await route.continue(); });
+  const { app, page, errors } = await settingsWindow(t, { name: "ui14", width: 400, height: 800, provider: scripted([say("done")]), route: slowUsage,
     before: (one) => one.runtime.run({ prompt: "one task" }) });
   assert.equal(usageReportSettings(app.store, app.runtime.owner).mode, "when-needed", "ships when needed (the ship-on rule)");
   await openSettingsPage(page, "usage");

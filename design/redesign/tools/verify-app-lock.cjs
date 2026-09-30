@@ -6,7 +6,7 @@
      BRANCH_DATA_DIR=<fresh dir> BRANCH_PORT=<port> node dist/cli.js start
      PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-app-lock.cjs
    It leaves the engine with no PIN and the lock's settings as they ship. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }

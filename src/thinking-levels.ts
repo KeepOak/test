@@ -3,14 +3,15 @@ import type { ReasoningEffort } from "./models.js";
 /**
  * Redesign phase 2 (accounts, critique #22): which thinking levels a connection's model really takes.
  *
- * Branch sends a thinking level in exactly three places, and nowhere else, so this map is those three:
+ * Branch sends a thinking level through the OpenAI-shaped, Anthropic, and Claude subscription connections:
  * - `reasoning_effort` (low / medium / high) from the OpenAI-shaped connection (src/providers.ts) and Azure
  *   OpenAI (src/providers/azure-openai.ts, the same body), and
  *   `reasoning.effort` from the Responses API connection (src/providers/openai-responses.ts, which
  *   Perplexity's agent connection extends) and the ChatGPT sign-in (src/chatgpt-provider.ts);
  * - an extended-thinking budget of 1,024 / 4,096 / 8,192 tokens from the Anthropic connection
  *   (src/providers.ts, `anthropicThinking`), which Claude on Vertex extends.
- * Every other connection (Gemini's own, Ollama, Cohere, Bedrock, the installed programs)
+ * - `output_config.effort` and the native `--effort` option from Claude subscription sign-in.
+ * Every other connection (Gemini's own, Ollama, Cohere, Bedrock, the other installed programs)
  * ignores the level, so the window offers none for it rather than a control that does nothing.
  *
  * Within those, only models that think take a level: sending one to a model that does not is refused
@@ -49,6 +50,14 @@ function effortLevels(model: string): ReasoningEffort[] {
   if (/^gemini-(2\.5|[3-9])/.test(name)) return all;
   return [];
 }
+/** Claude subscription aliases and model versions that accept output_config.effort. */
+function claudeEffortLevels(model: string): ReasoningEffort[] {
+  const name = bare(model);
+  if (name === "sonnet" || name === "opus") return all;
+  if (/^claude-opus-(4-[5-9]|[5-9])(?:-|$)/.test(name)) return all;
+  if (/^claude-sonnet-(4-[6-9]|[5-9])(?:-|$)/.test(name)) return all;
+  return [];
+}
 /** Claude models with extended thinking: 3.7 Sonnet and every Claude 4 and later. */
 function takesBudget(model: string): boolean {
   const name = bare(model);
@@ -57,6 +66,10 @@ function takesBudget(model: string): boolean {
 
 /** What the window may offer for one connection: its provider's name and its model. */
 export function thinkingLevels(provider: string, model: string): ThinkingLevels {
+  if (provider === "claude-subscription") {
+    const levels = claudeEffortLevels(model);
+    return levels.length ? { how: "effort", levels, sent: true } : none(true);
+  }
   if (effortProviders.has(provider)) {
     const levels = effortLevels(model);
     return levels.length ? { how: "effort", levels, sent: true } : none(true);

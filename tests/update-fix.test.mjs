@@ -78,10 +78,11 @@ test("the first Fix update makes the Update keeper, switches Trunks on and says 
 test("the owner can give updates to another Trunk, and back to the Update keeper without making a second one", async (t) => {
   const { app, call } = await failedUpdate(t);
   const first = (await call("updates/fix", {})).body;
+  const before = app.trunks.records.list().map((trunk) => trunk.id);
   const other = app.trunks.create({ name: "Ops", title: "", description: "" });
   const listed = (await call("updates/keeper")).body;
   assert.equal(listed.trunkId, first.trunkId);
-  assert.deepEqual(listed.trunks.map((trunk) => trunk.name).sort(), ["Ops", keeperName].sort());
+  assert.deepEqual(listed.trunks.map((trunk) => trunk.id).sort(), [...new Set([...before, other.id, first.trunkId])].sort(), "the existing default and the two named choices, with no duplicate keeper");
   assert.equal((await call("updates/keeper", { trunkId: other.id })).body.trunkId, other.id);
   assert.equal((await call("updates/fix", {})).body.trunkId, other.id, "the chosen Trunk does it");
   assert.equal((await call("updates/keeper", { trunkId: "11111111-2222-4333-8444-555555555555" })).status, 400, "only a Trunk that exists");
@@ -132,4 +133,3 @@ test("the update's own steps always reach the keeper, their end kept, however lo
   assert.ok(!text.includes("ABOUT-END"), "and it is cut");
   assert.match(text, /## What the last update did/);
 });
-

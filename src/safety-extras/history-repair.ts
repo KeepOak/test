@@ -39,6 +39,10 @@ function uniqueCalls(message: Message, fixes: string[]): Message {
  * Pairs every call with exactly one result, straight after the message that made it. A note from
  * the person or the app that landed between two results (a picture a tool showed) is moved to just
  * after the last of them, because services want the results together.
+ *
+ * A call id belongs to the message that made it. Local models (Ollama, LM Studio and others) number their calls afresh in
+ * every answer ("call_0" each time), so the same id in a later answer is a new call with its own real result; which ids
+ * were answered is kept per answer, never for the whole conversation, or that real result would be dropped as a second one.
  */
 function pairResults(messages: readonly Message[], fixes: string[]): Message[] {
   const out: Message[] = [];
@@ -71,7 +75,8 @@ function pairResults(messages: readonly Message[], fixes: string[]): Message[] {
     if (original.role !== "assistant" && open.size) { held.push(original); continue; }
     close();
     const message = original.role === "assistant" ? uniqueCalls(original, fixes) : original;
-    for (const call of message.toolCalls ?? []) if (!answered.has(call.id)) open.set(call.id, call);
+    if (message.role === "assistant") answered.clear(); // a new answer: its ids are its own
+    for (const call of message.toolCalls ?? []) open.set(call.id, call);
     out.push(message);
   }
   close();

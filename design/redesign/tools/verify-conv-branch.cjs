@@ -5,11 +5,13 @@
 // Use a throwaway engine (fresh BRANCH_DATA_DIR, the offline demo provider). It makes conversations, a Trunk, paths and
 // read marks there, and changes the quick-ask keys, then puts the keys back. The demo provider cannot write a diagram, so
 // Save to Library is also proved on a second, in-process engine with a scripted model (its own temp folder, a free port).
-const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
 const { mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const { pathToFileURL } = require("node:url");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
+const { withStandIn } = require("./stand-in-model.cjs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("PORT and TOKEN are required"); process.exit(2); }
@@ -140,8 +142,8 @@ async function verifyBranch(page, ctx) {
   check("Switch in the Branches tab opens that path", switched);
   await page.locator(".ptab[data-p='branches']").click();
   await page.locator(".brp17c [data-act='brcmp17c']").click();
-  await page.locator(".dlg .cmpsel17c select").first().waitFor();
-  await page.locator("#br-sel117c").selectOption(again.sessionId);
+  await page.locator(".dlg .cmpsel17c .gsel").first().waitFor();
+  await pickGsel(page.locator("#br-sel117c"), again.sessionId);
   check("with more than two paths, the pickers choose which to compare", (await page.locator(".dlg .cmpc17c h3").allInnerTexts()).includes("Again"));
   await page.locator(".dlg [data-act='dlg-close']").click();
   await page.locator(".brp17c [data-act='br17c']").click();
@@ -215,7 +217,9 @@ async function verifyDiagram(page, browser) {
   await page.waitForSelector("#side .row");
   await openChat(page, imported.sessionId);
   await page.locator(".dia17c").waitFor();
-  check("a mermaid block draws as a diagram card with its text", (await page.locator(".dia17c pre").innerText()).includes("flowchart LR"));
+  check("a mermaid block draws as a diagram card with its text", (await page.locator(".dia17c details pre").textContent()).includes("flowchart LR"));
+  check("the card's frame is sandboxed with scripts only", (await page.locator(".dia17c iframe.dmm-frame").getAttribute("sandbox")) === "allow-scripts");
+  check("Mermaid drew it inside the sealed frame (GET /diagram-frame)", await drewIn(page, ".dia17c iframe.dmm-frame", "Something breaks"));
   check("with no task holding the answer, Save to Library stays greyed", (await page.locator(".dia17c .acts button").nth(2).getAttribute("aria-disabled")) === "true");
   await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
   await page.locator(".dia17c [data-act='diacopy17c']").click();
@@ -223,13 +227,23 @@ async function verifyDiagram(page, browser) {
   const copied = await until(async () => { const t = (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n"); return t === MERMAID && t; });
   check("diacopy17c copies the diagram's text", copied, copied ? "" : `clipboard: ${JSON.stringify(await page.evaluate(() => navigator.clipboard.readText()).catch((e) => e.message))}; toast: ${await page.locator(".toast").innerText().catch(() => "")}`);
   await page.locator(".dia17c [data-act='diaopen17c']").click();
-  const frame = page.locator(".dlg iframe.dframe17c");
+  const frame = page.locator(".dlg iframe.dmm-frame.big");
   await frame.waitFor();
   const src = await frame.getAttribute("src"), sandbox = await frame.getAttribute("sandbox");
-  const served = await fetch(BASE + src).then(async (r) => ({ ok: r.ok, csp: r.headers.get("content-security-policy"), body: await r.text() }));
-  check("diaopen17c opens it larger as an artifact, in a sandboxed frame", sandbox === "" && served.ok && /sandbox/.test(served.csp) && served.body.includes("flowchart LR"), src);
+  const served = await fetch(BASE + src).then(async (r) => ({ ok: r.ok, csp: r.headers.get("content-security-policy") }));
+  check("diaopen17c opens it larger, in the same sealed frame", sandbox === "allow-scripts" && served.ok && /sandbox allow-scripts/.test(served.csp)
+    && await drewIn(page, ".dlg iframe.dmm-frame.big", "Landlord pays"), src);
   await page.locator(".dlg [data-act='dlg-close']").click();
   await verifyDiagramSave(browser);
+}
+
+/* Mermaid drew the diagram in that frame: the frame's own page holds the drawing, and its height came back. */
+async function drewIn(page, selector, words) {
+  return until(async () => {
+    const inner = await (await page.locator(selector).elementHandle())?.contentFrame();
+    const drawn = inner && await inner.evaluate((w) => !!document.querySelector("svg") && document.body.textContent.includes(w), words).catch(() => false);
+    return drawn && parseInt(await page.locator(selector).evaluate((f) => f.style.height), 10) > 40;
+  });
 }
 
 /* Save to Library needs the task whose answer holds the diagram, so it runs on an engine whose model writes one. */
@@ -260,8 +274,11 @@ async function verifyDiagramSave(browser) {
   }
 }
 
+let standIn = null;
 async function setup() {
   const stamp = Date.now().toString(36);
+  // A fresh engine has no model (the demo model left in #359): a stand-in answers, so there are replies to branch from.
+  if ((await api("state")).modelNeeded) standIn = await withStandIn(api);
   await api("trunks/switch", { part: "trunks", mode: "on" });
   await api("trunks/switch", { part: "conversations", mode: "on" });
   const trunk = (await api("trunks", { name: `Verify ${stamp}`, title: "Checks quick ask" })).trunk;
@@ -294,6 +311,7 @@ async function setup() {
     for (const part of ["conversations", "trunks"])
       await api("trunks/switch", { part, mode: modesBefore[part] ?? "off" }).catch((e) => console.log(`restore ${part}:`, e.message));
     check("no page errors", errors.length === 0, errors.join(" | "));
+    await standIn?.close();
     await browser.close();
   }
   const failed = results.filter((r) => !r.ok);
