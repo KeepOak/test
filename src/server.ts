@@ -129,6 +129,7 @@ import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "
 import { conversationPathsApi, conversationPathsRoute, readMarksPath } from "./conversation-paths-api.js";
 import { ArtifactPageSchema, ArtifactSaveSchema, artifactPageRoute, holdArtifactPage } from "./artifact-pages.js";
 import { readServingSettings, saveServingSettings } from "./mcp-server.js";
+import { validateStateless, statelessFailure, StatelessError } from "./mcp-stateless.js";
 import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from "./tool-loading.js";
 import { handleA2a, remoteAgentsApi } from "./a2a-routes.js";
 import type { createBranch } from "./index.js";
@@ -3734,6 +3735,8 @@ async function handleMcpRequest(
     const owner = app.runtime.owner;
     const mcp = app.mcpServer;
     if (!mcp) throw new HttpError(500, "MCP server not initialized");
+    if (request.headers["mcp-protocol-version"] === "2026-07-28" && request.method !== "POST")
+      throw new HttpError(405, "Stateless MCP uses POST only");
 
     const sessionId = request.headers["mcp-session-id"] as string | undefined;
 
@@ -3763,6 +3766,23 @@ async function handleMcpRequest(
     }
 
     const body = request.method === "POST" ? await readBody(request, 65536) : undefined;
+
+    const metadata = body && typeof body === "object" ? (body as { params?: { _meta?: unknown } }).params?._meta : undefined;
+    if (request.headers["mcp-protocol-version"] === "2026-07-28" || metadata && typeof metadata === "object"
+      && "io.modelcontextprotocol/protocolVersion" in metadata) {
+      try {
+        const parsed = validateStateless(body, request.headers);
+        const result = await mcp.handleStateless(parsed);
+        const status = result.error?.code === -32601 ? 404 : result.error ? 400 : 200;
+        if (!response.destroyed && !response.writableEnded) {
+          response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+          response.end(JSON.stringify(result));
+        }
+      } catch (error) {
+        send(response, 400, statelessFailure(body, error instanceof StatelessError ? error : new StatelessError(-32602, "Invalid stateless request")));
+      }
+      return true;
+    }
 
     if (request.method === "POST" && body) {
       const JsonRpcSchema = z
