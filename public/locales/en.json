@@ -10317,6 +10317,7 @@
   "window.why.gate-script": "Stays off here until a separate safety review: Allow lets this program run on this computer before every turn. Until then the job stays paused, so Cancel would change nothing.",
   "window.why.group18c": "Branch has no groups yet, so there's nothing to make. What each person here may use is set on their card in Settings › People.",
   "window.why.grp-talk": "Always on in a room: its Trunks talk it through, up to 3 rounds, and any Trunk can pass. There's no switch for one room.",
+  "window.why.xdo": "Allow stays off here pending the install-request safety review. Nothing has been installed. You can decline the request with Don't.",
   "window.why.gw-tray": "Only the desktop app has a tray icon, and it always shows one; there's no setting for it.",
   "window.why.hoaccept18b": "Stays off here until a separate safety review: who may take over a team's task.",
   "window.why.hops": "This is how Branch works, not a setting: a chain of Trunks messaging each other stops after three hops, and one task sends at most three messages.",
