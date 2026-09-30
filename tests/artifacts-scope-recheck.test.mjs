@@ -40,6 +40,11 @@ async function fixture(t) {
 test("GET /api/artifacts: scope changed during await correctly refuses metadata", async (t) => {
   const { app, server, call } = await fixture(t);
 
+  // The owner has a kept file, so a refused answer is not empty by accident.
+  const run = app.store.createRun(app.runtime.owner, "keep a note");
+  await app.artifacts.write(run.id, "note.md", "text/markdown", Buffer.from("# Note"));
+  assert.equal((await call("/api/artifacts")).artifacts.length, 1, "the owner's window lists its task's file");
+
   // Create a second profile
   const profile2 = app.store.profiles.create({ name: "Profile 2", pin: "5678" });
 
@@ -61,6 +66,7 @@ test("GET /api/artifacts: scope changed during await correctly refuses metadata"
   try {
     // Call GET /api/artifacts - scope changes during the await
     const response = await call("/api/artifacts");
+    app.store.profiles.switch({ profileId: null });
 
     // With the fix: response should have empty artifacts because scope changed
     // Without the fix: this assertion would fail (artifacts would be returned despite scope change)
@@ -74,8 +80,11 @@ test("GET /api/artifacts: scope changed during await correctly refuses metadata"
 test("GET /api/artifacts: scope unchanged returns artifacts normally", async (t) => {
   const { app, server, call } = await fixture(t);
 
+  const run = app.store.createRun(app.runtime.owner, "keep a note");
+  await app.artifacts.write(run.id, "note.md", "text/markdown", Buffer.from("# Note"));
   // Call without switching profiles
   const response = await call("/api/artifacts");
+  assert.deepEqual(response.artifacts.map((entry) => entry.name), ["note.md"], "the owner's own file is listed");
 
   // Should return valid artifacts array
   assert(Array.isArray(response.artifacts),
