@@ -15,6 +15,7 @@ import { drawShell, initShell, PLACE_VIEWS, wide } from "./shell/shell.js";
 import { showSignIn } from "./shell/signin.js";
 import { showLock, watchLock, initLock } from "./shell/applock.js";
 import { openConversation, rereadOpen } from "./chat/chat.js";
+import { selectionHeld, scrollSecurity } from "./chat/scroll-follow.js";
 import { forgetChips } from "./chat/chips.js";
 import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
@@ -113,6 +114,10 @@ function drawMain() {
   const main = $("#main");
   const draw = VIEWS[S.view] ?? VIEWS.chat;
   const html = draw(), key = `${S.view}\n${wide()}\n${html}`;
+  const security = scrollSecurity();
+  // Same conversation/principal only. Owner, policy and lock changes must replace superseded DOM immediately.
+  if (S.view === "chat" && drawn.view === "chat" && drawn.chat === S.chat && drawn.security === security &&
+      (selectionHeld($("#scroll", main)) || selectionHeld($(".beside15 .thread", main)))) return;
   if (key === drawn.key && main.firstElementChild && main.firstElementChild === drawn.first) {
     /* A place's after() is how it reads its own data again (the Inbox's questions, a library tab, Overview's health);
        it touches no markup and draws only when something came back different, so it still runs on an unchanged view. */
@@ -136,7 +141,7 @@ function drawMain() {
   drawn.view = S.view;
   drawn.page = page();
   VIEWS.after?.[S.view]?.(main);
-  Object.assign(drawn, { key, first: main.firstElementChild });
+  Object.assign(drawn, { key, first: main.firstElementChild, chat: S.chat, security });
 }
 
 /* The conversation's width, from the owner's saved preference (the prototype's three: comfortable, wide, full); pass 18 makes
