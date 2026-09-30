@@ -45,7 +45,7 @@ function viewHtml() {
   const still = L.muted || L.phase === "starting";
   return `<div class="vin"><div class="v-top">${av(chatFace(L.sessionId), 28)}<span>${who}<span id="v-t">${clock()}</span></span></div>
     <div class="orb${still ? " muted" : ""}" aria-hidden="true"></div><p class="v-cap" id="v-cap" aria-live="polite">${esc(caption())}</p>
-    <div class="acts"><button class="btn" type="button" data-act="v-mute" aria-pressed="${L.muted}">${t(L.muted ? "voiceView.unmute" : "voiceView.mute")}</button><button class="btn" type="button" data-act="v-interrupt">Cut in</button><button class="btn bad" type="button" data-act="v-end">${t("voiceView.end")}</button></div>
+    <div class="acts"><button class="btn" type="button" data-act="v-mute" aria-pressed="${L.muted}">${t(L.muted ? "voiceView.unmute" : "voiceView.mute")}</button><button class="btn" type="button" data-act="v-interrupt">${t("voiceView.cutIn")}</button><button class="btn bad" type="button" data-act="v-end">${t("voiceView.end")}</button></div>
     ${L.note ? `<p class="hint" data-css="margin:0">${esc(L.note)}</p>` : ""}</div>`;
 }
 /* Drawn once into the window when Talk live opens, drawn again in place as it changes, and taken away when it ends. */
