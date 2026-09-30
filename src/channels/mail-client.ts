@@ -34,6 +34,8 @@ export interface MailMessage {
   messageId: string;
   references: string;
   text: string;
+  /** First Authentication-Results header, in receiving-server order; later copies are untrusted. */
+  authenticationResults?: string;
   /** Files attached to the message, at most `maxMailFiles` of them, already decoded. */
   attachments?: MailFile[];
 }
@@ -199,6 +201,24 @@ export class ImapClient {
 const fromBytes = (bytes: string) => Buffer.from(bytes, "latin1").toString("utf8");
 const quote = (value: string) => `"${value.replace(/([\\"])/g, "\\$1")}"`;
 
+/** Preserve duplicate-header order and unfold continuation lines before interpreting any identity. */
+function mailHeaders(raw: string): Map<string, string[]> {
+  const fields = new Map<string, string[]>();
+  let current: string[] | undefined;
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line) break;
+    if (/^[ \t]/.test(line) && current) { current[current.length - 1] += ` ${line.trim()}`; continue; }
+    const field = /^([a-zA-Z0-9-]+):[ \t]*(.*)$/.exec(line);
+    current = undefined;
+    if (!field) continue;
+    const name = field[1]!.toLowerCase();
+    current = fields.get(name) ?? [];
+    current.push(field[2]!.trim());
+    fields.set(name, current);
+  }
+  return fields;
+}
+
 /**
  * Splits one FETCH answer into the headers we thread on and the plain text body. Each part is found by its name: a
  * server may answer the items in any order (RFC 3501 7.4.2), and GreenMail sends the text first about half the time,
@@ -215,9 +235,13 @@ export function parseFetched(seq: number, raw: string): MailMessage {
   }
   const headers = literals.HEADER ?? "";
   const body = literals.TEXT ?? "";
-  const header = (name: string) => new RegExp(`^${name}:[ \\t]*([\\s\\S]*?)(?=\\r\\n[^ \\t]|$)`, "im").exec(headers)?.[1]?.replace(/\r\n[ \t]+/g, " ").trim() ?? "";
+  const fields = mailHeaders(headers);
+  const header = (name: string) => fields.get(name.toLowerCase())?.[0] ?? "";
   const from = header("From");
-  const address = /<([^>]+)>/.exec(from)?.[1] ?? from.split(/\s+/).pop() ?? "";
+  const candidate = /^(?:[^<>]*)<([^<>\s]+)>\s*$/.exec(from)?.[1] ?? from.trim();
+  // Ambiguous senders cannot become a paired identity. Full RFC mailbox syntax is deliberately not guessed.
+  const address = (from.length <= 2048 && fields.get("from")?.length === 1 && /^[^\s<>(),;"@]+@[^\s<>(),;"@]+$/.test(candidate)
+    && (from.match(/@/g)?.length === 1)) ? candidate : "";
   // The body is read with the message's own headers, so a formatted, encoded or multipart message gives its words and its files.
   const parts = mimeParts(`${headers.split(/\r?\n\r?\n/)[0]}\r\n\r\n${body}`);
   const attachments = parts.filter((part) => part.filename || part.disposition === "attachment").slice(0, maxMailFiles)
@@ -226,6 +250,7 @@ export function parseFetched(seq: number, raw: string): MailMessage {
     seq, from: address.toLowerCase(), fromName: from.replace(/<[^>]*>/, "").replace(/"/g, "").trim() || address,
     subject: header("Subject"), messageId: header("Message-ID"), references: header("References"),
     text: textOf(parts).replace(/\r\n/g, "\n").trim(),
+    authenticationResults: header("Authentication-Results"),
     ...(attachments.length ? { attachments } : {}),
   };
 }

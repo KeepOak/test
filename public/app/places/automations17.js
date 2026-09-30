@@ -24,6 +24,7 @@ import { ic, toast, openDlg, closeDlg } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { reason } from "../core/why.js";
 import { pill17, btn17 } from "./parts17.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
@@ -156,7 +157,8 @@ function registerDemos() {
   }, go: () => sendTest() });
   onDemo17("hooks", { open: async () => {
     const { hooks } = await api("hooks");
-    demoDlg17("hooks", { title: t("window.places.automations17.before-and-after-each-step"), lead: t("window.places.automations17.hooks-on-this-computer"), go: t("window.places.automations17.run-the-checks"), rows: hooks.map((h) => [h.event, h.executable, onOff(h.enabled)]) });
+    // No primary: Branch runs each hook only when its event happens, never by hand, and the lead says so (window.why.d17-hooks-go).
+    demoDlg17("hooks", { title: t("window.places.automations17.before-and-after-each-step"), lead: `${t("window.places.automations17.hooks-on-this-computer")} ${reason("d17-hooks-go")}`, go: "", rows: hooks.map((h) => [h.event, h.executable, onOff(h.enabled)]) });
   } });
   onDemo17("turnhook", { open: async () => {
     const { hooks } = await api("hooks");

@@ -185,8 +185,9 @@ async function verifyMention(page, ctx) {
   await box.pressSequentially("hi @");
   await page.locator(".pop [data-act='mention-pick']").first().waitFor();
   const focused = await page.evaluate(() => document.activeElement && document.activeElement.id);
-  const names = await page.locator(".pop [data-act='mention-pick'] .mi-t").allInnerTexts();
-  check("mention list is the engine's Trunks, box keeps focus", focused === "prompt" && names.includes(ctx.trunk.name) && names.length === trunks.length, names.join(", "));
+  // The list calls a Trunk, then offers material to point at (the changes, a link: chat/messages.js MATERIAL).
+  const names = await page.locator(".pop [data-act='mention-pick']:not([data-v='diff']):not([data-v='https://']) .mi-t").allInnerTexts();
+  check("mention list calls the engine's Trunks, box keeps focus", focused === "prompt" && names.includes(ctx.trunk.name) && names.length === trunks.length, names.join(", "));
   await page.locator(`.pop [data-act='mention-pick'][data-v="${ctx.trunk.name}"]`).click();
   check("mention-pick calls the Trunk in the box", (await box.inputValue()) === `hi @${ctx.trunk.name} `);
   await box.fill("");
@@ -215,12 +216,16 @@ async function verifyStatus(page, ctx) {
 async function verifyProject(page, ctx) {
   await page.locator("#side [data-act='projtoggle']").click();
   await page.locator(`#side [data-act='project'][data-v="${ctx.project.id}"]`).click();
-  const active = await until(async () => (await api("projects")).active.id === ctx.project.id);
-  check("project makes it the active project", !!active, `GET projects active ${ctx.project.id}`);
+  // Opening a project only shows its page: the window never switches a global project; a conversation started there is
+  // filed under it (places/project.js, dogfood D14).
+  const shown = await until(async () => (await page.locator("#main .place").innerText().catch(() => "")).includes(ctx.project.name ?? ctx.project.id));
+  const active = (await api("projects")).active.id;
+  check("project opens its own page and switches no global project", !!shown && active !== ctx.project.id, `GET projects active ${active}`);
   const current = await until(async () => (await page.locator(`#side [data-act='project'][data-v="${ctx.project.id}"]`).getAttribute("aria-current")) === "true");
   check("project row shows it is active", current);
   await page.locator("#side [data-act='project'][data-v='default']").click();
-  await until(async () => (await api("projects")).active.id === "default");
+  await page.locator(`#side [data-act='chat'][data-id="${ctx.sid}"]`).click(); // back to the conversation for the next step
+  await page.locator("#prompt").waitFor({ timeout: 10000 });
 }
 
 async function verifyQueue(page, ctx) {
@@ -253,7 +258,7 @@ async function verifyQueue(page, ctx) {
     if (run) await api(`runs/${run.id}/cancel`, {});
     await running;
   } finally {
-    await api("policy", policy);
+    await api("policy", { ...policy, confirmLoosening: true }); // putting the limit back raises it, so it is a yes
   }
 }
 
