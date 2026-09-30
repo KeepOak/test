@@ -15,6 +15,8 @@ export interface OpenRouterRouting {
   ignore?: string[];
   allow_fallbacks?: boolean;
   data_collection?: "deny";
+  require_parameters?: boolean;
+  max_price?: { prompt: number; completion: number; request?: number };
 }
 
 /** True only for OpenRouter's own address (or a subdomain of it). */
@@ -40,9 +42,15 @@ export function openRouterRouting(store: Pick<Store, "get">, owner: string): Ope
   return Object.keys(routing).length ? routing : null;
 }
 
-/** What the OpenAI-shaped connection adds to its body: only for openrouter.ai, only when asked. */
-export function openRouterBodyPart(endpoint: string, routing: OpenRouterRouting | undefined): { provider?: OpenRouterRouting } {
-  return routing && isOpenRouterEndpoint(endpoint) ? { provider: routing } : {};
+/** OpenRouter company preferences, plus the free router's required capabilities and zero-price ceiling. */
+export function openRouterBodyPart(endpoint: string, routing: OpenRouterRouting | undefined, model?: string): { provider?: OpenRouterRouting } {
+  if (!isOpenRouterEndpoint(endpoint)) return {};
+  // The free router filters for tools itself; also require every requested parameter and zero-priced endpoints.
+  // https://openrouter.ai/docs/guides/routing/routers/free-router
+  // https://openrouter.ai/docs/guides/routing/provider-selection
+  if (model === "openrouter/free") return { provider: { ...routing, require_parameters: true,
+    max_price: { prompt: 0, completion: 0, request: 0 } } };
+  return routing ? { provider: routing } : {};
 }
 
 /** A company OpenRouter can send a request to: its slug (what `only` names) and its name. */
