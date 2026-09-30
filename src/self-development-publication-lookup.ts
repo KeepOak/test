@@ -4,7 +4,7 @@ export function publicationLookupPath(input: PublicationLookup): string {
   return `repos/${input.repo}/pulls?${query}`;
 }
 /** Fail closed on mismatched or incomplete lookup results; a failed lookup never means no PR. */
-export function matchingPublication(input: PublicationLookup, value: unknown): { number: number; address: string; state: string } | null {
+export function matchingPublication(input: PublicationLookup, value: unknown): { number: number; address: string; state: string; headSha: string } | null {
   if (!Array.isArray(value) || value.length >= 100) throw new Error("Publication lookup was incomplete.");
   const candidates = value as { number?: unknown; html_url?: unknown; state?: unknown;
     head?: { sha?: string; ref?: string; repo?: { full_name?: string } }; base?: { ref?: string; repo?: { full_name?: string } } }[];
@@ -20,5 +20,24 @@ export function matchingPublication(input: PublicationLookup, value: unknown): {
   }
   if (typeof pr.number !== "number" || typeof pr.html_url !== "string" || !pr.html_url.startsWith(`https://github.com/${input.repo}/pull/`))
     throw new Error("Publication lookup returned an invalid pull request.");
-  return { number: pr.number, address: pr.html_url, state: String(pr.state ?? "") };
+  return { number: pr.number, address: pr.html_url, state: String(pr.state ?? ""), headSha: input.sha };
+}
+
+/** Normalizes only the PR identity supplied by GitHub or the computer's gh opening receipt. */
+export function publicationReference(repository: string, value: unknown): { number: number; address: string | null } | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const pr = value as { number?: unknown; address?: unknown; url?: unknown; html_url?: unknown };
+  let number = pr.number, address: string | null = null;
+  const link = pr.address ?? pr.url ?? pr.html_url;
+  if (typeof link === "string") {
+    try {
+      const url = new URL(link), found = /^\/([^/]+\/[^/]+)\/pull\/(\d+)\/?$/.exec(url.pathname);
+      if (url.protocol !== "https:" || url.hostname !== "github.com" || url.username || url.password || url.port
+        || !found || found[1]!.toLowerCase() !== repository.toLowerCase()) return null;
+      const linked = Number(found[2]);
+      if (number !== undefined && number !== linked) return null;
+      number = linked; url.search = ""; url.hash = ""; address = url.href;
+    } catch { return null; }
+  }
+  return Number.isSafeInteger(number) && Number(number) > 0 ? { number: Number(number), address } : null;
 }
