@@ -7,10 +7,11 @@ const activitySchema = z.array(z.object({
 }).passthrough());
 
 /** Read the same profile-scoped activity as the window, through its proved engine connection. */
-export async function readTrayState(url: string, call: typeof fetch): Promise<TrayState> {
+export async function readTrayState(url: string, token: string, call: typeof fetch = fetch): Promise<TrayState> {
   const origin = new URL(url);
   if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1") return "unavailable";
-  const response = await call(`${origin.origin}/api/activity?waiting=1`, { signal: AbortSignal.timeout(5000) });
+  // The activity route is behind the window's key, as the usage glance is (./tray-ring.ts readTrayUsage).
+  const response = await call(`${origin.origin}/api/activity?waiting=1`, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(5000) });
   if (!response.ok) return "unavailable";
   const parsed = activitySchema.safeParse(await response.json());
   if (!parsed.success) return "unavailable";
@@ -28,8 +29,9 @@ export function trayStateBitmap(bitmap: Buffer, side: number, state: TrayState, 
   if (state === "idle") return bitmap;
   const out = Buffer.from(bitmap), radius = Math.max(2, Math.round(side * 0.19));
   const centre = side - radius - 1;
-  const colour = template ? [0, 0, 0] : state === "working" ? [0x5a, 0xa8, 0x3f]
-    : state === "needs-you" ? [0x2e, 0x98, 0xc9] : [0x8a, 0x8a, 0x8a];
+  // BGRA, the order NativeImage.toBitmap and createFromBitmap use (as ./tray-ring.ts draws its ring): green, blue, grey.
+  const colour = template ? [0, 0, 0] : state === "working" ? [0x3f, 0xa8, 0x5a]
+    : state === "needs-you" ? [0xc9, 0x98, 0x2e] : [0x8a, 0x8a, 0x8a];
   for (let y = centre - radius; y <= centre + radius; y++) for (let x = centre - radius; x <= centre + radius; x++) {
     const distance = Math.hypot(x - centre, y - centre);
     if (distance > radius || x < 0 || y < 0 || x >= side || y >= side) continue;

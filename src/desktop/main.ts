@@ -197,7 +197,7 @@ function watchTrayUsage(url: string, key: () => string, reachable: () => boolean
     try {
       let state: TrayState = "unavailable";
       if (reachable()) {
-        state = await readTrayState(url, call).catch(() => "unavailable" as const);
+        state = await readTrayState(url, key(), call).catch(() => "unavailable" as const);
         if (Date.now() - usageAt >= 60_000) {
           usage = await readTrayUsage(url, key(), call).catch(() => null);
           usageAt = Date.now();
