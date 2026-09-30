@@ -3807,7 +3807,7 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 { "git": { "remote": true, "github": { "tokenSecret": "GITHUB_TOKEN" } } }
 ```
 
-That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
+That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (300 by default, at most 600, looking again every `checksPollSeconds`, 15 by default, 1 to 120; it only looks, so one call may wait past the owner's tool time limit, and the loop guard treats it as a polled tool), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators and leaves required reviews to GitHub. When the base takes changes only through GitHub's merge queue, the checked commit joins the queue instead (GitHub's `enqueuePullRequest`, pinned to that commit), the tool says it is queued, not merged, and `github.wait_for_checks` stays pending until GitHub says merged, or failed if the queue took it out. It refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
 **GitLab (RES-719)** is a connection of its own, set up in the window: **Settings › Advanced › GitLab**. Its switch
 ships "when needed"; the row under it says whether GitLab is connected. **Connect** asks for your GitLab's address
@@ -3972,12 +3972,17 @@ the checks itself on the exact head commit rather than relying on GitHub enforci
 every check run, commit status and Actions workflow run must have finished and passed (skipped or neutral is
 accepted only for checks the base does not require), every check the base requires through classic
 protection or an active ruleset must have passed from its configured app, and the head must contain the exact
-base commit. Queued, running, missing or not-yet-registered checks are pending and never count as passed.
-Required approving reviews, merge queues and other rules Branch cannot satisfy by checking are left to
-GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
+base commit (unless the base has a merge queue, which tests the head on the newest base itself). Queued, running,
+missing or not-yet-registered checks are pending and never count as passed, and so is GitHub's "blocked" while
+they run. On a base with a merge queue (KeepOak/Branch-Agent's `redesign/window` has one) the checked commit joins
+the queue rather than merging directly, and the change is merged only when GitHub says so. Required approving
+reviews and other rules Branch cannot satisfy by checking are left to GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
 force-merges or bypasses a rule; the merge request names the checked head SHA, so a later push is refused by
 GitHub itself. `github.wait_for_checks` waits for the checks; in the owner's selected Full Access,
-`branch.finish_source_change` then gets an independent read-only review and merges without asking.
+`branch.finish_source_change` then gets an independent read-only review and merges without asking (or joins
+the merge queue). `branch.run_contract_tests` runs a worktree's contract tests the one way that counts as
+evidence (`node scripts/review.mjs --jobs 1` with its `expectedTests`, behind the command wall) and says whether
+they passed, with counts, or failed and why; a failed run is kept too, never as evidence.
 
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
@@ -4672,9 +4677,24 @@ files open as the window, so a hand-over would hit a locked file. Before the han
 written, the window reads `running.json`, asks that process to close (`taskkill /PID <pid> /T`, then
 `/T /F` if it will not), waits a bounded time for it to go and removes the note. An engine that
 still refuses is not treated as a failure: the hand-over script waits for the engine's process id
-as well as the window's, and ends it itself before mirroring anything. Nothing new is started: the
-hand-over still runs through the same hidden Windows Script Host launcher, and every tool is run
-with no window.
+as well as the window's, and ends it itself before mirroring anything. Every tool is run with no
+window.
+
+**How Windows installs an update (versioned folders).** Each version sits in a folder of its own,
+`<install>\app-<version>\`, beside the others; `current.json` names the one in use and the one
+before it. A new version is made beside the one running (Electron's own program is hard linked from
+it, never made anew), tried on a copy of the work, and put in use by one rename of `current.json`,
+so there is never a half-copied program. The version before is kept whole for going back; older
+ones are removed once nothing runs from them, so two are kept. Going back is the same rename the
+other way, and it is refused when the new version has already moved the saved work to a format the
+older one cannot read (then the new version is started again and the owner is told why). A start
+of an older version's program (an old shortcut, say) starts the version in use instead. A copy
+installed before this layout is the version before on its first update, and on the update after,
+when it is no longer needed to go back, its app is replaced by a small launcher that starts the
+version in use, so shortcuts to the top of the install keep working. The switch is run by a small
+runner: Electron's own program, linked with its files beside the update's scratch files, which runs
+the switch with no window and no Windows Script Host. A portable copy keeps its data beside the
+program, so it keeps the older swap, run by the same runner.
 
 **Checking a computer is ready.** `branch doctor --fix`, and the *Check and repair what I can*
 button, look for Git, the private browser Branch uses to read pages, a free address on this
@@ -9520,13 +9540,19 @@ authors who test their plugin against Branch before shipping it. A tool with `se
   their names: this computer, numbers and private-network names (`localhost`, `.local`, `.lan`, `.internal`,
   `.home.arpa`) are refused in the package. A hand-placed plugin walled by the tick is pinned to the code it
   had when it was loaded. One question to a plugin is at most 1 MB, and at most 4 plugin runs go at once.
-- **Windows.** Windows has no file and network wall, only a job object, so add-on code is refused there unless
-  the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships off); a plugin run
-  that way says so instead of claiming a wall. Nothing else on Windows changes.
-- **Hand-placed plugins stay in-process by default (decided).** "Also run plugin files I put in the plugins
-  folder myself in their own walled program" (`wallEveryPlugin`) keeps shipping off: those files are the owner's own, the switch
-  would change how existing plugins behave (Windows included), and a walled plugin loses model connections and
-  chat services. Add-ons from a package, list or draft are walled whatever the tick says.
+- **Windows.** Windows has no file and network wall, only a job object, so add-on code other people wrote is
+  refused there unless the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships
+  off; turning it on needs the owner's yes and is refused under Lockdown); a plugin run that way says so instead of
+  claiming a wall. A plugin the owner placed themselves runs there as its own program with the job object's limits.
+- **Hand-placed plugins run as their own program too (RES-251).** "Also run plugin files I put in the plugins folder
+  myself in their own walled program" (`wallEveryPlugin`) ships on: no plugin runs inside Branch unless the owner
+  chose that. Hand-placed plugins already switched on when this first started keep running as before, each recorded
+  (`grandfathered`, and `add-ons-plugin-wall-kept` on this computer), and Customize › Tools › Plugins lists them once
+  with **Wall it** beside each. A walled plugin brings no model connections or chat services, since those live inside
+  Branch; the owner lets one plugin run inside (`insideBranch`, set by `POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
+  "Where it runs") or switches the wall off for all. Either is less careful, so it needs the owner's yes
+  (`confirmLoosening`) and is refused under Lockdown; walling a plugin always goes through. A walled plugin is held to the same add-on
+  interface version as one inside. Add-ons from a package, list or draft are walled whatever the tick says.
 - **Branch as a plugin.** A `.branch-export.json` file is trusted only for folders Branch remembers writing, so a
   record planted in a folder cannot make Branch remove or overwrite the owner's files. A folder with a file the
   owner changed stays Branch's until everything it wrote is gone.
