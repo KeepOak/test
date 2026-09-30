@@ -1,5 +1,12 @@
 # Third-party notices
 
+### MCP tool error feedback
+
+`src/integrations/mcp-errors.ts` adapts Gemini CLI's MCP tool error-result handling, with Branch's
+credential redaction, text-only limit and outside-content guard. Source:
+https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-tool.ts
+(Copyright Google LLC, Apache-2.0). The Apache-2.0 license text is reproduced in this document.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
