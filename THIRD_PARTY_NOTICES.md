@@ -10,6 +10,12 @@ the notices for bundled entities (BSD-2-Clause), linkify-it, mdurl, punycode.js
 and uc.micro (MIT) are retained alongside the bundle. See that folder's README
 for the official package source, version and checksum.
 
+The browser also includes the unchanged DOMPurify 3.4.16 ES module (Cure53 and
+contributors, Apache-2.0 or MPL-2.0; used here under Apache-2.0) at
+`public/app/vendor/dompurify-3.4.16/purify.js`, with its upstream license banner and
+Apache `LICENSE` retained alongside. See that folder's README for the source commit
+and checksum.
+
 ## @hono/node-server 2.1.1
 
 Declared license: MIT
