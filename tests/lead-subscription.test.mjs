@@ -69,7 +69,8 @@ test("the default Trunk runs on the Claude subscription at Opus 5.5, with Branch
   assert.equal(app.store.events(first.id).filter((e) => e.kind === "tool.completed" && e.data.name === "files.read").length, 1);
   assert.equal(app.store.events(first.id).filter((e) => /approval|needs_input/.test(e.kind)).length, 0, "no question in Full Access");
   const flag = (args, name) => args[args.indexOf(name) + 1];
-  assert.ok(launches.length >= 2);
+  // One kept native session may serve both rounds of the task (SELF-090), so at least one launch, each on the defaults.
+  assert.ok(launches.length >= 1);
   for (const args of launches) {
     assert.equal(flag(args, "--model"), "claude-opus-5-5", "Opus 5.5 by default");
     assert.equal(flag(args, "--effort"), "medium", "medium effort by default");

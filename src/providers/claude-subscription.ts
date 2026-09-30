@@ -192,7 +192,7 @@ export class ClaudeSubscriptionProvider implements Provider {
     request.signal.addEventListener("abort", stop, { once: true });
     try {
       if (session) { session.native.beginTurn(); session.relay.arm(request, nativeInventory(request.tools), authorize, marker); }
-      else session = await this.startSession(request, authorize, marker);
+      else { await lease.released; session = await this.startSession(request, authorize, marker); }
       authorize();
       if (lease.continued) await session.native.send(nativeTrigger(marker), request.signal);
       else await replay(session.native, session.frames, request.signal, authorize);

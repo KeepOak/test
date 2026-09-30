@@ -38,7 +38,9 @@ function identity(request: CompletionRequest): Identity | null {
     messages: request.messages.map((message) => digest(normalized(message))) };
 }
 type Entry<T> = { value: T; signature: string; messages: string[]; busy: boolean; at: number; born: number; turns: number };
-export type NativeLease<T> = { entry: Entry<T> | null; value: T | null; identity: Identity | null; continued: boolean; epoch: number };
+/** `released` settles once a replaced transport of the same conversation is gone, so its private folder is free again. */
+export type NativeLease<T> = { entry: Entry<T> | null; value: T | null; identity: Identity | null; continued: boolean; epoch: number; released: Promise<void> };
+const none = Promise.resolve();
 const caches = new Set<{ close(): void }>();
 /** Owned native transports are closed by the same app lifecycle as other spare agent processes. */
 export function closeNativeSubscriptions(): void { for (const cache of caches) cache.close(); }
@@ -51,17 +53,17 @@ export class NativeContinuations<T> {
   lease(request: CompletionRequest): NativeLease<T> {
     this.prune(); const scope = identity(request);
     caches.add(this);
-    if (!scope) return { entry: null, value: null, identity: null, continued: false, epoch: this.epoch };
+    if (!scope) return { entry: null, value: null, identity: null, continued: false, epoch: this.epoch, released: none };
     const existing = this.entries.get(scope.key);
-    if (existing?.busy) return { entry: null, value: null, identity: null, continued: false, epoch: this.epoch };
+    if (existing?.busy) return { entry: null, value: null, identity: null, continued: false, epoch: this.epoch, released: none };
     if (existing && existing.signature === scope.signature && scope.messages.length > existing.messages.length
         && existing.messages.every((message, at) => message === scope.messages[at])) {
       existing.busy = true;
-      return { entry: existing, value: existing.value, identity: scope, continued: true, epoch: this.epoch };
+      return { entry: existing, value: existing.value, identity: scope, continued: true, epoch: this.epoch, released: none };
     }
-    if (existing) this.drop(scope.key, existing);
-    if (this.entries.size >= 8) return { entry: null, value: null, identity: null, continued: false, epoch: this.epoch };
-    return { entry: null, value: null, identity: scope, continued: false, epoch: this.epoch };
+    const released = existing ? this.drop(scope.key, existing) : none;
+    if (this.entries.size >= 8) return { entry: null, value: null, identity: null, continued: false, epoch: this.epoch, released };
+    return { entry: null, value: null, identity: scope, continued: false, epoch: this.epoch, released };
   }
   finish(lease: NativeLease<T>, value: T, completion: Completion): boolean {
     const scope = lease.identity;
@@ -75,21 +77,22 @@ export class NativeContinuations<T> {
     return true;
   }
   fail(lease: NativeLease<T>): void {
-    if (lease.entry && lease.identity) this.drop(lease.identity.key, lease.entry);
+    if (lease.entry && lease.identity) void this.drop(lease.identity.key, lease.entry);
     if (!this.entries.size) caches.delete(this);
   }
   private prune(): void {
     for (const [key, entry] of this.entries)
-      if (!entry.busy && (!this.alive(entry.value) || Date.now() - entry.at >= 120000 || Date.now() - entry.born >= 600000 || entry.turns >= 64)) this.drop(key, entry);
+      if (!entry.busy && (!this.alive(entry.value) || Date.now() - entry.at >= 120000 || Date.now() - entry.born >= 600000 || entry.turns >= 64)) void this.drop(key, entry);
     if (!this.entries.size) caches.delete(this);
   }
-  private drop(key: string, entry: Entry<T>): void {
-    if (this.entries.get(key) !== entry) return;
-    this.entries.delete(key); void this.dispose(entry.value).catch(() => undefined);
+  private drop(key: string, entry: Entry<T>): Promise<void> {
+    if (this.entries.get(key) !== entry) return none;
+    this.entries.delete(key);
+    return this.dispose(entry.value).catch(() => undefined);
   }
   close(): void {
     this.epoch += 1;
-    for (const [key, entry] of this.entries) this.drop(key, entry);
+    for (const [key, entry] of this.entries) void this.drop(key, entry);
     caches.delete(this);
   }
 }
