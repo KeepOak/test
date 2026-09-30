@@ -230,6 +230,7 @@ export interface DelegateOptions extends HelperSelection { timeoutMs?: number; r
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
+  deferredFrom?: string;
   /** mac7/outside-review: the tools the task that queued it had; the task reading it gets no more. */
   permissions?: string[] }
 /** mac7/outside-review: what a queued message keeps of the task that queued it (see FollowUp). */
@@ -256,7 +257,7 @@ export const unkeyedAlwaysRefusal = "This request does not say what it is target
  * is the registry's `noStandingTarget` (Q76).
  */
 const keyedOnDeclaredTargets: ReadonlySet<string> = new Set(["browser.flow"]);
-export interface FollowUpCarry { originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
+export interface FollowUpCarry { deferredFrom?: string | undefined; originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
 export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string;
   /** workbench (SELF-303): a helper the lead started with helpers.start, whose finishing wakes the lead's conversation. */
   tellsLead?: boolean }
@@ -612,6 +613,8 @@ export interface RunOptions {
    * step's answer). When that task came from outside, this one is held as it was.
    */
   originFrom?: string;
+  /** Internal: a deferred answer must recover its saved effective scope before starting. */
+  deferredFrom?: string;
   /** bucket 19 (integration review): whose conversation this is, when a person's own one is lent to the assistant. */
   lentTo?: string;
   /** Practice run: tools that would change something report what they would have done. */
@@ -862,12 +865,14 @@ export class Runtime {
     if (!this.store.ownsSession(this.owner, waiting.sessionId)) throw new Error("Session not found");
     // Q44: a refused continuation must leave the step unanswered.
     this.queueGuard(waiting.sessionId);
+    // Validate before settling: an unavailable scope leaves the handoff unanswered.
+    const scope = this.deferredScope(waiting.runId, waiting.sessionId);
     const entry = this.deferrals.settle(id, answer);
     if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool, kind: entry.kind, ...(action ? { action } : {}) });
     // mac7/outside-resume: the answer carries the task that handed the step over on, as that task.
     const queued = this.followUp(entry.sessionId,
       deferredFollowUp(entry, action),
-      null, { originFrom: entry.runId || undefined });
+      null, { originFrom: entry.runId, deferredFrom: entry.runId, permissions: scope.permissions });
     return { id: entry.id, sessionId: entry.sessionId, queued: queued.queued };
   }
   /** The default preset's provider; individual runs may select another preset. */
@@ -1036,7 +1041,7 @@ export class Runtime {
    * so a person can steer a task that is still working without waiting for it to finish.
    */
   followUp(sessionId: string, prompt: string, windowPerson: string | null = null, carry: FollowUpCarry = {}): { id: string; position: number; queued: number } {
-    const { originFrom, permissions } = carry;
+    const { originFrom, deferredFrom, permissions } = carry;
     RunInputSchema.parse({ prompt, sessionId });
     // profile-audit: queued from the app window switched to a household profile, it runs as them.
     const person = currentPerson()?.profileId ?? windowPerson;
@@ -1049,6 +1054,7 @@ export class Runtime {
       ...(startedWithShortLivedKey() ? { shortLivedKey: true } : {}),
       ...(shortLivedKeyMark().keyId ? { shortLivedKeyId: shortLivedKeyMark().keyId } : {}),
       ...(person ? { personProfileId: person } : {}), ...(originFrom ? { originFrom } : {}),
+      ...(deferredFrom ? { deferredFrom } : {}),
       ...(permissions ? { permissions: [...permissions] } : {}) }];
     this.store.save("settings", this.owner, `followups:${sessionId}`, { items });
     this.drainFollowUps(sessionId);
@@ -1061,7 +1067,8 @@ export class Runtime {
     if (!next) return;
     this.store.save("settings", this.owner, `followups:${sessionId}`, { items: rest });
     const start = () => this.track(() => this.execute({ prompt: next.prompt, sessionId, onTextDelta: () => undefined,
-      ...(next.originFrom ? { originFrom: next.originFrom } : {}), ...(next.permissions ? { permissions: next.permissions } : {}) }));
+      ...(next.originFrom ? { originFrom: next.originFrom } : {}),
+      ...(next.deferredFrom ? { deferredFrom: next.deferredFrom } : {}), ...(next.permissions ? { permissions: next.permissions } : {}) }));
     const marked = () => (next.shortLivedKey ? underShortLivedKey(start, next.shortLivedKeyId ? { keyId: next.shortLivedKeyId } : {}) : start());
     // bucket 19: a message a household person queued runs as that person, held to their role.
     void (next.personProfileId ? asPerson({ profileId: next.personProfileId, keyId: "queued" }, marked) : marked())
@@ -1593,6 +1600,10 @@ ${run.output.slice(0, 6000)}`;
     instructions = "",
     helper?: HelperConnection,
   ): Promise<Run> {
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      options = { ...options, ...(saved.dryRun ? { dryRun: true } : {}) };
+    }
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
     // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
@@ -1635,6 +1646,13 @@ ${run.output.slice(0, 6000)}`;
         ...(options.style === undefined && trunk.style ? { style: trunk.style } : {}) };
     }
     // ── end R17-A ──
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      const current = options.permissions ?? this.registry.permissions();
+      options = { ...options, originFrom: options.deferredFrom,
+        permissions: current.filter((permission) => saved.permissions.includes(permission)),
+        ...(saved.dryRun ? { dryRun: true } : {}) };
+    }
     // Q050: a task taken up again keeps the reach it started with, never more (the tools it was given, narrowed further
     // by anything above); Lockdown and the owner's rules are still asked at every call.
     if (options.continuing) options = { ...options, permissions: this.continuedReach(options.continuing.runId, options.permissions),
@@ -1758,6 +1776,13 @@ ${run.output.slice(0, 6000)}`;
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      // Only an ordinary root can be reconstructed by this deferred queue. Helpers, scoped
+      // memory, borrowed copies and other execution shapes require their original placement.
+      deferredScope: { version: 1, workspace: this.workspace, root: !parent && context.depth === 0 && !context.agent
+        && !context.trunk && !context.isolated && !context.ownCopy && !options.lentTo
+        && context.workspace === this.workspace && (context.source ?? "owner") === "owner"
+        && !currentPerson() && !startedWithShortLivedKey() && !options.originFrom
+        && !options.resumeFrom && !options.continuing, dryRun: context.dryRun === true },
       // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
       ...(context.dryRun ? { dryRun: true } : {}),
       ...(options.channel ? { channel: options.channel.slice(0, 64) } : {}),
@@ -1974,7 +1999,23 @@ ${run.output.slice(0, 6000)}`;
   private startedAsDryRun(runId: string): boolean {
     return this.store.events(runId).find((event) => event.kind === "run.started")?.data.dryRun === true;
   }
-  /** Q050: what a task taken up again may reach: what it was given when it started, narrowed by what is asked now. */
+  /** Deferred answers only resume a durably identified ordinary root; other shapes remain held. */
+  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean } {
+    const run = runId ? this.store.run(runId) : null;
+    const events = runId ? this.store.events(runId) : [];
+    const started = events.find((event) => event.kind === "run.started")?.data;
+    const value = started?.deferredScope;
+    const saved = value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown> : null;
+    if (!run || run.owner !== this.owner || run.sessionId !== sessionId
+      || !saved
+      || saved.version !== 1 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
+      || !Array.isArray(started?.permissions) || !started.permissions.every((permission) => typeof permission === "string")
+      || events.some((event) => event.kind === "worktree.used" || event.kind === "worktree.inherited"))
+      throw new Error("This handed-over task cannot continue safely because its saved effective scope or workspace cannot be recovered. The job remains unanswered; reconcile its original task first.");
+    return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun };
+  }
+  /** Q050: what a task taken up again may reach, narrowed by what is asked now. */
   private continuedReach(runId: string, now: string[] | undefined): string[] {
     const started = runOrigin(this.store, runId).permissions;
     const allowed = now ?? this.registry.permissions();
@@ -4159,6 +4200,7 @@ ${run.output.slice(0, 6000)}`;
    */
   private carryOrigin(options: RunOptions, parent?: ToolContext): RunOptions {
     if (parent || (options.source && options.source !== "owner")) return options;
+    if (options.deferredFrom) return { ...options, originFrom: options.deferredFrom };
     const { originFrom: asked, ...rest } = options;
     const carried = (id: string | null | undefined) => (id && outsideSourceOf(this.store, id) ? id : undefined);
     const from = carried(options.resumeFrom) ?? carried(asked) ?? carried(conversationCarrier(this.store, options.sessionId));
