@@ -203,15 +203,20 @@ export function lineHTML(active, messages, activeSession) {
   };
 }
 
-/* Scrolled up to the "more" mark: the next older conversation is read and drawn above, and the reader keeps their place. */
+/* Scrolled up to the "more" mark: the conversation just above the ones on screen is read and drawn above, and the reader
+   keeps their place. It is found from what is drawn, not from what is read: one whose read landed after the last drawing
+   is drawn first, so a conversation further up is never read before the owner could scroll to it. */
 async function loadOlder() {
   const trunk = lineTrunk();
   if (!trunk || L.older) return;
   const all = lineOf(trunk), at = all.findIndex((s) => sid(s) === L.active);
-  const next = (at < 0 ? all.filter((s) => sid(s) !== L.active) : all.slice(0, at)).findLast((s) => !ready(s));
+  const drawn = (s) => !!$("#scroll")?.querySelector(`[data-tl-block="${CSS.escape(sid(s))}"]`);
+  const next = (at < 0 ? all.filter((s) => sid(s) !== L.active) : all.slice(0, at)).findLast((s) => !drawn(s));
   if (!next) return;
-  L.older = true;
-  try { await want(next, () => undefined); } finally { L.older = false; }
+  if (!ready(next)) {
+    L.older = true;
+    try { await want(next, () => undefined); } finally { L.older = false; }
+  }
   const box = $("#scroll"), height = box?.scrollHeight ?? 0, top = box?.scrollTop ?? 0;
   renderNow();
   const now = $("#scroll");
@@ -221,12 +226,18 @@ const heard = new WeakSet();
 /** After the conversation is drawn: scrolling near its top reads further back, and so does a thread too short to scroll. */
 export function lineAfter(box) {
   if (!box || !L.trunkId) return;
-  const due = () => $("#tl-more", box) && box.scrollTop < 240;
+  /* Only a box still on screen: the browser sends a scroll it queued (the thread put at its end on a drawing) on the next
+     frame, and when a redraw has replaced the box by then, the old one is off the page, where its scrollTop reads 0, so
+     it looked scrolled to the top and read the conversation above what was drawn (CI, window-trunk-timeline). */
+  const due = () => box.isConnected && $("#tl-more", box) && box.scrollTop < 240;
+  const short = () => box.isConnected && $("#tl-more", box) && box.scrollHeight <= box.clientHeight + 240;
   if (!heard.has(box)) {
     heard.add(box);
     box.addEventListener("scroll", () => { if (due()) loadOlder(); }, { passive: true });
   }
-  if ($("#tl-more", box) && box.scrollHeight <= box.clientHeight + 240) setTimeout(loadOlder);
+  // Measured again when the timer runs: a drawing in between (the conversation's own messages, or the one above it) can
+  // have filled the window, and a thread that scrolls now waits for the owner to scroll up.
+  if (short()) setTimeout(() => { if (short()) loadOlder(); });
 }
 
 /* ---------- actions ---------- */
