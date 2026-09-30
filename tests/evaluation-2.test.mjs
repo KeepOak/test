@@ -75,7 +75,7 @@ test("the scorers that look at the workspace and the trajectory", async (t) => {
 test("SELF-099: the helper scorer counts only engine-recorded helpers, not what the model claimed", async () => {
   const spec = { kind: "helper-runs", min: 1, max: 1, completed: true, output: "42" };
   const ran = (helpers) => ({ ...emptyTrajectory, runId: "parent", helpers });
-  const done = { runId: "child", status: "completed", output: " 42. " };
+  const done = { runId: "child", status: "completed", output: " 42. ", truncated: false };
   assert.equal((await scoreOne(spec, "42", ran([done]))).pass, true);
   assert.equal((await scoreOne(spec, "42", emptyTrajectory)).pass, false, "no provenance read is never a pass");
   assert.equal((await scoreOne(spec, "42", ran([{ ...done, status: "running" }]))).pass, false);
@@ -85,6 +85,26 @@ test("SELF-099: the helper scorer counts only engine-recorded helpers, not what 
   assert.equal((await scoreOne(none, "21", ran([]))).pass, true);
   assert.equal((await scoreOne(none, "21", ran([{ ...done, status: "failed" }]))).pass, false, "a failed helper still counts");
   assert.throws(() => makeScorer({ kind: "helper-runs", min: 2, max: 1 }, { workspace: tmpdir() }));
+});
+
+/* Review of #1097: receipts kept only the first 2,000 characters of a helper's answer, so an answer of 42, 1,998 spaces
+   and then "wrong" was compared as just "42" and passed. A cut answer cannot be compared exactly, so it fails closed. */
+test("SELF-099: a helper answer longer than the kept 2,000 characters never passes an exact output check", async (t) => {
+  const { app } = await fixture(t, []);
+  const owner = app.runtime.owner;
+  const parent = app.store.createRun(owner, "Delegate 6 times 7 to a helper");
+  app.store.event(parent.id, "run.started", { parentRunId: null });
+  const child = app.store.createRun(owner, "6 multiplied by 7");
+  app.store.event(child.id, "run.started", { parentRunId: parent.id });
+  app.store.finish(child.id, "completed", `42${" ".repeat(1998)}wrong`);
+  const trajectory = readTrajectory(app.store, parent.id, { ms: 10, tokens: 10, dollars: 0.001 });
+  assert.equal(trajectory.helpers.length, 1);
+  const spec = { kind: "helper-runs", min: 1, max: 1, completed: true, output: "42" };
+  const scored = await scoreOne(spec, "42", trajectory);
+  assert.equal(scored.pass, false, "the full helper answer is wrong, yet the cut one passed");
+  assert.equal(trajectory.helpers[0].truncated, true, "the receipt says its answer was cut");
+  // The same helper still counts where no answer is compared (restraint counts every child).
+  assert.equal((await scoreOne({ kind: "helper-runs", min: 1, max: 1, completed: true }, "42", trajectory)).pass, true);
 });
 
 test("the completion review catches an answer that quietly gave up", async () => {

@@ -1,6 +1,8 @@
 import type { Store } from "./store.js";
 
-export interface EvaluationHelperReceipt { runId: string; status: string; output: string }
+/** The most of a helper's answer a receipt keeps; `truncated` says a longer one was cut, so it cannot be compared exactly. */
+export const helperOutputLimit = 2000;
+export interface EvaluationHelperReceipt { runId: string; status: string; output: string; truncated: boolean }
 
 /** Engine-authored direct-child provenance; a model's tool arguments are never a receipt. */
 export function evaluationHelpers(store: Store, parentId: string): EvaluationHelperReceipt[] {
@@ -14,6 +16,7 @@ export function evaluationHelpers(store: Store, parentId: string): EvaluationHel
     if (!child || child.owner !== parent.owner || child.id === parentId) return [];
     const start = store.events(child.id).find((event) => event.kind === "run.started")?.data;
     if (start?.parentRunId !== parentId) return [];
-    return [{ runId: child.id, status: child.status, output: child.output.slice(0, 2000) }];
+    return [{ runId: child.id, status: child.status, output: child.output.slice(0, helperOutputLimit),
+      truncated: child.output.length > helperOutputLimit }];
   });
 }

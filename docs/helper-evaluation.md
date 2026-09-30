@@ -9,8 +9,10 @@ background helper API; the prompts and engine receipt implementation here are or
 The delegated case requires both the actual helper tool arguments and a completed direct child
 with the required answer. The scorer reads engine-authored `run.started` parent provenance and
 the stored run status for the same owner. A proposed tool call, another task's child, a running
-child or a parent answer that merely claims delegation cannot pass. The restraint case counts
-children in every status, including failed or unfinished attempts.
+child or a parent answer that merely claims delegation cannot pass. A receipt keeps the first
+2,000 characters of a child's answer and records whether it was cut; a cut answer never passes an
+exact answer check, because the part left out may differ. The restraint case counts children in
+every status, including failed or unfinished attempts.
 
 The suite is not labelled read-only: starting a helper creates an audited run and spends the
 chosen model's budget, even with no tools available to the child. Missing helper tools skip the

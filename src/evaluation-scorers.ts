@@ -253,10 +253,15 @@ function scoreToolCalled(spec: { name: string; withArgs?: Record<string, unknown
 function scoreHelpers(spec: { min: number; max: number; completed: boolean; output?: string | undefined }, trajectory: ScoredTrajectory): ScoreResult {
   if (!trajectory.runId || !trajectory.helpers) return fail("No engine-authored helper provenance was supplied");
   if (trajectory.helpers.length > 100) return fail("The helper receipt bound was exceeded");
+  // A receipt whose answer was cut (or does not say it was not) cannot match exactly: the part left out may differ.
   const helpers = trajectory.helpers.filter((helper) => (!spec.completed || helper.status === "completed")
-    && (spec.output === undefined || normaliseAnswer(helper.output) === normaliseAnswer(spec.output)));
+    && (spec.output === undefined || (helper.truncated === false && normaliseAnswer(helper.output) === normaliseAnswer(spec.output))));
   if (trajectory.helpers.length > spec.max) return fail(`The task started ${trajectory.helpers.length} helpers; at most ${spec.max} were allowed`);
-  if (helpers.length < spec.min) return fail(`Only ${helpers.length} helpers have the required completion and answer; at least ${spec.min} were required`);
+  if (helpers.length < spec.min) {
+    const cut = spec.output === undefined ? 0 : trajectory.helpers.filter((helper) => helper.truncated !== false).length;
+    return fail(`Only ${helpers.length} helpers have the required completion and answer; at least ${spec.min} were required`
+      + (cut ? `. ${cut} helper answers were longer than the kept text and cannot be compared exactly` : ""));
+  }
   return pass();
 }
 
