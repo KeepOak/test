@@ -10471,5 +10471,13 @@
   "settings.help.notification-task-done": "Shows a completion notification for a long task. Turning it off keeps the completed task and its receipts available in the conversation.",
   "settings.help.respect-gitignore": "Skips files matched by the workspace's .gitignore during supported file searches. Turning this off broadens search results; secret-file and workspace permission checks still apply.",
   "settings.help.tool-server-timeout": "Allows a tool server 1 to 300 seconds to finish starting before startup times out. A longer value waits longer for a slow server; it does not install or start a server by itself.",
-  "settings.help.release-channel": "Selects stable or beta releases for update checks. This is separate from Never, Daily or Install when idle; choosing a channel does not immediately install an update."
+  "settings.help.release-channel": "Selects stable or beta releases for update checks. This is separate from Never, Daily or Install when idle; choosing a channel does not immediately install an update.",
+  "settings.models.company-search": "Find an OpenRouter company",
+  "settings.models.company-count": "{count} of 16 companies selected. Remove a selection to add another.",
+  "settings.models.company-selected": "Selected companies",
+  "settings.models.company-available": "Available companies",
+  "settings.models.company-empty": "No companies match this search. Your selections are unchanged.",
+  "settings.models.company-unlisted": "Saved company no longer listed by OpenRouter. Uncheck it to remove it.",
+  "settings.models.company-changed": "OpenRouter routing changed while this choice was being saved. Review the current selection and choose again.",
+  "settings.models.company-help": "Limits which companies may serve an OpenRouter model; it does not choose the model itself. Choose up to 16. Each checkbox saves immediately. With none selected, any company may serve the model. Searching only filters this list. Choosing Cheapest or Fastest clears the list and uses that routing preference instead."
 }

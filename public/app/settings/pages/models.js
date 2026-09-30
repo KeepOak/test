@@ -8,8 +8,8 @@ import { controlRow } from "../row-kit.js";
    click that installs, downloads with progress, connects and selects. */
 import { esc, renderNow } from "../../core/dom.js";
 import { gsel } from "../../core/gsel.js";
-import { level, E, ownerHere, refresh } from "../../core/state.js";
-import { api } from "../../core/api.js";
+import { level, E, ownerHere, refresh, activeId } from "../../core/state.js";
+import { api, token } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
@@ -274,9 +274,19 @@ export function init() {
   on("m-tier", (el) => setKnob("reasoning", { serviceTier: el.dataset.v }));
   on("m-effort", (el) => setEffort(el.dataset.v));
   on("m-planning", (el) => setSavings("phases", { planModel: el.dataset.v || null }));
-  on("m-openrouter", (el) => { OR.open = false; setSavings("openrouter", { mode: "on", sort: el.dataset.v, only: [] }); });
-  on("m-orlist", () => { OR.open = true; if (OR.list) renderNow(); else loadCompanies(); });
-  on("m-orco", (el) => toggleCompany(el.dataset.v));
+  on("m-openrouter", (el) => { if (OR.saving) return; OR.open = false; setSavings("openrouter", { mode: "on", sort: el.dataset.v, only: [] }); });
+  on("m-orlist", () => { companyScope(); OR.open = true; if (OR.list) renderNow(); else loadCompanies(); });
+  document.addEventListener("change", event => { if (event.target.dataset.sw === "or-company") toggleCompany(event.target.dataset.v); });
+  document.addEventListener("input", event => {
+    if (event.target.id !== "or-company-search") return;
+    OR.query = event.target.value;
+    const list = document.getElementById("or-companies"), query = OR.query.trim().toLocaleLowerCase();
+    list?.querySelectorAll("[data-company-name]").forEach(row => { row.hidden = !row.dataset.companyName.toLocaleLowerCase().includes(query); });
+    const empty = document.getElementById("or-company-empty");
+    if (empty && list) empty.hidden = !!list.querySelector("[data-company-name]:not([hidden])");
+  });
+  const app = document.getElementById("app");
+  if (app) new MutationObserver(() => { if (companyLocked()) { OR.scope = null; OR.list = null; OR.query = ""; Object.assign(X, { savings:null, coding:null, reach:null, second:null, media:null }); } }).observe(app, {attributes:true, attributeFilter:["class"]});
   on("m-def", (el) => setDefault(el));
   on("m-codex-check", (el) => checkCodex(el));
   document.addEventListener("change", (e) => { if (e.target.id === "m-codex") setCodexModel(e.target); });
@@ -286,12 +296,12 @@ export function init() {
   on("m-img", (el) => setPictureModel(el.dataset.v));
   on("m-vid-svc", (el) => setVideoService(el.dataset.v));
   markLive(["sw:m-second-by", "m-img", "m-vid-svc", "sw:m-second-max", "m-debate-rounds", "sw:m-debate-max"]);
-  markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", "m-orlist", "m-orco", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", "m-orlist", "sw:or-company", "sw:or-company-search", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
 }
 
 export function load() { loadAccounts(); loadKnobs(); loadMore(); loadCodex(); loadDecisions17d(); return freshPick(); }
 
-export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "m-orco": true, "m-codex-check": true, "sw:m-codex": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
+export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "sw:or-company": true, "sw:or-company-search": true, "m-codex-check": true, "sw:m-codex": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
   "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:m-second": true, "sw:m-second-max": true, "sw:m-second-by": true, "m-debate-rounds": true, "sw:m-debate-max": true, "m-img": true, "m-vid-svc": true, "sw:f15-slow-down-near-a-rate-limit": true };
 
 /* Q002: the engine's other settings these rows keep, each the owner's: the R17-E cards (GET /api/model-savings: the
@@ -301,8 +311,10 @@ export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": t
 const X = { savings: null, coding: null, reach: null, second: null, media: null };
 async function loadMore() {
   if (!ownerHere()) { Object.assign(X, { savings: null, coding: null, reach: null, second: null, media: null }); renderNow(); return; }
-  const read = (path) => api(path).catch((error) => { toast(error.message); return null; });
+  const state = companyScope();
+  const read = (path) => api(path).catch((error) => { if (companyValid(state)) toast(error.message); return null; });
   const [savings, coding, reach, second, media] = await Promise.all([read("model-savings"), read("coding"), read("reach"), read("second-opinion"), read("media/settings")]);
+  if (!companyValid(state)) return;
   Object.assign(X, { savings, coding, reach, second, media });
   renderNow();
   if (savings?.values?.openrouter?.only?.length) loadCompanies(); // a saved list shows its chips
@@ -345,27 +357,63 @@ function openRouterSeg() {
   return `<span class="right"><span class="seg" role="group" aria-label="${label}">${opts.map(([v, w]) => { const [act, why] = actOf(v); return `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}"${why ? ` data-why="${why}"` : ""}>${w}</button>`; }).join("")}</span></span>`;
 }
 /* Only ones I list: OpenRouter's own list of companies (POST /api/model-savings/companies, asked only when this is
-   pressed, or when a list is already saved), each a chip; pressing one adds it to or takes it from the card's `only`
+   pressed, or when a list is already saved), as grouped searchable checkboxes. A choice adds it to or takes it from the card's `only`
    (POST /api/model-savings { card: "openrouter", values: { mode: "on", sort: null, only } }). A saved company OpenRouter
    no longer lists is still shown, by its slug, so it can be taken off. */
-const OR = { open: false, list: null, busy: false };
+const OR = { open: false, list: null, busy: false, saving: false, query: "", scope: null };
+const companyLocked = () => ["locked", "locked-b17"].some(name => document.getElementById("app")?.classList.contains(name));
+const companyValid = state => state === OR.scope && state.id === activeId() && state.credential === token.get() && ownerHere() && !companyLocked();
+function companyScope() {
+  if (!OR.scope || !companyValid(OR.scope)) {
+    if (OR.scope) Object.assign(X, { savings:null, coding:null, reach:null, second:null, media:null });
+    Object.assign(OR, { open:false, list:null, busy:false, saving:false, query:"", scope:{ id:activeId(), credential:token.get() } });
+  }
+  return OR.scope;
+}
+async function companyOwner(state) {
+  if (!companyValid(state)) throw new Error(t("settings.catalogue.changed"));
+  const profiles = await api("profiles");
+  if (!companyValid(state) || !profiles.isOwner || (profiles.active?.id ?? null) !== state.id) throw new Error(t("settings.catalogue.changed"));
+}
 async function loadCompanies() {
-  if (OR.list || OR.busy || !X.savings?.openRouter) return;
+  const state = companyScope();
+  if (!companyValid(state) || OR.list || OR.busy || !X.savings?.openRouter) return;
   OR.busy = true;
-  try { OR.list = (await api("model-savings/companies", {})).companies; } catch (error) { OR.open = false; toast(error.message); }
-  OR.busy = false;
-  renderNow();
+  try { await companyOwner(state); const got = await api("model-savings/companies", {}); if (companyValid(state)) OR.list = got.companies; }
+  catch (error) { if (companyValid(state)) { OR.open = false; toast(error.message); } }
+  finally { if (companyValid(state)) { OR.busy = false; renderNow(); } }
 }
 function companiesRow() {
+  companyScope();
   const only = X.savings?.values?.openrouter?.only ?? [];
   if (!ownerHere() || !X.savings?.openRouter || !(OR.open || only.length) || !OR.list) return "";
   const known = new Set(OR.list.map((c) => c.slug)), all = [...OR.list, ...only.filter((slug) => !known.has(slug)).map((slug) => ({ slug, name: slug }))];
-  /* A row of its own across the whole card (no title column to share), and a long list scrolls inside it. */
-  return `${controlRow(`<span class="chips8" role="group" aria-label="${esc(t("window.settings.models.only-ones-i-list"))}" data-css="grid-column:1 / -1;max-height:220px;overflow:auto">${all.map((c) => `<button type="button" class="chip6" data-act="m-orco" data-v="${esc(c.slug)}" aria-pressed="${only.includes(c.slug)}">${esc(c.name)}</button>`).join("")}</span>`)}`;
+  const query = OR.query.trim().toLocaleLowerCase();
+  const rows = selected => all.filter(c => only.includes(c.slug) === selected).map(c => `<label class="or-company" data-company-name="${esc(c.name + " " + c.slug)}"${!(c.name + " " + c.slug).toLocaleLowerCase().includes(query) ? " hidden" : ""}><input type="checkbox" class="chk15" data-sw="or-company" data-v="${esc(c.slug)}"${selected ? " checked" : ""}${OR.saving || (!selected && only.length >= 16) ? " disabled" : ""}><span>${esc(c.name)}${!known.has(c.slug) ? `<small>${esc(t("settings.models.company-unlisted"))}</small>` : ""}</span></label>`).join("");
+  const search = `<label for="or-company-search">${esc(t("settings.models.company-search"))}</label><input class="inp" type="search" id="or-company-search" value="${esc(OR.query)}" aria-label="${esc(t("settings.models.company-search"))}">`;
+  const groups = `<div id="or-companies" class="or-companies">${search}<p role="status">${esc(t("settings.models.company-count", {count:only.length}))}</p><h3>${esc(t("settings.models.company-selected"))}</h3>${rows(true)}<h3>${esc(t("settings.models.company-available"))}</h3>${rows(false)}<p id="or-company-empty"${all.some(c => (c.name + " " + c.slug).toLocaleLowerCase().includes(query)) ? " hidden" : ""}>${esc(t("settings.models.company-empty"))}</p></div>`;
+  return controlRow(`<b>${esc(t("window.settings.models.only-ones-i-list"))}</b><div class="or-company-controls">${groups}</div><small>${esc(t("settings.models.company-help"))}</small>`, {help:t("settings.models.company-help")});
 }
-function toggleCompany(slug) {
-  const only = X.savings?.values?.openrouter?.only ?? [], next = only.includes(slug) ? only.filter((s) => s !== slug) : [...only, slug].slice(0, 16);
-  setSavings("openrouter", { mode: "on", sort: null, only: next });
+async function toggleCompany(slug) {
+  const state = companyScope(), displayed = X.savings?.values?.openrouter, only = displayed?.only ?? [];
+  if (!companyValid(state) || OR.saving || !OR.list || (!only.includes(slug) && !OR.list.some(c => c.slug === slug))) return;
+  if (!only.includes(slug) && only.length >= 16) { toast(t("settings.models.company-count", {count:16})); renderNow(); return; }
+  OR.saving = true; renderNow();
+  try {
+    await companyOwner(state);
+    const fresh = await api("model-savings");
+    if (!companyValid(state)) return;
+    if (!fresh.openRouter || JSON.stringify(fresh.values.openrouter) !== JSON.stringify(displayed)) { X.savings = fresh; throw new Error(t("settings.models.company-changed")); }
+    const next = only.includes(slug) ? only.filter(value => value !== slug) : [...only, slug];
+    const got = await api("model-savings", {card:"openrouter", values:{mode:"on", sort:null, only:next}});
+    if (companyValid(state)) X.savings = got;
+  } catch (error) { if (companyValid(state)) toast(error.message); }
+  finally {
+    if (companyValid(state)) {
+      OR.saving = false; renderNow();
+      [...document.querySelectorAll('[data-sw="or-company"]')].find(box => box.dataset.v === slug)?.focus({preventScroll:true});
+    }
+  }
 }
 
 /* Q002: the knobs the engine keeps for these rows (GET /api/knobs), each saved alone with POST /api/knobs { card,
