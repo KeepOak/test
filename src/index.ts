@@ -1654,6 +1654,7 @@ ${result.output || "(it said nothing)"}`;
   const mcpOwnerRequests = new McpOwnerRequests(store, () => runtime.owner, runtime.models);
   const mcpHost = {
     ownerRequests: mcpOwnerRequests,
+    injectionPolicy: () => web.injectionPolicy,
     connectWhen: () => readLifecycleSettings(store, store.profiles.scope()).connect,
     cache: {
       read: (id: string) =>
