@@ -88,3 +88,19 @@ test("the dashboard's page and every file it loads are served while it is switch
   }
   assert.deepEqual(missing, [], "these files the dashboard loads are not served");
 });
+
+test("UP-UI-063: the old phone worker address now only retires itself and Branch's own shell caches", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-retired-worker-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const response = await fetch(new URL("/service-worker.js", server.url));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store", "a browser must fetch the update, not keep the old copy");
+  const source = await response.text();
+  assert.match(source, /registration\.unregister\(\)/);
+  assert.doesNotMatch(source, /addEventListener\("fetch"/, "no page is answered from a cache any more");
+  assert.doesNotMatch(source, /caches\.open|cache\.put/);
+  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(html, /serviceWorker\.register/, "the window registers no worker");
+});
