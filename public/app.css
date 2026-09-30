@@ -4532,3 +4532,5 @@ audio.docread18m{width:100%}
 #stage7 .ob7-library-range { display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin:8px 0; }
 #stage7 .ob7-library-range label { display:grid; gap:3px; }
 #stage7 .ob7-library-range small { flex-basis:100%; }
+/* Plan-step pictures are visibly separate from the live browser. */
+#stage7 .st7-replay-note{position:absolute;bottom:12px;left:12px;padding:6px 10px;border-radius:6px;background:var(--bg);color:var(--ink);box-shadow:0 2px 8px #0002}

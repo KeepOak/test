@@ -21,6 +21,7 @@
 import type { Store } from "./store.js";
 import type { WatchedWindow } from "./integrations/browser.js";
 import { runActivity } from "./activity.js";
+import { rememberReplay, readReplay, sameReplayStep, type ReplayPlan, type ReplayStep } from './live-stage-replay.js';
 import { redactLeaksIn } from "./leak-guard.js";
 
 export const liveStagePath = "/api/panels/live";
@@ -46,10 +47,14 @@ export interface LiveStage {
   /** What that task is doing now, as the activity feed says it. */
   doing: string | null;
   browser: LiveBrowser | null;
+  replaySteps?: ReplayStep[];
+  replay?: LiveBrowser | null;
 }
 
 export interface LiveStageDeps {
   store: Store;
+  plan?(sessionId: string): ReplayPlan | undefined;
+  observeSteps?: boolean;
   /** The runtime's owner, the name the browser keys each task's window under. */
   owner: string;
   /** Who is at the window: records are theirs (`scope`), and only the owner is shown anything. */
@@ -88,7 +93,7 @@ async function watching(deps: LiveStageDeps, runId: string | null): Promise<Live
 }
 
 /** What the full-size view shows for this conversation now; empty for anyone but the owner or another's conversation. */
-export async function liveStage(deps: LiveStageDeps, sessionId: string): Promise<LiveStage> {
+export async function liveStage(deps: LiveStageDeps, sessionId: string, replayRequest?: unknown): Promise<LiveStage> {
   const empty: LiveStage = { runId: null, status: null, doing: null, browser: null };
   const scope = deps.profiles.scope();
   if (!sessionId || !deps.profiles.isOwner() || !deps.store.ownsSession(scope, sessionId)) return empty;
@@ -97,6 +102,8 @@ export async function liveStage(deps: LiveStageDeps, sessionId: string): Promise
   // the conversation starts the next task), so its question is no longer the one that matters.
   const going = runs[0] && GOING.has(runs[0].status) ? runs[0] : null;
   const key = JSON.stringify([scope, sessionId]);
+  const initialPlan = deps.plan?.(sessionId);
+  const beforePlan = initialPlan ? { ...initialPlan, steps: initialPlan.steps.map(step => ({ ...step })) } : undefined;
   const found = await watching(deps, going?.id ?? null), last = kept.get(key);
   // A frame can fail while the page is between two addresses or its window is closing; the last one of the same
   // window stands in for that moment rather than a blank. Only a real frame is kept.
@@ -105,5 +112,9 @@ export async function liveStage(deps: LiveStageDeps, sessionId: string): Promise
   // The last frame kept is shown only while its task is still the conversation's newest: never beside another task.
   const browser = now ?? (last && last.runId === runs[0]?.id ? { ...last, live: false } : null);
   const doing = going ? cleaned(deps.store, runActivity(going, deps.store.events(going.id)).current) : null;
-  return { runId: going?.id ?? null, status: going?.status ?? null, doing, browser };
+  if (!deps.profiles.isOwner() || deps.profiles.scope() !== scope || !deps.store.ownsSession(scope, sessionId)) return empty;
+  const plan = deps.plan?.(sessionId);
+  if (deps.plan && deps.observeSteps) rememberReplay(deps.store, scope, key, plan, sameReplayStep(beforePlan, plan), found);
+  const replay = deps.plan ? readReplay(deps.store, scope, key, runs[0]?.id, plan, replayRequest) : {};
+  return { runId: going?.id ?? null, status: going?.status ?? null, doing, browser, ...replay };
 }
