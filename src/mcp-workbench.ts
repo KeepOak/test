@@ -11,11 +11,11 @@
 import { z } from "zod";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { mcpClient } from "./integrations/mcp-sdk.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { connectMcpTransport } from "./integrations/mcp-connect.js";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
 import type { NetworkPolicy } from "./network-policy.js";
-import { makeTransport, McpTransportSchema, withLockerSecrets, type McpTransportConfig, type SecretLookup } from "./integrations/mcp-config.js";
+import { McpTransportSchema, withLockerSecrets, type McpTransportConfig, type SecretLookup } from "./integrations/mcp-config.js";
 
 export const TrySchema = z.object({
   server: McpTransportSchema,
@@ -57,11 +57,10 @@ export async function tryServer(
 ): Promise<WorkbenchResult> {
   const parsed = TrySchema.parse(input);
   const where = label(parsed.server);
-  const { transport, secrets } = await makeTransport(parsed.server, await withLockerSecrets(parsed.server, env, secret), policy);
+  let secrets: string[] = [];
   const client = new (await mcpClient())({ name: "branch-workbench", version: "1.0.0" });
   try {
-    // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
-    await client.connect(transport as Transport, { timeout });
+    secrets = await connectMcpTransport(client, parsed.server, await withLockerSecrets(parsed.server, env, secret), policy, timeout);
     const listed = await client.listTools({}, { timeout });
     const tools = listed.tools.slice(0, 200).map((tool) => ({
       name: tool.name, description: (tool.description ?? tool.name).slice(0, 2000),

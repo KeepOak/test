@@ -3664,3 +3664,7 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+
+### MCP legacy transport fallback (UP-RESEARCH-009)
+
+The connect-only HTTP-to-SSE fallback sequence in `src/integrations/mcp-connect.ts` is adapted from Google Gemini CLI `packages/core/src/tools/mcp-client.ts` at commit 40d4dccfa9aec692b27798ca819b918609e2bc60 (https://github.com/google-gemini/gemini-cli). Copyright 2025 Google LLC. Apache License, Version 2.0, whose full text is included above. Branch adds a shared abortable startup deadline and uses its existing guarded fetch and server-bound OAuth provider. No transport implementation was copied. The source tree has no root NOTICE file.

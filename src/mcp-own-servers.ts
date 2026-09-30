@@ -33,7 +33,7 @@ export const lockdownStartRefusal = "Lockdown is on, so Branch does not start a 
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { mcpClient } from "./integrations/mcp-sdk.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { connectMcpTransport } from "./integrations/mcp-connect.js";
 import { audit } from "./audit.js";
 import { approvalQuestion, type ApprovalGate, type PendingApproval } from "./approvals.js";
 import { askerOf, runOrigin, startedWithShortLivedKey } from "./key-context.js";
@@ -43,7 +43,7 @@ import { lockdownActive } from "./lockdown.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
-import { credentialNames, makeTransport, McpTransportSchema, reachFor, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { credentialNames, McpTransportSchema, reachFor, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
 import { secretNameSchema } from "./locker.js";
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
@@ -272,10 +272,9 @@ export class OwnMcpServers {
   private async listTools(entry: OwnServer): Promise<{ tools: string[]; hidden: string[]; version: string }> {
     const env = await withLockerSecrets(entry.server, this.env, this.deps.host()?.secret);
     const signIn = entry.server.transport === "http" ? this.deps.host()?.signIn?.(entry.id, entry.server.url) : undefined;
-    const { transport } = await makeTransport(entry.server, env, reachFor(this.deps.policy(), signIn));
     const client = new (await mcpClient())({ name: "branch", version: "0.1.0" });
     try {
-      await client.connect(transport as Transport, { timeout: 20000 });
+      await connectMcpTransport(client, entry.server, env, reachFor(this.deps.policy(), signIn), 20000);
       const listed = await client.listTools({}, { timeout: 20000 });
       const names = listed.tools.slice(0, 64).map((tool) => tool.name);
       const policy = readPolicy(this.deps.store, this.deps.owner());

@@ -5,10 +5,10 @@ import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { mcpClient, mcpValidator } from './mcp-sdk.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import type { JsonSchemaType } from '@modelcontextprotocol/sdk/validation';
-import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolDefinition, ToolContext } from '../contracts.js';
-import { McpConfigSchema, makeTransport, type McpConfig } from './mcp-config.js';
+import { McpConfigSchema, type McpConfig } from './mcp-config.js';
+import { connectMcpTransport, McpSignInRequired } from './mcp-connect.js';
 
 export const mcpToolName = (id: string, tool: string): string =>
   `mcp.${id}.${createHash('sha256').update(tool).digest('hex').slice(0, 16)}`;
@@ -180,11 +180,9 @@ export async function openMcp(
 ) {
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
-  const { transport, secrets } = await makeTransport(config, env, policy);
   const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' });
   try {
-    // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
-    await client.connect(transport as Transport, { timeout: startupTimeoutMs });
+    const secrets = await connectMcpTransport(client, config, env, policy, startupTimeoutMs);
     if (client.getServerVersion()?.version !== config.expectedVersion)
       throw new Error('MCP server version changed; review compatibility before enabling');
     const found = await discover(client, config.tools, startupTimeoutMs);
@@ -194,8 +192,9 @@ export async function openMcp(
     let alive = true;
     client.onclose = () => { alive = false; };
     return { config, found, secrets, call: through(client), close: () => client.close(), alive: () => alive };
-  } catch {
+  } catch (error) {
     await client.close().catch(() => undefined);
+    if (error instanceof McpSignInRequired) throw error;
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');
   }
 }
