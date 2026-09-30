@@ -3656,3 +3656,7 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+
+### Hermes Agent (Nous Research), MIT: reconnecting after the computer wakes
+
+`wake()` in `src/channels/router.ts` follows the post-resume sweep in Hermes Agent's `apps/desktop/electron/remote-liveness.ts` (`revalidateSuspectPooledRemoteBackends` and `POWER_RESUME_REVALIDATION_HOLDOFF_MS`, https://github.com/NousResearch/hermes-agent, commit a9a5424): one bounded liveness look per connection after the computer wakes, only a connection that fails it is rebuilt, and wake signals that overlap are one sweep. It was rewritten for Branch's chat apps. Copyright (c) 2025 Nous Research, used under the MIT licence, whose text is given above.
