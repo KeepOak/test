@@ -1,6 +1,7 @@
 import { parseImages } from "./contracts.js";
 import type { LiveConversation, LiveConversations, LiveOutput } from "./realtime-voice.js";
 import type { RunSocketHooks, RunSocketWriter } from "./ws.js";
+import type { RealtimePlaybackItem } from "./realtime.js";
 
 /**
  * A live conversation carried on the socket the browser already has open for a task. Sound goes up
@@ -16,7 +17,7 @@ import type { RunSocketHooks, RunSocketWriter } from "./ws.js";
 export type LiveCommand =
   | { live: "start"; offer?: string }
   | { live: "stop" }
-  | { live: "interrupt" }
+  | { live: "interrupt"; playback?: RealtimePlaybackItem[] }
   | { live: "done" }
   | { live: "say"; text: string }
   /** Bucket 17: a picture shown while talking, checked like any attached picture. */
@@ -44,7 +45,8 @@ export function parseCommand(payload: Buffer): LiveCommand | null {
     if (offer !== undefined && (typeof offer !== "string" || Buffer.byteLength(offer) > 256 * 1024)) return null;
     return { live, ...(typeof offer === "string" ? { offer } : {}) };
   }
-  if (live === "stop" || live === "interrupt" || live === "done") return { live };
+  if (live === "stop" || live === "done") return { live };
+  if (live === "interrupt") return { live, playback: playbackItems((value as Record<string, unknown>)["playback"]) };
   if (live === "say") {
     const text = String((value as { text?: unknown }).text ?? "").slice(0, 4000).trim();
     return text ? { live: "say", text } : null;
@@ -57,6 +59,18 @@ export function parseCommand(payload: Buffer): LiveCommand | null {
     } catch { return null; }
   }
   return null;
+}
+
+function playbackItems(value: unknown): RealtimePlaybackItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 32).flatMap((item: unknown) => {
+    if (!item || typeof item !== "object") return [];
+    const { itemId, contentIndex, audioEndMs } = item as Record<string, unknown>;
+    if (typeof itemId !== "string" || !itemId || itemId.length > 256) return [];
+    if (typeof contentIndex !== "number" || !Number.isInteger(contentIndex) || contentIndex < 0) return [];
+    if (typeof audioEndMs !== "number" || !Number.isFinite(audioEndMs) || audioEndMs < 0) return [];
+    return [{ itemId, contentIndex, audioEndMs: Math.min(3_600_000, Math.floor(audioEndMs)) }];
+  });
 }
 
 /** Where a live conversation writes to when it is being carried on a run's socket. */
@@ -82,7 +96,7 @@ export function liveHooks(live: LiveConversations, runId: string, sessionId: str
     if (command.live === "start") { if (!starting && !conversation && !ended) void begin(reply, command.offer); return; }
     if (!conversation) { reply.text(JSON.stringify({ kind: "voice.live.problem", data: { message: "No live conversation is open." } })); return; }
     if (command.live === "stop") { live.stop(runId, "You ended the conversation"); conversation = undefined; return; }
-    if (command.live === "interrupt") { conversation.interrupt(); return; }
+    if (command.live === "interrupt") { conversation.interrupt(command.playback); return; }
     if (command.live === "done") { conversation.done(); return; }
     try { if (command.live === "picture") conversation.show(command); else conversation.say(command.text); }
     catch (error) { reply.text(JSON.stringify({ kind: "voice.live.problem", data: { message: (error as Error).message } })); }

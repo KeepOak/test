@@ -37,6 +37,8 @@ export interface LiveBrowser {
   frame: string | null;
   /** An unavailable picture never means that the page is closed. No raw capture errors leave the engine. */
   preview: "ready" | "unavailable" | "borrowed";
+  /** The page is waiting for a person (a sign-in or a "prove you're a person" check), not for the task. */
+  needs: "sign-in" | "captcha" | null;
   at: string;
 }
 export interface LiveStage {
@@ -54,7 +56,11 @@ export interface LiveStageDeps {
   owner: string;
   /** Who is at the window: records are theirs (`scope`), and only the owner is shown anything. */
   profiles: { scope(): string; isOwner(): boolean };
-  browser: { watch?(owner: string, runId: string): Promise<WatchedWindow | null> } | null;
+  browser: {
+    watch?(owner: string, runId: string): Promise<WatchedWindow | null>;
+    paintWake?(owner: string, runId: string, signal: AbortSignal, painted: () => void, readable: () => boolean):
+      Promise<{ close(): Promise<void>; current(): boolean } | null>;
+  } | null;
 }
 
 const GOING = new Set(["running", "needs_input"]);
@@ -83,7 +89,7 @@ async function watching(deps: LiveStageDeps, runId: string | null): Promise<Live
   const words = cleaned(deps.store, { url: shownAddress(seen.url), title: seen.title,
     tabs: seen.tabs.map((tab) => ({ url: shownAddress(tab.url), title: tab.title, active: tab.active })) });
   return { live: true, runId, ...words,
-    preview: seen.borrowed ? "borrowed" : seen.frame ? "ready" : "unavailable",
+    preview: seen.borrowed ? "borrowed" : seen.frame ? "ready" : "unavailable", needs: seen.needs ?? null,
     frame: seen.frame ? `data:image/jpeg;base64,${seen.frame.toString("base64")}` : null, at: new Date().toISOString() };
 }
 

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
+import { watchSettled } from "./page-settled.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
@@ -29,34 +30,34 @@ const sections = (page) => page.evaluate(() => [...document.querySelectorAll("#l
 /* The new window: Settings › Computer & browser is the prototype's page. Its sections at Regular and Advanced, at 1440,
    860 and 400 px, fitting the window; at Technical nothing is drawn twice; and "Computers they may use" lists the
    computers the owner paired, from the engine (GET /api/devices), not only this one. */
-const pageHeads = (page) => page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
-  all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
 // The prototype (pass 17) adds "Phones lent to Branch" to the page itself, so it shows at every level.
 const REGULAR_NOW = ["Computer & browser", "Computers they may use", "Which Trunk uses which", "On a computer", "The browser", "Phones lent to Branch"];
 // Pass 17 adds "Where scripts run, more" at Advanced (whereB17("computer", 1, ...)).
 const ADVANCED_NOW = [...REGULAR_NOW, "The browser, more", "Code", "On a computer, more", "Where scripts run, more"];
 
 test("Computer & browser has the prototype's sections at Regular and Advanced, at every width", async (t) => {
-  const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+  const { settingsWindow, openSettingsPage, setLevel, assertHeadings } = await import("./settings-window.mjs");
   const { page, errors } = await settingsWindow(t, { name: "settings-computer" });
   for (const width of [1440, 860, 400]) {
     await page.setViewportSize({ width, height: 1000 });
     await openSettingsPage(page, "computer");
     await setLevel(page, "regular");
-    assert.deepEqual(await pageHeads(page), REGULAR_NOW, `Regular at ${width} px`);
+    await assertHeadings(page, REGULAR_NOW, `Regular at ${width} px`);
     await setLevel(page, "advanced");
-    assert.deepEqual(await pageHeads(page), ADVANCED_NOW, `Advanced at ${width} px`);
+    await assertHeadings(page, ADVANCED_NOW, `Advanced at ${width} px`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth), false, `nothing scrolls sideways at ${width} px`);
   }
   assert.deepEqual(errors, []);
 });
 
 test("Computer & browser at Technical draws each section once", async (t) => {
-  const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+  const { settingsWindow, openSettingsPage, setLevel, shownHeadings } = await import("./settings-window.mjs");
   const { page, errors } = await settingsWindow(t, { name: "settings-computer" });
+  const settled = watchSettled(page);
   await openSettingsPage(page, "computer");
   await setLevel(page, "technical");
-  const heads = await pageHeads(page);
+  await settled(); // no expected list here: read once the page's own reads have landed, in one turn
+  const heads = await shownHeadings(page);
   assert.deepEqual(heads.filter((words, at) => heads.indexOf(words) !== at), [], `drawn twice: ${heads.join(" · ")}`);
   assert.deepEqual(errors, []);
 });

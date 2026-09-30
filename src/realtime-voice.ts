@@ -6,7 +6,7 @@ import { catalogEntry } from "./provider-catalog.js";
 import { GeminiLiveSession } from "./realtime-gemini.js";
 import { OpenAiRealtimeSession } from "./realtime-openai.js";
 import { chatgptLiveModel } from "./realtime-chatgpt.js";
-import type { RealtimeSession, RealtimeSettings, RealtimeTool } from "./realtime.js";
+import type { RealtimeSession, RealtimeSettings, RealtimeTool, RealtimePlaybackItem } from "./realtime.js";
 import { argumentFingerprint, type Runtime } from "./runtime.js";
 import type { Store } from "./store.js";
 import type { OpenSpan } from "./tracing.js";
@@ -105,6 +105,7 @@ export class LiveConversation {
   private startedAt = 0;
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
+  private audioGeneration = 0;
   private readonly opening = new AbortController();
   private span: OpenSpan | null = null;
   private readonly partial = { person: "", assistant: "" };
@@ -199,7 +200,8 @@ export class LiveConversation {
   }
 
   private wire(session: RealtimeSession, settings: VoiceSettings): void {
-    session.onAudio = (pcm16) => {
+    session.onAudio = (pcm16, item) => {
+      this.out.notice("voice.live.audio", { ...item, generation: this.audioGeneration });
       this.out.audio(pcm16);
       // The sound goes to the screen and nowhere else. What follows writes down how big each piece
       // was and never the piece itself, so no path through here keeps a copy of anything spoken.
@@ -207,6 +209,7 @@ export class LiveConversation {
         this.deps.store.event(this.runId, "voice.live.audio", { bytes: pcm16.byteLength });
     };
     session.onTranscript = (part) => this.heard(part.who, part.text, part.final);
+    session.onSpeechStarted = () => this.out.notice("voice.live.speech_started", {});
     session.onToolCall = (call) => void this.useTool(call.id, call.name, call.arguments);
     session.onUsage = (usage) => this.spend(usage.inputTokens, usage.outputTokens);
     session.onError = (message) => this.out.notice("voice.live.problem", { message });
@@ -363,9 +366,11 @@ export class LiveConversation {
   }
   audio(chunk: Uint8Array): void { this.session?.sendAudio(chunk); }
   done(): void { this.session?.commit(); }
-  interrupt(): void {
-    this.session?.interrupt();
+  interrupt(playback: readonly RealtimePlaybackItem[] = []): void {
+    this.audioGeneration += 1;
+    this.session?.interrupt(playback);
     this.partial.assistant = "";
+    this.out.notice("voice.live.interrupted", { generation: this.audioGeneration });
     this.deps.store.event(this.runId, "voice.live.interrupted", {});
   }
   stop(reason = "You ended the conversation"): void {

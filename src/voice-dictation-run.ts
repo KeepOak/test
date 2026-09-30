@@ -1,7 +1,7 @@
 import type { ProgramPresent, RecorderCommand } from "./mic-capture.js";
 import type { Store } from "./store.js";
 import {
-  cleanWords, dictationCapture, dictationEngine, dictationLockedRefusal, dictationRefusal,
+  cleanWords, dictationCapture, dictationEngine, dictationLockedRefusal, dictationOwnerOnlyRefusal, dictationRefusal,
   frameBytes, mostWords, RoomFloor, dictationSettings,
 } from "./voice-dictation.js";
 import { voiceSettings } from "./voice.js";
@@ -43,7 +43,7 @@ export interface SpeechStream {
  */
 export type SpeechStreamRunner = (
   command: RecorderCommand,
-  onWords: (written: string) => void,
+  onWords: (written: string, final?: boolean) => void,
   /** Called once when it ends, with why it ended when Branch knows, or null when it simply stopped. */
   onEnded: (why: string | null) => void,
 ) => SpeechStream;
@@ -130,6 +130,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
   let recorder: { stop(): void } | null = null;
   let ticker: ReturnType<typeof setInterval> | null = null;
   let words = "";
+  let committedWords = "";
   let lastSpeechAt = 0;
   let startedAt = 0;
   let crashes = 0;
@@ -167,6 +168,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
   /** Why it must not be listening this moment, or null. Asked before every piece and on the tick. */
   const mustStop = (): string | null =>
     (deps.locked?.() ? dictationLockedRefusal : null)
+    ?? (!deps.store.profiles.isOwner() || deps.store.profiles.scope() !== deps.owner ? dictationOwnerOnlyRefusal : null)
     ?? dictationRefusal(deps.store, deps.owner, platform, present);
 
   const quietFor = (): number => dictationSettings(deps.store, deps.owner).silenceSeconds * 1000;
@@ -192,13 +194,16 @@ export function startDictation(deps: DictationDeps): LiveDictation {
     release(true);
   };
 
-  const heardWords = (written: string): void => {
+  const heardWords = (written: string, final = true): void => {
+    if (!speech) return;
+    try { if (mustStop()) { release(false); return; } } catch { release(false); return; }
     const clean = cleanWords(written);
     if (!clean) return;
     lastSpeechAt = now();
     // Replaced rather than grown past the cap: a program that will not stop writing is cut off
     // where it arrives, never queued and never allowed to grow without end.
-    words = `${words} ${clean}`.trim().slice(-mostWords);
+    words = `${committedWords} ${clean}`.trim().slice(-mostWords);
+    if (final) committedWords = words;
     tell(false);
   };
 
@@ -221,6 +226,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
       startedAt = now();
       lastSpeechAt = now();
       words = "";
+      committedWords = "";
       last = { words: "", settled: false };
       speech = deps.speech(engine.command, heardWords, ended);
       const capture = dictationCapture(engine, platform, present);
