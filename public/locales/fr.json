@@ -9362,7 +9362,7 @@
   "window.settings.models.keep-claudes-cache-warm": "Garder le cache de Claude au chaud",
   "window.settings.models.keeping-long-conversations-short": "Garder les longues conversations courtes.",
   "window.settings.models.largest-tool-answer-kept-whole": "Plus grande réponse d’outil gardée entière",
-  "window.settings.models.limit-auto": "Auto",
+  "window.settings.models.limit-auto": "Automatique",
   "window.settings.models.loaded-when-first-asked-nothing-leaves": "Chargé à la première demande · rien ne quitte cet ordinateur.",
   "window.settings.models.make-pictures": "Créer des images",
   "window.settings.models.make-short-videos": "Créer de courtes vidéos",
