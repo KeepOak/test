@@ -6826,6 +6826,7 @@
   "window.chat.live.running": "Running {command}",
   "window.chat.live.saved": "Saved",
   "window.chat.live.service-limit": "Reached the model service's limit",
+  "window.chat.live.reconnecting-updates": "Reconnecting to task updates…",
   "window.chat.live.show-all": "Show all {count}",
   "window.chat.live.summarised": "Summarised the earlier conversation",
   "window.chat.live.tried-after": "Tried again after {time}",

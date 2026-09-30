@@ -6826,6 +6826,7 @@
   "window.chat.live.running": "Führt {command} aus",
   "window.chat.live.saved": "Gespeichert",
   "window.chat.live.service-limit": "Limit des Modelldienstes erreicht",
+  "window.chat.live.reconnecting-updates": "Verbindung zu Aufgabenaktualisierungen wird wiederhergestellt…",
   "window.chat.live.show-all": "Alle {count} zeigen",
   "window.chat.live.summarised": "Den früheren Teil der Unterhaltung zusammengefasst",
   "window.chat.live.tried-after": "Nach {time} erneut versucht",

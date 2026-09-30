@@ -14,7 +14,7 @@ import { t, language, formatNumber } from "../../i18n.js";
 import { liveHead } from "../places/inboxwork.js"; // long-work: time so far and Pause
 
 const SHOWN = 8;
-const L = { runId: null, snap: null, ctl: null, open: new Set(), all: false, frame: 0, onAsk: () => {}, onGone: () => {}, onShow: () => {} };
+const L = { runId: null, snap: null, ctl: null, reconnecting: false, open: new Set(), all: false, frame: 0, onAsk: () => {}, onGone: () => {}, onShow: () => {} };
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const waitingAsk = (snap) => (snap?.steps ?? []).some((s) => s.kind === "ask" && s.state === "waiting");
 
@@ -32,25 +32,35 @@ async function follow(runId, signal) {
     let ended = false;
     try {
       await streamOnce(`runs/${encodeURIComponent(runId)}/live`, (kind, data) => {
+        if (signal.aborted || L.runId !== runId) return;
         if (kind === "steps") take(data);
         else if (kind === "end") ended = data?.reason === "profile" ? "moved" : true;
       }, signal);
       wait = 300;
     } catch (error) {
-      if (error.name === "AbortError") return;
+      if (signal.aborted || L.runId !== runId || error.name === "AbortError") return;
       // Refused for good (not this person's task, not theirs to read): nothing more to follow, and the last list goes
       // with it, so no step is left spinning. Anything else (locked for now, the engine restarting, the network): try
       // again, a little later.
       if ([400, 401, 403, 404].includes(error.status)) { gone(runId); return; }
       wait = Math.min(wait * 2, 5000);
     }
+    if (signal.aborted || L.runId !== runId) return;
     if (ended === "moved") gone(runId); // the window moved to somebody else: nothing of this task stays drawn
-    if (ended) return;
+    if (ended) { reconnecting(runId, false); return; }
+    reconnecting(runId, true);
     await pause(wait);
   }
 }
+/* Connection state describes the updates only; the last snapshot stays available while the stream retries. */
+function reconnecting(runId, value) {
+  if (L.runId !== runId || L.reconnecting === value) return;
+  L.reconnecting = value;
+  if (!L.frame) L.frame = requestAnimationFrame(draw);
+}
 function gone(runId) {
-  if (L.runId !== runId || !L.snap) return;
+  if (L.runId !== runId) return;
+  L.reconnecting = false;
   L.snap = null;
   L.onGone();
 }
@@ -58,6 +68,7 @@ function take(snap) {
   if (snap?.runId !== L.runId) return;
   const asked = waitingAsk(snap) && !waitingAsk(L.snap);
   L.snap = snap;
+  L.reconnecting = false;
   if (asked) L.onAsk();
   if (!L.frame) L.frame = requestAnimationFrame(draw);
 }
@@ -68,6 +79,7 @@ function draw() {
   // The first steps have no block to go in yet: the reply area is drawn again with it, rather than waiting for
   // something else to redraw the chat (on a slow machine nothing may, and the steps never showed).
   if (!block) { if (liveShown()) L.onShow(); return; }
+  if (!liveShown()) { L.onGone(); return; }
   const box = $("#scroll");
   const atEnd = box && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   block.innerHTML = lines();
@@ -76,11 +88,11 @@ function draw() {
 export function stopLive() {
   L.ctl?.abort();
   if (L.frame) cancelAnimationFrame(L.frame);
-  Object.assign(L, { runId: null, snap: null, ctl: null, all: false, frame: 0 });
+  Object.assign(L, { runId: null, snap: null, ctl: null, reconnecting: false, all: false, frame: 0 });
   L.open.clear();
 }
-/* Whether there is anything to show yet (until the first step, the reply area keeps its thinking line or dots). */
-export const liveShown = () => Boolean(L.snap?.steps?.length);
+/* Before the first step, show the thinking line or dots unless task updates need to reconnect. */
+export const liveShown = () => L.reconnecting || Boolean(L.snap?.steps?.length);
 export const liveBlock = () => `<div class="steps live-steps" id="live-steps" aria-live="polite">${lines()}</div>`;
 
 /* The engine's words for a line in the language chosen: a line that comes with its words' key (src/live-steps.ts
@@ -136,7 +148,8 @@ function lines() {
   const shown = cut ? steps.slice(-SHOWN) : steps;
   const all = cut ? `<button type="button" class="btn ghost sm ls-all" data-act="live-all">${esc(t("window.chat.live.show-all", { count: L.snap.total ?? steps.length }))}</button>` : "";
   const running = L.snap?.status === "running" ? liveHead(L.snap.runId, L.snap.startedAt) : "";
-  return `${running}${all}<ol>${shown.map(line).join("")}</ol>`;
+  const connection = L.reconnecting ? `<p class="ls-time" role="status">${esc(t("window.chat.live.reconnecting-updates"))}</p>` : "";
+  return `${connection}${running}${all}<ol>${shown.map(line).join("")}</ol>`;
 }
 
 /* The chat hands in what to do when a question appears (read the waiting questions, so its card shows). */
