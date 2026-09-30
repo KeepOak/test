@@ -203,7 +203,9 @@ export class SessionLibrary {
   /** `hidden`: conversations kept out of every list (phase2/rooms: a Trunk's side of a room). */
   /** `project`: only the conversations in that project (see projectOf). */
   /** Pinned conversations come first, in the order they were pinned; archived and deleted ones are left out. */
-  recent(owner: string, limit = 20, hidden: readonly string[] = [], project?: string) {
+  recent(owner: string, limit = 20, hidden: readonly string[] = [], project?: string, offset = 0) {
+    const size = Number.isFinite(limit) ? Math.min(Math.max(Math.trunc(limit), 1), 100) : 20;
+    const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
     const rows = this.db.prepare(`SELECT s.id, s.created_at, c.pin_order, c.title,
       (SELECT COUNT(*) FROM messages m WHERE m.session_id=s.id) AS message_count,
       (SELECT substr(json_extract(m.body,'$.content'),1,240) FROM messages m
@@ -220,9 +222,10 @@ export class SessionLibrary {
         ORDER BY m.id DESC LIMIT 1) AS latest_at
       FROM sessions s LEFT JOIN conversation_marks c ON c.session_id=s.id
       WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notEngineOnly} ${notPutAway} ${project === undefined ? "" : `AND ${projectOf}=?`}
-      ORDER BY c.pin_order IS NULL, c.pin_order, s.created_at DESC, s.id DESC LIMIT ?`).all(owner, ...hidden, ...(project === undefined ? [] : [project]), Math.min(Math.max(limit, 1), 100));
+      ORDER BY c.pin_order IS NULL, c.pin_order, s.created_at DESC, s.id DESC LIMIT ? OFFSET ?`).all(owner, ...hidden, ...(project === undefined ? [] : [project]), size + 1, start);
     return {
-      sessions: rows.map((row) => ({
+      nextOffset: rows.length > size ? start + size : null,
+      sessions: rows.slice(0, size).map((row) => ({
         sessionId: String(row.id), createdAt: String(row.created_at), messageCount: Number(row.message_count),
         // Dogfood D23: a steer reads as the owner's own words here too, never the marker the model was given it in.
         opening: steerShown(String(row.opening ?? "")), lastMessage: steerShown(String(row.latest ?? "")),
