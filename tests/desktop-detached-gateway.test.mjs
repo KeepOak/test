@@ -114,10 +114,10 @@ test("the owner's OFF from a joined shell stops the broker and the shell starts 
   t.after(async () => {
     closing = true;
     await offScreen(shell, "joined shell cleanup");
-    const closing = shell.close();
+    const closed = shell.close();
     // Ends the broker this test's home started, even when the test stopped before it read the note (a busy computer).
     await stopHomeBroker(home);
-    await closing;
+    await closed;
     await discardTemp(home);
   });
   const shellPid = await shell.evaluate(() => process.pid);
