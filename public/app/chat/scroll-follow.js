@@ -9,10 +9,12 @@ import { t, plural } from "../../i18n.js";
 let read = () => ({ sessionId: null }), held = false, selectedScope = null, frame = 0;
 export const privateContext = () => JSON.stringify([activeId(), E.profiles?.isOwner ?? null, S.signedIn,
   document.getElementById("app")?.classList.contains("locked-b17") ?? false, !!$(".lockscreen")]);
+/* The App lock's own state, without its activity clock (lastActiveAt moves on every request, which is no reason to redraw). */
+const lockOf = (lock) => (lock ? [lock.locked, lock.lockedSince, lock.pinSet, lock.lockOnOpen, lock.secretsWhileLocked] : null);
 export function scrollSecurity() {
   const state = E.state ?? {};
   return JSON.stringify([privateContext(), S.chat, read().sessionId, E.profiles?.active ?? null, E.trunkModes,
-    state.lock, state.approvalCategories, state.askFirst, state.practice, state.network, state.privacy,
+    lockOf(state.lock), state.approvalCategories, state.askFirst, state.practice, state.network, state.privacy,
     state.skillPolicy, state.setAside, state.preferences, document.getElementById("app")?.classList.contains("locked") ?? false]);
 }
 export function selectionHeld(root) {
