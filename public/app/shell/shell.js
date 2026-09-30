@@ -341,7 +341,8 @@ function rowMenu(e) {
   const id = esc(row.dataset.id), s = E.sessions.find((x) => sessionId(x) === row.dataset.id), tr = line ?? (s && trunkFor(s));
   const pin = line ? mi("tl-pin", "pin", linePinned(line) ? t("accounts.action.unpin") : t("window.shell.extras.pin-to-top"), "", `data-id="${esc(line.id)}"`)
     + mi("rename-id", "edit", t("accounts.action.rename"), "", `data-id="${esc(line.chatSessionId)}"`) : convItems(row.dataset.id);
-  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"${line ? ` data-line="${esc(line.id)}"` : ""}`) + unreadItem(row.dataset.id) + pin;
+  const pane = row.dataset.id !== S.chat ? mi("pane-add", "cols15", t("window.panes.open-in-pane"), "", `data-id="${id}"`) : ""; // RES-703
+  const base = mi("chat", "chat", t("ov.open"), "", `data-id="${id}"${line ? ` data-line="${esc(line.id)}"` : ""}`) + pane + unreadItem(row.dataset.id) + pin;
   const tid = esc(tr?.id ?? "");
   const trunk = tr ? mi("new-with", "plus", t("window.shell.shell.new-conversation-with-name", { name: esc(tr.name) }), "", `data-id="${tid}"`) + roomItems(tr.id) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("autonomy.pause"), "", `data-id="${tid}"`) + mi("edit", "sliders", t("window.shell.shell.edit-trunk"), "", `data-id="${tid}"`) + "<hr>" + mi("remove", "trash", t("strip.menu.remove"), "", `data-id="${tid}"`) : "";
   /* A room's own row ends with the prototype's "Leave and archive", greyed: the engine keeps no leaving or archiving of
