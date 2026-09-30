@@ -201,7 +201,6 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // RES-408: the last check of a personal sign-in (src/personal/signin.ts): this computer's own recent result, gone in
   // 15 minutes; a file putting one in place would show a connection as working that was never checked here.
   "personal-connection-health:",
-
   // CHAT-041: how much of each step one chat is shown (/verbose), set from that chat here.
   "chat-steps-detail:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
