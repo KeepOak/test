@@ -10597,5 +10597,15 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "libraryMadeTypes.label": "Dateitypen",
+  "libraryMadeTypes.all": "Alle",
+  "libraryMadeTypes.pictures": "Bilder",
+  "libraryMadeTypes.audio": "Audio",
+  "libraryMadeTypes.video": "Video",
+  "libraryMadeTypes.documents": "Dokumente",
+  "libraryMadeTypes.data": "Daten",
+  "libraryMadeTypes.other": "Andere",
+  "libraryMadeTypes.count": "{shown} von {total} gespeicherten Dateien",
+  "libraryMadeTypes.empty": "Keine gespeicherten Dateien dieses Typs. W\u00e4hle einen anderen Typ oder Alle."
 }

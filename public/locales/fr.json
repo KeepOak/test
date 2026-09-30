@@ -10597,5 +10597,15 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "libraryMadeTypes.label": "Types de fichiers",
+  "libraryMadeTypes.all": "Tous",
+  "libraryMadeTypes.pictures": "Images",
+  "libraryMadeTypes.audio": "Audio",
+  "libraryMadeTypes.video": "Vid\u00e9o",
+  "libraryMadeTypes.documents": "Documents",
+  "libraryMadeTypes.data": "Donn\u00e9es",
+  "libraryMadeTypes.other": "Autres",
+  "libraryMadeTypes.count": "{shown} sur {total} fichiers conserv\u00e9s",
+  "libraryMadeTypes.empty": "Aucun fichier conserv\u00e9 de ce type. Choisissez un autre type ou Tous."
 }

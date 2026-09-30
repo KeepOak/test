@@ -10597,5 +10597,15 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "libraryMadeTypes.label": "File types",
+  "libraryMadeTypes.all": "All",
+  "libraryMadeTypes.pictures": "Pictures",
+  "libraryMadeTypes.audio": "Audio",
+  "libraryMadeTypes.video": "Video",
+  "libraryMadeTypes.documents": "Documents",
+  "libraryMadeTypes.data": "Data",
+  "libraryMadeTypes.other": "Other",
+  "libraryMadeTypes.count": "{shown} of {total} kept files",
+  "libraryMadeTypes.empty": "No kept files of this type. Choose another type or All."
 }

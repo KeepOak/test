@@ -10597,5 +10597,15 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "libraryMadeTypes.label": "Tipos de archivo",
+  "libraryMadeTypes.all": "Todos",
+  "libraryMadeTypes.pictures": "Im\u00e1genes",
+  "libraryMadeTypes.audio": "Audio",
+  "libraryMadeTypes.video": "V\u00eddeo",
+  "libraryMadeTypes.documents": "Documentos",
+  "libraryMadeTypes.data": "Datos",
+  "libraryMadeTypes.other": "Otros",
+  "libraryMadeTypes.count": "{shown} de {total} archivos guardados",
+  "libraryMadeTypes.empty": "No hay archivos guardados de este tipo. Elige otro tipo o Todos."
 }
