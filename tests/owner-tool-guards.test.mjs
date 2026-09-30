@@ -49,6 +49,8 @@ const GUARDS = [
   { file: "src/settings-kit/tools.ts", tool: "settings.loosen", args: { changes: [{ setting: "fly-core.mode", value: "on" }] } },
   { file: "src/settings-kit/tools.ts", tool: "settings.why", args: { setting: "fly-core.mode" } },
   { file: "src/settings-kit/tools.ts", tool: "settings.undo", args: { record: "no-such-change" } },
+  // TRUNK-106: tying a private saved fact to a local picture is the owner's own memory.
+  { file: "src/memory-images.ts", tool: "memory.image", args: { id: "no-such-fact" } },
   { file: "src/channels/connectors.ts", tool: "channels.broadcast", args: { text: "hello" } },
   { file: "src/channels/connectors.ts", tool: "channels.digest", args: { channel: "telegram", chatId: "1" } },
   // Choosing the chat the morning brief goes to is choosing where the owner's messages go.
@@ -105,6 +107,7 @@ const NOT_TOOL_GUARDS = {
   "src/integrations/bootstrap.ts": "hands store.profiles.requireOwner to signin.fill (listed above)",
   "src/self-development-merge.ts": "its requireOwner (ownerHere) guards the owner's review-and-merge routes in Inbox; the branch.finish_source_change tool is gated by autoOwner instead: runtime.ownerFullAccessFor(context, true), which refuses any task that is not the owner's own direct Full Access task with the owner's profile active, and no person, household caller, paired door or short-lived key",
   "src/self-development-requests.ts": "its requireOwner (ownerHere) guards the owner's chat-request routes in Inbox, and installed() is a read-only proof that only refuses, never grants, when the window is on someone else; the tool path, fileOwnerTask (seasons.request_setting), is gated by ownerOnly(context), which judges by the task's recorded origin (runOrigin: person, key, lent door) and refuses Trunks and short-lived keys",
+  "src/media.ts": "its isOwner check only refuses: a ChatGPT sign-in picture also needs the window on the owner, and the task's own origin (runOrigin, currentPerson, the run's owner) is checked as well, so a household person's task is refused whichever profile the window shows",
   "src/coding/project-tests.ts": "the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
 };
 
