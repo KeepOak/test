@@ -28,6 +28,7 @@ export class DevicesHttpError extends Error {
 }
 
 export interface DevicesHttpDeps {
+  chatPairing?: { list(): unknown[]; consume(id: string, kind: "phone" | "computer"): void };
   devices: Devices; store: Store; owner: string; method: string;
   readBody: () => Promise<unknown>;
   /** The address a device should dial: the paired door while it is open, otherwise this computer. */
@@ -227,6 +228,10 @@ async function findRoute(deps: DevicesHttpDeps, path: string): Promise<unknown> 
 /** The owner's routes. Answers undefined for a path it does not know. */
 export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<unknown> {
   const { devices, method } = deps;
+  if (path === "/api/devices/chat-pairing" && method === "GET") {
+    if (deps.viaDoor !== false) throw new DevicesHttpError(403, phoneInviteHereOnly);
+    return { proposals: deps.chatPairing?.list() ?? [] };
+  }
   if (path === "/api/devices" && method === "GET") return overview(deps);
   const picked = pickedPath.exec(path);
   if (picked && method === "GET") return pickedFor(deps, picked[1]!);
@@ -236,9 +241,14 @@ export async function devicesApi(deps: DevicesHttpDeps, path: string): Promise<u
   if (method !== "POST") return undefined;
   if (path === "/api/devices/mode") return { mode: devices.setMode(await deps.readBody()) };
   if (path === "/api/devices/invite") {
-    const { phone } = z.object({ phone: z.boolean().optional() }).strict().parse((await deps.readBody()) ?? {});
+    const { phone, proposalId } = z.object({ phone: z.boolean().optional(), proposalId: z.string().regex(/^[a-f0-9]{32}$/).optional() }).strict().parse((await deps.readBody()) ?? {});
     // B6: a phone invitation hands the window's key to the phone let in, so only this computer's window makes one.
     if (phone === true && deps.viaDoor !== false) throw new DevicesHttpError(403, phoneInviteHereOnly);
+    if (proposalId) {
+      if (deps.viaDoor !== false || !deps.chatPairing) throw new DevicesHttpError(403, phoneInviteHereOnly);
+      try { deps.chatPairing.consume(proposalId, phone === true ? "phone" : "computer"); }
+      catch { throw new DevicesHttpError(409, "That chat pairing request expired or is no longer authorized. Send /pair again."); }
+    }
     const offer = devices.book.invite({ phone: phone === true });
     const link = `${deps.baseUrl.replace(/\/+$/, "")}/devices/pair?offer=${offer.id}`;
     return { ...offer, link, qr: qrRows(encodeQr(link)) };
