@@ -41,7 +41,7 @@ const everywhere: readonly DevicePlatform[] = devicePlatforms;
 
 export const capabilityInfo: Record<Capability, CapabilityInfo> = {
   camera: { kind: "capture", tool: "device.camera", label: "Take a photo with the camera", platforms: ["darwin", "linux", "ios", "android"] },
-  screen: { kind: "capture", tool: "device.screen", label: "Take a picture of the screen", platforms: computers },
+  screen: { kind: "capture", tool: "device.screen", label: "Take a picture of the screen", platforms: [...computers, "ios"] },
   location: { kind: "capture", tool: "device.location", label: "Say where the device is", platforms: ["linux", "ios", "android"] },
   notify: { kind: "act", tool: "device.notify", label: "Show a notification", platforms: computers },
   "clipboard-read": { kind: "capture", tool: "device.clipboard", label: "Read what was copied", platforms: computers },
