@@ -161,6 +161,41 @@ test("New conversation starts fresh in the same timeline, under a new line, neve
   assert.deepEqual(errors, []);
 });
 
+/* The same stale scroll as trunkline.js's: the browser sends a scroll queued on a box to that box on the next frame, even
+   when a redraw took it off the page meanwhile. Off the page its scrollTop and heights read 0, so the conversation's own
+   listener took it for a reader at the end, and the next drawing threw someone reading back down to the bottom. Here
+   the box is drawn anew (its place put back, a scroll queued) and the window leaves for Settings in one step. */
+test("a scroll that lands on a box off the page does not move a reader who scrolled back", async (t) => {
+  const { app, root } = await fixture(t, [long]);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  await app.runtime.run({ prompt: "one long talk", trunkId: home.id });
+  const { page, errors } = await open(t, app, root, { width: 1100, height: 640 });
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  await page.locator("#scroll .u", { hasText: "one long talk" }).waitFor();
+  const frame = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await page.locator("#scroll").evaluate((box) => { box.scrollTop = 300; });
+  await frame(); // the reader's own scroll is heard: they are reading back, 300 from the top
+  const stale = await page.evaluate(async () => {
+    const { renderNow } = await import("/app/core/dom.js"), { S } = await import("/app/core/state.js");
+    const seen = { heard: false };
+    S.view = "settings"; renderNow(); S.view = "chat"; renderNow(); // drawn anew, in a new box put back at 300
+    const box = document.querySelector("#scroll");
+    box.addEventListener("scroll", () => { seen.heard = !box.isConnected; });
+    S.view = "settings"; renderNow(); // and left before the frame: the box is off the page when its scroll is sent
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    return seen;
+  });
+  assert.ok(stale.heard, "the box taken off the page was sent its scroll");
+  await page.evaluate(async () => {
+    const { renderNow } = await import("/app/core/dom.js"), { S } = await import("/app/core/state.js");
+    S.view = "chat"; renderNow();
+  });
+  assert.equal(await page.locator("#scroll").evaluate((box) => box.scrollTop), 300, "back in the conversation, the reader is where they left it");
+  assert.deepEqual(errors, []);
+});
+
 test("older conversations are read only when scrolled to", async (t) => {
   const { app, root } = await fixture(t, [long]);
   saveOnboarding(app.store, app.runtime.owner, { done: true });
