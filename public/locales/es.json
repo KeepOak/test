@@ -10417,5 +10417,7 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "gatewayActivity.reading": "Leyendo el estado del gateway y su actividad reciente…",
+  "gatewayActivity.unavailable": "No se pudo leer la actividad reciente del gateway."
 }

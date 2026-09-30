@@ -10418,5 +10418,7 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "gatewayActivity.reading": "Lecture de l’état de la passerelle et de son activité récente…",
+  "gatewayActivity.unavailable": "Impossible de lire l’activité récente de la passerelle."
 }

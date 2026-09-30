@@ -10417,5 +10417,7 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "gatewayActivity.reading": "Gateway-Status und letzte Aktivitäten werden gelesen…",
+  "gatewayActivity.unavailable": "Die letzten Gateway-Aktivitäten konnten nicht gelesen werden."
 }

@@ -10417,5 +10417,7 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "gatewayActivity.reading": "Reading gateway status and recent activity…",
+  "gatewayActivity.unavailable": "Recent gateway activity could not be read."
 }
