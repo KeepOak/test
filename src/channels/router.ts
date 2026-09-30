@@ -350,6 +350,17 @@ function fitsTurn(messages: InboundMessage[], next: InboundMessage): boolean {
  * Edited messages: a new version arriving once its message is already being answered is a message of its own. It keeps
  * the original as the one a reaction goes on, and gets an id of its own so it is not taken for a repeat.
  */
+/**
+ * UP-CHAT-002: whether an edited message reads as something that acts rather than words: a slash command (the chat's,
+ * the owner's DM list, a saved one, /platform, /start), a typed y / a / n, or a button's payload. An edit of one is never
+ * carried out: editing `/bg x` would start a second task, and editing an old message into `/new` would reset the thread.
+ * Following OpenClaw (MIT), extensions/telegram/src/bot-handlers.inbound-pipeline.ts `handleEditedMessage`, which only
+ * records an edit and never dispatches it.
+ */
+export function editedCommandShaped(text: string): boolean {
+  const line = text.trim();
+  return /^\/[a-z?][\w?-]*(?:@[\w.-]+)?(?:\s|$)/i.test(line) || /^[yan](?::[0-9a-f:]*)?$/i.test(line) || /^(?:br|m):\S+$/.test(line);
+}
 function editedAsNew(message: InboundMessage): InboundMessage {
   return { ...message, edited: false, reactTo: message.reactTo ?? message.messageId, messageId: `${message.messageId}:edited:${Date.now().toString(36)}` };
 }
@@ -724,6 +735,8 @@ export class ChannelRouter {
     const entry = this.adapters.get(message.channel);
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
+    // UP-CHAT-002: an edit is answered as words at most; a command, approval or button in one is never carried out.
+    if (message.edited && editedCommandShaped(message.text)) return "ignored";
     const { adapter, policy } = entry;
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
@@ -1514,6 +1527,9 @@ export class ChannelRouter {
     saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
       ...(trunkId ? { trunkId } : {}) });
+    // hot-update: a newer engine took this task over and carries it on; its answer goes to the chat from there
+    // (carryOnReply), so nothing is said from here: no "could not finish", and no second answer.
+    if (run.status === "interrupted" && this.handedOver(run.id)) { live?.cancel(); turn.reply?.cancel(); return "replied"; }
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
       : run.status === "cancelled" ? "Stopped."
       // owner-dm-signin: the task's own reason, scrubbed and kept short, rather than the bare status.
@@ -1537,6 +1553,51 @@ export class ChannelRouter {
     if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
     if (message.voice) await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
     return ok ? "replied" : "failed";
+  }
+  /**
+   * hot-update: resolves once no chat's turn is still finishing (its answer written down and sent) and no send is under
+   * way, or after `ms`; answers whether all were done. An engine handing over waits for this before it lets go.
+   */
+  async settle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (this.turns.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.flushing, new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, until - Date.now())); })]);
+    clearTimeout(timer);
+    return this.turns.size === 0;
+  }
+  /**
+   * The chat message a task began from, through every engine it was carried on in: each carried-on task names the one
+   * it carried on (`resumedFrom`), and only the first holds the chat's mark (`channel.inbound`).
+   */
+  private chatOrigin(runId: string): { channel?: unknown; chatId?: unknown; messageId?: unknown } | undefined {
+    let id: string | undefined = runId;
+    for (let hops = 0; id && hops < 50; hops++) {
+      const events = this.store.events(id);
+      const inbound = events.find((event) => event.kind === "channel.inbound");
+      if (inbound) return inbound.data as { channel?: unknown; chatId?: unknown; messageId?: unknown };
+      const from = events.find((event) => event.kind === "run.started")?.data.resumedFrom;
+      id = typeof from === "string" ? from : undefined;
+    }
+    return undefined;
+  }
+  private handedOver(runId: string): boolean {
+    return !!this.store.sqlite.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.handed_over' LIMIT 1").get(runId);
+  }
+  /**
+   * hot-update: a chat's task that an older engine handed to this one (src/never-break/resume.ts resumeHandedOver)
+   * answers the chat from here once it finishes, in reply to the message that started it. The older engine said
+   * nothing for it (finishTurn), and a chat app that sent its message once never sends it again.
+   */
+  async carryOnReply(runId: string, resumed: Promise<Run | undefined>): Promise<boolean> {
+    const inbound = this.chatOrigin(runId);
+    if (typeof inbound?.channel !== "string" || typeof inbound.chatId !== "string") return false;
+    const run = await resumed ?? this.store.run(runId);
+    if (!run || run.status === "interrupted") return false; // handed on again: the next engine answers it
+    const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
+      : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
+    await this.deliver(inbound.channel, inbound.chatId, said, `reply:${run.id}`, typeof inbound.messageId === "string" ? inbound.messageId : undefined);
+    return true;
   }
   /**
    * Batch 20 (wave 8): the message going back out is the last step of the task, so it hangs off the

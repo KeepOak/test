@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from "electron";
 
+// A shell update (src/desktop/shell-switch.ts): what the old version's window had open, handed to this page once, before
+// any of its scripts run, where a live reload keeps it (public/app/shell/liveupdate.js restoreOpen).
+try {
+  const kept: unknown = ipcRenderer.sendSync("branch:shell-kept");
+  if (typeof kept === "string") sessionStorage.setItem("branch-live-restore", kept);
+} catch { /* nothing kept, or no storage: an ordinary start */ }
+
 contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   modelSettings: () => ipcRenderer.invoke("branch:model-settings"),
   saveModelSettings: (settings: unknown) =>
@@ -10,6 +17,9 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   exportMemoryLines: (text: unknown) => ipcRenderer.invoke("branch:export-memory-lines", text),
   exportBackup: (text: unknown) => ipcRenderer.invoke("branch:export-backup", text),
   updateStatus: () => ipcRenderer.invoke("branch:update-status"),
+  // Update by itself runs in the app (src/desktop/update-loop.ts): what it last planned, and what it says, for the page to show.
+  updateLoop: () => ipcRenderer.invoke("branch:update-loop"),
+  onUpdateSaid: (listener: (words: string) => void) => ipcRenderer.on("branch:update-said", (_event, words: unknown) => { if (typeof words === "string") listener(words); }),
   checkForUpdates: () => ipcRenderer.invoke("branch:update-check"),
   // Dogfood F1: true only when "update by itself" starts it, so turning that off while it builds stops it.
   // The second value is the exact Dev change of another line of work the owner confirmed (updater-ipc.ts refuses it with automatic).

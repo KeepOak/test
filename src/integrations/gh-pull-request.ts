@@ -1,8 +1,20 @@
 import { execFile } from "node:child_process";
 import type { ComputerPullRequest } from "../pr-hook.js";
+import { matchingPublication, publicationLookupPath, type PublicationLookup } from "../self-development-publication-lookup.js";
 
 type Run = (file: string, args: string[], options: { signal: AbortSignal; windowsHide: true; timeout: number },
   done: (error: Error | null, stdout: string, stderr: string) => void) => { stdin: { end(text: string): void } | null };
+
+/** Read-only reconciliation through the computer's existing sign-in, including closed PRs. */
+export function computerGhPublicationFinder(run: Run = execFile as unknown as Run, gh = "gh"):
+  (input: PublicationLookup, signal: AbortSignal) => Promise<unknown | null> {
+  return (input, signal) => new Promise((resolve, reject) => {
+    run(gh, ["api", "--method=GET", publicationLookupPath(input)], { signal, windowsHide: true, timeout: 120000 }, (error, stdout, stderr) => {
+      if (error) { reject(new Error(`GitHub lookup failed: ${String(stderr).slice(0, 300) || error.message}`)); return; }
+      try { resolve(matchingPublication(input, JSON.parse(String(stdout)))); } catch (failure) { reject(failure); }
+    });
+  });
+}
 
 /**
  * selfdev: opens a draft pull request with this computer's own GitHub sign-in (`gh auth`). `gh` reads its
