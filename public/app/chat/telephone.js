@@ -1,3 +1,4 @@
+import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { esc, render } from "../core/dom.js";
 import { on } from "../core/actions.js";
@@ -7,6 +8,7 @@ let state = null, initialized = false;
 export async function loadTelephone() { if (E.profiles?.isOwner === false) return; try { state = await api("telephone"); } catch (error) { state = { problem: error.message }; } render(); }
 export function initTelephone() {
   if (initialized) return; initialized = true;
+  markLive(["call17d", ...["save", "propose", "callme", "approve", "cancel", "recover", "refresh"].map((x) => "telephone-" + x), ...["enabled", "account", "token", "from", "own", "origin", "pin", "direction", "to", "purpose", "seconds", "carrier", "tokens", "recovery-sid"].map((x) => "sw:telephone-" + x)]);
   const field = (id) => document.getElementById("telephone-" + id);
   const action = async (work) => { try { await work(); await loadTelephone(); } catch (error) { toast(error.message); } };
   on("call17d", () => { S.view = "settings"; S.setPage = "voice"; void loadTelephone(); });
