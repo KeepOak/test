@@ -205,6 +205,12 @@ test('files go to the website only from the workspace, and files it sends land i
     const refused = await h.registry.execute('browser.click', {role: 'link', name: 'Get program'}, context);
     assert.match(refused.downloads[0].from, /files ending in \.exe are not saved/);
     assert.equal(refused.downloads[0].file, '');
+    // SCREEN-021: the owner's view keeps the session's completed downloads after the task's once-only events were taken,
+    // newest last, with the plain source address (never the refusal's words) and the refusal as an unsaved file.
+    const history = [...h.browser.sessions.values()].map((entry) => entry.session.completedDownloads()).find((list) => list.length);
+    assert.deepEqual(history.map((one) => one.file), ['downloads/report.csv', '']);
+    assert.doesNotMatch(history[1].from, /not saved/);
+    assert.match(history[1].from, /^http:\/\/127\.0\.0\.1:\d+\//);
     await h.registry.finishRun(context);
   } finally { await h.close(); }
 });
