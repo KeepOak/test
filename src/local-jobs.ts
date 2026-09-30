@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { runtimeIds, type RuntimeId } from "./local-launch.js";
+import { vllmToolParsers } from "./local-vllm.js";
 import type { Store } from "./store.js";
 import { markChosen, shippedUnlessChosen, unsetRecord } from "./ship-on.js";
 
@@ -43,7 +44,7 @@ const runtimeEnum = z.enum(runtimeIds as [RuntimeId, ...RuntimeId[]]);
 export const SetupRequestSchema = z.union([
   z.object({ runtime: runtimeEnum.optional(), model: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,40}$/), quant: z.string().regex(/^[A-Za-z0-9_]{2,16}$/), force: z.boolean().default(false) }).strict(),
   // `found`: the model is already in Ollama or LM Studio on this computer, so it is used as it is and never fetched again.
-  z.object({ runtime: runtimeEnum.optional(), name: z.string().trim().min(1).max(300), force: z.boolean().default(false), found: z.literal(true).optional() }).strict(),
+  z.object({ runtime: runtimeEnum.optional(), name: z.string().trim().min(1).max(300), force: z.boolean().default(false), found: z.literal(true).optional(), toolParser: z.enum(vllmToolParsers).optional() }).strict(),
 ]);
 export type SetupRequest = z.infer<typeof SetupRequestSchema>;
 

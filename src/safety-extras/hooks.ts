@@ -30,7 +30,8 @@ export function tightenCheck(store: Reader, owner: string, call: CallAbout, deci
   if (stopped) return { decision: "deny", reason: stopped, note: null, exact: false, code: false };
   let result: Tightened = { decision, reason: null, note: null, exact: false, code: false };
   const scan = safetyMode(store, owner, "command-scan");
-  if (scan !== "off" && decision !== "deny" && isCommandTool(call.tool) && call.resource?.kind === "command"
+  // Owner ruling 2026-09-30: a program on another computer is read too, as Hermes Agent reads its SSH backend's commands.
+  if (scan !== "off" && decision !== "deny" && (isCommandTool(call.tool) || call.tool === "remote.run") && call.resource?.kind === "command"
     && (scan === "on" || decision === "allow")) {
     const findings = scanCommand(call.resource.value);
     const tightened = tightenForFindings(decision, findings);
