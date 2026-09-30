@@ -1380,13 +1380,19 @@ async function api(
       });
     }
     app.store.profiles.requireOwner("Managing isolated profile gateways");
+    const ownerScope = app.store.profiles.scope();
+    const authorizeGateway = () => {
+      app.store.profiles.requireOwner("Managing isolated profile gateways");
+      if (app.store.profiles.scope() !== ownerScope || !app.store.profiles.list().some((profile) => profile.id === id))
+        throw new Error("Profile ownership changed; review the action again.");
+    };
     if (!action && request.method === "GET") return app.profileGateways.view(id);
     if (!action && request.method === "POST") {
       const body = await readBody(request);
       app.store.profiles.requireOwner("Creating an isolated profile gateway");
-      return app.profileGateways.create(id, body);
+      return app.profileGateways.create(id, body, authorizeGateway);
     }
-    if (action === "start" && request.method === "POST") return app.profileGateways.start(id);
+    if (action === "start" && request.method === "POST") return app.profileGateways.start(id, authorizeGateway);
     if (action === "stop" && request.method === "POST") { await app.profileGateways.stop(id); return { stopped: true, profileId: id }; }
     throw new Error("Unsupported profile gateway operation.");
   }
