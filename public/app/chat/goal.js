@@ -28,14 +28,14 @@ export function goalStrip(sessionId) {
   scopeCache();
   const g = sessionId ? goals.get(sessionId) : null;
   if (!g) return "";
-  if (g.status !== "working" && g.status !== "paused") return `<div class="goal6"><b>${esc(g.objective)}</b><span>${esc(g.status)}</span><button class="btn ghost sm" type="button" data-act="goal-timeline" data-id="${esc(sessionId)}">Timeline</button></div>`;
+  if (g.status !== "working" && g.status !== "paused") return `<div class="goal6"><b>${esc(g.objective)}</b><span>${esc(t(`goal.heading.${["blocked", "done", "limit", "stopped"].includes(g.status) ? g.status : "other"}`))}</span><button class="btn ghost sm" type="button" data-act="goal-timeline" data-id="${esc(sessionId)}">${t("window.chat.goal.timeline")}</button></div>`;
   const score = typeof g.score === "number" ? g.score : null;
   const facts = [t("goal.rounds", { round: g.round, max: g.maxRounds }), score === null ? "" : t("window.chat.goal.score", { score: score.toFixed(1) }),
     g.missing?.length ? t("window.chat.goal.missing", { missing: g.missing.join("; ") }) : "", t("window.chat.goal.minutes", { n: Math.round((g.elapsedMs ?? 0) / 60000) })].filter(Boolean);
   const button = g.status === "working"
     ? `<button class="btn ghost sm" type="button" data-act="goal-st" data-v="pause" data-id="${esc(sessionId)}">${t("autonomy.pause")}</button>`
     : `<button class="btn ghost sm" type="button" data-act="goal-st" data-v="resume" data-id="${esc(sessionId)}">${t("autonomy.resume")}</button>`;
-  return `<div class="goal6">${ic("target", "s")}<span class="grow"><b>${t("window.chat.goal.goal", { goal: esc(g.objective) })}</b><small>${esc(facts.join(" · "))}</small></span><button class="btn ghost sm" type="button" data-act="goal-timeline" data-id="${esc(sessionId)}">Timeline</button>${button}<button class="btn ghost sm" type="button" data-act="goal-st" data-v="stop" data-id="${esc(sessionId)}">${t("dashboard.stop")}</button></div>`;
+  return `<div class="goal6">${ic("target", "s")}<span class="grow"><b>${t("window.chat.goal.goal", { goal: esc(g.objective) })}</b><small>${esc(facts.join(" · "))}</small></span><button class="btn ghost sm" type="button" data-act="goal-timeline" data-id="${esc(sessionId)}">${t("window.chat.goal.timeline")}</button>${button}<button class="btn ghost sm" type="button" data-act="goal-st" data-v="stop" data-id="${esc(sessionId)}">${t("dashboard.stop")}</button></div>`;
 }
 
 /* After a conversation is drawn: re-read its goal, and draw again only if it changed. */

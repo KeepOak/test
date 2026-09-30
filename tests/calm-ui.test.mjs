@@ -212,7 +212,7 @@ test("calm: a goal keeps its Resume and Stop in view", async (t) => {
   await f.page.locator(`#side [data-act="chat"][data-id="${sessionId}"]`).click();
   const strip = f.page.locator("#main .goal6");
   await strip.waitFor({ state: "visible", timeout: 15000 });
-  assert.deepEqual((await strip.locator("button").allTextContents()).map((text) => text.trim()), ["Resume", "Stop"]);
+  assert.deepEqual((await strip.locator("button").allTextContents()).map((text) => text.trim()), ["Timeline", "Resume", "Stop"]);
   assert.deepEqual(f.errors, []);
 });
 

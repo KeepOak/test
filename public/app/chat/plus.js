@@ -27,7 +27,7 @@ function menu() {
     + mi("insert", "at", t("rooms.mentionList"), "<kbd>@</kbd>", 'data-v="@"') + mi("skills15", "slash", t("window.chat.plus.skill"), "<kbd>/</kbd>") + "<hr>"
     + `<div class="row-in"><span class="ic-t">${ic("ghost", "s")}${t("window.chat.plus.temporary")}</span><input class="sw" type="checkbox" id="pm-temp" data-sw="temp" ${Q.temporary ? "checked" : ""} ${S.chat ? "disabled" : ""} aria-label="${t("window.chat.plus.temporary")}"></div><div class="row-in"><span class="ic-t">${ic("help", "s")}${t("more.askFirst")}</span><input class="sw" type="checkbox" id="pm-ask" data-sw="askqs" ${asksFirst() ? "checked" : ""} aria-label="${t("more.askFirst")}"></div>`
     + practiceMenu() + whoRows() + "<hr>" + mi("goal-fill", "target", t("window.chat.plus.goal"), "<kbd>/goal</kbd>") // handled in goal.js
-    + mi("goals-index", "target", "Goals and timelines")
+    + mi("goals-index", "target", t("window.chat.plus.goals-index"))
     + mi("prompts-fill", "star", t("settings-kit.name.prompts"), "<kbd>/</kbd>"); // handled in messages.js
 }
 

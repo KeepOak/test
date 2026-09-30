@@ -338,7 +338,8 @@ export class GoalMode {
     if (!state.sessionId) return;
     const previous = this.store.get("settings", this.runtime.owner, key(state.sessionId))?.data;
     this.store.save("settings", this.runtime.owner, key(state.sessionId), { ...state });
-    if (state.lastRunId && JSON.stringify(previous) !== JSON.stringify(state)) this.store.event(state.lastRunId, "goal.state", {
+    // Only a round that is recorded carries its goal's state; a round with no task on record keeps the snapshot alone.
+    if (state.lastRunId && this.store.run(state.lastRunId) && JSON.stringify(previous) !== JSON.stringify(state)) this.store.event(state.lastRunId, "goal.state", {
       startedAt: state.startedAt, status: state.status, round: state.round, maxRounds: state.maxRounds,
       score: state.score, missing: state.missing, reason: state.reason, elapsedMs: state.elapsedMs,
       subgoals: subgoalsOf(this.store, this.runtime.owner, state.sessionId),

@@ -1,4 +1,4 @@
-# Retained goal timeline (UI265)
+# Retained goal timeline (UI-265)
 
 The conversation + menu opens a read-only Goals index. Active, paused and finished goal strips open the same timeline. The index reads at most 101 retained settings rows, joins their owning sessions, excludes temporary and recently deleted conversations, and applies the existing current-profile ownership predicate. Detail reads are independently ownership checked, including before navigation. No route starts, resumes, sends to, or changes a goal.
 
@@ -8,4 +8,4 @@ Current subgoals are shown as configured items, without claiming completion. The
 
 Navigation reuses the actual `chat` and `beside15` actions. Named side chats are existing coverage; PR1057 refresh and PR1223 focused recipient composer can integrate independently. This change does not edit the beside/composer modules or claim that parallel composers are implemented here. Async dialog requests and goal cache reads fence current profile/token and dialog identity; the existing modal trap, Escape and focus return apply.
 
-Remaining scope: historical goals overwritten in the same session are not indexed; subgoal completion and dependency milestones are not recorded by the existing runtime; timeline strings are English. No tests, build, browser, runtime, provider, model or database calls were executed in this session. Runtime/UI behavior remains unverified; source review and diff whitespace checks are the only validation.
+Remaining scope: historical goals overwritten in the same session are not indexed; subgoal completion and dependency milestones are not recorded by the existing runtime; timeline strings are English.
