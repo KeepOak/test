@@ -86,8 +86,10 @@ export class NativeAdmission {
   error: unknown = null;
   private readonly server: Server;
   private readonly active = new Set<Promise<void>>();
+  /** `activity` is told when the request arrives, when the service answers and of every streamed chunk (the idle deadline). */
   constructor(private readonly request: CompletionRequest, inventory: NativeInventory,
-    private readonly authorize: () => void, private readonly connect: NativeConnector = connectNative) {
+    private readonly authorize: () => void, private readonly connect: NativeConnector = connectNative,
+    private readonly activity: () => void = () => {}) {
     this.capture = new NativeCapture(inventory, request);
     this.server = createServer((incoming, response) => {
       const work = this.receive(incoming, response).catch((error: unknown) => {
@@ -115,9 +117,9 @@ export class NativeAdmission {
     if (this.used || this.request.signal.aborted) { this.denied++; return refuse(response, 400); }
     this.authorize(); this.request.signal.throwIfAborted(); this.used = true;
     const body = await boundedBody(incoming, this.request.signal);
-    this.authorize(); this.request.signal.throwIfAborted();
+    this.authorize(); this.request.signal.throwIfAborted(); this.activity();
     const upstream = await this.connect(forwardHeaders(incoming), cacheHistory(body), path.search, this.request.signal);
-    this.status = upstream.status;
+    this.status = upstream.status; this.activity();
     // selfdev: when a plan limit says when it resets (Unix seconds), the refusal can say so too.
     const reset = Number(upstream.headers.get("anthropic-ratelimit-unified-reset"));
     if (upstream.status === 429 && Number.isFinite(reset) && reset > 0) this.resetsAt = new Date(reset * 1000);
@@ -132,7 +134,7 @@ export class NativeAdmission {
       while (true) {
         this.request.signal.throwIfAborted(); const part = await reader.read();
         if (part.done) break;
-        this.capture.feed(part.value); response.write(part.value);
+        this.activity(); this.capture.feed(part.value); response.write(part.value);
       }
       this.request.signal.throwIfAborted(); this.authorize();
       this.completion = this.capture.result(); response.end();

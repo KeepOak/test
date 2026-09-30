@@ -3564,6 +3564,18 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Hermes Agent Claude subscription DirectSDK plugin (Nous Research), MIT
+
+`src/providers/claude-subscription.ts` and its helpers (`claude-subscription-process.ts`, `claude-subscription-admission.ts`, `claude-subscription-history.ts`) follow the design of the Hermes Agent Claude subscription DirectSDK plugin (https://github.com/NousResearch/hermes-plugin-claude-subscription-directsdk, `directsdk.py` and `admission.py`): one inert native Claude Code process per generation, started with the same native flags, behind a loopback admission relay that allows exactly one upstream request; history replayed over stream-json with zero-turn acknowledgments; and an idle deadline that starts again on every native event (`directsdk.py` `receive`). Used under the MIT licence:
+
+Copyright (c) 2026 Nous Research and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 ### Helper lifecycle (ideas only), MIT and Apache-2.0
 
 `src/helper-tree.ts` and the helper start, stop and limit in `src/runtime.ts` (`delegateBackground`, `cancel`, `stopHelpers`) were written for Branch after reading these projects; no code was copied.
