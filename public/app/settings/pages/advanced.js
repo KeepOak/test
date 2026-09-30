@@ -5,6 +5,7 @@ import { api, token } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { toast, openDlg } from "../../core/ui.js";
+import { viewFence } from "../../core/view-fence.js";
 import { fact15 } from "../rows15.js";
 import { sections17, init17, load17 } from "../p17-advanced.js";
 import { initMarket } from "../market.js"; // RES-720
@@ -127,14 +128,22 @@ function drawRewrite() {
   openDlg({ title: t("window.settings.advanced.rewrite-short-notes"), body, foot });
 }
 async function openRewrite() {
-  try { RW.notes = (await api("reach/notes")).notes ?? []; } catch (error) { toast(error.message); return; }
+  const still = viewFence("ad-rewrite");
+  let notes;
+  try { notes = (await api("reach/notes")).notes ?? []; } catch (error) { if (still()) toast(error.message); return; }
+  if (!still()) return; // closed, replaced, another person or locked while the notes were read: nothing is shown late
+  RW.notes = notes;
   RW.id = RW.notes.some((n) => n.id === RW.id) ? RW.id : RW.notes[0]?.id ?? "";
   RW.out = null;
   drawRewrite();
 }
 async function rewriteNow() {
   RW.id = document.getElementById("ad-rw-note")?.value || RW.id;
-  try { RW.out = await api("reach/notes/rewrite", { id: RW.id, style: RW.style }); } catch (error) { toast(error.message); return; }
+  const still = viewFence("ad-rewrite");
+  let out;
+  try { out = await api("reach/notes/rewrite", { id: RW.id, style: RW.style }); } catch (error) { if (still()) toast(error.message); return; }
+  if (!still()) return;
+  RW.out = out;
   drawRewrite();
 }
 async function keepRewrite() {
