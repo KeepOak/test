@@ -152,6 +152,7 @@ import { registerSettingsTools } from "./settings-kit/tools.js";
 import { registerUpdateTool } from "./comfort/update-tool.js";
 import { newestPassing } from "./comfort/update-now.js";
 import { ownBuild } from "./hot-update/window-files.js";
+import { primaryRepo } from "./desktop/repo-pair.js"; // the repository updates come from
 import { registerHelpSearch } from "./help-search.js";
 import { settingsKitWriters } from "./settings-kit/writers.js";
 import { GitTools } from "./integrations/git.js";
@@ -2043,7 +2044,7 @@ ${result.output || "(it said nothing)"}`;
   registerSettingsTools(registry, store, () => settingsKitWriters(branch));
   // Branch's own updates, asked about or asked for by the owner (src/comfort/update-tool.ts).
   const updateFacts = { version: String(createRequire(import.meta.url)("../package.json").version), commit: ownBuild,
-    newestPassing: newestPassing("stabrea/Branch-Agent") };
+    newestPassing: newestPassing(primaryRepo) };
   registerUpdateTool(registry, store, updateFacts);
   channels.updateFacts = updateFacts;
   registerHelpSearch(registry); // what Branch knows about itself, from its own handbook

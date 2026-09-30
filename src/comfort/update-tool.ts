@@ -7,13 +7,11 @@ import { lockedDown } from "../lockdown.js";
 import { requestInstallNow, updateSummary, type UpdateSummary } from "./update-now.js";
 
 /**
- * `branch.update`: the owner asks Branch about its own updates, or asks it to update itself. `status` says which
- * version runs, the newest change that passed its checks, and why an update waits; `install` asks the app's own update
- * loop to install the newest version at the next safe moment (update-now.ts), through the same updater, check on a copy
+ * `branch.update`: the owner asks Branch about its own updates: which version runs, the newest change that passed its
+ * checks, and why an update waits. `branch.install_update` asks the app's own update loop to install the newest version at the next safe moment (update-now.ts), through the same updater, check on a copy
  * of the work and way back as any update. Only the owner, in the Branch app or a task of their own: a chat's task, a
  * short-lived key or somebody else's conversation cannot ask for an install (the owner's own chat has `/update`).
  */
-const UpdateToolSchema = z.object({ action: z.enum(["status", "install"]).default("status") }).strict();
 
 export interface UpdateFacts { version: string; commit: () => string | null; newestPassing: () => Promise<string | null> }
 
@@ -34,19 +32,28 @@ function mayInstall(store: Store, context: ToolContext): void {
 export function registerUpdateTool(registry: ToolRegistry, store: Store, facts: UpdateFacts): void {
   registry.register({
     name: "branch.update", permission: "settings.read", group: "settings",
-    description: "Branch's own updates. action \"status\" says which version of Branch is running, the newest change that passed its checks, whether updating by itself is on, and why an update is waiting. action \"install\" asks Branch to install the newest version at the next safe moment (the owner only; it is checked on a copy of the work first and goes back by itself if the new version does not start).",
-    parameters: UpdateToolSchema,
-    target: (input: z.infer<typeof UpdateToolSchema>) => (input.action === "install" ? "install the newest Branch" : "Branch's version and updates"),
-    execute: async (input: z.infer<typeof UpdateToolSchema>, context: ToolContext) => {
+    description: "Branch's own updates: which version of Branch is running, the newest change that passed its checks, whether updating by itself is on, and why an update is waiting. To install the newest version, the owner asks for branch.install_update.",
+    parameters: z.object({}).strict(),
+    target: () => "Branch's version and updates",
+    execute: async (_input: Record<string, never>, context: ToolContext) => {
       store.profiles.requireOwner("Branch's updates");
-      if (input.action === "install") {
-        mayInstall(store, context);
-        if (context.dryRun) return { wouldAsk: "install the newest version at the next safe moment" };
-        requestInstallNow(store, context.owner, "branch.update");
-        const now = await updateStatus(store, context.owner, facts);
-        return { asked: true, words: `${now.words} It installs at the next safe moment; the app looks within a few minutes.`, status: now };
-      }
       return await updateStatus(store, context.owner, facts);
+    },
+  });
+  // Installing changes what runs and goes ahead even with updating by itself off, so it is a change, not a look: its own
+  // tool with a changing permission, which the approval policy asks about in Ask first and a read-only task never has.
+  registry.register({
+    name: "branch.install_update", permission: "settings.write", group: "settings",
+    description: "Asks Branch to install its newest version at the next safe moment (the owner only). It is checked on a copy of the work first and goes back by itself if the new version does not start. branch.update says what would be installed.",
+    parameters: z.object({}).strict(),
+    target: () => "install the newest Branch",
+    execute: async (_input: Record<string, never>, context: ToolContext) => {
+      store.profiles.requireOwner("Branch's updates");
+      mayInstall(store, context);
+      if (context.dryRun) return { wouldAsk: "install the newest version at the next safe moment" };
+      requestInstallNow(store, context.owner, "branch.install_update");
+      const now = await updateStatus(store, context.owner, facts);
+      return { asked: true, words: `${now.words} It installs at the next safe moment; the app looks within a few minutes.`, status: now };
     },
   });
 }

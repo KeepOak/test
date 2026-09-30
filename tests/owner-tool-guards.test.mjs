@@ -86,7 +86,9 @@ const GUARDS = [
   { file: "src/owner-folders.ts", tool: "files.list", args: { path: "~/Downloads" } },
   { file: "src/owner-folders.ts", tool: "files.move", args: { from: "~/Downloads/a.pdf", to: "~/Downloads/Documents/a.pdf" } },
   // Branch's own updates are the owner's to ask about or install. The newest passing change is a stand-in, so nothing is fetched.
-  { file: "src/comfort/update-tool.ts", tool: "branch.update", args: { action: "status" },
+  { file: "src/comfort/update-tool.ts", tool: "branch.update", args: {},
+    setup: (app) => { app.channels.updateFacts.newestPassing = async () => null; } },
+  { file: "src/comfort/update-tool.ts", tool: "branch.install_update", args: {},
     setup: (app) => { app.channels.updateFacts.newestPassing = async () => null; } },
 ];
 /** Files with an owner check that is not a tool's guard, and why. */

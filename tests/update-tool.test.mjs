@@ -28,17 +28,20 @@ async function world(t) {
   return { app, owner };
 }
 
-test("branch.update says which version runs and the newest that passed; install asks the loop, even with updating by itself off", async (t) => {
+test("branch.update says which version runs and the newest that passed; branch.install_update asks the loop, even with updating by itself off", async (t) => {
   const { app, owner } = await world(t);
-  const tool = app.registry.registered("branch.update");
-  assert.ok(tool, "the tool is there");
+  const tool = app.registry.registered("branch.update"), install = app.registry.registered("branch.install_update");
+  assert.ok(tool && install, "the tools are there");
+  // Installing is a change, so the approval policy asks about it in Ask first and a read-only task never has it.
+  assert.equal(app.registry.permissionOf("branch.update"), "settings.read");
+  assert.equal(app.registry.permissionOf("branch.install_update"), "settings.write");
   const context = { owner, runId: undefined, source: "owner", signal: new AbortController().signal };
   // The engine's own facts: this copy's version, and GitHub asked for the newest passing change (stand-in).
-  const status = await tool.execute({ action: "status" }, context);
+  const status = await tool.execute({}, context);
   assert.match(status.words, /Branch 0\.19\.4 is running/);
   assert.match(status.words, /Updating by itself is off\./);
   assert.equal(updatePlan(app.store, owner, { busyTasks: 0, updaterPhase: "available" }).step, "nothing", "off: nothing installs by itself");
-  const asked = await tool.execute({ action: "install" }, context);
+  const asked = await install.execute({}, context);
   assert.equal(asked.asked, true);
   assert.equal(installRequested(app.store, owner), true);
   assert.equal(updatePlan(app.store, owner, { busyTasks: 0, updaterPhase: "available", installRequested: true }).step, "install",
@@ -48,7 +51,7 @@ test("branch.update says which version runs and the newest that passed; install 
   // A chat's task cannot ask for an install; the owner's own chat has /update for that.
   const run = app.store.createRun(owner, "from a chat");
   app.store.event(run.id, "run.started", { source: "channel" });
-  await assert.rejects(tool.execute({ action: "install" }, { ...context, runId: run.id, source: "channel" }), /owner|chat/i);
+  await assert.rejects(install.execute({}, { ...context, runId: run.id, source: "channel" }), /owner|chat/i);
 });
 
 test("/update in the owner's own paired chat answers with an Install now button; anyone else, or under Lockdown, is refused", async (t) => {
