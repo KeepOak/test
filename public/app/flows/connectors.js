@@ -7,10 +7,9 @@
    - "Test it" stays greyed: trying a server starts the typed program (POST /api/mcp/try) without the approval gate.
    - A command-line tool: the tools the engine found on this computer (GET /api/clis), each allowed through POST
      /api/clis by its name, or one added by its full address (Enter in the path box).
-   - A skill from a file is real: the SKILL.md is read here and sent to POST /api/skills/install. The skill library and
-     GitHub stay greyed: no library address ships with the engine (a registry is a JSON index the owner names, POST
-     /api/registry/browse {url}), and the engine installs no skill from a repository. Writing one with Branch is another
-     area's.
+   - The skill library browses the owner's curated HTTPS registry sources, inspects the actual document/hash/signature
+     and static scan, then asks explicit approval for an inactive install. A file uses POST /api/skills/install. GitHub
+     imports are a separate reviewed capability; writing one with Branch is another area's.
    - Another agent with an A2A card: its address goes to POST /api/agents/remote {cardUrl}; the engine reads its card
      (refusing a private or local address unless the owner allowed those) and keeps it. Branch on another computer is
      pairing (POST /api/agents/pair), held back for the security review; an agent on a KeepOak computer needs keepoak.com,
@@ -25,6 +24,7 @@ import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { showTool, reloadTools } from "../places/customize.js";
 import { t } from "../../i18n.js";
+import { initSkillMarketplace } from "./skill-marketplace.js";
 
 const prov = (act, v, icon, name, sub) => `<button class="prov" type="button" data-act="${act}" data-v="${v}">${icon}<b>${name}</b><small>${sub}</small></button>`;
 const tile = (name) => `<span class="ico-tile">${ic(name, "s")}</span>`;
@@ -171,6 +171,7 @@ const ADD = { mcp: connectorCatalogue, skills: addSkill, clis: addCliDialog, age
 const entryOf = (id) => CAT.list.flatMap((g) => g.connectors).find((c) => c.id === id) ?? null;
 
 export function init() {
+  initSkillMarketplace();
   markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
   on("ag-add", () => agentCard());
   on("ag-go", () => addAgent());

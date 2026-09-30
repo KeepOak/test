@@ -116,6 +116,7 @@ import { afterTaskMetrics, executionMetricsDeps } from "./execution-metrics.js";
 import { SessionTokens } from "./session-tokens.js";
 import { CommandSecrets, KeychainSecrets } from "./vault-sources.js";
 import { SkillRegistry } from "./registry-install.js";
+import { SkillMarketplace } from "./skill-marketplace.js";
 import { SkillPackages } from "./skill-packages.js";
 import { Plugins } from "./plugins.js";
 import { Evaluation } from "./evaluation.js";
@@ -1018,6 +1019,7 @@ export async function createBranch(options: {
   // Wave 7: one finished task's full record, in the documented trajectory shape.
   registerRunExport(registry, store, version);
   const skillRegistry = new SkillRegistry(store, runtime.owner, web.policy);
+  const skillMarketplace = new SkillMarketplace(store, runtime.owner, skillRegistry, () => sessionLock.state().locked);
   // Skill packages people can hand to each other, and single-file plugins the owner switches on.
   const skillPackages = new SkillPackages(store, runtime.owner, registry, { store, policy: web.policy, fetchImpl: web.policy.guard(globalThis.fetch) });
   skillPackages.replayRecipe = (recipe, _event, runId) => replayNamedRecipe(knowledge, store, runtime, recipe, runId);
@@ -1925,6 +1927,7 @@ ${result.output || "(it said nothing)"}`;
     hooks,
     teams,
     skillRegistry,
+    skillMarketplace,
     /** Skill packages: opening, installing and rebuilding the single file people share. */
     skillPackages,
     /** Installed packages whose tools could not be put back this time. */
