@@ -288,6 +288,7 @@ import { guardsApi, GuardsApiError, handlesGuardsPath } from "./run-guards.js";
 import { handlesKnobsPath, knobsApi, KnobsApiError } from "./knobs/api.js";
 // R17-E: models, cheaper and smarter (src/model-savings/).
 import { syncMixtures } from "./model-savings/mixture.js"; // a forgotten connection takes its mixtures with it
+import { channelMessageOrigins } from "./channels/message-origin.js";
 import { readChatIntake } from "./channels/intake-settings.js"; // Settings › Chat apps
 import { channelFormats, saveChannelFormatting } from "./channels/formatting-settings.js";
 import { replyStyles, saveReplyStyle } from "./channels/reply-style.js";
@@ -2336,7 +2337,9 @@ async function sessionApi(app: Branch, request: IncomingMessage, path: string): 
     const shared = person && app.trunks.rooms.forPerson(person.id).some((room) => room.sessionId === match[1]);
     const view = app.store.sessionView(shared ? app.runtime.owner : owner, match[1]!);
     // Dogfood D14: the project the conversation is filed under, so the window can say so; projects are the owner's.
-    return app.store.profiles.isOwner() ? { ...view, project: app.store.sessionProject(match[1]!) ?? null } : view;
+    return app.store.profiles.isOwner() ? { ...view, messages: channelMessageOrigins(app.store, owner, match[1]!, view.messages),
+      project: app.store.sessionProject(match[1]!) ?? null }
+      : { ...view, messages: view.messages.map((message) => ({ ...message, channelOrigin: undefined })) };
   }
   if (match && match[2] === "skill") {
     if (!app.store.ownsSession(owner, match[1]!)) throw new HttpError(404, "Session not found");

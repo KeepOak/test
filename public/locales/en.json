@@ -6927,6 +6927,7 @@
   "window.chat.msg.tools-offered": "{shown} · {more} more one step away",
   "window.chat.msg.undo-that": "“Undo that” puts everything back the way it was.",
   "window.chat.msg.unpin-this": "Unpin this message",
+  "window.chat.msg.via-app": "via {name}",
   "window.chat.msg.waiting": "{count} waiting",
   "window.chat.msg.went-back-conv": "Went back in the conversation. Files are as they were.",
   "window.chat.msg.went-back-files": "Went back, files included.",

@@ -1465,6 +1465,8 @@ export class ChannelRouter {
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
     const message = turn.messages[0]!, live = turn.live;
+    const channelKind = this.adapters.get(message.channel)?.adapter.kind;
+    let userMessageId: number | undefined;
     // Where a chat's answer spent its time, written on the task so "Look inside" can show it (src/inspect.ts timing):
     // from the message being taken in (the turn opened; `startedAt` moves to the task's start once it starts).
     const receivedAt = turn.startedAt;
@@ -1534,10 +1536,12 @@ export class ChannelRouter {
         source: "channel",
         // Which app it came in on, for the model's line saying where it runs (src/environment.ts).
         channel: chatAppName(this.adapters.get(message.channel)?.adapter.kind ?? message.channel),
+        onUserMessageId: (id) => { userMessageId = id; },
         onStarted: (started) => {
           // mac3/never-break: a task a chat started is left for the chat app to send again after a restart.
           this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId,
             senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true,
+            ...(userMessageId !== undefined && channelKind ? { userMessageId, channelKind } : {}),
             waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
           turn.runId = started.id;
           turn.startedAt = Date.now();
