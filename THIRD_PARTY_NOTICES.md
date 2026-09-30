@@ -1,5 +1,18 @@
 # Third-party notices
 
+## Optional external Piper voice program
+
+The original `src/voice-piper.ts` adapter uses the stdin and WAV output contract documented by
+OHF-Voice/piper1-gpl at `efffbfb226bfb511ebbcf55d0cecd8b35a89743d`
+(`src/piper/__main__.py`, `docs/CLI.md`). Piper is GPL-3.0 software installed separately by the
+owner. Branch does not import, bundle, download or redistribute that program or any voice model.
+No Piper implementation code is copied here. Each chosen model has its own license.
+
+The persistent-worker approach was informed by Hermes Agent's MIT-licensed local TTS cache
+(`tools/tts_tool_local.py`, `a9a54245b2311c705d29050b7f9868c015917aec`) and Pipecat's BSD-2-Clause
+external Piper service distinction (`src/pipecat/services/piper/tts.py`,
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc`). Their implementation code is not copied.
+
 ## Installed faster-whisper and Silero VAD integration
 
 `src/voice-whisper.ts` calls the installed faster-whisper local VAD and timestamp APIs,
@@ -73,6 +86,33 @@ Branch Agent application code is MIT licensed. Distributed dependencies retain t
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
 
+## Hermes wake-word adapter
+
+`src/voice-wake-kws.ts` adapts threshold and phrase display mapping from
+`tools/wake_word_engines.py` at `a9a54245b2311c705d29050b7f9868c015917aec`
+of https://github.com/NousResearch/hermes-agent. Branch uses an external installed
+sherpa-onnx CLI and owner-supplied models/keywords, with no model downloads.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+## OpenClaw Realtime GA protocol adaptations
+
+The ChatGPT subscription adapter also adapts the pinned OpenClaw Quicksilver
+wire, audio-only SDP admission, sideband event and context append contracts
+(`extensions/openai/realtime-quicksilver-wire.ts`, `realtime-sdp-offer.ts`,
+`realtime-quicksilver-events.ts`, `realtime-quicksilver-protocol.ts`,
+`realtime-quicksilver-delegation-controller.ts`, `realtime-quicksilver-bridge-delegation.ts`).
+Branch adapts consultation generation/cancellation and bounded transcript admission
+to its existing delegated runtime and approval cards. OAuth is
+resolved by Branch's existing selected-account adapter; no account data or upstream
+implementation package is bundled. The MIT notice below covers these adaptations.
+
+`src/realtime-openai.ts` adapts beta/GA event names and the GA session shape from
+`extensions/openai/realtime-voice-events.ts` and `realtime-voice-session-policy.ts`
+at `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of https://github.com/openclaw/openclaw.
+
 ## OpenClaw realtime voice adaptations
 
 `src/realtime-openai.ts` and `public/app/chat/talklive.js` adapt cancellation,
@@ -109,6 +149,40 @@ The browser also includes the pinned markdown-it 15.0.2 ESM bundle (MIT) at
 the notices for bundled entities (BSD-2-Clause), linkify-it, mdurl, punycode.js
 and uc.micro (MIT) are retained alongside the bundle. See that folder's README
 for the official package source, version and checksum.
+
+## Pipecat dictation VAD and pre-speech adaptations
+
+`src/voice-dictation.ts` and `src/voice-dictation-preroll.ts` port the four-state
+speech hysteresis and pre-speech buffer approach from
+`src/pipecat/audio/vad/vad_analyzer.py` and
+`src/pipecat/audio/turn/smart_turn/base_smart_turn.py` at
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc` of https://github.com/pipecat-ai/pipecat.
+Modified to use Branch's local energy detector and forward every recorder frame.
+
+BSD 2-Clause License
+
+Copyright (c) 2024–2026, Daily
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## @hono/node-server 2.1.1
 
@@ -3851,6 +3925,19 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 
+
+## Hermes weekly recap aggregation
+
+`src/weekly-recap.ts` adapts guarded duration aggregation from `agent/insights.py` (`_compute_overview`) in NousResearch/hermes-agent at `16b214e1a1f0544218b1cf8c21b923b4e1c62768`. The listed weekly-review-planning recipe was read for context only. Branch owner scoping, task completion counts, Trunk attribution and manual-time estimate are original integration code.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/agent/insights.py
+
+## Price-watch condition recipe
+
+The listed Hermes `product-price-monitor` skill was read at commit `7327624d3500d4bbc9ad58b0a75c324a306d882a` (MIT). Its threshold/drop, successful-baseline, retained-good-observation and duplicate-alert shape informed the implementation. It is a recipe, not an executable price parser: `src/monitor-price.ts` and the Branch integration are original code, not a claimed source-code port.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/7327624d3500d4bbc9ad58b0a75c324a306d882a/skills/productivity/product-price-monitor/SKILL.md
+
 ### Branch builds Branch (P0 fixes): Hermes Agent (MIT); Codex (Apache-2.0)
 
 - `boundSummaryInput` in `src/compaction-input.ts`, which holds a fold's input to its room by keeping 45% from the start and 55% from the end with a marker naming how much of the middle was left out, is adapted from `_bound_summary_input` in Hermes Agent's `agent/context_compressor.py` (https://github.com/NousResearch/hermes-agent, commit 7083a524a, Copyright (c) 2025 Nous Research, MIT; the licence text is given under IronClaw above).
@@ -3859,6 +3946,10 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `programStart` in `src/coding/hand-off.ts` starts an npm-installed Codex as its own program with the environment its npm launcher (`codex-cli/bin/codex.js`, commit d14143834) adds, as `codexBinary` in `src/asks/codex-app-server.ts` already did for the app-server.
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
+
+## OpenClaw GitHub device flow
+
+`src/integrations/github-device-auth.ts` adapts device response validation, anchored expiry and cumulative polling-delay behavior from [OpenClaw login.ts](https://github.com/openclaw/openclaw/blob/2663c6b6202807712586bb2928c22397ccc14b27/extensions/github-copilot/login.ts). Branch uses an owner-supplied OAuth client identity; no OpenClaw/Copilot client ID is included.
 
 ## Hermes live-dashboard recipe (scheduled dashboard design)
 
@@ -3900,6 +3991,14 @@ Licensed under the Apache License, Version 2.0 (the License); you may not use th
 ## Hermes Agent profile import preview
 
 The Trunk import preview/apply flow adapts the staged manifest review in [hermes_cli/profile_distribution.py](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/profile_distribution.py) (`plan_install`/`install_distribution`), reviewed on 2026-09-29. The implementation uses Branch Trunk JSON and its existing import route; no archive installer is included.
+
+## Hermes Agent Codex notification scope
+
+src/asks/codex-conversation.ts adapts _notification_scope_ids and
+_notification_belongs_to_turn from Hermes Agent's
+[agent/transports/codex_app_server_session.py](https://github.com/NousResearch/hermes-agent/blob/a4c31d592b9d8916ffed9ab80ebee48ba428c172/agent/transports/codex_app_server_session.py).
+The functions were translated to TypeScript for Branch's existing app-server transport.
+The transcript-prefix cache and Branch account/conversation binding are original code.
 
 MIT License
 

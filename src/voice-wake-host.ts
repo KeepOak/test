@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 // this computer's environment, and ending it for good if it will not go — is shared with live
 // dictation now and lives in src/mic-capture.ts. Nothing about what runs here changed with the move.
 import { endChild, located, windowBytes } from "./mic-capture.js";
-import type { WakeCaptureRunner, WakeRunner } from "./voice-wake.js";
+import type { WakeCaptureRunner, WakeRunner, WakeStreamRunner } from "./voice-wake.js";
 
 /**
  * mac7/wake-mic: the real programs the wake word runs on this computer, and the only place in
@@ -75,5 +75,43 @@ export function wakeRunner(): WakeRunner {
     child.stdin.on("error", () => undefined);
     if (input.length > 0) child.stdin.write(input);
     child.stdin.end();
+  });
+}
+
+/** Run the owner's installed Apache-2.0 sherpa KWS microphone CLI once per enabled session.
+ * Its Display emits numbered JSON to stderr, sometimes wrapped across terminal lines. */
+export function wakeStreamRunner(): WakeStreamRunner {
+  return (command, onWord, signal) => new Promise((resolve, reject) => {
+    if (signal.aborted) { resolve(); return; }
+    const child = spawn(located(command.file), command.args, {
+      stdio: ["ignore", "ignore", "pipe"], env: {}, windowsHide: true, shell: false,
+    });
+    let pending = "", finished = false;
+    const finish = (error?: Error) => {
+      if (finished) return;
+      finished = true; signal.removeEventListener("abort", abort); endChild(child);
+      if (error) reject(error); else resolve();
+    };
+    const abort = () => finish();
+    signal.addEventListener("abort", abort, { once: true });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (piece: string) => {
+      if (finished) return;
+      pending = (pending + piece).replace(/\x1b\[[0-9;?]*[A-Za-z]|[\r\n]/g, "").slice(-4000);
+      let end: number;
+      while ((end = pending.indexOf("}")) >= 0) {
+        const start = pending.indexOf("{");
+        const json = start >= 0 && start <= end ? pending.slice(start, end + 1) : "";
+        pending = pending.slice(end + 1);
+        try {
+          const value: unknown = JSON.parse(json);
+          const word = (value as { keyword?: unknown })?.keyword;
+          if (typeof word === "string" && word.length <= 100) onWord(word);
+        } catch { /* configuration and device diagnostics never become a wake event */ }
+      }
+    });
+    child.stderr.on("error", (error) => finish(error));
+    child.on("error", (error) => finish(error));
+    child.on("close", () => finish());
   });
 }

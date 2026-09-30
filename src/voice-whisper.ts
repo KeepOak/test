@@ -167,6 +167,18 @@ export function whisperEnvironment(source: NodeJS.ProcessEnv = process.env): Nod
     PYTHONIOENCODING: "utf-8", PYTHONDONTWRITEBYTECODE: "1" };
 }
 
+const cancelled = (): Error => new Error("faster-whisper was cancelled.");
+/** Waits for the worker to be ready, or stops waiting as soon as the request is aborted (the worker keeps starting). */
+function untilReadyOrAborted(ready: Promise<void>, signal?: AbortSignal): Promise<void> {
+  if (!signal) return ready;
+  if (signal.aborted) return Promise.reject(cancelled());
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(cancelled());
+    signal.addEventListener("abort", onAbort, { once: true });
+    ready.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+  });
+}
+
 export interface WhisperHeard { text: string; language: string | null }
 interface Pending { id: number; resolve: (heard: WhisperHeard) => void; reject: (error: Error) => void; timer: NodeJS.Timeout }
 
@@ -211,31 +223,41 @@ export class LocalWhisper {
 
   /**
    * Writes one recording out. `partial` is a live caption: it is answered quickly, or not at all (null) when
-   * the worker is still busy with the last one.
+   * the worker is still busy with the last one. The `signal` aborts the transcription immediately without waiting.
    */
-  async transcribe(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean } = {}): Promise<WhisperHeard | null> {
+  async transcribe(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean } = {}, signal?: AbortSignal): Promise<WhisperHeard | null> {
+    if (signal?.aborted) throw cancelled();
     if (!found.available || !found.python || !found.model) throw new Error(found.how);
     if (bytes.byteLength === 0) throw new Error("That recording has no sound in it.");
     if (bytes.byteLength > whisperMostBytes) throw new Error("That recording is too long to write out here. Keep it under ten minutes.");
     if (options.partial && this.busy) return null;
-    const mine = this.turn.then(() => this.ask(found, bytes, options));
+    const mine = this.turn.then(() => this.ask(found, bytes, options, signal));
     this.turn = mine.catch(() => undefined);
     return mine;
   }
 
-  private async ask(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean }): Promise<WhisperHeard> {
+  private async ask(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean }, signal?: AbortSignal): Promise<WhisperHeard> {
+    // Aborted while waiting its turn: nothing is started or written.
+    if (signal?.aborted) throw cancelled();
     this.busy = true;
     if (this.idle) { clearTimeout(this.idle); this.idle = null; }
+    let onAbort: (() => void) | null = null;
     try {
-      await this.ensure(found.python!, found.model!);
+      await untilReadyOrAborted(this.ensure(found.python!, found.model!), signal);
+      if (signal?.aborted || !this.child) throw cancelled();
+      // This request and the worker serving it, held for this call alone: a later abort of a finished request
+      // can never end the worker that is serving the next one.
+      const child = this.child, id = this.nextId++;
       return await new Promise<WhisperHeard>((resolve, reject) => {
-        const id = this.nextId++;
-        const timer = setTimeout(() => this.fail(new Error("faster-whisper took more than two minutes, so Branch stopped it.")), whisperRequestMs);
+        const timer = setTimeout(() => this.fail(new Error("faster-whisper took more than two minutes, so Branch stopped it."), child), whisperRequestMs);
         this.pending = { id, resolve, reject, timer };
+        onAbort = () => { if (this.pending?.id === id) this.fail(cancelled(), child); };
+        signal?.addEventListener("abort", onAbort, { once: true });
         const line = JSON.stringify({ id, audio: Buffer.from(bytes).toString("base64"), language: options.language || null, partial: !!options.partial });
-        this.child!.stdin.write(`${line}\n`);
+        child.stdin.write(`${line}\n`);
       });
     } finally {
+      if (onAbort) signal?.removeEventListener("abort", onAbort);
       this.busy = false;
       if (this.child) { this.idle = setTimeout(() => this.stop(), whisperIdleMs); this.idle.unref?.(); }
     }
