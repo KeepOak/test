@@ -1,9 +1,9 @@
 /**
  * A short check that runs before a scheduled job wakes the assistant.
  *
- * The owner names a program in full with its arguments, and approves it once. On each turn the
- * program runs under the same time, memory, processor and output limits as any other command, with
- * an emptied environment and, unless the owner allowed it, no way out to the internet. It prints
+ * The owner names a configured command alias and arguments, and approves it once. On each turn the
+ * program runs through the existing scoped command tool, under its policy and configured limits,
+ * without requested project secrets. Netless is best effort, not a network firewall. It prints
  * one line of JSON last — `{"wakeAgent": true, "data": …}` — and the assistant is only woken when
  * told to, and is handed `data`. A check that keeps failing waits longer each time and is paused
  * with a plain reason, so a broken script never burns model calls or runs every minute for ever.
@@ -12,23 +12,16 @@
  * NanoClaw's task scripts (MIT), written afresh here; nothing here builds a shell string.
  */
 import { createHash } from "node:crypto";
-import { stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { ShellProcess } from "./integrations/shell-process.js";
 import { netlessEnvironment } from "./integrations/shell-config.js";
-import { defaultJobObjects, jobWithin, type JobObjects } from "./integrations/job-object.js";
 import { benchmarkPath } from "./benchmark-shell.js";
 
 const argument = z.string().max(2000).refine((value) => !value.includes("\0"), "NUL is not permitted");
 export const GateScriptSchema = z.object({
-  /** The program, named in full. Nothing is looked up by name. */
-  executable: z.string().min(1).max(1000).refine((value) => isAbsolute(value) && !value.includes("\0"),
-    "Give the check program in full, starting from the top of the disk"),
+  /** Existing configured command alias. Absolute host paths are no longer accepted. */
+  executable: z.string().regex(/^[a-z][a-z0-9_-]{0,29}$/, "Choose a configured command alias, such as node"),
   args: z.array(argument).max(20).default([]),
   timeoutMs: z.number().int().min(1000).max(120_000).default(30_000),
-  maxMemoryMb: z.number().int().min(16).max(4096).default(256),
-  maxCpuSeconds: z.number().int().min(1).max(120).default(20),
   /** Let the check reach the internet. Off unless the owner says so. */
   network: z.boolean().default(false),
 }).strict();
@@ -52,17 +45,9 @@ export type GateOutcome =
   | { outcome: "sleep"; durationMs: number }
   | { outcome: "error"; reason: string; durationMs: number };
 
-/** The real runner: the same child-process machinery, limits and job holding every command uses. */
-export function defaultGateRunner(jobs: JobObjects = defaultJobObjects()): GateRunner {
-  return async (run, limits, signal) => {
-    const job = await jobWithin(jobs, { maxMemoryMb: limits.maxMemoryMb, maxCpuSeconds: limits.maxCpuSeconds }, 1500);
-    const result = await new ShellProcess({
-      executable: run.executable, args: run.args, cwd: run.cwd, env: run.env, signal,
-      timeoutMs: limits.timeoutMs, maxOutputBytes: limits.maxOutputBytes,
-      maxMemoryMb: limits.maxMemoryMb, maxCpuSeconds: limits.maxCpuSeconds, ...(job ? { job } : {}),
-    }).run();
-    return { status: result.status, exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr, durationMs: result.durationMs };
-  };
+/** No standalone host runner: the scheduler must supply its scoped tool runner. */
+export function defaultGateRunner(): GateRunner {
+  return async () => { throw new Error("Check scripts require the schedule's scoped command tool runner."); };
 }
 
 /**
@@ -80,19 +65,16 @@ export function gateEnvironment(script: GateScript, platform: NodeJS.Platform = 
 
 /** A fingerprint of exactly what was approved, so a changed program or argument asks again. */
 export function gateFingerprint(script: GateScript): string {
-  const { executable, args, timeoutMs, maxMemoryMb, maxCpuSeconds, network } = script;
-  return createHash("sha256").update(JSON.stringify([executable, args, timeoutMs, maxMemoryMb, maxCpuSeconds, network])).digest("hex");
+  const { executable, args, timeoutMs, network } = script;
+  return createHash("sha256").update(JSON.stringify([executable, args, timeoutMs, network])).digest("hex");
 }
 
-/** The program has to be a real file, and not a Windows batch file that would need a shell. */
+/** Alias resolution is performed by the existing command tool, under policy. */
 export async function checkGateProgram(executable: string): Promise<void> {
-  if (/\.(cmd|bat)$/i.test(executable))
-    throw new Error("A check has to be a program, not a Windows batch file");
-  const found = await stat(executable).catch(() => null);
-  if (!found?.isFile()) throw new Error(`There is no program at ${executable}`);
+  if (!/^[a-z][a-z0-9_-]{0,29}$/.test(executable)) throw new Error("Choose a configured command alias for this check.");
 }
 
-const AnswerSchema = z.object({ wakeAgent: z.boolean(), data: z.unknown().optional() });
+const AnswerSchema = z.object({ wakeAgent: z.boolean(), data: z.unknown().optional() }).strict();
 /** Reads the last line the check printed. A line that is not the agreed JSON is a failed check. */
 export function readGateAnswer(stdout: string): { wake: boolean; data: unknown } {
   const last = stdout.trim().split(/\r?\n/).at(-1)?.trim() ?? "";
@@ -110,7 +92,7 @@ const stopped: Record<string, string> = {
   cancelled: "was cancelled", descendant_pipes: "left something running and was stopped",
 };
 function failureReason(run: GateRun): string | null {
-  if (run.status === "completed") return null;
+  if (run.status === "completed" && run.exitCode === 0) return null;
   if (stopped[run.status]) return `The check ${stopped[run.status]}.`;
   const said = run.stderr.trim().split(/\r?\n/)[0]?.slice(0, 200);
   const code = run.exitCode === null ? "could not be started" : `ended with code ${run.exitCode}`;
@@ -126,10 +108,12 @@ export async function runGate(script: GateScript, options: {
     await checkGateProgram(script.executable);
     const run = await (options.runner ?? defaultGateRunner())(
       { executable: script.executable, args: [...script.args], cwd: options.cwd, env: gateEnvironment(script, options.platform) },
-      { timeoutMs: script.timeoutMs, maxMemoryMb: script.maxMemoryMb, maxCpuSeconds: script.maxCpuSeconds, maxOutputBytes },
+      // The production runner applies the existing command tool's configured memory/CPU/output limits.
+      { timeoutMs: script.timeoutMs, maxMemoryMb: 256, maxCpuSeconds: 20, maxOutputBytes },
       options.signal ?? AbortSignal.timeout(script.timeoutMs + 5000));
     const reason = failureReason(run);
     if (reason) return { outcome: "error", reason, durationMs: run.durationMs };
+    if (Buffer.byteLength(run.stdout, "utf8") > maxOutputBytes) return { outcome: "error", reason: "The check printed too much.", durationMs: run.durationMs };
     const answer = readGateAnswer(run.stdout);
     return answer.wake ? { outcome: "wake", data: answer.data, durationMs: run.durationMs } : { outcome: "sleep", durationMs: run.durationMs };
   } catch (error) {

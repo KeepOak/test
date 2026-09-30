@@ -39,7 +39,7 @@ const mode = modes.default("off");
 export const QuietSwitchesSchema = z.object({
   /** on: check in every few minutes; when-needed: only when woken or asked; off: never. */
   checkIn: mode,
-  /** on: a job's script runs before every turn; when-needed: repeating jobs only; off: gated jobs are held. */
+  /** on/when-needed: every job with an explicit condition runs it; off: gated jobs are held. */
   scriptGates: mode,
   /** on: checks send news only; when-needed: only checks that repeat more than daily; off: every result is sent. */
   notifyGate: modes.default("when-needed"),
