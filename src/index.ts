@@ -1996,7 +1996,7 @@ ${result.output || "(it said nothing)"}`;
       tracer: runtime.tracer,
       onLock: (release: () => Promise<unknown>) => { releaseOnLock.push(release); },
       context: (runId: string) => runtime.context({ runId }),
-      slackEvents: (channelId: string, event: unknown, bot: string | null) => void slackAutomations.handle(channelId, event, bot), // mac6/bucket-16
+      slackEvents: (channelId: string, event: unknown, bot: string | null) => void slackAutomations.handle(channelId, event, bot).catch(() => undefined),
       // Wave mac2 (guards): an integrations file inside the workspace is only used when the owner
       // trusts its folder (src/folder-trust.ts), and what was left out is kept for the launch-file
       // card. A file elsewhere is theirs.
