@@ -236,14 +236,25 @@ async function saveDmPolicy(el) {
   }
 }
 
-/* The toast says what really happened: connected, listening for an app that posts to Branch, or saved but not connected. */
-async function finish() {
-  const name = S.chw.recipe.name, r = S.chw.result;
+/* Closes the wizard, and answers a check that holds while nothing newer happened since: the same person on the same
+   page, unlocked, no newer wizard started and no dialog opened or closed. What follows the page's refresh (the toast)
+   shows only then, so it never lands behind the lock, on another page or profile, or over newer work. */
+function closeWizard(w) {
   S.chw = null;
   vals = {};
   closeDlg();
+  const profile = w.profile, view = S.view, request = wizardRequest, closed = dialogsClosed;
+  return () => ownerHere() && activeId() === profile && unlocked() && S.view === view && wizardRequest === request
+    && dialogsClosed === closed && !dialog();
+}
+
+/* The toast says what really happened: connected, listening for an app that posts to Branch, or saved but not connected. */
+async function finish() {
+  const w = S.chw;
+  if (!w) return;
+  const name = w.recipe.name, r = w.result, still = closeWizard(w);
   await refresh().catch(() => {});
-  toast(r?.connected === false ? t("window.flows.chw.saved-not-connected", { name }) : r?.address ? t("window.flows.chw.listening", { name }) : t("window.flows.chw.connected", { name }));
+  if (still()) toast(r?.connected === false ? t("window.flows.chw.saved-not-connected", { name }) : r?.address ? t("window.flows.chw.listening", { name }) : t("window.flows.chw.connected", { name }));
 }
 
 /* Disconnects an app set up here (DELETE /api/channel-setup/<id>); what was pasted stays in the locker. */
@@ -254,11 +265,9 @@ async function remove() {
   catch (error) { if (currentWizard(w, dialog)) toast(error.message); return; }
   // The app is disconnected either way; only the wizard that asked is closed, never a newer one or one behind the lock.
   if (!currentWizard(w, dialog)) return;
-  S.chw = null;
-  vals = {};
-  closeDlg();
+  const still = closeWizard(w);
   await refresh().catch(() => {});
-  toast(t("window.flows.chw.removed", { name: w.recipe.name }));
+  if (still()) toast(t("window.flows.chw.removed", { name: w.recipe.name }));
 }
 
 async function saveMedia(el, w) {
