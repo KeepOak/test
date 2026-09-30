@@ -131,7 +131,7 @@ export function init() {
   on("ca-watchdog-log", showWatchdogLog);
   initFormatting();
   initReplyStyle();
-  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-watchdog-log", ...Object.keys(SW).map((id) => "sw:" + id)]);
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
   document.addEventListener("change", (e) => {
