@@ -18,10 +18,11 @@ import { ic, toast } from "../core/ui.js";
 import { ownerHere } from "../core/state.js";
 import { t } from "../../i18n.js";
 
-const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"]];
+const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"], ["spotify", "personal.spotify.name", "accounts.spotify.com"]];
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
 const M = { signin: {}, busy: false, typed: {} };
 const typed = (id, saved) => esc(M.typed[id] ?? saved ?? "");
+const accountPath = (service, account = M.signin[service]?.accountId ?? "default") => `personal/signin/${service}/accounts/${encodeURIComponent(account)}`;
 /* Reuse the password controls during a draw of Accounts: a late read must not discard input. No secret goes into
    markup or draft state, and these transient node references are released at the end of that same draw. */
 let passwordControls = [];
@@ -48,8 +49,13 @@ function service([id, name]) {
   const s = got.settings ?? {};
   const state = got.status?.signedIn ? `<span class="pill ok"><i></i>${t("personal.signin.yes")}</span>` : `<span class="pill idle"><i></i>${t("personal.signin.no")}</span>`;
   return `<div class="more18-svc"><div class="th"><b>${t(name)}</b>${state}</div>`
+    + `<label class="fld"><span>Selected account</span><select class="inp" id="more18-${id}-account" data-service="${id}">${(got.accounts?.accounts ?? []).map((account) => `<option value="${esc(account.id)}" ${account.id === got.accountId ? "selected" : ""}>${esc(account.label)} (${esc(account.id)})</option>`).join("")}</select></label>`
+    + `<label class="fld"><span>New account label</span><input class="inp" id="more18-${id}-new-account" autocomplete="off" maxlength="60"></label><button class="btn sm" data-act="more18-account-add" data-v="${id}">Add account</button>`
     + `<label class="fld"><span>${t("personal.signin.client")}</span><input class="inp" id="more18-${id}-client" value="${typed(`more18-${id}-client`, s.clientId)}" autocomplete="off"></label>`
     + `<label class="fld"><span>${t("personal.signin.secret-value")}</span><input class="inp" type="password" id="more18-${id}-secret" value="" autocomplete="new-password" spellcheck="false"></label>`
+    + (id === "google" || id === "microsoft" ? `<label class="fld"><span>Allow calendar changes after confirmation</span><input type="checkbox" id="more18-${id}-calendar" ${s.calendarWrite ? "checked" : ""}></label><p class="hint">Save, then sign in again to allow event changes. Each change asks once. Calendar reminders are set for 24 hours before.</p>` : "")
+    + (id === "google" || id === "microsoft" ? `<label class="fld"><span>Allow sending mail after preview and confirmation</span><input type="checkbox" id="more18-${id}-send" ${s.mailSend ? "checked" : ""}></label><p class="hint">Save, then sign in again to allow sending. Branch shows a local draft preview and asks Send? for each message.</p>` : "")
+    + (id === "google" ? `<label class="fld"><span>Allow shared calendar availability</span><input type="checkbox" id="more18-${id}-availability" ${s.availability ? "checked" : ""}></label><p class="hint">Save and sign in again to compare accessible calendars. Outlook shared availability uses work or school accounts. Ask Branch to find a common slot; nothing is booked.</p>` : "")
     + `<div class="acts"><button class="btn sm" type="button" data-act="more18-save" data-v="${id}">${t("personal.save")}</button><button class="btn pri sm" type="button" data-act="more18-signin" data-v="${id}">${t("personal.signin.go")}</button></div></div>`;
 }
 
@@ -57,7 +63,8 @@ function service([id, name]) {
 export function moreSections() {
   if (!ownerHere()) return "";
   passwordControls = SERVICES.map(([id]) => document.getElementById(`more18-${id}-secret`)).filter(Boolean);
-  return `<div class="sec more18"><h2>${t("window.flows.setup.email")}</h2><p class="hint">${t("window.flows.setup.email-hint")}</p>${SERVICES.map(service).join("")}</div>`
+  return `<div class="sec more18"><h2>${t("window.flows.setup.email")}</h2><p class="hint">${t("window.flows.setup.email-hint")}</p>${SERVICES.filter(([id]) => id !== "spotify").map(service).join("")}</div>`
+    + `<div class="sec more18"><h2>${t("personal.spotify.name")}</h2>${service(SERVICES[2])}</div>`
     + `<div class="sec more18"><h2>${t("first-run-steps.restore-title")}</h2><p class="hint">${t("first-run-steps.restore-purpose")}</p>`
     + `<div class="acts"><button class="btn" type="button" data-act="more18-restore" ${M.busy ? "disabled" : ""}>${ic("folder", "s")}${M.busy ? t("first-run-steps.restore-working") : t("window.flows.setup.backup")}</button></div>`
     + `<input type="file" id="more18-file" accept=".json,application/json" hidden></div>`;
@@ -65,14 +72,18 @@ export function moreSections() {
 
 /* The client id is saved; a client secret typed is sent once into the locker and the field emptied, and one left empty
    keeps whatever secret is already saved. */
-async function save(id) {
+async function save(id, account = M.signin[id]?.accountId ?? "default") {
   const client = document.getElementById(`more18-${id}-client`), secret = document.getElementById(`more18-${id}-secret`);
   if (!client || !secret) return false;
   const value = secret.value.trim();
   try {
-    await api(`personal/signin/${id}`, { clientId: client.value.trim() });
+    const calendar = document.getElementById(`more18-${id}-calendar`);
+    const send = document.getElementById(`more18-${id}-send`);
+    const endpoint = accountPath(id, account);
+    const availability = document.getElementById(`more18-${id}-availability`);
+    await api(endpoint, { clientId: client.value.trim(), ...(calendar ? { calendarWrite: calendar.checked } : {}), ...(send ? { mailSend: send.checked } : {}), ...(availability ? { availability: availability.checked } : {}) });
     delete M.typed[client.id];
-    if (value) await api(`personal/signin/${id}/secret`, { value });
+    if (value) await api(`${endpoint}/secret`, { value });
     secret.value = "";
     return true;
   } catch (error) { toast(error.message); return false; }
@@ -85,15 +96,37 @@ function safeAddress(url, host) {
 }
 
 async function signIn(id) {
-  if (!(await save(id))) return;
+  const account = M.signin[id]?.accountId ?? "default";
+  if (!(await save(id, account))) return;
   const host = SERVICES.find(([s]) => s === id)?.[2];
   let started;
-  try { started = await api(`personal/signin/${id}/start`, {}); } catch (error) { toast(error.message); return; }
+  try { started = await api(`${accountPath(id, account)}/start`, {}); } catch (error) { toast(error.message); return; }
   const address = safeAddress(started?.url, host);
   if (!address) return;
   const opened = typeof window.branchDesktop?.openExternal === "function" ? window.branchDesktop.openExternal(address) : window.open(address, "_blank", "noopener");
   await Promise.resolve(opened).catch((error) => toast(error.message));
   toast(t("personal.signin.opened"));
+}
+
+/* Switching drops unsaved client/password controls so they cannot be written into another account. */
+async function selectAccount(service, id) {
+  if (!ownerHere()) return;
+  const secret = document.getElementById(`more18-${service}-secret`);
+  if (secret) secret.value = "";
+  delete M.typed[`more18-${service}-client`];
+  try { await api(`personal/signin/${service}/accounts/select`, { id }); await loadMore(); }
+  catch (error) { toast(error.message); }
+}
+
+async function addAccount(service) {
+  if (!ownerHere()) return;
+  const input = document.getElementById(`more18-${service}-new-account`);
+  const label = input?.value.trim();
+  if (!label) return;
+  try {
+    const result = await api(`personal/signin/${service}/accounts`, { label });
+    await selectAccount(service, result.account.id);
+  } catch (error) { toast(error.message); }
 }
 
 /* The backup file goes to the engine as it is; its answer (how much came back, or why nothing did) is said. Setup's
@@ -116,12 +149,14 @@ async function restore(file) {
 }
 
 export function initMore() {
-  markLive(["more18-save", "more18-signin", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`])]);
+  markLive(["more18-save", "more18-signin", "more18-account-add", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`, `sw:more18-${id}-account`])]);
   on("more18-save", async (el) => { if (await save(el.dataset.v)) { toast(t("accounts.saved")); await loadMore(); } });
   on("more18-signin", (el) => signIn(el.dataset.v));
+  on("more18-account-add", (el) => addAccount(el.dataset.v));
   on("more18-restore", () => document.getElementById("more18-file")?.click());
   document.addEventListener("input", (e) => { if (/^more18-\w+-client$/.test(e.target?.id ?? "")) M.typed[e.target.id] = e.target.value; }); // never the secret
   document.addEventListener("change", (e) => {
+    if (/^more18-\w+-account$/.test(e.target?.id ?? "")) { void selectAccount(e.target.dataset.service, e.target.value); return; }
     if (e.target?.id !== "more18-file" || !e.target.files?.[0]) return;
     const file = e.target.files[0];
     e.target.value = "";

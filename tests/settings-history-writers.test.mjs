@@ -163,6 +163,7 @@ const unreadKeys = {
   "src/never-break/resume.ts": "messages waiting to be answered again",
   "src/orchestration-modes.ts": "one record per orchestration hand-off",
   "src/people/groups.ts": "who may do what, per group",
+  "src/personal/accounts.ts": "the personal accounts list for each service, not in the catalogue",
   "src/personal/settings.ts": "the personal connector parts, none of them in the catalogue",
   "src/plugin-catalog.ts": "one record per plugin offer",
   "src/plugins.ts": "one record per plugin",
