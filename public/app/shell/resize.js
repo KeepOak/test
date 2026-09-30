@@ -16,6 +16,7 @@ const WIDE = matchMedia("(min-width: 761px)");
 let dragging = null;
 
 const app = () => document.getElementById("app");
+const inlineSign = () => document.documentElement.dir === "rtl" ? -1 : 1;
 const appW = () => app().getBoundingClientRect().width;
 const sideW = () => S.sideW ?? USUAL.side;
 const sideWidth = () => (S.sideHidden ? 0 : S.rail ? RAIL_W : sideW());
@@ -87,7 +88,7 @@ function startDrag(e) {
   document.body.classList.add("resizing9");
   let moved = false;
   const move = (ev) => {
-    const dx = ev.clientX - x0;
+    const dx = (ev.clientX - x0) * inlineSign();
     if (Math.abs(dx) > 2) moved = true;
     if (!moved) return;
     const was = mode();
@@ -133,7 +134,7 @@ function arrows(e) {
   const kind = e.target.dataset.resize, restore = kind === "side" && hiddenNow() && e.key === "Enter";
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight" && !restore) return;
   e.preventDefault();
-  const dx = e.key === "ArrowRight" ? STEP : -STEP;
+  const dx = (e.key === "ArrowRight" ? STEP : -STEP) * inlineSign();
   if (restore) Object.assign(S, { sideHidden: false, rail: false });
   else if (kind === "side") stepSide(dx);
   else setWidth(kind, width(kind) - dx, appW());

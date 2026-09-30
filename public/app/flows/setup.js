@@ -15,7 +15,7 @@ import { api, origin } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
-import { t, language, LANGUAGES } from "../../i18n.js";
+import { t, language, LANGUAGES, languageCoverage } from "../../i18n.js";
 import { canSpeak, chooseLanguage } from "../shell/language.js";
 import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
@@ -54,7 +54,7 @@ const pose = (i) => i ? `<span class="mark mark-face ob-pose11" data-css="animat
 
 function languageControl() {
   const now = language();
-  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now })}</span></div>`;
+  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: LANGUAGES.map(({ id, label, partial }) => [id, partial ? label : ownName(id)]), value: now })}</span>${languageCoverage() ? `<small role="status">${esc(languageCoverage())}</small>` : ""}</div>`;
 }
 
 function welcome(o) {

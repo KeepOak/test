@@ -12,6 +12,7 @@ export const LANGUAGES = [
   { id: "fr", label: "Français (machine draft)", draft: true },
   { id: "es", label: "Español", draft: false },
   { id: "de", label: "Deutsch", draft: false },
+  { id: "ar", label: "العربية (ترجمة جزئية)", draft: true, partial: true, direction: "rtl" },
 ];
 /* Locale startup follows Hermes Desktop's saved-choice/OS-language fallback (Nous Research, MIT),
    adapted to Branch's bundled languages and navigator.languages preference order. */
@@ -47,6 +48,8 @@ export function tc(key, count, values = {}) {
   return t(form in dictionary || form in english ? form : `${key}.other`, { ...values, count });
 }
 export const language = () => current;
+export const languageCoverage = () => LANGUAGES.find((entry) => entry.id === current)?.partial
+  ? t("appearance.languagePartial") : "";
 /**
  * The words for a count, in the form the chosen language uses for it (Intl.PluralRules: "one", "other", and "few" or
  * "many" where a language has them). `forms` names a key per form, e.g. { one: "x.one", other: "x" }; a form with no key,
