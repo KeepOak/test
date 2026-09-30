@@ -5,7 +5,7 @@
 
 import { esc, renderNow } from "../core/dom.js";
 import { openPop, closePop, openDlg, mi, toast, ic } from "../core/ui.js";
-import { S, E, ownerHere } from "../core/state.js";
+import { S, E, ownerHere, activeId } from "../core/state.js";
 import { api, token } from "../core/api.js";
 import { on, run, has } from "../core/actions.js";
 import { markLive, isLive } from "../core/features.js";
@@ -23,6 +23,10 @@ import { say } from "../core/words.js";
 
 /* The saved choice and the worker actually running behind a gateway are separate facts. */
 let gw = null;
+let gwReadAt = 0, gwProfile = undefined;
+/** Only successfully read facts for the profile still at the window; no problem text or private worker details. */
+export const petGateway = () => ownerHere() && gwProfile === activeId() && Date.now() - gwReadAt <= 60000
+  ? { running: typeof gw?.underGateway === "boolean" ? gw.underGateway : null, problem: !!gw?.problem } : null;
 
 function gatewayPop() {
   const saved = (gw?.mode ?? "off") !== "off", running = gw?.underGateway === true;
@@ -38,6 +42,7 @@ export const gatewayOn = () => (gw ? gw.underGateway === true : null);
 export function noteGateway(read) {
   const was = gatewayOn();
   gw = read;
+  gwReadAt = Date.now(); gwProfile = activeId();
   if (gatewayOn() !== was) renderNow();
 }
 let gwFor = null, gwReading = false;
@@ -46,7 +51,8 @@ export async function readGateway() {
   gwFor = E.state;
   gwReading = true;
   const was = gatewayOn();
-  try { gw = await api("never-break"); } catch (error) { console.warn(error.message); } finally { gwReading = false; }
+  const profile = activeId();
+  try { gw = await api("never-break"); gwReadAt = Date.now(); gwProfile = profile; } catch (error) { console.warn(error.message); } finally { gwReading = false; }
   if (gatewayOn() !== was) renderNow();
 }
 

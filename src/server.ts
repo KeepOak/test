@@ -952,6 +952,7 @@ function state(app: Branch): unknown {
   const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
+    profileId: app.store.profiles.active()?.id ?? null,
     provider: app.runtime.provider.name,
     // No model set up: nothing is named as answering, and the window shows these words with the way to set one up.
     activeModel: app.runtime.models.configured ? app.runtime.models.plan(owner, "").choice : null,

@@ -31,6 +31,7 @@ export const S = {
 
 export const E = {
   state: null,
+  stateReadAt: 0,
   trunks: [],
   trunkModes: {},
   rooms: [],
@@ -54,6 +55,7 @@ export function save() {
 export async function refresh() {
   /* One request first: until the engine accepts the window, every refused request counts against sign-in. */
   const state = await api("state");
+  const stateReadAt = Date.now();
   const [trunks, sessions, profiles] = await Promise.all([
     api("trunks").catch(() => null),
     api("sessions?limit=50").catch(() => null),
@@ -64,6 +66,7 @@ export async function refresh() {
      CI), and the side list lost its Trunks and conversations until the next read. */
   if (profiles) E.profiles = profiles;
   E.state = state;
+  E.stateReadAt = stateReadAt;
   if (trunks) {
     E.trunks = trunks.trunks ?? (Array.isArray(trunks) ? trunks : []);
     E.trunksRead = true; // pass 18: an empty Trunks list is a welcome only when the engine answered
