@@ -9,12 +9,22 @@ import { on } from "../core/actions.js";
 import { openDlg, closeDlg, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { S, ownerHere, activeId } from "../core/state.js";
 
 const P = { view: null };
 const quoted = (command) => command.map((part) => (/^[\w@%+=:,./-]+$/.test(part) ? part : `"${part}"`)).join(" ");
 
+/* A late answer is kept, drawn or its error shown only for the newest read, by the same owner on the same page, with the
+   window unlocked: nothing lands behind the lock or for another person. */
+let reading = 0;
+function fence() {
+  const mine = ++reading, profile = activeId(), view = S.view;
+  return () => mine === reading && ownerHere() && activeId() === profile && S.view === view
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+}
 export async function loadPhoneAccess() {
-  try { P.view = (await api("miniapp/phone-access")).phoneAccess; } catch { P.view = null; }
+  const still = fence();
+  try { const read = (await api("miniapp/phone-access")).phoneAccess; if (still()) P.view = read; } catch { if (still()) P.view = null; }
 }
 export function phoneAccessCard() {
   const view = P.view;
@@ -42,8 +52,9 @@ export function initPhoneAccess(reload) {
     const turn = el.dataset.v, command = P.view?.[turn];
     if (!command) return;
     el.disabled = true;
-    try { P.view = (await api("miniapp/phone-access", { turn, command })).phoneAccess; closeDlg(); }
-    catch (error) { toast(error.message); el.disabled = false; }
-    await reload();
+    const still = fence();
+    try { const done = (await api("miniapp/phone-access", { turn, command })).phoneAccess; if (still()) { P.view = done; closeDlg(); } }
+    catch (error) { if (still()) { toast(error.message); el.disabled = false; } }
+    if (still()) await reload();
   });
 }
