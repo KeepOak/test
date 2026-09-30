@@ -1,6 +1,9 @@
 import { chatOwnerOnly, startedFromChat } from "./key-context.js";
 import { heldSource } from "./outside-origin.js"; // mac7/outside-resume
 import { randomUUID } from "node:crypto";
+import { lockedDown } from "./lockdown.js";
+import { underProject } from "./project-scope.js";
+import { defaultProjectId } from "./projects.js";
 import { z } from "zod";
 import type { Store, SavedRecord } from "./store.js";
 import type { Runtime } from "./runtime.js";
@@ -105,6 +108,7 @@ export function weeklyReviewWorkflow(deliverTo?: { channel: string; chatId: stri
 }
 
 export class Workflows {
+  private readonly running = new Set<string>();
   /**
    * Set by the launch: how to carry on a flow drawn as a graph. A graph flow is a saved workflow
    * to everyone outside, so "carry it on" is the one tool it already had rather than a second one
@@ -299,10 +303,46 @@ export class Workflows {
    * `source` is whoever set it going: a workflow started by a schedule or another app is held to
    * the same limits that task would have been, so it cannot be used to get around them.
    */
+  /** Resume only durable time waits, including waits restored when this engine starts.
+   * Paused/interrupted work and approval questions still need their existing controls. */
+  async tick(now = new Date()): Promise<void> {
+    const owner = this.runtime.owner;
+    if (this.store.profiles.scope() !== owner || lockedDown(this.store, owner)) return;
+    const due = this.store.list("workflows", owner).filter((record) => {
+      const until = typeof record.data.waitingUntil === "string" ? Date.parse(record.data.waitingUntil) : NaN;
+      return record.data.status === "waiting_time" && Number.isFinite(until) && until <= now.getTime();
+    }).slice(0, 20);
+    for (const record of due) {
+      if (this.store.profiles.scope() !== owner || lockedDown(this.store, owner)) return;
+      if (this.running.has(`${owner}:${record.id}`)) continue;
+      // The preceding wait may have been paused or removed while another due flow ran.
+      const current = this.store.get("workflows", owner, record.id);
+      if (current?.data.status !== "waiting_time" || current.data.waitingUntil !== record.data.waitingUntil) continue;
+      try { await this.run(owner, record.id); }
+      catch (error) {
+        const after = this.store.get("workflows", owner, record.id);
+        if (after?.data.status === "waiting_time" && after.data.waitingUntil === record.data.waitingUntil)
+          this.setStatus(owner, record.id, { status: "failed", error: errorText(error) });
+      }
+    }
+  }
+
   async run(owner: string, id: string, source: RunSource = "owner", chain: readonly string[] = [], within?: readonly string[]): Promise<WorkflowView> {
+    // Cover Trunk setup as well as step execution: its asynchronous setup must not let
+    // a manual continuation and an overlapping clock beat start the same wait twice.
+    const key = `${owner}:${id}`;
+    if (this.running.has(key)) throw new Error("That workflow is working right now");
+    this.running.add(key);
+    try { return await this.runOnce(owner, id, source, chain, within); }
+    finally { this.running.delete(key); }
+  }
+
+  private async runOnce(owner: string, id: string, source: RunSource, chain: readonly string[], within?: readonly string[]): Promise<WorkflowView> {
     let current = this.view(owner, id);
     if (current.status === "running") throw new Error("That workflow is working right now");
     const fresh = ["idle", "completed", "failed"].includes(current.status);
+    const savedProject = this.store.get("workflows", owner, id)?.data.project;
+    const project = fresh ? this.store.projects.active(owner).id : typeof savedProject === "string" ? savedProject : defaultProjectId;
     const limit = this.limitFor(owner, id, fresh, within); // mac7/lockdown-fix
     const held = this.heldSource(owner, id, fresh, source); // mac7/outside-resume
     const startedBy = this.startedBy(owner, id); // Q114/Q119
@@ -310,7 +350,7 @@ export class Workflows {
     const byModel = insideModelCall() || (!fresh && (this.store.get("workflows", owner, id)?.data as { byModel?: unknown } | undefined)?.byModel === true);
     const carryOn = async (): Promise<WorkflowView> => {
       current = this.setStatus(owner, id, { status: "running", error: null, question: null, pausedFrom: null, pendingApproval: null, taskLimit: limit,
-        startedFrom: held, startedBy, byModel, ...(fresh ? { cursor: 0 } : {}) });
+        startedFrom: held, startedBy, byModel, project, ...(fresh ? { cursor: 0 } : {}) });
       for (let index = current.cursor; index < current.steps.length; index++) {
         // Q121 (NAS 7af12b6): a Trunk removed while its workflow works stops it before the next step, as each step used to ask.
         if (startedBy && !this.runtime.trunkKeysFor(startedBy))
@@ -326,7 +366,7 @@ export class Workflows {
     // Q114: the whole carry-on runs as the Trunk that started it, so a refusal (another Trunk, or one that is
     // gone) comes before anything is marked running, and the workflow is left exactly as it stopped.
     const go = byModel ? () => underModelCall(id, carryOn) : carryOn;
-    return startedBy ? this.runtime.asTrunkWork(startedBy, go) : go();
+    return underProject(project, () => startedBy ? this.runtime.asTrunkWork(startedBy, go) : go());
   }
   private async step(owner: string, id: string, index: number, step: WorkflowStep, view: WorkflowView, source: RunSource, chain: readonly string[] = [], limit: string[] | null = null):
     Promise<{ halt: boolean; cursor?: number; patch?: Record<string, unknown> }> {
