@@ -109,7 +109,7 @@ import { notIntegratedBenchmarks } from "./benchmarks.js";
 import { compareStudies, comparisonTable, studyTable, type StudyRunResult } from "./study.js";
 import { runToolChecksSafely } from "./tool-evaluations.js";
 
-import { McpSharingSchema, shareableTools, type McpServer } from "./mcp-server.js";
+import { McpSharingSchema, shareableTools, supportedProtocolVersions, type McpServer } from "./mcp-server.js";
 // Wave 7: Branch as a first-class MCP citizen — streaming, preflight, records of what a client was
 // shown, connection lifecycle, the "try a server" bench, and small pages an outside server sends.
 import { hiddenToolsText } from "./mcp-policy.js";
@@ -126,7 +126,7 @@ import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "
 import { conversationPathsApi, conversationPathsRoute, readMarksPath } from "./conversation-paths-api.js";
 import { ArtifactPageSchema, ArtifactSaveSchema, artifactPageRoute, holdArtifactPage } from "./artifact-pages.js";
 import { readServingSettings, saveServingSettings } from "./mcp-server.js";
-import { validateStateless, statelessFailure, StatelessError } from "./mcp-stateless.js";
+import { statelessFailure, StatelessError } from "./mcp-stateless.js";
 import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from "./tool-loading.js";
 import { handleA2a, remoteAgentsApi } from "./a2a-routes.js";
 import type { createBranch } from "./index.js";
@@ -3600,6 +3600,51 @@ export function mcpAppPage(request: IncomingMessage, response: ServerResponse, p
   response.end(page.body);
   return true;
 }
+/** Authentication and Origin checks have already run. SDK owns the bounded request stream. */
+async function serveModernMcp(mcp: McpServer, request: IncomingMessage, response: ServerResponse, body: unknown): Promise<void> {
+  if (!mcp.sharing().statelessPreview) throw new StatelessError(-32022, "Unsupported protocol version", {
+    requested: "2026-07-28", supported: [...supportedProtocolVersions],
+  });
+  mcp.requireModern();
+  const stamp = mcp.modernAccessStamp();
+  const controller = new AbortController();
+  const disconnected = () => controller.abort(new Error("MCP client disconnected"));
+  response.once("close", disconnected);
+  const timer = setInterval(() => {
+    try {
+      mcp.requireModern();
+      if (stamp !== mcp.modernAccessStamp()) disconnected();
+    } catch { disconnected(); }
+  }, 250);
+  timer.unref();
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(request.headers))
+    if (value !== undefined) headers.set(name, Array.isArray(value) ? value.join(", ") : value);
+  try {
+    const input = new Request("http://127.0.0.1/mcp", { method: "POST", headers,
+      body: JSON.stringify(body), signal: controller.signal });
+    const result = await mcp.modern.fetch(input, { parsedBody: body });
+    if (response.destroyed) return;
+    response.writeHead(result.status, { ...Object.fromEntries(result.headers), "cache-control": "no-store" });
+    const reader = result.body?.getReader();
+    if (reader) {
+      try {
+        while (!controller.signal.aborted) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          if (!response.write(chunk.value)) await new Promise<void>((resolve) => {
+            const done = () => { response.off("drain", done); response.off("close", done); resolve(); };
+            response.once("drain", done); response.once("close", done);
+          });
+        }
+      } finally { await reader.cancel().catch(() => undefined); }
+    }
+    response.end();
+  } catch (error) {
+    if (response.headersSent) response.destroy(); else throw error;
+  } finally { clearInterval(timer); response.off("close", disconnected); }
+}
+
 async function handleMcpRequest(
   app: Branch,
   request: IncomingMessage,
@@ -3649,13 +3694,7 @@ async function handleMcpRequest(
     if (request.headers["mcp-protocol-version"] === "2026-07-28" || metadata && typeof metadata === "object"
       && "io.modelcontextprotocol/protocolVersion" in metadata) {
       try {
-        const parsed = validateStateless(body, request.headers);
-        const result = await mcp.handleStateless(parsed);
-        const status = result.error?.code === -32601 ? 404 : result.error ? 400 : 200;
-        if (!response.destroyed && !response.writableEnded) {
-          response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
-          response.end(JSON.stringify(result));
-        }
+        await serveModernMcp(mcp, request, response, body);
       } catch (error) {
         send(response, 400, statelessFailure(body, error instanceof StatelessError ? error : new StatelessError(-32602, "Invalid stateless request")));
       }

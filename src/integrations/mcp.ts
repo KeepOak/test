@@ -206,7 +206,7 @@ export async function openMcp(
 
 async function tryStateless(config: McpConfig, env: NodeJS.ProcessEnv, policy: { guard(base: typeof fetch): typeof fetch } | undefined,
   cache: McpToolCache | undefined, timeout: number): Promise<Awaited<ReturnType<typeof openStatelessMcp>> | undefined> {
-  if (config.transport !== 'http' || (config.protocol ?? 'legacy') === 'legacy') return undefined;
+  if ((config.protocol ?? 'legacy') === 'legacy') return undefined;
   let opened: Awaited<ReturnType<typeof openStatelessMcp>> | undefined;
   try {
     opened = await openStatelessMcp(config, env, policy, timeout);

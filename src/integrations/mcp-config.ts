@@ -9,6 +9,7 @@ const common = {
   expectedVersion: z.string().min(1).max(100),
 };
 const stdioShape = {
+  protocol: z.enum(['legacy', 'stateless-preview', 'auto']).optional(),
   transport: z.literal('stdio'), command: z.string().min(1),
   args: z.array(z.string()).max(40).default([]), cwd: z.string().optional(),
   envKeys: z.array(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/)).max(20).default([]),
