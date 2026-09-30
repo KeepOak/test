@@ -38,6 +38,7 @@ import { Knowledge, registerKnowledge } from "./knowledge.js";
 import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
+import { registerAnswerAdapters } from './answer-adapter-tools.js';
 import { isCurrentFact, memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
@@ -621,6 +622,7 @@ export async function createBranch(options: {
     options.clock,
   );
   const decisions = new JevDecisions(store, runtime.owner, options.jev?.runner);
+  registerAnswerAdapters(registry, runtime);
   registerJevDecisions(registry, decisions);
   // P17-D §3: learn an app or workflow and prove it, as a narrowed task that saves a workbook (src/workbooks.ts).
   const workbooks = new Workbooks({ store, owner: runtime.owner, registry, run: (options) => runtime.run(options) });
