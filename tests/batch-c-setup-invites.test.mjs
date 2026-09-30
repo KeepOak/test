@@ -111,28 +111,17 @@ test("setup's model with no accounts says why its switch cannot be used", async 
   assert.deepEqual(errors, []);
 });
 
-test("the first run's ways to think open the real thing, then carry on with the accounts", async (t) => {
-  const { page, errors } = await newWindow(t);
-  const first = page.locator(".first");
+test("UP-UI-062: Replay the first run opens the one setup journey, which carries on to the models and accounts", async (t) => {
+  const { page, call, errors } = await newWindow(t);
+  await call("/api/onboarding", { done: false });
   await page.evaluate(() => import("/app/core/actions.js").then((m) => m.run("firstrun")));
-  await first.locator('[data-act="fr-next"]').first().click();
-  const computer = first.locator('[data-act="fr-way-computer"]');
-  await computer.waitFor();
-  for (const act of ["fr-way-computer", "fr-way-chatgpt", "fr-way-claude"]) assert.equal(await first.locator(`[data-act="${act}"]`).getAttribute("aria-disabled"), null, `${act} is live`);
-  await computer.click();
-  const picker = page.locator(".scrim .dlg .lp");
-  await picker.waitFor();
-  await page.locator('.scrim [data-act="dlg-close"]').first().click();
-  await first.locator(".ways [data-act='fr-acc'], .ways").first().waitFor();
-  await until(async () => (await first.locator("h1").innerText()) !== "" && await first.locator('[data-act="fr-way-computer"]').count() === 0, "on to the accounts step");
-  // Back to "How should Branch think?", then ChatGPT: its sign-in, in the Add an account wizard.
-  await page.evaluate(() => import("/app/core/actions.js").then((m) => m.run("firstrun")));
-  await first.locator('[data-act="fr-next"]').first().click();
-  await first.locator('[data-act="fr-way-chatgpt"]').click();
-  await page.locator('.scrim [data-act="aa-dev"], .scrim [data-act="aa-back"]').first().waitFor();
-  assert.equal(await page.locator('.scrim [data-act="aa-prov"]').count(), 0, "straight to the plan, not the list of services");
-  await page.locator('.scrim [data-act="dlg-close"]').first().click();
-  await until(async () => await first.locator('[data-act="fr-way-chatgpt"]').count() === 0, "carries on once it closes");
+  await page.locator("#ob-trust").waitFor();
+  assert.equal(await page.locator(".first").count(), 0, "the old eight-step first run is gone");
+  assert.equal(await page.locator(".welcome10").count(), 0, "the New to Branch card closes");
+  await page.locator("#ob-trust").check();
+  await page.locator('[data-act="ob-next"]').click();
+  await page.locator('.ob9 [data-act="addacct"]').waitFor();
+  assert.equal(await page.locator('.ob9 [data-act="addacct"]').getAttribute("aria-disabled"), null, "adding an account is live");
   assert.deepEqual(errors, []);
 });
 
