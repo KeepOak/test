@@ -10423,5 +10423,6 @@
   "onboarding.routine.question": "What boring task should I take off your plate?",
   "onboarding.routine.example": "For example: summarize my open tasks every weekday at 9am.",
   "onboarding.routine.hint": "Optional. Review the task, time, who runs it and permissions before confirming. Selected Trunks are created when leaving this step.",
-  "onboarding.routine.review": "Review my first routine"
+  "onboarding.routine.review": "Review my first routine",
+  "onboarding.routine.changed": "Setup changed. Reopen onboarding to continue."
 }

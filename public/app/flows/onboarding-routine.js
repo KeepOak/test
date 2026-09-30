@@ -22,7 +22,7 @@ async function review(close) {
   const current = () => actor === token.get() && profile === activeId() && unlocked();
   busy = true;
   try {
-    await close();
+    await close(current);
     if (S.ob || !current()) return;
     run("view", { dataset: { v: "automations", tab: "scheduled" } });
     const box = $("#nl-in");

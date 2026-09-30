@@ -10424,5 +10424,6 @@
   "onboarding.routine.question": "Quelle tâche ennuyeuse puis-je vous épargner ?",
   "onboarding.routine.example": "Par exemple : résume mes tâches en cours chaque jour ouvré à 9 h.",
   "onboarding.routine.hint": "Facultatif. Vérifiez la tâche, l’heure, qui l’exécute et les autorisations avant de confirmer. Les Trunks sélectionnés sont créés en quittant cette étape.",
-  "onboarding.routine.review": "Examiner ma première routine"
+  "onboarding.routine.review": "Examiner ma première routine",
+  "onboarding.routine.changed": "La configuration a changé. Rouvrez le guide de démarrage pour continuer."
 }

@@ -239,15 +239,16 @@ export async function openSetup(jump = 1, how = "start") {
 /* One change to how far setup got, sent in order and merged by the engine; its answer is what the Guide menu and
    Overview's "Finish setting up" read. saveProgress is Overview's way in too, so both go through the one queue. */
 let sending = Promise.resolve();
-export function saveProgress(change) {
-  const saved = sending.then(() => api("onboarding", change)).then((view) => { if (E.state) E.state.onboarding = view; return view; });
+export function saveProgress(change, current = () => true) {
+  const saved = sending.then(() => { if (!current()) throw new Error(t("onboarding.routine.changed")); return api("onboarding", change); })
+    .then((view) => { if (current() && E.state) E.state.onboarding = view; return view; });
   sending = saved.catch(() => undefined); // the queue goes on; the caller is told why this one was refused
   return saved;
 }
-function progress(o, change) {
+function progress(o, change, current = () => true) {
   for (const id of change.completed ?? []) o.completed.add(id);
   if (!o.mine) return;
-  saveProgress(change).catch((error) => toast(error.message));
+  saveProgress(change, current).catch((error) => { if (current()) toast(error.message); });
 }
 const doneWith = (o, id) => progress(o, { completed: [id] });
 
@@ -262,11 +263,11 @@ export function onboardingHint() {
 
 /* "Skip for now", Escape: everything chosen is already saved; the engine notes setup was skipped, so a reload lands in
    the window rather than back in setup (flows/flows.js). */
-async function close() {
+async function close(current = () => true) {
   const o = S.ob;
-  if (!o) return;
-  if (!(await leaveTrunks(o))) return; // Trunks picked and not yet made are made on leaving, as Continue does
-  progress(o, { skipped: true });
+  if (!o || !current()) return;
+  if (!(await leaveTrunks(o, current)) || S.ob !== o || !current()) return; // Trunks picked and not yet made are made on leaving, as Continue does
+  progress(o, { skipped: true }, current);
   cancelHello(o);
   $(".ob9")?.remove();
   S.ob = null;
@@ -275,20 +276,26 @@ async function close() {
 
 /* Leaving "Your first Trunks" makes each picked template a Trunk, skipping names that already exist. Picking one is
    asking for Trunks, so they are switched on first if they are off. */
-async function makeTrunks(o) {
-  if (E.trunkModes.trunks === "off") await api("trunks/switch", { part: "trunks", mode: "on" });
+async function makeTrunks(o, current = () => true) {
+  const ask = async (...args) => {
+    if (S.ob !== o || !current()) throw new Error(t("onboarding.routine.changed"));
+    const answer = await api(...args);
+    if (S.ob !== o || !current()) throw new Error(t("onboarding.routine.changed"));
+    return answer;
+  };
+  if (E.trunkModes.trunks === "off") await ask("trunks/switch", { part: "trunks", mode: "on" });
   const have = new Set(E.trunks.map((tr) => tr.name));
   for (const i of o.tpls) {
     const [name, description] = TEMPLATES[i].slice(0, 2).map((key) => t(key));
     const [, , colour, shape] = TEMPLATES[i];
     if (have.has(name)) continue;
     /* The create takes name, title and description; the template's face follows as an edit, as flows/trunk.js does. */
-    const { trunk } = await api("trunks", { name, description });
-    await api(`trunks/${encodeURIComponent(trunk.id)}`, { chosenColour: hex(colour), look: { ...lookOf(null), shape: SHAPE_NAMES[shape] } });
+    const { trunk } = await ask("trunks", { name, description });
+    await ask(`trunks/${encodeURIComponent(trunk.id)}`, { chosenColour: hex(colour), look: { ...lookOf(null), shape: SHAPE_NAMES[shape] } });
   }
   /* A proposal is made with exactly the fields Branch proposed, the owner's own create (as chat/mktrunk.js). */
   for (const p of o.proposals) {
-    if (o.picks.has(p.name) && !have.has(p.name)) await api("trunks", { name: p.name, title: p.title, description: p.description });
+    if (o.picks.has(p.name) && !have.has(p.name)) await ask("trunks", { name: p.name, title: p.title, description: p.description });
   }
   o.tpls.clear();
   o.picks.clear();
@@ -344,9 +351,9 @@ async function go(i) {
 
 /* Leaving "Your first Trunk" with Trunks picked and not yet made makes them; false (the engine's words shown) when it
    could not, so the step stays. */
-async function leaveTrunks(o) {
+async function leaveTrunks(o, current = () => true) {
   if (WIZARD[o.i] !== "trunks" || !(o.tpls.size || o.picks.size)) return true;
-  try { await makeTrunks(o); o.error = ""; doneWith(o, "trunks"); return true; } catch (error) { o.error = error.message; draw(); return false; }
+  try { await makeTrunks(o, current); o.error = ""; progress(o, { completed: ["trunks"] }, current); return true; } catch (error) { if (S.ob === o && current()) { o.error = error.message; draw(); } return false; }
 }
 
 /* The last step ends setup: the Trunks picked are made, then the engine's record says setup was finished. The steps

@@ -10423,5 +10423,6 @@
   "onboarding.routine.question": "¿Qué tarea aburrida puedo quitarte de encima?",
   "onboarding.routine.example": "Por ejemplo: resume mis tareas pendientes cada día laborable a las 9.",
   "onboarding.routine.hint": "Opcional. Revisa la tarea, la hora, quién la ejecuta y los permisos antes de confirmar. Los Trunks seleccionados se crean al salir de este paso.",
-  "onboarding.routine.review": "Revisar mi primera rutina"
+  "onboarding.routine.review": "Revisar mi primera rutina",
+  "onboarding.routine.changed": "La configuración ha cambiado. Abre de nuevo la introducción para continuar."
 }
