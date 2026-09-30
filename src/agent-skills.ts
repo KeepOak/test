@@ -16,7 +16,7 @@ import { packSkill, zipRead, zipWrite, type ZipLimits } from "./skill-package.js
  *
  * Writing one does the opposite, so a skill made here can be used by any agent that reads the layout.
  */
-export const agentSkillLimits: ZipLimits = { entries: 64, entryBytes: 128 * 1024, totalBytes: 512 * 1024 };
+export const agentSkillLimits: ZipLimits = { entries: 64, entryBytes: 128 * 1024, totalBytes: 512 * 1024, strictText: true };
 const segment = /^[A-Za-z0-9_][A-Za-z0-9._ -]{0,99}$/;
 const maxNotes = 12;
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { hiddenSkillCharacters, upstreamSkillPatterns } from "./skill-scan-patterns.js";
 
 /**
  * Scans a skill document before it can be activated. It looks for hardcoded secrets, instructions
@@ -7,7 +8,7 @@ import { z } from "zod";
  */
 export const SkillScanPolicySchema = z.object({ policy: z.enum(["block", "review"]).default("block") }).strict();
 export type SkillScanPolicy = z.infer<typeof SkillScanPolicySchema>["policy"];
-export interface SkillFinding { kind: "secret" | "exfiltration" | "override"; line: number; excerpt: string; reason: string }
+export interface SkillFinding { kind: "secret" | "exfiltration" | "override" | "persistence" | "destructive" | "obfuscation" | "network"; line: number; excerpt: string; reason: string }
 
 /** Shared with the conversation share export, which blanks these out before anything leaves the app. */
 export const secretPatterns: [RegExp, string][] = [
@@ -34,12 +35,16 @@ const overridePatterns: [RegExp, string][] = [
 export function scanSkill(document: string): SkillFinding[] {
   const findings: SkillFinding[] = [];
   const lines = document.split(/\r?\n/);
-  const groups: [SkillFinding["kind"], [RegExp, string][]][] = [["secret", secretPatterns], ["exfiltration", exfiltrationPatterns], ["override", overridePatterns]];
-  for (const [index, text] of lines.entries()) for (const [kind, patterns] of groups) {
-    const hit = patterns.find(([pattern]) => pattern.test(text));
-    if (!hit) continue;
-    findings.push({ kind, line: index + 1, excerpt: text.trim().slice(0, 120), reason: hit[1] });
-    if (findings.length >= 20) return findings;
+  const groups: [SkillFinding["kind"], [RegExp, string][]][] = [["secret", secretPatterns], ["exfiltration", exfiltrationPatterns], ["override", overridePatterns], ...upstreamSkillPatterns];
+  const invisible = new RegExp(hiddenSkillCharacters.source, "g");
+  for (const [index, text] of lines.entries()) {
+    const visible = text.replace(invisible, "");
+    for (const [kind, patterns] of groups) {
+      const hit = patterns.find(([pattern]) => pattern.test(text) || pattern.test(visible));
+      if (!hit) continue;
+      findings.push({ kind, line: index + 1, excerpt: text.trim().slice(0, 120), reason: hit[1] });
+      if (findings.length >= 20) return findings;
+    }
   }
   return findings;
 }
