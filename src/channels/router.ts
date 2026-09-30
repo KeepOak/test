@@ -19,7 +19,7 @@ import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatSte
 import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
 import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
-import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
+import { readChatIntake, albumWaitMs, splitPieceChars, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
 import { chatLiveSwitches, commandsInPairedDm, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
@@ -228,6 +228,11 @@ export interface ChannelAdapter {
    */
   miniAppUser?(initData: string): MiniAppUser;
   stop(): Promise<void>;
+  /**
+   * Taken out for good (removed, or replaced by a connection with another token), unlike stop() when Branch closes:
+   * drops what the app saved about its incoming messages (Telegram's inbox), so none of their words are kept.
+   */
+  forget?(): void;
 }
 /**
  * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
@@ -589,6 +594,7 @@ export class ChannelRouter {
     this.adapters.delete(id);
     this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
+    try { attached.adapter.forget?.(); } catch { /* the saved rows are tidied when this connection is next opened */ }
   }
   async detachAll(): Promise<void> {
     if (this.pump) clearInterval(this.pump);
@@ -1246,7 +1252,8 @@ export class ChannelRouter {
     // With no split wait, a turn gathering only for an album takes only that album's photos (Codex P2).
     const first = turn.messages[0], sameAlbum = !!message.groupId && message.groupId === first?.groupId;
     const joins = this.switches().steering === "on"
-      || (message.senderId === first?.senderId && !message.caughtUp && (this.intake().splitWaitMs > 0 || sameAlbum));
+      || (message.senderId === first?.senderId && !message.caughtUp
+        && ((this.intake().splitWaitMs > 0 && (first?.text.length ?? 0) >= splitPieceChars) || sameAlbum));
     if (turn.phase === "gathering" && joins && fitsTurn(turn.messages, message)) {
       turn.messages.push(message);
       return new Promise((resolve) => turn.waiters.push(resolve));
@@ -1374,14 +1381,16 @@ export class ChannelRouter {
   }
   /**
    * How long a new turn gathers before it runs: the steering window ("on"), the owner's "Wait for messages split in
-   * two", and at least `albumWaitMs` for a photo that came in an album while albums are joined. `mergeWindowMs` 0 turns
-   * all gathering off (tests that want each message on its own).
+   * two" after a message long enough to be a split one's first piece, and at least `albumWaitMs` for a photo that came
+   * in an album while albums are joined. `mergeWindowMs` 0 turns all gathering off (tests that want each message on its
+   * own). chat-speed: every other message starts at once; the owner's "Hi" waited a whole second here.
    */
   private gatherMs(first: InboundMessage): number {
     if (this.mergeWindowMs <= 0) return 0;
     const intake = this.intake(), steering = this.switches().steering === "on" ? this.mergeWindowMs : 0;
     if (first.caughtUp) return steering; // messages fetched after a restart are old ones, each already whole
-    return Math.max(steering, intake.splitWaitMs, first.groupId && intake.albums ? albumWaitMs : 0);
+    const split = first.text.length >= splitPieceChars ? intake.splitWaitMs : 0;
+    return Math.max(steering, split, first.groupId && intake.albums ? albumWaitMs : 0);
   }
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
@@ -1456,6 +1465,8 @@ export class ChannelRouter {
             waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
           turn.runId = started.id;
           turn.startedAt = Date.now();
+          // chat-speed: when the reply's first words were in the chat, beside when the model wrote them (first_words).
+          if (turn.reply) turn.reply.onFirstShown = () => this.store.event(started.id, "channel.first_shown", { ms: Date.now() - receivedAt });
           live?.thinking();
           if (turn.dropped) this.runtime.cancel(started.id);
           this.passNotes(turn);

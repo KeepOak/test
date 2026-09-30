@@ -139,8 +139,22 @@ export class SnapshotStore {
     await writeFile(join(this.gitDir, "info", "attributes"), exactBytes);
     return true;
   }
+  /**
+   * One snapshot step at a time: two `git add` runs on the one hidden index would trip over its lock, and a failed take
+   * turns snapshots off until Branch restarts. A task's snapshot now runs beside its first model call (src/rewind.ts),
+   * so the next message's can start while the last one's is still going.
+   */
+  private queue: Promise<unknown> = Promise.resolve();
+  private inTurn<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(work, work);
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
   /** Records every workspace file (except the excluded ones) and returns the snapshot's id. */
-  async take(): Promise<string> {
+  take(): Promise<string> {
+    return this.inTurn(() => this.takeNow());
+  }
+  private async takeNow(): Promise<string> {
     if (!(await this.available())) throw new Error("Snapshots need Git, which is not installed on this computer.");
     const pathspecs = join(this.gitDir, "branch-pathspecs");
     const skipped = await this.unwanted();
@@ -181,9 +195,12 @@ export class SnapshotStore {
    * Puts the workspace back to a snapshot: every kept file gets its kept bytes, and a file that has
    * appeared since (and is not excluded) is removed. Take a snapshot first if this should be undoable.
    */
-  async restore(id: string): Promise<{ changed: string[]; removed: string[] }> {
-    if (!treeId.test(id)) throw new Error("That snapshot id is not valid");
-    await this.take();
+  restore(id: string): Promise<{ changed: string[]; removed: string[] }> {
+    if (!treeId.test(id)) return Promise.reject(new Error("That snapshot id is not valid"));
+    return this.inTurn(() => this.restoreNow(id));
+  }
+  private async restoreNow(id: string): Promise<{ changed: string[]; removed: string[] }> {
+    await this.takeNow();
     const diff = await this.call(["diff-index", "--cached", "--no-renames", "--name-status", "-z", id, "--"]);
     if (!diff.ok) throw new Error(`The snapshot could not be read: ${firstLine(diff.stderr)}`);
     const { changed, added } = parseNameStatus(diff.stdout);

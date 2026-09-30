@@ -109,7 +109,7 @@ import { keyWords, ownerFactsBlock, ownersLastMessage, personalQuestion, relevan
 import { mergeSummaries, parseSessionSummary, statedLists, summaryText, type SessionSummary } from "./session-summary.js";
 import { chatEngineSettings, condenseMessages, earlierTurns, shouldCondense, standaloneQuestion } from "./chat-engine.js"; // w911 (A0847)
 import {
-  CheckError, StallError, LocalModelSilentError, localFirstReplyGraceMs, ReliabilityOptionsSchema, CompletionCheckSchema, clipToolResult, evaluateChecks, shrinkToolResults, withStallWatchdog,
+  CheckError, StallError, LocalModelSilentError, localFirstReplyGraceMs, ReliabilityOptionsSchema, CompletionCheckSchema, clipToolResult, evaluateChecks, shrinkToolResults, shrinkEarlierTurns, withStallWatchdog,
   type FirstReplyWait,
   thinkingKeepsAlive, thinkingCharsPerToken, thinkingStallWindows,
   type CompletionCheck, type ReliabilityInput, type ReliabilityOptions,
@@ -242,6 +242,8 @@ export interface FollowUp { id: string; prompt: string; createdAt: string; short
   /** mac7/outside-review: the tools the task that queued it had; the task reading it gets no more. */
   permissions?: string[] }
 /** mac7/outside-review: what a queued message keeps of the task that queued it (see FollowUp). */
+/** chat-speed: how long a chat app's turn waits for the meaning half of the automatic document lookup (addDocuments). */
+export const chatLookupMs = 300;
 /** mac7/residuals (4b): why a script in an Ask first conversation is asked about every time. */
 export const scriptAskFirstHold = "In Ask first, every script is asked about on its own";
 /** P17-D §3: a learning task asks about every step it takes in the browser, each time, whatever was said before. */
@@ -2387,6 +2389,7 @@ ${run.output.slice(0, 6000)}`;
   private finish(run: Run, status: Run["status"], output: string): Run {
     const finished = this.store.finish(run.id, status, output);
     this.egress.forget(run.id);
+    this.chatShrunk.delete(run.id);
     this.store.event(run.id, "run.finished", { status, output });
     // Live steps: a finished task's thoughts go a minute later (the window has folded its steps by then).
     if (this.thoughtsNow.has(run.id)) setTimeout(() => this.thoughtsNow.delete(run.id), 60_000).unref?.();
@@ -3181,7 +3184,10 @@ ${run.output.slice(0, 6000)}`;
     try {
       const question = await this.searchQuestion(run, context, messages);
       // mac7/walk-rules: looked up as part of this task, so its rules decide which files' passages may come in.
-      const found = await underTask(run.id, () => this.documents!.contextFor(context.owner, question, context.signal)); // w911 (A0847) hook
+      // chat-speed: a chat app's turn looks things up by meaning only while that is quick. Asking the embedding service
+      // took 0.6 to 1.1 seconds before a Telegram "Hi" (2026-09-29); past `chatLookupMs` the words-only matches stand.
+      const signal = context.source === "channel" ? AbortSignal.any([context.signal, AbortSignal.timeout(chatLookupMs)]) : context.signal;
+      const found = await underTask(run.id, () => this.documents!.contextFor(context.owner, question, signal)); // w911 (A0847) hook
       if (!found) { span?.end("ok", "", { "branch.retrieval.passages": 0 }); return; }
       const at = ids.findIndex((id) => id !== null), position = at < 0 ? messages.length : at;
       messages.splice(position, 0, { role: "system", content:
@@ -3591,7 +3597,7 @@ ${run.output.slice(0, 6000)}`;
   private async completeFitted(run: Run, messages: Message[], ids: (number | null)[], context: ToolContext, route: ModelRoute,
     every: Message | undefined, preview?: (text: string) => void): Promise<Completion> {
     try {
-      return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
+      return await this.completeWithRetries(run, this.chatSized(run, context, every ? [...messages, every] : messages), context, route, preview);
     } catch (error) {
       // Dogfood follow-up: an HTTP refusal or a failure mid-stream, in any service's words; the maximum it stated wins.
       const overflow = overflowOf(error);
@@ -3602,9 +3608,27 @@ ${run.output.slice(0, 6000)}`;
       this.store.event(run.id, "context.window_learned", { preset: preset.id, sent: sent.catalog + sent.messages, room,
         ...(overflow.stated ? { stated: overflow.stated } : {}) });
       await this.fitContext(run, messages, ids, context, route);
-      return await this.completeWithRetries(run, every ? [...messages, every] : messages, context, route, preview);
+      return await this.completeWithRetries(run, this.chatSized(run, context, every ? [...messages, every] : messages), context, route, preview);
     }
   }
+  /**
+   * chat-speed: what a chat app's turn sends: what was said before, but not the bulky tool results of turns before the
+   * last one (src/reliability.ts). A "Hi" carried 42,000 characters of them. Shrunk in a copy, only as the request is
+   * sent, so a summary of the conversation (maybeCompact) still reads them whole; the owner's window sends them all.
+   */
+  private chatSized(run: Run, context: ToolContext, messages: Message[]): Message[] {
+    if (context.source !== "channel" || context.depth) return messages;
+    const sent = messages.map((message) => ({ ...message }));
+    const shrunk = shrinkEarlierTurns(sent, 2);
+    if (!shrunk) return messages;
+    if (!this.chatShrunk.has(run.id)) {
+      this.chatShrunk.add(run.id);
+      this.store.event(run.id, "context.earlier_results_shrunk", { results: shrunk });
+    }
+    return sent;
+  }
+  /** Tasks whose `context.earlier_results_shrunk` is written (once each; cleared as the task settles). */
+  private readonly chatShrunk = new Set<string>();
   /**
    * dogfood D22: this task's own earlier work (its tool calls and what they gave back) folded into one note, so a long
    * turn of reading carries on instead of running out of room. The newest call and its results stay as they are, and

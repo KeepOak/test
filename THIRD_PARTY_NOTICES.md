@@ -3604,6 +3604,16 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### Telegram inbox, retries and delivery errors: OpenClaw, grammY auto-retry, Hermes Agent (MIT)
+
+Written afresh for Branch; the parts that follow a source's design closely are named here.
+
+- `src/channels/telegram-inbox.ts` and the poll in `src/channels/telegram.ts`: a Telegram update is saved before the read position moves on, the committed save being the acknowledgement, after OpenClaw's `extensions/telegram/src/polling-session.ts` and `extensions/telegram/src/telegram-ingress-spool.ts`. The 409 Conflict handling (delete the webhook, back off from 30 seconds to ten minutes with jitter) follows `extensions/telegram/src/polling-session-restart-policy.ts` and `polling-session.ts` in the same project (https://github.com/openclaw/openclaw, commit c4461b5, Copyright (c) 2026 OpenClaw Foundation, MIT; GitHub reports the licence as NOASSERTION, the LICENSE file is MIT).
+- `src/channels/telegram-retry.ts` and `call()` in `src/channels/telegram.ts`: waiting exactly `retry_after`, backing off on server and network errors, and following `migrate_to_chat_id`, after grammY auto-retry's `src/mod.ts` (https://github.com/grammyjs/auto-retry, commit 9fad835, Copyright (c) 2021-2024 KnorpelSenf, MIT).
+- `sendErrorKind` and the "attempting" state in `src/channels/deliveries.ts`: gone chats never retried, flood waits honoured, other errors backed off, and a send cut off mid-way marked when it is sent again, after Hermes Agent's `gateway/delivery_ledger.py` and the send-error table in `gateway/platforms/base.py` (https://github.com/NousResearch/hermes-agent, commit 94f3f17, Copyright (c) 2025 Nous Research, MIT).
+
+All three are used under the MIT licence, whose text is given under IronClaw above.
+
 ### Helper lifecycle (ideas only), MIT and Apache-2.0
 
 `src/helper-tree.ts` and the helper start, stop and limit in `src/runtime.ts` (`delegateBackground`, `cancel`, `stopHelpers`) were written for Branch after reading these projects; no code was copied.
