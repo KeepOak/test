@@ -1,4 +1,4 @@
-import { parseSkillDocument, skillDocumentLimit } from "./skill-document.js";
+import { parseSkillDocument } from "./skill-document.js";
 import { packSkill, zipRead, zipWrite, type ZipLimits } from "./skill-package.js";
 
 /**
@@ -11,22 +11,20 @@ import { packSkill, zipRead, zipWrite, type ZipLimits } from "./skill-package.js
  * - the front matter must meet the Agent Skills rules, which `parseSkillDocument` already checks
  *   (lowercase name with single dashes, at most 64 long; description up to 1024), and the name must
  *   match the folder it sits in, as the layout requires;
- * - text references are kept with the package and, while they fit, added to the instructions,
- *   because Branch gives the assistant one document per skill;
+ * - text references stay separate and are loaded through skills.read_file when a task needs them;
  * - programs in `scripts/` and files in `assets/` are left out and named, never run or unpacked.
  *
  * Writing one does the opposite, so a skill made here can be used by any agent that reads the layout.
  */
-export const agentSkillLimits: ZipLimits = { entries: 64, entryBytes: 128 * 1024, totalBytes: 512 * 1024 };
+export const agentSkillLimits: ZipLimits = { entries: 64, entryBytes: 128 * 1024, totalBytes: 512 * 1024, strictText: true };
 const segment = /^[A-Za-z0-9_][A-Za-z0-9._ -]{0,99}$/;
 const maxNotes = 12;
-const byteLimit = 48 * 1024;
 
 export interface AgentSkillFolder {
   name: string;
   /** The folder SKILL.md sat in, or null when it was at the top of the file. */
   folder: string | null;
-  /** SKILL.md as it will be installed: the original, with the references that fit added. */
+  /** The original SKILL.md, without inlined references. */
   document: string;
   /** Text references kept with the package, by their package file name. */
   notes: Record<string, string>;
@@ -62,20 +60,6 @@ function noteName(file: string, taken: Record<string, string>): string | null {
   return base in taken || base.includes("..") ? null : base;
 }
 
-/** Adds each reference under its own heading while the instructions stay within a skill's size. */
-function withReferences(document: string, notes: Record<string, string>, leftOut: AgentSkillFolder["leftOut"]): string {
-  let combined = document.trimEnd();
-  for (const [file, text] of Object.entries(notes)) {
-    const next = `${combined}\n\n## Reference: ${file.replace(/^reference-/, "")}\n\n${text.trim()}`;
-    if (next.length > skillDocumentLimit || Buffer.byteLength(next) > byteLimit) {
-      leftOut.push({ path: `references/${file.replace(/^reference-/, "")}`, why: "kept with the package, but too long to add to the instructions" });
-      continue;
-    }
-    combined = next;
-  }
-  return `${combined}\n`;
-}
-
 /** Opens an Agent Skills folder handed over as a zip file. Nothing is installed by reading it. */
 export function readAgentSkill(bytes: Buffer): AgentSkillFolder {
   const entries = zipRead(bytes, agentSkillLimits, acceptName);
@@ -95,9 +79,7 @@ export function readAgentSkill(bytes: Buffer): AgentSkillFolder {
     if (!name) { leftOut.push({ path, why: `at most ${maxNotes} text references with distinct names are kept` }); continue; }
     notes[name] = text;
   }
-  const document = withReferences(original, notes, leftOut);
-  parseSkillDocument(document);
-  return { name: metadata.name, folder, document, notes, leftOut };
+  return { name: metadata.name, folder, document: original, notes, leftOut };
 }
 
 /** The same skill as a Branch skill package, ready for the usual preview and install. */
