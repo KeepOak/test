@@ -1,5 +1,4 @@
 {
-  "_draft": "Brouillon automatique. Non relu par un traducteur. Machine draft, not reviewed by a translator.",
   "about.keeper.acorn": "Le gland. Faites-le glisser ou utilisez les flèches pour le tourner.",
   "accounts.action.add": "Ajouter ce compte",
   "accounts.action.disable": "Désactiver",
@@ -4179,7 +4178,7 @@
   "prompts.action.save": "Enregistrer la requête",
   "prompts.action.try": "L'essayer",
   "prompts.action.use": "Utiliser",
-  "prompts.blanks.none": "Aucun blanc. Écrivez {{nom}} là où un mot doit être rempli à l'utilisation ; {{input}} reprend ce qui suit la commande.",
+  "prompts.blanks.none": "Aucun blanc. Écrivez {{name}} là où un mot doit être rempli à l'utilisation ; {{input}} reprend ce qui suit la commande.",
   "prompts.blanks.title": "Rempli à l'utilisation :",
   "prompts.card.purpose": "Ce que vous demandez souvent, rangé par groupes, chacun avec sa propre commande si vous le souhaitez, par exemple /weekly.",
   "prompts.card.title": "Vos requêtes enregistrées",

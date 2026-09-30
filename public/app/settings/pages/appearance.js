@@ -18,9 +18,9 @@ import { level as level17 } from "../../core/state.js";
 import { ART17, art17Slot } from "../../core/art17.js";
 import { sec17 } from "../rows17.js";
 import { AG, saveUi } from "../../chat/agent17.js";
-import { LANGUAGES, language, t } from "../../../i18n.js";
+import { language, t } from "../../../i18n.js";
 import { say } from "../../core/words.js";
-import { canSpeak, chooseLanguage } from "../../shell/language.js";
+import { canSpeak, chooseLanguage, languageChoices } from "../../shell/language.js";
 import { gsel } from "../../core/gsel.js";
 
 const pressed = (on) => `aria-pressed="${!!on}"`;
@@ -109,15 +109,11 @@ function shownSection() {
 }
 
 /* Only the languages that have words on file (public/locales, i18n.js LANGUAGES) are listed, the same list setup's
-   Language picker shows, each named in its own language by the browser (Intl.DisplayNames). The one in force is the one
+   Language picker shows, each with the catalogue's own-language label and translation notice. The one in force is the one
    shown; picking one saves it (shell/language.js). */
-const ownName = (code) => {
-  const name = new Intl.DisplayNames([code], { type: "language" }).of(code) ?? code;
-  return name.charAt(0).toLocaleUpperCase(code) + name.slice(1);
-};
 function languageSection() {
   const now = language();
-  const pick = gsel({ id: "lang", sw: "lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now });
+  const pick = gsel({ id: "lang", sw: "lang", label: t("appearance.language"), options: languageChoices(), value: now });
   return `<div class="sec"><h2>${t("appearance.language")}</h2><div class="ctl"><b>${t("appearance.language")}</b><span class="right">${pick}</span><small>${t("window.settings.appearance.dates-and-numbers-follow-it-too")}</small></div></div>`;
 }
 /* The window is drawn again in the new words; English says so as the prototype does. */
