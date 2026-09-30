@@ -17,7 +17,7 @@ export const PauseSchema = z.object({
 
 /** What every place that skips a paused Trunk says. */
 export function pausedWords(trunk: Pick<Trunk, "name">, what: string): string {
-  return `${trunk.name} is paused, so ${what}. Resume it under Customize → Trunks.`;
+  return `${trunk.name} is paused, so ${what}. Resume it under Customize › Trunks. When all Trunks are paused, choose Resume all Trunks in the status bar menu.`;
 }
 
 export interface PauseDeps {

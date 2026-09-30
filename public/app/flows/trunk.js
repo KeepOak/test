@@ -1,11 +1,11 @@
 /* A Trunk, changed from the window (design doc 5.7): the Trunk editor, the Trunk's own menu items (pin, rename, remove),
    starting a Trunk from a job, and a new room. Every change goes to the engine's Trunk routes (src/trunks/api.ts):
    POST /api/trunks/{id} merges the fields it is given, but `look` is replaced whole, so the full look is always sent.
-   What it may do (the permission switches) stays greyed: loosening a Trunk is not done from here. */
+   What it may do explains its existing limits and opens the owner's permission rules. */
 
 import { $, esc, onRender } from "../core/dom.js";
 import { openDlg, closeDlg, openPop, closePop, toast, ic, av, mi, COLOURS, SHAPE_NAMES, hex, faceOf, dialog } from "../core/ui.js";
-import { S, E, refresh, activeId } from "../core/state.js";
+import { S, E, refresh, activeId, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -181,7 +181,6 @@ function emojiRow(tr) {
 }
 
 const ctl = (id, title, sub) => `<div class="ctl"><b>${esc(title)}</b><input class="sw" type="checkbox" id="${id}" aria-label="${esc(title)}" data-sw="set"><small>${esc(sub)}</small></div>`;
-const ctlSeg = (title, sub, opts) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map((o) => `<button type="button" aria-pressed="false" data-act="seg">${esc(o)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
 
 /* Which model: the engine's own presets (GET /api/state models.presets, by their names) in the window's ordinary select,
    saved at once as the Trunk's model (POST /api/trunks/{id} model, a preset id); Default ("") follows the conversation's
@@ -280,12 +279,14 @@ function setCopy(el) {
   saveKeys(el.dataset.id, (keys) => ({ ...keys, copyFromOwner: on }));
 }
 
-/* Drawn as the design has it and greyed, bar Which model: reading files, the browser and sending without asking each loosen
-   the Trunk (reviewed apart, not done from here); the engine's Spend money category holds no tool in this build (GET
-   /api/state approvalCategories), so there is nothing a Trunk could be let spend or kept from; and its own notes are
-   always kept apart (src/trunks/memory-scope.ts), which the engine has no switch for (sharedFacts is another thing). */
+/* Explain where authority is really controlled instead of showing switches that cannot save anything. */
 function mayTab(tr) {
-  return `<div>${ctl("tm-read", t("window.flows.trunk.read-files"), t("window.flows.trunk.read-hint"))}${ctl("tm-browse", t("window.flows.trunk.browser"), t("window.flows.trunk.browser-hint"))}${ctlSeg(t("window.flows.trunk.send"), t("window.flows.trunk.send-hint"), [t("mode.ask"), t("window.chat.tl.allowed")])}${ctlSeg(t("people.admin.kind.spend"), t("window.flows.trunk.spend-hint"), [t("window.flows.trunk.never")])}${modelSeg(tr)}${ctl("tm-notes", t("window.flows.trunk.notes"), t("window.flows.trunk.notes-hint"))}</div>`;
+  const row = (title, words) => `<div class="ctl"><b>${title}</b><small>${esc(say(words))}</small></div>`;
+  const tools = tr.permissions?.length ? say("This Trunk has a chosen tool list. Permission rules can restrict it further.") : say("This Trunk follows the tools and permission rules you allow.");
+  const notes = tr.id === E.defaultTrunkId ? "The default Trunk uses your memory. There is no separate notes switch."
+    : "This Trunk's own notes stay separate. Shared facts follow its existing sharing setting.";
+  const open = ownerHere() ? `<button class="btn sm" type="button" data-act="trunk-permissions">${esc(say("Open Permissions for all Trunks"))}</button>` : "";
+  return `<div><p class="hint">${esc(tools)}</p>${row(t("window.flows.trunk.read-files"), "File access is controlled in Settings › Permissions and by this Trunk's tool list.")}${row(t("window.flows.trunk.browser"), "Browser access is controlled in Settings › Permissions and by this Trunk's tool list.")}${row(t("window.flows.trunk.send"), "Whether a message needs your approval is controlled by your permission rules.")}${row(t("people.admin.kind.spend"), "There is no dedicated spending control in this editor. Connected tools follow your permission rules.")}${open}${modelSeg(tr)}${row(t("window.flows.trunk.notes"), notes)}</div>`;
 }
 
 /* The editor redraws whole on every change; where the dialog and the characters were scrolled to is kept. */
@@ -579,6 +580,15 @@ export function init() {
   on("grp-rule", (el) => { grp.name = $("#grp-name")?.value ?? grp.name; grp.rule = el.dataset.v; groupDlg(); });
   markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
+  markLive(["trunk-permissions"]);
+  on("trunk-permissions", () => {
+    if (!ownerHere()) return;
+    keepFields();
+    closeDlg();
+    const button = document.createElement("button");
+    button.dataset.v = "permissions";
+    run("setgo", button);
+  });
   on("edit", (el) => editTrunk(el.dataset.id));
   on("st-tab", async (el) => {
     if (!ed) return; // only while an editor is open (a household person's Edit on the owner's Trunk opens none)
