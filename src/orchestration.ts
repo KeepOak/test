@@ -3,6 +3,7 @@ import { NeedsInputError, errorText } from "./contracts.js";
 import type { Message, Run } from "./contracts.js";
 import type { Store } from "./store.js";
 import { planProgress, type PlanProgress } from "./orchestration-progress.js";
+import { PausedError } from "./long-work.js";
 import { checkResult } from "./delegation.js";
 import { CheckError, CompletionCheckSchema, evaluateChecks, type CompletionCheck } from "./reliability.js";
 import { audit } from "./audit.js";
@@ -81,6 +82,10 @@ export interface PlanAnswer {
   actor?: string | undefined;
 }
 export interface ConductOptions {
+  /** The parent task's existing lifecycle; reviewer failure must not swallow Stop or Pause. */
+  signal?: AbortSignal;
+  /** Pause/handover uses the runtime's separate between-step lifecycle check. */
+  checkLifecycle?: () => void;
   /** Ask for a plan for this task whatever the saved setting says. */
   plan?: boolean;
   /** Review the finished answer for this task whatever the saved setting says. */
@@ -172,6 +177,10 @@ export class Orchestration {
   dropAbandonedPlan(sessionId: string, status = "failed"): void {
     const plan = this.plan(sessionId);
     if (!plan?.approved) return;
+    // Explicit Stop abandons even a review/check-back pause. Pause or shutdown keeps the
+    // recorded phase and completed actions for the authorized continuation.
+    if (status === "cancelled") { this.clearPlan(sessionId); return; }
+    if (status === "interrupted") return;
     if (plan.waitingOnOwner || (plan.mode === "show-plan" && status === "needs_input")) return;
     this.clearPlan(sessionId);
   }
@@ -472,8 +481,12 @@ export class RunConductor {
     ].filter(Boolean).join("\n\n");
     let raw: string;
     try {
+      this.checkLifecycle();
       raw = await this.aside([{ role: "system", content: criticInstructions }, { role: "user", content: body }]);
+      this.checkLifecycle();
     } catch (error) {
+      this.checkLifecycle();
+      if (error instanceof PausedError) throw error;
       this.event("verify.failed", { error: errorText(error) });
       return { received: false, verdict: "accept", fixes: [] };
     }
@@ -493,8 +506,12 @@ export class RunConductor {
     const note = previous ? `\n\nThe person saw this plan:\n${previous.steps.map((s, i) => `${i + 1}. ${s.title}`).join("\n")}${sentBack}\nand replied: ${this.run.prompt.slice(0, 1000)}\nPlan again with that in mind.` : "";
     let raw: string;
     try {
+      this.checkLifecycle();
       raw = await this.aside([{ role: "system", content: planInstructions }, { role: "user", content: `Task: ${prompt.slice(0, 4000)}${note}` }]);
+      this.checkLifecycle();
     } catch (error) {
+      this.checkLifecycle();
+      if (error instanceof PausedError) throw error;
       this.event("plan.failed", { error: errorText(error) });
       return null;
     }
@@ -512,6 +529,10 @@ export class RunConductor {
       touches: steps.map((s) => s.touches ?? ""), changes: steps.map((s) => s.changes),
       risk: riskSentence(steps), mode: settings.planMode, autonomy: settings.autonomy });
     return plan;
+  }
+  private checkLifecycle(): void {
+    this.options.signal?.throwIfAborted();
+    this.options.checkLifecycle?.();
   }
   private persist(): void {
     if (!this.goalId) return;
