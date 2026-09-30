@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { z } from "zod";
 import { pluginWall } from "../add-ons/walled-plugin.js";
 import { ApprovalRequiredError } from "../approvals.js";
@@ -15,7 +14,9 @@ import { openWall, type SandboxStart, type WallDeps } from "../sandbox-backends.
 import type { WallContext } from "../sandbox.js";
 import { gateToolUse, type ToolGateHost } from "../tool-gate.js";
 import { requireSafety } from "./settings.js";
-import { scriptAnswerMarker, scriptHostSource } from "./script-host.js";
+import { scriptAnswerMarker, scriptHost, scriptRequestMarker } from "./script-host.js";
+import { scriptWslStart } from "./script-wsl.js";
+import { ScriptLines } from "./script-lines.js";
 
 /**
  * mac7/r17-g (R17-061): the model writes one JavaScript module that calls several Branch tools,
@@ -34,7 +35,7 @@ import { scriptAnswerMarker, scriptHostSource } from "./script-host.js";
  *    before it runs (under a `branch-script:` id no model call can have, so a restart finds it and
  *    the outer `tools.script` step is put to the owner rather than run again), and what it hands back
  *    has keys hidden before the script can reshape them.
- * On Windows there is no file and network wall, so scripts are refused there.
+ * Windows uses the WSL held runner with stdin/stdout RPC and the same per-call gate.
  */
 export const maxCalls = 50;
 export const ScriptInputSchema = z.object({
@@ -60,7 +61,6 @@ export interface ToolScriptDeps {
 }
 export interface ScriptResult { ok: boolean; result: unknown; calls: { tool: string; outcome: string }[]; output: string; error?: string }
 
-export const windowsScriptRefusal = "On Windows Branch cannot wall a script off from your files and the internet, so tool scripts do not run here.";
 export const askedInScript = "Your approval settings ask first about this, and a script cannot stop to ask. Call this tool on its own, outside the script.";
 
 export class ToolScripts {
@@ -68,11 +68,18 @@ export class ToolScripts {
 
   async run(input: ScriptInput, context: ToolContext): Promise<ScriptResult> {
     requireSafety(this.deps.host.store, this.deps.host.owner, "tool-scripts");
-    if ((this.deps.wallDeps?.platform ?? process.platform) === "win32") throw new Error(windowsScriptRefusal);
+    context.signal.throwIfAborted();
+    const windows = (this.deps.wallDeps?.platform ?? process.platform) === "win32";
     const staging = await mkdtemp(join(tmpdir(), "branch-script-"));
     try {
       await writeFile(join(staging, "script.mjs"), input.source, { mode: 0o600 });
-      await writeFile(join(staging, "host.mjs"), scriptHostSource, { mode: 0o600 });
+      await writeFile(join(staging, "host.mjs"), scriptHost(windows), { mode: 0o600 });
+      if (windows) {
+        const start = await scriptWslStart(staging, input.timeoutMs,
+          [...this.deps.unreadable(), ...(context.osSandbox?.unreadable ?? [])], this.deps.wallDeps ?? {});
+        context.signal.throwIfAborted();
+        return await this.drive(start, input, context, `branch-script:${randomUUID()}:`, true);
+      }
       const wall = scriptWall(context.osSandbox, this.deps.unreadable());
       const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin", HOME: staging, TMPDIR: staging,
         ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
@@ -83,32 +90,41 @@ export class ToolScripts {
     } finally { await rm(staging, { recursive: true, force: true }).catch(() => undefined); }
   }
 
-  private drive(start: SandboxStart, input: ScriptInput, context: ToolContext, idPrefix: string): Promise<ScriptResult> {
+  private drive(start: SandboxStart, input: ScriptInput, context: ToolContext, idPrefix: string, framed = false): Promise<ScriptResult> {
+    context.signal.throwIfAborted();
     const child = (this.deps.start ?? startScript)(start);
+    const stopped = new AbortController();
+    context = { ...context, signal: AbortSignal.any([context.signal, stopped.signal]) };
     child.stdin?.on("error", () => undefined); // a pipe that closes first must not throw on its own
     const calls: ScriptResult["calls"] = [];
     let output = "";
-    child.stdout?.on("data", (chunk: Buffer) => { if (output.length < 64_000) output += chunk.toString("utf8"); });
-    child.stderr?.on("data", (chunk: Buffer) => { if (output.length < 64_000) output += chunk.toString("utf8"); });
+    if (!framed) child.stdout?.on("data", (chunk: Buffer) => { output = (output + chunk.toString("utf8")).slice(-64_000); });
+    child.stderr?.on("data", (chunk: Buffer) => { output = (output + chunk.toString("utf8")).slice(-64_000); });
     let queue = Promise.resolve();
-    const requests = child.stdio[3];
-    if (requests && "on" in requests) createInterface({ input: requests as NodeJS.ReadableStream }).on("line", (line) => {
+    let queued = 0;
+    const requests = framed ? child.stdout : child.stdio[3];
+    const lines = new ScriptLines((line) => {
       // mac7/linux-fixes: the script may be gone by the time its call is answered — stopped, timed
       // out or killed — and then this is a pipe with nobody reading it. Writing to one throws
       // EPIPE where nothing could catch it, which took the whole run down. The answer is simply
       // dropped instead: there is no longer anyone to give it to.
-      queue = queue.then(() => this.answer(line, input, context, calls, idPrefix))
+      if (framed && !line.startsWith(scriptRequestMarker)) { output = (output + line + "\n").slice(-64_000); return; }
+      if (framed) line = line.slice(scriptRequestMarker.length);
+      if (++queued > maxCalls) { stopped.abort(new Error("Too many script calls")); return; }
+      queue = queue.then(() => { context.signal.throwIfAborted(); return this.answer(line, input, context, calls, idPrefix); })
         .then((reply) => { if (child.stdin?.writable) child.stdin.write(`${JSON.stringify(reply)}\n`, () => undefined); })
         .catch(() => undefined);
-    });
+    }, () => stopped.abort(new Error("A script frame exceeded the output limit")));
+    if (requests && "on" in requests) requests.on("data", (chunk: Buffer) => lines.push(chunk));
     return new Promise<ScriptResult>((resolve) => {
-      const timer = setTimeout(() => stopChild(child), input.timeoutMs);
-      const abort = () => stopChild(child);
+      const abort = () => { child.stdin?.end(); stopChild(child); };
+      const timer = setTimeout(() => stopped.abort(new Error("The script timed out")), input.timeoutMs);
       context.signal.addEventListener("abort", abort, { once: true });
       child.on("error", (error) => { output += `\n${error.message}`; });
       child.on("close", () => {
         clearTimeout(timer);
         context.signal.removeEventListener("abort", abort);
+        stopped.abort(new Error("The script stopped"));
         resolve(readScriptAnswer(output, calls));
       });
     });
@@ -166,7 +182,7 @@ export function scriptWall(outer: WallContext | undefined, unreadable: readonly 
 
 function startScript(start: SandboxStart): ChildProcess {
   return spawn(start.executable, start.args, { cwd: start.cwd, env: start.env, shell: false, windowsHide: true,
-    detached: true, stdio: ["pipe", "pipe", "pipe", "pipe"] });
+    detached: process.platform !== "win32", stdio: process.platform === "win32" ? ["pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe", "pipe"] });
 }
 function stopChild(child: ChildProcess): void {
   try { if (child.pid) process.kill(-child.pid, "SIGKILL"); } catch { child.kill("SIGKILL"); }

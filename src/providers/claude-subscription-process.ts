@@ -66,6 +66,11 @@ export class NativeProcess {
       error ? reject(new Error("Claude subscription could not replay its history")) : resolve()));
   }
   rateEvents(): string { return this.rates.join("\n"); }
+  isClosed(): boolean { return this.ended; }
+  beginTurn(): void {
+    if (this.ended || this.waiter || this.stopping) throw new Error("Claude subscription native session is not available");
+    this.bytes = 0; this.rates.length = 0;
+  }
   stop(): Promise<void> { return this.stopping ??= this.stopTree(); }
   private async stopTree(): Promise<void> {
     const pid = this.child.pid;
