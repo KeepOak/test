@@ -341,7 +341,7 @@ test("Email: a stranger is turned away, and the mail helpers read what a server 
   assert.equal(toMrkdwn("keep ```**this**``` as is"), "keep ```**this**``` as is");
 });
 
-test("Email: a forged From is a stranger, even for an address on the list, and is offered no pairing code", async (t) => {
+test("Email: a forged From is a stranger, even for an address on the list, and is sent nothing, not even a pairing code", async (t) => {
   for (const [label, auth, pairing] of [["no header", [], false], ["a fail", ["mx.example.net; dmarc=fail header.from=example.com"], true],
     ["a pass from another server below the real one", ["mx.example.net; spf=softfail", "attacker.test; dmarc=pass header.from=example.com"], true]]) {
     const { app, provider } = await fixture(t);
@@ -351,9 +351,11 @@ test("Email: a forged From is a stranger, even for an address on the list, and i
       imap: { host: "127.0.0.1", port: mailbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 },
       smtp: { host: "127.0.0.1", port: outbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 } });
     await app.channels.attach(adapter, { activation: "always", pairing, allowlist: ["alice@example.com"] });
-    const refusal = await until(() => outbox.messages[0], `refusal sent (${label})`);
-    assert.match(refusal.body, /could not confirm that this message came from the address it shows/, label);
-    assert.doesNotMatch(refusal.body, /code/, `${label}: no pairing code for an address nobody proved`);
+    // UP-CHAT-008 (#1054): a block is silent, so a forged From gets no mail back; the mail is still read and set aside.
+    await until(() => mailbox.stored.some((command) => /STORE 1 \+FLAGS \(\\Seen\)/.test(command)), `mail read (${label})`);
+    await delay(300);
+    assert.equal(outbox.messages.length, 0, `${label}: nothing is sent to an address nobody proved`);
+    assert.equal(app.channels.summary().pending.length, 0, `${label}: no pairing request for an address nobody proved`);
     assert.equal(provider.requests.length, 0, `${label}: the forged mail never reaches the model`);
     await adapter.stop();
   }
