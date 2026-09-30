@@ -98,10 +98,12 @@ async function loadTrunkVoices(id) {
     if (ed?.id !== id) return;
     ed.voiceError = error.message;
   }
-  // Only the Look tab shows the voice list; redrawing another tab would close a list the owner has open there.
-  if (ed.tab !== "look" || !dialog()?.querySelector(".editor")) return;
+  // Only the voice field is drawn again, and only where it is shown (the Look tab): redrawing the whole editor would
+  // replace its pebble preview mid-motion and close a list the owner has open on another tab.
+  const field = dialog()?.querySelector(".editor #st-voice")?.closest(".field");
+  if (!field) return;
   keepFields();
-  drawEditor();
+  field.outerHTML = voicePicker();
 }
 
 function fileSuggestions(name) {
