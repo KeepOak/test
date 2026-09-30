@@ -1084,6 +1084,10 @@ export const ROUTES = {
   "/api/codex-models": "owner POST", // QA 2026-09-28: which model Codex answers with
   "/api/codex-models/check": "owner POST", // runs one tiny request per model Codex takes
   "/api/helper-defaults": "owner POST", // models-ui: each specialist's own model and account
+  "/api/mobile-push": "owner POST",
+  "/api/mobile-push/register": "owner POST",
+  "/api/mobile-push/revoke": "owner POST",
+  "/api/mobile-push/unregister": "owner POST",
   "/api/secrets": "owner POST",
   "/api/secrets/audit": "look",
   "/api/secrets/default": "look",

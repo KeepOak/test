@@ -162,6 +162,7 @@ const unreadKeys = {
   "src/orchestration-modes.ts": "one record per orchestration hand-off",
   "src/people/groups.ts": "who may do what, per group",
   "src/personal/settings.ts": "the personal connector parts, none of them in the catalogue",
+  "src/mobile-push.ts": "the push service setup and the phones registered for push, not in the catalogue",
   "src/plugin-catalog.ts": "one record per plugin offer",
   "src/plugins.ts": "one record per plugin",
   "src/profile-roles.ts": "one record per profile",
