@@ -14,6 +14,8 @@
 
 import { esc, render } from "../../core/dom.js";
 import { level, E } from "../../core/state.js";
+import { sessionPrincipal } from "../../core/session-pages.js";
+import { deliveryReadout, initDeliveryReadout } from "../chat-deliveries.js";
 import { api } from "../../core/api.js";
 import { toast, openDlg } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
@@ -28,7 +30,7 @@ import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.j
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null, watchdogLog: [] };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null, watchdogLog: [], receipts: null, receiptsPrincipal: null };
 const STEPS = "Show steps in chats";
 /* owner-dm-full: the owner's own verified direct chat runs with the owner's full access (GET /api/channels
    `permissions.ownerChats`, saved with POST /api/channels/permissions { ownerChats }). On as Branch ships. */
@@ -39,7 +41,10 @@ const kindOf = (c) => c.kind ?? c.id;
 async function loadApps() {
   if (E.profiles?.isOwner === false) return; // the owner's chat apps: no page asks for them on a household person's profile
   A.at = Date.now();
+  const principal = sessionPrincipal(E.profiles);
   const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
+  A.receipts = E.profiles?.isOwner !== false && sessionPrincipal(E.profiles) === principal && Array.isArray(live?.deliveryReceipts) ? live.deliveryReceipts : null;
+  A.receiptsPrincipal = principal;
   A.channels = live?.channels ?? [];
   A.intake = live?.intake ?? null;
   A.watchdogLog = live?.watchdogLog ?? [];
@@ -72,6 +77,8 @@ export function draw() {
   const kinds = [...new Set(on.map(kindOf))];
   const quotes = (id) => on.some((c) => kindOf(c) === id && c.replyQuotes === true); // an app whose replies can quote
   if (kinds.length) html += `<div class="sec x15-sec"><h2>${esc(t("window.chat-reply.title"))}</h2>${kinds.map((id) => replyStyleRows(id, nameOf(id), quotes(id))).join("")}</div>`;
+  if (E.profiles?.isOwner !== false) html += deliveryReadout(A.receiptsPrincipal === sessionPrincipal(E.profiles) ? A.receipts : null,
+    id => { const channel = on.find(item => item.id === id); return channel ? nameOf(kindOf(channel)) : id; });
   if (lv >= 1) html += advanced(on);
   if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
   if (lv >= 2) html += `<div class="ctl"><b>${esc(t("window.p17d.watchdog-log"))}</b><button type="button" class="btn sm" data-act="ca-watchdog-log">${esc(t("ov.open"))}</button><small>${esc(t("window.p17d.watchdog-log-hint"))}</small></div>`;
@@ -140,6 +147,7 @@ async function saveSteps(on) {
 }
 
 export function init() {
+  initDeliveryReadout(loadApps);
   on("ca-watchdog-log", showWatchdogLog);
   initFormatting();
   initReplyStyle();
