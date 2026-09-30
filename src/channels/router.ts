@@ -28,6 +28,7 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
   readChatPermissionSettings as chatPermissionSettings,
   saveChatPermissionSettings, type ChatPermissionSettings } from "./chat-permissions.js";
 import { commandMode } from "../commands/settings.js";
+import { inlineShortcuts, type AuthoredCommandText } from "./inline-shortcuts.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
@@ -60,6 +61,8 @@ export interface InboundMessage {
   senderId: string;
   senderName: string;
   text: string;
+  /** Adapter-vouched original human text and native quote/code/link spans. Absent for forwards, buttons or unknown provenance. */
+  authoredCommandText?: AuthoredCommandText;
   addressed: boolean;
   messageId: string;
   /** The message a reaction goes on, where it differs from `messageId` (a Slack thread reply). */
@@ -938,6 +941,8 @@ export class ChannelRouter {
   }
 
   private async answer(message: InboundMessage): Promise<Outcome> {
+    const inline = await this.inlineCommands(message);
+    if (inline) return inline;
     // Telegram sends /start when somebody opens the bot: a welcome, answered here without asking the model.
     if (startCommand.test(message.text.trim()) && !message.voice) return this.welcome(message);
     // ---- bucket 12: one of the owner's saved commands becomes the message it stands for ----
@@ -1002,6 +1007,28 @@ export class ChannelRouter {
     const turn = this.turns.get(chatKey(message));
     if (turn) return this.joinTurn(turn, message);
     return this.startTurn([message.edited ? editedAsNew(message) : message]);
+  }
+  /** Read-only shortcuts run before saved-command expansion, approvals, task queues and models. */
+  private async inlineCommands(message: InboundMessage): Promise<Outcome | null> {
+    if (!message.authoredCommandText || message.voice || message.attachments?.length || message.caughtUp || message.edited
+      || message.chatKind !== "direct" || this.appLocked()) return null;
+    const turn = this.turns.get(chatKey(message));
+    if (turn && turn.messages[0]?.senderId !== message.senderId) return null;
+    const picked = inlineShortcuts(message.authoredCommandText, message.text); if (!picked) return null;
+    // Reuse exact standalone availability; no new command or tool permission is granted.
+    if (picked.names.some(name => !this.commandIn({ ...message, text: `/${name}` }))) return null;
+    const { authoredCommandText: _authored, ...original } = message;
+    const remaining = { ...original, text: picked.remainder };
+    for (const name of picked.names) {
+      if (this.appLocked() || !this.senderAllowed(message.channel, message.senderId)
+        || !this.commandIn({ ...message, text: `/${name}` })) return "ignored";
+      await this.command(message, { name, argument: "" }, `inline-${name}`);
+    }
+    if (!remaining.text.trim()) return "replied";
+    if (this.appLocked() || !this.senderAllowed(message.channel, message.senderId)) return "ignored";
+    // A remainder such as "yes", "/stop" or a saved alias is task prose, never another control path.
+    const current = this.turns.get(chatKey(message));
+    return current ? this.joinTurn(current, remaining) : this.startTurn([remaining]);
   }
   /**
    * The answer to /start: who is answering, where, and how to talk to it, in one short message. Hermes Agent takes
@@ -1146,7 +1173,7 @@ export class ChannelRouter {
   }
   // ---- chat-live (wave mac2): one task per chat, notes steer it, commands control it ----------
   /** Carries out a chat command and sends its answer back. */
-  private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
+  private async command(message: InboundMessage, command: ChatCommand, deliveryKind = "command"): Promise<Outcome> {
     const { channel, chatId } = message;
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
@@ -1169,7 +1196,7 @@ export class ChannelRouter {
       forget: () => this.forgetSession(channel, chatId),
     });
     const reply = asks ? await this.withSlot(work) : await work();
-    await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
+    await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
     return "replied";
   }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */

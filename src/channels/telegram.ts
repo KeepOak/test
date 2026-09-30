@@ -55,6 +55,8 @@ const messageSchema = z.object({
   from: userSchema.optional(),
   chat: z.object({ id: z.number(), type: z.string(), title: z.string().optional() }).passthrough(),
   entities: z.array(z.object({ type: z.string(), offset: z.number(), length: z.number() })).optional(),
+  forward_origin: z.unknown().optional(),
+  forward_date: z.number().optional(),
   reply_to_message: z.object({ from: userSchema.optional() }).passthrough().optional(),
 }).passthrough();
 /** A button somebody pressed. Telegram sends the button's own `data` back, at most 64 bytes of it. */
@@ -414,6 +416,10 @@ export class TelegramAdapter implements ChannelAdapter {
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
       text, addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
+      ...(!spoken && !media && message.text !== undefined && !mentioned && message.forward_origin === undefined && message.forward_date === undefined
+        ? { authoredCommandText: { text, protected: (message.entities ?? []).filter(entity =>
+          ["code", "pre", "blockquote", "expandable_blockquote", "text_link", "url"].includes(entity.type))
+          .map(({ offset, length }) => ({ offset, length })) } } : {}),
       ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
         name: message.document?.file_name ?? message.video?.file_name ?? `photo-${message.message_id}.jpg`,
