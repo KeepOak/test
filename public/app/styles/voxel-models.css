@@ -1,0 +1,10 @@
+.voxel-pet { display: inline-block; width: 48px; height: 40px; }
+.voxel-pet.pet-pxc12 { width: 56px; height: 47px; margin: 4px 0 5px; }
+.voxel-pet > canvas, .voxel-pet > img { display: none; width: 100%; height: 100%; object-fit: contain; }
+.voxel-fallback { display: block; width: 100%; height: 100%; }
+.voxel-fallback canvas { width: 100%; height: 100%; image-rendering: pixelated; }
+.voxel-pet.voxel-ready > img { display: block; }
+.voxel-pet.voxel-ready > .voxel-fallback { display: none; }
+.voxel-oak { position: absolute; width: min(90vw, 90vh); height: min(90vw, 90vh); left: 50%; top: 50%; transform: translate(-50%, -50%); object-fit: contain; pointer-events: none; }
+.pixel-pebble .peb { border-radius: 0; box-shadow: none; background: var(--c); clip-path: polygon(20% 0,80% 0,80% 10%,90% 10%,90% 25%,100% 25%,100% 75%,90% 75%,90% 90%,80% 90%,80% 100%,20% 100%,20% 90%,10% 90%,10% 75%,0 75%,0 25%,10% 25%,10% 10%,20% 10%); }
+.pixel-pebble .eye { border-radius: 0; }

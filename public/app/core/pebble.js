@@ -20,6 +20,7 @@ import { esc, afterDraw } from "./dom.js";
 import { api } from "./api.js";
 import { restOf, onRest } from "./sleep.js";
 import { restMarks } from "./figures.js";
+import { visualStyle } from "./voxel-models.js";
 
 export const PEBBLE_EYES = ["round", "wide", "sleepy"];
 const ART = "/art/pebble/";
@@ -45,6 +46,8 @@ export function pebbleFace(trunk, face, size, css, paused, shape, marks = "") {
   const rk = trunk?.id ? `t:${trunk.id}` : "", rest = rk ? restOf(rk, pebbleState(trunk)) : "awake";
   const rkAttr = rk ? ` data-rk="${esc(rk)}"` : "";
   marks += restMarks(rk, rest);
+  if (visualStyle() === "pixel")
+    return `<span class="av pixel-pebble${paused}${marks}" data-css="${css}"${rkAttr} aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
   if (size <= SMALL)
     return `<span class="av${paused}${marks}" data-css="${css}"${rkAttr} aria-hidden="true"><span class="peb"></span><span class="eye l"></span><span class="eye r"></span></span>`;
   const key = keyOf(trunk);
