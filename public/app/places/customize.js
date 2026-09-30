@@ -65,7 +65,9 @@ function itemsOf(k) {
   if (k === "mcp") return [...ownServers.map((s) => ({ id: s.id, name: s.name, sub: s.how, error: s.error ?? "", own: s, on: Boolean(s.on) })),
     ...mcpServers.filter((s) => !ownServers.some((o) => o.id === s.id)).map((s) => ({ id: s.id, name: s.id, sub: s.summary ?? "", error: s.lastError ?? "", on: !s.lastError }))];
   if (k === "clis") return [...clis.programs.map((c) => ({ id: c.name, name: c.name, sub: c.path, own: c, on: true })), ...clis.launch.map((n) => ({ id: n, name: n, sub: "", on: true }))];
-  if (k === "skills") return [learnItem(), ...(E.state?.skills ?? []).map((s) => ({ id: s.id, name: s.activeName || s.name, sub: s.description ?? "", on: s.activeVersion != null }))]; // pass 17 part D §3: learn-this first
+  if (k === "skills") return [learnItem(), ...(E.state?.skills ?? []).map((s) => ({ id: s.id, name: s.activeName || s.name,
+    sub: s.availability?.available === false ? `Not available on this computer · ${s.availability.reasons.join("; ")}` : s.description ?? "",
+    on: s.activeVersion != null }))]; // pass 17 part D §3: learn-this first
   /* A plugin file as the engine lists it (GET /api/plugins {id, enabled, summary}); its summary is what the owner was
      shown when it was inspected, null before. */
   if (k === "plugins") return plugins.map((p) => ({ id: p.id, name: p.summary?.name || p.id, sub: p.summary?.description ?? "", tools: (p.summary?.tools ?? []).map((x) => x.name ?? x), on: p.enabled === true, shelf: !!p.fromShelf }));

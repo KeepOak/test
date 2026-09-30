@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import { skillAvailability } from "./skill-availability.js";
 import { SkillScanPolicySchema, describeFindings, scanSkill, type SkillFinding, type SkillScanPolicy } from "./skill-scan.js";
 import {
   parseSkillDocument, skillDocumentInput, skillRevisionInput, skillVersionInput,
@@ -49,6 +50,7 @@ export class InstalledSkills {
     const activeVersion = row.active_version === null ? null : Number(row.active_version);
     return { id, revision: Number(row.revision), name: head.metadata.name, description: head.metadata.description,
       headVersion: head.version, activeVersion, findings: head.findings, needsReview: head.findings.length > 0 && activeVersion !== head.version,
+      availability: skillAvailability((activeVersion === null ? head : this.version(id, activeVersion)).metadata.metadata),
       activeName: activeVersion === null ? null : this.version(id, activeVersion).metadata.name };
   }
   list(owner: string) {
@@ -70,11 +72,12 @@ export class InstalledSkills {
     const entry = this.version(id, version);
     return { id, version, metadata: entry.metadata, document: entry.document };
   }
-  catalog(owner: string): SkillCatalogEntry[] {
+  catalog(owner: string, includeUnavailable = false): SkillCatalogEntry[] {
     return this.db.prepare("SELECT id,active_version FROM installed_skills WHERE owner=? AND active_version IS NOT NULL ORDER BY id")
-      .all(owner).map(row => {
+      .all(owner).flatMap(row => {
         const entry = this.version(String(row.id), Number(row.active_version));
-        return { id: entry.id, version: entry.version, name: entry.metadata.name, description: entry.metadata.description };
+        if (!includeUnavailable && !skillAvailability(entry.metadata.metadata).available) return [];
+        return [{ id: entry.id, version: entry.version, name: entry.metadata.name, description: entry.metadata.description }];
       });
   }
   install(owner: string, input: unknown) {
@@ -147,7 +150,7 @@ export class InstalledSkills {
       .run(id, version, document, JSON.stringify(metadata), now, JSON.stringify(findings));
   }
   private validateCatalog(owner: string): void {
-    const catalog = this.catalog(owner);
+    const catalog = this.catalog(owner, true);
     // Fifty, as many as can be installed: a skill on "load when needed" costs one short line of a request, not its whole
     // description, so the old limit of twenty (there to keep requests small) no longer has to hold skills back.
     if (catalog.length > 50) throw new Error("At most 50 enabled skills");
