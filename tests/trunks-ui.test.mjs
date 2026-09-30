@@ -89,7 +89,11 @@ test("every word on the Trunks screens is the prototype's, in English and then i
   const prototype = await readFile(PROTOTYPE, "utf8");
   const english = await trunkWords(f.page, trunk);
   assert.ok(english.length > 20, `${english.length} words`);
-  const missing = [...new Set(english)].filter((word) => !prototype.includes(word));
+  // TRUNK-201: the prototype's greyed permission switches became words saying where each limit is set; they are
+  // Branch's own (window.flows.trunk.may-*), not the prototype's, and are translated like every other word.
+  const en = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
+  const guidance = new Set(Object.entries(en).filter(([key]) => key.startsWith("window.flows.trunk.may-")).map(([, words]) => words));
+  const missing = [...new Set(english)].filter((word) => !prototype.includes(word) && !guidance.has(word));
   assert.deepEqual(missing, [], "no word on the Trunks screens that the prototype does not have");
   assert.deepEqual(f.errors, []);
   /* French: Settings › Appearance › Language (the prototype's, with Français), and the design says every screen switches
@@ -122,7 +126,7 @@ async function trunkWords(page, trunk) {
   await editor.locator('[data-act="st-tab"][data-v="may"]').waitFor();
   words.push(...await texts(editor.locator('[role="tab"]')), ...await texts(editor.locator("label")), ...await texts(editor.locator(".dlg-f .btn")));
   await editor.locator('[data-act="st-tab"][data-v="may"]').click();
-  await editor.locator("#tm-read").waitFor();
+  await editor.locator('[data-act="trunk-permissions"]').waitFor();
   words.push(...await texts(editor.locator(".ctl > b")), ...await texts(editor.locator(".ctl small")));
   await editor.locator('.dlg-f [data-act="dlg-close"]').click();
   await place(page, "customize", "trunks");
@@ -216,11 +220,13 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   assert.equal(await editor.locator('[data-act="st-shape"]').count(), 5, "its five shapes");
   await editor.locator("#st-name").fill("Ada");
   await editor.locator("#st-role").fill("Planner");
-  // Redesign: what a Trunk may do stays greyed in the window: loosening a Trunk is held for separate security review.
+  // TRUNK-201: What it may do explains where each limit really lives, with no greyed switch that saves nothing,
+  // and opens Settings › Permissions (loosening a Trunk is still not done from here).
   await editor.getByRole("tab", { name: "What it may do" }).click();
-  assert.deepEqual(await greyed(editor.locator("#tm-read")), GREY);
-  assert.equal(await editor.locator("#tm-read").isDisabled(), true);
-  assert.deepEqual(await greyed(editor.getByRole("button", { name: "Ask first" })), GREY);
+  await editor.getByText("File access is controlled in Settings › Permissions and by this Trunk's tool list.", { exact: true }).waitFor();
+  assert.equal(await editor.locator("#tm-read, #tm-browse, #tm-notes").count(), 0, "no switch that cannot save");
+  assert.equal(await editor.getByRole("button", { name: "Ask first" }).count(), 0);
+  assert.equal(await editor.locator('[data-act="trunk-permissions"]').isDisabled(), false);
   await editor.getByRole("button", { name: "Save", exact: true }).click();
   await editor.waitFor({ state: "detached" });
   await until(async () => app.trunks.records.list()[0].name === "Ada");
@@ -298,4 +304,18 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   const seen = { roomMarked: await roomRow.locator("p.attn").count(), editorTabs };
   assert.deepEqual(seen, { roomMarked: 1, editorTabs: ["Look", "What it may do", "Its computers", "Files", "Accounts"] },
     "a waiting room stays marked; the editor has Its computers, the persistent personality Files and Accounts (its own account per connection)");
+});
+
+test("What it may do opens Settings › Permissions for the owner", async (t) => {
+  const f = await fixture(t, [], { width: 1280, height: 900 });
+  const { trunk } = await f.call("/api/trunks", { name: "Ada", title: "Planner", description: "" });
+  await f.open();
+  await place(f.page, "customize", "trunks");
+  await f.page.locator(`#main .place [data-act="edit"][data-id="${trunk.id}"]`).click();
+  const editor = f.page.locator(".dlg");
+  await editor.locator('[data-act="st-tab"][data-v="may"]').click();
+  await editor.locator('[data-act="trunk-permissions"]').click();
+  await editor.waitFor({ state: "detached" });
+  await f.page.locator('[data-act="setpage"][data-v="permissions"][aria-current="true"]').first().waitFor();
+  assert.deepEqual(f.errors, []);
 });

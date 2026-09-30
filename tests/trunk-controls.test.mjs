@@ -49,7 +49,7 @@ test("pausing a Trunk: nothing new starts from any source, each says so in words
   assert.equal(paused.body.trunk.paused, true);
   assert.equal(paused.body.stopped, 0);
   assert.equal((await ask("/api/trunks")).body.trunks.find((one) => one.id === fi.id).paused, true, "the roster shows it paused");
-  const words = /Fi is paused, so .+\. Resume it under Customize → Trunks\./;
+  const words = /Fi is paused, so .+\. Resume it under Customize › Trunks\. When all Trunks are paused, choose Resume all Trunks in the status bar menu\./;
 
   // The owner's own message, and anything queued for it.
   await assert.rejects(app.trunks.say(fi.id, "hello"), words);
@@ -67,7 +67,7 @@ test("pausing a Trunk: nothing new starts from any source, each says so in words
   await assert.rejects(app.triggers.fire(app.runtime.owner, trigger.id, {}), /this trigger did not start anything/);
   assert.match(JSON.stringify(app.triggers.getLog(trigger.id, app.runtime.owner)), /this trigger did not start anything/, "the refused fire is logged");
   const order = await app.autonomy.runner.turn({ key: "order:x", prompt: "Go", permissions: [], perDay: 4, gapMs: 0, sessionId: fi.chatSessionId });
-  assert.deepEqual(order, { ran: false, reason: "Fi is paused, so this did not start. Resume it under Customize → Trunks." });
+  assert.deepEqual(order, { ran: false, reason: "Fi is paused, so this did not start. Resume it under Customize › Trunks. When all Trunks are paused, choose Resume all Trunks in the status bar menu." });
   // A plain conversation of the owner's is untouched.
   assert.equal((await app.runtime.run({ prompt: "hi" })).status, "completed");
 
@@ -180,7 +180,7 @@ test("a paused Trunk sits out its turn in a room and says so; the room carries o
   app.trunks.rooms.send(room.id, { text: "hello both" });
   await app.trunks.rooms.settled(room.id);
   const events = app.trunks.rooms.get(room.id).events;
-  assert.deepEqual(events.filter((e) => e.memberId === fi.id).map((e) => [e.kind, e.text]), [["failed", "Fi is paused, so it did not answer. Resume it under Customize → Trunks."]]);
+  assert.deepEqual(events.filter((e) => e.memberId === fi.id).map((e) => [e.kind, e.text]), [["failed", "Fi is paused, so it did not answer. Resume it under Customize › Trunks. When all Trunks are paused, choose Resume all Trunks in the status bar menu."]]);
   assert.deepEqual(events.filter((e) => e.memberId === jo.id).map((e) => e.kind), ["member"]);
 });
 

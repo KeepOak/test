@@ -281,12 +281,12 @@ function setCopy(el) {
 
 /* Explain where authority is really controlled instead of showing switches that cannot save anything. */
 function mayTab(tr) {
-  const row = (title, words) => `<div class="ctl"><b>${title}</b><small>${esc(say(words))}</small></div>`;
-  const tools = tr.permissions?.length ? say("This Trunk has a chosen tool list. Permission rules can restrict it further.") : say("This Trunk follows the tools and permission rules you allow.");
-  const notes = tr.id === E.defaultTrunkId ? "The default Trunk uses your memory. There is no separate notes switch."
-    : "This Trunk's own notes stay separate. Shared facts follow its existing sharing setting.";
-  const open = ownerHere() ? `<button class="btn sm" type="button" data-act="trunk-permissions">${esc(say("Open Permissions for all Trunks"))}</button>` : "";
-  return `<div><p class="hint">${esc(tools)}</p>${row(t("window.flows.trunk.read-files"), "File access is controlled in Settings › Permissions and by this Trunk's tool list.")}${row(t("window.flows.trunk.browser"), "Browser access is controlled in Settings › Permissions and by this Trunk's tool list.")}${row(t("window.flows.trunk.send"), "Whether a message needs your approval is controlled by your permission rules.")}${row(t("people.admin.kind.spend"), "There is no dedicated spending control in this editor. Connected tools follow your permission rules.")}${open}${modelSeg(tr)}${row(t("window.flows.trunk.notes"), notes)}</div>`;
+  const row = (title, words) => `<div class="ctl"><b>${title}</b><small>${esc(words)}</small></div>`;
+  const may = (key) => t(`window.flows.trunk.may-${key}`);
+  const tools = may(tr.permissions?.length ? "tools-chosen" : "tools-all");
+  const notes = may(tr.id === E.defaultTrunkId ? "default-notes" : "notes");
+  const open = ownerHere() ? `<button class="btn sm" type="button" data-act="trunk-permissions">${esc(may("open-permissions"))}</button>` : "";
+  return `<div><p class="hint">${esc(tools)}</p>${row(t("window.flows.trunk.read-files"), may("read"))}${row(t("window.flows.trunk.browser"), may("browser"))}${row(t("window.flows.trunk.send"), may("send"))}${row(t("people.admin.kind.spend"), may("spend"))}${open}${modelSeg(tr)}${row(t("window.flows.trunk.notes"), notes)}</div>`;
 }
 
 /* The editor redraws whole on every change; where the dialog and the characters were scrolled to is kept. */
