@@ -506,7 +506,7 @@ The free fallback reads a public results page rather than an interface meant for
 
 ### Pinned skills and memory retention
 
-Above the composer, **Pinned skill** keeps one enabled skill's full instructions in every turn of that conversation until unpinned (`GET|POST /api/sessions/:id/skill`). `POST /api/memory/hygiene {olderThanDays, action: "preview"|"archive"|"purge"}` reports or removes facts not updated within the period; archived facts are listed by `GET /api/memory/archive` and restored with `POST /api/memory/archive/:id/restore`.
+Above the composer, **Pinned skill** keeps one enabled skill's full instructions in every turn of that conversation until unpinned (`GET|POST /api/sessions/:id/skill`). `POST /api/memory/hygiene {olderThanDays, action: "preview"|"archive"|"purge"}` reports or removes facts not updated within the period; archived facts are listed by `GET /api/memory/archive` and restored with `POST /api/memory/archive/:id/restore`. Settings › Advanced › **Archive facts unused for** (90 days, 180 days or never; never is where Branch starts) sets aside by itself, once a day, the facts nobody changed or drew on for that long (`GET`/`POST /api/memory/auto-archive { afterDays: 90 | 180 | null }`, owner only): each goes into the archive with a note, keeps its versions and can be restored.
 
 ## Browser tools
 

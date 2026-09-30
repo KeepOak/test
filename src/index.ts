@@ -43,6 +43,7 @@ import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
 import { MemoryRetrieval } from "./memory-retrieval.js";
+import { autoArchiveTick } from "./memory-auto-archive.js"; // wire-greyed
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
 import { MemoryTidy, registerMemoryTidy, shipTidyProcedure } from "./memory-tidy.js";
@@ -1395,6 +1396,8 @@ ${result.output || "(it said nothing)"}`;
   rings.gardener = gardener;
   rings.problems = sourceRequests;
   scheduler.onTick.add(async (now) => { rings.tick(now); });
+  // wire-greyed: facts unused for the owner's chosen days set aside by themselves, once a day (off: "never").
+  scheduler.onTick.add(async (now) => { autoArchiveTick(store, memory.retrieval, runtime.owner, now.getTime()); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
   scheduler.onTick.add(async (now) => {

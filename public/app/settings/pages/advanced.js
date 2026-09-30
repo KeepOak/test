@@ -26,16 +26,16 @@ import { restart as restartEngine } from "./self.js";
    Crash reports need a linked destination first, so they stay greyed; every other greyed row says why under itself
    (core/why.js, the locale's window.why.*). */
 const D = { knobs: null, log: null, local: null, profiles: null, orders: null, retrieval: null, providers: null, history: null,
-  heartbeat: null, boards: null, reach: null, autonomy: null, personal: null, media: null };
+  heartbeat: null, boards: null, reach: null, autonomy: null, personal: null, media: null, archive: null };
 const PATHS = { knobs: "knobs", log: "diagnostics/log/settings", local: "local-models", profiles: "browser/profiles", orders: "autonomy/orders",
   retrieval: "memory/retrieval", providers: "learning-more/providers", history: "memory/history", heartbeat: "heartbeat",
-  boards: "flows-boards", reach: "reach", autonomy: "autonomy", personal: "personal", media: "media/programs" };
+  boards: "flows-boards", reach: "reach", autonomy: "autonomy", personal: "personal", media: "media/programs", archive: "memory/auto-archive" };
 /* The owner's own settings: every change here is refused to a household profile (src/household-routes.ts fails closed),
    so for one the window neither reads them nor draws them live: each control is drawn without its id and greys with the
    owner-only reason (as models.js num() does, Q261), never showing an "off" it did not read. */
 const household = () => E.profiles?.isOwner === false;
 const own = (id) => (household() ? 'data-why="knobs-owner-only"' : `id="${id}" ${WIRES[id] ? checked(id) : ""}`);
-const OWNER_ONLY = new Set(["retrieval", "providers", "history", "heartbeat", "boards", "reach", "autonomy", "personal", "media"]);
+const OWNER_ONLY = new Set(["retrieval", "providers", "history", "heartbeat", "boards", "reach", "autonomy", "personal", "media", "archive"]);
 const onMode = (mode) => Boolean(mode) && mode !== "off";
 const mode = (on) => (on ? "when-needed" : "off");
 const part = (path, name) => (on) => api(path, { part: name, mode: mode(on) });
@@ -62,6 +62,21 @@ async function loadAll() {
   const raw = Object.fromEntries(keys.map((key, i) => [key, got[i]]));
   Object.assign(D, raw, { knobs: raw.knobs?.values ?? null, profiles: raw.profiles?.profiles ?? null, orders: raw.orders?.orders ?? null });
   render();
+}
+
+/* Archive facts unused for: 90 days, 180 days or never (GET/POST /api/memory/auto-archive, src/memory-auto-archive.ts),
+   pressed from the engine's value. A fact set aside keeps its versions and comes back from Library › Memory › Archive;
+   the row says how many would go now. */
+function archiveRow() {
+  const label = t("window.settings.advanced.archive-facts-unused-for");
+  const after = D.archive?.settings?.afterDays ?? null, owner = !household() && D.archive;
+  const opt = (v, words) => `<button type="button" aria-pressed="${owner ? String(after) === v : false}" data-act="${owner ? "ad-archive" : "ad-archive-owner"}"${owner ? "" : ' data-why="knobs-owner-only"'} data-v="${v}">${words}</button>`;
+  const sub = after ? t("window.settings.advanced.archive-would", { count: D.archive.wouldSetAside ?? 0 }) : t("window.settings.advanced.archive-never");
+  return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${opt("90", t("window.settings.advanced.90-days"))}${opt("180", t("window.settings.advanced.180-days"))}${opt("null", t("window.settings.advanced.never"))}</span></span><small>${owner ? sub : ""}</small></div>`;
+}
+async function chooseArchive(v) {
+  try { await api("memory/auto-archive", { afterDays: v === "null" ? null : Number(v) }); } catch (error) { toast(error.message); }
+  await loadAll();
 }
 
 /* Outside memory: the engine's four choices (none, Mem0, Honcho, Hindsight), pressed from its own value. */
@@ -117,7 +132,7 @@ export function draw() {
     html += fact15(t("window.settings.advanced.share-memory-between-trunks"), "f15-share-memory-between-trunks");
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.outside-memory")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.outside-memory")}\">${outsideSeg()}</span></span><small>${t("window.settings.explain.outside-memory")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.keep-a-history-in-git")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-keep-a-history-in-git")} aria-label=\"${t("window.settings.advanced.keep-a-history-in-git")}\" data-sw=\"set\"><small>${t("window.settings.advanced.every-change-to-memory-as-a")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.archive-facts-unused-for")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.archive-facts-unused-for")}\"><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"archive-facts-unused-for\">${t("window.settings.advanced.90-days")}</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"archive-facts-unused-for\">${t("window.settings.advanced.180-days")}</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"archive-facts-unused-for\">${t("window.settings.advanced.never")}</button></span></span><small></small></div>`;
+    html += archiveRow();
     html += "</div>";
 
     html += `<div class=\"sec x15-sec\"><h2>${t("dashboard.automations.title")}</h2>`;
@@ -214,8 +229,9 @@ export function init() {
   on("restart16", () => restartNow());
   on("ad-orders", () => openOrders());
   on("ad-outside", (el) => chooseOutside(el));
+  on("ad-archive", (el) => chooseArchive(el.dataset.v));
   initTunnel();
-  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "sw:ad-facts", ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
+  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "ad-archive", "sw:ad-facts", ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "ad-facts") { await saveFacts(e.target); return; }
     const wire = WIRES[e.target.id];
@@ -228,4 +244,4 @@ export function init() {
 
 export async function load() { await Promise.all([loadAll(), load17()]); }
 
-export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "sw:ad-facts": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };
+export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "ad-archive": true, "sw:ad-facts": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };

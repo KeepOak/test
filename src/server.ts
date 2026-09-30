@@ -335,6 +335,7 @@ import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
 import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
+import { autoArchiveApi, AutoArchiveApiError } from "./memory-auto-archive.js"; // wire-greyed
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
@@ -2520,6 +2521,12 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
     const { staged, review } = app.memory.hygiene.suggest(owner);
     return { suggested: staged.length, proposals: staged, review };
   }
+  // wire-greyed: Settings › Advanced › Archive facts unused for (owner only).
+  if (path === "/api/memory/auto-archive")
+    return autoArchiveApi({ store: app.store, owner: app.runtime.owner, retrieval: app.memory.retrieval,
+      requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", () => readBody(request, 1024)).catch((error: unknown) => {
+      throw error instanceof AutoArchiveApiError ? new HttpError(error.status, error.message) : error;
+    });
   if (request.method === "POST" && path === "/api/memory/hygiene") return app.store.memoryHygiene(owner, await readBody(request));
   if (request.method === "GET" && path === "/api/memory/archive") return { archived: app.store.archivedMemory(owner), total: app.store.archivedMemoryCount(owner) };
   // Purge all: every archived fact removed for good, the owner's alone. The confirm step is the word and how
