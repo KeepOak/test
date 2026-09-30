@@ -6,7 +6,7 @@
    carries the engine's own words for why. */
 
 import { $, esc, renderNow } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, S, activeId } from "../core/state.js";
 import { toast, ic } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -16,6 +16,9 @@ import { recordInWindow } from "./dictate-window.js";
 import { heardSpeech } from "./aloud.js";
 
 const D = { state: null, reading: false, on: false, timer: null, base: "", heard: "", rec: null, pressAt: 0, pointer: false };
+const promptBox = () => $("#beside-prompt") ?? $("#prompt");
+const recipient = () => promptBox()?.dataset.composeSession ?? S.chat ?? "new";
+const principal = () => JSON.stringify([activeId(), E.profiles?.isOwner ?? null]);
 /* RES-709: no streaming speech program, but a free one is here, so the window records with its own microphone. */
 const inWindow = () => D.state?.engine?.kind === "window-mic";
 
@@ -36,7 +39,7 @@ function redrawMic() {
   mic.outerHTML = micButton();
 }
 
-export const dictating = () => D.on;
+export const dictating = () => D.on || D.starting;
 
 export function micButton() {
   if (D.state?.canDictate === false) {
@@ -52,7 +55,9 @@ export const dictRow = () => `<div class="dict"><span class="wave" aria-hidden="
    as they come (the box stays in the composer, hidden behind the listening row, so a redraw keeps them); the box tells
    the conversation it changed, which keeps the draft. */
 function put(words) {
-  const box = $("#prompt");
+  if (D.owner !== principal()) return;
+  if (recipient() !== D.recipient) { S.drafts[D.draftKey] = D.base + words; return; }
+  const box = promptBox();
   if (!box) return;
   box.value = D.base + words;
   if (words) heardSpeech(); // the message is spoken, for Answer aloud › When I talk (chat/aloud.js)
@@ -70,7 +75,7 @@ function caption(words) {
 /* RES-709: the window's own microphone, opened on this press and let go of when the recording stops. */
 async function startInWindow(state) {
   if (state.refusal) { toast(state.refusal); return; }
-  const typed = $("#prompt")?.value ?? "";
+  const typed = promptBox()?.value ?? "";
   Object.assign(D, { on: true, heard: "", base: typed.trim() ? typed.replace(/\s*$/, " ") : "" });
   renderNow();
   try {
@@ -93,21 +98,27 @@ function finish(words) {
   countDictation();
   renderNow();
   put(typeof words === "string" ? words.trim() : D.heard);
-  const box = $("#prompt");
+  const box = recipient() === D.recipient ? promptBox() : null;
   box?.focus();
   box?.setSelectionRange(box.value.length, box.value.length);
 }
 
 async function start() {
+  if (D.starting) return;
+  D.recipient = recipient(); D.draftKey = promptBox()?.dataset.draftKey ?? S.chat ?? "new";
+  D.owner = principal(); D.starting = true;
+  try {
   const state = await read();
+  if (recipient() !== D.recipient || principal() !== D.owner) return;
   if (!state || state.canDictate === false) { renderNow(); return; }
   if (inWindow()) { await startInWindow(state); return; }
   let said;
   try { said = await api("voice/dictation/listen", { on: true }); } catch (error) { toast(error.message); return; }
+  if (recipient() !== D.recipient || principal() !== D.owner) { await api("voice/dictation/listen", { on: false }).catch(() => {}); return; }
   if (said.state) D.state = said.state;
   if (said.refusal) toast(said.refusal);
   if (!said.open) { renderNow(); return; }
-  const typed = $("#prompt")?.value ?? "";
+  const typed = promptBox()?.value ?? "";
   Object.assign(D, { on: true, heard: "", base: typed.trim() ? typed.replace(/\s*$/, " ") : "" });
   renderNow();
   D.timer = setInterval(async () => {
@@ -118,6 +129,7 @@ async function start() {
     const words = String(now.words ?? "").trim();
     if (words !== D.heard) { D.heard = words; put(words); }
   }, 500);
+  } finally { D.starting = false; renderNow(); }
 }
 
 async function done() {

@@ -112,14 +112,14 @@ async function chooseWho(el) {
 
 /* The files waiting to go with the next message (chat/attach.js: sent ahead as soon as they are added, each a chip with
    its own preview and progress); a chip's x takes it off. */
-export const attached = () => attachedChips();
+export const attached = (name) => attachedChips(name);
 
 /* What the next message carries: the ids of the files sent ahead, once all of them have arrived. The chips stay until the
    message is sent (filesSent), so a message the engine never got keeps its files (chat.js keepForLater). */
 export { filesSent, resendFiles, hasFiles } from "./attach.js";
-export async function takePending(isNew) {
+export async function takePending(isNew, name) {
   const out = {};
-  const uploads = await readyUploads();
+  const uploads = await readyUploads(name);
   if (uploads.length) out.uploads = uploads;
   if (practiceNext()) out.dryRun = true;
   if (isNew && Q.temporary) out.temporary = true;

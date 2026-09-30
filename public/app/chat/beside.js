@@ -14,6 +14,7 @@ import { ic, av, mi, openPop, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { text } from "./markdown.js";
 import { mediaRows } from "./media.js";
+import { sessionAttachmentTray } from "./attach.js";
 import { t } from "../../i18n.js";
 import { shareMenu } from "../flows/share.js";
 import { initBesidePicker, openBesidePicker, rememberBesidePick, pickedBesideName } from "./beside-picker.js";
@@ -79,7 +80,7 @@ export function besideWrap(scroll) {
   if (V.loaded !== id || V.version !== version) { V.version = version; scheduleLoad(id); }
   const body = V.id === id ? thread(V.messages, id) : "";
   const name = esc(nameOf(id));
-  return `<div class="split15">${scroll}<aside class="beside15" aria-label="${t("window.chat.beside.label", { name })}"><div class="bs-h15">${av(chatFace(id), 26)}<span class="grow"><b>${name}</b><small></small></span><button class="btn ghost sm" type="button" data-act="chat" data-id="${esc(id)}">${t("ov.open")}</button><button class="icon-btn" type="button" aria-label="${t("window.chat.beside.close")}" data-act="beside15" data-v="">${ic("x", "s")}</button></div><div class="bs-body15"><div class="thread">${body}</div></div></aside></div>`;
+  return `<div class="split15">${scroll}<aside class="beside15" data-composer-tray="${esc(sessionAttachmentTray(id))}" aria-label="${t("window.chat.beside.label", { name })}"><div class="bs-h15">${av(chatFace(id), 26)}<span class="grow"><b>${name}</b><small></small></span><button class="btn ghost sm" type="button" data-act="chat" data-id="${esc(id)}">${t("ov.open")}</button><button class="icon-btn" type="button" aria-label="${t("window.chat.beside.close")}" data-act="beside15" data-v="">${ic("x", "s")}</button></div><div class="bs-body15"><div class="thread">${body}</div></div></aside></div>`;
 }
 
 function beside(el) {

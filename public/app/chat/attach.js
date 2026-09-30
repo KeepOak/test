@@ -15,6 +15,7 @@ import { $, esc, applyCss } from "../core/dom.js";
 import { ic, toast } from "../core/ui.js";
 import { api, uploadFile } from "../core/api.js";
 import { t } from "../../i18n.js";
+import { S, E, activeId } from "../core/state.js";
 
 /** The engine's own limits (src/contracts.ts maximumUploadsPerTurn, maximumUploadBytes); it decides, this only says early. */
 export const MAX_FILES = 20;
@@ -23,7 +24,9 @@ export const MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024;
 export const PASTE_CHARS = 4000;
 
 const A = { trays: { main: [], home19: [] }, next: 1 };
-const tray = (name = "main") => (A.trays[name] ??= []);
+export const sessionAttachmentTray = (id = S.chat) => `session:${JSON.stringify([activeId(), E.profiles?.isOwner ?? null])}:${id ?? "new"}`;
+const trayName = name => name === "main" ? sessionAttachmentTray() : name;
+const tray = (name = "main") => (A.trays[trayName(name)] ??= []);
 const HOLDERS = { main: "#attached", home19: "#home19-attached" };
 const sizeOf = (n) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const mmss = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -74,6 +77,9 @@ function redraw() {
     box.innerHTML = attachedChips(name);
     applyCss(box);
   }
+  for (const box of document.querySelectorAll("[data-attachment-tray]")) {
+    box.innerHTML = attachedChips(box.dataset.attachmentTray); applyCss(box);
+  }
   /* Send turns copper once there is something to send: words, or files (a message may be only files). */
   const sendButton = $("#send");
   if (sendButton?.type === "submit") sendButton.classList.toggle("ready", !!$("#prompt")?.value.trim() || hasFiles());
@@ -81,6 +87,8 @@ function redraw() {
 
 /** Adds files (a FileList or an array of { file, name }) and starts sending each one at once. */
 export function addFiles(list, into = "main") {
+  into = trayName(into);
+  if (into.startsWith("session:") && !into.startsWith(`session:${JSON.stringify([activeId(), E.profiles?.isOwner ?? null])}:`)) return;
   const incoming = [...list].map((one) => (one instanceof File ? { file: one, name: one.name } : one));
   const room = MAX_FILES - tray(into).length;
   if (incoming.length > room) toast(t("window.chat.plus.left-out", { files: MAX_FILES, n: incoming.length - Math.max(0, room) }));
@@ -179,6 +187,7 @@ export async function readyUploads(name = "main") {
 }
 /** The message went (POST /api/run answered): its chips go with it, and a file that could not be sent is named. */
 export function filesSent(name = "main") {
+  name = trayName(name);
   const failed = tray(name).filter((f) => f.state === "failed");
   for (const f of tray(name)) if (f.preview.thumb) URL.revokeObjectURL(f.preview.thumb);
   A.trays[name] = [];
@@ -201,6 +210,7 @@ export async function resendFiles() {
 
 /** Hands every chip of tray `from` to tray `to` (the Home panel opened as the page keeps its files). */
 export function moveFiles(from, to) {
+  from = trayName(from); to = trayName(to);
   if (from === to || !tray(from).length) return;
   A.trays[to] = [...tray(to), ...tray(from)].slice(0, MAX_FILES);
   A.trays[from] = [];
@@ -209,9 +219,9 @@ export function moveFiles(from, to) {
 
 /* ---------- paste and drop ---------- */
 /* The box a paste or a drop is for: the Home panel's when it lands in the panel, else the conversation's. */
-const trayAt = (el) => (el?.closest?.("#home19") ? "home19" : "main");
+const trayAt = (el) => el?.closest?.("[data-composer-tray]")?.dataset.composerTray ?? (el?.closest?.("#home19") ? "home19" : sessionAttachmentTray());
 function onPaste(e) {
-  if (e.target?.id !== "prompt" && e.target?.id !== "home19-prompt") return;
+  if (!["prompt", "home19-prompt", "beside-prompt"].includes(e.target?.id)) return;
   const into = trayAt(e.target);
   const data = e.clipboardData;
   const files = [...(data?.files ?? [])];
@@ -243,7 +253,7 @@ const pastedName = (file, i) => `${t("window.chat.plus.pasted")}${i ? ` ${i + 1}
 
 const carriesFiles = (e) => [...(e.dataTransfer?.types ?? [])].includes("Files");
 const dropZone = (e) => e.target?.closest?.("#conversation, .dock, .composer, .chat-empty, main, #home19");
-const boxAt = (el) => (trayAt(el) === "home19" ? $("#home19-form") : $("#composer"));
+const boxAt = (el) => (trayAt(el) === "home19" ? $("#home19-form") : el?.closest?.("[data-composer-tray]")?.querySelector("form") ?? $("#composer"));
 function onDragOver(e) {
   if (!carriesFiles(e) || !dropZone(e)) return;
   e.preventDefault();
@@ -283,6 +293,7 @@ async function walk(entry, under, found) {
 
 /** Picks files, or a whole folder, with the system's own picker. */
 export function pickFiles(folder = false, into = "main") {
+  into = trayName(into); // The native picker may return after the focused recipient changes.
   const input = Object.assign(document.createElement("input"), { type: "file", multiple: true });
   if (folder) input.webkitdirectory = true;
   input.addEventListener("change", () => addFiles([...input.files].map((file) => ({ file, name: file.webkitRelativePath || file.name })), into));

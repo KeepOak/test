@@ -29,6 +29,8 @@ import { dockRow, initBg } from "./bg.js";
 import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
+import { besideComposer, paneComposeBar, focusedBeside, sendBeside, stopFocusedBeside } from "./beside-compose.js";
+import { sessionAttachmentTray } from "./attach.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
@@ -310,8 +312,10 @@ function placeholder() {
   return who?.name ? t("window.chat.composer.message-to", { name: who.name }) : t("window.chat.composer.message");
 }
 function composer() {
+  const side = besideComposer();
+  if (side) return paneComposeBar() + side;
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
-  return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
+  return paneComposeBar() + `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" aria-expanded="false" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${practiceFlag()}${costLine(C.sessionId)}</span>`}
     ${chips()}
@@ -340,7 +344,7 @@ export function conversationState(sid) {
   return (E.state?.runs ?? []).some((r) => r.sessionId === sid && ["running", "queued"].includes(r.status)) ? "working" : null;
 }
 /** shell-033 (B6): what a shortcut reaches in the conversation: the message box, and Stop. */
-export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => (viewingHelper() ? undefined : stopRun()) };
+export const chatKeys = { focusBox: () => $(focusedBeside() ? "#beside-prompt" : "#prompt")?.focus(), stop: () => (focusedBeside() ? stopFocusedBeside() : viewingHelper() ? undefined : stopRun()) };
 
 /* The words of the message being sent, so the side panel can follow a new conversation's first task before its id is known. */
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
@@ -568,6 +572,7 @@ async function destinationReady(sid, prompt) {
 }
 
 async function send(words, answered = false) {
+  if (words === undefined && focusedBeside()) return sendBeside();
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
   if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
@@ -670,6 +675,7 @@ function adoptDraft(sessionId) {
 /* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
    card's answer and a room's route are sent word for word. */
 async function sendPlain(said, withLead = false) {
+  const attachmentTray = sessionAttachmentTray(C.sessionId);
   const lead = withLead ? PREFIX.map((take) => take(C.sessionId ?? null)).filter(Boolean).join("\n") : "";
   const prompt = lead ? `${lead}\n\n${said}` : said;
   const before = replyMark(C.messages);
@@ -683,9 +689,9 @@ async function sendPlain(said, withLead = false) {
   let started = false;
   let restoreDraft = () => undefined;
   try {
-    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
+    const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId, attachmentTray)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
-    filesSent();
+    filesSent(attachmentTray);
     restoreDraft = adoptDraft(run.sessionId);
     practiceSent();
     C.sessionId = run.sessionId;
@@ -912,7 +918,8 @@ export function init() {
   initFind();
   initToolsHub();
   initDictate();
-  initTalkLive({ state: () => C, reopen: openConversation });
+  initTalkLive({ state: () => focusedBeside() ? { sessionId: focusedBeside() } : C,
+    reopen: async id => { if (id === C.sessionId) await openConversation(id); else { await refresh(); renderNow(); } } });
   initBg();
   initMedia();
   initBeside();
