@@ -48,6 +48,7 @@ export class SentenceChunker {
   feed(delta: string): string[] {
     this.buffer = this.buffer + delta;
     this.buffer = this.buffer.replace(/<think(?:\s[^>]*)?>[\s\S]*?<\/think>/gi, " ");
+    this.buffer = this.buffer.replace(/```[\s\S]*?```/g, " ");
     if (/<think(?:\s|>|$)/i.test(this.buffer)) return [];
     const out: string[] = [];
     let start = 0;
@@ -55,6 +56,8 @@ export class SentenceChunker {
       const match = /[.!?。！？]["'”’)]*(?:\s+)|\n\n/.exec(this.buffer.slice(start));
       if (!match) break;
       const end = start + match.index + match[0].length;
+      const fence = this.buffer.indexOf("```");
+      if (fence >= 0 && fence < end) break;
       const head = this.buffer.slice(0, end);
       if (head.trim().length < this.minLength || /\b(?:Dr|Mr|Mrs|Ms|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e)\.["'”’)]*\s*$/i.test(head)) { start = end; continue; }
       out.push(head.trim()); this.buffer = this.buffer.slice(end); start = 0;
@@ -62,7 +65,7 @@ export class SentenceChunker {
     return out;
   }
   flush(): string[] {
-    const tail = stripNonspoken(this.buffer).trim(); this.buffer = "";
+    const tail = stripNonspoken(this.buffer).replace(/```[\s\S]*$/g, " ").trim(); this.buffer = "";
     return tail ? [tail] : [];
   }
 }

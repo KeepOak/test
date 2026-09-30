@@ -7,6 +7,7 @@
 
 import { api, apiBlob } from "../core/api.js";
 import { toast } from "../core/ui.js";
+import { openReplyStream, stopReplyStream } from "./replyspeech.js";
 
 const A = { audio: null, url: "", finish: null, spoken: false, lastSpoken: false };
 
@@ -37,11 +38,22 @@ function stop() {
    a newer one. */
 let turn = 0;
 
+export async function startReplyStream(options) {
+  stopReplyStream();
+  const mine = ++turn;
+  stop();
+  let settings;
+  try { settings = await api("voice/settings"); } catch { return null; }
+  if (mine !== turn || !settings.autoReadAloud || (settings.readAloudWhen === "spoken" && !A.lastSpoken)) return null;
+  return openReplyStream({ ...options, speed: settings.speechRate });
+}
+
 /** Reads the newest reply aloud when it is newer than `before` and the engine's Answer aloud is Always. `words` gives
     the words the window shows for a reply (a room's reply without its "@name:" prefix). */
 export async function readNewReply(before, messages, words = (m) => m.content, voiceOf = () => "") {
   if (replyMark(messages) === before || !replies(messages).length) return;
   const mine = ++turn;
+  stopReplyStream();
   stop();
   const reply = replies(messages).at(-1);
   const text = String(words(reply) ?? "").trim();
