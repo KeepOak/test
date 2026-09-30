@@ -43,7 +43,7 @@ export interface SpeechStream {
  */
 export type SpeechStreamRunner = (
   command: RecorderCommand,
-  onWords: (written: string) => void,
+  onWords: (written: string, final?: boolean) => void,
   /** Called once when it ends, with why it ended when Branch knows, or null when it simply stopped. */
   onEnded: (why: string | null) => void,
 ) => SpeechStream;
@@ -130,6 +130,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
   let recorder: { stop(): void } | null = null;
   let ticker: ReturnType<typeof setInterval> | null = null;
   let words = "";
+  let committedWords = "";
   let lastSpeechAt = 0;
   let startedAt = 0;
   let crashes = 0;
@@ -192,13 +193,14 @@ export function startDictation(deps: DictationDeps): LiveDictation {
     release(true);
   };
 
-  const heardWords = (written: string): void => {
+  const heardWords = (written: string, final = true): void => {
     const clean = cleanWords(written);
     if (!clean) return;
     lastSpeechAt = now();
     // Replaced rather than grown past the cap: a program that will not stop writing is cut off
     // where it arrives, never queued and never allowed to grow without end.
-    words = `${words} ${clean}`.trim().slice(-mostWords);
+    words = `${committedWords} ${clean}`.trim().slice(-mostWords);
+    if (final) committedWords = words;
     tell(false);
   };
 
@@ -221,6 +223,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
       startedAt = now();
       lastSpeechAt = now();
       words = "";
+      committedWords = "";
       last = { words: "", settled: false };
       speech = deps.speech(engine.command, heardWords, ended);
       const capture = dictationCapture(engine, platform, present);

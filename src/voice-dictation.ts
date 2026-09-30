@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { lockdownOverrides } from "./lockdown.js";
 import { bytesPerSecond, onThisComputer, recorderFor, recorderName,
@@ -138,6 +140,8 @@ export function dictationEngine(
   // substitution a person would never find out about.
   const named = voice.localSpeechStream ? streamingPrograms[3] : undefined;
   const found = named ?? streamingPrograms.filter((program) => program.file).find((program) => present(program.file));
+  const vad = vadDictationEngine(voice, present);
+  if (!named && vad) return vad;
   if (!found) return { available: false, kind: "none", command: null, how: missingProgram(platform) };
   const file = found.file || voice.localSpeechStream;
   if (!voice.localSpeechModel)
@@ -150,6 +154,20 @@ export function dictationEngine(
       ? `${found.label}, which you installed yourself, kept running for as long as you are dictating and ended the moment you stop. It opens the microphone itself, so no sound ever reaches Branch at all — only the words, and only while it runs. Branch runs the first program called ${file} on your search path and does not check what it is, so keep that path yours; it is given its arguments one by one, never a line for a shell to read, and none of this computer's own environment. Words appear about a second behind you and may change as it hears more.`
       : `${found.label}, handed sound on its standard input by a recorder Branch holds open beside it. Branch counts how loud the room is and feeds it only what carries speech, so a quiet room costs it nothing. No file is written and no file name is ever an argument; it is given its arguments one by one, never a line for a shell to read, and none of this computer's own environment. Words appear about a second behind you and may change as it hears more.`,
   };
+}
+
+/** Upstream Apache-2.0 sherpa-onnx VAD microphone CLI, 040afe360a38. External program only.
+ * Prefer finished segments when the owner already supplied the full transducer + Silero bundle. */
+function vadDictationEngine(voice: VoiceSettings, present: ProgramPresent): DictationEngine | null {
+  const file = "sherpa-onnx-vad-microphone-offline-asr", model = voice.localSpeechModel;
+  if (!model || !present(file)) return null;
+  const assets = ["silero_vad.onnx", "tokens.txt", "encoder.onnx", "decoder.onnx", "joiner.onnx"];
+  if (!assets.every((asset) => existsSync(join(model, asset)))) return null;
+  return { available: true, kind: "own-microphone", command: { file, args: [
+    `--silero-vad-model=${join(model, assets[0]!)}`, `--tokens=${join(model, assets[1]!)}`,
+    `--encoder=${join(model, assets[2]!)}`, `--decoder=${join(model, assets[3]!)}`,
+    `--joiner=${join(model, assets[4]!)}`,
+  ] }, how: "Your installed sherpa-onnx VAD microphone program stays loaded while you dictate and writes each finished speech segment once. It uses the Silero and transducer models you supplied, opens the microphone itself, and stops when you stop dictating. Branch downloads nothing." };
 }
 
 const missingProgram = (platform: string): string =>
@@ -236,6 +254,7 @@ export const mostWords = 4000;
  */
 export function cleanWords(written: string): string {
   return written
+    .replace(/\[Start speaking\]/gi, "")
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "") // the codes a program uses to rewrite its own line
     .replace(/\[[0-9:.\s>-]+\]/g, "")       // whisper.cpp's timings
     .replace(/\r/g, " ")
