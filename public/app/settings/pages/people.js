@@ -21,6 +21,7 @@ import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
 import { say } from "../../core/words.js";
 import { reason } from "../../core/why.js";
+import { gatewayRows, selectGateway, initGatewayRows } from "../profile-gateways.js";
 
 /* The prototype's words for the engine's seven kinds (src/tool-categories.ts), in the prototype's order. */
 const KINDS = [["read", "Look things up"], ["browse", "Use web pages"], ["files", "Write files"], ["commands", "Run commands"], ["message", "Send messages"], ["spend", "Spend money"], ["settings", "Change how Branch is set up"]];
@@ -48,6 +49,8 @@ export async function loadSignin() {
 async function loadProfiles() {
   try { await refresh(); } catch (error) { toast(error.message); }
   await loadSignin();
+  pickDefault();
+  await selectGateway(picked);
   render();
 }
 
@@ -137,7 +140,7 @@ function card(p) {
   const where = p.id === OWNER ? t("dashboard.computer.title") : on.length ? esc(on.join(", ")) : t("window.settings.people.this-computer-pin");
   return `<div class="t9-detail pcard10"><div class="t9-dh">${avatar(p, 44, 17)}<span class="grow"><b>${esc(p.name)}</b><small>${where}</small></span><span class="pill ${p.role === OWNER ? "ok" : "idle"}">${esc(label(p.role))}</span></div>
     <div class="sec"><h2>${t("window.settings.people.may")}</h2><div class="acts10">${mayRows(p)}</div></div>
-    <dl class="kv" data-css="margin-top:14px">${facts(p)}</dl>${actions(p)}</div>`;
+    <dl class="kv" data-css="margin-top:14px">${facts(p)}</dl>${actions(p)}${gatewayRows(p.id)}</div>`;
 }
 
 /* Both are how the engine always works (greyed: PINs are for review): a profile cannot be made without a PIN
@@ -166,12 +169,13 @@ export function draw() {
 export function load() { return loadProfiles(); }
 
 /* flows/people.js: after adding somebody, the card shows them. */
-export function pickPerson(id) { picked = id; }
+export function pickPerson(id) { picked = id; void selectGateway(id); }
 
 /* Picking whom to look at, for both pages; registered once, by whichever starts first. */
 export function startPeople() {
+  initGatewayRows();
   if (has("p-sel")) return;
-  on("p-sel", (el) => { picked = el.dataset.v; render(); });
+  on("p-sel", (el) => { picked = el.dataset.v; void selectGateway(picked); render(); });
   markLive(["p-sel"]);
 }
 

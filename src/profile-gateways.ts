@@ -10,6 +10,7 @@ const Binding = z.object({ profileId: ProfileId, choices: Choice, createdAt: z.i
 const Route = z.discriminatedUnion("operation", [
   z.object({ operation: z.literal("sessions") }).strict(),
   z.object({ operation: z.literal("configure-model"), settings: z.record(z.string(), z.unknown()) }).strict(),
+  z.object({ operation: z.literal("connect-model"), settings: z.record(z.string(), z.unknown()) }).strict(),
   z.object({ operation: z.literal("read"), sessionId: z.string().uuid() }).strict(),
   z.object({ operation: z.literal("run"), sessionId: z.string().uuid().optional(), prompt: z.string().min(1).max(100_000) }).strict(),
 ]);
@@ -47,30 +48,32 @@ export class ProfileGateways {
     }
   }
 
-  async create(profileId: string, input: unknown) {
+  async create(profileId: string, input: unknown, authorize: () => void = () => undefined) {
     const choices = Choice.parse(input);
     const home = this.home(profileId);
     await this.directory(join(this.dataDir, "profile-gateways"));
     await this.directory(home);
+    authorize();
     await writeFile(join(home, "binding.json"), JSON.stringify({ profileId, choices, createdAt: new Date().toISOString() }), { flag: "wx", mode: 0o600 });
     return this.view(profileId);
   }
 
-  async start(profileId: string) {
+  async start(profileId: string, authorize: () => void = () => undefined) {
     if (this.closing || this.busy.has(profileId)) throw new Error("Gateway lifecycle is busy; try again.");
     if (this.live.has(profileId)) return this.view(profileId);
     this.busy.add(profileId);
-    try { return await this.startBound(profileId); }
+    try { return await this.startBound(profileId, authorize); }
     finally { this.busy.delete(profileId); }
   }
 
-  private async startBound(profileId: string) {
+  private async startBound(profileId: string, authorize: () => void) {
     await this.binding(profileId);
     const home = this.home(profileId);
     await this.directory(join(home, "data"));
     await this.directory(join(home, "workspace"));
     // Atomic supervisor lease. A crash leaves it closed: no automatic stale-lock takeover.
     const lease = join(home, "writer.lock");
+    authorize();
     await mkdir(lease, { mode: 0o700 });
     await writeFile(join(lease, "owner.json"), JSON.stringify({ pid: process.pid, profileId }), { mode: 0o600 });
     const env = isolatedEnvironment(home, profileId);
@@ -78,6 +81,7 @@ export class ProfileGateways {
       script: fileURLToPath(new URL("./profile-gateway-worker.js", import.meta.url)), args: [], env });
     try {
       if (this.closing) throw new Error("Branch is closing.");
+      authorize();
       await gateway.start();
       if (this.closing) throw new Error("Branch is closing.");
       this.live.set(profileId, gateway);
@@ -105,7 +109,7 @@ export class ProfileGateways {
 
   async route(profileId: string, input: unknown, authorize: (configure: boolean) => void) {
     const route = Route.parse(input);
-    const configure = route.operation === "configure-model";
+    const configure = route.operation === "configure-model" || route.operation === "connect-model";
     authorize(configure);
     await this.binding(profileId);
     const gateway = this.live.get(profileId);
@@ -127,6 +131,7 @@ export class ProfileGateways {
     if ("sessionId" in route && route.sessionId) await call(`/api/sessions/${route.sessionId}`);
     const result = route.operation === "sessions" ? await call("/api/sessions")
       : route.operation === "configure-model" ? await call("/api/models", route.settings)
+      : route.operation === "connect-model" ? await call("/api/connections/from-preset", route.settings)
       : route.operation === "read" ? await call(`/api/sessions/${route.sessionId}`)
       : await call("/api/run", { prompt: route.prompt, ...(route.sessionId ? { sessionId: route.sessionId } : {}) });
     return { profileId, isolated: true, result };
