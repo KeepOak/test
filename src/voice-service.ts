@@ -21,6 +21,7 @@ export interface VoiceRoute<K> {
   provider: AudioProvider | null;
   /** Why this route was chosen, in plain words, for the record and the settings screen. */
   reason: string;
+  ready?: boolean;
 }
 
 /** The audio address of a connection, plus how Gemini is told who is asking. */
@@ -143,7 +144,10 @@ export class VoiceService {
   /** What would happen if the owner pressed the microphone or Read aloud right now. */
   plan(owner: string): { stt: VoiceRoute<SttRoute>; tts: VoiceRoute<TtsRoute>; settings: VoiceSettings } {
     const settings = this.settings(owner), provider = this.provider(owner);
-    const tts = ttsRouteFor(settings, provider, this.platform, !!this.piper && !!findPiper(settings));
+    const piperReady = !!this.piper && !!findPiper(settings);
+    const chosen = ttsRouteFor(settings, provider, this.platform, piperReady);
+    const tts = chosen.kind === "piper" ? { ...chosen, ready: piperReady,
+      reason: piperReady ? chosen.reason : "Choose an installed Piper program and voice model under Settings → Voice." } : chosen;
     const off = (tts.kind === "windows" || tts.kind === "piper") && settings.systemVoice === "off";
     const reason = systemVoiceOffMessage(this.platform, settings.keepAudioOnThisComputer);
     return { stt: sttRouteFor(settings, provider, !!this.localSpeech(owner)?.available), tts: off ? { ...tts, reason } : tts, settings };
