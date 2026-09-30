@@ -156,6 +156,7 @@ test("hole: removing a fork keeps a copy that holds unsaved work", { skip: git ?
   app.store.message(first.sessionId, { role: "user", content: "hi" });
   const messageId = app.runtime.store.sqlite.prepare("SELECT source_id FROM messages WHERE session_id=?").get(first.sessionId)?.source_id;
   app.coding.setMode("worktrees", "on");
+  app.store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", forks: true }); // forks ship off (2026-09-30)
   const fork = await app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000));
   await writeFile(join(workspace, fork.path, "unsaved.txt"), "work");
   await assert.rejects(app.coding.worktrees.remove(fork.sessionId, AbortSignal.timeout(30_000)), /not saved yet/);

@@ -1,5 +1,13 @@
 # Third-party notices
 
+### Public MCP registry discovery
+
+`src/mcp-public-registry.ts` adapts the fetch-and-sanitise discovery flow from Cline's
+`apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts` (Copyright 2026 Cline Bot Inc.,
+Apache-2.0; https://github.com/cline/cline). Branch replaces its protobuf catalog with the official
+registry response schema, checks the owner's network policy, caps response bytes, and offers no
+automatic installation. The Apache-2.0 license text is reproduced in this document.
+
 ### Hermes chat branch argument parsing
 
 `src/channels/branch-command.ts` adapts the leading `--here` argument handling from `gateway/slash_commands_branch_thread.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, MIT. Branch uses its existing SessionBranches file/transcript copy, path records and per-conversation choices; it branches in place and does not open a native chat-app thread. The MIT license is reproduced elsewhere in this document under Hermes Agent.

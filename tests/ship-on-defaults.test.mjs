@@ -22,7 +22,8 @@ import { autonomyMode, saveAutonomyMode } from "../dist/autonomy/settings.js";
 import { askMode, saveAskMode } from "../dist/asks/settings.js";
 import { interopMode } from "../dist/interop/settings.js";
 import { savedReachMode } from "../dist/reach/settings.js";
-import { codingMode, saveCodingMode } from "../dist/coding/settings.js";
+import { codingMode, partSettings, saveCodingMode } from "../dist/coding/settings.js";
+import { WorktreeSettingsSchema } from "../dist/coding/worktrees.js";
 import { trunkMode } from "../dist/trunks/settings.js";
 import { promptLibrarySettings, savePromptLibrarySettings } from "../dist/prompt-library.js";
 import { recordingSettings, saveRecordingSettings } from "../dist/run-recording.js";
@@ -86,6 +87,8 @@ const flipped = [
   { name: "sharing assistants", read: (s) => interopMode(s, owner, "agent-market"), ships: "when-needed" },
   { name: "skill bundles", read: (s) => savedReachMode(s, owner, "skill-bundles"), ships: "when-needed" },
   { name: "fewer rounds", read: (s) => codingMode(s, owner, "fewer-rounds"), ships: "when-needed", off: (s) => saveCodingMode(s, owner, "fewer-rounds", "off") },
+  // The owner's ruling (2026-09-30): each coding helper in a Git project gets its own worktree; forks stay off (below).
+  { name: "a copy per coding helper", read: (s) => codingMode(s, owner, "worktrees"), ships: "when-needed", off: (s) => saveCodingMode(s, owner, "worktrees", "off") },
   { name: "a Trunk in any conversation", read: (s) => trunkMode(s, owner, "conversations"), ships: "when-needed" },
   { name: "saved prompts", read: (s) => promptLibrarySettings(s, owner).mode, ships: "on", off: (s) => savePromptLibrarySettings(s, owner, { mode: "off" }) },
   { name: "recordings", read: (s) => recordingSettings(s, owner).mode, ships: "when-needed", off: (s) => saveRecordingSettings(s, owner, { mode: "off" }),
@@ -286,15 +289,16 @@ test("what spends, sends, deletes, listens, is heavy or loosens approvals is sti
     "commands typed in a chat app (f)": chatLiveSwitches(store, owner).commands,
     "keeping the prompt cache warm (a)": readSavings(store, owner, "keepAlive").mode,
     "the wake word (d)": wakeWordSettings(store, owner).mode,
-    "a worktree for every forked conversation (e)": codingMode(store, owner, "worktrees"),
-    "the shared board, until its tools declare what they touch (f)": boardMode(store, owner, "kanban"),
+    "a worktree for every forked conversation (e)": partSettings(store, owner, "worktrees", WorktreeSettingsSchema).forks ? "on" : "off",
   };
   for (const [name, mode] of Object.entries(kept)) assert.equal(mode, "off", `${name} stays off`);
   assert.equal(localModelsMode(store, owner) === "on", false, "no local runtime is started with Branch (e)");
   assert.equal(languageServerSettings(store, owner).keepRunning, false, "no language server is kept running between tasks (e)");
   assert.equal(debugSettings(store, owner).keepRunning, false);
-  const { hidden } = switchedToolTiers(store, owner, ["procedures.auto.list", "board.cards", "memory.outside_recall", "learn.map", "addon.draft"]);
-  assert.deepEqual(hidden.sort(), ["board.cards", "memory.outside_recall", "procedures.auto.list"], "only the tools of what stays off are hidden");
+  // Orchard (the shared board before it) ships on: its tools declare what they touch (src/orchard/tools.ts).
+  assert.equal(boardMode(store, owner, "kanban"), "when-needed", "Orchard ships on");
+  const { hidden } = switchedToolTiers(store, owner, ["procedures.auto.list", "orchard.cards", "memory.outside_recall", "learn.map", "addon.draft"]);
+  assert.deepEqual(hidden.sort(), ["memory.outside_recall", "procedures.auto.list"], "only the tools of what stays off are hidden");
 });
 
 test("the settings kit starts each flipped field where its module ships it, so a fresh install has nothing to put back", () => {

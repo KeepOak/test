@@ -60,7 +60,10 @@ const codingShipsOn: Partial<Record<CodingPart, CodingMode>> = {
   "review-checks": "when-needed",
   // The owner's rule (ships on, 2026-09-27): the same tool calls in fewer rounds, and only calls that look run side by side; none of (a)–(f).
   "fewer-rounds": "when-needed",
-  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): worktrees puts a whole git worktree on disk for every forked conversation (heavy disk).
+  // The owner's ruling (2026-09-30): helpers only, on. Each coding helper in a Git project works in its own worktree,
+  // removed when it finishes holding nothing (src/coding/worktrees.ts). A forked conversation's copy stays off (heavy
+  // disk: a whole copy kept for as long as the fork lives) until the owner switches `forks` on. A saved off still wins.
+  worktrees: "when-needed",
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */

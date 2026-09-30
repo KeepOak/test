@@ -253,6 +253,7 @@ import { registerCheckpoints, SnapshotStore, systemGit, type GitCall } from "./c
 // Wave mac2 (goal-undo): working toward a goal in rounds, and going back to an earlier message.
 import { GoalMode, goalUndoSettings } from "./goal-mode.js";
 import { Rewinds } from "./rewind.js";
+import { GoalUndo } from "./goal-undo.js";
 import { isReadOnlyPermission, migrateUnmatchedCommands } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
@@ -1569,6 +1570,9 @@ ${result.output || "(it said nothing)"}`;
   };
   listFromCards(registry, personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
     () => void personal());
+  // Pass 17 (leftovers): undoing a goal puts back its files, deletes its drafts where they were written, and forgets its facts.
+  const goalUndo = new GoalUndo({ db: store.sqlite, owner: runtime.owner, goals, history, files, memory: memory.backend,
+    drafts: { "gmail.draft": (id) => personal().google.deleteDraft(id), "outlook.draft": (id) => personal().microsoft.deleteDraft(id) } });
   releaseOnLock.push(async () => { await personalBuilt?.close(); }); // locking Branch stops the tunnel and forgets spoken answers
   // ── end R17-C ──
   // ── mac7/wake-mic: the word that starts a turn, actually listening. Ships off, like everything else. ──
@@ -1631,12 +1635,15 @@ ${result.output || "(it said nothing)"}`;
   // ── end mac7/r17-g ──
   // ── r17-h: flows and boards (src/flows-boards/). Every part ships off. ──
   const flowsBoards = new FlowsBoards({ runtime, registry, flows, knowledge, queue: runQueue, asks,
+    trunks: () => trunks.records.list().map((trunk) => ({ id: trunk.id, name: trunk.name, handle: trunk.handle })),
     requireInstallOwner: () => {
       store.profiles.requireOwner("Answering an install request");
       if (startedWithShortLivedKey()) throw new Error("Answer install requests with the owner's full access.");
       if (sessionLock.locked()) throw new Error("Unlock Branch before answering an install request.");
     },
     fetch: () => web.policy.guard(globalThis.fetch), ...(process.env.BRANCH_OSV_ENDPOINT ? { osvEndpoint: process.env.BRANCH_OSV_ENDPOINT } : {}) });
+  // Orchard pulls what may start on the engine's own tick too, so a Trunk resumed or Lockdown ended is noticed.
+  scheduler.onTick.add(async () => flowsBoards.orchard.grow());
   // ── end r17-h ──
   // ── R17-F: learning, deeper (src/learning-more/). Every part ships off. ──
   const learningMore = new LearningMore({ store, registry, owner: runtime.owner, models: runtime.models,
@@ -1801,6 +1808,8 @@ ${result.output || "(it said nothing)"}`;
     /** Wave mac2: going back to an earlier message, and working toward a goal in rounds. */
     rewinds,
     goals,
+    /** Undoing a goal in one step: its files, its drafts and its facts. */
+    goalUndo,
     files,
     knowledge,
     documents,
@@ -2076,6 +2085,7 @@ ${result.output || "(it said nothing)"}`;
       await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
+      flowsBoards.orchard.close(); // Orchard stops following its cards' tasks
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
       await ownMcp.closeAll(); // eng-connectors: no question watcher or server of the owner's outlives the app
       await mcpConnections.closeAll();
@@ -2508,6 +2518,7 @@ export * from "./lockdown.js";
 export * from "./session-tree.js";
 export * from "./goal-mode.js";
 export * from "./rewind.js";
+export * from "./goal-undo.js";
 export * from "./project-ledger.js";
 export * from "./watch.js";
 // bucket-18: AI comments (A0344)

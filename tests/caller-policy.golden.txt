@@ -1042,24 +1042,44 @@ owner GET /api/reach/video/settings | here=ok remote=ok phone=ok legacy=ok perso
 owner POST /api/reach/video/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/read-marks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/read-marks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/canopy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/canopy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/boards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/boards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/boards/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/boards/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/boards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/boards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/assign | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/assign | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/comment | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/comment | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/comment-edit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/comment-edit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/comment-remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/comment-remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/edit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/edit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/grow | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/grow | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/link | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/link | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/move | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/move | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/reset | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/reset | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/orchard/cards/:id/unlink | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/orchard/cards/:id/unlink | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/flows-boards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/flows-boards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/flows-boards/board | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/flows-boards/board | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/flows-boards/board/cards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/flows-boards/board/cards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/flows-boards/board/cards/:id/handoff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/flows-boards/board/cards/:id/handoff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/flows-boards/board/cards/:id/move | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/flows-boards/board/cards/:id/move | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/flows-boards/board/cards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/flows-boards/board/cards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/flows-boards/board/cards/:id/reset | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/flows-boards/board/cards/:id/reset | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/flows-boards/board/cards/:id/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/flows-boards/board/cards/:id/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/flows-boards/board/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner POST /api/flows-boards/board/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/flows-boards/busy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/flows-boards/busy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/flows-boards/busy/send | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -1366,6 +1386,8 @@ owner GET /api/mcp/preflight | here=ok remote=ok phone=ok legacy=ok person=401/3
 owner POST /api/mcp/preflight | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/mcp/servers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/mcp/servers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/mcp/registry/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/mcp/registry/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/mcp/servers/sample/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/mcp/servers/sample/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/mcp/servers/sample/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -1990,6 +2012,8 @@ owner GET /api/sessions/:id/left-out | here=ok remote=ok phone=ok legacy=ok pers
 owner POST /api/sessions/:id/left-out | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/goal | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions/:id/goal | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner GET /api/sessions/:id/goal/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/:id/goal/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/memory-policy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions/:id/memory-policy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/merge-note | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3300,24 +3324,44 @@ owner+lockdown GET /api/reach/video/settings | here=ok remote=ok phone=ok legacy
 owner+lockdown POST /api/reach/video/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/read-marks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/read-marks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/canopy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/canopy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/boards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/boards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/boards/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/boards/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/boards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/boards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/assign | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/assign | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/comment | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/comment | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/comment-edit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/comment-edit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/comment-remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/comment-remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/edit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/edit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/grow | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/grow | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/link | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/link | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/move | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/move | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/reset | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/reset | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/orchard/cards/:id/unlink | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/orchard/cards/:id/unlink | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/flows-boards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/flows-boards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/flows-boards/board | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/flows-boards/board | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/flows-boards/board/cards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/flows-boards/board/cards | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/flows-boards/board/cards/:id/handoff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/flows-boards/board/cards/:id/handoff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/flows-boards/board/cards/:id/move | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/flows-boards/board/cards/:id/move | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/flows-boards/board/cards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/flows-boards/board/cards/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/flows-boards/board/cards/:id/reset | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/flows-boards/board/cards/:id/reset | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/flows-boards/board/cards/:id/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/flows-boards/board/cards/:id/work | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/flows-boards/board/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
-owner+lockdown POST /api/flows-boards/board/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/flows-boards/busy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/flows-boards/busy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/flows-boards/busy/send | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3624,6 +3668,8 @@ owner+lockdown GET /api/mcp/preflight | here=ok remote=ok phone=ok legacy=ok per
 owner+lockdown POST /api/mcp/preflight | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/mcp/servers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/mcp/servers | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/mcp/registry/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/mcp/registry/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/mcp/servers/sample/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/mcp/servers/sample/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/mcp/servers/sample/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4248,6 +4294,8 @@ owner+lockdown GET /api/sessions/:id/left-out | here=ok remote=ok phone=ok legac
 owner+lockdown POST /api/sessions/:id/left-out | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/goal | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions/:id/goal | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner+lockdown GET /api/sessions/:id/goal/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/:id/goal/undo | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/memory-policy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions/:id/memory-policy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/merge-note | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5558,24 +5606,44 @@ household GET /api/reach/video/settings | here=400/f6e21c remote=400/f6e21c read
 household POST /api/reach/video/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/read-marks | here=ok remote=ok read=ok run=ok
 household POST /api/read-marks | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/canopy | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/canopy | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/boards | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/boards | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/boards/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/boards/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/boards/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/boards/:id/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/assign | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/assign | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/comment | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/comment | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/comment-edit | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/comment-edit | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/comment-remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/comment-remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/edit | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/edit | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/grow | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/grow | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/link | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/link | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/move | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/move | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/reset | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/reset | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/orchard/cards/:id/unlink | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/orchard/cards/:id/unlink | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/flows-boards | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/flows-boards | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/flows-boards/board | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/flows-boards/board | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/flows-boards/board/cards | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/flows-boards/board/cards | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/flows-boards/board/cards/:id/handoff | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/flows-boards/board/cards/:id/handoff | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/flows-boards/board/cards/:id/move | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/flows-boards/board/cards/:id/move | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/flows-boards/board/cards/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/flows-boards/board/cards/:id/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/flows-boards/board/cards/:id/reset | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/flows-boards/board/cards/:id/reset | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/flows-boards/board/cards/:id/work | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/flows-boards/board/cards/:id/work | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/flows-boards/board/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household POST /api/flows-boards/board/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/flows-boards/busy | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/flows-boards/busy | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/flows-boards/busy/send | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -5882,6 +5950,8 @@ household GET /api/mcp/preflight | here=400/f6e21c remote=400/f6e21c read=400/f6
 household POST /api/mcp/preflight | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/mcp/servers | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/mcp/servers | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/mcp/registry/search | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/mcp/registry/search | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/mcp/servers/sample/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/mcp/servers/sample/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/mcp/servers/sample/start | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6506,6 +6576,8 @@ household GET /api/sessions/:id/left-out | here=400/f6e21c remote=400/f6e21c rea
 household POST /api/sessions/:id/left-out | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/sessions/:id/goal | here=ok remote=ok read=ok run=ok
 household POST /api/sessions/:id/goal | here=ok remote=ok read=401/d45404 run=ok
+household GET /api/sessions/:id/goal/undo | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/sessions/:id/goal/undo | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id/memory-policy | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/sessions/:id/memory-policy | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id/merge-note | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7816,24 +7888,44 @@ household+lockdown GET /api/reach/video/settings | here=400/f6e21c remote=400/f6
 household+lockdown POST /api/reach/video/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/read-marks | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/read-marks | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/canopy | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/canopy | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/boards | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/boards | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/boards/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/boards/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/boards/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/boards/:id/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/assign | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/assign | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/comment | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/comment | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/comment-edit | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/comment-edit | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/comment-remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/comment-remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/edit | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/edit | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/grow | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/grow | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/link | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/link | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/move | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/move | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/reset | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/reset | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/orchard/cards/:id/unlink | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/orchard/cards/:id/unlink | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/flows-boards | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/flows-boards | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/flows-boards/board | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/flows-boards/board | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/flows-boards/board/cards | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/flows-boards/board/cards | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/flows-boards/board/cards/:id/handoff | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/flows-boards/board/cards/:id/handoff | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/flows-boards/board/cards/:id/move | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/flows-boards/board/cards/:id/move | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/flows-boards/board/cards/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/flows-boards/board/cards/:id/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/flows-boards/board/cards/:id/reset | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/flows-boards/board/cards/:id/reset | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/flows-boards/board/cards/:id/work | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/flows-boards/board/cards/:id/work | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/flows-boards/board/settings | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
-household+lockdown POST /api/flows-boards/board/settings | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/flows-boards/busy | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/flows-boards/busy | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/flows-boards/busy/send | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8140,6 +8232,8 @@ household+lockdown GET /api/mcp/preflight | here=400/f6e21c remote=400/f6e21c re
 household+lockdown POST /api/mcp/preflight | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/mcp/servers | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/mcp/servers | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/mcp/registry/search | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/mcp/registry/search | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/mcp/servers/sample/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/mcp/servers/sample/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/mcp/servers/sample/start | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8764,6 +8858,8 @@ household+lockdown GET /api/sessions/:id/left-out | here=400/f6e21c remote=400/f
 household+lockdown POST /api/sessions/:id/left-out | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/goal | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/sessions/:id/goal | here=ok remote=ok read=401/d45404 run=ok
+household+lockdown GET /api/sessions/:id/goal/undo | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/sessions/:id/goal/undo | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/memory-policy | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/sessions/:id/memory-policy | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/merge-note | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10074,24 +10170,44 @@ applock GET /api/reach/video/settings | here=423/a8f863
 applock POST /api/reach/video/settings | here=423/a8f863
 applock GET /api/read-marks | here=423/a8f863
 applock POST /api/read-marks | here=423/a8f863
+applock GET /api/canopy | here=423/a8f863
+applock POST /api/canopy | here=423/a8f863
+applock GET /api/orchard | here=423/a8f863
+applock POST /api/orchard | here=423/a8f863
+applock GET /api/orchard/boards | here=423/a8f863
+applock POST /api/orchard/boards | here=423/a8f863
+applock GET /api/orchard/boards/:id | here=423/a8f863
+applock POST /api/orchard/boards/:id | here=423/a8f863
+applock GET /api/orchard/boards/:id/remove | here=423/a8f863
+applock POST /api/orchard/boards/:id/remove | here=423/a8f863
+applock GET /api/orchard/cards | here=423/a8f863
+applock POST /api/orchard/cards | here=423/a8f863
+applock GET /api/orchard/cards/:id | here=423/a8f863
+applock POST /api/orchard/cards/:id | here=423/a8f863
+applock GET /api/orchard/cards/:id/assign | here=423/a8f863
+applock POST /api/orchard/cards/:id/assign | here=423/a8f863
+applock GET /api/orchard/cards/:id/comment | here=423/a8f863
+applock POST /api/orchard/cards/:id/comment | here=423/a8f863
+applock GET /api/orchard/cards/:id/comment-edit | here=423/a8f863
+applock POST /api/orchard/cards/:id/comment-edit | here=423/a8f863
+applock GET /api/orchard/cards/:id/comment-remove | here=423/a8f863
+applock POST /api/orchard/cards/:id/comment-remove | here=423/a8f863
+applock GET /api/orchard/cards/:id/edit | here=423/a8f863
+applock POST /api/orchard/cards/:id/edit | here=423/a8f863
+applock GET /api/orchard/cards/:id/grow | here=423/a8f863
+applock POST /api/orchard/cards/:id/grow | here=423/a8f863
+applock GET /api/orchard/cards/:id/link | here=423/a8f863
+applock POST /api/orchard/cards/:id/link | here=423/a8f863
+applock GET /api/orchard/cards/:id/move | here=423/a8f863
+applock POST /api/orchard/cards/:id/move | here=423/a8f863
+applock GET /api/orchard/cards/:id/remove | here=423/a8f863
+applock POST /api/orchard/cards/:id/remove | here=423/a8f863
+applock GET /api/orchard/cards/:id/reset | here=423/a8f863
+applock POST /api/orchard/cards/:id/reset | here=423/a8f863
+applock GET /api/orchard/cards/:id/unlink | here=423/a8f863
+applock POST /api/orchard/cards/:id/unlink | here=423/a8f863
 applock GET /api/flows-boards | here=423/a8f863
 applock POST /api/flows-boards | here=423/a8f863
-applock GET /api/flows-boards/board | here=423/a8f863
-applock POST /api/flows-boards/board | here=423/a8f863
-applock GET /api/flows-boards/board/cards | here=423/a8f863
-applock POST /api/flows-boards/board/cards | here=423/a8f863
-applock GET /api/flows-boards/board/cards/:id/handoff | here=423/a8f863
-applock POST /api/flows-boards/board/cards/:id/handoff | here=423/a8f863
-applock GET /api/flows-boards/board/cards/:id/move | here=423/a8f863
-applock POST /api/flows-boards/board/cards/:id/move | here=423/a8f863
-applock GET /api/flows-boards/board/cards/:id/remove | here=423/a8f863
-applock POST /api/flows-boards/board/cards/:id/remove | here=423/a8f863
-applock GET /api/flows-boards/board/cards/:id/reset | here=423/a8f863
-applock POST /api/flows-boards/board/cards/:id/reset | here=423/a8f863
-applock GET /api/flows-boards/board/cards/:id/work | here=423/a8f863
-applock POST /api/flows-boards/board/cards/:id/work | here=423/a8f863
-applock GET /api/flows-boards/board/settings | here=423/a8f863
-applock POST /api/flows-boards/board/settings | here=423/a8f863
 applock GET /api/flows-boards/busy | here=423/a8f863
 applock POST /api/flows-boards/busy | here=423/a8f863
 applock GET /api/flows-boards/busy/send | here=423/a8f863
@@ -10398,6 +10514,8 @@ applock GET /api/mcp/preflight | here=423/a8f863
 applock POST /api/mcp/preflight | here=423/a8f863
 applock GET /api/mcp/servers | here=423/a8f863
 applock POST /api/mcp/servers | here=423/a8f863
+applock GET /api/mcp/registry/search | here=423/a8f863
+applock POST /api/mcp/registry/search | here=423/a8f863
 applock GET /api/mcp/servers/sample/remove | here=423/a8f863
 applock POST /api/mcp/servers/sample/remove | here=423/a8f863
 applock GET /api/mcp/servers/sample/start | here=423/a8f863
@@ -11022,6 +11140,8 @@ applock GET /api/sessions/:id/left-out | here=423/a8f863
 applock POST /api/sessions/:id/left-out | here=423/a8f863
 applock GET /api/sessions/:id/goal | here=423/a8f863
 applock POST /api/sessions/:id/goal | here=423/a8f863
+applock GET /api/sessions/:id/goal/undo | here=423/a8f863
+applock POST /api/sessions/:id/goal/undo | here=423/a8f863
 applock GET /api/sessions/:id/memory-policy | here=423/a8f863
 applock POST /api/sessions/:id/memory-policy | here=423/a8f863
 applock GET /api/sessions/:id/merge-note | here=423/a8f863

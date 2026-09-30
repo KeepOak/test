@@ -46,9 +46,9 @@ async function pagesRoute(deps: AsksHttpDeps, path: string): Promise<unknown> {
   }
   const match = pageId.exec(path);
   if (!match) return undefined;
-  if (match[2] === "/export") return asks.pages.exportPage(match[1]!);
+  if (match[2] === "/export") return await asks.pages.exportPage(match[1]!);
   if (match[2] === "/remove" && method === "POST") return asks.pages.remove(match[1]!);
-  return { page: asks.pages.get(match[1]!) };
+  return { page: await asks.pages.open(match[1]!) }; // SELF-309: a live page is read from its file as it is opened
 }
 
 async function analyticsRoute(deps: AsksHttpDeps, path: string): Promise<unknown> {

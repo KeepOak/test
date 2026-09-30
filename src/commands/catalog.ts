@@ -142,6 +142,8 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("busy", [], "[queue|steer|interrupt]", "what happens when you type while a task works: wait, pass it on, or stop and go next", [...W, "terminal"], "owner", { bareLooks: true }),
   entry("focus", [], "[on|off]", "show only what you asked and the final answers", W, "look"),
   entry("installs", ["install"], "[request npm|pypi <name> [why] | approve n | decline n]", "requests for new packages and tool servers; only the owner answers, and nothing installs itself", ALL, "look", { withArgument: "run" }),
+  // Orchard (src/orchard/commands.ts): a chat may look, add a card that waits for the owner's yes, and comment; the rest is the owner's
+  entry("orchard", ["board", "kanban"], "[show n | add <title> | comment n <words> | grow n | pick n | reset n | move n <column>]", "the Orchard board your Trunks work from: look, add a card, comment, and (the owner) start, pick or move one", ALL, "look", { bareLooks: true, withArgument: "run" }),
   // ---- end r17-h ----
   // A change to Branch itself, asked for from a chat app (src/self-development-requests.ts). It only files
   // a request; the owner's yes or no is given in the Branch app, never with a command.

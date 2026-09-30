@@ -1,0 +1,13 @@
+/* area: canopy */
+.cn-tasks,.cn-list{list-style:none;padding:0;margin:0;display:grid;gap:10px}
+.cn-task,.cn-list li{display:flex;gap:8px;align-items:flex-start;min-width:0}
+.cn-task{padding:10px 0;border-bottom:1px solid var(--line)}
+.cn-task .grow{min-width:0;overflow-wrap:anywhere}
+.cn-task small,.cn-list small{display:block;color:var(--ink-3);font-size:11px;overflow-wrap:anywhere}
+.cn-task p{margin:4px 0;font-size:12px}
+.cn-cols{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;margin-top:16px}
+.cn-cols h3{font-size:12px;margin:0 0 8px}
+.cn-list li{flex-wrap:wrap;align-items:center}
+.cn-steer{display:flex;gap:8px;margin-top:8px}
+.cn-steer .inp{min-width:0;flex:1}
+@media(max-width:640px){.cn-cols{grid-template-columns:minmax(0,1fr)}}

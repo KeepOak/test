@@ -1,10 +1,10 @@
-/* Automations: scheduled, triggers, procedures, check-ins, board - matches redesign prototype.
+/* Automations: scheduled, triggers, procedures, check-ins, and Orchard (places/orchard.js) in the board's tab - matches redesign prototype.
    Real data from: GET /api/state (schedules, triggers, procedures), /api/heartbeat,
    /api/flows-boards, /api/prompts. Switches and buttons wired to real routes. */
 
 import { $, esc, renderNow } from "../core/dom.js";
 import { S, E, refresh, ownerHere } from "../core/state.js";
-import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.js";
+import { ic, av, toast, openDlg, closeDlg } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { initRecipeRun, recipeRunLive } from "./recipe-run.js";
@@ -18,10 +18,9 @@ import { faceOf, nameOf } from "./inbox17.js";
 import { say } from "../core/words.js";
 import { offTile, initSwitchOn } from "./switch-on.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { orchardTab, loadOrchard, initOrchard } from "./orchard.js"; // Orchard, in the tab the shared board had
 
 let heartbeat = null;
-let board = null;
-let boardProblem = "";
 let prompts = null;
 /* stress test B006: whether procedures that start themselves are switched on (GET /api/autonomy modes.procedures); a
    trigger is kept as one, so while it is off the Triggers tab says so with its switch. */
@@ -46,48 +45,6 @@ const IDEAS = [
   ["Work", "Weekly report", "Friday summary of what your Trunks did.", "every Friday at 4, summarise what my Trunks did this week"],
 ];
 const ideaCard = (x, i) => `<button type="button" class="idea15" data-act="idea15" data-i="${i}"><small>${esc(say(x[0]))}</small><b>${esc(say(x[1]))}</b><span>${esc(say(x[2]))}</span></button>`;
-
-/* The engine's shared board (GET /api/flows-boards/board): its five lanes under the design's five column names. */
-const LANES = [["todo", "To do"], ["doing", "Doing"], ["review", "To check"], ["done", "Done"], ["blocked", "Stuck"]];
-const cardOf = (id) => LANES.flatMap(([k]) => board?.lanes?.[k] ?? []).find((c) => c.id === id);
-function assigneeFace(name) {
-  const trunk = (Array.isArray(E.trunks) ? E.trunks : []).find((t) => t.name === name || t.id === name);
-  return trunk ? av(trunk, 18) : name === "assistant" ? ic("spark", "s") : "";
-}
-function boardCard(c) {
-  return `<div class="card15" role="listitem" draggable="true" data-card15="${esc(c.id)}"><b>${esc(c.title)}</b><span class="c-foot15">${assigneeFace(c.assignee)}<small>${esc(c.notes)}</small></span><button type="button" class="c-mv15" data-act="bmove15" data-id="${esc(c.id)}" aria-label="${t("window.places.automations.move-title", { title: esc(c.title) })}">${ic("more", "s")}</button></div>`;
-}
-function boardTab() {
-  const hint = `<p class="hint" data-css="margin:4px 0 10px">${t("window.places.automations.work-that-takes-more-than-one")}</p>`;
-  if (!board) return `<div class="x15" data-tab15="board">${hint}${boardProblem ? offTile("board", boardProblem) || `<p class="hint">${esc(boardProblem)}</p>` : ""}</div>`;
-  const cols = LANES.map(([k, label]) => {
-    const cards = board.lanes?.[k] ?? [];
-    return `<section class="col15" data-col15="${k}" aria-label="${say(label)}"><h3>${say(label)}<span>${cards.length}</span></h3>${cards.map(boardCard).join("") || `<p class="c-empty15">${t("window.places.automations.nothing-here")}</p>`}</section>`;
-  }).join("");
-  return `<div class="x15" data-tab15="board">${hint}<div class="board15" role="list">${cols}</div></div>`;
-}
-/* One card to another lane: POST /api/flows-boards/board/cards/<id>/move {lane}; the engine's refusal is shown as it said it. */
-async function moveCard(id, lane) {
-  closePop();
-  try { await api(`flows-boards/board/cards/${encodeURIComponent(id)}/move`, { lane }); } catch (error) { toast(error.message); }
-  try { board = await api("flows-boards/board"); } catch (error) { toast(error.message); }
-  renderNow();
-}
-/* Dragging a card onto another column is the same move. */
-function initDrag() {
-  let dragged = null;
-  document.addEventListener("dragstart", (e) => { const c = e.target.closest?.("[data-card15]"); if (!c) return; dragged = c.dataset.card15; c.classList.add("dragging15"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragged); });
-  document.addEventListener("dragover", (e) => { const col = e.target.closest?.("[data-col15]"); if (!col || !dragged) return; e.preventDefault(); document.querySelectorAll(".col15.over15").forEach((x) => x !== col && x.classList.remove("over15")); col.classList.add("over15"); });
-  document.addEventListener("drop", (e) => {
-    const col = e.target.closest?.("[data-col15]");
-    if (!col || !dragged) return;
-    e.preventDefault();
-    const id = dragged;
-    dragged = null;
-    if (cardOf(id)?.lane !== col.dataset.col15) moveCard(id, col.dataset.col15); else renderNow();
-  });
-  document.addEventListener("dragend", () => { dragged = null; document.querySelectorAll(".dragging15,.over15").forEach((x) => x.classList.remove("dragging15", "over15")); });
-}
 
 /* A schedule (state.schedules): the Trunk that made it (data.startedBy) or Branch, its words, when it next comes round and
    who does it, how it has been doing (the time each of its recorded turns took, and how many needed you: the engine's
@@ -171,7 +128,7 @@ export function draw() {
 
   let html = `<main class="main enter11" id="main"><div class="lock-banner">${ic('lock', 's')}${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place">
     <h1>${t("dashboard.automations.title")}</h1><p class="lede">${t("window.places.automations.work-your-trunks-do-on-their")}</p>
-    <div class="tabs" role="tablist"><button class="tab" role="tab" type="button" aria-selected="${tab === 'scheduled' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="scheduled">${t("place.automations.scheduled")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'procedures' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="procedures">${t("nav.procedures")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'triggers' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="triggers">${t("asks.board.triggers")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'checkins' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="checkins">${t("window.places.automations.check-ins")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'board' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="board">${t("window.places.automations.board")}</button></div>`;
+    <div class="tabs" role="tablist"><button class="tab" role="tab" type="button" aria-selected="${tab === 'scheduled' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="scheduled">${t("place.automations.scheduled")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'procedures' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="procedures">${t("nav.procedures")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'triggers' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="triggers">${t("asks.board.triggers")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'checkins' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="checkins">${t("window.places.automations.check-ins")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'board' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="board">${t("window.places.orchard.tab")}</button></div>`;
 
   if (tab === "scheduled") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
@@ -195,7 +152,7 @@ export function draw() {
   } else if (tab === "checkins") {
     html += checkinsTile(heartbeat);
   } else if (tab === "board") {
-    html += boardTab();
+    html += orchardTab();
   }
 
   html += `</div></div></div></main>`;
@@ -215,19 +172,7 @@ export async function after() {
       renderNow();
     }
   } else if (tab === "board") {
-    let fresh = null, problem = "";
-    /* B007: switched off, the board is not asked for (it answers 409); the line is the engine's own label for it
-       (GET /api/flows-boards labels.kanban) with its switch. Without a label the board's own refusal is shown. */
-    try {
-      const boards = await api("flows-boards");
-      if (boards.modes?.kanban === "off" && boards.labels?.kanban) problem = t("window.switch-on.off", { label: boards.labels.kanban });
-      else fresh = await api("flows-boards/board");
-    } catch (error) { problem = error.message; }
-    if (JSON.stringify(fresh) !== JSON.stringify(board) || problem !== boardProblem) {
-      board = fresh;
-      boardProblem = problem;
-      renderNow();
-    }
+    if (await loadOrchard()) renderNow();
   } else if (tab === "triggers") {
     let modes = null;
     try { modes = await modeOfProcedures(); } catch (error) { toast(error.message); }
@@ -314,14 +259,8 @@ export function init() {
     const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
     if (add) add.disabled = !e.target.value.trim();
   });
-  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
+  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
   initRecipeRun();
-  on("bmove15", (el) => {
-    const card = cardOf(el.dataset.id);
-    if (!card) return;
-    openPop(el, `<div class="ph">${t("window.places.automations.move-to")}</div>${LANES.map(([k, l]) => `<button class="mi" type="button" role="menuitemradio" aria-checked="${card.lane === k}" data-act="bto15" data-id="${esc(card.id)}" data-v="${k}"><span class="mi-t">${say(l)}</span></button>`).join("")}`, { right: true });
-  });
-  on("bto15", (el) => moveCard(el.dataset.id, el.dataset.v));
   on("ideas15", () => openDlg({ title: t("window.places.automations.ideas-for-automations"), wide: true, body: [...new Set(IDEAS.map((x) => x[0]))].map((g) => `<div class="idea-g15"><h3>${esc(say(g))}</h3><div class="idea-row15">${IDEAS.map((x, i) => (x[0] === g ? ideaCard(x, i) : "")).join("")}</div></div>`).join("") }));
   /* Fills the Scheduled box with the idea's words; nothing is saved here. */
   on("idea15", (el) => {
@@ -332,7 +271,7 @@ export function init() {
     const box = $("#nl-in");
     if (box) { box.value = say(IDEAS[+el.dataset.i]?.[3] ?? ""); box.dispatchEvent(new Event("input", { bubbles: true })); box.focus(); }
   });
-  initDrag();
+  initOrchard();
   /* Run now on a procedure that starts itself; the engine says why when it did not start (asked first, already running). */
   on("proc-run", async (el) => {
     el.disabled = true;

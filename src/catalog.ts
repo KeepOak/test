@@ -67,9 +67,9 @@ const groupPrefixes: readonly (readonly [string, readonly string[]])[] = [
   // bucket-15: drafting an add-on and searching what plugins bring sit with the rest of what extends Branch.
   // The ship-on rule: asking the owner for a package or a tool server extends Branch too, so it waits in this box.
   ["skills", ["skills.", "plugins.", "recipes.", "mcp.", "sdk.", "addon.", "install."]],
-  // The shared board and the dashboard's widgets ship when needed (src/flows-boards/settings.ts): a box of their own,
+  // Orchard and the dashboard's widgets ship when needed (src/flows-boards/settings.ts): a box of their own,
   // one line until the work opens it, rather than open in the unrecognised box on every round.
-  ["boards", ["board.", "widgets."]],
+  ["boards", ["orchard.", "board.", "widgets."]],
   // The owner's own instruction files (AGENTS.md, SOUL.md and the rest) are part of how Branch is
   // set up, so they file under settings rather than opening a box of their own for two tools.
   ["settings", ["settings.", "help.", "preferences.", "policy.", "secrets.", "locker.", "usage.", "costs.", "models.", "context."]],

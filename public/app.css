@@ -3301,6 +3301,10 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 }
 /* area: p17 settings (prototype patch17b: rule tester, network sentences, why is this set, move in, compare, savings) */
 .lead-b17{margin:0;color:var(--ink-2);font-size:13.5px;line-height:1.5}
+/* SELF-309: a published page and the list of them (places/pages19.js). */
+.page19{max-height:62vh;overflow:auto;margin-top:10px}
+pre.page19{white-space:pre-wrap;font:inherit}
+.rows button.prow{width:100%;text-align:left;background:none;border:0;font:inherit;color:inherit;cursor:pointer}
 .why-b17 .grow{display:grid;gap:2px;min-width:0}
 .why-b17 small{font-size:12px;color:var(--ink-3);overflow-wrap:anywhere}
 .s3-b17{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0}
@@ -4426,6 +4430,10 @@ audio.docread18m{width:100%}
 .in18c.dim18{opacity:.55;filter:saturate(.6)}
 .hb18c .b18c{position:absolute;right:-2px;bottom:-2px;width:calc(var(--s) * .42);height:calc(var(--s) * .42);min-width:12px;min-height:12px;border-radius:50%;display:grid;place-items:center;background:var(--raise);color:var(--ink-2);box-shadow:0 0 0 1.5px var(--raise)}
 .hb18c .b18c svg.i{width:70%;height:70%}
+
+/* area: goal undo */
+/* The goal strip sticks below the merged title row, not under it, so Pause, Stop and Undo can be pressed. */
+:root:has(.titlebar.merged14) #scroll>.goal6:first-child{margin-top:var(--tb-h,52px)}
 
 /* area: mermaid diagrams */
 /* The prototype's diagram card: the drawing on the card's fill, the text that drew it folded under it. The drawing is a

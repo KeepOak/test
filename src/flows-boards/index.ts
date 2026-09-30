@@ -5,7 +5,8 @@ import type { ToolRegistry } from "../registry.js";
 import type { RunQueue } from "../run-queue.js";
 import type { Runtime } from "../runtime.js";
 import { InstallRequests } from "./install-requests.js";
-import { KanbanBoard } from "./kanban.js";
+import { Orchard, type OrchardTrunk } from "../orchard/index.js";
+import { lockdownActive } from "../lockdown.js";
 import { RecipeChecker } from "./recipe-checks.js";
 import { boardMode, boardParts, boardTools, followBoardSwitches, saveBoardMode, type BoardMode, type BoardPart } from "./settings.js";
 import { FlowTimeTravel } from "./time-travel.js";
@@ -17,7 +18,8 @@ import { Widgets } from "./widgets.js";
  * Bucket R17-H: flows and boards — going back in a flow, checked procedures, the shared board, live
  * widgets the assistant builds, the waiting line you can change, focus view, and requests for new
  * packages and tool servers. `createBranch` makes one of these and the server hands it
- * /api/flows-boards/. Every part ships off. See docs/configuration.md, "Flows and boards".
+ * /api/flows-boards/ (Orchard's routes are /api/orchard/, src/orchard/api.ts). What each part ships as is in
+ * src/flows-boards/settings.ts. See docs/configuration.md, "Flows and boards".
  */
 export interface FlowsBoardsDeps {
   runtime: Runtime; registry: ToolRegistry; flows: Flows; knowledge: Knowledge; queue: RunQueue; asks: Asks;
@@ -25,6 +27,8 @@ export interface FlowsBoardsDeps {
   fetch: () => typeof fetch;
   /** The address of that list; only a test changes it. */
   osvEndpoint?: string;
+  /** The owner's Trunks now, for Orchard (src/trunks). */
+  trunks: () => OrchardTrunk[];
   requireInstallOwner?: () => void;
 }
 
@@ -35,7 +39,8 @@ export const flowsBoardsFor = (runtime: object): FlowsBoards | undefined => byRu
 export class FlowsBoards {
   readonly timeTravel: FlowTimeTravel;
   readonly recipes: RecipeChecker;
-  readonly kanban: KanbanBoard;
+  /** Orchard, under the switch the shared board had (src/orchard). */
+  readonly orchard: Orchard;
   readonly widgets: Widgets;
   readonly waiting: WaitingLine;
   readonly installs: InstallRequests;
@@ -49,7 +54,8 @@ export class FlowsBoards {
         return record.data;
       } });
     this.recipes = new RecipeChecker({ runtime, knowledge: deps.knowledge });
-    this.kanban = new KanbanBoard(runtime, deps.asks.boards);
+    this.orchard = new Orchard({ store, owner, runtime, trunks: deps.trunks, on: () => this.mode("kanban") !== "off",
+      lockdown: () => lockdownActive(store, owner) });
     this.widgets = new Widgets(store, owner, deps.registry, deps.asks.surfaces);
     this.waiting = new WaitingLine(runtime, deps.queue);
     this.installs = new InstallRequests({ store, owner, fetch: deps.fetch, ...(deps.osvEndpoint ? { endpoint: deps.osvEndpoint } : {}),
@@ -75,6 +81,7 @@ export class FlowsBoards {
   setMode(part: BoardPart, input: unknown): BoardMode {
     const mode = saveBoardMode(this.store, this.owner, part, input);
     this.sync(part);
+    if (part === "kanban") this.orchard.grow();
     return mode;
   }
 

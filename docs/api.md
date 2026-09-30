@@ -29,6 +29,8 @@ Version 0.19.3. The machine-readable description is at `GET /api/openapi.json`.
 | `GET` | `/api/sessions/{sessionId}/rewind` | Whether files can be taken back here, and the rewind that can be undone. |
 | `POST` | `/api/sessions/{sessionId}/rewind` | Take the conversation, the files, or both back to just before one message. |
 | `POST` | `/api/sessions/{sessionId}/unrevert` | Undo the newest rewind in this conversation. |
+| `GET` | `/api/sessions/{sessionId}/goal/undo` | What undoing this conversation's goal would put back: its files, its drafts and its facts. |
+| `POST` | `/api/sessions/{sessionId}/goal/undo` | Undo the goal: stop it, put back its files, delete its drafts and forget what it learned. The conversation stays. |
 ## memory
 
 | Method | Address | What it is for |
