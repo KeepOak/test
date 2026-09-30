@@ -121,12 +121,14 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     // Source preparation publishes its clone through this logical directory link. Resolve only
     // that recorded source prefix; descendants must still match exactly, without nested redirects.
     let expected = resolve(rootReal, copy);
+    let managedSource: string | null = null;
     if (copy.startsWith("branch-agent-source/.branch-worktrees/")) {
       const sourceReal = await realpath(resolve(root, "branch-agent-source")).catch(() => null);
       const sourceFrom = sourceReal ? relative(rootReal, sourceReal) : "";
       if (!sourceReal || !sourceFrom || isAbsolute(sourceFrom) || sourceFrom === ".."
         || sourceFrom.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
         refused("the recorded source checkout is not contained in the workspace");
+      managedSource = sourceReal;
       expected = resolve(sourceReal, copy.slice("branch-agent-source/".length));
     }
     if (!copyReal || !from || isAbsolute(from) || from === ".." || from.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
@@ -148,6 +150,21 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     if (!actualTop || !samePath(actualTop, copyReal) || line.status !== "completed" || line.exitCode !== 0
       || line.truncated || line.stdout.trim() !== branch || ancestor.status !== "completed" || ancestor.exitCode !== 0 || ancestor.truncated)
       refused("the retained working copy no longer proves its recorded branch and baseline");
+    if (managedSource) {
+      const source = managedSource;
+      let sourceTop: GitOutcome, sourceCommon: GitOutcome;
+      try {
+        sourceTop = await git({ cwd: source, args: ["rev-parse", "--show-toplevel"], timeoutMs: 10_000, maxOutputBytes: 8192 }, signal);
+        sourceCommon = await git({ cwd: source, args: ["rev-parse", "--git-common-dir"], timeoutMs: 10_000, maxOutputBytes: 8192 }, signal);
+      } catch { return refused("the retained copy's source repository could not be read"); }
+      const copyCommon = await read(["rev-parse", "--git-common-dir"]);
+      const canonical = async (result: GitOutcome, cwd: string) => result.status === "completed" && result.exitCode === 0
+        && !result.truncated && result.stdout.trim() ? realpath(resolve(cwd, result.stdout.trim())).catch(() => null) : null;
+      const sourceRoot = await canonical(sourceTop, source), sourceIdentity = await canonical(sourceCommon, source);
+      const copyIdentity = await canonical(copyCommon, copyReal);
+      if (!sourceRoot || !samePath(sourceRoot, source) || !sourceIdentity || !copyIdentity || !samePath(sourceIdentity, copyIdentity))
+        refused("the retained copy does not belong to the recorded source repository");
+    }
     signal.throwIfAborted();
     workspace = copyReal;
   }
