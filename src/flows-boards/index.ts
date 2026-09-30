@@ -25,6 +25,7 @@ export interface FlowsBoardsDeps {
   fetch: () => typeof fetch;
   /** The address of that list; only a test changes it. */
   osvEndpoint?: string;
+  requireInstallOwner?: () => void;
 }
 
 const byRuntime = new WeakMap<object, FlowsBoards>();
@@ -51,7 +52,8 @@ export class FlowsBoards {
     this.kanban = new KanbanBoard(runtime, deps.asks.boards);
     this.widgets = new Widgets(store, owner, deps.registry, deps.asks.surfaces);
     this.waiting = new WaitingLine(runtime, deps.queue);
-    this.installs = new InstallRequests({ store, owner, fetch: deps.fetch, ...(deps.osvEndpoint ? { endpoint: deps.osvEndpoint } : {}) });
+    this.installs = new InstallRequests({ store, owner, fetch: deps.fetch, ...(deps.osvEndpoint ? { endpoint: deps.osvEndpoint } : {}),
+      ...(deps.requireInstallOwner ? { requireOwner: deps.requireInstallOwner } : {}) });
     for (const part of boardParts) this.sync(part);
     byRuntime.set(runtime, this);
     followBoardSwitches(store, (part, input) => this.setMode(part, input));
