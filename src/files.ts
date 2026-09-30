@@ -55,7 +55,28 @@ export class WorkspaceFiles {
   ownerFolders: OwnerFolderHost | undefined;
   /** The home folder those three are in: the person's own, read each time. */
   home: () => string = () => homedir();
+  /**
+   * Owner ruling (2026-09-30): whether a task may name any place on the computer, as OpenClaw's file tools do with
+   * `tools.fs.workspaceOnly` false (its default), Codex's danger-full-access and Claude Code's bypass: the owner's own
+   * task in a conversation on Full access (src/runtime.ts `ownerFullMode`). Set at start-up; absent wiring keeps the
+   * workspace. Secret names and Branch's own files stay refused there as everywhere.
+   */
+  wholeComputer: (context: ToolContext | undefined) => boolean = () => false;
   constructor(readonly root: string) {}
+  /** True when this path is outside the workspace and this task may reach it (the owner's Full access). */
+  beyondWorkspace(path: string, context: ToolContext): boolean {
+    try { return this.outside(path, context) !== null; } catch { return false; }
+  }
+  /** A path outside the workspace, for a task that may reach the whole computer, or null for a workspace path. */
+  private outside(path: string, context: ToolContext | undefined): string | null {
+    const rooted = isAbsolute(path) || /^[a-z]:/i.test(path) || path.startsWith("~") || path.startsWith("\\");
+    if (!rooted || !context || !this.wholeComputer(context)) return null;
+    const target = resolve(path.startsWith("~") ? join(this.home(), path.slice(1)) : path);
+    const parts = target.replace(/\\/g, "/").split("/").filter(Boolean);
+    if (parts.some((part) => secretName(part)) || secretPath.test(parts.join("/")))
+      throw new Error("Path denied: secret filename");
+    return target;
+  }
   /**
    * The owner folder a path names (`~/Downloads/a.pdf`, a full path into one, or `Downloads/a.pdf` when the workspace
    * has nothing called Downloads), or null for a workspace path. A place outside both is an error in plain words.
@@ -79,7 +100,9 @@ export class WorkspaceFiles {
     return resolve(this.base, path);
   }
   /** The same checks as `checked`, and then a refusal for a folder the assistant may only read. */
-  async checkedForWrite(path: string): Promise<string> {
+  async checkedForWrite(path: string, context?: ToolContext): Promise<string> {
+    const beyond = this.outside(path, context);
+    if (beyond) return beyond;
     const refusal = this.readOnly(path.replace(/^\.\//, "").replace(/\\/g, "/"));
     if (refusal) throw new Error(refusal);
     return this.checked(path);
@@ -89,7 +112,9 @@ export class WorkspaceFiles {
     const folder = this.scope();
     return folder ? resolve(this.root, folder) : this.root;
   }
-  async checked(path: string, allowRoot = false): Promise<string> {
+  async checked(path: string, allowRoot = false, context?: ToolContext): Promise<string> {
+    const beyond = this.outside(path, context);
+    if (beyond) return beyond;
     // QA (first task): a wildcard or a place outside the workspace is said plainly, with what to do instead, never
     // turned into an empty answer the model takes for "nothing there".
     if (/[*?]/.test(path))
@@ -166,8 +191,8 @@ export class WorkspaceFiles {
     const relative = path.replace(/\\/g, "/").replace(/^\/+/, "");
     return !!relative && !!matcher && matcher.ignores(relative, isDirectory);
   }
-  async read(path: string, maxBytes = 32768): Promise<{ path: string; content: string }> {
-    const target = await this.checked(path);
+  async read(path: string, maxBytes = 32768, context?: ToolContext): Promise<{ path: string; content: string }> {
+    const target = await this.checked(path, false, context);
     const handle = await open(
       target,
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
@@ -187,8 +212,8 @@ export class WorkspaceFiles {
    * coding assistant's reader does. The answer says where it starts and how many lines the file has, and is held
    * to 32 KiB of text, so a larger slice comes back shorter and says so.
    */
-  async readLines(path: string, from: number, count: number): Promise<{ path: string; content: string; fromLine: number; toLine: number; totalLines: number; more: boolean; whole: string }> {
-    const { content: whole } = await this.read(path, largeFileBytes);
+  async readLines(path: string, from: number, count: number, context?: ToolContext): Promise<{ path: string; content: string; fromLine: number; toLine: number; totalLines: number; more: boolean; whole: string }> {
+    const { content: whole } = await this.read(path, largeFileBytes, context);
     const lines = whole.split(/(?<=\n)/);
     const start = Math.min(Math.max(1, from), Math.max(1, lines.length));
     let content = "", end = start - 1;
@@ -208,12 +233,13 @@ export class WorkspaceFiles {
     signal: AbortSignal,
     /** selfdev: an edit in place of a large file (files.edit, files.patch) writes it back whole. */
     maxBytes = 32768,
+    context?: ToolContext,
   ): Promise<{ path: string; bytes: number }> {
     if (Buffer.byteLength(content) > maxBytes)
       throw new Error(maxBytes === 32768 ? "File exceeds 32 KiB" : "File exceeds 8 MiB");
-    const target = await this.checkedForWrite(path);
+    const target = await this.checkedForWrite(path, context);
     await mkdir(dirname(target), { recursive: true });
-    await this.checked(path);
+    await this.checked(path, false, context);
     signal.throwIfAborted();
     const handle = await open(
       target,
@@ -236,8 +262,10 @@ export class WorkspaceFiles {
    * by a walk over many folders; a single listing makes its own and says what it left out).
    */
   async list(
-    path = ".", rules?: WalkRules, outside?: { source: RunSource },
+    path = ".", rules?: WalkRules, outside?: { source: RunSource }, context?: ToolContext,
   ): Promise<{ entries: { name: string; type: string }[]; leftOut?: string }> {
+    const beyond = this.outside(path, context);
+    if (beyond) return this.listAnywhere(beyond);
     const walk = rules ?? new WalkRules(this.walkRules(outside));
     walk.start(path);
     const target = await this.checked(path, true);
@@ -255,16 +283,26 @@ export class WorkspaceFiles {
     }
     return rules ? { entries } : walk.noted({ entries });
   }
+  /** Owner ruling 2026-09-30: one folder anywhere on the computer, for Full access; secret names and links left out. */
+  private async listAnywhere(target: string): Promise<{ entries: { name: string; type: string }[] }> {
+    const entries: { name: string; type: string }[] = [];
+    for (const e of (await readdir(target, { withFileTypes: true })).slice(0, 400)) {
+      if (entries.length >= 200) break;
+      if (e.isSymbolicLink() || secretName(e.name)) continue;
+      entries.push({ name: e.name, type: e.isDirectory() ? "directory" : "file" });
+    }
+    return { entries };
+  }
   /** Moves one workspace file to a new workspace path; the folder it goes into is made. Never replaces a file. */
-  async move(from: string, to: string, signal: AbortSignal): Promise<{ from: string; to: string }> {
-    const source = await this.checkedForWrite(from), target = await this.checkedForWrite(to);
+  async move(from: string, to: string, signal: AbortSignal, context?: ToolContext): Promise<{ from: string; to: string }> {
+    const source = await this.checkedForWrite(from, context), target = await this.checkedForWrite(to, context);
     const info = await lstat(source).catch(() => null);
     if (!info) throw new Error(`${from} does not exist. Use files.list to see the files.`);
     if (!info.isFile()) throw new Error(`${from} is not a file. Move files one at a time.`);
     if (info.nlink > 1) throw new Error("Hardlink path denied");
     if (await lstat(target).then(() => true, () => false)) throw new Error(`${to} already exists, so nothing was moved.`);
     await mkdir(dirname(target), { recursive: true });
-    await this.checked(to); // the folders just made are checked again
+    await this.checked(to, false, context); // the folders just made are checked again
     signal.throwIfAborted();
     await rename(source, target);
     return { from, to };
@@ -335,7 +373,7 @@ export const largeFileBytes = 8 * 1024 * 1024;
 
 /** selfdev: part of a large file; seen as it is now, so a change to it (files.edit) is judged against the whole file. */
 async function readPart(files: WorkspaceFiles, context: ToolContext, path: string, from: number, count: number) {
-  const { whole, ...part } = await files.readLines(path, from, count);
+  const { whole, ...part } = await files.readLines(path, from, count, context);
   files.readFirst?.noteRead(context.runId, files.addressOf(path), whole);
   const where = part.more ? `Lines ${part.fromLine}-${part.toLine} of ${part.totalLines}. Read on with files.read_lines from line ${part.toLine + 1}.`
     : `Lines ${part.fromLine}-${part.toLine} of ${part.totalLines}.`;
@@ -355,7 +393,7 @@ export function registerFiles(
     permission: "files.read",
     parameters: z.object({ path: pathSchema }).strict(),
     execute: async (a, c: ToolContext) => {
-      const file = await files.read(a.path).catch((error: unknown) => {
+      const file = await files.read(a.path, 32768, c).catch((error: unknown) => {
         // selfdev: a file too large to read whole is read from its start, and says how to read the rest.
         if (!(error instanceof Error) || !error.message.includes("32 KiB")) throw error;
         return null;
@@ -380,6 +418,7 @@ export function registerFiles(
     permission: "files.read",
     parameters: z.object({ path: pathSchema.default(".") }).strict(),
     execute: async (a, c: ToolContext) => {
+      if (files.wholeComputer(c)) return files.list(a.path, undefined, undefined, c); // owner ruling 2026-09-30
       const place = await files.ownerPlace(a.path);
       if (!place) return files.list(a.path);
       files.requireOwnerFolder(c, place);
@@ -404,6 +443,11 @@ export function registerFiles(
     targets: (a) => movePaths(a, files.home()).map((path) => ({ kind: "write" as const, path })),
     execute: async (a, c: ToolContext) => {
       const moves = movePairs(a, files.home());
+      if (files.wholeComputer(c)) { // owner ruling 2026-09-30: Full access moves anywhere, each file as a workspace move is
+        const moved = [];
+        for (const one of moves) moved.push(await files.move(one.from, one.to, c.signal, c));
+        return moved.length === 1 ? moved[0] : { moved };
+      }
       const places: { from: string; to: string; fromPlace: OwnerPath | null; toPlace: OwnerPath | null }[] = [];
       for (const move of moves) {
         const fromPlace = await files.ownerPlace(move.from);
@@ -452,11 +496,13 @@ export function registerFiles(
     execute: async (a, c: ToolContext) => {
       refuseRemovedLines(a.content);
       // mac7/coding-next: an existing file is replaced only once this task has read it as it is now.
-      if (!c.readFirstExempt && files.readFirst?.holds(c.runId)) await files.readFirst.require(c.runId, await files.checked(a.path), a.path);
-      const token = observer ? await observer.before(a.path, c) : undefined;
-      const result = await files.write(a.path, a.content, c.signal);
+      if (!c.readFirstExempt && files.readFirst?.holds(c.runId)) await files.readFirst.require(c.runId, await files.checked(a.path, false, c), a.path);
+      // A file outside the workspace (the owner's Full access) has no workspace history to keep, as upstream keeps none.
+      const watched = observer && !files.beyondWorkspace(a.path, c) ? observer : undefined;
+      const token = watched ? await watched.before(a.path, c) : undefined;
+      const result = await files.write(a.path, a.content, c.signal, 32768, c);
       files.readFirst?.noteWritten(c.runId, files.addressOf(a.path));
-      if (observer) await observer.after(a.path, c, token);
+      if (watched) await watched.after(a.path, c, token);
       return result;
     },
   });
@@ -547,9 +593,9 @@ function registerVerification(
     parameters: z
       .object({ path: pathSchema, expected: z.string().max(32768) })
       .strict(),
-    execute: async (a) => ({
+    execute: async (a, c: ToolContext) => ({
       path: a.path,
-      verified: (await files.read(a.path)).content === a.expected,
+      verified: (await files.read(a.path, 32768, c)).content === a.expected,
     }),
   });
 }

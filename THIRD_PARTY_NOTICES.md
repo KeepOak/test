@@ -3367,6 +3367,10 @@ owner-dm-full (`ownerChats` in `src/channels/chat-permissions.ts`, `ownerFullFro
 
 The test in `src/skill-authoring.ts` for whether something deserves to be a new skill (a concrete, repeatable procedure, not general knowledge, a one-off fix or a preference; when in doubt, none) follows `packages/core/src/agents/skill-extraction-agent.ts` in Gemini CLI (https://github.com/google-gemini/gemini-cli, commit 6a466a7), rewritten in Branch's words. Copyright 2026 Google LLC. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), on the same terms as above.
 
+### Hermes Agent dangerous-command list (Nous Research), MIT
+
+`src/safety-extras/dangerous-commands.ts` is a port of Hermes Agent's `DANGEROUS_PATTERNS` and `HARDLINE_PATTERNS` (`tools/approval_detection.py` in https://github.com/NousResearch/hermes-agent, commit a9a54245) to JavaScript regular expressions, less the rows about Hermes's own gateway, updater and config files. Under Full access these are the only commands Branch asks about, as Hermes's CLI asks about them for its owner. Copyright (c) 2025 Nous Research. Used under the MIT licence, whose text is given below.
+
 ### Hermes Agent (Nous Research), MIT
 
 The background review after a number of turns, the preference for correcting an existing skill over making a new one, and the curator that sets unused skills aside with scheduled ones exempt (`agent/background_review.py`, `agent/learn_prompt.py`, `agent/curator.py` in https://github.com/NousResearch/hermes-agent, commit 6005aa1) shaped `src/reflection/`. Used under the MIT licence:
