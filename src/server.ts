@@ -1,3 +1,4 @@
+import { sourcePublicationRollouts } from "./source-rollout-receipt.js";
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import { retiredPhoneWorker } from "./retired-phone-worker.js";
 import {
@@ -1078,7 +1079,7 @@ async function api(
     if (throughADoor(request)) throw new HttpError(403, hereOnly);
     if (startedWithShortLivedKey() || currentPerson()) throw new HttpError(401, "Only the owner at this window may manage source publications.");
     if (request.method === "GET" && path === "/api/self-development/publications")
-      return { publications: app.sourcePublications.list() };
+      return { publications: sourcePublicationRollouts(app.store, app.runtime.owner, app.sourcePublications.list()) };
     if (request.method === "POST" && path === "/api/self-development/publications/cancel") {
       const { id } = z.object({ id: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(await readBody(request));
       return { publication: app.sourcePublications.cancel(id) };

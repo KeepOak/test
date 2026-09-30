@@ -130,7 +130,8 @@ export class SelfDevelopmentMerges {
         throw new Error("The review expired or GitHub connection changed before the merge was sent. Review again.");
     });
     this.record(grant, result.merged ? "merged" : "queued");
-    if (result.merged) recordSourceArrival(this.deps.store, this.deps.owner, grant.input.worktree, result.sha);
+    if (result.merged) recordSourceArrival(this.deps.store, this.deps.owner, grant.input.worktree, result.sha,
+      { repository: grant.input.repo, number: grant.input.number, reviewedHead: snapshot.github.headSha });
     return { ...result, repository: grant.input.repo, number: grant.input.number, reviewedHead: snapshot.github.headSha };
   }
   private autoOwner(input: ReviewInput, context: ToolContext): string {
@@ -190,7 +191,8 @@ export class SelfDevelopmentMerges {
       gate();
       if (ownerGitHubConnection(this.deps.registry) !== github) throw new Error("The GitHub connection changed before merge.");
     });
-    if (merged.merged) recordSourceArrival(this.deps.store, this.deps.owner, input.worktree, merged.sha);
+    if (merged.merged) recordSourceArrival(this.deps.store, this.deps.owner, input.worktree, merged.sha,
+      { repository: input.repo, number: input.number, reviewedHead: ready.github.headSha });
     audit(this.deps.store, this.deps.owner, { action: "self_development.merge", actor,
       subject: `${input.repo}#${input.number} ${ready.github.headSha}`, runId: context.runId,
       reason: `Independent read-only task ${result.runId} passed; exact tested protected commit ${merged.merged ? "merged normally" : "joined the base's merge queue"}.`,

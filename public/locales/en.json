@@ -10594,5 +10594,15 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "sourceRollout.published": "Draft publication recorded.",
+  "sourceRollout.unknown": "No PR-specific confirmed merge is recorded locally.",
+  "sourceRollout.merged": "Merge confirmed locally; the running engine does not yet prove it contains this change.",
+  "sourceRollout.running": "The running engine build includes the confirmed merge.",
+  "sourceRollout.reviewedHead": "Reviewed PR head",
+  "sourceRollout.merge": "Confirmed merge commit",
+  "sourceRollout.engine": "Running engine commit",
+  "sourceRollout.confirmed": "Merge recorded",
+  "sourceRollout.observed": "Engine identity observed",
+  "sourceRollout.localOnly": "Local evidence only. This does not verify remote rollout, application health, or tests. A newer window alone is not engine proof."
 }

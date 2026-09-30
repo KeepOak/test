@@ -10594,5 +10594,15 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "sourceRollout.published": "Publication du brouillon enregistrée.",
+  "sourceRollout.unknown": "Aucune fusion confirmée pour cette PR n’est enregistrée localement.",
+  "sourceRollout.merged": "Fusion confirmée localement ; le moteur en cours ne prouve pas encore qu’il contient ce changement.",
+  "sourceRollout.running": "La version du moteur en cours inclut la fusion confirmée.",
+  "sourceRollout.reviewedHead": "Commit de PR examiné",
+  "sourceRollout.merge": "Commit de fusion confirmé",
+  "sourceRollout.engine": "Commit du moteur en cours",
+  "sourceRollout.confirmed": "Fusion enregistrée",
+  "sourceRollout.observed": "Identité du moteur observée",
+  "sourceRollout.localOnly": "Preuves locales uniquement. Cela ne vérifie ni le déploiement distant, ni le bon fonctionnement de l’application, ni les tests. Une fenêtre plus récente ne prouve pas la mise à jour du moteur."
 }
