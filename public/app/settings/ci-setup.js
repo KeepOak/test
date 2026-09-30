@@ -1,3 +1,4 @@
+import { controlRow, segmentedControl } from "./row-kit.js";
 /* Settings › Computer › Branch in CI › Copy the setup: the few lines to paste into a GitHub or GitLab workflow, written by
    the engine from the boxes here (POST /api/coding/ci, src/coding/ci.ts): where the check runs, the model service, the
    model, its address and the name of the CI secret that holds its key. The key itself is never asked for or written.
@@ -13,7 +14,7 @@ const CI = { kind: "github", provider: "anthropic", model: "", endpoint: "", key
 /* Each service's own address and the secret name its docs use; the model is the owner's to type. */
 const DEFAULTS = { anthropic: ["https://api.anthropic.com", "ANTHROPIC_API_KEY"], openai: ["https://api.openai.com/v1", "OPENAI_API_KEY"] };
 
-const seg = (act, pairs, cur, label) => `<span class="seg" role="group" aria-label="${esc(label)}">${pairs.map(([v, words]) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}">${esc(words)}</button>`).join("")}</span>`;
+const seg = (act, pairs, cur, label) => segmentedControl({title: label, options: pairs, current: cur, action: act});
 const box = (id, label, value) => `<div class="fld"><label for="${id}">${esc(label)}</label><input class="inp" id="${id}" value="${esc(value)}" spellcheck="false"></div>`;
 
 /* What the boxes hold now, kept across a redraw. */
@@ -26,8 +27,8 @@ function keep() {
 
 function draw() {
   const where = t("window.settings.computer.ci-where"), service = t("window.settings.computer.ci-service");
-  const body = `<div class="ctl"><b>${esc(where)}</b><span class="right">${seg("ci-kind", [["github", "GitHub Actions"], ["gitlab", "GitLab CI"]], CI.kind, where)}</span><small></small></div>`
-    + `<div class="ctl"><b>${esc(service)}</b><span class="right">${seg("ci-provider", [["anthropic", "Anthropic"], ["openai", t("window.settings.computer.ci-openai-shape")]], CI.provider, service)}</span><small></small></div>`
+  const body = `${controlRow(`<b>${esc(where)}</b><span class="right">${seg("ci-kind", [["github", "GitHub Actions"], ["gitlab", "GitLab CI"]], CI.kind, where)}</span><small></small>`)}`
+    + `${controlRow(`<b>${esc(service)}</b><span class="right">${seg("ci-provider", [["anthropic", "Anthropic"], ["openai", t("window.settings.computer.ci-openai-shape")]], CI.provider, service)}</span><small></small>`)}`
     + box("ci-model", t("window.settings.computer.ci-model"), CI.model)
     + box("ci-endpoint", t("window.settings.computer.ci-endpoint"), CI.endpoint)
     + box("ci-key", t("window.settings.computer.ci-key"), CI.key)

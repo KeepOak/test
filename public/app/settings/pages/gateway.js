@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Gateway, 1:1 with the prototype at each level, from GET /api/never-break. "Carry on interrupted work by
    itself" is the gateway's own mode (POST /api/never-break): "on" carries interrupted work on after a restart, "when-needed"
    only offers it (src/never-break/resume.ts), so the switch saves "on" or "when-needed"; turned on while the gateway is off
@@ -116,17 +117,17 @@ function statusSection(gw) {
 
 function modeSection(gw) {
   const mode = gw?.mode ?? null;
-  return `<div class="sec"><h2>${t("field.never-break-mode")}</h2><div class="ctl"><b>${t("window.settings.gateway.gateway")}</b><input class="sw" type="checkbox" id="gw-mode" data-sw="gw-mode" ${gwOn(mode) ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.gateway")}"><small>${t("window.settings.gateway.recommended-on-telegram-your-phone-and")}</small></div>`
-    + `<div class="ctl"><b>${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}</b><input class="sw" type="checkbox" id="gw-carry" data-sw="gw-carry" ${mode === "on" ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}"><small>${t("window.settings.gateway.after-a-restart-safe-steps-carry")}</small></div>`
+  return `<div class="sec"><h2>${t("field.never-break-mode")}</h2>${controlRow(`<b>${t("window.settings.gateway.gateway")}</b><input class="sw" type="checkbox" id="gw-mode" data-sw="gw-mode" ${gwOn(mode) ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.gateway")}"><small>${t("window.settings.gateway.recommended-on-telegram-your-phone-and")}</small>`)}`
+    + `${controlRow(`<b>${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}</b><input class="sw" type="checkbox" id="gw-carry" data-sw="gw-carry" ${mode === "on" ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}"><small>${t("window.settings.gateway.after-a-restart-safe-steps-carry")}</small>`)}`
     + keepAwakeRow(gw)
-    + `<div class="ctl"><b>${t("window.settings.gateway.show-the-gateway-in-the-tray")}</b><input class="sw" type="checkbox" id="gw-tray" aria-label="${t("window.settings.gateway.show-the-gateway-in-the-tray")}" data-sw="set"><small>${t("window.settings.gateway.a-small-branch-icon-by-the")}</small></div></div>`;
+    + `${controlRow(`<b>${t("window.settings.gateway.show-the-gateway-in-the-tray")}</b><input class="sw" type="checkbox" id="gw-tray" aria-label="${t("window.settings.gateway.show-the-gateway-in-the-tray")}" data-sw="set"><small>${t("window.settings.gateway.a-small-branch-icon-by-the")}</small>`)}</div>`;
 }
 
 function keepAwakeRow(gw) {
   const runtime = gw?.keepAwakeRuntime;
   const state = runtime?.error ? `${t("gatewayPower.failed")} ${runtime.error}` : runtime?.suspended ? t("gatewayPower.suspended")
     : runtime?.active ? t("gatewayPower.active") : gw?.config?.keepAwake ? t("gatewayPower.waiting") : t("gatewayPower.off");
-  return `<div class="ctl"><b>${t("gatewayPower.title")}</b><input class="sw" type="checkbox" id="gw-keep-awake" data-sw="gw-keep-awake" ${gw?.config?.keepAwake ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("gatewayPower.title")}"><small>${t("gatewayPower.description")} ${esc(state)}</small></div>`;
+  return `${controlRow(`<b>${t("gatewayPower.title")}</b><input class="sw" type="checkbox" id="gw-keep-awake" data-sw="gw-keep-awake" ${gw?.config?.keepAwake ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("gatewayPower.title")}"><small>${t("gatewayPower.description")} ${esc(state)}</small>`)}`;
 }
 
 /* What it has been doing: while the gateway is off the prototype's one line is simply true. While it runs, its own notes,

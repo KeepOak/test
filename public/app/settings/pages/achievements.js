@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Achievements, from GET /api/delight/achievements: how many are earned of how many, each tier's share, and
    every achievement as the engine shows it (the higher the tier, the less a locked one gives away; an earned one says the
    day it was earned in its tooltip). The category tabs are
@@ -67,7 +68,7 @@ function card(a) {
 
 /* The engine answers { on: false } while achievements are switched off: no list then, but the quiet switch is still its. */
 function settingsSec() {
-  return `<div class="sec"><h2>${t("memory.movein.kind.setting")}</h2><div class="ctl"><b>${t("window.settings.achievements.keep-achievements-quiet")}</b><input class="sw" type="checkbox" id="ach-q" ${quiet ? "checked" : ""} aria-label="${t("window.settings.achievements.keep-achievements-quiet")}" data-sw="achquiet"><small>${t("window.settings.achievements.no-pop-ups-they-still-unlock")}</small></div><p class="hint">${t("window.settings.achievements.hints-bronze-and-silver-get-a")}</p></div>`;
+  return `<div class="sec"><h2>${t("memory.movein.kind.setting")}</h2>${controlRow(`<b>${t("window.settings.achievements.keep-achievements-quiet")}</b><input class="sw" type="checkbox" id="ach-q" ${quiet ? "checked" : ""} aria-label="${t("window.settings.achievements.keep-achievements-quiet")}" data-sw="achquiet"><small>${t("window.settings.achievements.no-pop-ups-they-still-unlock")}</small>`)}<p class="hint">${t("window.settings.achievements.hints-bronze-and-silver-get-a")}</p></div>`;
 }
 
 export function draw() {

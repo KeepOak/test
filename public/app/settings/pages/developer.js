@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Developer, 1:1 with the prototype (only shown at the Technical level). The local address is the one this
    window is talking to; Copy puts it on the clipboard. A switch shows the engine's own value and is live only where a
    route changes it (WIRES); a three-way feature switch reads as on unless its mode is "off", turns on as "when-needed"
@@ -51,7 +52,7 @@ function statusRow() {
   const items = D.comfort?.values?.display?.statusLine, title = t("comfort.field.statusLine");
   const cur = !D.comfort ? null : items == null ? "default" : JSON.stringify(items) === JSON.stringify(MINIMAL) ? "minimal" : null;
   const opt = (v, words) => `<button type="button" aria-pressed="${cur === v}" data-act="dv-status" data-v="${v}">${esc(words)}</button>`;
-  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("default", t("voice.default"))}${opt("minimal", t("window.settings.developer.minimal"))}<button type="button" aria-pressed="false" data-act="dv-status-script" data-why="f15-status-line-script">${esc(t("window.settings.developer.my-script"))}</button></span></span><small>${esc(t("window.settings.developer.status-line-where"))}</small></div>`;
+  return `${controlRow(`<b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("default", t("voice.default"))}${opt("minimal", t("window.settings.developer.minimal"))}<button type="button" aria-pressed="false" data-act="dv-status-script" data-why="f15-status-line-script">${esc(t("window.settings.developer.my-script"))}</button></span></span><small>${esc(t("window.settings.developer.status-line-where"))}</small>`)}`;
 }
 async function setStatusLine(v) {
   try { await api("comfort", { card: "display", values: { statusLine: v === "minimal" ? MINIMAL : null } }); } catch (error) { toast(error.message); }
@@ -61,12 +62,12 @@ async function setStatusLine(v) {
 export function draw() {
   let html = `<h1>${t("settings.card.developer")}</h1><p class=\"lede\">${t("settingsGrown.bucket.advanced.dev.line")}</p>`;
   html += `<div class=\"sec\"><h2>${t("window.settings.developer.local-address")}</h2>`;
-  html += `<div class="ctl"><b>${esc(location.host)}</b><span class="right"><button class="btn sm" type="button" data-act="dv-copy">${t("asks.examples.copy")}</button></span><small>${t("window.settings.developer.only-this-computer-can-reach-it")}</small></div>`;
+  html += `${controlRow(`<b>${esc(location.host)}</b><span class="right"><button class="btn sm" type="button" data-act="dv-copy">${t("asks.examples.copy")}</button></span><small>${t("window.settings.developer.only-this-computer-can-reach-it")}</small>`)}`;
   html += `<div class=\"ctl\"><b>${t("window.settings.developer.session-key")}</b><span class=\"right\"><span data-css=\"font:12px var(--mono);color:var(--ink-3)\">&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;&#8226;</span><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"session-key\">${t("window.settings.developer.make-a-new-one")}</button></span><small>${t("window.settings.developer.never-shown-in-full-here")}</small></div>`;
   html += "</div>";
   html += `<div class=\"sec\"><h2>${t("settings.advanced.code.title")}</h2>`;
-  html += `<div class="ctl"><b>${t("window.settings.developer.use-language-servers")}</b><input class="sw" type="checkbox" id="dv-ls" ${value("dv-ls") ? "checked" : ""} aria-label="${t("window.settings.developer.use-language-servers")}" data-sw="set"><small>${t("window.settings.developer.programs-you-already-installed-one-per")}</small></div>`;
-  html += `<div class="ctl"><b>${t("window.settings.developer.use-a-debugger")}</b><input class="sw" type="checkbox" id="dv-dbg" ${value("dv-dbg") ? "checked" : ""} aria-label="${t("window.settings.developer.use-a-debugger")}" data-sw="set"><small>${t("window.settings.developer.nothing-downloads-and-nothing-runs-until")}</small></div>`;
+  html += `${controlRow(`<b>${t("window.settings.developer.use-language-servers")}</b><input class="sw" type="checkbox" id="dv-ls" ${value("dv-ls") ? "checked" : ""} aria-label="${t("window.settings.developer.use-language-servers")}" data-sw="set"><small>${t("window.settings.developer.programs-you-already-installed-one-per")}</small>`)}`;
+  html += `${controlRow(`<b>${t("window.settings.developer.use-a-debugger")}</b><input class="sw" type="checkbox" id="dv-dbg" ${value("dv-dbg") ? "checked" : ""} aria-label="${t("window.settings.developer.use-a-debugger")}" data-sw="set"><small>${t("window.settings.developer.nothing-downloads-and-nothing-runs-until")}</small>`)}`;
   html += "</div>";
   html += sec15(t("window.settings.developer.tools-technical"),
     btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), t("window.settings.openapi.row"), t("delight.bg.choose"), "openapi-pick")

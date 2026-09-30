@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Your data (privacy). Everything drawn here is read from GET /api/your-data (src/your-data.ts), which answers
    for whoever is at the window: a household person gets only their own counts and the model services their words go to;
    the owner also gets keys and connections (counted and named, never a value), logs, the folder, and every door out.
@@ -56,11 +57,11 @@ function exportRow() {
   const bar = job && !job.ready && !job.error ? `<progress class="prog-p18" max="${job.total}" value="${job.done}" aria-label="${t("window.settings.data.export")}"></progress>` : "";
   const ready = job?.ready ? `<button class="btn pri sm" type="button" data-act="data-dl">${t("window.settings.data.download", { size: size(job.bytes ?? 0) })}</button>` : "";
   const busy = job && !job.ready && !job.error;
-  return `<div class="ctl"><b>${t("window.settings.data.export")}</b><span class="right">${ready || `<button class="btn sm" type="button" data-act="data-export" ${busy ? "disabled" : ""}>${t("window.settings.data.export-go")}</button>`}</span><small>${t("window.settings.data.export-sub")}</small>${bar}${job?.error ? `<small class="bad-p18">${esc(job.error)}</small>` : ""}</div>`;
+  return `${controlRow(`<b>${t("window.settings.data.export")}</b><span class="right">${ready || `<button class="btn sm" type="button" data-act="data-export" ${busy ? "disabled" : ""}>${t("window.settings.data.export-go")}</button>`}</span><small>${t("window.settings.data.export-sub")}</small>${bar}${job?.error ? `<small class="bad-p18">${esc(job.error)}</small>` : ""}`)}`;
 }
 
 function deleteRow() {
-  return `<div class="ctl"><b>${t("window.settings.data.delete")}</b><span class="right"><button class="btn bad sm" type="button" data-act="data-del">${t("window.settings.data.delete-go")}</button></span><small>${t(data?.owner ? "window.settings.data.delete-sub-owner" : "window.settings.data.delete-sub-person")}</small></div>`;
+  return `${controlRow(`<b>${t("window.settings.data.delete")}</b><span class="right"><button class="btn bad sm" type="button" data-act="data-del">${t("window.settings.data.delete-go")}</button></span><small>${t(data?.owner ? "window.settings.data.delete-sub-owner" : "window.settings.data.delete-sub-person")}</small>`)}`;
 }
 
 /* The Delete everything pressed here: a bar that is the engine's count of steps done, what went (the engine's
@@ -136,7 +137,7 @@ function deleteDialog() {
   const phrase = data?.deletePhrase ?? "";
   return openDlg({ title: t("window.settings.data.delete-title"),
     body: `<p class="lead-b17">${t(data?.owner ? "window.settings.data.delete-warn-owner" : "window.settings.data.delete-warn-person")}</p>
-      <div class="ctl"><b>${t("window.settings.data.export-first")}</b><span class="right"><button class="btn sm" type="button" data-act="data-export">${t("window.settings.data.export-go")}</button></span><small>${t("window.settings.data.export-sub")}</small></div>
+      ${controlRow(`<b>${t("window.settings.data.export-first")}</b><span class="right"><button class="btn sm" type="button" data-act="data-export">${t("window.settings.data.export-go")}</button></span><small>${t("window.settings.data.export-sub")}</small>`)}
       <label class="fld"><span>${t("window.settings.data.type", { phrase: esc(phrase) })}</span><input class="inp" id="data-del-in" autocomplete="off" spellcheck="false"></label>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("window.settings.data.cancel")}</button><button class="btn bad" type="button" data-act="data-del-go">${t("window.settings.data.delete-go")}</button>` });
 }

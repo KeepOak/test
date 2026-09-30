@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › advanced: bind real engine data and wire controls. */
 import { esc, render } from "../../core/dom.js";
 import { level, E, refresh } from "../../core/state.js";
@@ -103,9 +104,9 @@ export function draw() {
 
   // Seeing more section
   html += `<div class=\"sec\"><h2>${t("window.settings.advanced.seeing-more")}</h2>`;
-  html += `<div class="ctl"><b>${t("window.settings.advanced.show-the-thinking")}</b><input class="sw" type="checkbox" id="ad-think" ${checked("ad-think")} aria-label="${t("window.settings.advanced.show-the-thinking")}" data-sw="set"><small>${t("window.settings.advanced.adds-the-models-reasoning-under-each")}</small></div>`;
+  html += `${controlRow(`<b>${t("window.settings.advanced.show-the-thinking")}</b><input class="sw" type="checkbox" id="ad-think" ${checked("ad-think")} aria-label="${t("window.settings.advanced.show-the-thinking")}" data-sw="set"><small>${t("window.settings.advanced.adds-the-models-reasoning-under-each")}</small>`)}`;
   const keep = D.log?.keepDays ? t("window.settings.advanced.every-step-kept-for-days", { days: esc(D.log.keepDays) }) : "";
-  html += `<div class="ctl"><b>${t("field.activity-log-mode")}</b><input class="sw" type="checkbox" id="ad-log" ${checked("ad-log")} aria-label="${t("field.activity-log-mode")}" data-sw="set"><small>${keep}</small></div>`;
+  html += `${controlRow(`<b>${t("field.activity-log-mode")}</b><input class="sw" type="checkbox" id="ad-log" ${checked("ad-log")} aria-label="${t("field.activity-log-mode")}" data-sw="set"><small>${keep}</small>`)}`;
   html += `<div class=\"ctl\"><b>${t("window.settings.advanced.send-crash-reports")}</b><input class=\"sw\" type=\"checkbox\" id=\"ad-crash\" aria-label=\"${t("window.settings.advanced.send-crash-reports")}\" data-sw=\"set\"><small>${t("window.settings.advanced.only-the-error-never-your-conversations")}</small></div>`;
   html += "</div>";
 

@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Models, 1:1 with the prototype's five tabs, each drawn from the engine:
    Connections: what runs on this computer (GET /api/state models, Q070), then every connection that can have several
    accounts, with its accounts (GET /api/accounts, flows/account.js);
@@ -39,7 +40,7 @@ function codexRow() {
   const options = [["", t("window.settings.models.codex-best", { model: codex.offered[0] ?? codex.inUse })], ...codex.offered.map((m) => [m, m])];
   const checked = codex.checkedAt ? t("window.settings.models.codex-checked", { when: new Date(codex.checkedAt).toLocaleString(), version: codex.version ?? "" }) : t("window.settings.models.codex-unchecked");
   const select = ownerHere() ? gsel({ id: "m-codex", label: title, options, value: cur }) : "";
-  return `<div class="ctl codex-model"><b>${esc(title)}</b><span class="right">${select}<button class="btn sm ghost" type="button" data-act="m-codex-check" ${ownerOnly()}>${t("window.settings.models.codex-check")}</button></span><small>${esc(checked)}</small></div>`;
+  return `${controlRow(`<b>${esc(title)}</b><span class="right">${select}<button class="btn sm ghost" type="button" data-act="m-codex-check" ${ownerOnly()}>${t("window.settings.models.codex-check")}</button></span><small>${esc(checked)}</small>`, { className: "ctl codex-model" })}`;
 }
 async function setCodexModel(el) {
   try { codex = await api("codex-models", { chosen: el.value || null }); } catch (error) { toast(error.message); }
@@ -359,7 +360,7 @@ function companiesRow() {
   if (!ownerHere() || !X.savings?.openRouter || !(OR.open || only.length) || !OR.list) return "";
   const known = new Set(OR.list.map((c) => c.slug)), all = [...OR.list, ...only.filter((slug) => !known.has(slug)).map((slug) => ({ slug, name: slug }))];
   /* A row of its own across the whole card (no title column to share), and a long list scrolls inside it. */
-  return `<div class="ctl"><span class="chips8" role="group" aria-label="${esc(t("window.settings.models.only-ones-i-list"))}" data-css="grid-column:1 / -1;max-height:220px;overflow:auto">${all.map((c) => `<button type="button" class="chip6" data-act="m-orco" data-v="${esc(c.slug)}" aria-pressed="${only.includes(c.slug)}">${esc(c.name)}</button>`).join("")}</span></div>`;
+  return `${controlRow(`<span class="chips8" role="group" aria-label="${esc(t("window.settings.models.only-ones-i-list"))}" data-css="grid-column:1 / -1;max-height:220px;overflow:auto">${all.map((c) => `<button type="button" class="chip6" data-act="m-orco" data-v="${esc(c.slug)}" aria-pressed="${only.includes(c.slug)}">${esc(c.name)}</button>`).join("")}</span>`)}`;
 }
 function toggleCompany(slug) {
   const only = X.savings?.values?.openrouter?.only ?? [], next = only.includes(slug) ? only.filter((s) => s !== slug) : [...only, slug].slice(0, 16);
@@ -418,13 +419,13 @@ const steps = () => {
   return value == null ? ""
     : `<span class="right num15"><input class="inp" id="m-steps" value="${esc(value)}" aria-label="${t("knobs.field.maxSteps")}"><small>${t("window.settings.models.steps")}</small></span>`;
 };
-const row = (b, right, small = "") => `<div class="ctl"><b>${b}</b>${right}<small>${small}</small></div>`;
+const row = (b, right, small = "") => `${controlRow(`<b>${b}</b>${right}<small>${small}</small>`)}`;
 /* A switch, checked from the engine's value. One the owner alone changes is greyed for a household person, and one that
    cannot act here is greyed with its reason (off: the reason's key); either is drawn without its id, so it is never live.
    A switch with no engine setting keeps its id and is greyed by it (core/why.js). */
 const swRow = (id, title, small, on = false, off = "") => {
   const why = SW[id] && !ownerHere() ? "knobs-owner-only" : off;
-  return `<div class="ctl"><b>${title}</b><input class="sw" type="checkbox" ${why ? `data-why="${why}"` : `id="${id}" data-sw="set"`} ${on ? "checked" : ""} aria-label="${title}"><small>${small}</small></div>`;
+  return `${controlRow(`<b>${title}</b><input class="sw" type="checkbox" ${why ? `data-why="${why}"` : `id="${id}" data-sw="set"`} ${on ? "checked" : ""} aria-label="${title}"><small>${small}</small>`)}`;
 };
 const sw = (id, b, small, on = false, off = "") => swRow(id, esc(say(b)), esc(say(small)), on, off);
 

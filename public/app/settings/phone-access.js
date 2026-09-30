@@ -1,3 +1,4 @@
+import { controlRow } from "./row-kit.js";
 /* Settings › Chat apps › Drive a task's browser from your phone (src/miniapp/phone-access.ts). Telegram only opens its
    Mini App from an HTTPS address, which the owner's Tailscale gives this computer when it forwards one path to the
    Mini App's own door. "Turn on phone access" shows the exact command first and runs it only on the owner's yes;
@@ -24,7 +25,7 @@ export function phoneAccessCard() {
   const line = view.url ? t("window.phone-access.on", { url: view.url }) : t("window.phone-access.off");
   const act = view.url ? "phone-access-off" : why || "phone-access-on";
   const button = `<button class="btn sm" type="button" data-act="${act}"${why ? ` data-why="${why}"` : ""}>${esc(t(view.url ? "window.phone-access.turn-off" : "window.phone-access.turn-on"))}</button>`;
-  return `<div class="rows"><div class="ctl" data-phone-access="${view.url ? "on" : "off"}"><b>${esc(t("window.phone-access.title"))}</b><span class="right">${button}</span><small>${esc(line)}</small></div></div>`;
+  return `<div class="rows">${controlRow(`<b>${esc(t("window.phone-access.title"))}</b><span class="right">${button}</span><small>${esc(line)}</small>`, { attributes: `data-phone-access="${view.url ? "on" : "off"}"` })}</div>`;
 }
 function ask(turn) {
   const command = P.view?.[turn];

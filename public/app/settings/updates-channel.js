@@ -1,3 +1,4 @@
+import { controlRow, segmentedRow } from "./row-kit.js";
 /* Settings › Updates, the channel section: Stable (published releases, each checked against its fingerprint) or Beta
    (every merged change built on this computer), the comfort card "notify" field releaseChannel (POST /api/comfort
    merges the one value). Only the owner, in the app window on this computer, may change it. What the updater says,
@@ -42,7 +43,7 @@ async function saveNotify(part) {
   render();
 }
 
-const seg = (title, act, opts, cur, note) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${esc(note)}</small></div>`;
+const seg = (title, act, opts, cur, note) => segmentedRow({title, description: note, options: opts, current: cur, action: act});
 
 /* The updater's status as this page last read it (the status card prefers the one shell/updating.js hears live). */
 export const channelStatus = () => desktop;
@@ -53,19 +54,19 @@ function betaStatus() {
   const release = desktop?.release?.channel === "beta" ? desktop.release : null;
   const mine = short(desktop?.installed?.commit), newest = short(release?.commit);
   if (!mine && !newest) return "";
-  return `<div class="ctl"><b>${t("updates.channel.beta")}</b><span class="right"></span><small>${mine ? esc(t("window.settings.updates.this-copy", { commit: mine })) : ""}${mine && newest ? " · " : ""}${newest ? esc(t("window.settings.updates.newest-on-line", { commit: newest })) : ""}</small></div>`;
+  return `${controlRow(`<b>${t("updates.channel.beta")}</b><span class="right"></span><small>${mine ? esc(t("window.settings.updates.this-copy", { commit: mine })) : ""}${mine && newest ? " · " : ""}${newest ? esc(t("window.settings.updates.newest-on-line", { commit: newest })) : ""}</small>`)}`;
 }
 
 /* The newest copy of the data folder, and whether it is to be put back at the next start. */
 function copyRow() {
-  if (copiesRefused) return `<div class="ctl"><b>${t("window.settings.updates.data-copy")}</b><span class="right"></span><small>${esc(copiesRefused)}</small></div>`;
+  if (copiesRefused) return `${controlRow(`<b>${t("window.settings.updates.data-copy")}</b><span class="right"></span><small>${esc(copiesRefused)}</small>`)}`;
   const newest = copies?.copies?.[0];
   if (!newest) return "";
   const when = new Date(newest.savedAt).toLocaleString(language());
   const pending = copies.pending === newest.name;
   const act = pending ? `<button class="btn sm" type="button" data-act="u-keep">${t("window.settings.updates.keep-data")}</button>`
     : `<button class="btn sm" type="button" data-act="u-restore" data-name="${esc(newest.name)}">${t("window.settings.updates.put-back")}</button>`;
-  return `<div class="ctl"><b>${t("window.settings.updates.data-copy")}</b><span class="right">${act}</span><small>${esc(t(pending ? "window.settings.updates.data-copy-pending" : "window.settings.updates.data-copy-from", { when, version: newest.version }))}</small></div>`;
+  return `${controlRow(`<b>${t("window.settings.updates.data-copy")}</b><span class="right">${act}</span><small>${esc(t(pending ? "window.settings.updates.data-copy-pending" : "window.settings.updates.data-copy-from", { when, version: newest.version }))}</small>`)}`;
 }
 
 export function channelSection() {

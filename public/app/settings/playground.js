@@ -1,3 +1,4 @@
+import { controlRow } from "./row-kit.js";
 /* Settings › Developer › Playground (the prototype's playDlgB17, "Tool playground"): run one tool by hand through the
    engine's own door, POST /api/tools/try, which holds it to exactly what a task's tool call meets: the owner's rules,
    Lockdown, the safety extras, a household person's role, and a short-lived key that can never confirm. The tools and the
@@ -24,7 +25,7 @@ function fieldRow([name, property]) {
   const input = kind === "boolean"
     ? `<input class="sw" type="checkbox" id="${esc(id)}" aria-label="${esc(name)}" data-field="${esc(name)}" data-kind="boolean">`
     : `<input class="inp" id="${esc(id)}" ${kind === "number" || kind === "integer" ? 'type="number"' : ""} aria-label="${esc(name)}" data-field="${esc(name)}" data-kind="${esc(kind)}">`;
-  return `<div class="ctl"><b>${esc(name)}</b><span class="right">${input}</span><small>${esc(property?.description ?? "")}</small></div>`;
+  return `${controlRow(`<b>${esc(name)}</b><span class="right">${input}</span><small>${esc(property?.description ?? "")}</small>`)}`;
 }
 
 /* The filled-in boxes as the object the tool expects; an empty box is left out. */
@@ -50,7 +51,7 @@ function draw() {
   markLive(["sw:play-tool", ...fieldsOf(tool).map(([name]) => "sw:play-field-" + name)]);
   const options = gsel({ id: "play-tool", label: t("window.chat.play.tool"), options: P.tools.map((tool) => [tool.name, tool.name]), value: P.name }); // state: the tool the person picked
   const body = `<p class="lead-b17">${t("window.chat.play.lead")}</p>
-    <div class="ctl"><b>${t("window.chat.play.tool")}</b><span class="right">${options}</span><small>${esc(tool?.description ?? "")}</small></div>
+    ${controlRow(`<b>${t("window.chat.play.tool")}</b><span class="right">${options}</span><small>${esc(tool?.description ?? "")}</small>`)}
     ${fieldsOf(tool).map(fieldRow).join("")}<div id="play-result"></div>`;
   const run = tool ? `<button class="btn pri" type="button" data-act="playrunb17">${t("window.chat.play.run", { tool: esc(tool.name) })}</button>` : "";
   openDlg({ title: t("window.chat.play.title"), body, foot: `<button class="btn" type="button" data-act="dlg-close">${t("window.chat.play.close")}</button>${run}` });

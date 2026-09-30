@@ -1,3 +1,4 @@
+import { linkRow } from "./row-kit.js";
 /* Pass 17's settings rows (prototype patch17b: rowB17, demoB17, sec15 with a note), 1:1 in markup. WORDS holds each
    Settings row's own words, [title, row text, button], from the prototype with its example data taken out (a count
    written into a button, a made-up project or Trunk name): those parts are left empty or come from the engine. */
@@ -73,8 +74,7 @@ export const demo17 = (key, label) => demoRow17(key, label ? [WORDS[key][0], WOR
 export const demos17 = (keys) => keys.map((k) => demo17(k)).join("");
 
 /** The prototype's rowB17: a titled row with one button carrying its own action. */
-export const row17 = (title, sub, label, act, attrs = "") =>
-  `<div class="ctl"><b>${esc(title)}</b><span class="right"><button class="btn sm" type="button" data-act="${esc(act)}" ${attrs}>${esc(label)}</button></span><small>${esc(sub)}</small></div>`;
+export const row17 = (title, sub, label, act, attrs = "") => linkRow({title, description: sub, label, action: act, attributes: attrs});
 
 /** The prototype's sec15 with its optional note. */
 export const sec17 = (title, rows, note = "") =>

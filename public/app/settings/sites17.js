@@ -1,3 +1,4 @@
+import { controlRow } from "./row-kit.js";
 /* Settings › Computer & browser › The browser, more › Site skills (pass 17's siteb17), from the engine: the websites the
    owner's switched-on skills know about (GET /api/browser/site-skills: each skill's websites, its notes, the skill it came
    from and that skill's revision). "See N" opens them; Forget removes the skill the site came from, after a confirm that
@@ -21,7 +22,7 @@ export async function loadSites() {
 /** The row: its words, and "See N" once the engine has said how many there are. */
 export function siteRow() {
   const button = S.sites ? `<span class="right"><button class="btn sm" type="button" data-act="siteb17">${esc(t("window.settings.p17-permissions.see-count", { count: S.sites.length }))}</button></span>` : "";
-  return `<div class="ctl"><b>${t("window.settings.computer.site-skills")}</b>${button}<small>${t("window.settings.computer.what-branch-learned-about-the-sites")}</small></div>`;
+  return `${controlRow(`<b>${t("window.settings.computer.site-skills")}</b>${button}<small>${t("window.settings.computer.what-branch-learned-about-the-sites")}</small>`)}`;
 }
 
 function siteDialog() {

@@ -1,3 +1,4 @@
+import { controlRow } from "./row-kit.js";
 /* Settings › Permissions › App lock (prototype patch17b: Off, After 15 min, Always), from the engine:
    GET /api/lock says whether a PIN is set (never the PIN), the quiet minutes and lock-on-open.
    Off removes the PIN: POST /api/lock/pin { pin: null, current }, which the engine refuses without the PIN set now, and
@@ -37,7 +38,7 @@ export function applockRow() {
   const opts = [["off", t("accounts.switch.off")], ["quiet", t("window.applock.after-min", { count: n })], ["pin", t("window.places.automations.always")]];
   const seg = `<span class="seg" role="group" aria-label="${esc(t("window.settings.p17-permissions.app-lock"))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${cur === v}" data-act="applockb17" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span>`;
   const change = lock?.pinSet ? `<button class="btn sm" type="button" data-act="applockchgb17">${esc(t("window.settings.voice.change"))}</button>` : "";
-  return `<div class="ctl"><b>${esc(t("window.settings.p17-permissions.app-lock"))}</b><span class="right applock-b17">${seg}${change}</span><small>${esc(sub)}</small></div>`;
+  return `${controlRow(`<b>${esc(t("window.settings.p17-permissions.app-lock"))}</b><span class="right applock-b17">${seg}${change}</span><small>${esc(sub)}</small>`)}`;
 }
 
 const field = (id, label, hint = "") => `<div class="field"><label for="${id}">${esc(label)}</label><input class="inp" id="${id}" type="password" inputmode="numeric" maxlength="8" autocomplete="off"></div>${hint ? `<p class="hint" data-css="margin:0">${esc(hint)}</p>` : ""}`;

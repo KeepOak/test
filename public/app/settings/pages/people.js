@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › People, 1:1 with the prototype's card, from the engine's own list (GET /api/profiles): you, the owner,
    then everyone with a profile on this computer, each with the role and what the role lets them have Branch do
    (roles[].effective, roles[].categories). Picking a person to look at is window state. Switching person, roles,
@@ -145,7 +146,7 @@ function card(p) {
 function eachPerson() {
   const pin = `<input class="sw" type="checkbox" id="pp-pin" checked aria-label="${t("window.settings.people.ask-for-a-pin-when-switching")}" data-sw="set">`; // state: every profile has a PIN
   const own = `<input class="sw" type="checkbox" id="pp-own" checked aria-label="${t("window.settings.people.keep-conversations-separate")}" data-sw="set">`; // state: each profile's records are its own
-  return `<div class="sec"><h2>${t("window.settings.people.each-person")}</h2><div class="ctl"><b>${t("window.settings.people.ask-for-a-pin-when-switching")}</b>${pin}<small>${t("window.settings.people.four-to-eight-digits-kept-on")}</small></div><div class="ctl"><b>${t("window.settings.people.keep-conversations-separate")}</b>${own}<small>${t("window.settings.people.people-cant-read-each-others-conversations")}</small></div></div>`;
+  return `<div class="sec"><h2>${t("window.settings.people.each-person")}</h2>${controlRow(`<b>${t("window.settings.people.ask-for-a-pin-when-switching")}</b>${pin}<small>${t("window.settings.people.four-to-eight-digits-kept-on")}</small>`)}${controlRow(`<b>${t("window.settings.people.keep-conversations-separate")}</b>${own}<small>${t("window.settings.people.people-cant-read-each-others-conversations")}</small>`)}</div>`;
 }
 
 /* The prototype's peopleTab(): the list, the card of whoever is picked, and the hint. Settings › People and Team › People. */

@@ -1,3 +1,4 @@
+import { controlRow } from "./row-kit.js";
 /* Settings › Advanced › GitLab (RES-719): the connection under GitLab's switch. The owner pastes a personal access
    token (and, for their own server, its address); the engine checks it with GitLab and only then keeps it in the locker
    (POST /api/gitlab/connect, src/gitlab-connection.ts). The token is never read back into the window. Disconnect takes
@@ -25,7 +26,7 @@ export function gitlabRow() {
   const button = a.connected && !a.fromLaunchFile
     ? `<button class="btn sm" type="button" data-act="gl-disconnect">${esc(t("window.settings.gitlab.disconnect"))}</button>`
     : `<button class="btn sm pri" type="button" data-act="gl-connect">${esc(t("window.settings.gitlab.connect"))}</button>`;
-  return `<div class="ctl" id="gl-row"><b>${esc(t("window.settings.gitlab.connection"))}</b><span class="right">${button}</span><small>${esc(line)}</small></div>`;
+  return `${controlRow(`<b>${esc(t("window.settings.gitlab.connection"))}</b><span class="right">${button}</span><small>${esc(line)}</small>`, { attributes: `id="gl-row"` })}`;
 }
 
 function connectDialog() {

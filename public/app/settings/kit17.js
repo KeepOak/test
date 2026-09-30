@@ -1,3 +1,4 @@
+import { segmentedRow } from "./row-kit.js";
 /* Settings rows that are the engine's own settings (parity B5). Two engine stores back them:
    the settings kit: GET /api/settings-kit lists every setting with its value; POST /api/settings-kit/apply
      { plan: { source: "set", key, field, value }, accept: ["key.field"] } changes one field. A change that makes Branch
@@ -83,14 +84,10 @@ export const numBox = (id, title, value, unit = "") =>
   `<span class="right num15"><input class="inp" id="${esc(id)}" value="${esc(value ?? "")}" aria-label="${esc(title)}">${unit ? `<small>${esc(unit)}</small>` : ""}</span>`;
 
 /** A segmented control on a kit field: opts are [value, label]; the pressed one is the engine's value. */
-export const kitSeg = (title, sub, key, field, opts) =>
-  `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([v, l]) =>
-    `<button type="button" aria-pressed="${K.kit ? JSON.stringify(kitVal(key, field)) === JSON.stringify(v) : false}" data-act="kitseg17" data-key="${esc(key)}" data-field="${esc(field)}" data-j="${esc(JSON.stringify(v))}">${esc(l)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
+export const kitSeg = (title, sub, key, field, opts) => segmentedRow({title, description: sub, options: opts, action: "kitseg17", valueAttribute: false, selected: v => Boolean(K.kit) && JSON.stringify(kitVal(key, field)) === JSON.stringify(v), attributes: v => `data-key="${esc(key)}" data-field="${esc(field)}" data-j="${esc(JSON.stringify(v))}"`});
 
 /** A segmented control on a knob: opts are [value, label]; `cur` is the engine's value. */
-export const knobSeg = (title, sub, card, field, opts, cur) =>
-  `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([v, l]) =>
-    `<button type="button" aria-pressed="${K.knobs ? JSON.stringify(cur) === JSON.stringify(v) : false}" data-act="knobseg17" data-card="${esc(card)}" data-field="${esc(field)}" data-j="${esc(JSON.stringify(v))}">${esc(l)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
+export const knobSeg = (title, sub, card, field, opts, cur) => segmentedRow({title, description: sub, options: opts, action: "knobseg17", valueAttribute: false, selected: v => Boolean(K.knobs) && JSON.stringify(cur) === JSON.stringify(v), attributes: v => `data-card="${esc(card)}" data-field="${esc(field)}" data-j="${esc(JSON.stringify(v))}"`});
 
 let started = false;
 export function initKit() {

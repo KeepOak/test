@@ -1,3 +1,4 @@
+import { controlRow } from "./row-kit.js";
 /* Settings › Advanced › Reach webhooks from outside: a public address for incoming webhooks and nothing else
    (src/personal/tunnel.ts). Branch's own window never goes on the internet: a small door on this computer passes on
    only the addresses chat services and triggers post to, each still checked by its own signature inside Branch.
@@ -25,7 +26,7 @@ export function tunnelSeg() {
   const running = T.state?.status?.running ? T.state.settings?.program ?? null : null;
   const opt = (v, words) => `<button type="button" aria-pressed="${T.state ? String((running ?? "off") === v) : "false"}" data-act="tunnel-seg" data-v="${v}"${T.busy ? " disabled" : ""}>${esc(words)}</button>`;
   const note = running && T.state?.status?.address ? W("tunnel-running") : "";
-  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("off", t("accounts.switch.off"))}${PROGRAMS.map(([v, words]) => opt(v, words)).join("")}</span></span><small>${esc(note)}</small></div>`;
+  return `${controlRow(`<b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("off", t("accounts.switch.off"))}${PROGRAMS.map(([v, words]) => opt(v, words)).join("")}</span></span><small>${esc(note)}</small>`)}`;
 }
 
 async function start(program) {

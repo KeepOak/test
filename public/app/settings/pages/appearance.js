@@ -1,3 +1,4 @@
+import { controlRow, dropdownRow, segmentedRow } from "../row-kit.js";
 /* Settings › Appearance, 1:1 with the prototype's page, from the engine: light or dark and the reading choices from the
    preferences (POST /api/preferences replaces the whole record, so shell/look.js lays each change over it), the theme
    from GET /api/look (the gallery and the colour editor are shell/themes.js), the background and the pet from the
@@ -21,10 +22,9 @@ import { AG, saveUi } from "../../chat/agent17.js";
 import { LANGUAGES, language, t } from "../../../i18n.js";
 import { say } from "../../core/words.js";
 import { canSpeak, chooseLanguage } from "../../shell/language.js";
-import { gsel } from "../../core/gsel.js";
 
 const pressed = (on) => `aria-pressed="${!!on}"`;
-const segAct = (title, sub, opts, cur, act) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([v, l, a]) => `<button type="button" ${pressed(v === cur)} data-act="${a ?? act}" data-v="${v}">${esc(l)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
+const segAct = (title, sub, opts, cur, act) => segmentedRow({title, description: sub, options: opts, current: cur, action: act, optionAction: value => opts.find(([v]) => v === value)?.[2] ?? act});
 const prefs = () => E.state?.preferences ?? {};
 
 /* The light and dark previews mirror the conversation that is open (its title and last line). */
@@ -41,15 +41,15 @@ function mirror(mode) {
 function themeSection() {
   const id = wornId(), mode = effMode(), x = lookOf(id), eff = lookEF(id, mode);
   const accs = ACCENTS.map((a) => `<button type="button" class="acc" data-css="--c:${a}" data-act="acc-set" data-v="${a}" ${pressed(L.accent === a)} aria-label="${t("window.settings.appearance.accent-value", { value: a })}"></button>`).join("");
-  const mine = L.my.length ? `<div class="ctl"><b>${t("window.settings.appearance.your-themes")}</b><span class="right acts" data-css="gap:6px;flex-wrap:wrap">${L.my.map((t) => `<button class="chip6" type="button" data-act="skin" data-v="my-${esc(t.id)}" ${pressed(id === "my-" + t.id)}>${esc(t.name)}</button>`).join("")}</span><small>${t("window.settings.appearance.saved-on-this-computer-edit-copy")}</small></div>` : "";
+  const mine = L.my.length ? `${controlRow(`<b>${t("window.settings.appearance.your-themes")}</b><span class="right acts" data-css="gap:6px;flex-wrap:wrap">${L.my.map((t) => `<button class="chip6" type="button" data-act="skin" data-v="my-${esc(t.id)}" ${pressed(id === "my-" + t.id)}>${esc(t.name)}</button>`).join("")}</span><small>${t("window.settings.appearance.saved-on-this-computer-edit-copy")}</small>`)}` : "";
   return `<div class="sec"><h2>${t("look.theme")}</h2><div class="theme-now">${swatch(eff)}<span class="grow"><b>${esc(x[1])}</b><small>${esc(x[3] ? t("people.home.own") : x[2])} · ${mode === "dark" ? t("look.moonlight") : t("appearance.daylight")}${more() ? ` · ${t("window.settings.appearance.more-contrast-lower")}` : ""}</small><span class="acts"><button class="btn pri sm" type="button" data-act="skins">${t("window.settings.appearance.browse-all-count-themes", { count: looks().length })}</button><button class="btn sm" type="button" data-act="ce-new">${ic("palette", "s")}${t("window.settings.appearance.make-your-own")}</button></span></span></div>
-    <div class="ctl"><b>${t("settingsIndex.look-accent")}</b><span class="right accs"><button type="button" class="acc theme-acc" data-act="acc-set" data-v="theme" ${pressed(!L.accent)} aria-label="${t("window.settings.appearance.the-themes-own-accent")}">A</button>${accs}<label class="acc acc-pick" aria-label="${t("studio.colour.custom")}"><input type="color" id="acc-pick" value="${L.accent || eff.accent}"></label></span><small>${t("window.settings.appearance.only-for-what-wants-you-the")} <button class="link" type="button" data-act="acc-save">${t("window.settings.appearance.save-as-a-theme")}</button></small></div>
-    <div class="ctl"><b>${t("window.settings.appearance.more-contrast")}</b><input class="sw" type="checkbox" id="a-contrast" data-sw="contrast" aria-label="${t("window.settings.appearance.more-contrast")}" ${more() ? "checked" : ""}><small>${t("window.settings.appearance.stronger-lines-and-text-from-each")}</small></div>${mine}</div>`;
+    ${controlRow(`<b>${t("settingsIndex.look-accent")}</b><span class="right accs"><button type="button" class="acc theme-acc" data-act="acc-set" data-v="theme" ${pressed(!L.accent)} aria-label="${t("window.settings.appearance.the-themes-own-accent")}">A</button>${accs}<label class="acc acc-pick" aria-label="${t("studio.colour.custom")}"><input type="color" id="acc-pick" value="${L.accent || eff.accent}"></label></span><small>${t("window.settings.appearance.only-for-what-wants-you-the")} <button class="link" type="button" data-act="acc-save">${t("window.settings.appearance.save-as-a-theme")}</button></small>`)}
+    ${controlRow(`<b>${t("window.settings.appearance.more-contrast")}</b><input class="sw" type="checkbox" id="a-contrast" data-sw="contrast" aria-label="${t("window.settings.appearance.more-contrast")}" ${more() ? "checked" : ""}><small>${t("window.settings.appearance.stronger-lines-and-text-from-each")}</small>`)}${mine}</div>`;
 }
 
 /* The agent beside the conversation (chat/agent17.js): whether it shows and its size are this window's. */
 function agentsSection() {
-  return `<div class="sec"><h2>${t("window.settings.appearance.agents")}</h2><div class="ctl"><b>${t("window.settings.appearance.show-the-agent-beside-the-conversation")}</b><input class="sw" type="checkbox" id="ag-show" aria-label="${t("window.settings.appearance.show-the-agent-beside-the-conversation")}" data-sw="set" ${AG.show ? "checked" : ""}><small>${t("window.settings.appearance.it-acts-out-what-the-trunk")}</small></div>${segAct(t("window.settings.appearance.size"), t("window.settings.appearance.small-keeps-it-out-of-the"), [["s", t("appearance.textSize.small")], ["m", t("appearance.textSize.medium")], ["l", t("appearance.textSize.large")]], AG.size, "ag-size")}</div>`;
+  return `<div class="sec"><h2>${t("window.settings.appearance.agents")}</h2>${controlRow(`<b>${t("window.settings.appearance.show-the-agent-beside-the-conversation")}</b><input class="sw" type="checkbox" id="ag-show" aria-label="${t("window.settings.appearance.show-the-agent-beside-the-conversation")}" data-sw="set" ${AG.show ? "checked" : ""}><small>${t("window.settings.appearance.it-acts-out-what-the-trunk")}</small>`)}${segAct(t("window.settings.appearance.size"), t("window.settings.appearance.small-keeps-it-out-of-the"), [["s", t("appearance.textSize.small")], ["m", t("appearance.textSize.medium")], ["l", t("appearance.textSize.large")]], AG.size, "ag-size")}</div>`;
 }
 
 /* Pass 17 (Advanced): the pictures Branch uses where a feature starts or has nothing to show yet (core/art17.js). */
@@ -60,10 +60,10 @@ const picturesSection = (lv) => (lv < 1 ? "" : sec17(t("window.settings.appearan
 const KINDS = { picture: "Picture", animation: "Animation", video: "Video", "3d": "3D model" };
 function ownRows() {
   const s = OWN.saved, file = (id, label) => `<input type="file" id="${id}" data-sw="bgfile" accept="image/*,video/*" aria-label="${label}">`;
-  if (!s) return `<div class="ctl"><b>${t("delight.bg.choose")}</b><span class="right">${file("bg-file6", t("window.settings.appearance.choose-a-background-file"))}</span><small>${t("window.settings.appearance.a-picture-or-animation-up-to", { picture: LIMITS.picture, video: LIMITS.video })}</small></div>`;
+  if (!s) return `${controlRow(`<b>${t("delight.bg.choose")}</b><span class="right">${file("bg-file6", t("window.settings.appearance.choose-a-background-file"))}</span><small>${t("window.settings.appearance.a-picture-or-animation-up-to", { picture: LIMITS.picture, video: LIMITS.video })}</small>`)}`;
   const fits = [["fill", t("window.settings.appearance.fill")], ["fit", t("window.settings.appearance.fit")], ...(s.kind === "video" ? [] : [["tile", t("window.settings.appearance.tile")]])];
-  return `<div class="ctl"><b>${esc(s.name)}</b><span class="right"><button class="btn sm" type="button" data-act="bg-remove">${t("accounts.action.remove")}</button></span><small>${t("window.settings.appearance.value-value2-mb", { value: say(KINDS[s.kind] ?? ""), value2: (s.size / 1048576).toFixed(1) })}</small></div>
-    ${s.kind !== "3d" ? segAct(t("window.settings.appearance.fit"), t("window.settings.appearance.tile-is-for-pictures-and-animations"), fits, D.settings?.background?.fit ?? "fill", "bgfit") : ""}<div class="ctl"><b>${t("window.settings.appearance.another-file")}</b><span class="right">${file("bg-file6", t("window.settings.appearance.choose-another-background-file"))}</span><small>${t("window.settings.appearance.replaces-this-one")}</small></div>`;
+  return `${controlRow(`<b>${esc(s.name)}</b><span class="right"><button class="btn sm" type="button" data-act="bg-remove">${t("accounts.action.remove")}</button></span><small>${t("window.settings.appearance.value-value2-mb", { value: say(KINDS[s.kind] ?? ""), value2: (s.size / 1048576).toFixed(1) })}</small>`)}
+    ${s.kind !== "3d" ? segAct(t("window.settings.appearance.fit"), t("window.settings.appearance.tile-is-for-pictures-and-animations"), fits, D.settings?.background?.fit ?? "fill", "bgfit") : ""}${controlRow(`<b>${t("window.settings.appearance.another-file")}</b><span class="right">${file("bg-file6", t("window.settings.appearance.choose-another-background-file"))}</span><small>${t("window.settings.appearance.replaces-this-one")}</small>`)}`;
 }
 
 function backgroundSection() {
@@ -74,9 +74,9 @@ function backgroundSection() {
   const season = choice === "painted" ? segAct(t("look.seasonRow"), t("window.settings.appearance.spring-greens-autumn-copper-winter-snow"), [byDate, sp, au, wi], W.season, "season")
     : choice === "grove" ? segAct(t("look.seasonRow"), t("window.settings.appearance.fireflies-in-summer-petals-in-spring"), [byDate, sp, su, au, wi], W.season, "season") : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.background")}</h2>${segAct(t("window.settings.appearance.behind-the-glass"), t("window.settings.appearance.the-grove-and-the-oak-wear"), kinds, choice, "bgset")}${season}${choice === "own" ? ownRows() : ""}<div class="fld"><span>${t("window.settings.appearance.painted-scenes")}</span><div class="scenes12">${scenes}</div></div>
-    <div class="ctl"><b>${t("window.settings.appearance.how-much-the-theme-covers-it")}</b><span class="right"><input class="range" type="range" id="scrim6" min="20" max="90" step="5" value="${scrim}" aria-label="${t("window.settings.appearance.how-much-the-theme-covers-the")}" ${choice === "none" ? "disabled" : ""}><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${scrim}%</span></span><small>${t("window.settings.appearance.more-keeps-text-calmer-less-shows")}</small></div>
-    <div class="ctl"><b>${t("window.settings.appearance.see-through-panels")}</b><span class="right"><input class="range" type="range" id="see" min="0" max="60" step="5" value="${prefs().seeThrough ?? ""}" aria-label="${t("window.settings.appearance.see-through-panels")}" ${choice === "none" ? "disabled" : ""}><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${prefs().seeThrough ?? ""}%</span></span><small>${t("window.settings.appearance.panels-blur-whats-behind-them")}</small></div>
-    <div class="ctl"><b>${t("agent-files.preview")}</b><span class="right"><button class="btn sm" type="button" data-act="bg-peek" ${on ? "" : "disabled"}>${ic("eye", "s")}${t("window.settings.appearance.see-it-clearly")}</button></span><small>${t("settingsGrown.look.clear")}</small></div></div>`;
+    ${controlRow(`<b>${t("window.settings.appearance.how-much-the-theme-covers-it")}</b><span class="right"><input class="range" type="range" id="scrim6" min="20" max="90" step="5" value="${scrim}" aria-label="${t("window.settings.appearance.how-much-the-theme-covers-the")}" ${choice === "none" ? "disabled" : ""}><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${scrim}%</span></span><small>${t("window.settings.appearance.more-keeps-text-calmer-less-shows")}</small>`)}
+    ${controlRow(`<b>${t("window.settings.appearance.see-through-panels")}</b><span class="right"><input class="range" type="range" id="see" min="0" max="60" step="5" value="${prefs().seeThrough ?? ""}" aria-label="${t("window.settings.appearance.see-through-panels")}" ${choice === "none" ? "disabled" : ""}><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${prefs().seeThrough ?? ""}%</span></span><small>${t("window.settings.appearance.panels-blur-whats-behind-them")}</small>`)}
+    ${controlRow(`<b>${t("agent-files.preview")}</b><span class="right"><button class="btn sm" type="button" data-act="bg-peek" ${on ? "" : "disabled"}>${ic("eye", "s")}${t("window.settings.appearance.see-it-clearly")}</button></span><small>${t("settingsGrown.look.clear")}</small>`)}</div>`;
 }
 
 function readingSection() {
@@ -88,10 +88,10 @@ function readingSection() {
    as there (after the gallery, so the first control for each pet is the one you can see). */
 function petSection() {
   const pets = D.settings?.pets, kind = petNow(), all = petChoices();
-  const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), all, kind, "petset").replace('<div class="ctl">', '<div class="ctl" data-css="display:none">');
+  const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), all, kind, "petset").replace('class="ctl"', 'class="ctl" data-css="display:none"');
   const cards = all.map(([v, l]) => petCard(v, l, kind)).join("");
   const where = pets?.on ? segAct(t("window.settings.appearance.where-it-walks"), t("window.settings.appearance.it-keeps-out-of-the-way"), [["side", t("window.settings.appearance.the-list")], ["status", t("window.settings.appearance.status-bar")], ["dock", t("window.settings.appearance.by-the-message-box")]], W.petWhere, "petwhere15") : "";
-  const name = pets ? `<div class="ctl"><b>${t("accounts.field.name")}</b><span class="right"><input class="inp" id="pet-name" value="${esc(pets.name ?? "")}" aria-label="${t("window.settings.appearance.pet-name")}" maxlength="20" data-sw="set" data-css="width:140px"></span><small>${t("window.settings.appearance.pat-it-for-a-tip")}</small></div>` : "";
+  const name = pets ? `${controlRow(`<b>${t("accounts.field.name")}</b><span class="right"><input class="inp" id="pet-name" value="${esc(pets.name ?? "")}" aria-label="${t("window.settings.appearance.pet-name")}" maxlength="20" data-sw="set" data-css="width:140px"></span><small>${t("window.settings.appearance.pat-it-for-a-tip")}</small>`)}` : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.the-pet")}</h2><div class="pets12">${cards}</div>${row}${where}${name}</div>`;
 }
 
@@ -101,10 +101,10 @@ const HIDES = [["h-usage", "usage", "The usage ring"], ["h-gateway", "gateway", 
 export const HIDEABLE = HIDES.map(([, k]) => k);
 function shownSection() {
   const hidden = prefs().hidden ?? [];
-  const rows = HIDES.map(([id, k, l]) => `<div class="ctl"><b>${say(l)}</b><input class="sw" type="checkbox" id="${id}" ${hidden.includes(k) ? "" : "checked"} aria-label="${say(l)}" data-sw="hide" data-k="${k}"><small>${k === "statusbar" ? t("window.settings.appearance.lockdowns-banner-and-stop-while-a") : t("window.settings.appearance.right-click-it-anywhere-to-hide")}</small></div>`).join("");
+  const rows = HIDES.map(([id, k, l]) => `${controlRow(`<b>${say(l)}</b><input class="sw" type="checkbox" id="${id}" ${hidden.includes(k) ? "" : "checked"} aria-label="${say(l)}" data-sw="hide" data-k="${k}"><small>${k === "statusbar" ? t("window.settings.appearance.lockdowns-banner-and-stop-while-a") : t("window.settings.appearance.right-click-it-anywhere-to-hide")}</small>`)}`).join("");
   return `<div class="sec"><h2>${t("window.settings.appearance.whats-shown")}</h2>${rows}
-    <div class="ctl"><b>${t("window.settings.appearance.keep-things-still")}</b><input class="sw" type="checkbox" id="a-still" ${prefs().reduceMotion ? "checked" : ""} aria-label="${t("window.settings.appearance.keep-things-still")}" data-sw="still"><small>${t("window.settings.appearance.stops-the-pet-walking-the-working")}</small></div>
-    <div class="ctl"><b>${t("window.settings.appearance.scenery-behind-the-list")}</b><input class="sw" type="checkbox" id="a-scenery" aria-label="${t("window.settings.appearance.scenery-behind-the-list")}" data-sw="scenery" ${W.scenery ? "checked" : ""}><small>${t("window.settings.appearance.a-small-pixel-oak-at-the")}</small></div></div>
+    ${controlRow(`<b>${t("window.settings.appearance.keep-things-still")}</b><input class="sw" type="checkbox" id="a-still" ${prefs().reduceMotion ? "checked" : ""} aria-label="${t("window.settings.appearance.keep-things-still")}" data-sw="still"><small>${t("window.settings.appearance.stops-the-pet-walking-the-working")}</small>`)}
+    ${controlRow(`<b>${t("window.settings.appearance.scenery-behind-the-list")}</b><input class="sw" type="checkbox" id="a-scenery" aria-label="${t("window.settings.appearance.scenery-behind-the-list")}" data-sw="scenery" ${W.scenery ? "checked" : ""}><small>${t("window.settings.appearance.a-small-pixel-oak-at-the")}</small>`)}</div>
   ${languageSection()}`;
 }
 
@@ -117,8 +117,8 @@ const ownName = (code) => {
 };
 function languageSection() {
   const now = language();
-  const pick = gsel({ id: "lang", sw: "lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now });
-  return `<div class="sec"><h2>${t("appearance.language")}</h2><div class="ctl"><b>${t("appearance.language")}</b><span class="right">${pick}</span><small>${t("window.settings.appearance.dates-and-numbers-follow-it-too")}</small></div></div>`;
+  const row = dropdownRow({ title: t("appearance.language"), description: t("window.settings.appearance.dates-and-numbers-follow-it-too"), dropdown: { id: "lang", sw: "lang", options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now } });
+  return `<div class="sec"><h2>${t("appearance.language")}</h2>${row}</div>`;
 }
 /* The window is drawn again in the new words; English says so as the prototype does. */
 async function pickLanguage(code) {

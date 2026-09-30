@@ -1,3 +1,4 @@
+import { controlRow } from "./row-kit.js";
 /* Settings › Chat apps › Show steps in chats: how the steps message looks, for every chat app and for each connected
    one (src/channels/steps-display.ts, read from GET /api/channels `steps`, saved with POST /api/channels/steps one knob
    at a time). How much each step says, one message or one a step, commands as code, what a long list does, removing
@@ -36,11 +37,11 @@ export function stepsCard(state, level) {
       + seg15(t("window.chat-steps.no-edit"), t("window.chat-steps.no-edit-hint"),
         [["summary", t("window.chat-steps.no-edit-summary")], ["each", t("window.chat-steps.grouping-each")], ["off", t("accounts.switch.off")]], knob("noEdit", "summary"), "cs-noedit")
       + sw15(GROUPS, "In a group, a short message counts the kinds of step and never names a file or command.", knob("groups", "kinds") === "kinds")
-      + `<div class="ctl"><b>${esc(t("window.chat-steps.line"))}</b><span class="right num15"><input class="inp" id="cs-line" inputmode="numeric" value="${esc(knob("lineChars", 120))}" aria-label="${esc(t("window.chat-steps.line"))}"><small>${esc(t("window.chat-steps.characters"))}</small></span><small>${esc(t("window.chat-steps.line-hint"))}</small></div>`;
+      + `${controlRow(`<b>${esc(t("window.chat-steps.line"))}</b><span class="right num15"><input class="inp" id="cs-line" inputmode="numeric" value="${esc(knob("lineChars", 120))}" aria-label="${esc(t("window.chat-steps.line"))}"><small>${esc(t("window.chat-steps.characters"))}</small></span><small>${esc(t("window.chat-steps.line-hint"))}</small>`)}`;
     const apps = (steps.apps ?? []).map((app) => {
       const own = steps.settings?.apps?.[app.id]?.detail ?? "";
       const opts = [["", t("window.chat-steps.same-as-all")], ["off", t("accounts.switch.off")], ...detailChoices()];
-      return `<div class="ctl"><b>${esc(app.name)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.chat-steps.app-detail", { name: app.name }))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${own === v}" data-act="cs-app" data-v="${esc(`${app.id}:${v}`)}">${esc(l)}</button>`).join("")}</span></span><small>${esc(app.shows)}</small></div>`;
+      return `${controlRow(`<b>${esc(app.name)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.chat-steps.app-detail", { name: app.name }))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${own === v}" data-act="cs-app" data-v="${esc(`${app.id}:${v}`)}">${esc(l)}</button>`).join("")}</span></span><small>${esc(app.shows)}</small>`)}`;
     }).join("");
     if (apps) return sec15(t("window.chat-steps.title"), body) + sec15(t("window.chat-steps.each-app"), apps);
   }

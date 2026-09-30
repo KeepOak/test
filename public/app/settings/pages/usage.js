@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Data & usage. The report card adds up the engine's own usage for the last 7, 30 or 90 days
    (GET /api/usage?range=&by=day). "Open the report" is that stretch in the prototype's form, from the same day rows:
    four tiles (spent, tasks, the model cheapest per task, the busiest day), bars by model and by where each task came
@@ -164,7 +165,7 @@ function evalCard() {
   const picks = (suites ?? []).map((s) => `<button type="button" aria-pressed="${s.id === suiteId}" data-act="eval-set" data-v="${esc(s.id)}">${esc(s.name)} · ${s.tasks.length}</button>`).join("");
   const state = running && current ? `<p class="hint ic-t">${ic("spin", "s spin")}${t("window.settings.usage.running-tasks-tasks", { tasks: current.tasks.length })}</p>` : lastRun && !running ? result(lastRun) : "";
   return `<div class="sec"><h2>${t("window.settings.usage.test-the-model-you-use")}</h2><p class="hint" data-css="margin:0 0 6px">${t("window.settings.usage.run-a-ready-made-set-of")}</p>
-  <div class="ctl ev15"><b>${t("window.settings.usage.test-set")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.usage.test-set")}">${picks}</span></span><small>${t("window.settings.usage.each-task-is-checked-the-same")}</small></div>
+  ${controlRow(`<b>${t("window.settings.usage.test-set")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.usage.test-set")}">${picks}</span></span><small>${t("window.settings.usage.each-task-is-checked-the-same")}</small>`, { className: "ctl ev15" })}
   ${state}
   <div class="acts" data-css="margin-top:8px"><button class="btn" type="button" data-act="eval-run" ${running || !suiteId ? "disabled" : ""}>${lastRun ? t("window.places.library17.run-again") : t("window.settings.usage.run-the-test")}</button></div></div>`;
 }
@@ -213,11 +214,11 @@ const WIRES = {
 const checked = (id) => (WIRES[id][0]() ? "checked" : "");
 
 function limitsSec() {
-  const tray = onPhone() ? "" : `<div class="ctl"><b>${t("window.settings.usage.show-usage-in-the-tray")}</b><input class="sw" type="checkbox" id="u-tray" ${checked("u-tray")} aria-label="${t("window.settings.usage.show-usage-in-the-tray")}" data-sw="set"><small>${t("window.settings.usage.tray-ring")}</small></div>`;
+  const tray = onPhone() ? "" : `${controlRow(`<b>${t("window.settings.usage.show-usage-in-the-tray")}</b><input class="sw" type="checkbox" id="u-tray" ${checked("u-tray")} aria-label="${t("window.settings.usage.show-usage-in-the-tray")}" data-sw="set"><small>${t("window.settings.usage.tray-ring")}</small>`)}`;
   return `<div class="sec"><h2>${t("glance.title")}</h2><p class="hint" data-css="margin:0 0 6px">${t("window.settings.usage.how-much-of-each-services-allowance")}</p><div class="lims flat">${(glance?.rows ?? []).map(limitRow).join("")}</div>
-    <div class="ctl"><b>${t("window.settings.usage.the-ring-bottom-right")}</b><input class="sw" type="checkbox" id="u-ring" ${checked("u-ring")} aria-label="${t("window.settings.usage.show-the-ring")}" data-sw="ring"><small>${t("window.settings.usage.the-connection-used-next-how-much")}</small></div>
-    <div class="ctl"><b>${t("window.settings.usage.offer-to-save-progress-at-95")}</b><input class="sw" type="checkbox" id="u-ckpt" ${checked("u-ckpt")} aria-label="${t("window.settings.usage.offer-to-save-progress-at-95")}" data-sw="ckpt"><small>${t("window.settings.usage.it-only-asks-once-per-connection")}</small></div>
-    <div class="ctl"><b>${t("settings-kit.name.usage-limits")}</b><input class="sw" type="checkbox" id="u-ask" ${checked("u-ask")} aria-label="${t("settings-kit.name.usage-limits")}" data-sw="set"><small>${t("window.settings.usage.only-openrouter-documents-a-way-to")}</small></div>
+    ${controlRow(`<b>${t("window.settings.usage.the-ring-bottom-right")}</b><input class="sw" type="checkbox" id="u-ring" ${checked("u-ring")} aria-label="${t("window.settings.usage.show-the-ring")}" data-sw="ring"><small>${t("window.settings.usage.the-connection-used-next-how-much")}</small>`)}
+    ${controlRow(`<b>${t("window.settings.usage.offer-to-save-progress-at-95")}</b><input class="sw" type="checkbox" id="u-ckpt" ${checked("u-ckpt")} aria-label="${t("window.settings.usage.offer-to-save-progress-at-95")}" data-sw="ckpt"><small>${t("window.settings.usage.it-only-asks-once-per-connection")}</small>`)}
+    ${controlRow(`<b>${t("settings-kit.name.usage-limits")}</b><input class="sw" type="checkbox" id="u-ask" ${checked("u-ask")} aria-label="${t("settings-kit.name.usage-limits")}" data-sw="set"><small>${t("window.settings.usage.only-openrouter-documents-a-way-to")}</small>`)}
     ${tray}</div>`;
 }
 
@@ -249,7 +250,7 @@ let snapshots = [];
 function keeping() {
   const r = retention;
   const cur = !r ? null : !r.enabled || !r.keepDays ? "forever" : r.keepDays === 30 ? "30" : r.keepDays === 365 ? "365" : null;
-  return `<div class="sec"><h2>${t("window.settings.usage.keeping-things")}</h2>${seg15(t("window.settings.usage.keep-conversations"), t("window.settings.usage.older-ones-are-deleted-for-good"), [["30", t("window.settings.usage.30-days")], ["365", t("window.settings.usage.1-year")], ["forever", t("window.settings.usage.forever")]], cur, "keep15", "f15-keep-conversations")}<div class="ctl"><b>${t("window.settings.usage.checkpoints")}</b><span class="right"><button class="btn sm" type="button" data-act="ckpts15">${t("window.settings.usage.see-all")}</button></span><small>${t("window.settings.usage.kept-before-a-trunk-changes-files")}</small></div></div>`;
+  return `<div class="sec"><h2>${t("window.settings.usage.keeping-things")}</h2>${seg15(t("window.settings.usage.keep-conversations"), t("window.settings.usage.older-ones-are-deleted-for-good"), [["30", t("window.settings.usage.30-days")], ["365", t("window.settings.usage.1-year")], ["forever", t("window.settings.usage.forever")]], cur, "keep15", "f15-keep-conversations")}${controlRow(`<b>${t("window.settings.usage.checkpoints")}</b><span class="right"><button class="btn sm" type="button" data-act="ckpts15">${t("window.settings.usage.see-all")}</button></span><small>${t("window.settings.usage.kept-before-a-trunk-changes-files")}</small>`)}</div>`;
 }
 async function loadRetention() {
   try { retention = (await api("retention")).settings ?? null; } catch (error) { toast(error.message); }
@@ -298,7 +299,7 @@ function flagsSec() {
   const when = (at) => new Date(at).toLocaleDateString(language(), { month: "short", day: "numeric" });
   const why = (f) => f.reasons.map((r) => (REASONS.includes(r) ? t(`window.chat.flag.reason.${r}`) : r)).join(", ");
   const rows = flags.map((f) => `<div class="prow">${ic("flag", "s")}<span class="grow"><b>${esc(why(f))}</b><small>${esc([chat(f.sessionId), when(f.at), t("window.settings.usage.kept-here")].filter(Boolean).join(" · "))}</small></span><button class="btn ghost sm" type="button" data-act="flforget17c" data-v="${esc(f.id)}">${t("accounts.action.remove")}</button></div>`).join("");
-  return `<div class="sec x15-sec"><h2>${t("window.settings.usage.flagged-replies")}</h2><div class="ctl"><b>${t("window.chat.flag.send")}</b><input class="sw" type="checkbox" id="fl-send-set17c" aria-label="${esc(t("window.chat.flag.send"))}" data-sw="set"><small>${t("window.settings.usage.off-until-you-turn-it-on")}</small></div>${flags.length ? `<p class="hint" data-css="margin:6px 0">${t("window.settings.usage.flagged-count-kept", { count: flags.length })}</p><div class="rows">${rows}</div>` : ""}</div>`;
+  return `<div class="sec x15-sec"><h2>${t("window.settings.usage.flagged-replies")}</h2>${controlRow(`<b>${t("window.chat.flag.send")}</b><input class="sw" type="checkbox" id="fl-send-set17c" aria-label="${esc(t("window.chat.flag.send"))}" data-sw="set"><small>${t("window.settings.usage.off-until-you-turn-it-on")}</small>`)}${flags.length ? `<p class="hint" data-css="margin:6px 0">${t("window.settings.usage.flagged-count-kept", { count: flags.length })}</p><div class="rows">${rows}</div>` : ""}</div>`;
 }
 async function forgetFlag(el) {
   try { toast((await api(`reply-flags/${encodeURIComponent(el.dataset.v)}/remove`, {})).said); } catch (error) { toast(error.message); }

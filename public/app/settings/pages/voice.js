@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Voice, 1:1 with the prototype's page, from the engine:
    the voice settings (GET /api/voice/settings), the push-to-talk key (the comfort card
    "voice", POST /api/comfort { card, values }, merged), dictation in the message box and how long a quiet room ends it
@@ -89,20 +90,20 @@ function captureKey() {
   window.addEventListener("keydown", waiting, true);
 }
 
-const num = (id, title, sub, value, unit, attrs = "") => `<div class="ctl"><b>${esc(title)}</b><span class="right num15"><input class="inp" id="${id}" value="${esc(value ?? "")}" aria-label="${esc(title)}" data-sw="set" ${attrs}>${unit ? `<small>${esc(unit)}</small>` : ""}</span><small>${esc(sub)}</small></div>`;
+const num = (id, title, sub, value, unit, attrs = "") => `${controlRow(`<b>${esc(title)}</b><span class="right num15"><input class="inp" id="${id}" value="${esc(value ?? "")}" aria-label="${esc(title)}" data-sw="set" ${attrs}>${unit ? `<small>${esc(unit)}</small>` : ""}</span><small>${esc(sub)}</small>`)}`;
 
 function talking() {
   const key = V.comfort?.pushToTalkKey ?? "";
   const listening = !V.settings ? "" : V.wake && V.wake !== "off" ? t("window.settings.voice.wake-word") : key ? t("window.settings.voice.push-to-talk") : t("accounts.switch.off");
   return `<div class="sec"><h2>${t("window.settings.voice.talking")}</h2>${ctlSeg(t("dictation.listening"), t("window.settings.voice.push-to-talk-holds-the-key"), [t("accounts.switch.off"), t("window.settings.voice.push-to-talk"), t("window.settings.voice.wake-word")], listening, "f15-listening")}
-    <div class="ctl"><b>${t("comfort.field.pushToTalkKey")}</b><span class="right">${key ? `<kbd data-css="font-size:12px;padding:4px 8px">${esc(key)}</kbd>` : ""}<button class="btn sm" type="button" data-act="ptt-key">${t("window.settings.voice.change")}</button></span><small>${t("window.settings.voice.hold-it-anywhere-in-windows")}</small></div></div>`;
+    ${controlRow(`<b>${t("comfort.field.pushToTalkKey")}</b><span class="right">${key ? `<kbd data-css="font-size:12px;padding:4px 8px">${esc(key)}</kbd>` : ""}<button class="btn sm" type="button" data-act="ptt-key">${t("window.settings.voice.change")}</button></span><small>${t("window.settings.voice.hold-it-anywhere-in-windows")}</small>`)}</div>`;
 }
 
 function speakingBack() {
   const s = V.settings ?? {}, reads = !!s.autoReadAloud;
   const voices = [...V.voices.map((n) => [n, n, reads && s.voiceId === n]), ["off", t("accounts.switch.off"), !!V.settings && !reads]];
   const dict = !!V.dictation && V.dictation.mode !== "off";
-  return `<div class="sec"><h2>${t("window.settings.voice.speaking-back")}</h2><div class="ctl"><b>${t("field.voice")}</b><span class="right"><span class="seg" role="group" aria-label="${t("field.voice")}">${voices.map(([v, l, p]) => `<button type="button" aria-pressed="${p}" data-act="v-voice" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.settings.voice.read-replies-out-loud-in-this")}</small></div>
+  return `<div class="sec"><h2>${t("window.settings.voice.speaking-back")}</h2>${controlRow(`<b>${t("field.voice")}</b><span class="right"><span class="seg" role="group" aria-label="${t("field.voice")}">${voices.map(([v, l, p]) => `<button type="button" aria-pressed="${p}" data-act="v-voice" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.settings.voice.read-replies-out-loud-in-this")}</small>`)}
     ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), [t("window.settings.voice.the-microphone-button-turns-speech-into"), V.dictationHow].filter(Boolean).join(" "), dict)}</div>`;
 }
 
@@ -119,7 +120,7 @@ function listeningMore() {
 function answerAloud() {
   const cur = !V.settings ? null : !V.settings.autoReadAloud ? "never" : V.settings.readAloudWhen === "spoken" ? "talk" : "always";
   const opt = (v, l, act) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}">${esc(l)}</button>`;
-  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "aloud15")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small></small></div>`;
+  return `${controlRow(`<b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "aloud15")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small></small>`)}`;
 }
 /* Voice: a computer voice reads replies aloud in that voice; Off stops reading aloud. */
 async function saveVoice(v) {

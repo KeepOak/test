@@ -1,3 +1,4 @@
+import { controlRow, segmentedRow } from "../row-kit.js";
 /* Settings › Notifications, 1:1 with the prototype's page, from the engine: how Branch gets your attention and whether
    it updates itself (the comfort card "notify", POST /api/comfort { card, values }, merged), and quiet hours
    (GET /api/calendar), named in the status line only while they are on. "A Trunk needs a yes" and "A long task finishes"
@@ -40,14 +41,14 @@ async function toggleDay(v) {
   render();
 }
 const dayPressed = (v) => (v === "none" ? !(quiet?.days ?? []).length : (quiet?.days ?? []).includes(+v));
-const daysRow = () => `<div class="ctl"><b>${esc(t("window.settings.notifications.days-off"))}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.settings.notifications.days-off"))}">${[["6", t("window.settings.notifications.sat")], ["7", t("window.settings.notifications.sun")], ["none", t("comfort.placeholder.none")]].map(([v, l]) => `<button type="button" aria-pressed="${dayPressed(v)}" data-act="n-day" data-v="${v}">${esc(l)}</button>`).join("")}</span></span><small>${esc(t("window.settings.notifications.no-notifications-at-all-on-these"))}</small></div>`;
+const daysRow = () => `${controlRow(`<b>${esc(t("window.settings.notifications.days-off"))}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.settings.notifications.days-off"))}">${[["6", t("window.settings.notifications.sat")], ["7", t("window.settings.notifications.sun")], ["none", t("comfort.placeholder.none")]].map(([v, l]) => `<button type="button" aria-pressed="${dayPressed(v)}" data-act="n-day" data-v="${v}">${esc(l)}</button>`).join("")}</span></span><small>${esc(t("window.settings.notifications.no-notifications-at-all-on-these"))}</small>`)}`;
 
 async function saveNotify(part) {
   try { notify = (await api("comfort", { card: "notify", values: part })).values?.notify ?? notify; } catch (error) { toast(error.message); }
   render();
 }
 
-const seg = (title, sub, act, opts, cur) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}">${esc(l)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
+const seg = (title, sub, act, opts, cur) => segmentedRow({title, description: sub, options: opts, current: cur, action: act});
 
 /* "21:00" as the prototype says it ("10 PM"), in this computer's own way of writing a time. */
 const clock = (hm) => { const [h, m] = String(hm).split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(language(), { hour: "numeric", minute: m ? "2-digit" : undefined }); };

@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Accounts: the engine's accounts in the order it uses them (GET /api/accounts), moving one up, the account
    menu (flows/account.js) and, at Advanced, selecting several and acting on all of them. Never shows a key. */
 import { level, E, refresh } from "../../core/state.js";
@@ -89,10 +90,10 @@ function whenOneRunsOut() {
   const several = (A.view?.pools ?? []).filter((p) => p.accounts.length > 1);
   const next = t("window.settings.accounts.move-to-the-next-account-in"), fall = t("window.settings.accounts.fall-back-to-this-computer");
   return `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${next}</b>${box("ac-next", next, several.length > 0 && several.every((p) => p.autoSwitch), several.length ? "" : "ac-next")}<small></small></div>`
-    + (several.length ? `<div class="ctl"><b>${t("window.settings.accounts.strategy")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.accounts.strategy")}">${STRATEGIES.map(([v, k]) => `<button type="button" data-act="ac-strategy" data-v="${v}" aria-pressed="${several.every((p) => p.strategy === v)}" ${ownerOnly()}>${t(k)}</button>`).join("")}</span></span><small>${t("window.settings.accounts.strategy-hint")}</small></div>` : "")
+    + `${controlRow(`<b>${next}</b>${box("ac-next", next, several.length > 0 && several.every((p) => p.autoSwitch), several.length ? "" : "ac-next")}<small></small>`)}`
+    + (several.length ? `${controlRow(`<b>${t("window.settings.accounts.strategy")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.accounts.strategy")}">${STRATEGIES.map(([v, k]) => `<button type="button" data-act="ac-strategy" data-v="${v}" aria-pressed="${several.every((p) => p.strategy === v)}" ${ownerOnly()}>${t(k)}</button>`).join("")}</span></span><small>${t("window.settings.accounts.strategy-hint")}</small>`)}` : "")
     + `<p class="hint">${t("window.settings.accounts.switch-note")}</p>`
-    + `<div class="ctl"><b>${fall}</b>${box("ac-fall", fall, fallOn(), localIds().length ? "" : "ac-fall")}<small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
+    + `${controlRow(`<b>${fall}</b>${box("ac-fall", fall, fallOn(), localIds().length ? "" : "ac-fall")}<small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small>`)}</div>`;
 }
 const STRATEGIES = [["priority", "window.settings.accounts.fill-first"], ["round-robin", "window.settings.accounts.round-robin"], ["least-used", "window.settings.accounts.least-used"]];
 async function setPools(values) {

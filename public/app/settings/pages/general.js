@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › General, 1:1 with the prototype's page, from the engine:
    Starting up: GET /api/deployment (autostart, daemon). Start with Windows is POST /api/deployment/autostart { enabled };
    Keep working when the window closes is the same saved gateway mode used on Settings › Gateway and the footer;
@@ -64,14 +65,14 @@ const BOUND = {
   "f15-keep-latest": { card: "compaction", field: "keepRecentMessages", set: count },
   "f15-repair-the-history-before-each-call": { key: "safety-history-repair", field: "mode" },
 };
-const num = (id, title, sub, unit, value) => `<div class="ctl"><b>${esc(title)}</b>${numBox(id, title, value, unit)}<small>${esc(sub)}</small></div>`;
+const num = (id, title, sub, unit, value) => `${controlRow(`<b>${esc(title)}</b>${numBox(id, title, value, unit)}<small>${esc(sub)}</small>`)}`;
 
 /* Message times: On hover, Always and Never are the display card's timestamps and hideTimes (Never hides the time in a
    message's action row too, chat/messages.js). */
 function times() {
   const always = comfort.display?.timestamps === true, never = !always && comfort.display?.hideTimes === true, title = t("window.settings.general.message-times");
   const opt = (v, words, pressed) => `<button type="button" aria-pressed="${pressed}" data-act="mtimes15" data-v="${v}">${esc(words)}</button>`;
-  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("hover", t("window.settings.general.on-hover"), !always && !never)}${opt("always", t("window.places.automations.always"), always)}${opt("never", t("window.settings.advanced.never"), never)}</span></span><small>${esc(t("window.settings.general.when-a-message-was-sent-and"))}</small></div>`;
+  return `${controlRow(`<b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("hover", t("window.settings.general.on-hover"), !always && !never)}${opt("always", t("window.places.automations.always"), always)}${opt("never", t("window.settings.advanced.never"), never)}</span></span><small>${esc(t("window.settings.general.when-a-message-was-sent-and"))}</small>`)}`;
 }
 
 function advanced() {
@@ -100,13 +101,13 @@ export function draw() {
     ${computer ? `<div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), backgroundStatus(), gateway ? gateway.mode !== "off" : false)}</div>` : ""}
     ${ownerHere() ? where() : ""}
     <div class="sec"><h2>${t("memory.movein.kind.project")}</h2><div class="rows">${ownerHere() ? P.all.map(project).join("") : ""}</div></div>
-    <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2>${computer ? `<div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div>` : ""}${K.kit ? ctl("g-cmds", t("commands.card.switch"), t("window.settings.general.commands-here"), kitOn("command-catalog")) : ""}</div>
+    <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2>${computer ? `${controlRow(`<b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small>`)}` : ""}${K.kit ? ctl("g-cmds", t("commands.card.switch"), t("window.settings.general.commands-here"), kitOn("command-catalog")) : ""}</div>
     ${lv >= 1 ? advanced() : ""}${lv >= 2 ? technical() : ""}`;
 }
 
 /* Where Branch runs (Overview's Finish setting up opens this page for it): this computer, or another one added through
    the Settings › Computer flow's own "Add a computer" (flows/computers.js comp-add, pairing through the engine). */
-const where = () => `<div class="sec"><h2>${t("window.flows.setup.step-where")}</h2><div class="ctl"><b>${t("window.p18.ob.fin-where")}</b><span class="right"><button class="btn sm" type="button" data-act="comp-add">${t("window.settings.computer.add-a-computer")}</button></span></div></div>`;
+const where = () => `<div class="sec"><h2>${t("window.flows.setup.step-where")}</h2>${controlRow(`<b>${t("window.p18.ob.fin-where")}</b><span class="right"><button class="btn sm" type="button" data-act="comp-add">${t("window.settings.computer.add-a-computer")}</button></span>`)}</div>`;
 
 /* ---------- starting up ---------- */
 async function startUp(el) {

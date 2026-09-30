@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Updates & about, for an owner who never presses Update (the owner's request, 2026-09-27): one status card
    that says what is happening now, from the desktop updater's own state (shell/updating.js, pushed as it changes) and
    update by itself's last look (shell/autoupdate.js, the engine's plan), with the one button that fits that moment.
@@ -183,13 +184,13 @@ function draw() {
   if (!notOwner() && bridgeHere()) html += statusCard(autoUpdate);
 
   // The prototype's "Updating" section, under its heading. The switch says how often it really looks: every minute on Beta, once a day on Stable (src/comfort/auto-update.ts).
-  html += `<div class="sec upd18-self"><h2>${t("window.settings.updates.updating")}</h2><div class="ctl"><b>${t("comfort.update.install")}</b><input class="sw" type="checkbox" id="u-auto" ${autoUpdate ? "checked" : ""} aria-label="${t("comfort.update.install")}" data-sw="set"><small>${t(beta ? "window.updates.card.checks-every-few-minutes" : "window.settings.updates.checks-every-day")}</small></div></div>`;
+  html += `<div class="sec upd18-self"><h2>${t("window.settings.updates.updating")}</h2>${controlRow(`<b>${t("comfort.update.install")}</b><input class="sw" type="checkbox" id="u-auto" ${autoUpdate ? "checked" : ""} aria-label="${t("comfort.update.install")}" data-sw="set"><small>${t(beta ? "window.updates.card.checks-every-few-minutes" : "window.settings.updates.checks-every-day")}</small>`)}</div>`;
 
   /* The rest, quieter: What's new (the notes this build ships, flows/whatsnew.js), undoing an update (greyed: going back
      is `branch rollback` in a terminal, which says first whether it would lose work), the channel, and the copy of the data folder. */
   html += `<details class="adv upd18-more" id="u-more"${moreOpen ? " open" : ""}><summary>${esc(t("window.updates.card.more"))}</summary>`;
-  html += `<div class="ctl"><b>${t("window.settings.updates.whats-new")}</b><span class="right"><button class="btn sm" type="button" data-act="whatsnew13">${t("window.settings.updates.whats-new")}</button></span><small></small></div>`;
-  html += `<div class="ctl"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class="right"><button class="btn sm" type="button" data-act="soon" data-why="undo-the-last-update">${t("strip.undo")}</button></span><small></small></div>`;
+  html += `${controlRow(`<b>${t("window.settings.updates.whats-new")}</b><span class="right"><button class="btn sm" type="button" data-act="whatsnew13">${t("window.settings.updates.whats-new")}</button></span><small></small>`)}`;
+  html += `${controlRow(`<b>${t("window.settings.updates.undo-the-last-update")}</b><span class="right"><button class="btn sm" type="button" data-act="soon" data-why="undo-the-last-update">${t("strip.undo")}</button></span><small></small>`)}`;
   html += channelSection();
   html += "</details>";
 

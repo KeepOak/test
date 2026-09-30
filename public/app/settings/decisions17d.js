@@ -1,3 +1,4 @@
+import { controlRow } from "./row-kit.js";
 /* Pass 17 part D §4: decision models in Settings › Models, 1:1 with the prototype's patch17d.js. Everything is the engine's
    (src/decision-models.ts): the connections it can use and the one chosen (GET /api/decisions, POST /api/decisions/settings),
    the last 24 hours in numbers, and each decision, asked of that model and checked against what was offered
@@ -31,7 +32,7 @@ const chosen = () => D.data?.models.find((m) => m.id === (D.data.settings.model 
 function modelRow() {
   const s = D.data.settings, local = chosen()?.local;
   const opts = [...D.data.models.map((m) => [m.id, m.local ? t("window.p17d.model-here", { name: m.name }) : m.name]), ["", t("window.p17d.same-as-task")]];
-  return `<div class="ctl"><b>${esc(t("window.p17d.model-for-decisions"))}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.model-for-decisions"))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${s.model === v}" data-act="dmmodel17d" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${local ? esc(t("window.p17d.free-here")) : ""}</small></div>`;
+  return `${controlRow(`<b>${esc(t("window.p17d.model-for-decisions"))}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.model-for-decisions"))}">${opts.map(([v, l]) => `<button type="button" aria-pressed="${s.model === v}" data-act="dmmodel17d" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${local ? esc(t("window.p17d.free-here")) : ""}</small>`)}`;
 }
 function lastDay() {
   const d = D.data.lastDay;
@@ -55,7 +56,7 @@ export function decisions17d(lv) {
     ${modelRow()}${sw15("Send each message to the right Trunk", "When you don’t say who, it picks from their jobs.", s.route)}${sw15("Sort the Inbox by urgency", "Deadlines and money first.", s.inbox)}${sw15("Filter long lists before a Trunk reads them", "Mail, files and search results it clearly doesn’t need are dropped.")}
     ${tryIt()}</div>`;
   if (lv < 2) return main;
-  const num = (id, title, sub, value, unit) => `<div class="ctl"><b>${esc(title)}</b><span class="right num15"><input class="inp" id="${id}" value="${esc(value)}" aria-label="${esc(title)}" inputmode="decimal">${unit ? `<small>${esc(unit)}</small>` : ""}</span><small>${esc(sub)}</small></div>`;
+  const num = (id, title, sub, value, unit) => `${controlRow(`<b>${esc(title)}</b><span class="right num15"><input class="inp" id="${id}" value="${esc(value)}" aria-label="${esc(title)}" inputmode="decimal">${unit ? `<small>${esc(unit)}</small>` : ""}</span><small>${esc(sub)}</small>`)}`;
   return main + `<div class="sec x15-sec"><h2>${esc(t("window.p17d.decision-technical"))}</h2>${num("dm-sure17d", t("window.p17d.less-sure"), t("window.p17d.less-sure-hint"), s.minConfidence, t("window.p17d.sure-unit"))}${num("dm-max17d", t("window.p17d.longest-list"), t("window.p17d.longest-list-hint"), s.maxList, t("window.p17d.lines-unit"))}</div>`;
 }
 

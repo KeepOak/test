@@ -1,3 +1,4 @@
+import { controlRow } from "../row-kit.js";
 /* Settings › Chat apps (pass 17 part D §8), a page under Your assistant, 1:1 with the prototype's patch17d.js. The apps
    and how each is doing are the engine's: the connected ones and their health from GET /api/channels, every app's name
    and the count from GET /api/channel-setup. Telegram now says when it refuses its bot token (src/channels/telegram.ts);
@@ -65,7 +66,7 @@ export function draw() {
   const quotes = (id) => on.some((c) => kindOf(c) === id && c.replyQuotes === true); // an app whose replies can quote
   if (kinds.length) html += `<div class="sec x15-sec"><h2>${esc(t("window.chat-reply.title"))}</h2>${kinds.map((id) => replyStyleRows(id, nameOf(id), quotes(id))).join("")}</div>`;
   if (lv >= 1) html += advanced(on);
-  if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
+  if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2>${controlRow(`<b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small>`)}</div>`;
   return html;
 }
 
@@ -95,7 +96,7 @@ function advanced(on) {
     + (watching ? `<div class="rows wd17d">${watching}</div>` : ""));
   const connected = new Set(on.map(kindOf));
   const fmt = [...new Set([...connected, "slack", "discord", "whatsapp"])].map((id) => { const name = esc(nameOf(id));
-    return `<div class="ctl"><b>${name}${connected.has(id) ? "" : ` <small>${esc(t("window.p17d.when-connected"))}</small>`}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.formatting-in", { name: nameOf(id) }))}">${formatButtons(id, nativeFormat(id))}</span></span><small>${esc(t("window.p17d.formatting-in-hint", { name: nameOf(id) }))}</small></div>`; }).join("");
+    return `${controlRow(`<b>${name}${connected.has(id) ? "" : ` <small>${esc(t("window.p17d.when-connected"))}</small>`}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.formatting-in", { name: nameOf(id) }))}">${formatButtons(id, nativeFormat(id))}</span></span><small>${esc(t("window.p17d.formatting-in-hint", { name: nameOf(id) }))}</small>`)}`; }).join("");
   return seen + staying + `<div class="sec x15-sec"><h2>${esc(t("window.p17d.formatting-each"))}</h2><p class="hint">${esc(t("window.p17d.formatting-each-hint"))}</p>${fmt}</div>`;
 }
 
