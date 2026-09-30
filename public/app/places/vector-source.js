@@ -18,7 +18,7 @@ async function openSource() {
   try {
     const { vectorStore: settings, backend, backendNote } = await api("knowledge");
     openDlg({ title: t("vectors.source.title"), body: `<p class="hint">${t("vectors.source.explanation")}</p>
-      <label>${t("vectors.source.where")}${gsel({ id: "vector-source", sw: "vector-source", label: t("vectors.source.where"), options: [["database", t("vectors.source.database")], ["file", t("vectors.source.file")], ["qdrant", "Qdrant"], ["chroma", "Chroma"], ["pinecone", "Pinecone"], ["milvus", "Milvus"]], value: settings.vectorsIn })}</label>
+      <label>${t("vectors.source.where")}${gsel({ id: "vector-source", sw: "vector-source", label: t("vectors.source.where"), options: [["database", t("vectors.source.database")], ["file", t("vectors.source.file")], ["qdrant", "Qdrant"], ["chroma", "Chroma"], ["pinecone", "Pinecone"], ["milvus", "Milvus"], ["elasticsearch", "Elasticsearch"]], value: settings.vectorsIn })}</label>
       ${field("vector-file", "vectors.source.path", settings.vectorsFile, 400)}
       ${field("vector-url", "vectors.source.url", settings.vectorsUrl, 500)}
       ${field("vector-secret", "vectors.source.secret", settings.vectorsSecret, 200)}
