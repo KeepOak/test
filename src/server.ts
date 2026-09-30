@@ -1121,7 +1121,9 @@ async function api(
   if (path === "/api/web-search")
     return webSearchApi({ store: app.store, owner: app.runtime.owner, launch: () => app.web.settings().search,
       hasSecret: (name) => { try { return app.store.secrets.list(app.runtime.owner, app.store.projects.active(app.runtime.owner).id).some((entry) => entry.name === name); } catch { return false; } },
-      requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", () => readBody(request, 4 * 1024)).catch((error: unknown) => {
+      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireUnlocked: () => { if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before choosing where web searches go."); },
+    }, request.method ?? "GET", () => readBody(request, 4 * 1024)).catch((error: unknown) => {
       throw error instanceof WebSearchApiError ? new HttpError(error.status, error.message) : error;
     });
   // RES-719: GitLab set up in the window: its switch, the token checked and kept in the locker, and taking it out.
@@ -4969,7 +4971,8 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {
-    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined) });
+    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined),
+      locked: () => app.sessionLock.refusal(request.method, path) });
     return true;
   }
   // ---- end of the bucket 13 block ----
