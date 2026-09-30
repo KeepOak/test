@@ -31,6 +31,7 @@ import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
 import { initScrollFollow, jumpRow, selectionHeld } from "./scroll-follow.js";
+import { initInputHistory } from "./input-history.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
@@ -940,6 +941,7 @@ export function init() {
   initBeside();
   initMessages({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
   initScrollFollow(() => C);
+  initInputHistory(() => C);
   initMore({ state: () => C });
   initLeaveOut({ state: () => C, reopen: openConversation });
   initBranches({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
