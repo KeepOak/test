@@ -1,5 +1,18 @@
 # Third-party notices
 
+## Optional external Piper voice program
+
+The original `src/voice-piper.ts` adapter uses the stdin and WAV output contract documented by
+OHF-Voice/piper1-gpl at `efffbfb226bfb511ebbcf55d0cecd8b35a89743d`
+(`src/piper/__main__.py`, `docs/CLI.md`). Piper is GPL-3.0 software installed separately by the
+owner. Branch does not import, bundle, download or redistribute that program or any voice model.
+No Piper implementation code is copied here. Each chosen model has its own license.
+
+The persistent-worker approach was informed by Hermes Agent's MIT-licensed local TTS cache
+(`tools/tts_tool_local.py`, `a9a54245b2311c705d29050b7f9868c015917aec`) and Pipecat's BSD-2-Clause
+external Piper service distinction (`src/pipecat/services/piper/tts.py`,
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc`). Their implementation code is not copied.
+
 ## Installed faster-whisper and Silero VAD integration
 
 `src/voice-whisper.ts` calls the installed faster-whisper local VAD and timestamp APIs,
