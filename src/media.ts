@@ -6,7 +6,16 @@ import { z } from "zod";
 import type { Artifact, RunArtifacts } from "./artifacts.js";
 import { maximumImageBytes, parseImages, type ImagePart, type ToolContext } from "./contracts.js";
 import type { WorkspaceFiles } from "./files.js";
-import type { ModelRouter } from "./models.js";
+import { keptOnThisComputer, type ModelPreset, type ModelRouter } from "./models.js";
+import { accountsServiceFor } from "./accounts/service.js";
+import { sessionChoice } from "./accounts/settings.js";
+import { currentAccountCall } from "./accounts/context.js";
+import { currentPerson } from "./people/context.js";
+import { runOrigin, startedWithShortLivedKey } from "./key-context.js";
+import { helperRoute } from "./delegation.js";
+import { readKnobs } from "./knobs/settings.js";
+import { chatgptDefaults } from "./chatgpt-auth.js";
+import { codexImageModel, generateCodexImage, type CodexImageEndpoint } from "./media-codex-images.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import { supportsImages } from "./providers.js";
 import type { ToolRegistry } from "./registry.js";
@@ -125,7 +134,10 @@ export class MediaTools {
   /** Makes a picture, or changes one the person already has, and keeps the result as an artifact. */
   async image(input: ImageRequest, context: ToolContext): Promise<Record<string, unknown>> {
     const artifacts = this.artifactStore();
-    const where = providerImages(this.preset(context.owner).provider);
+    const preset = this.preset(context.owner);
+    const signIn = (preset.provider as { signInImages?: (signal: AbortSignal) => Promise<CodexImageEndpoint> }).signInImages;
+    if (typeof signIn === "function") return this.signInImage(input, context, preset, signIn.bind(preset.provider));
+    const where = providerImages(preset.provider);
     if (!where) throw new Error(noImageEndpoint);
     const settings = mediaSettings(this.store, context.owner);
     const model = settings.imageModel || where.defaultModel;
@@ -150,6 +162,60 @@ export class MediaTools {
     if (!source) return generateOpenAi(where, model, input, this.policy, this.fetch, signal);
     const mask = input.edit?.mask ? await this.source(input.edit.mask) : null;
     return editOpenAi(where, model, input, source, mask, this.policy, this.fetch, signal);
+  }
+
+  /** A sign-in picture call cannot borrow another account or bypass a task's private/budget choice. */
+  private assertSignInImage(context: ToolContext, preset: ModelPreset): void {
+    const run = this.store.run(context.runId), origin = runOrigin(this.store, context.runId);
+    if (!run || run.owner !== context.owner || currentPerson() || startedWithShortLivedKey() ||
+        !this.store.profiles.isOwner() || this.store.profiles.scope() !== context.owner ||
+        origin.source !== "owner" || origin.shortLivedKey || origin.personProfileId || origin.lentTo ||
+        (context.source && context.source !== "owner")) throw new Error("Only the owner's own task can make pictures through a ChatGPT sign-in.");
+    if (keptOnThisComputer()) throw new Error("This task keeps its inputs on this computer, so it cannot make a ChatGPT picture.");
+    if (helperRoute(this.store, context.owner, run.sessionId)) throw new Error("A pinned helper cannot borrow the primary ChatGPT picture account.");
+    const chosen = this.models.session(context.owner, run.sessionId).preset;
+    if (chosen && chosen !== preset.id) throw new Error("The conversation has another model connection picked; ChatGPT pictures will not switch it.");
+    const answered = this.store.events(run.id).findLast((event) => event.kind === "model.started")?.data.preset;
+    if (typeof answered === "string" && answered !== preset.id) throw new Error("This task is using another model connection; ChatGPT pictures will not borrow the primary account.");
+    const trunk = currentAccountCall()?.trunk;
+    if ((context.trunk && !trunk) || (trunk && (trunk.signIns !== true || !trunk.keys.copyFromOwner ||
+        Object.keys(trunk.keys.accounts).length || Object.keys(trunk.keys.next ?? {}).length)))
+      throw new Error("ChatGPT pictures cannot borrow a Trunk's separately selected or unpermitted sign-in account.");
+    const service = accountsServiceFor(this.models), found = service?.poolFor(preset), pool = found ? service?.usablePool(found.pool) : null;
+    if (found && found.kind === "chatgpt" && !service?.legacySignedIn) throw new Error("The primary ChatGPT account is signed out.");
+    if (pool && (pool.accounts.length !== 1 || pool.accounts[0]!.id !== "primary" || pool.accounts[0]!.disabled ||
+        pool.accounts[0]!.monthlyCapUsd !== null || (pool.defaultAccount !== null && pool.defaultAccount !== "primary")))
+      throw new Error("ChatGPT pictures need a single primary account with no account dollar cap; picture usage is not attributed yet.");
+    const pick = found ? sessionChoice(this.store, context.owner, currentAccountCall()?.sessionId || run.sessionId)[found.pool] : null;
+    if (pick && pick !== "primary")
+      throw new Error("ChatGPT pictures cannot replace the conversation's chosen account.");
+    const budget = this.store.get("settings", context.owner, "usage_budget")?.data;
+    const thresholds = this.store.get("settings", context.owner, "model-savings-costThresholds")?.data;
+    if (readKnobs(this.store, context.owner, "limits").spendCapDollars !== null ||
+        (budget?.pauseAtBudget !== false && typeof budget?.maxMonthlyDollars === "number") ||
+        (thresholds?.mode !== undefined && thresholds.mode !== "off"))
+      throw new Error("ChatGPT picture usage has no bill on file, so it cannot run while dollar caps or cost thresholds are enabled.");
+  }
+
+  private async signInImage(input: ImageRequest, context: ToolContext, preset: ModelPreset,
+    endpoint: (signal: AbortSignal) => Promise<CodexImageEndpoint>): Promise<Record<string, unknown>> {
+    this.assertSignInImage(context, preset);
+    const settings = mediaSettings(this.store, context.owner);
+    if (settings.imageModel && settings.imageModel !== codexImageModel) throw new Error("ChatGPT pictures use gpt-image-2; clear the picture model override or select that model.");
+    if (input.edit?.mask) throw new Error("ChatGPT picture edits do not support a mask here.");
+    const cost = { amount: null, currency: "USD", confidence: "unknown", note: "Uses your ChatGPT plan; picture usage and any charge are not on file." };
+    if (context.dryRun) return { wouldMake: input.edit ? "a changed picture" : "a new picture", model: codexImageModel, size: input.size, cost };
+    const signal = AbortSignal.any([context.signal, AbortSignal.timeout(180000)]);
+    await this.policy.assertAllowed(new URL(`${chatgptDefaults.apiBase}/images/${input.edit ? "edits" : "generations"}`), "making a picture");
+    const source = input.edit ? await this.source(input.edit.source) : null;
+    this.assertSignInImage(context, preset); signal.throwIfAborted();
+    const where = await endpoint(signal);
+    this.assertSignInImage(context, preset); signal.throwIfAborted();
+    const made = await generateCodexImage(where, input, source, this.policy, this.fetch, signal);
+    const kept = await this.artifactStore().write(context.runId, `picture-${randomUUID().slice(0, 8)}.png`, made.mediaType, made.bytes);
+    const saved = input.save ? await this.keep(context.owner, input.save, made.bytes) : null;
+    this.store.event(context.runId, "image.generated", { connection: preset.id, model: codexImageModel, account: "primary", bytes: made.bytes.length, cost: null });
+    return { ...(kept as Artifact), model: codexImageModel, size: `${made.width}x${made.height}`, requestedSize: input.size, prompt: input.prompt, cost, ...(saved ? { savedAs: saved.path } : {}) };
   }
 
   /** A picture from the workspace, checked for size and kind, ready to show a model. */
