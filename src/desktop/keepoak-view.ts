@@ -11,13 +11,24 @@ export function keepOakViewUrl(value: string): boolean {
   } catch { return false; }
 }
 
+// Fixed cookie API used by the portal; never allow it as a document destination.
+export function keepOakResourceUrl(value: string, resourceType: string): boolean {
+  if (keepOakViewUrl(value)) return true;
+  if (!["xhr", "other"].includes(resourceType)) return false;
+  try {
+    const url = new URL(value);
+    return url.origin === "https://api.keepoak.com" && !url.username && !url.password
+      && url.pathname.startsWith("/v1/");
+  } catch { return false; }
+}
+
 function lockPartition(partition: Session, enabled: () => boolean): void {
   partition.setPermissionRequestHandler((_contents, _permission, answer) => answer(false));
   partition.setPermissionCheckHandler(() => false);
   partition.setDevicePermissionHandler(() => false);
   partition.on("will-download", (event) => event.preventDefault());
   partition.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, answer) =>
-    answer({ cancel: !enabled() || !keepOakViewUrl(details.url) }));
+    answer({ cancel: !enabled() || !keepOakResourceUrl(details.url, details.resourceType) }));
 }
 
 function lockContents(view: WebContentsView): void {
@@ -88,7 +99,7 @@ async function openView(state: ViewState, main: BrowserWindow, owner: () => Prom
     host.on("closed", () => { if (state.host === host) closeView(state); });
     host.on("page-title-updated", (event) => event.preventDefault());
     state.timer = setInterval(() => { void owner().catch(() => { if (state.host === host) void disconnectView(state).catch(() => {}); }); }, 2000);
-    await view.webContents.loadURL(ORIGIN);
+    await view.webContents.loadURL(`${ORIGIN}/app/#computers`);
     await owner();
     if (state.host !== host || main.isDestroyed()) throw new Error("KeepOak view closed");
     host.show(); host.focus();
