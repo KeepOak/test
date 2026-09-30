@@ -3,10 +3,13 @@ import { mcpHttp, mcpStdio } from './mcp-sdk.js';
 import { boundedFetch } from './bounded-fetch.js';
 import { runAsNode } from '../child-env.js';
 
+/** Seconds without progress before a tool call stops waiting. */
+export const McpCallTimeoutSchema = z.number().int().min(1).max(3600);
 const common = {
   id: z.string().regex(/^[a-z][a-z0-9-]{0,29}$/),
   tools: z.array(z.string().min(1).max(200)).min(1).max(64),
   expectedVersion: z.string().min(1).max(100),
+  callTimeoutSeconds: McpCallTimeoutSchema.optional(),
 };
 const stdioShape = {
   protocol: z.enum(['legacy', 'stateless-preview', 'auto']).optional(),
