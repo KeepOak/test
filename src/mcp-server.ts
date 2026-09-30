@@ -16,11 +16,21 @@ import { argumentFingerprint } from './runtime.js';
 import { approvalQuestion, maximumPendingPerSession } from './approvals.js';
 
 /**
- * Protocol versions Branch understands, newest first. A client that asks for something else is told
- * plainly which ones work rather than being left to guess.
+ * Protocol versions Branch understands, newest first: the list the MCP SDK Branch ships
+ * (`SUPPORTED_PROTOCOL_VERSIONS` in @modelcontextprotocol/sdk 1.30.0 types.ts, MIT; see
+ * THIRD_PARTY_NOTICES.md). It is written out rather than imported so the engine does not load the
+ * SDK at start; a test keeps the two lists equal.
  */
-export const supportedProtocolVersions = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
+export const supportedProtocolVersions = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'] as const;
 const PREFERRED_PROTOCOL_VERSION = supportedProtocolVersions[0];
+/**
+ * The version to answer with. A client asking for one Branch speaks gets it; any other is offered
+ * Branch's newest, and the client decides whether it can use that, as the spec's lifecycle says.
+ * Adapted from the SDK server's `_oninitialize` (@modelcontextprotocol/sdk 1.30.0
+ * dist/esm/server/index.js; upstream https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/server.ts#L898-L922, MIT).
+ */
+export const negotiatedProtocolVersion = (asked: string): string =>
+  (supportedProtocolVersions as readonly string[]).includes(asked) ? asked : PREFERRED_PROTOCOL_VERSION;
 const CONVERSATION_LIMIT = 20;
 const RUN_LIMIT = 20;
 const TRANSCRIPT_BYTES = 64 * 1024;
@@ -346,10 +356,7 @@ export class McpServer {
       if (result === undefined) return respond(undefined, { code: -32601, message: 'Method not found' });
       return respond(result);
     } catch (e) {
-      const unsupported = e instanceof UnsupportedProtocol;
-      return respond(undefined, unsupported
-        ? { code: -32602, message: e.message, data: { supported: [...supportedProtocolVersions] } }
-        : { code: -32603, message: 'Internal error', data: { details: errorText(e) } });
+      return respond(undefined, { code: -32603, message: 'Internal error', data: { details: errorText(e) } });
     }
   }
 
@@ -376,16 +383,15 @@ export class McpServer {
       protocolVersion: z.string(),
       capabilities: z.record(z.string(), z.unknown()).optional(),
       clientInfo: z.object({ name: z.string(), version: z.string() }),
+      _meta: z.record(z.string(), z.unknown()).optional(),
     }).strict();
     const parsed = InitializeSchema.parse(params);
-    if (!(supportedProtocolVersions as readonly string[]).includes(parsed.protocolVersion))
-      throw new UnsupportedProtocol(parsed.protocolVersion);
     session.clientName = parsed.clientInfo.name;
     session.clientVersion = parsed.clientInfo.version;
-    session.protocolVersion = parsed.protocolVersion;
+    session.protocolVersion = negotiatedProtocolVersion(parsed.protocolVersion);
     session.initialized = true;
     return {
-      protocolVersion: parsed.protocolVersion,
+      protocolVersion: session.protocolVersion,
       capabilities: {
         tools: { listChanged: true },
         resources: { subscribe: true, listChanged: true },
@@ -838,12 +844,6 @@ function askPlan(args: Record<string, unknown>): DryRunPlan {
     wouldHappen: 'Branch would work out the steps itself and run them under your approval settings, stopping to ask you about anything that changes something.',
     dryRun: true,
   };
-}
-
-class UnsupportedProtocol extends Error {
-  constructor(asked: string) {
-    super(`Branch does not speak MCP version "${asked}". It speaks ${supportedProtocolVersions.join(', ')}.`);
-  }
 }
 
 /** A record without the tool list itself, which is far too long for a listing. */
