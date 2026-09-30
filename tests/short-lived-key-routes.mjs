@@ -167,10 +167,12 @@ export const ROUTES = {
   "/api/channel-setup/": "prefix",
   "/api/channel-setup/sample": "look",
   "/api/channel-setup/sample/check": "owner POST",
+  "/api/channel-setup/sample/link": "owner POST", // a bridge on this computer: its pairing code (WhatsApp, personal number)
   "/api/channels": "look",
   "/api/channels/addresses": "secret-read",
   "/api/channels/addresses/rotate": "owner POST",
   "/api/channels/addresses/settings": "owner POST",
+  "/api/channels/allowlist": "owner POST", // CHAT-156: who may message Branch; a short-lived key cannot read it either
   "/api/channels/catalog": "look",
   "/api/channels/deliveries/sample/retry": "other POST",
   "/api/channels/link": "owner POST",
@@ -484,6 +486,7 @@ export const ROUTES = {
   "/api/trunks/:id/retire": "owner POST",
   "/api/trunks/:id/avatar": "owner POST",
   "/api/trunks/:id/export": "look",
+  "/api/trunks/:id/inbox": "look",
   "/api/trunks/:id/keys": "look",
   "/api/trunks/:id/routines": "owner POST",
   "/api/trunks/:id/watch": "owner POST",
@@ -800,6 +803,7 @@ export const ROUTES = {
   "/api/mcp/servers/sample/remove": "owner POST",
   "/api/mcp/servers/sample/start": "owner POST",
   "/api/mcp/servers/sample/stop": "owner POST",
+  "/api/mcp/servers/sample/timeout": "owner POST",
   "/api/mcp/settings": "owner POST",
   "/api/mcp/signin": "owner POST",
   "/api/mcp/snapshots": "look",

@@ -14,7 +14,9 @@ for (const file of read("public/app", ".js")) {
     if (!path) continue;
     const route = "/api/" + path;
     const known = engine.includes(`"${route}"`) || engine.includes(`'${route}'`) || engine.includes(`\`${route}`)
-      || engine.includes(`"${route}/`) || new RegExp(`\\\\/api\\\\/${path.replace(/[/-]/g, (c) => "\\\\" + c)}`).test(engine);
+      // A route the engine matches with a regular expression is written there with its slashes as \/ and its dashes
+      // as they are (`/^\/api\/open-work\/wakeups\//`), so only a slash is looked for escaped.
+      || engine.includes(`"${route}/`) || new RegExp(`\\\\/api\\\\/${path.replace(/[.*+?^$()|[\]\\]/g, "\\$&").replace(/\//g, "\\\\/")}`).test(engine);
     if (!known) { console.log(`${file}: /api/${m[2]}`); missing++; }
   }
 }
