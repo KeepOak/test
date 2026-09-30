@@ -22,6 +22,7 @@ import { chatFailureLine, chatSignInRefusal, reasonAtMost } from "../dist/channe
 import { trunkSignInRefusal } from "../dist/accounts/context.js";
 import { primaryAccount } from "../dist/accounts/settings.js";
 import { setupTrunk } from "./trunks-helpers.mjs";
+import { setOwnerChatCheck } from "../dist/key-context.js";
 
 const OWNER = "5660235788", FRIEND = "friend-2";
 
@@ -152,6 +153,7 @@ test("a paired friend, a group, or the owner's account not named as theirs is st
   await t.test("with no router to ask, a chat is never the owner", async (t) => {
     const { app, say } = await fixture(t);
     app.runtime.ownerChatRun = null;
+    setOwnerChatCheck(app.store, null); // owner-dm-full: nor does the task's origin have a router to ask
     const { run, programRan } = await say(OWNER, "Hola");
     assert.equal(run.status, "failed");
     assert.match(run.output, /only for your own work/);

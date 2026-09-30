@@ -4934,6 +4934,7 @@
   "settings-kit.everything": "Alles auf dieser Liste",
   "settings-kit.field.audit": "Selbst prüfen",
   "settings-kit.field.chat-extras": "Meine Liste nutzen, was Chats zusätzlich dürfen",
+  "settings-kit.field.chat-owner-chats": "Deine eigenen Chats haben deinen vollen Zugriff",
   "settings-kit.field.dictation-silence": "Wie lange Stille es beendet",
   "settings-kit.field.file-agents": "AGENTS.md",
   "settings-kit.field.file-heartbeat": "HEARTBEAT.md",

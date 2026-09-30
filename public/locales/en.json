@@ -4934,6 +4934,7 @@
   "settings-kit.everything": "Everything on this list",
   "settings-kit.field.audit": "Check by itself",
   "settings-kit.field.chat-extras": "Use my list of what chats may also do",
+  "settings-kit.field.chat-owner-chats": "Your own chats have your full access",
   "settings-kit.field.dictation-silence": "How long a quiet room ends it",
   "settings-kit.field.file-agents": "AGENTS.md",
   "settings-kit.field.file-heartbeat": "HEARTBEAT.md",
