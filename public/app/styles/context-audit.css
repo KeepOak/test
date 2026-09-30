@@ -1,0 +1,5 @@
+.context-audit{width:min(420px,calc(100vw - 40px));max-height:65vh;overflow:auto;padding:12px}
+.context-audit ul{padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.context-audit li{display:flex;align-items:center;justify-content:space-between;gap:12px;overflow-wrap:anywhere}
+.context-audit h4{margin:16px 0 8px}
+.context-audit p{margin:8px 0}

@@ -124,6 +124,7 @@ import { AppResourceSchema, appHeaders, appPage, type AppResource } from "./mcp-
 import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "./fly-core-api.js";
 // Wave 8: artifacts out of a reply, shown in the same locked-down frame an MCP app gets.
 import { conversationPathsApi, conversationPathsRoute, readMarksPath } from "./conversation-paths-api.js";
+import { contextAuditApi, contextAuditRoute } from "./context-audit-api.js";
 import { ArtifactPageSchema, ArtifactSaveSchema, artifactPageRoute, holdArtifactPage } from "./artifact-pages.js";
 import { readServingSettings, saveServingSettings } from "./mcp-server.js";
 import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from "./tool-loading.js";
@@ -1387,6 +1388,7 @@ async function api(
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
   if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
+  if (contextAuditRoute.test(path)) return contextAuditApi(app, request, path, () => readBody(request));
   // Wave mac2 (goal-undo): working toward a goal in rounds, and going back to an earlier message.
   if (path === "/api/goals" || path === "/api/goal-undo/settings" || /^\/api\/sessions\/[a-f0-9-]{36}\/(goal|rewind|unrevert)$/.test(path))
     return goalUndoApi(app, request, path);

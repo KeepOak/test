@@ -213,6 +213,7 @@ const owners = (why: string, ...routes: string[]): TaskRoute[] => routes.flatMap
  * tests/q262-household-writes.test.mjs pins this list, so it cannot shrink without a reviewed change to that test too.
  */
 export const householdOwnerStores: readonly TaskRoute[] = [
+  ...owners("the owner's model request context and future-result exclusions", "/api/sessions/:id/context-audit GET,POST"),
   ...owners("the owner's document library, which the owner's tasks retrieve (searching it reads the owner's documents)",
     "/api/documents", "/api/documents/:id DELETE", "/api/documents/reindex", "/api/documents/search"),
   ...owners("the owner's knowledge bases, which the owner's tasks retrieve (the searches, exports and maps read them)",
