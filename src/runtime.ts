@@ -5209,7 +5209,9 @@ ${run.output.slice(0, 6000)}`;
     await this.pace(context, "tool", this.policy().limits.toolCallsPerMinute);
     const gated = await this.gate(call, seen, context, shown);
     if (gated.refusal) return gated.refusal;
-    const limitMs = knobs.toolLimits(this.store, this.owner, this.reliability).toolTimeoutMs, timeout = AbortSignal.timeout(limitMs); // R17-S10
+    // R17-S10; selfdev (SELF-022): a look-only waiting tool may wait longer than the owner's limit (ToolDefinition.waitsUpToMs).
+    const limitMs = Math.max(knobs.toolLimits(this.store, this.owner, this.reliability).toolTimeoutMs, this.registry.registered(call.name)?.waitsUpToMs ?? 0);
+    const timeout = AbortSignal.timeout(limitMs);
     // How tightly a program this call starts is held travels with the call, so a tool that starts
     // one can honour the owner's rule without knowing anything about the policy.
     // wave mac3 (os-sandbox, integration review): the wall comes only from wallContextFor below, never

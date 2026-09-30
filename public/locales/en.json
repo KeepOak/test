@@ -4938,6 +4938,7 @@
   "selfMerge.needNumber": "Enter a positive pull request number and choose its repository.",
   "selfMerge.number": "Pull request number",
   "selfMerge.open": "Review a pull request",
+  "selfMerge.queued": "The checked commit joined GitHub's merge queue. It merges once the queue's checks pass.",
   "selfMerge.read": "Read the exact change",
   "selfMerge.repository": "Repository",
   "selfMerge.required": "Required checks and their configured GitHub Apps were verified on this commit.",

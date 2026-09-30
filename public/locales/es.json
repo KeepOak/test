@@ -4938,6 +4938,7 @@
   "selfMerge.needNumber": "Introduce un número de pull request positivo y elige su repositorio.",
   "selfMerge.number": "Número de la pull request",
   "selfMerge.open": "Revisar una pull request",
+  "selfMerge.queued": "El commit comprobado entró en la cola de fusión de GitHub. Se fusiona cuando pasen las comprobaciones de la cola.",
   "selfMerge.read": "Leer el cambio exacto",
   "selfMerge.repository": "Repositorio",
   "selfMerge.required": "Las comprobaciones obligatorias y sus GitHub Apps configuradas se verificaron en este commit.",

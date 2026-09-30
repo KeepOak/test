@@ -4938,6 +4938,7 @@
   "selfMerge.needNumber": "Gib eine positive Pull-Request-Nummer ein und wähle sein Repository.",
   "selfMerge.number": "Nummer des Pull Requests",
   "selfMerge.open": "Einen Pull Request prüfen",
+  "selfMerge.queued": "Der geprüfte Commit ist jetzt in der Merge-Warteschlange von GitHub. Er wird zusammengeführt, sobald die Prüfungen der Warteschlange bestehen.",
   "selfMerge.read": "Die genaue Änderung lesen",
   "selfMerge.repository": "Repository",
   "selfMerge.required": "Die erforderlichen Checks und ihre konfigurierten GitHub Apps wurden für diesen Commit geprüft.",
