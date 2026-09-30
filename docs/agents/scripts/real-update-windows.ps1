@@ -15,7 +15,10 @@ $RU = 'C:\ru'; $W = "$RU\w"; $Repo = 'stabrea/Branch-Agent'; $Asset = 'Branch-Ag
 $Install = "$W\Programs\Branch Agent"; $Exe = "$Install\Branch Agent.exe"
 $Data = "$W\userdata\state"; $Scratch = "$W\tmp\branch-agent-update"; $D = "$RU\driver\real-update-test.mjs"
 $Hive = 'HKCU\Software\BranchRealUpdateTest'
-$env:BRANCH_DESKTOP_HOME = "$W\userdata"; $env:BRANCH_PROVIDER = 'demo'
+$env:BRANCH_DESKTOP_HOME = "$W\userdata"
+foreach ($name in @('BRANCH_PROVIDER', 'BRANCH_ENDPOINT', 'BRANCH_MODEL', 'BRANCH_API_KEY', 'BRANCH_MODEL_PRESETS')) {
+  Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+}
 $env:TEMP = "$W\tmp"; $env:TMP = "$W\tmp"; $env:APPDATA = "$W\AppData\Roaming"; $env:LOCALAPPDATA = "$W\AppData\Local"
 function Say($line) { Write-Output "== $line" }
 function Drive { & node.exe $D @args 2>&1 | Where-Object { $_ -notmatch ' MB of ' } | ForEach-Object { "$_" } }
@@ -32,14 +35,45 @@ function Setup($from, $to) {
   }
   New-Item -ItemType Directory -Force "$RU\driver" | Out-Null
   Copy-Item "$PSScriptRoot\real-update-test.mjs", "$PSScriptRoot\drop-connection.ps1" "$RU\driver\" -ErrorAction SilentlyContinue
+  $fixtureSource = "$PSScriptRoot\..\..\..\tests\fixtures\model-service.mjs"
+  if (Test-Path $fixtureSource) { Copy-Item -LiteralPath $fixtureSource -Destination "$RU\driver\" -ErrorAction Stop }
+  elseif (-not (Test-Path "$RU\driver\model-service.mjs")) {
+    Copy-Item -LiteralPath "$PSScriptRoot\model-service.mjs" -Destination "$RU\driver\" -ErrorAction Stop
+  }
+  ExtractFixtureProvider
   Push-Location "$RU\driver"; & npm init -y | Out-Null; & npm i playwright-core@1 2>&1 | Out-Null; Pop-Location
+}
+
+# Read the checksum-verified old release's fixture module before any installer can launch the app.
+function ExtractFixtureProvider {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archive = [System.IO.Compression.ZipFile]::OpenRead("$RU\dl\from\$Asset")
+  try {
+    $entries = @($archive.Entries | Where-Object { $_.FullName.EndsWith('/resources/app/dist/demo.js', [StringComparison]::OrdinalIgnoreCase) })
+    if ($entries.Count -ne 1 -or $entries[0].Length -gt 128KB) { throw 'The release must contain one bounded deterministic fixture module' }
+    [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], "$RU\driver\release-demo.mjs", $true)
+  } finally { $archive.Dispose() }
 }
 
 # Everything started from the test folders, and nothing else.
 function StopAll {
+  if (Test-Path "$RU\fixture.json") {
+    Drive fixture-stop --state "$RU\fixture.json"
+    if ($LASTEXITCODE -ne 0) { throw 'External fixture could not be stopped; its state file was retained' }
+  }
   Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like "$W\*" -or $_.CommandLine -like "*$W\tmp\branch-agent-update*" } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   Start-Sleep 3
+}
+
+function Fixture {
+  Drive fixture-start --provider-module "$RU\driver\release-demo.mjs" --state "$RU\fixture.json"
+  if ($LASTEXITCODE -ne 0) { throw 'External fixture could not be started' }
+  $fixtureEnv = Get-Content -LiteralPath "$RU\fixture.json" -Raw | ConvertFrom-Json
+  foreach ($name in @('BRANCH_PROVIDER', 'BRANCH_ENDPOINT', 'BRANCH_MODEL', 'BRANCH_API_KEY')) {
+    [Environment]::SetEnvironmentVariable($name, $fixtureEnv.$name, 'Process')
+  }
+  Remove-Item Env:BRANCH_MODEL_PRESETS -ErrorAction SilentlyContinue
 }
 
 # The one-step installer, as a person runs it, told to install into the test folders.
@@ -55,6 +89,7 @@ function RunInstaller($which) {
 function Fresh {
   StopAll; Remove-Item -Recurse -Force $W -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force "$W\tmp", "$W\AppData\Roaming", "$W\AppData\Local" | Out-Null
+  Fixture
   RunInstaller 'from'
   Drive launch --exe $Exe --port 9391
   Drive plant --data $Data --out "$RU\planted.json"
@@ -72,6 +107,7 @@ function Again($expect) {
   Say "starting it again, the way a person would after a restart"
   StopAll
   if (-not (Test-Path $Exe)) { Write-Output "FAIL: there is no program at $Exe to start"; return }
+  Fixture
   Drive launch --exe $Exe --port 9391
   Drive verify --data $Data --planted "$RU\planted.json" --expect $expect
 }
@@ -82,6 +118,7 @@ switch ($Command) {
   'setup' { Setup $A $B }
   'run' {
     Say "scenario $A"
+    try {
     switch ($A) {
       'normal' { Fresh; Drive update --port 9391 --scratch $Scratch; Start-Sleep 30
         Drive verify --data $Data --planted "$RU\planted.json" --expect $to; Leftovers; Again $to }
@@ -89,12 +126,12 @@ switch ($Command) {
       'drop' { Fresh; Drive update --port 9391 --scratch $Scratch --fault drop --drop-cmd "powershell -NoProfile -ExecutionPolicy Bypass -File $RU\driver\drop-connection.ps1 -Under `"$W`""
         Leftovers; Again $from }
       'kill-switch' { Fresh; Drive update --port 9391 --scratch $Scratch --fault kill-switch; Start-Sleep 5; Leftovers; Again $from }
-      'installer' { Fresh; StopAll; RunInstaller 'to'; Leftovers; Again $to }
+      'installer' { Fresh; StopAll; Fixture; RunInstaller 'to'; Leftovers; Again $to }
       # The owner's first real install of 0.18.0 was run with 0.17.0 still open, which is the usual case.
       'installer-open' { Fresh; RunInstaller 'to'; Leftovers; Again $to }
       default { Write-Output "unknown scenario $A" }
     }
-    StopAll
+    } finally { StopAll }
   }
   'clean' { StopAll; Remove-Item -Recurse -Force $RU -ErrorAction SilentlyContinue; reg.exe delete $Hive /f 2>&1 | Out-Null; Say 'cleaned' }
   default { Write-Output 'usage: real-update-windows.ps1 setup <from-tag> <to-tag> | run <scenario> | clean' }

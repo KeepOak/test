@@ -1,16 +1,23 @@
 import { createServer } from "node:http";
-import { DemoProvider } from "../../dist/demo.js";
 
 let service;
 
 /** A controlled OpenAI-shaped service, with the scripted provider explicitly injected outside the product. */
 export async function fixtureProviderEnv() {
+  const { DemoProvider } = await import("../../dist/demo.js");
   service ??= startFixtureService(new DemoProvider());
   return (await service).env;
 }
 
-async function startFixtureService(provider) {
+export async function startFixtureService(provider, options = {}) {
   const server = createServer((request, response) => {
+    if (options.token && request.headers.authorization !== `Bearer ${options.token}`) {
+      response.writeHead(403); return response.end();
+    }
+    if (options.persistent && request.method === "POST" && request.url === "/__fixture/stop") {
+      response.writeHead(204);
+      return response.end(() => { server.close(); server.closeAllConnections(); });
+    }
     answer(provider, request, response).catch(() => {
       if (!response.headersSent) response.writeHead(500);
       response.end();
@@ -21,10 +28,10 @@ async function startFixtureService(provider) {
     server.listen(0, "127.0.0.1", resolve);
   });
   // One stateless fixture per test process; it never holds a worker open after its tests finish.
-  server.unref();
+  if (!options.persistent) server.unref();
   server.on("connection", (socket) => socket.unref());
   return { env: { BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: `http://127.0.0.1:${server.address().port}/v1`,
-    BRANCH_MODEL: "demo", BRANCH_API_KEY: "controlled-test-fixture", BRANCH_MODEL_PRESETS: undefined } };
+    BRANCH_MODEL: "demo", BRANCH_API_KEY: options.token ?? "controlled-test-fixture", BRANCH_MODEL_PRESETS: undefined } };
 }
 
 async function answer(provider, request, response) {

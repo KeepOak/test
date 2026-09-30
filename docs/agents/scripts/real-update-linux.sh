@@ -12,7 +12,8 @@ set -u
 RU="${RU:-/tmp/ru}"
 REPO="${REPO:-stabrea/Branch-Agent}"
 ASSET=Branch-Agent-linux-x64.tar.gz
-export HOME="$RU/home" TMPDIR="$RU/tmp" DISPLAY="${RU_DISPLAY:-:77}" BRANCH_PROVIDER=demo
+export HOME="$RU/home" TMPDIR="$RU/tmp" DISPLAY="${RU_DISPLAY:-:77}"
+unset BRANCH_PROVIDER BRANCH_ENDPOINT BRANCH_MODEL BRANCH_API_KEY BRANCH_MODEL_PRESETS
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
 APP="$HOME/Applications/Branch-Agent-linux-x64"
 DATA="$HOME/.config/Branch Agent/state"
@@ -29,14 +30,25 @@ setup() {
       sha256sum -c "$ASSET.sha256") || exit 1
   done
   cp "$(dirname "$0")/real-update-test.mjs" "$RU/driver/"
+  source="$(dirname "$0")/../../../tests/fixtures/model-service.mjs"
+  if [ -f "$source" ]; then cp "$source" "$RU/driver/" || exit 1
+  elif [ ! -f "$RU/driver/model-service.mjs" ]; then cp "$(dirname "$0")/model-service.mjs" "$RU/driver/" || exit 1; fi
   (cd "$RU/driver" && npm init -y >/dev/null && npm i playwright-core@1 >/dev/null 2>&1)
 }
 
 display() { pgrep -f "Xvfb $DISPLAY" >/dev/null || { setsid nohup Xvfb "$DISPLAY" -screen 0 1440x950x24 -nolisten tcp >"$RU/xvfb.log" 2>&1 </dev/null & sleep 2; }; }
 
 stop_all() {
+  if [ -f "$RU/fixture.json" ]; then
+    node "$D" fixture-stop --state "$RU/fixture.json" --shell-env "$RU/fixture.env" || exit 1
+  fi
   pkill -f "$HOME/Applications/" 2>/dev/null; pkill -f "$RU/home/.local/share/branch-agent" 2>/dev/null
   pkill -f "$SCRATCH/apply-update.sh" 2>/dev/null; sleep 3
+}
+
+fixture() {
+  node "$D" fixture-start --exe "$APP/branch-agent" --state "$RU/fixture.json" --shell-env "$RU/fixture.env" || exit 1
+  . "$RU/fixture.env"
 }
 
 # A person on Ubuntu 24.04 unpacks the download and, as the docs say, runs the one sudo command the
@@ -45,6 +57,7 @@ fresh() {
   stop_all; rm -rf "$HOME" "$TMPDIR"; mkdir -p "$HOME/Applications" "$TMPDIR"
   tar -xzf "$RU/dl/from/$ASSET" -C "$HOME/Applications"
   sudo chown root "$APP/chrome-sandbox" && sudo chmod 4755 "$APP/chrome-sandbox"
+  fixture
   (cd "$RU/driver" && node "$D" launch --exe "$APP/branch-agent" --port 9391 && node "$D" plant --data "$DATA" --out "$RU/planted.json")
 }
 
@@ -59,6 +72,7 @@ leftovers() {
 again() {
   expect="$1"
   (cd "$RU/driver" && node "$D" quit --data "$DATA" 2>/dev/null); stop_all
+  fixture
   (cd "$RU/driver" && node "$D" launch --exe "$APP/branch-agent" --port 9391 && node "$D" verify --data "$DATA" --planted "$RU/planted.json" --expect "$expect")
 }
 
@@ -80,6 +94,7 @@ drop_cmd() {
 }
 
 run() {
+  trap 'node "$D" fixture-stop --state "$RU/fixture.json" --shell-env "$RU/fixture.env"' EXIT
   display; say "scenario $1"
   case "$1" in
     normal-stock) fresh; (cd "$RU/driver" && node "$D" update --port 9391 --scratch "$SCRATCH"); sleep 45; leftovers
@@ -90,6 +105,7 @@ run() {
     drop) fresh; (cd "$RU/driver" && node "$D" update --port 9391 --scratch "$SCRATCH" --fault drop --drop-cmd "$(drop_cmd)"); sleep 5; leftovers; again "${FROM_VERSION:-0.17.0}" ;;
     kill-switch) fresh; (cd "$RU/driver" && node "$D" update --port 9391 --scratch "$SCRATCH" --fault kill-switch); sleep 5; leftovers; again "${FROM_VERSION:-0.17.0}" ;;
     installer) fresh; (cd "$RU/driver" && node "$D" quit --data "$DATA"); stop_all
+      fixture
       sh "$RU/dl/to/install-branch-agent.sh" --quiet; echo "installer exit $?"
       ls -la "$HOME/Applications" "$HOME/.local/share/branch-agent" "$HOME/.local/bin" "$HOME/.local/share/applications" 2>&1
       find "$HOME" -maxdepth 5 -name branch-agent -type f 2>/dev/null ;;

@@ -10,6 +10,15 @@ Files, all in `docs/agents/scripts/`:
 
 - `real-update-test.mjs` — the driver (launch, plant, update with an optional fault, verify, quit).
   Runs on the test machine next to `playwright-core`.
+- `tests/fixtures/model-service.mjs` — copy beside the driver as `model-service.mjs`. The runner
+  starts this explicit loopback model fixture outside the installed app, gives the app its generated
+  endpoint and fixture token, and stops it before deleting the sandbox. No product demo environment
+  route is used. Windows extracts the old release's deterministic fixture module from the verified
+  archive before the installer can launch; Linux reads it from the unpacked release.
+  Fixture startup is bounded, metadata stays under the sandbox, and shutdown uses a fixture-only
+  loopback route with its random token. Shutdown failures retain the metadata for cleanup rather
+  than sending a signal to an unrelated PID. This migration has only been reviewed statically;
+  release archive/module compatibility and the full update scenarios still need execution.
 - `real-update-linux.sh` — Linux runner for `branch-test-linux`.
 - `real-update-windows.ps1` and `drop-connection.ps1` — Windows runner for `legion-branch`.
 
@@ -17,7 +26,9 @@ Files, all in `docs/agents/scripts/`:
 
 ```sh
 scp docs/agents/scripts/real-update-{test.mjs,linux.sh} branch-test-linux:/tmp/
+scp tests/fixtures/model-service.mjs branch-test-linux:/tmp/
 ssh branch-test-linux 'mkdir -p /tmp/ru/driver && cp /tmp/real-update-* /tmp/ru/driver/ &&
+  cp /tmp/model-service.mjs /tmp/ru/driver/ &&
   sh /tmp/ru/driver/real-update-linux.sh setup v0.18.0 v0.19.0'
 for s in normal-stock normal corrupt drop kill-switch installer; do
   ssh branch-test-linux "flock -o -w 7200 /tmp/branch-linux.lock sh /tmp/ru/driver/real-update-linux.sh run $s"
@@ -32,6 +43,7 @@ Set `FROM_VERSION` / `TO_VERSION` in the environment when they are not 0.17.0 / 
 ```sh
 ssh legion-branch 'mkdir C:\ru\driver'   # from cmd; Git Bash eats backslashes, use C:/ru/driver there
 scp docs/agents/scripts/{real-update-test.mjs,real-update-windows.ps1,drop-connection.ps1} legion-branch:/C:/ru/driver/
+scp tests/fixtures/model-service.mjs legion-branch:/C:/ru/driver/
 ssh legion-branch 'powershell -NoProfile -ExecutionPolicy Bypass -File C:/ru/driver/real-update-windows.ps1 setup v0.18.0 v0.19.0'
 for s in normal corrupt drop kill-switch installer installer-open; do
   ssh legion-branch "powershell -NoProfile -ExecutionPolicy Bypass -File C:/ru/driver/real-update-windows.ps1 run $s"

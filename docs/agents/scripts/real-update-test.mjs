@@ -13,8 +13,10 @@
 //   node real-update-test.mjs quit    --data <state folder>
 import { spawn, execSync } from "node:child_process";
 import { existsSync, openSync, writeSync, closeSync, statSync, readFileSync } from "node:fs";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, writeFile, unlink } from "node:fs/promises";
+import { join, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
 const [command, ...rest] = process.argv.slice(2);
@@ -22,6 +24,69 @@ const flag = (name, fallback) => { const at = rest.indexOf(`--${name}`); return 
 const say = (line) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${line}`);
 const fail = (line) => { console.log(`FAIL: ${line}`); process.exit(1); };
 const windows = process.platform === "win32";
+
+/** A fixture process remains outside the installed app throughout its update/relaunch. */
+async function fixture() {
+  if (!process.send) fail("the fixture must be started by fixture-start");
+  const module = flag("provider-module") ?? join(dirname(flag("exe")), "resources", "app", "dist", "demo.js");
+  const { DemoProvider } = await import(pathToFileURL(module).href);
+  const { startFixtureService } = await import("./model-service.mjs");
+  const service = await startFixtureService(new DemoProvider(), { persistent: true, token: randomBytes(24).toString("base64url") });
+  process.send(service.env, () => process.disconnect());
+}
+
+async function fixtureState() {
+  const path = flag("state");
+  if (!path) fail("--state is the fixture's private environment file");
+  const text = await readFile(path, "utf8");
+  if (text.length > 2048) throw new Error("Fixture environment is too large");
+  const env = JSON.parse(text);
+  if (env.BRANCH_PROVIDER !== "openai" || env.BRANCH_MODEL !== "demo"
+    || !/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}\/v1$/.test(env.BRANCH_ENDPOINT)
+    || !/^[A-Za-z0-9_-]{32}$/.test(env.BRANCH_API_KEY)) throw new Error("Invalid fixture environment");
+  return env;
+}
+
+async function startFixture() {
+  const state = flag("state"), exe = flag("exe");
+  const module = flag("provider-module");
+  if (!state || !(module ? existsSync(module) : exe && existsSync(exe)))
+    fail("fixture-start needs --state and an installed --exe or extracted --provider-module");
+  if (existsSync(state)) fail("stop the recorded external fixture before starting another one");
+  const args = [fileURLToPath(import.meta.url), "fixture", ...(module ? ["--provider-module", module] : ["--exe", exe])];
+  const child = spawn(process.execPath, args,
+    { detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true });
+  let timer;
+  try {
+    const env = await new Promise((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error("External fixture did not start within ten seconds")), 10000);
+      child.once("error", reject);
+      child.once("exit", () => reject(new Error("External fixture exited before becoming ready")));
+      child.once("message", resolve);
+    });
+    await writeFile(state, JSON.stringify(env), { mode: 0o600 });
+    await fixtureState(); // Only generated loopback metadata is admitted to relaunch scripts.
+    if (flag("shell-env")) {
+      const lines = Object.entries(env).filter(([key]) => /^BRANCH_(PROVIDER|ENDPOINT|MODEL|API_KEY)$/.test(key))
+        .map(([key, value]) => `export ${key}='${value}'`).join("\n");
+      await writeFile(flag("shell-env"), lines + "\nunset BRANCH_MODEL_PRESETS\n", { mode: 0o600 });
+    }
+    child.unref();
+  } catch (error) { child.kill(); throw error; }
+  finally { clearTimeout(timer); }
+}
+
+async function stopFixture() {
+  if (!flag("state") || !existsSync(flag("state"))) return;
+  const env = await fixtureState();
+  try {
+    const response = await fetch(env.BRANCH_ENDPOINT.replace(/\/v1$/, "/__fixture/stop"), { method: "POST", redirect: "error",
+      headers: { authorization: `Bearer ${env.BRANCH_API_KEY}` }, signal: AbortSignal.timeout(3000) });
+    if (response.status !== 204) throw new Error("External fixture refused shutdown");
+  } catch (error) { if (error.cause?.code !== "ECONNREFUSED") throw error; }
+  await unlink(flag("state"));
+  if (flag("shell-env") && existsSync(flag("shell-env"))) await unlink(flag("shell-env"));
+}
 
 /** The running engine's address and key, read from its own data folder the way `branch` does. */
 async function engine(data) {
@@ -182,7 +247,7 @@ function faultWatcher(kind, scratch, dropCmd) {
 function keepRelaunchIsolated(scratch) {
   if (!windows) return () => undefined;
   const script = join(scratch, "apply-update.cmd");
-  const names = ["BRANCH_DESKTOP_HOME", "BRANCH_PROVIDER", "TEMP", "TMP"].filter((name) => process.env[name]);
+  const names = ["BRANCH_DESKTOP_HOME", "BRANCH_PROVIDER", "BRANCH_ENDPOINT", "BRANCH_MODEL", "BRANCH_API_KEY", "TEMP", "TMP"].filter((name) => process.env[name]);
   const timer = setInterval(() => {
     if (!existsSync(script)) return;
     const text = readFileSync(script, "utf8");
@@ -238,6 +303,6 @@ async function update() {
   process.exit(0);
 }
 
-const commands = { launch, plant, update, verify, quit };
+const commands = { launch, plant, update, verify, quit, fixture, "fixture-start": startFixture, "fixture-stop": stopFixture };
 if (!commands[command]) fail(`usage: node real-update-test.mjs ${Object.keys(commands).join("|")} ...`);
 await commands[command]();
