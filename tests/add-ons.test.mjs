@@ -182,7 +182,7 @@ test("parts ship when needed but packages; switched off, routes refuse in a sent
   assert.deepEqual(overview.settings.modes, Object.fromEntries(parts.map((part) => [part, part === "packages" ? "off" : "when-needed"])));
   assert.ok(app.registry.names().includes("addon.draft") && app.registry.names().includes("addon.search"), "shipped when needed, the tools are there");
   await call("plugin-catalog/add-ons/settings", { modes: Object.fromEntries(parts.map((part) => [part, "off"])) });
-  assert.equal(overview.settings.wallEveryPlugin, false);
+  assert.equal(overview.settings.wallEveryPlugin, true, "RES-251: hand-placed plugins run as their own program, as shipped");
   assert.deepEqual(overview.bundled, [], "nothing is even looked at while packages are off");
   for (const [path, body] of [["look", { source: "/nowhere" }], ["lists/browse", { address: "https://example.com/list.json" }],
     ["filters", { id: "x", name: "x", match: "x", action: "redact" }], ["pipelines/check", { address: "https://p.example" }],
@@ -483,7 +483,11 @@ test("a hand-placed plugin written for a newer interface is refused, and its hoo
   const { app, call, dataDir } = await fixture(t);
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   await writeFile(join(dataDir, "plugins", "future.mjs"), "export default { id: 'future', name: 'Future', apiVersion: 9, tools: [] };\n");
-  await assert.rejects(call("plugins/future/enable", {}), /written for add-on interface 9/);
+  // Walled, as shipped: refused (a Linux computer without bubblewrap cannot start the wall, and says so first).
+  await assert.rejects(call("plugins/future/enable", {}), process.platform === "linux" ? /written for add-on interface 9|needs bubblewrap/ : /written for add-on interface 9/, "walled, as shipped");
+  // Its hook writes into Branch's own folder, which only a plugin running inside Branch can: the owner's choice, with a yes.
+  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true });
+  await assert.rejects(call("plugins/future/enable", {}), /written for add-on interface 9/, "and inside Branch");
   const heard = join(dataDir, "heard.txt");
   await writeFile(join(dataDir, "plugins", "listen.mjs"), `import { appendFile } from "node:fs/promises";
 export default { id: "listen", name: "Listen", apiVersion: 1, tools: [], hooks: [{ event: "run.finished", run: async (p) => appendFile(${JSON.stringify(heard)}, p.event + "\\n") }] };\n`);
@@ -495,7 +499,7 @@ export default { id: "listen", name: "Listen", apiVersion: 1, tools: [], hooks: 
   await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: true });
   assert.equal(app.addOns.walled.holds("listen"), true);
   assert.equal(app.addOns.walled.holds("nothing-installed"), true);
-  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false });
+  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true });
   assert.equal(app.addOns.walled.holds("listen"), false);
 });
 

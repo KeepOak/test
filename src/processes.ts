@@ -11,6 +11,7 @@ import { killProcessGroup, killWindowsTree } from "./integrations/shell-process.
 import { defaultJobObjects, jobWithin, startedThrough, type Job, type JobObjects } from "./integrations/job-object.js";
 import { PosixProcessGroup, type HeldBySystem } from "./integrations/posix-limits.js";
 import { fromTheTop, netlessEnvironment } from "./integrations/shell-config.js";
+import type { HeldLaunch } from "./integrations/shell.js";
 import { sandboxShape, shapeChoice, type SandboxChoice } from "./sandbox.js";
 import {
   chooseSandboxBackend, defaultSandboxProbe, sandboxBackendSet, sliceFor,
@@ -189,6 +190,8 @@ export class BackgroundProcesses {
   waker: ProcessWaker | null = null;
   /** workbench (SELF-304): the programs `shell.execute` may run (src/own-clis.ts commandPrograms); set by createBranch. */
   commandPrograms: () => Record<string, { path: string; args: string[] }> = () => ({});
+  /** SELF-304: how a program held to one folder is walled before it starts (BranchShell.launchHeld); set once commands exist. */
+  heldLauncher: ((input: { executable: string; args: string[]; cwd: string }, context: ToolContext, timeoutMs: number) => Promise<HeldLaunch>) | null = null;
   /**
    * A program by its short name: the owner's list of programs to leave running first, then, for a task that may run
    * commands (shell.execute), the ones commands may run. Without a context (a command rule reading the line), both.
@@ -220,42 +223,63 @@ export class BackgroundProcesses {
     return [name, ...program.args, ...input.args].join(" ").trim();
   }
   /** Starts a program and leaves it running; the tool call is over long before the program is. */
-  async start(input: z.infer<typeof StartInputSchema>, context: ToolContext): Promise<ProcessView & { sandbox: SandboxChoice; backend: SandboxBackendName }> {
+  async start(input: z.infer<typeof StartInputSchema>, context: ToolContext): Promise<ProcessView & { sandbox: SandboxChoice; backend: SandboxBackendName; heldTo?: string }> {
     // A helper's own conversation is not where anyone listens; it reads the program's output or tells its lead.
     if ((input.wakeOnExit || input.wakeOnText?.length) && context.depth > 0)
       throw new Error("A helper cannot be woken by a program. Read its output with process.read, or tell your lead with helpers.tell_lead.");
     const settings = this.settings();
-    const program = this.program(input.program, context);
-    if (!program) throw new Error(`"${input.program}" is not one of the programs allowed to be left running or run as a command. The owner adds those in Settings.`);
+    // SELF-304: while Branch's own source is checked out, a program is left running held to one folder, as a held
+    // shell.execute is (the contract guard sets writesConfinedTo); the owner's own list is not what runs then.
+    const held = !!context.writesConfinedTo;
+    const program = held ? null : this.program(input.program, context);
+    if (!held && !program) throw new Error(`"${input.program}" is not one of the programs allowed to be left running or run as a command. The owner adds those in Settings.`);
+    // Only a task that may run commands may leave one running, held or not.
+    if (held && !context.permissions.has("shell.execute"))
+      throw new Error(`"${input.program}" is not one of the programs allowed to be left running or run as a command. The owner adds those in Settings.`);
+    if (held && !this.heldLauncher) throw new Error("A program held to one folder cannot be left running here: there are no commands in this launch.");
     if (this.list({ active: true }).length >= settings.maxRunning)
       throw new Error(`${settings.maxRunning} programs are already running; stop one before starting another.`);
-    const cwd = await new WorkspaceFiles(this.workspace).checked(input.cwd, true);
     // An approval rule may say how tightly a program left running is held. Without one it is held
     // to its limits and left able to reach the internet, exactly as it was before.
     const shape = sandboxShape(context.sandbox, { job: true, netless: false });
-    const job = shape.job
+    const cwd = held ? "" : await new WorkspaceFiles(this.workspace).checked(input.cwd, true);
+    const launch = held
+      ? await this.heldLauncher!({ executable: input.program, args: input.args, cwd: input.cwd }, context, settings.maxMinutes * 60_000)
+      : null;
+    const job = shape.job || held
       ? await jobWithin(this.jobs, { maxMemoryMb: settings.maxMemoryMb, maxCpuSeconds: settings.maxCpuSeconds }, 1500)
       : null;
     // A rule may also say where it runs. The backend wraps the command — a container run, a call
     // into the Linux side — and the program left running is that wrapper, so stopping it stops
     // what it started. A backend that is not on this computer refuses here, before anything starts.
-    const start = await this.wrapped(context, cwd,
-      { executable: program.path, args: [...program.args, ...input.args] }, shape, settings);
+    const start = launch ? { ...launch.start, cwd: launch.cwd }
+      : await this.wrapped(context, cwd, { executable: program!.path, args: [...program!.args, ...input.args] }, shape, settings);
     // On macOS and Linux the limits are set as the program starts, so the job may change how it starts.
     const argv = startedThrough(job, { executable: start.executable, args: start.args });
-    const child = spawn(argv.executable, argv.args, { cwd: start.cwd, shell: false, windowsHide: true,
-      detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: start.env });
+    let child: ChildProcess;
+    try {
+      child = spawn(argv.executable, argv.args, { cwd: start.cwd, shell: false, windowsHide: true,
+        detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: start.env });
+    } catch (error) {
+      await launch?.cleanup();
+      await job?.close().catch(() => undefined);
+      throw error;
+    }
     if (job && child.pid) await job.assign(child.pid).catch(() => false);
     const wake: ProcessWake = { onExit: input.wakeOnExit ?? false, onText: input.wakeOnText ?? [], wakes: input.wakes ?? 3 };
     const entry: Running = new Running(input.name, input.program, this.sessionOf(context), context.runId, child, job,
       settings.bufferBytes, settings.maxMinutes, (view) => {
+        // SELF-304: a held program's wall, scratch folder and any .git it planted go when it does.
+        if (launch) void launch.cleanup().then((swept) => {
+          if (swept.length) this.store.event(view.runId, "process.swept", { id: view.id, removed: swept });
+        });
         for (const listener of this.finished) listener(view);
         if (wake.onExit && view.status !== "stopped") this.wakeWith(view, `The program you left running, "${view.name}", ${view.status === "finished" ? "finished" : "failed"}`
           + ` (exit code ${view.exitCode ?? "none"}). Its last lines:\n${entry.output(1500).text.trim() || "(nothing printed)"}`);
       }, wake, (view, line) => this.wakeWith(view, `The program you left running, "${view.name}", printed a line you asked to be woken for:\n${line}`));
     this.running.set(entry.id, entry);
-    if (context.runId) this.store.event(context.runId, "process.started", { id: entry.id, name: entry.name, program: entry.program, pid: child.pid ?? null, sandbox: shapeChoice(shape), backend: context.sandboxBackend ?? "job-object" });
-    return { ...entry.view(), sandbox: shapeChoice(shape), backend: context.sandboxBackend ?? "job-object" };
+    if (context.runId) this.store.event(context.runId, "process.started", { id: entry.id, name: entry.name, program: entry.program, pid: child.pid ?? null, sandbox: shapeChoice(shape), backend: context.sandboxBackend ?? "job-object", ...(launch ? { heldTo: context.writesConfinedTo } : {}) });
+    return { ...entry.view(), sandbox: shapeChoice(shape), backend: context.sandboxBackend ?? "job-object", ...(launch ? { heldTo: context.writesConfinedTo! } : {}) };
   }
 
   /**
