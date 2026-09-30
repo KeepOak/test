@@ -287,6 +287,9 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
         && typeof event.data.branch === "string" && event.data.branch.startsWith("branch/helper-"));
       if (context.depth > 0 || context.agent || started?.ownCopy === true || helperCopy)
         throw new Error("The interrupted helper's saved authority and copy cannot yet be restored by normal continuation. Its journal was reconciled within the saved limits; automatic model continuation was held.");
+      // Normal execute restores practice mode only from this original run's own start record.
+      if (context.dryRun && started?.dryRun !== true)
+        throw new Error("The interrupted task's practice mode cannot be restored by normal continuation. Automatic model continuation was held.");
       const candidate = outsideSourceOf(input.store, runId)
         ? runOrigin(input.store, runId).permissions
         : [...input.runtime.context({ signal: context.signal }).permissions];
