@@ -2528,6 +2528,8 @@
   "folder-trust.switch.on": "Activé",
   "folder-trust.switch.when-needed": "Quand c'est utile",
   "folder-trust.workspace": "Votre espace de travail",
+  "gatewayActivity.reading": "Lecture de l’état de la passerelle et de son activité récente…",
+  "gatewayActivity.unavailable": "Impossible de lire l’activité récente de la passerelle.",
   "gatewayChoice.off": "La passerelle ne tourne pas. Le travail en arrière-plan s’arrête quand vous quittez Branch.",
   "gatewayChoice.offLater": "Désactivé enregistré. Cette passerelle tourne jusqu’au prochain démarrage de Branch.",
   "gatewayChoice.preference": "Laisser Branch tourner quand cette fenêtre se ferme",

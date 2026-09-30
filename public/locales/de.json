@@ -2527,6 +2527,8 @@
   "folder-trust.switch.on": "An",
   "folder-trust.switch.when-needed": "Bei Bedarf",
   "folder-trust.workspace": "Dein Arbeitsbereich",
+  "gatewayActivity.reading": "Gateway-Status und letzte Aktivitäten werden gelesen…",
+  "gatewayActivity.unavailable": "Die letzten Gateway-Aktivitäten konnten nicht gelesen werden.",
   "gatewayChoice.off": "Das Gateway läuft nicht. Hintergrundarbeit endet, wenn Branch beendet wird.",
   "gatewayChoice.offLater": "Aus gespeichert. Dieses Gateway läuft bis zum nächsten Start von Branch weiter.",
   "gatewayChoice.preference": "Branch weiterlaufen lassen, wenn dieses Fenster geschlossen wird",
