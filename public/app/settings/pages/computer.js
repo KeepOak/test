@@ -26,7 +26,7 @@ import { onPaired } from "../../flows/pair.js";
 import { glyphSvg, hexOr } from "../../flows/name-device.js"; // finish-soon-a
 import { t } from "../../../i18n.js";
 import { trunkRow17, settingsCloudOffer, loadAll as loadComputers17, viewOf } from "../../flows/computers17.js"; // pass 17 part D §9, §1
-import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
+import { id15, sw15, btn15, code15, seg15, sec15, fact15 } from "../rows15.js";
 import { computer17 } from "../p17-more.js";
 import { siteRow, loadSites, initSites } from "../sites17.js"; // Site skills (siteb17)
 import { initCiSetup } from "../ci-setup.js"; // wire-greyed: Branch in CI › Copy the setup
@@ -201,7 +201,7 @@ const browserMore = () => sec15(t("window.settings.computer.the-browser-more"),
 
 const code = () => sec15(t("window.settings.computer.code"),
   sw("Try ideas on a branch", "A plan can be tried, compared and merged; a forked conversation gets its own copy.")
-  + sw("Code map", "A ranked outline of a repository so a Trunk finds its way.")
+  + fact15("Code map", "f15-code-map")
   + sw("Check and format files after editing", "")
   + sw("AI! and AI? comments start tasks", "Write “AI! add tests” in a file and a Trunk picks it up.")
   + sw("Draft a pull request from a task", "Never merged by Branch.")

@@ -1,0 +1,7 @@
+/* Rows about how Branch always works (settings/rows15.js fact15): words, never a control. */
+.fact15-v{font-size:13px;color:var(--ink-2);text-align:right}
+/* Settings › People › May: what the person's role lets Branch do, as words with a tick or a cross. */
+.may15{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--ink-2)}
+.may15.no10{color:var(--ink-3)}
+/* The mode menu's "Applies to": this conversation, and where every new one's is set. */
+.pop .scope15{margin:0;padding:0 10px 8px;font-size:12px;line-height:1.4;color:var(--ink-3);max-width:34ch}
