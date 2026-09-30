@@ -3981,6 +3981,19 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         send(response, 200, await hook(app, request, path));
         return;
       }
+      const meetingHook = /^\/webhooks\/meeting-notes\/recall\/([a-f0-9-]{36})$/.exec(path);
+      if (meetingHook) {
+        if (request.method !== "POST") throw new HttpError(405, "POST required");
+        const chunks: Buffer[] = []; let bytes = 0;
+        for await (const part of request) {
+          bytes += Buffer.byteLength(part);
+          if (bytes > 64000) throw new HttpError(413, "Meeting webhook too large");
+          chunks.push(Buffer.from(part));
+        }
+        try { send(response, 200, await app.personal.meetingBot.event(meetingHook[1]!, request.headers, Buffer.concat(chunks))); }
+        catch { throw new HttpError(403, "Meeting webhook rejected"); }
+        return;
+      }
       if (await whatsAppWebhook(app, request, response, path, webhookLimiter, () => listen.beyond)) return;
       if (await chatWebhook(app, request, response, path, webhookLimiter, () => listen.beyond)) return;
       // Wave 6: a read-only shared conversation carries its own code instead of the session key.
@@ -4380,10 +4393,23 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // ---- end phase2/shell ----
         // ---- R17-C: files, voice, devices and personal connectors under /api/personal (src/personal/api.ts). ----
         if (path.startsWith("/api/personal/meeting-notes/")) {
-          const answer = await meetingNotesApi(app.personal.meetingNotes, request.method ?? "GET", path, () => readBody(request, 32000), () => {
+          const requestGuard = () => {
             if (throughDoor(request) || app.sessionLock.shut() || request.headers["x-branch-origin"] !== "window")
               throw new HttpError(403, "Use meeting notes in the unlocked owner's app window.");
-          });
+          };
+          requestGuard(); app.personal.meetingNotes.guard();
+          const bot = app.personal.meetingBot;
+          let answer: unknown;
+          if (path === "/api/personal/meeting-notes/bot/status" && request.method === "GET") answer = bot.view();
+          else if (path.startsWith("/api/personal/meeting-notes/bot/") && request.method === "POST") {
+            const body = await readBody(request, 32000); requestGuard();
+            if (path.endsWith("/preview")) answer = bot.preview(body);
+            else if (path.endsWith("/join")) answer = await bot.join(body, requestGuard);
+            else if (path.endsWith("/record")) answer = await bot.control("record", body, requestGuard);
+            else if (path.endsWith("/leave")) answer = await bot.control("leave", body, requestGuard);
+            else if (path.endsWith("/draft")) answer = app.personal.meetingNotes.acceptGuest(bot.excerpt(body));
+            else throw new HttpError(404, "Unknown meeting bot action");
+          } else answer = await meetingNotesApi(app.personal.meetingNotes, request.method ?? "GET", path, () => readBody(request, 32000), requestGuard);
           send(response, 200, answer); return;
         }
         if (handlesPersonalPath(path)) {

@@ -1,5 +1,7 @@
 # Teams transcript notes
 
+This documents the historical transcript increment. The subsequent [guest meeting integration](guest-meeting-notes.md) adds separately approved joins and live notes through a prepared provider.
+
 This increment of RES-123 supports an existing Teams transcript, private manual editing, and an explicitly approved append to an existing Google Docs tab. It remains partial meeting-bot coverage.
 
 The composer + menu and Voice advanced settings open the same form. The owner names a Microsoft account ID and Teams URL, then presses **Approve transcript access and fetch**. Existing delegated Graph account permissions and personal connector enablement apply. Work/school accounts, calendar-backed nonexpired meetings, an existing transcript and tenant Graph transcript permission are required. Personal Microsoft accounts, live events and calendarless online meetings are unsupported by this API. Existing provider errors are shown; no recording is started or enabled.

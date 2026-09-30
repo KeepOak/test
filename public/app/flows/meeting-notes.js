@@ -3,6 +3,7 @@ import { openDlg, closeDlg, closePop, dialog, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { initMeetingGuest } from "./meeting-guest.js";
 
 let frame = null, draft = null, review = null, busy = false;
 const button = (act, text) => `<button class="btn pri" type="button" data-act="${act}">${esc(text)}</button>`;
@@ -34,6 +35,7 @@ async function perform(work) {
   finally { busy = false; current.querySelectorAll("button[data-act^=mn-]").forEach(el => { el.disabled = false; }); }
 }
 export function initMeetingNotes() {
+  initMeetingGuest(answer => { draft = answer; edit(); });
   markLive(["meeting-notes", "mn-fetch", "mn-review", "mn-approve", "mn-edit"]);
   on("meeting-notes", open);
   on("mn-fetch", () => perform(async alive => {
