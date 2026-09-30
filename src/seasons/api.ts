@@ -5,6 +5,7 @@ import type { Rings } from "./rings.js";
 import type { Gardener } from "./gardener.js";
 import type { Budding } from "./budding.js";
 import { saveSeasonsSettings, seasonsSettings } from "./settings.js";
+import { byCard, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
 
 /**
  * The web side of Seasons, under /api/seasons. Everything a person reads or undoes is their own night only:
@@ -79,7 +80,8 @@ export async function seasonsApi(deps: SeasonsHttpDeps, path: string): Promise<u
   const body = await deps.readBody();
   if (path === seasonsRoutes.settings) {
     deps.requireOwner("The Seasons switches");
-    return { settings: saveSeasonsSettings(store, deps.owner, body) };
+    // Q48: a Settings setting now (settings-kit catalogue), so the window's change is recorded as every card's is.
+    return { settings: recordedWrite(store, deps.owner, byCard("seasons"), ["seasons"], () => saveSeasonsSettings(store, deps.owner, body)) };
   }
   if (path === seasonsRoutes.run) {
     deps.requireOwner("Running a night now");

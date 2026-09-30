@@ -53,6 +53,7 @@ import { saveReviewerSettings } from "../dist/approval-reviewer.js";
 import { saveReflectionSettings } from "../dist/reflection/settings.js";
 import { readKnobs } from "../dist/knobs/settings.js";
 import { systemVoiceShipsAs } from "../dist/feature-switches.js";
+import { seasonsSettings } from "../dist/seasons/settings.js";
 
 /*
  * Q65: the settings kit reads and writes every setting through the app's own parse. A record the app would
@@ -66,6 +67,8 @@ const part = (reader, name) => mode((store, owner) => reader(store, owner, name)
 /** Every catalogue setting whose module reads it through a strict schema, and that module's own reader. */
 const strictReaders = {
   policy: readPolicy,
+  // SELF-068: the engine keeps the gain on 0..1; the catalogue shows it in whole percentage points.
+  seasons: (store, owner) => { const value = seasonsSettings(store, owner); return { ...value, minGainPercent: value.minGain * 100 }; },
   approval_reviewer: reviewerSettings,
   loop_guard: mode(loopGuardMode),
   folder_trust_mode: mode(folderTrustMode),
