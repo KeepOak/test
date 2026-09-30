@@ -116,6 +116,7 @@ export async function openChatWizard(id, at = null) {
     [recipe, live] = await Promise.all([api(`channel-setup/${encodeURIComponent(id)}`), api("channels").catch(() => ({}))]);
   } catch (error) { toast(error.message); return; }
   const here = (live.channels ?? []).find((c) => c.id === id || c.kind === id), connected = !!here;
+  if (recipe.unavailableReason && !connected) { toast(recipe.unavailableReason); return; }
   const ownerNamed = live.ownerNamed !== false, pinSet = !ownerNamed && (await api("lock").catch(() => ({}))).pinSet === true;
   // pass 17 part D §8: "Paste a new token" opens a connected app at Paste, saying why.
   const step = at ? Math.max(0, stepsOf(recipe).indexOf(at)) : connected ? stepsOf(recipe).length - 1 : 0;
@@ -128,6 +129,7 @@ export async function openChatWizard(id, at = null) {
    that comes back after the wizard went Back (or closed) belongs to a check it has left, so it is not drawn over what
    is being typed now; drawing it wiped the new token from its field while it was still being pasted. */
 async function runCheck(w) {
+  if (w.recipe.unavailableReason) { toast(w.recipe.unavailableReason); return; }
   const sent = vals, ask = (w.ask = (w.ask ?? 0) + 1);
   vals = {};
   let result = null, error = "";
@@ -165,6 +167,7 @@ async function next() {
 
 /* The toast says what really happened: connected, listening for an app that posts to Branch, or saved but not connected. */
 async function finish() {
+  if (S.chw?.recipe.unavailableReason) { toast(S.chw.recipe.unavailableReason); return; }
   const name = S.chw.recipe.name, r = S.chw.result;
   S.chw = null;
   vals = {};
