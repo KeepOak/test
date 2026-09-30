@@ -8651,6 +8651,7 @@
   "window.rooms.drop.with": "Einen Raum mit {name} öffnen",
   "window.rooms.talk.everyone": "Alle antworten",
   "window.rooms.talk.only": "Nur {name}",
+  "window.sessions.showOlder": "Ältere Gespräche anzeigen",
   "window.settings.accounts.accounts-signed-in": "Konten angemeldet",
   "window.settings.accounts.add-an-account": "Konto hinzufügen",
   "window.settings.accounts.another-value-account": "Weiteres {value}-Konto",
@@ -10417,6 +10418,5 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben",
-  "window.sessions.showOlder": "Ältere Gespräche anzeigen"
+  "wsedit.up": "Einen Ordner nach oben"
 }

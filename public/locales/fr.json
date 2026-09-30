@@ -8652,6 +8652,7 @@
   "window.rooms.drop.with": "Ouvrir un salon avec {name}",
   "window.rooms.talk.everyone": "Tout le monde répond",
   "window.rooms.talk.only": "Seulement {name}",
+  "window.sessions.showOlder": "Afficher les anciennes conversations",
   "window.settings.accounts.accounts-signed-in": "comptes connectés",
   "window.settings.accounts.add-an-account": "Ajouter un compte",
   "window.settings.accounts.another-value-account": "Un autre compte {value}",
@@ -10418,6 +10419,5 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier",
-  "window.sessions.showOlder": "Afficher les anciennes conversations"
+  "wsedit.up": "Remonter d'un dossier"
 }
