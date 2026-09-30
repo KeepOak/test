@@ -112,11 +112,11 @@ test("what a chat sender's task may use is held too, over this Branch and into a
   archive.tables.settings.push({ id: "chat-permissions", owner, data: JSON.stringify(grant), created_at: now, updated_at: now });
   const answer = await restoreBackup(app, async () => archive, true);
   assert.ok(groups(answer.held).includes("chat-permissions"), "it waits for the owner");
-  assert.deepEqual(readChatPermissionSettings(app.store, owner), { extras: false, rules: [] }, "nothing new for a chat until then");
+  assert.deepEqual(readChatPermissionSettings(app.store, owner), { extras: false, rules: [], ownerChats: true }, "nothing new for a chat until then");
   const fresh = await fixture(t);
   const second = await restoreBackup(fresh.app, async () => archive, false);
   assert.ok(groups(second.held).includes("chat-permissions"));
-  assert.deepEqual(readChatPermissionSettings(fresh.app.store, owner), { extras: false, rules: [] });
+  assert.deepEqual(readChatPermissionSettings(fresh.app.store, owner), { extras: false, rules: [], ownerChats: true });
 });
 
 test("the owner's yes to a held setting is written down: a settings change and an audit line (Q48, NAS 49b183b)", async (t) => {

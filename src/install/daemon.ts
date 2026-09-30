@@ -1,8 +1,16 @@
 import { writeFile, rm } from "node:fs/promises";
-import { hiddenRunner } from "../desktop/hand-over.js";
 import { runTool, systemTool, type RunTool } from "./windows.js";
 import { launchdCommand, launchdPlistPath } from "./launchd.js";
 import { systemdCommand, systemdUnitPath } from "./systemd.js";
+
+/**
+ * Windows Script Host text that runs a command with window style 0 (hidden) and does not wait. Used only to start the
+ * background engine at sign-in and on request (UP-PLATFORM-006a moves these off VBScript too); the update hand-over
+ * no longer uses it (src/desktop/hand-over.ts).
+ */
+export function hiddenRunner(command: string): string {
+  return `CreateObject("WScript.Shell").Run "${command.replace(/"/g, '""')}", 0, False\r\n`;
+}
 
 /**
  * Keeping Branch working with the window closed. A Windows scheduled task starts the assistant's

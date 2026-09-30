@@ -70,6 +70,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("preset", ["permissions", "approvals"], "[name]", "when Branch checks with you before doing something", [...W, "terminal"], "owner", { ...was("terminal"), bareLooks: true, route: { method: "POST", path: "/api/policy" }, newAliases: added(["approvals"], "terminal") }),
   entry("memory", [], "[words]", "facts it has saved", [...W, "terminal"], "look", was("terminal")),
   entry("skills", [], "", "skills installed here", [...W, "terminal"], "look", was("terminal")),
+  entry("verbose", [], "[off|new|all|full|default]", "the steps level for this direct chat; on its own, cycle the level", ["chat"], "look", { whileWorking: true }),
   // CHAT-205: pin one skill to this conversation (src/commands/steer-skill.ts); /skill off unpins it.
   entry("skill", [], "[name|off]", "pin a skill to this conversation so it applies to every turn; on its own, which one is pinned", ["window", "phone", "terminal", "chat"], "run", { bareLooks: true }),
   entry("plan", [], "[on|off]", "turn a short plan first on or off", [...W, "terminal"], "look", was("terminal")),
@@ -78,8 +79,13 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("temporary", ["incognito"], "[on|off]", "a conversation that is not remembered; set it before the first message", [...W, "terminal"], "look", was("terminal")),
   entry("attach", ["image"], "<file>", "send a file or picture with your next message", [...W, "terminal"], "look", was("terminal")),
   entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
+  entry("diff", [], "[--staged] [relative folder]", "tracked Git changes in a workspace folder, shortened to one reply; owner direct chat with git.read", ["chat"], "look"), // reads only; the runner holds it to the owner's own direct chat and git.read
+  entry("topic", [], "[name]", "create a separate private Telegram topic; on its own, setup guidance", ["chat"], "look"), // like /new: a new conversation place, no Branch setting changes; the runner holds it to the owner's own direct chat
+  entry("session", [], "[idle|max-age] [duration|off]", "this chat's chosen idle and age limits; expired conversations stay in history", ["chat"], "look"), // owner-approved 2026-09-30: the runner holds it to the owner's own direct chat, like /diff and /topic
+  entry("personality", [], "[none|helpful|concise|technical|creative|teacher]", "choose the reply tone for this chat's next task", ["chat"], "look"), // owner-approved 2026-09-30: the runner holds it to the owner's own direct chat, like /diff and /topic
   entry("export", ["save"], "[file]", "save this conversation as a Markdown file", [...W, "terminal"], "look", was("terminal")),
   entry("new", ["clear", "reset"], "", "start a fresh conversation", ["window", "phone", "terminal", "chat"], "look", { ...was("terminal", "chat"), newAliases: added(["clear"], "chat") }),
+  entry("branch", ["fork"], "[--here] [name]", "copy this chat's conversation and follow the copy here; the original is kept", ["chat"], "run"),
   entry("sessions", ["resume"], "[id]", "earlier conversations; with a number, carry one on", [...W, "terminal"], "look", was("terminal")),
   entry("go", ["open"], "<place>", "open a place or a Settings page by name: /go inbox finished", [...W, "terminal", "dashboard"], "look", was("terminal")),
   entry("inbox", [], "[tab]", "what needs you, what finished, and the history", [...W, "terminal", "dashboard"], "look", was("terminal")),
@@ -115,7 +121,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // bucket 12: the owner's saved prompts and procedures; their own commands are laid over this table in saved.ts
   entry("prompts", ["procedures", "workflows"], "[name]", "your saved prompts and procedures; with a name, one of them in the message box", ALL, "look"),
   // R17-A: the owner's Trunks; talking to one starts a task, so a bare /trunk only looks
-  entry("trunk", ["trunks"], "[name] [message]", "your Trunks; with a name and a message, talk to one", [...W, "terminal"], "run", { bareLooks: true }),
+  entry("trunk", ["trunks"], "[name] [message]", "your Trunks; with a name and a message, talk to one", [...W, "terminal", "chat"], "run", { bareLooks: true }),
   // mac6/accounts: which account the model answers through; switching is the owner's, so not in chat apps
   entry("account", ["accounts"], "[name|default name]", "which account the model uses; with a name, switch this conversation to it", [...W, "terminal", "dashboard"], "owner", { bareLooks: true, route: { method: "POST", path: "/api/accounts/switch" } }),
   // ---- r17-b: repeating in a conversation, sub-goals, background tasks, handing on, suggested automations (src/autonomy/commands.ts) ----
@@ -139,6 +145,8 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // ---- end r17-h ----
   // A change to Branch itself, asked for from a chat app (src/self-development-requests.ts). It only files
   // a request; the owner's yes or no is given in the Branch app, never with a command.
+  // CHAT-096 / CHAT-200: when this chat's replies are spoken (src/channels/chat-voice.ts); the Voice settings still decide whether at all.
+  entry("voice", ["tts"], "[on|always|off]", "spoken replies in this chat: to voice notes (on), to every message (always), or never (off)", ["chat"], "run", { bareLooks: true }),
   entry("improve", [], "<what to change in Branch>", "ask the owner for a change to Branch itself; only the owner answers, in the Branch app", ["chat"], "run"),
   // mac7/learn: a map of a folder of code or a knowledge base, and a guided walk through it. Building
   // a map reads a whole folder and a tour may ask a model, and every /api/learn route is the owner's,
@@ -149,6 +157,16 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // at this computer with its own key: never from a chat app, a phone or the browser dashboard,
   // each of which reaches Branch as another computer does.
   entry("adapt", ["unblock"], "[what it said | yes <line>]", "what a stopped task is missing, what would fix it and what that costs; with yes and the offer's line, get it and carry on", ["window", "terminal"], "owner", { bareLooks: true, route: { method: "POST", path: "/api/adapt/go" } }),
+  // ---- the chat-parity build (Hermes Agent and OpenClaw): home chat, what is working, naming a conversation, the full list ----
+  // CHAT-190: where results sent "home" go. Owner only; from a chat app it is taken only from the owner's own account in a
+  // direct chat, before any command is read (`homeGate` in src/channels/home-chat.ts), exactly as /platform is.
+  entry("sethome", [], "[off | <chat app> [chat]]", "the chat that gets schedule results and notices sent home; from your own account in a chat, make it that one", [...W, "terminal"], "owner", { bareLooks: true }),
+  // CHAT-196: every task working now and the helpers each started; in a chat, only that chat's own
+  entry("agents", ["tasks", "subagents"], "", "what is working now, with the helpers each task started", ALL, "look"),
+  // CHAT-193: OpenClaw /name, Hermes /title
+  entry("title", ["name", "rename"], "<name>", "give this conversation a name", ["window", "phone", "terminal", "chat"], "run"),
+  // CHAT-204: Hermes and OpenClaw /commands
+  entry("commands", [], "", "every command you can use here, with what each does", ALL, "look"),
 ];
 
 const bare = (name: string): string => name.replace(/^\//, "").replace(/@[\w.-]+$/, "").toLowerCase();
