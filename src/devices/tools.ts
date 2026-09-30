@@ -14,6 +14,7 @@ import type { DeviceBook, DeviceRecord } from "./book.js";
 import { capabilityInfo, devicePermissions, type Capability } from "./capabilities.js";
 import { DeviceSaid, type DeviceHub, type InvokeAnswer } from "./hub.js";
 import { companionActions, companionGrant, isCompanionAction } from "./companion-grants.js";
+import { notificationArgs, notificationRows } from "./notification-tickets.js";
 
 /**
  * mac7/nodes: the tools the model uses to ask one of the owner's devices for something. Every call
@@ -162,16 +163,23 @@ export async function useDevice(deps: DeviceToolDeps, context: ToolContext, name
   const companion = isCompanionAction(device, capability);
   const grant = companion ? companionGrant(deps.store, device, askingPerson(deps, context), capability, chat) : null;
   if (companion && !grant || chat && (!companion || !grant || !ownerChat)) throw new Error("This phone action needs its own current local-owner device/profile/action grant.");
-  const signal = grant ? AbortSignal.any([grant.abort.signal, ...(context.signal ? [context.signal] : [])]) : context.signal;
-  const answer = await deps.hub.invoke(device.id, capability, args, { signal,
-    timeoutMs: grant ? Math.max(1, Math.min(45000, grant.expiresAt - Date.now()))
+  const readGrant = capability === "notification-action" ? companionGrant(deps.store, device, askingPerson(deps, context), "notification-read", chat) : null;
+  if (capability === "notification-action" && !readGrant) throw new Error("A current notification read grant is also required.");
+  const signal = grant ? AbortSignal.any([grant.abort.signal, ...(readGrant ? [readGrant.abort.signal] : []), ...(context.signal ? [context.signal] : [])]) : context.signal;
+  const notifications = capability === "notification-read" || capability === "notification-action";
+  const sent = notifications ? notificationArgs(deps.store, device, askingPerson(deps, context), chat, capability, args) : args;
+  const answer = await deps.hub.invoke(device.id, capability, sent, { signal,
+    timeoutMs: grant ? Math.max(1, Math.min(45000, grant.expiresAt - Date.now(), readGrant ? readGrant.expiresAt - Date.now() : 45000))
       : capability === "run" ? Number(args.timeoutSeconds ?? 60) * 1000 + 15_000 : 45_000 })
     .catch((error: unknown) => { throw error instanceof DeviceSaid ? deviceError(error, device.name) : error; });
   const current = deps.book.device(device.id);
   deps.book.requireOn();
   if (companion && (!current || companionGrant(deps.store, current, askingPerson(deps, context), capability, chat) !== grant)
-    || grant?.abort.signal.aborted || chat && deps.ownerChatRun?.(context.runId) !== true) throw new Error("The phone action grant is no longer current.");
-  const cleaned = redactLeaksIn(cutText(answer.value ?? null));
+    || readGrant && (!current || companionGrant(deps.store, current, askingPerson(deps, context), "notification-read", chat) !== readGrant)
+    || grant?.abort.signal.aborted || readGrant?.abort.signal.aborted || chat && deps.ownerChatRun?.(context.runId) !== true) throw new Error("The phone action grant is no longer current.");
+  const value = capability === "notification-read" ? notificationRows(deps.store, current!, askingPerson(deps, context), chat, args, answer.value)
+    : capability === "notification-action" ? { requested: args.action } : answer.value;
+  const cleaned = redactLeaksIn(cutText(value ?? null));
   const result: Record<string, unknown> = { device: device.name, trust: "untrusted", note: untrustedNote, result: cleaned.value };
   if (cleaned.kinds.size) result.hidden = [...cleaned.kinds];
   if (answer.media) result.file = { path: await saveMedia(deps, device, capability, answer.media), mime: answer.media.mime, bytes: answer.media.bytes };
@@ -185,6 +193,8 @@ const describe = (capability: Capability, extra: string): string =>
 type Registration = { name: string; capability: Capability | ((args: Record<string, unknown>) => Capability); schema: z.ZodObject; extra: string };
 
 const registrations: Registration[] = [
+  { name: "phone.notifications.read", capability: "notification-read", schema: deviceArgs["notification-read"], extra: "Android only. Specify one exact app package; metadata only unless content is explicitly requested. Read grant required, and every call asks." },
+  { name: "phone.notifications.action", capability: "notification-action", schema: deviceArgs["notification-action"], extra: "Android only. One exact open/dismiss/reply action from a fresh notification ticket; separate read/action grants and per-call approval required. Never chooses or taps actions automatically." },
   { name: "device.camera", capability: "camera", schema: deviceArgs.camera, extra: "The photo is saved as a file in the workspace." },
   { name: "device.screen", capability: "screen", schema: deviceArgs.screen, extra: "The picture is saved as a file in the workspace." },
   { name: "device.location", capability: "location", schema: deviceArgs.location, extra: "" },
@@ -222,6 +232,7 @@ export function registerDeviceTools(registry: ToolRegistry, deps: DeviceToolDeps
     },
   });
   for (const entry of registrations) {
+    if (entry.name.startsWith("phone.")) continue;
     const schema = entry.schema.extend({ device: DeviceName });
     const pick = (input: Record<string, unknown>): Capability => (typeof entry.capability === "function" ? entry.capability(input) : entry.capability);
     registry.register({
@@ -255,13 +266,15 @@ function registerCompanionTools(registry: ToolRegistry, deps: DeviceToolDeps): v
     } });
   for (const entry of registrations.filter(e => typeof e.capability === "string" && (companionActions as readonly string[]).includes(e.capability))) {
     const capability = entry.capability as Capability;
-    registry.register({ name: entry.name.replace("device.", "phone."), permission: capabilityInfo[capability].kind === "capture" ? "phone.capture" : "phone.act",
+    registry.register({ name: entry.name.replace("device.", "phone."), permission: capability === "notification-read" ? "phone.notifications.read" : capability === "notification-action" ? "phone.notifications.act" : capabilityInfo[capability].kind === "capture" ? "phone.capture" : "phone.act",
       description: `One explicitly granted action on a paired phone; its separate local-owner device/profile/action grant must still be current. ${entry.extra} ${untrustedNote}`,
       parameters: entry.schema.extend({ device: DeviceName }),
       execute: async (input: Record<string, unknown>, context) => {
         const device = chooseDevice(deps, context, input.device as string | undefined);
         if (!isCompanionAction(device, capability)) throw new Error("Choose a paired phone with a companion action grant.");
         return useDevice(deps, context, device.id, capability, argsFor(capability, input));
-      }, target: input => `${String(input.device ?? "the picked phone")}: ${capability === "open-url" ? String(input.url ?? "") : capabilityInfo[capability].label}` });
+      }, target: input => `${String(input.device ?? "the picked phone")}: ${capability === "notification-read" ? `read ${String(input.package)} (${input.content === true ? "content" : "metadata only"}), limit ${String(input.limit ?? 5)}`
+        : capability === "notification-action" ? JSON.stringify({ id: input.id, action: input.action, text: input.text ?? "" })
+        : capability === "open-url" ? String(input.url ?? "") : capabilityInfo[capability].label}` });
   }
 }

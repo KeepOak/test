@@ -4,7 +4,7 @@ import type { Store } from "../store.js";
 import type { DeviceBook, DeviceRecord } from "./book.js";
 import type { Capability } from "./capabilities.js";
 
-export const companionActions = ["camera", "location", "notify", "open-url"] as const;
+export const companionActions = ["camera", "location", "notify", "open-url", "notification-read", "notification-action"] as const;
 type Action = typeof companionActions[number];
 interface Grant { id: string; deviceId: string; publicKey: string; profileId: string | null; action: Action; chat: boolean; expiresAt: number; abort: AbortController; timer: NodeJS.Timeout }
 const records = new WeakMap<Store, Map<string, Grant>>();
@@ -48,7 +48,7 @@ export function companionGrant(store: Store, device: DeviceRecord, profileId: st
 /** Only announces permissions; the actual tool still checks its exact phone and profile. */
 export function companionChatPermissions(store: Store): string[] {
   const actions = [...grants(store).values()].filter(g => g.chat && g.profileId === null && g.expiresAt > Date.now()).map(g => g.action);
-  return actions.length ? ["phone.read", ...new Set(actions.map(a => a === "camera" || a === "location" ? "phone.capture" : "phone.act"))] : [];
+  return actions.length ? ["phone.read", ...new Set(actions.map(a => a === "notification-read" ? "phone.notifications.read" : a === "notification-action" ? "phone.notifications.act" : a === "camera" || a === "location" ? "phone.capture" : "phone.act"))] : [];
 }
 export const isCompanionAction = (device: DeviceRecord, capability: Capability): boolean =>
   ["ios", "android"].includes(device.platform) && (companionActions as readonly string[]).includes(capability);

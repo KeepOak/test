@@ -53,7 +53,7 @@ final class BranchNode {
     /** What this phone does for Branch when lent, before the owner's refusals (PH-03: BranchLend, phone-node.js APP_OFFERS). */
     static final List<String> OFFERS = BranchLend.OFFERS;
     /** What this phone can promise never to do (apps/mobile/web/rules.js DEVICE_REFUSALS). */
-    static final List<String> REFUSALS = Arrays.asList("camera", "screen", "listen", "run", "location", "notify", "open-url");
+    static final List<String> REFUSALS = Arrays.asList("camera", "screen", "listen", "run", "location", "notify", "open-url", "notification-read", "notification-action");
     private static final String KEY_ALIAS = "branch-node";
     /** The Ed25519 key itself, when this phone's Keystore can hold one. */
     private static final String SIGN_ALIAS = "branch-node-ed25519";

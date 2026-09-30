@@ -30,7 +30,7 @@ export const PHONE_OFFERS = ["camera", "location", "open-url", "speak", "listen"
  * None of the four companion actions is usable without its separate local-owner grant and phone-side switches.
  * The native sides keep the same lists (BranchLend.java OFFERS, BranchLend.swift offers).
  */
-export const APP_OFFERS = { ios: ["camera", "listen", "speak", "location", "notify", "open-url"], android: ["camera", "listen", "location", "notify", "open-url"] };
+export const APP_OFFERS = { ios: ["camera", "listen", "speak", "location", "notify", "open-url"], android: ["camera", "listen", "location", "notify", "open-url", "notification-read", "notification-action"] };
 /** What this phone offers Branch: what it can do, less what the owner told it here never to do. */
 export const offersLess = (never, can = PHONE_OFFERS) => can.filter((capability) => !readNever(never).includes(capability));
 
@@ -157,6 +157,10 @@ function phoneLocation(env) {
 }
 /** Does one switched-on thing. Arguments are checked again here, whatever Branch sent. */
 export async function perform(env, capability, args = {}) {
+  if (capability === "notification-read" || capability === "notification-action") {
+    if (env.platform !== "android") throw new Error("Other-app notifications are only supported on Android.");
+    return { value: await env.notifications({ ...args, capability, invokeId: env.invokeId }) };
+  }
   if (capability === "camera" || capability === "listen") return { value: { captured: capability }, media: await capture(env, capability, args) };
   if (capability === "location") {
     const where = await phoneLocation(env);

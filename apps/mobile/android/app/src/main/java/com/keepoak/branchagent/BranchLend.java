@@ -27,7 +27,7 @@ import com.keepoak.branchagent.BranchLendGeneration.Pending;
  */
 final class BranchLend {
     /** What this phone does when lent: its page takes photos and records (Android's WebView cannot speak). */
-    static final List<String> OFFERS = Collections.unmodifiableList(Arrays.asList("camera", "listen", "location", "notify", "open-url"));
+    static final List<String> OFFERS = Collections.unmodifiableList(Arrays.asList("camera", "listen", "location", "notify", "open-url", "notification-read", "notification-action"));
     static final int PROTOCOL = 1;
     static final int MEDIA_LIMIT = 8 * 1024 * 1024;
 
@@ -297,6 +297,7 @@ final class BranchLend {
             BranchLendGeneration.Pending pending = lock.waiting.get(id);
             if (pending == null || pending.generation != lock.generation || socket == null || lock.socket != socket
                 || pending.effectCommitted || !pending.capability.equals(capability) || !lock.enabled.contains(capability) || node.never().contains(capability)
+                || capability.equals("notification-action") && (!lock.enabled.contains("notification-read") || node.never().contains("notification-read"))
                 || pending.deadline < System.currentTimeMillis() || !page.foreground())
                 throw new IllegalStateException("No current phone action request.");
             pending.effectCommitted = true;

@@ -329,6 +329,45 @@ public class BranchPhonePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void notificationAccess(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (!foreground || !BranchRefusals.sameOrigin(String.valueOf(getBridge().getWebView().getUrl()), getBridge().getAppUrl()))
+                    throw new IllegalStateException("Open the phone app’s own settings page.");
+                if (call.getData().has("allow")) {
+                    BranchWords.state(getContext()).edit().putBoolean("notification-reader", Boolean.TRUE.equals(call.getBoolean("allow"))).apply();
+                    BranchNotificationReader.clearTickets();
+                    lend.pause(); lend.resume();
+                }
+                if (Boolean.TRUE.equals(call.getBoolean("settings"))) getActivity().startActivity(new Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+                call.resolve(JSObject.fromJSONObject(BranchNotificationReader.status(getContext())));
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        });
+    }
+
+    @PluginMethod
+    public void lendNotifications(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (!foreground || !BranchRefusals.sameOrigin(String.valueOf(getBridge().getWebView().getUrl()), getBridge().getAppUrl()))
+                    throw new IllegalStateException("Open the phone app’s own page.");
+                String capability = call.getString("capability", "");
+                if (!capability.equals("notification-read") && !capability.equals("notification-action")) throw new IllegalStateException("Unknown notification operation.");
+                final JSONObject[] result = {null};
+                final Exception[] failed = {null};
+                lend.performAction(call.getString("invokeId", ""), capability, () -> {
+                    try {
+                        result[0] = capability.equals("notification-read")
+                            ? BranchNotificationReader.list(getContext(), call.getString("package", ""), Boolean.TRUE.equals(call.getBoolean("content")), call.getInt("limit", 5), call.getString("scope", ""), node.publicKey())
+                            : BranchNotificationReader.action(getContext(), call.getString("id", ""), call.getString("scope", ""), node.publicKey(), call.getString("action", ""), call.getString("text", ""));
+                    } catch (Exception error) { failed[0] = error; }
+                });
+                if (failed[0] != null) throw failed[0];
+                call.resolve(JSObject.fromJSONObject(result[0]));
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        });
+    }
+    @PluginMethod
     public void lastSeen(PluginCall call) {
         JSObject out = new JSObject();
         out.put("at", BranchWords.state(getContext()).getLong("last-seen", 0L));

@@ -78,6 +78,7 @@ function environment() {
     media: navigator.mediaDevices, frame, record, speak,
     geolocation: navigator.geolocation,
     notify: (args) => plugin.lendNotify(args),
+    notifications: (args) => plugin.lendNotifications(args),
     open: (url, id) => plugin.lendOpen({ url, id }),
     stopOutput: () => globalThis.speechSynthesis?.cancel(),
     onHidden: (stop) => {
