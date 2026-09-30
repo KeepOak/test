@@ -24,14 +24,57 @@ async function fixture(t, { gap = false, platform = "linux", passed = 1 } = {}) 
     seen.delegated.push({ task, permissions, instructions });
     return { ...original, output: gap && seen.delegated.length === 1 ? `${gapMarker} no capability` : "Original task finished", status: "completed" };
   };
-  const scripts = { async run(input) { seen.scripts.push(input); return { ok: passed > 0, result: { passed }, calls: [], output: "", ...(passed > 0 ? {} : { error: "test failed" }) }; } };
+  const scripts = { async run(input) { seen.scripts.push(input); return { ok: passed > 0, result: [{ value: 6, complete: true }], calls: [], output: "", ...(passed > 0 ? {} : { error: "test failed" }) }; } };
   const servers = { async add(input) { seen.installs.push(input); return { server: { id: "approved-server" } }; }, async start() { return {}; } };
-  const sourceRequests = { file(input) { seen.source.push(input); return { id: "source-request" }; }, list() { return []; } };
+  const sourceRequests = { file(input) { seen.source.push(input); return { id: "source-request" }; },
+    fileOwnerTask(text) { seen.source.push({ text }); return { id: "source-request" }; }, installed() { return false; }, list() { return []; } };
   const deps = { store: app.store, runtime: app.runtime, registry: app.registry, gardener: app.gardener, scripts, servers, sourceRequests, platform, version: "test-v1" };
   const budding = new Budding(deps);
   return { app, budding, context, seen, deps };
 }
 const build = (id) => ({ id, name: "report", description: "Compute reports", source: "async function build(input) { return input.count * 2; }", tools: ["files.read"], tests: [{ input: { count: 3 }, expected: 6 }] });
+
+test("a missing setting preserves its task and opens one source review without pretending to change it", async (t) => {
+  const { budding, context, seen } = await fixture(t);
+  const input = { request: "quantum report style", task: "Set quantum report style and make my report", value: "on" };
+  const bud = budding.requestSetting(input, context);
+  assert.equal(bud.stage, "branch-review");
+  assert.equal(bud.task, input.task);
+  assert.equal(bud.settingRequest.request, input.request);
+  assert.match(seen.source[0].text, /quantum report style/);
+  assert.equal(budding.requestSetting(input, context).id, bud.id);
+  assert.equal(seen.source.length, 1);
+  assert.throws(() => budding.requestSetting({ ...input, request: "do not change quantum report style" }, context), /clarify/);
+  assert.throws(() => budding.requestSetting({ ...input, request: "wake word" }, context), /already|clarify/);
+});
+
+test("an installed merge still cannot resume a setting request until the setting exists", async (t) => {
+  const { app, budding, context, deps } = await fixture(t);
+  const bud = budding.requestSetting({ request: "quantum report style", task: "Make a report", value: "on" }, context);
+  deps.version = "test-v2";
+  deps.sourceRequests.installed = () => true;
+  let resumed = false;
+  app.runtime.run = async () => { resumed = true; throw new Error("must not resume"); };
+  await budding.tick();
+  assert.equal(resumed, false);
+  assert.equal(budding.get(bud.id).stage, "branch-review");
+});
+
+test("manual confirmation cannot substitute an unrelated version for a missing-setting merge receipt", async t => {
+  const { app, budding, context, deps } = await fixture(t);
+  const bud = budding.requestSetting({ request: "quantum report style", task: "Make a report", value: "on" }, context);
+  // Represents a saved request from a build before wake word settings existed.
+  app.store.sqlite.prepare("UPDATE seasons_buds SET data=? WHERE id=?").run(JSON.stringify({ ...bud,
+    settingRequest: { ...bud.settingRequest, request: "wake word mode" }, branchConfirmed: true }), bud.id);
+  deps.version = "test-v2";
+  let resumed = 0;
+  app.runtime.run = async () => { resumed++; return { id: bud.runId, status: "completed", output: "done" }; };
+  await budding.tick();
+  assert.equal(resumed, 0);
+  deps.sourceRequests.installed = () => true;
+  await budding.tick(); await budding.tick();
+  assert.equal(resumed, 1);
+});
 
 test("Budding composes first, finishes the preserved task, and creates only an eval-waiting skill seed", async (t) => {
   const { app, budding, context, seen } = await fixture(t);
@@ -116,6 +159,31 @@ test("held tools register only after successful fixtures and finish the original
   assert.equal(seen.scripts.length, 1);
   assert.equal(app.registry.sourceOf(completed.tool), "plugin:bud-report");
   assert.equal(seen.delegated.at(-1).task, bud.task);
+  assert.equal(completed.evaluation.candidate.passed, 1);
+  assert.match(completed.evaluation.candidate.sha256, /^[a-f0-9]{64}$/);
+});
+
+test("generated-tool revisions compare old fixtures, reject regressions, and retain a rollback", async (t) => {
+  const { app, budding, context, deps } = await fixture(t, { gap: true });
+  deps.scripts.run = async () => ({ ok: true, result: [{ value: 6, complete: true }], calls: [], output: "" });
+  const bud = await budding.start("Compute reports", "zzx-unsupported-capability", context);
+  await budding.build(build(bud.id), context);
+  let outputs = [[6, 8], [99, 8]];
+  deps.scripts.run = async () => ({ ok: true, result: outputs.shift().map(value => ({ value, complete: true })), calls: [], output: "" });
+  const revision = { ...build(bud.id), source: "async function build(input) { return input.count === 3 ? 99 : 8; }", tests: [{ input: { count: 4 }, expected: 8 }] };
+  const rejected = await budding.revise(revision, context);
+  assert.equal(rejected.built.source, build(bud.id).source);
+  assert.equal(rejected.evaluation.promoted, false);
+  assert.equal(rejected.evaluation.baseline.passed, 2);
+  outputs = [[6, null], [6, 8]];
+  const improved = await budding.revise({ ...revision, source: "async function build(input) { return input.count * 2; } // improved" }, context);
+  assert.equal(improved.evaluation.promoted, true);
+  assert.equal(improved.evaluation.candidate.passed, 2);
+  assert.equal(improved.built.tests.length, 2);
+  const rolledBack = budding.rollback(bud.id, context);
+  assert.equal(rolledBack.built.source, build(bud.id).source);
+  assert.equal(rolledBack.built.tests.length, 2, "rollback retains the regression suite");
+  assert.ok(app.registry.names().includes("plugin.bud-report.run"));
 });
 
 test("failing held-tool tests never register it; Branch changes only file a review request after owner action", async (t) => {
@@ -132,12 +200,12 @@ test("failing held-tool tests never register it; Branch changes only file a revi
   await assert.rejects(budding.retry(bud.id, context), /has not arrived/);
 });
 
-test("Windows never runs held code, and household or Lockdown cannot approve new capabilities", async (t) => {
+test("Windows uses the held runner, and household or Lockdown cannot approve new capabilities", async (t) => {
   const { app, budding, context, seen } = await fixture(t, { gap: true, platform: "win32" });
   const bud = await budding.start("Compute reports", "zzx-unsupported-capability", context);
-  const refused = await budding.build(build(bud.id), context);
-  assert.match(refused.error, /On Windows/);
-  assert.deepEqual(seen.scripts, []);
+  const built = await budding.build(build(bud.id), context);
+  assert.equal(built.stage, "completed");
+  assert.equal(seen.scripts.length, 1);
   const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
   app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
   assert.throws(() => budding.requestBranch(bud.id), /owner/);

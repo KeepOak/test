@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { openWall, type WallDeps } from '../sandbox-backends.js';
 import { bwrapMissing, namespacesOff } from '../sandbox-bwrap.js';
 import { confinedWall } from './shell.js';
+import { pluginScratchWall } from '../plugin-scratch-wall.js';
 import { heldCover, venvPrograms, wslHeldPrograms, wslNoBubblewrap, wslNoNamespaces, wslNoNode, wslNoProgram, type WslHeldPlan } from './wsl-held.js';
 
 /**
@@ -99,7 +100,8 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   }
   let wall;
   try {
-    wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry, open: plan.open === true }), readOnly: restored },
+    wall = await openWall({ ...confinedWall(undefined, { registry: plan.registry, open: plan.open === true }), readOnly: restored,
+      unreadable: plan.unreadable ?? [] },
       { executable: program, args: plan.args, cwd: plan.cwd, env },
       { workspace: plan.workspace, temp, held: true, covered, secrets: Object.fromEntries(plan.secrets.map((name) => [name, ''])) },
       { ...deps, platform: 'linux' });
@@ -109,7 +111,8 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
     return 1;
   }
   try {
-    const result = await forward(wall.start, plan.timeoutMs);
+    const start = plan.scratchOnly ? await pluginScratchWall(wall.start, program, plan.workspace, 'linux') : wall.start;
+    const result = await forward(start, plan.timeoutMs, plan.interactive === true);
     const note = await wall.finish(result).catch((error: unknown) => plainly(error));
     if (note) process.stderr.write(`${result.stderr && !result.stderr.endsWith('\n') ? '\n' : ''}${note}\n`);
     return result.exitCode ?? 1;
@@ -123,20 +126,29 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
  * Starts the walled program, passes its output straight through and keeps the tail of its errors.
  * It ends the program at the time limit, and when WSL's link back to Windows goes away.
  */
-function forward(start: { executable: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }, timeoutMs: number) {
+function forward(start: { executable: string; args: string[]; cwd: string; env: NodeJS.ProcessEnv }, timeoutMs: number, interactive: boolean) {
   return new Promise<{ exitCode: number | null; stdout: string; stderr: string }>((done) => {
-    const child = spawn(start.executable, start.args, { cwd: start.cwd, env: start.env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(start.executable, start.args, { cwd: start.cwd, env: start.env, stdio: [interactive ? 'pipe' : 'ignore', 'pipe', 'pipe'] });
     let stderr = '';
-    child.stdout.on('data', (chunk: Buffer) => process.stdout.write(chunk));
-    child.stderr.on('data', (chunk: Buffer) => { process.stderr.write(chunk); stderr = (stderr + chunk.toString('utf8')).slice(-keptErrorBytes); });
+    child.stdout!.on('data', (chunk: Buffer) => process.stdout.write(chunk));
+    child.stderr!.on('data', (chunk: Buffer) => { process.stderr.write(chunk); stderr = (stderr + chunk.toString('utf8')).slice(-keptErrorBytes); });
     const parent = process.ppid;
     const stop = () => { child.kill('SIGKILL'); };
+    if (interactive && child.stdin) {
+      child.stdin.on('error', () => undefined);
+      process.stdin.pipe(child.stdin);
+      process.stdin.on('end', stop);
+    }
     const timer = setTimeout(stop, timeoutMs);
     const watch = setInterval(() => { if (process.ppid !== parent) stop(); }, 500);
     process.stdout.on('error', stop);
     child.on('error', () => undefined);
     child.on('close', (code, signal) => {
       clearTimeout(timer); clearInterval(watch);
+      process.stdout.removeListener('error', stop);
+      process.stdin.removeListener('end', stop);
+      if (child.stdin) process.stdin.unpipe(child.stdin);
+      process.stdin.pause();
       done({ exitCode: code ?? (signal ? 128 : 1), stdout: '', stderr });
     });
   });
