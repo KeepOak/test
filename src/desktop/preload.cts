@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
     ipcRenderer.on("branch:update-changed", (_event, status: unknown) => (callback as (status: unknown) => void)(status));
   },
   openExternal: (url: unknown) => ipcRenderer.invoke("branch:open-external", url),
+  keepOakViewStatus: () => ipcRenderer.invoke("branch:keepoak-view-status"),
+  openKeepOakView: () => ipcRenderer.invoke("branch:keepoak-view-open"),
+  disconnectKeepOakView: () => ipcRenderer.invoke("branch:keepoak-view-disconnect"),
   restartBranch: () => ipcRenderer.invoke("branch:restart"),
   // Light, dark, or the title row's own colour (#rrggbb): the window controls' glyphs follow it (window-chrome-ipc.ts).
   windowLook: (look: unknown) => ipcRenderer.invoke("branch:window-look", look),
