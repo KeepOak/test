@@ -31,6 +31,8 @@ import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { rosterButton, initBeside } from "./beside.js";
 import { panesWrap, panesOn, paneOpen, followPane, paneTo, paneWords, paneTarget, paneBusy, paneRoom, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
+import { initScrollFollow, jumpRow, selectionHeld } from "./scroll-follow.js";
+import { initApprovalKeys } from "./approval-keys.js";
 import { initFlag, flagBadge } from "./flag.js";
 import { rememberCards, initRemember } from "./remember.js";
 import { goalStrip, loadGoal, initGoal } from "./goal.js";
@@ -170,7 +172,7 @@ function askCard(q) {
   const locked = document.getElementById("app")?.classList.contains("locked"); // Lockdown keeps no standing yes either
   const standing = !q.noStanding && !q.noAlways && !q.onceOnly && q.source === "owner" && !E.profiles?.active?.id && !locked;
   const always = standing ? `<button class="btn" type="button" data-act="ask-always" ${id}>${t("window.chat.ask.always")}</button>` : "";
-  return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
+  return `<div class="b"><div class="gut"></div><div><div class="card ask" id="live-ask" data-approval-card tabindex="0" role="group" aria-label="${esc(t("dashboard.needs.title"))}" aria-keyshortcuts="Enter Escape"><div class="card-h"><span class="q">${esc(q.question || q.label)}</span><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div>
     ${(q.question && q.label) || q.bytes || q.jobs?.length ? `<dl class="kv">${q.question && q.label ? `<dd class="mailbody">${esc(q.label)}</dd>` : ""}${requestBody(q)}</dl>` : ""}
     <div class="acts"><button class="btn pri" type="button" data-act="ask" data-v="allow" ${id}>${esc(verb)}</button>${always}<button class="btn ghost" type="button" data-act="ask" data-v="deny" ${id}>${t("window.chat.ask.dont-allow")}</button></div></div></div></div>`;
 }
@@ -368,13 +370,13 @@ export function draw() {
   readPlace();
   /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
      in the composer's place */
-  if (viewingHelper()) return `${panesWrap(`<div class="scroll" id="scroll" tabindex="-1"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
+  if (viewingHelper()) return `${panesWrap(`<div class="scroll" id="scroll" tabindex="-1"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${jumpRow()}${helperDock()}`;
   /* trunk-one-row: a Trunk's conversation is drawn inside the Trunk's one timeline (chat/trunkline.js): its older
      conversations above it, under their own lines, and any written in since below it. #conversation stays the one the
      message box sends to; its own line names when it began, so its first message carries no stamp of its own. */
   const line = LINE.now = isEmpty() || whoHere()?.kind === "room" ? null : lineHTML(C.sessionId, C.messages, current());
   const above = line ? `<div class="thread tl-past19">${line.before}${line.sep}</div>` : "", below = line?.after ? `<div class="thread tl-past19 tl-after19" id="tl-now">${line.after}</div>` : "";
-  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${panesWrap(`<div class="scroll" id="scroll" tabindex="-1">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `${above}<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>${below}`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${panesWrap(`<div class="scroll" id="scroll" tabindex="-1">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `${above}<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>${below}`}</div>`)}${jumpRow()}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
@@ -403,7 +405,7 @@ export function after(main) {
   const box = $("#scroll", main);
   if (box) {
     const same = C.readSid === C.sessionId;
-    box.scrollTop = !same || C.atBottom !== false ? box.scrollHeight : C.readTop ?? box.scrollHeight;
+    if (!same || !selectionHeld(box)) box.scrollTop = !same || C.atBottom !== false ? box.scrollHeight : C.readTop ?? box.scrollHeight;
     /* trunk-one-row: a conversation opened with newer ones below it in the timeline opens at its own end. */
     const now = !same && $("#tl-now", box);
     if (now) box.scrollTop += now.getBoundingClientRect().top - box.getBoundingClientRect().bottom + 24;
@@ -1012,6 +1014,8 @@ export function init() {
   initBeside();
   initPanes({ asks: paneAsks, readAsks: () => loadWaiting().then(render) });
   initMessages({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
+  initScrollFollow(() => C);
+  initApprovalKeys();
   initMore({ state: () => C });
   initLeaveOut({ state: () => C, reopen: openConversation });
   initBranches({ state: () => C, sendText: (words) => send(words), reopen: openConversation });
