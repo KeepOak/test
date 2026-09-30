@@ -31,7 +31,20 @@ const owned = () => B.control?.state === "owner" && B.control.writer?.kind === "
 const free = () => B.control?.state === "owner" && !B.control.writer && !B.control.paused;
 const scope = () => ({ sessionId: B.sid, clientId: B.clientId, profile: B.profile });
 const bound = () => ({ ...scope(), id: B.control.id, epoch: B.control.epoch });
-const changed = (redraw = true) => B.onChange?.(redraw);
+const changed = (redraw = true) => {
+  // Live metadata redraws replace the tab buttons. Keep keyboard focus on the same stable tab,
+  // provided the redraw did not deliberately move focus to a dialog or another control.
+  const focused = document.activeElement?.closest?.("#stage7 .ob7-tab, #stage7 .ob7-x");
+  const sid = B.sid, control = B.control?.id;
+  const tab = focused?.dataset.tabId, action = focused?.dataset.act;
+  B.onChange?.(redraw);
+  if (!redraw || !focused || focused.isConnected || B.sid !== sid || B.control?.id !== control
+      || !visible() || ![document.body, null].includes(document.activeElement)) return;
+  const buttons = [...document.querySelectorAll("#stage7 .ob7-tab, #stage7 .ob7-x")];
+  const same = tab && buttons.find(button => button.dataset.tabId === tab && button.dataset.act === action && !button.disabled);
+  const fallback = buttons.find(button => button.classList.contains("ob7-tab") && button.getAttribute("aria-pressed") === "true" && !button.disabled);
+  (same ?? fallback)?.focus({ preventScroll: true });
+};
 const clearFrame = () => { B.frameId = ""; B.tabId = ""; B.ready = false; B.frame = ""; };
 /* After an action the last picture stays up (no blink) until the next one arrives, but it no longer counts as the page
    the next input is aimed at. */
@@ -152,8 +165,8 @@ function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, "");
 function tabsHTML() {
   const tabs = B.page?.tabs ?? [], can = canDrive() && hasOwnerBrowser();
   const one = (tab, index) => `<span class="${tab.active ? "on7" : ""}">
-    <button type="button" class="ob7-tab" data-act="owner-browser-tab" data-index="${index}"${can ? "" : " disabled"} title="${esc(tab.url)}">${tab.loading ? `${ic("spin", "s spin")}` : iconOf(tab)}<em>${esc(tab.title || hostOf(tab.url) || t("window.chat.stage.ob.new-tab"))}</em></button>
-    ${tabs.length > 1 ? `<button type="button" class="ob7-x" data-act="owner-browser-tab-close" data-index="${index}" aria-label="${t("window.chat.stage.ob.close-tab")}"${can ? "" : " disabled"}>${ic("x", "s")}</button>` : ""}</span>`;
+    <button type="button" class="ob7-tab" data-act="owner-browser-tab" data-index="${index}" data-tab-id="${esc(B.control?.tabs?.[index] ?? "")}" aria-pressed="${tab.active ? "true" : "false"}"${can ? "" : " disabled"} title="${esc(tab.url)}">${tab.loading ? `${ic("spin", "s spin")}` : iconOf(tab)}<em>${esc(tab.title || hostOf(tab.url) || t("window.chat.stage.ob.new-tab"))}</em></button>
+    ${tabs.length > 1 ? `<button type="button" class="ob7-x" data-act="owner-browser-tab-close" data-index="${index}" data-tab-id="${esc(B.control?.tabs?.[index] ?? "")}" aria-label="${esc(t("window.chat.stage.ob.close-tab"))}: ${esc(tab.title || hostOf(tab.url) || t("window.chat.stage.ob.new-tab"))}"${can ? "" : " disabled"}>${ic("x", "s")}</button>` : ""}</span>`;
   const add = `<button type="button" class="ob7-new" data-act="owner-browser-new-tab" aria-label="${t("window.chat.stage.ob.new-tab")}"${can && tabs.length < MAX_TABS ? "" : " disabled"}>${ic("plus", "s")}</button>`;
   return `<div class="dk-tabs ob7-tabs">${tabs.map(one).join("")}${hasOwnerBrowser() ? add : ""}</div>`;
 }
@@ -362,7 +375,22 @@ export function initOwnerBrowser() {
     B.wheel = { dx: (B.wheel?.dx ?? 0) + event.deltaX * scale, dy: (B.wheel?.dy ?? 0) + event.deltaY * scale };
     setTimeout(flushWheel, 40);
   }, { capture: true, passive: false });
-  document.addEventListener("keydown", (event) => { if (inPage(event)) key(event); }, true);
+  document.addEventListener("keydown", (event) => {
+    const tab = event.target.closest?.("#stage7 .ob7-tab");
+    if (tab && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.isComposing
+        && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      const tabs = [...tab.closest(".ob7-tabs").querySelectorAll(".ob7-tab:not(:disabled)")];
+      const index = tabs.indexOf(tab);
+      if (index < 0 || !tabs.length) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      // Navigation only moves focus. Native Enter/Space activation selects the page.
+      tabs[next].focus({ preventScroll: true });
+      return;
+    }
+    if (inPage(event)) key(event);
+  }, true);
   document.addEventListener("paste", (event) => {
     if (!inPage(event) || !visible() || !(owned() || free()) || B.pending) return;
     event.preventDefault(); typeText(event.clipboardData?.getData("text/plain") ?? "");
