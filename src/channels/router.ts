@@ -471,6 +471,7 @@ export class ChannelRouter {
   /** The newest message each chat sent that was let in, so an answer knows a newer one came in before it went out. */
   private readonly latest = new Map<string, string>();
   private readonly turns = new Map<string, ChatTurnState>();
+  private readonly trunkCommands = new Map<string, ChatTurn & { dropped: boolean }>();
   /** How many chats may have a task working at the same time. */
   maxChatTasks = 4;
   private chatTasks = 0;
@@ -1048,7 +1049,7 @@ export class ChannelRouter {
     if (!command || setting === "on" || pairedDm) return command;
     // "When needed": only the commands for a task that is working, and only while one is; and, at any time, "/new"
     // (or "/reset"), which starts a fresh thread in this chat and keeps the one before (defaulttrunk, src/channels/threads.ts).
-    const busy = this.turns.has(chatKey(message));
+    const busy = this.turns.has(chatKey(message)) || this.trunkCommands.has(chatKey(message));
     return (busy && chatCommandSpec(command.name).whileWorking) || command.name === "new" ? command : null;
   }
   /**
@@ -1150,25 +1151,42 @@ export class ChannelRouter {
     const { channel, chatId } = message;
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
+    const side = this.trunkCommands.get(chatKey(message));
     // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
     // held back when the owner turned steering off, and answered as the next turn if the task never read it.
     if (command.name === "steer" && turn && command.argument.trim()) return this.joinTurn(turn, { ...message, text: command.argument.trim() });
     // A side question, folding and a question for the handbook all ask the model, so they count
     // against the chats working at once (`/help` and `/help all` only list).
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
-    const asks = command.name === "btw" || command.name === "compact" || question;
-    const work = () => runChatCommand(command, {
-      runtime: this.runtime, channel, chatId, turn,
+    const asks = command.name === "btw" || command.name === "compact" || command.name === "trunk" || question;
+    const named = command.name === "trunk" && !turn && !side && /\S+\s+\S/.test(command.argument)
+      ? { runId: null as string | null, startedAt: Date.now(), passed: 0, dropped: false } : undefined;
+    if (named) this.trunkCommands.set(chatKey(message), named);
+    const work = () => named?.dropped ? Promise.resolve("Dropped that. Nothing was started.") : runChatCommand(command, {
+      runtime: this.runtime, channel, chatId, turn: turn ?? side,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
+      ownerDm: ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message),
+      trunkRefusal: (id) => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "trunk", command.argument)
+        ?? this.trunkIdReach(channel, id),
+      onTrunkStarted: (id) => {
+        if (!named) return;
+        named.runId = id; named.startedAt = Date.now();
+        this.store.event(id, "channel.inbound", { channel, chatId, messageId: message.messageId, senderId: message.senderId,
+          chatKind: message.chatKind, caughtUp: message.caughtUp === true, command: "trunk" });
+        if (named.dropped) this.runtime.cancel(id);
+      },
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
       dropWaiting: () => {
-        if (!turn || turn.runId) return false;
-        turn.dropped = true;
+        const active = turn ?? side;
+        if (!active || active.runId) return false;
+        active.dropped = true;
         return true;
       },
       forget: () => this.forgetSession(channel, chatId),
     });
-    const reply = asks ? await this.withSlot(work) : await work();
+    let reply: string;
+    try { reply = asks ? await this.withSlot(work) : await work(); }
+    finally { if (named) this.trunkCommands.delete(chatKey(message)); }
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
     return "replied";
   }
