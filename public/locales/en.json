@@ -8740,6 +8740,7 @@
   "window.rooms.drop.with": "Open a room with {name}",
   "window.rooms.talk.everyone": "Everyone answers",
   "window.rooms.talk.only": "Only {name}",
+  "window.sessions.showOlder": "Show older",
   "window.settings.accounts.accounts-signed-in": "accounts signed in",
   "window.settings.accounts.add-an-account": "Add an account",
   "window.settings.accounts.another-value-account": "Another {value} account",

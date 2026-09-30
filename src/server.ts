@@ -1393,7 +1393,8 @@ async function api(
   // everything else, so a paired phone can pick up what was started at the computer.
   if (request.method === "GET" && path === "/api/sessions") {
     const scope = app.store.profiles.scope();
-    const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
+    const params = new URL(request.url ?? "/", "http://x").searchParams;
+    const recent = app.store.recentSessions(scope, Number(params.get("limit") ?? 20) || 20, Number(params.get("offset") ?? 0));
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
     // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
     const away = app.store.putAwayConversations(scope, { limit: 1 });
@@ -1403,7 +1404,7 @@ async function api(
     const trunkOf = (sessionId: string) => app.store.profiles.isOwner()
       ? app.trunks.trunkForConversation(sessionId)?.trunkId ?? null
       : personal?.threads.get(sessionId)?.trunkId ?? null;
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
+    return { ...recent, profileId: app.store.profiles.active()?.id ?? null, isOwner: app.store.profiles.isOwner(), sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
       archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
