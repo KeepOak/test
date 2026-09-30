@@ -64,7 +64,7 @@ test('files sent inside a forum topic are stored with cleaned address in the fol
     },
     run: async options => { runs.push(options); return { id: 'run', sessionId: 'session', status: 'completed', output: 'done' }; }
   };
-  const store = { ownsSession: () => false, get: () => undefined, save: () => {}, event: () => {}, events: () => [], onEvent: () => () => {}, list: () => [] };
+  const store = { ownsSession: () => false, get: () => undefined, save: () => {}, event: () => {}, events: () => [], onEvent: () => () => {}, list: () => [], profiles: { isOwner: () => true } };
   const { ChannelRouter } = await import('../dist/channels/router.js');
   const router = new ChannelRouter(store, runtime, 100000);
 
@@ -116,7 +116,7 @@ test('router rejects files larger than 8 MB with clear message', async () => {
     },
     run: async options => { runs.push(options); return { id: 'run', sessionId: 'session', status: 'completed', output: 'done' }; }
   };
-  const store = { ownsSession: () => false, get: () => undefined, save: () => {}, event: () => {}, events: () => [], onEvent: () => () => {}, list: () => [] };
+  const store = { ownsSession: () => false, get: () => undefined, save: () => {}, event: () => {}, events: () => [], onEvent: () => () => {}, list: () => [], profiles: { isOwner: () => true } };
   const { ChannelRouter } = await import('../dist/channels/router.js');
   const router = new ChannelRouter(store, runtime, 100000);
 
@@ -169,7 +169,7 @@ async function storedFileRouter(t, body) {
     artifacts: { write: async (id, name, type, bytes) => { names.push(name); return stored.write(id, name, type, bytes); } },
     run: async options => { runs.push(options); return { id: 'run', sessionId: 'session', status: 'completed', output: 'done' }; },
   };
-  const store = { ownsSession: () => false, get: () => undefined, save: () => {}, event: () => {}, events: () => [], onEvent: () => () => {}, list: () => [] };
+  const store = { ownsSession: () => false, get: () => undefined, save: () => {}, event: () => {}, events: () => [], onEvent: () => () => {}, list: () => [], profiles: { isOwner: () => true } };
   const router = new ChannelRouter(store, runtime, 100000);
   router.deliver = async (channel, chatId, text) => { deliveries.push(text); return { messageId: 'sent', queued: 0 }; };
   const fetch = async url => {
