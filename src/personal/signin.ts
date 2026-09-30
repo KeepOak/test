@@ -24,22 +24,24 @@ export const SignInSettingsSchema = z.object({
   tenant: z.string().trim().regex(/^[A-Za-z0-9.-]{1,80}$/).default("common"),
   /** Google and Microsoft: also ask for leave to write drafts. Off by default; nothing ever sends mail. */
   drafts: z.boolean().default(false),
+  /** Explicit opt-in; a new provider consent is required before calendar writes. */
+  calendarWrite: z.boolean().default(false),
 }).strict();
 export type SignInSettings = z.infer<typeof SignInSettingsSchema>;
 
 const settingsKey = (service: SignInService): string => `personal-signin-${service}`;
 
 /** The scopes each service is asked for. Read-only unless the owner turned drafts on. */
-export function scopesFor(service: SignInService, drafts: boolean): string[] {
+export function scopesFor(service: SignInService, drafts: boolean, calendarWrite = false): string[] {
   if (service === "google") return [
     "https://www.googleapis.com/auth/gmail.readonly",
-    "https://www.googleapis.com/auth/calendar.events.readonly",
+    calendarWrite ? "https://www.googleapis.com/auth/calendar.events" : "https://www.googleapis.com/auth/calendar.events.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
     // Gmail has no drafts-only scope; this one could also send, which Branch never does.
     ...(drafts ? ["https://www.googleapis.com/auth/gmail.compose"] : []),
   ];
   if (service === "microsoft") return [
-    "offline_access", "User.Read", drafts ? "Mail.ReadWrite" : "Mail.Read", "Calendars.Read",
+    "offline_access", "User.Read", drafts ? "Mail.ReadWrite" : "Mail.Read", calendarWrite ? "Calendars.ReadWrite" : "Calendars.Read",
     "OnlineMeetings.Read", "OnlineMeetingTranscript.Read.All",
   ];
   return ["user-read-playback-state", "user-read-currently-playing", "user-modify-playback-state"];
@@ -50,12 +52,13 @@ const labels: Record<SignInService, string> = { google: "Google", microsoft: "Mi
 /** The service described for the existing connection flow, without its client secret. */
 export function describeSignIn(service: SignInService, settings: SignInSettings): OAuthProvider {
   const base = { id: `personal-${service}`, label: labels[service], clientId: settings.clientId,
-    scopes: scopesFor(service, settings.drafts), extra: {} as Record<string, string> };
+    scopes: scopesFor(service, settings.drafts, settings.calendarWrite), extra: {} as Record<string, string> };
   if (service === "google") return { ...base, authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token", extra: { access_type: "offline", prompt: "consent" } };
   if (service === "microsoft") {
     const root = `https://login.microsoftonline.com/${encodeURIComponent(settings.tenant)}/oauth2/v2.0`;
-    return { ...base, authorizeUrl: `${root}/authorize`, tokenUrl: `${root}/token` };
+    return { ...base, authorizeUrl: `${root}/authorize`, tokenUrl: `${root}/token`,
+      extra: settings.calendarWrite ? { prompt: "consent" } : {} };
   }
   return { ...base, authorizeUrl: "https://accounts.spotify.com/authorize", tokenUrl: "https://accounts.spotify.com/api/token" };
 }
@@ -97,6 +100,13 @@ export class SignIn {
   /** A usable access key, renewed first when it has run out. */
   async token(): Promise<string> {
     return this.deps.oauth.accessToken(await this.provider());
+  }
+  async requireCalendarWrite(): Promise<void> {
+    if (!this.settings().calendarWrite) throw new Error("Allow calendar changes on your account card, then sign in again.");
+    const tokens = await this.deps.oauth.saved(`personal-${this.service}`);
+    const scope = this.service === "google" ? "https://www.googleapis.com/auth/calendar.events" : "Calendars.ReadWrite";
+    if (!tokens?.scope?.split(/\s+/).includes(scope))
+      throw new Error("Sign in again and consent to calendar changes. Your saved read-only grant cannot write events.");
   }
 }
 

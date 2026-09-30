@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CalendarCreateSchema, CalendarMoveSchema, CalendarDeleteSchema, microsoftDayBefore, registerCalendarWrites } from "./calendar-write.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
 import { stripTags } from "./mime.js";
@@ -116,15 +117,38 @@ export class MicrosoftConnector {
     const from = value.from ?? now.toISOString();
     const to = value.to ?? new Date(Date.parse(from) + 86_400_000).toISOString();
     const query = new URLSearchParams({ startDateTime: from, endDateTime: to, $top: String(value.max),
-      $select: "subject,start,end,location,isOnlineMeeting,onlineMeeting", $orderby: "start/dateTime" });
+      $select: "id,subject,start,end,location,isOnlineMeeting,onlineMeeting", $orderby: "start/dateTime" });
     const Time = z.object({ dateTime: z.string(), timeZone: z.string().optional() }).passthrough();
-    const body = z.object({ value: z.array(z.object({ id: z.string(), subject: z.string().nullish(), start: Time.optional(), end: Time.optional(),
+    const body = z.object({ value: z.array(z.object({ id: z.string(), "@odata.etag": z.string().optional(), subject: z.string().nullish(), start: Time.optional(), end: Time.optional(),
       location: z.object({ displayName: z.string().nullish() }).passthrough().nullish(),
       onlineMeeting: z.object({ joinUrl: z.string().nullish() }).passthrough().nullish() }).passthrough()).default([]) })
       .passthrough().parse(await this.call(`/calendarView?${query}`, { headers: { prefer: 'outlook.timezone="UTC"' } }));
-    return { from, to, note: outsideTextNote, events: body.value.map((e) => ({ id: e.id, title: clip(e.subject ?? "(no title)", 200),
+    return { from, to, note: outsideTextNote, events: body.value.map((e) => ({ id: e.id, etag: e["@odata.etag"] ?? null, title: clip(e.subject ?? "(no title)", 200),
       starts: e.start?.dateTime ?? "", ends: e.end?.dateTime ?? "", location: clip(e.location?.displayName ?? "", 200),
       teamsJoinUrl: e.onlineMeeting?.joinUrl ?? null })) };
+  }
+
+  async writeCalendar(action: "create" | "move" | "delete", input: unknown) {
+    requirePersonal(this.store, this.owner, "microsoft");
+    await this.signIn.requireCalendarWrite();
+    // Graph expects local dateTime plus zone; normalise explicit offsets to UTC.
+    const at = (value: string) => ({ dateTime: new Date(value).toISOString().replace(/Z$/, ""), timeZone: "UTC" });
+    if (action === "create") {
+      const v = CalendarCreateSchema.parse(input);
+      return this.call("/events", { method: "POST", json: { subject: v.title,
+        location: { displayName: v.location }, start: at(v.starts), end: at(v.ends), ...microsoftDayBefore } });
+    }
+    const v = action === "move" ? CalendarMoveSchema.parse(input) : CalendarDeleteSchema.parse(input);
+    const path = `/events/${encodeURIComponent(v.id)}`;
+    const event = z.object({ "@odata.etag": z.string(), type: z.string() }).passthrough()
+      .parse(await this.call(`${path}?$select=id,type`));
+    if (event["@odata.etag"] !== v.etag) throw new Error("This event changed. List it again and confirm the updated event.");
+    if (event.type !== "singleInstance") throw new Error("Recurring events must be changed in Outlook Calendar.");
+    const moved = action === "move" ? CalendarMoveSchema.parse(input) : null;
+    const json = moved ? { start: at(moved.starts), end: at(moved.ends), ...microsoftDayBefore } : undefined;
+    const result = await this.call(path, { method: action === "delete" ? "DELETE" : "PATCH",
+      headers: { "if-match": v.etag }, ...(json ? { json } : {}) });
+    return { action, id: v.id, result };
   }
 
   /** The newest transcript of one Teams meeting, as plain lines, for the model to summarise. */
@@ -147,6 +171,7 @@ export class MicrosoftConnector {
 }
 
 export function registerMicrosoft(registry: Pick<ToolRegistry, "register">, microsoft: MicrosoftConnector): void {
+  registerCalendarWrites(registry, "outlook", (action, input) => microsoft.writeCalendar(action, input));
   const tool = (name: string, permission: string, description: string, parameters: z.ZodType, run: (input: unknown) => Promise<unknown>) =>
     registry.register({ name, permission, description, parameters, execute: async (input) => run(input) });
   tool("outlook.search", "personal.read", "Search the owner's Outlook mail, or list the newest in the inbox when no words are given.",
