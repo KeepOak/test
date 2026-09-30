@@ -2,8 +2,8 @@ import { z } from 'zod';
 
 export type AdapterField = {
   type: 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'string[]' | 'number[]' | 'integer[]' | 'boolean[]' | 'object[]';
-  description?: string; optional?: boolean; nullable?: boolean;
-  choices?: (string | number | boolean)[]; fields?: AdapterFields;
+  description?: string | undefined; optional?: boolean | undefined; nullable?: boolean | undefined;
+  choices?: (string | number | boolean)[] | undefined; fields?: AdapterFields | undefined;
 };
 export type AdapterFields = Record<string, AdapterField>;
 const names = z.string().regex(/^[a-z][a-z0-9_]{0,39}$/)
