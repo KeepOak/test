@@ -36,6 +36,7 @@ import { WebConfigSchema, type WebAccess } from './web.js';
 import { LaunchMcp, followLaunchFile } from './launch-mcp.js';
 import { HookSchema, type Hooks, type HookRunner, type HookConfig } from '../hooks.js';
 import type { ToolContext } from '../contracts.js';
+import type { McpOwnerRequests } from '../mcp-owner-requests.js';
 import type { NetworkPolicy } from '../network-policy.js';
 import type { GitTools } from './git.js';
 import { GitHubAccess, GitHubConfigSchema, type TokenSource } from './github.js';
@@ -441,9 +442,9 @@ export async function startMcp(
   const reopen = async () => {
     await host?.beforeRestart?.();
     await vet();
-    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
+    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.(), host?.ownerRequests);
   };
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injectionPolicy); // R17-S20
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injectionPolicy, host?.ownerRequests); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -478,6 +479,7 @@ async function vetLaunch(server: unknown, host: McpHost | undefined): Promise<vo
 export interface McpHost {
   /** Read fresh when outside descriptions or replies are used. Unset defaults to redaction. */
   injectionPolicy?: () => InjectionPolicy;
+  ownerRequests?: McpOwnerRequests;
   connectWhen(): 'startup' | 'on-demand';
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
