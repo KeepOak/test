@@ -1,7 +1,7 @@
 import type { ProgramPresent, RecorderCommand } from "./mic-capture.js";
 import type { Store } from "./store.js";
 import {
-  cleanWords, dictationCapture, dictationEngine, dictationLockedRefusal, dictationRefusal,
+  cleanWords, dictationCapture, dictationEngine, dictationLockedRefusal, dictationOwnerOnlyRefusal, dictationRefusal,
   frameBytes, mostWords, RoomFloor, dictationSettings,
 } from "./voice-dictation.js";
 import { voiceSettings } from "./voice.js";
@@ -168,6 +168,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
   /** Why it must not be listening this moment, or null. Asked before every piece and on the tick. */
   const mustStop = (): string | null =>
     (deps.locked?.() ? dictationLockedRefusal : null)
+    ?? (!deps.store.profiles.isOwner() || deps.store.profiles.scope() !== deps.owner ? dictationOwnerOnlyRefusal : null)
     ?? dictationRefusal(deps.store, deps.owner, platform, present);
 
   const quietFor = (): number => dictationSettings(deps.store, deps.owner).silenceSeconds * 1000;

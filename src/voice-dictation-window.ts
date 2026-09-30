@@ -27,6 +27,8 @@ export interface HearHost {
   owner: string;
   isOwner: boolean;
   locked: boolean;
+  /** Re-checked around awaited local inference, so the request's initial lock snapshot cannot authorize its result. */
+  isLocked?: () => boolean;
   voice: VoiceService;
   platform?: string | undefined;
   /** Whether a program is on this computer; the listener's own answer, so a test's fake is the one used. */
@@ -35,8 +37,14 @@ export interface HearHost {
 
 /** The words in one piece of the window's recording. `text` is null when a live caption was skipped as busy. */
 export async function hearInWindow(host: HearHost, request: IncomingMessage): Promise<{ text: string | null; partial: boolean }> {
-  if (!host.isOwner) throw new HearRefused(403, dictationOwnerOnlyRefusal);
-  if (host.locked) throw new HearRefused(409, dictationLockedRefusal);
+  const fresh = (): void => {
+    if (!host.isOwner || !host.store.profiles.isOwner() || host.store.profiles.scope() !== host.owner)
+      throw new HearRefused(403, dictationOwnerOnlyRefusal);
+    if (host.isLocked?.() ?? host.locked) throw new HearRefused(409, dictationLockedRefusal);
+    const refusal = dictationRefusal(host.store, host.owner, host.platform ?? process.platform, host.present, host.voice.localSpeech(host.owner));
+    if (refusal) throw new HearRefused(409, refusal);
+  };
+  fresh();
   const local = host.voice.localSpeech(host.owner);
   const refusal = dictationRefusal(host.store, host.owner, host.platform ?? process.platform, host.present, local);
   if (refusal) throw new HearRefused(409, refusal);
@@ -45,10 +53,12 @@ export async function hearInWindow(host: HearHost, request: IncomingMessage): Pr
   if (!/^audio\//.test(type)) throw new HearRefused(415, "Send the recording as audio.");
   const partial = new URL(request.url ?? "/", "http://local").searchParams.get("partial") === "1";
   const bytes = await readSound(request);
+  fresh();
   const whisper = host.voice.transcription.whisper;
   if (!whisper) throw new HearRefused(409, local.how);
   const language = host.voice.settings(host.owner).language || null;
   const heard = await whisper.transcribe(local, bytes, { language, partial });
+  fresh();
   return { text: heard ? heard.text : null, partial };
 }
 
