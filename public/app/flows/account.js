@@ -17,6 +17,7 @@ import { t } from "../../i18n.js";
 import { localPicker, initLocalPick, openLocalPicker } from "./localpick.js";
 import { loadSignIns, signInCards, planBody, planFoot, googleButton, googleOffered, initSignIns, signInExtraChatGPT, signInExtraProgram, stopPolling } from "./account-signin.js";
 import { gsel } from "../core/gsel.js";
+import { initKeepOak } from "./keepoak.js";
 
 /* ---------- the engine's list, shared by Settings › Accounts and Models ---------- */
 export const A = { view: null, catalog: null };
@@ -404,6 +405,7 @@ export function init() {
   initLocalPick();
   markLive(["sw:aa-q", "sw:aa-key", "sw:aa-name", "sw:aaextra", "signin", "addacct", "aa-prov", "aa-back", "aa-done", "aa-key", "aa-grp", "aa-nm", "aa-tr", "aa-pos", "aa-local", "aa-gone", "acct-menu", "acct-first", "acct-rename", "acct-rename-save", "acct-trunks", "acct-trunk", "acct-trunks-save", "sw:acct-name", "acct-out", "aa-plan", "aa-dev", "aa-chk", "aa-psi", "aa-cli", "aa-goo", "aa-fin"]);
   initSignIns(on);
+  initKeepOak();
   on("addacct", (el) => open(el.dataset.v || null));
   on("aa-prov", (el) => pick(el.dataset.v));
   on("aa-back", () => { stopPolling(); Object.assign(W, { step: 1, pool: null, service: null, extras: {}, saved: null, name: "", error: "", ...FRESH }); draw(); });
