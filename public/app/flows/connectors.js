@@ -8,8 +8,9 @@
    - A command-line tool: the tools the engine found on this computer (GET /api/clis), each allowed through POST
      /api/clis by its name, or one added by its full address (Enter in the path box).
    - The skill library browses the owner's curated HTTPS registry sources, inspects the actual document/hash/signature
-     and static scan, then asks explicit approval for an inactive install. A file uses POST /api/skills/install. GitHub
-     imports are a separate reviewed capability; writing one with Branch is another area's.
+     and static scan, then asks explicit approval for an inactive install. A file's SKILL.md goes to POST
+     /api/skills/install. GitHub skill-github.js inspects one pinned public tree and installs only the owner's exact
+     approved preview, switched off.
    - Another agent with an A2A card: its address goes to POST /api/agents/remote {cardUrl}; the engine reads its card
      (refusing a private or local address unless the owner allowed those) and keeps it. Branch on another computer is
      pairing (POST /api/agents/pair), held back for the security review; an agent on a KeepOak computer needs keepoak.com,
@@ -19,6 +20,7 @@ import { $, esc, renderNow, paint } from "../core/dom.js";
 import { openDlg, closeDlg, closePop, toast, ic } from "../core/ui.js";
 import { refresh } from "../core/state.js";
 import { api } from "../core/api.js";
+import { initGitHubSkills } from "./skill-github.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
@@ -172,6 +174,7 @@ const entryOf = (id) => CAT.list.flatMap((g) => g.connectors).find((c) => c.id =
 
 export function init() {
   initSkillMarketplace();
+  initGitHubSkills();
   markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
   on("ag-add", () => agentCard());
   on("ag-go", () => addAgent());
