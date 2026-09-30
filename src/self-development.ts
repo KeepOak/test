@@ -1,4 +1,4 @@
-import { rm, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, rename, rm, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
@@ -44,7 +44,10 @@ export interface SelfDevelopmentDeps {
   ownersDefaultTurn?: (context: ToolContext) => boolean;
 }
 
-const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
+const present = (path: string): Promise<boolean> => lstat(path).then(() => true, (error: NodeJS.ErrnoException) => {
+  if (error.code === "ENOENT") return false;
+  throw error;
+});
 
 async function run(deps: SelfDevelopmentDeps, cwd: string, args: string[], signal: AbortSignal, timeoutMs = 60_000): Promise<string> {
   const outcome = await deps.git({ cwd, args, timeoutMs }, signal);
@@ -66,18 +69,47 @@ function sourceChangeFolder(workspace: string, name: string): string {
   return join(workspace, sourceFolder, ".branch-worktrees", `self-${name}`);
 }
 
+/** Exclusive filesystem reservation shared by every preparation in this workspace, including other processes.
+ * Never steal an existing lock: it may belong to a live preparation even after a long clone. */
+async function withSourcePreparation<T>(workspace: string, signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted();
+  const lock = join(workspace, `${sourceFolder}.prepare-lock`);
+  try { await mkdir(lock); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST")
+      throw new Error(`Another source preparation holds ${lock}, or an interrupted preparation left it behind. Nothing was changed. Retry after that preparation finishes; a leftover lock needs recovery after confirming no preparation is active.`);
+    throw error;
+  }
+  try { signal.throwIfAborted(); return await work(); }
+  finally { await rmdir(lock); } // Only our empty reservation, never recursive cleanup or another preparation's files.
+}
+
+/** Clone only in a directory this attempt created; reserve the destination without replacing any existing path. */
+async function cloneSource(deps: SelfDevelopmentDeps, repository: { repo: string; url: URL }, source: string, signal: AbortSignal): Promise<void> {
+  const staging = await mkdtemp(join(deps.workspace, `${sourceFolder}.preparing-`));
+  try {
+    await run(deps, staging, ["clone", "--origin", "origin", repository.url.href, sourceFolder], signal, 1_800_000);
+    signal.throwIfAborted();
+    const clone = join(staging, sourceFolder);
+    // mkdir is exclusive even if a process not using our lock creates source between inspection and promotion.
+    // Do not rename a directory over source: POSIX rename can replace somebody else's empty directory.
+    await mkdir(source);
+    for (const name of await readdir(clone)) {
+      signal.throwIfAborted();
+      await rename(join(clone, name), join(source, name));
+    }
+    // A failed promotion leaves its destination intact for recovery, rather than deleting a checkout.
+  } finally { await rm(staging, { recursive: true, force: true, maxRetries: 5 }); }
+}
+
 async function ensureSource(deps: SelfDevelopmentDeps, repository: { repo: string; url: URL }, signal: AbortSignal): Promise<string> {
   const source = join(deps.workspace, sourceFolder);
   const exists = deps.exists ?? present;
   await deps.policy.assertAllowed(repository.url, "Branch Agent source repository");
-  // selfdev: a checkout with no commit is what a cut clone leaves behind; it is cloned again rather than used.
-  if ((await exists(source)) && await emptyCheckout(deps, source, signal)) await rm(source, { recursive: true, force: true, maxRetries: 5 });
-  if (!(await exists(source))) {
-    // Branch's history is large: a clone is given half an hour. One cut short (a slow link, the task stopped) is
-    // removed at once, so the next attempt clones again instead of finding a checkout with nothing in it.
-    try { await run(deps, deps.workspace, ["clone", "--origin", "origin", repository.url.href, sourceFolder], signal, 1_800_000); }
-    catch (error) { await rm(source, { recursive: true, force: true, maxRetries: 5 }).catch(() => undefined); throw error; }
-  }
+  if (await exists(source)) {
+    if (await emptyCheckout(deps, source, signal))
+      throw new Error(`The existing ${sourceFolder} has no commit and was preserved. Recover or move that incomplete checkout before preparing a source change again.`);
+  } else await cloneSource(deps, repository, source, signal);
   const address = await run(deps, source, ["remote", "get-url", "origin"], signal);
   const origin = repositoryAddress(address);
   if (origin.repo.toLowerCase() !== repository.repo.toLowerCase())
@@ -89,8 +121,8 @@ async function ensureSource(deps: SelfDevelopmentDeps, repository: { repo: strin
 }
 
 /**
- * selfdev: a checkout whose HEAD Git says is unborn, with no worktree made from it: what a clone cut short leaves
- * (a later fetch may have added the base, but no worktree can be made from it). Any other answer keeps it.
+ * Detect an unborn checkout with no worktree made from it. It is preserved for recovery, never deleted
+ * just because Git cannot resolve HEAD. Any other answer leaves the existing checkout in use.
  */
 async function emptyCheckout(deps: SelfDevelopmentDeps, source: string, signal: AbortSignal): Promise<boolean> {
   if (await (deps.exists ?? present)(join(source, ".branch-worktrees"))) return false;
@@ -185,31 +217,33 @@ export async function prepareBranchSourceChange(
 ): Promise<Record<string, unknown>> {
   const terms = ContractTermsSchema.parse(input.contract);
   const repository = repositoryAddress(input.repository);
-  const pendingFolder = `${sourceFolder}/.branch-worktrees/self-${input.name}`;
-  // Q12: the source commit is only known after the fetch, so before anything is cloned, fetched or
-  // added, the proposed contract is written down as pending, with where it comes from.
-  if (!deps.contracts.current(deps.owner, pendingFolder))
-    audit(deps.store, deps.owner, { action: "self_development.contract", actor: deps.owner, subject: `${pendingFolder} (pending)`,
-      reason: `From ${repository.repo} at ${input.base}. Paths ${terms.allowedPaths.join(", ")}; tools ${terms.permissions.join(", ")}`.slice(0, 500),
-      runId: runId ? runId.slice(0, 64) : null, outcome: "pending" });
-  const source = await ensureSource(deps, repository, signal);
-  const remote = await ensureUpstream(deps, source, !isBranchRepository(repository.repo), signal);
-  await run(deps, source, ["fetch", remote, input.base], signal, 900_000);
-  const copyName = `self-${input.name}`, branch = `branch/self-${input.name}`;
-  const folder = `${sourceFolder}/.branch-worktrees/${copyName}`;
-  const exists = deps.exists ?? present;
-  const existing = await exists(sourceChangeFolder(deps.workspace, input.name));
-  const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, remote, runId, terms, existing }, signal);
-  if (!existing)
-    await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal, 600_000);
-  const projectId = `branch-agent-${input.name}`;
-  const instructions = projectInstructions(input.name, input.base);
-  deps.projects.save(deps.owner, { id: projectId, name: `Branch Agent: ${input.name}`, instructions,
-    modelPreset: null, repository: branchRepository, folder, profile: null, knowledgeBases: [], branch: "" });
-  deps.projects.setActive(deps.owner, { active: projectId });
-  return { project: projectId, folder, branch, base: `${remote}/${input.base}`, pushRepository: repository.repo,
-    pullRequestTarget: branchRepository, ready: true, instructions, contract,
-    note: "Work only in this isolated copy. The running app and its data are unchanged. Every change is held to the contract above. Tests and owner review come before a draft pull request." };
+  return withSourcePreparation(deps.workspace, signal, async () => {
+    const pendingFolder = `${sourceFolder}/.branch-worktrees/self-${input.name}`;
+    // Q12: the source commit is only known after the fetch, so before anything is cloned, fetched or
+    // added, the proposed contract is written down as pending, with where it comes from.
+    if (!deps.contracts.current(deps.owner, pendingFolder))
+      audit(deps.store, deps.owner, { action: "self_development.contract", actor: deps.owner, subject: `${pendingFolder} (pending)`,
+        reason: `From ${repository.repo} at ${input.base}. Paths ${terms.allowedPaths.join(", ")}; tools ${terms.permissions.join(", ")}`.slice(0, 500),
+        runId: runId ? runId.slice(0, 64) : null, outcome: "pending" });
+    const source = await ensureSource(deps, repository, signal);
+    const remote = await ensureUpstream(deps, source, !isBranchRepository(repository.repo), signal);
+    await run(deps, source, ["fetch", remote, input.base], signal, 900_000);
+    const copyName = `self-${input.name}`, branch = `branch/self-${input.name}`;
+    const folder = `${sourceFolder}/.branch-worktrees/${copyName}`;
+    const exists = deps.exists ?? present;
+    const existing = await exists(sourceChangeFolder(deps.workspace, input.name));
+    const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, remote, runId, terms, existing }, signal);
+    if (!existing)
+      await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal, 600_000);
+    const projectId = `branch-agent-${input.name}`;
+    const instructions = projectInstructions(input.name, input.base);
+    deps.projects.save(deps.owner, { id: projectId, name: `Branch Agent: ${input.name}`, instructions,
+      modelPreset: null, repository: branchRepository, folder, profile: null, knowledgeBases: [], branch: "" });
+    deps.projects.setActive(deps.owner, { active: projectId });
+    return { project: projectId, folder, branch, base: `${remote}/${input.base}`, pushRepository: repository.repo,
+      pullRequestTarget: branchRepository, ready: true, instructions, contract,
+      note: "Work only in this isolated copy. The running app and its data are unchanged. Every change is held to the contract above. Tests and owner review come before a draft pull request." };
+  });
 }
 
 const toolName = "branch.prepare_source_change";
