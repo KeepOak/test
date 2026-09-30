@@ -12,7 +12,7 @@ import { GitRunner, type GitRunOptions, type GitOutcome } from "../integrations/
 
 type Deps = { store: Store; runtime: Runtime; git?: (input: GitRunOptions, signal: AbortSignal) => Promise<GitOutcome> };
 const identityGit = new GitRunner({ timeoutMs: 10_000 });
-const refused = (why: string): never => { throw new Error(`This interrupted step was not retried: ${why}. Its original context must be reconciled before continuing.`); };
+function refused(why: string): never { throw new Error(`This interrupted step was not retried: ${why}. Its original context must be reconciled before continuing.`); }
 const samePath = (a: string, b: string) => process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
 
 /** Restore only recorded constraints. A missing or ambiguous context never becomes the owner's current workspace. */
@@ -192,7 +192,7 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
       ...(outside ? { source: outside } : {}), ...(typeof own.agent === "string" ? { agent: own.agent } : {}),
       ...(own.delegates === true ? { delegates: true } : {}), ...(own.dryRun === true ? { dryRun: true } : {}) }), workspace };
     // Temporary conversations keep their original inability to write durable memory.
-    if (deps.store.sessionTemporary(run.sessionId)) context.permissions.delete("memory.write");
+    if (deps.store.sessionTemporary(run.sessionId)) context.permissions = new Set([...context.permissions].filter((permission) => permission !== "memory.write"));
     // Origin is still checked by the runtime from the task record; no key/person/approval grant is invented here.
     if (origin.permissions) context.permissions = new Set([...context.permissions].filter((p) => origin.permissions!.includes(p)));
     const proof: CopyIdentity | null = scope === null ? null : { scope, workspace, branch: branch!, base: base!, ...(recordedSource !== undefined ? { source: recordedSource } : {}) };
