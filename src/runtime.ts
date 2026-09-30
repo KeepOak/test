@@ -2507,9 +2507,12 @@ ${run.output.slice(0, 6000)}`;
     // back (the stall watch still runs) while an outlet filter applies to any connection this round may
     // fall back to, so filtered words never reach the page before the whole answer is filtered. ──
     const namesOf = (preset: ModelPreset | undefined): string[] => preset ? [preset.name, preset.id, preset.model, preset.provider.name] : [];
-    // mac7/speed: the owner's figure, or the launch one (12; 40 for work on the project's files). A planned task gets more on top.
-    const ceiling = knobs.maxModelRounds(this.store, this.owner, this.reliability, coding);
-    for (let round = 0; round < conductor.maxRounds(ceiling); round++) {
+    // mac7/speed: the owner's figure, or on auto no limit while a sign-in or a model here answers and the launch one (12; 40
+    // for work on the project's files) while a key billed per token does. Asked each round: a route may fall back. A
+    // planned task gets more on top.
+    const ceiling = (): number => knobs.maxModelRounds(this.store, this.owner, this.reliability, coding,
+      this.billedPerToken(this.helperModels.get(run.id) ?? route.candidates[route.index]));
+    for (let round = 0; round < conductor.maxRounds(ceiling()); round++) {
       // With no step left for the next question to the model, the task ends with the step limit's sentences, unasked.
       if (context.budget.steps >= context.budget.limits.maxSteps) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
       this.checkPaused(run.id); // long-work: the owner's Pause takes effect between steps
@@ -2690,7 +2693,7 @@ ${run.output.slice(0, 6000)}`;
       this.orchestration.milestone(run, round + 1);
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
-    return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling));
+    return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /**
    * mac7/speed: one tool call, from the journal entry to the result. This is exactly the path a
@@ -3463,6 +3466,10 @@ ${run.output.slice(0, 6000)}`;
    * window, up to 12,000 tokens): a coding task then sees its command, Git and GitHub tools together. A connection
    * billed per token, and a model on this computer, keep the launch figure.
    */
+  /** True for a connection billed per token (an API key): not a sign-in and not a model on this computer. */
+  private billedPerToken(preset: ModelPreset | undefined): boolean {
+    return !!preset && !presetRunsLocally(preset) && !isSignInConnection(preset);
+  }
   /** selfdev: where a reply's token ceiling starts and how far it may grow, by the kind of connection. */
   private replyCeiling(preset: ModelPreset): { base: number; max: number } {
     return !presetRunsLocally(preset) && isSignInConnection(preset) ? { base: signInReplyCeiling, max: signInMaxReplyCeiling }
@@ -3846,6 +3853,14 @@ ${run.output.slice(0, 6000)}`;
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
+    // The owner's "auto" limits are no limit on a sign-in or a model here, and finite on a key billed per token; a key's
+    // request also stops at this month's budget, so a task on no limit cannot run past it (src/knobs/apply.ts taskBudget).
+    const billed = this.billedPerToken(preset);
+    context.budget.answeredBy(billed);
+    if (billed) {
+      const monthly = this.monthlyBudgetRefusal();
+      if (monthly) throw new BudgetError(monthly);
+    }
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
