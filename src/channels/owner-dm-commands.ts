@@ -15,8 +15,9 @@ import type { InboundMessage } from "./router.js";
  *   sender (Telegram, Discord, Slack, Matrix; never email, SMS or a posted webhook, where a sender can be made up);
  * - never a message fetched after a restart, and under Lockdown or the App lock only `/lockdown` and `/lockdown on`;
  * - a task one of these starts (`/goal`, `/bg`) is given what an ordinary message from that chat is given: with
- *   "Your own chats have your full access" on (owner-dm-full, src/channels/chat-permissions.ts), every permission;
- *   with it off, the chat's short list;
+ *   "Your own chats have your full access" on (owner-dm-full, src/channels/chat-permissions.ts), it is the owner's own
+ *   (source "owner", every permission, carrying the chat's mark so it is checked again at every step); with it off, it
+ *   is the chat's task with the chat's short list;
  * - nothing that lasts beyond the conversation is made from a chat (the rule in docs/configuration.md: never an
  *   automation or a standing order from a chat), so `/loop`, `/heartbeat`, `/suggestions` and `/blueprint` only look,
  *   pause, resume or stop; switching Lockdown off stays in the app on this computer.

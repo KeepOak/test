@@ -985,10 +985,11 @@ app whose servers vouch for who sent it (Telegram, Discord, Slack, Matrix; never
 Its task runs as a task you start in the window: every permission, your approval rules, and the Access
 level a new conversation in the window starts on (Full access included), and you can answer its questions
 from that chat. The switch is `ownerChats` on this card, **Your own chats have your full access**, on by
-default. Lockdown and the App lock turn it off while they are on. Turning the switch off (or unmarking
-the account) gives the next message the short list at once; a task already running keeps its approval
-rules until it ends, but the things only you may do (your settings, your devices and the rest) refuse it
-again from its next step. A group,
+default. What `/goal` and `/bg` start from that chat is yours in the same way, and so is Full Access in
+the self-development worktree (Branch building Branch works from your phone). Lockdown and the App lock
+turn it off while they are on. It is checked again at every step: turning the switch off (or unmarking
+the account) gives the next message the short list, and a task already running is held to a chat's rules
+from its next step, so its next change waits for your yes in the window. A group,
 anybody else, or a message the app cannot vouch for still gets the short list above. This follows
 OpenClaw's "main" session: the owner's direct chat runs on the host with the full toolset, and every
 other session is held back.

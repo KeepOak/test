@@ -40,7 +40,7 @@ import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
-import { setOwnerChatCheck } from "../key-context.js"; // owner-dm-full
+import { ownerChatMark, setOwnerChatCheck } from "../key-context.js"; // owner-dm-full
 import { conversationModeSettings, looserThan, readConversationMode, type ConversationMode } from "../conversation-mode.js"; // owner-dm-full
 import { readPolicy } from "../policy.js"; // owner-dm-full
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
@@ -1157,7 +1157,7 @@ export class ChannelRouter {
       seen.add(id);
       const events = this.store.events(id);
       for (const event of events) {
-        if (event.kind !== "channel.inbound") continue;
+        if (event.kind !== "channel.inbound" && event.kind !== ownerChatMark) continue; // owner-dm-full: /bg, /goal
         const came = event.data;
         if (typeof came.channel !== "string" || typeof came.senderId !== "string" || came.chatKind !== "direct") return false;
         const kind = this.adapters.get(came.channel)?.adapter.kind ?? "";
@@ -1239,6 +1239,8 @@ export class ChannelRouter {
     const work = async () => (await executeCommand({ ...this.ownerDmHost!(), lockdownOffRefusal: "Lockdown can only be switched off in the app on this computer." }, {
       surface: "chat", line: message.text, sessionId: this.sessionFor(message.channel, message.chatId), access: "full",
       permissions: this.chatPermissions(message), ownerDm: true,
+      // owner-dm-full: with full access on, what these commands start is the owner's own, as a plain message's task is.
+      ...(this.ownerFullFrom(message) ? { ownerChat: { channel: message.channel, senderId: message.senderId } } : {}),
     }))?.text ?? "I do not know that command.";
     const reply = ["goal", "bg", "health"].includes(dm.name) ? await this.withSlot(work) : await work();
     await this.deliver(message.channel, message.chatId, reply, key, this.quoteFor(message)).catch(() => undefined);

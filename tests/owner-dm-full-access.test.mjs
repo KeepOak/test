@@ -22,11 +22,11 @@ import { setLockdown } from "../dist/lockdown.js";
 const OWNER = "5660235788", FRIEND = "friend-2";
 const powers = ["files.write", "shell.execute", "settings.write"];
 
-async function fixture(t, tool = "shell.execute", mode = "full") {
+async function fixture(t, tool = "shell.execute", mode = "full", script = null) {
   const root = await mkdtemp(join(tmpdir(), "branch-owner-dm-full-"));
   const ran = [], sent = [];
   // Calls the stand-in command tool once, then answers.
-  const provider = { name: "scripted", complete: async (request) =>
+  const provider = { name: "scripted", complete: async (request) => script ? script(request) :
     request.messages.at(-1)?.role === "tool" ? { content: "Done.", toolCalls: [] }
       : { content: "", toolCalls: [{ id: `t${ran.length}-${Date.now()}`, name: tool,
         arguments: tool === "shell.execute" ? JSON.stringify({ executable: "node", args: ["-p", "1+1"] }) : "{}" }] } };
@@ -123,4 +123,33 @@ test("on Ask first, the owner answers the command's own Yes from that DM", async
   await app.channels.handle({ channel: "tg", chatId: OWNER, chatKind: "direct", senderId: OWNER, senderName: OWNER,
     text: yes.value, addressed: true, messageId: "yes-1" });
   assert.equal(ran.length, 1, "the owner's Yes from the DM ran it");
+});
+
+const command = (id) => ({ content: "", toolCalls: [{ id, name: "shell.execute", arguments: JSON.stringify({ executable: "node", args: ["-p", "1+1"] }) }] });
+
+test("the self-development worktree's Full Access reaches a task from the owner's DM, and not a friend's", async (t) => {
+  const seen = [];
+  const { app, say } = await fixture(t, "demo.probe");
+  app.registry.register({ name: "demo.probe", permission: "files.read", description: "stand-in", group: "core",
+    parameters: z.object({}).strict(), execute: async (_input, context) => { seen.push(app.runtime.ownerFullAccessFor(context, true)); return {}; } });
+  await say(OWNER);
+  assert.match(String(seen.at(-1)), /Full Access in conversation/, "the owner's Full Access, as the window's would be");
+  await say(FRIEND);
+  assert.equal(seen.at(-1), null, "a friend's chat is never the owner's Full Access");
+});
+
+test("turning the switch off ends full access for a running DM task at its next step", async (t) => {
+  let app, turn = 0;
+  const script = async (request) => {
+    turn++;
+    if (turn === 1) return command("first");
+    if (turn === 2) { app.channels.setPermissionSettings({ ownerChats: false }); return command("second"); }
+    return { content: "Done.", toolCalls: [] };
+  };
+  const made = await fixture(t, "shell.execute", "full", script);
+  app = made.app;
+  const { run } = await made.say(OWNER);
+  assert.equal(made.ran.length, 1, "the first command ran on Full access; the one after the switch went off did not");
+  assert.equal(run.status, "needs_input", "it waits for the owner's yes in the window, as a chat's task does");
+  assert.equal(runOrigin(app.store, run.id).source, "channel");
 });
