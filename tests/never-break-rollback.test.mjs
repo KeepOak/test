@@ -564,7 +564,9 @@ test("branch rollback is not half-attempted on Windows", async () => {
     print: (line) => said.push(line),
   });
   assert.equal(code, 1);
-  assert.match(said.join("\n"), /On Windows, go back to the previous version from the app/);
+  assert.match(said.join("\n"), /On Windows, Branch goes back to the version before by itself when a new version does not open/);
+  // Settings › Updates' undo is greyed, so the refusal never sends the owner there.
+  assert.doesNotMatch(said.join("\n"), /Settings, Updates/);
 });
 
 test("merge-queue review: a swap that fails after the format was taken down does not say the work was untouched", async (t) => {
