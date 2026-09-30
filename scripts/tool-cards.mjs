@@ -7,11 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import { createBranch } from "../dist/index.js";
-import { personalParts, personalTools } from "../dist/personal/settings.js";
+import { listedPersonalTools, personalParts } from "../dist/personal/settings.js";
 
 /* Each part built on first use: how to build it with every switch on, and the names of its tools. */
 export const parts = [
-  { name: "personal", tools: () => personalParts.flatMap((part) => personalTools[part]),
+  { name: "personal", tools: () => listedPersonalTools(() => true),
     build: async (app) => { for (const part of personalParts) await app.personal.setMode(part, { mode: "on" }); } },
 ];
 

@@ -3,6 +3,7 @@ import type { WorkspaceFiles } from "../files.js";
 import type { OAuthConnections } from "../oauth.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Runtime } from "../runtime.js";
+import { CalendarAvailability, availabilityEnabled, registerCalendarAvailability } from "./calendar-availability.js";
 import { ChatFiles, registerChatFiles } from "./chat-files.js";
 import { GoogleConnector, registerGoogle } from "./google.js";
 import { HomeControl, registerHomeControl } from "./home-control.js";
@@ -59,6 +60,7 @@ function riskyQuestion(tool: string, permission: string, target: string): boolea
 
 export class Personal {
   readonly signIns: { google: SignIn; microsoft: SignIn; spotify: SignIn };
+  readonly availability: CalendarAvailability;
   readonly google: GoogleConnector;
   readonly microsoft: MicrosoftConnector;
   readonly spotify: SpotifyConnector;
@@ -77,6 +79,7 @@ export class Personal {
     const signIn = { store, owner, oauth: deps.oauth, secret: deps.secret };
     this.signIns = { google: new SignIn(signIn, "google", "google"), microsoft: new SignIn(signIn, "microsoft", "microsoft"),
       spotify: new SignIn(signIn, "spotify", "spotify") };
+    this.availability = new CalendarAvailability({ store, owner, fetch: deps.fetch, signIns: this.signIns, requireOwner: deps.requireOwner });
     this.google = new GoogleConnector(store, owner, deps.fetch, this.signIns.google);
     this.microsoft = new MicrosoftConnector(store, owner, deps.fetch, this.signIns.microsoft);
     this.spotify = new SpotifyConnector(store, owner, deps.fetch, this.signIns.spotify);
@@ -106,6 +109,7 @@ export class Personal {
       "mail-search": () => registerMailSearch(tools, this.mail),
     };
     for (const part of personalParts) this.sync(part);
+    this.syncAvailability();
   }
 
   private makeBrief(): SpokenBrief {
@@ -137,6 +141,13 @@ export class Personal {
     if (personalMode(this.deps.runtime.store, this.deps.runtime.owner, part) !== "off") this.registrars[part]?.();
   }
 
+  private syncAvailability(): void {
+    const { runtime, registry, requireOwner } = this.deps;
+    registry.unregister("calendars.free_slots");
+    if (availabilityEnabled(runtime.store, runtime.owner))
+      registerCalendarAvailability(ownerOnlyTools(registry, runtime.store, requireOwner), this.availability);
+  }
+
   modes(): Record<PersonalPart, PersonalMode> {
     return Object.fromEntries(personalParts.map((part) => [part, personalMode(this.deps.runtime.store, this.deps.runtime.owner, part)])) as Record<PersonalPart, PersonalMode>;
   }
@@ -145,6 +156,7 @@ export class Personal {
   async setMode(part: PersonalPart, input: unknown): Promise<PersonalMode> {
     const mode = savePersonalMode(this.deps.runtime.store, this.deps.runtime.owner, part, input);
     this.sync(part);
+    this.syncAvailability();
     if (mode === "off" && part === "tunnel") await this.tunnel.stop();
     if (mode === "off" && part === "voice-approvals") this.voiceApprovals.clear();
     return mode;

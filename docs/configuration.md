@@ -10644,3 +10644,14 @@ The Gardener extends this record with the following settings when its feature is
 | `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
+
+
+### Find a shared calendar slot
+
+Ask Branch to compare named Google calendar IDs and Microsoft work/school email schedules using `calendars.free_slots`. Give explicit `from` and `to` times with UTC offsets, meeting `minutes`, and optionally `windows` for agreed working hours. Queries are capped at seven days, ten calendars per provider and fifty suggestions. The owner must have access to each calendar.
+
+On the Google account card, enable **Allow shared calendar availability**, save, and sign in again to grant the read-only free/busy scope. Microsoft uses its existing calendar-read grant; shared scheduling requires a work/school account. Google groups are not expanded: name individual calendar IDs.
+
+Suggestions are UTC and never book an event. Tentative, away and working-elsewhere entries count as busy. Missing, inaccessible, invalid or oversized provider answers stop comparison instead of treating unknown time as free. Availability may change afterward; creating an event remains a separately confirmed action.
+
+Provider contracts: [Google freeBusy](https://developers.google.com/workspace/calendar/api/v3/reference/freebusy/query), [Microsoft getSchedule](https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0). Original code; no provider code copied.
