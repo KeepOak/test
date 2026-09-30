@@ -4,8 +4,8 @@
      the owner's own hand-run tool). "Run N test cases" runs the specialist's own evaluation (specialists.evaluate), Promote
      makes a passing draft the one in use (specialists.promote, refused in the engine's words until it passed) and Roll
      back returns to the one before (specialists.rollback). Everything is read back from GET /api/state specialists.
-   - Specialists › Other coding agents (Advanced): no route lists the coding programs a task could hand work to, and
-     handing work over starts a program here, so it stays greyed.
+   - Specialists › Other coding agents (Advanced): only Branch itself hands a coding job to the owner's own Claude Code
+     or Codex, never a Trunk, so the row says that in words and has no button (window.why.d17-handoffcli).
    - Tools, Advanced, by kind: skills (how often each is used, GET /api/learning-more/curator; the last install's written
      account, GET /api/skill-installs; checking a skill's writing and skills from other assistants have no route, so they
      stay greyed), plugins (what the chosen plugin asks for, POST /api/plugins/<id>/inspect, which runs none of its code;
@@ -17,7 +17,8 @@
 import { esc, renderNow } from "../core/dom.js";
 import { selectField } from "../core/gsel.js";
 import { E, level, refresh } from "../core/state.js";
-import { toast, openDlg, dialog } from "../core/ui.js";
+import { toast, openDlg, dialog, ic } from "../core/ui.js";
+import { reason } from "../core/why.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -139,7 +140,7 @@ export function toolsSection(kind, selected) {
   if (level() < 1 || !set) return "";
   return `<div class="sec x15-sec"><h2>${esc(say(set[0]))}</h2><div class="rows">${set[1].map(([k, i, w]) => demoPlace17(k, i, w)).join("")}</div></div>`;
 }
-export const codingAgentsSection = () => (level() >= 1 ? `<div class="sec x15-sec"><h2>${t("window.places.customize17.other-coding-agents")}</h2><div class="rows">${demoPlace17("handoffcli", "term", [t("window.places.customize17.hand-coding-to-another-agent"), t("window.places.customize17.a-trunk-can-pass-a-coding"), t("window.places.customize17.see-how")])}</div></div>` : "");
+export const codingAgentsSection = () => (level() >= 1 ? `<div class="sec x15-sec"><h2>${t("window.places.customize17.other-coding-agents")}</h2><div class="rows"><div class="prow"><span class="ico-tile">${ic("term", "s")}</span><span class="grow"><b>${esc(t("window.places.customize17.hand-coding-to-another-agent"))}</b><small>${esc(reason("d17-handoffcli"))}</small></span></div></div></div>` : "");
 
 /* A read from outside /api (the OpenAI-shaped address and the agent card), signed like every other request. */
 async function outside(path) {

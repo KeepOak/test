@@ -46,8 +46,11 @@ test("selected owner Full Access allows routine settings work and validated chil
   const plain = await call("run", { prompt: "Do the work" });
   assert.equal(app.runtime.checkPolicy("branch.prepare_source_change", prepare, app.runtime.context({ runId: plain.body.id })).decision, "ask",
     "outside Full Access the owner is still asked, once each time");
+  // Owner ruling 2026-09-30: Full access asks nothing but Hermes Agent's dangerous commands, a coding hand-off included.
   assert.equal(app.runtime.checkPolicy("code.hand_off", { program: "codex", folder: "site", task: "Review it" }, own).decision,
-    "ask", "a hand-off using an external coding account keeps its own once-only question");
+    "allow", "a hand-off in Full access goes ahead, as Codex's never-ask and Claude Code's bypass do");
+  assert.equal(app.runtime.checkPolicy("code.hand_off", { program: "codex", folder: "site", task: "Review it" },
+    app.runtime.context({ runId: plain.body.id })).decision, "ask", "outside Full Access the hand-off keeps its once-only question");
   await assert.rejects(app.registry.execute("files.write", { path: "branch-agent-source/src/runtime.ts", content: "unsafe" }, own),
     /protected Branch Agent source checkout is never changed directly/, "the execution guard still protects Branch's source");
   assert.match(app.runtime.ownerFullAccessFor(own, true), new RegExp(run.sessionId));
