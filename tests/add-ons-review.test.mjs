@@ -178,15 +178,18 @@ test("review: a list answer is cut off as soon as it is too large, before it is 
   await assert.rejects(lists.install(address, "weather"), /larger than an add-on list may send/);
 });
 
-test("review: a newer version that asks for more arrives switched off and says what grew", async (t) => {
+test("review: a newer code version must be evaluated and its staged request says what grew", async (t) => {
   const { app } = await fixture(t);
   const { lists, state } = webList(t, app, { permissions: ["text.read"] });
   await lists.browse(address);
   await lists.install(address, "weather");
   state.version = "1.1.0";
   state.permissions = ["text.read", "files.read"];
-  const updated = await lists.update("weather");
-  assert.deepEqual([updated.enabled, updated.grew, updated.plugin.permissions], [false, ["files.read"], ["text.read", "files.read"]]);
+  await assert.rejects(lists.update("weather"), /Evaluate and promote/);
+  const staged = await lists.stageUpdate("weather");
+  const candidate = await app.addOns.shelf.look(staged.source);
+  assert.deepEqual(candidate.offer.plugin.permissions, ["text.read", "files.read"]);
+  assert.deepEqual(app.addOns.shelf.record("weather").plugin.permissions, ["text.read"]);
   assert.equal(app.store.get("settings", app.runtime.owner, "plugin:weather"), undefined, "no earlier yes carries over");
 });
 
@@ -306,10 +309,31 @@ test("review: on Windows add-on code is refused unless the owner chose to run it
   const overview = await call("plugin-catalog/add-ons");
   assert.equal(overview.settings.windowsWithoutWall, false);
   assert.equal(overview.windows, process.platform === "win32");
-  assert.equal((await call("plugin-catalog/add-ons/settings", { windowsWithoutWall: true })).windowsWithoutWall, true);
+  // RES-251: turning it on is less careful, so it waits for the owner's yes.
+  await assert.rejects(call("plugin-catalog/add-ons/settings", { windowsWithoutWall: true }), /less careful/);
+  assert.equal((await call("plugin-catalog/add-ons/settings", { windowsWithoutWall: true, confirmLoosening: true })).windowsWithoutWall, true);
 });
 
-test("review: hand-placed plugins stay in Branch unless the owner ticks the wall; a package's plugin is walled whatever the tick says", async (t) => {
+/* RES-251: a plugin the owner placed runs as its own program. On Windows the wall is only a job object, and a
+   hand-placed plugin used to run inside Branch, so there it runs as its own program with limits rather than being
+   refused; code somebody else wrote still is. Mutation: drop `!handPlaced &&` in WalledPlugins.ask and the hand-placed
+   run is refused. */
+test("RES-251 on Windows a plugin the owner placed runs as its own program; others' code is still refused", async (t) => {
+  const started = [];
+  const walled = new WalledPlugins({ policy: (id) => ({ walled: true, hosts: [], handPlaced: id === "mine" }), unreadable: () => [],
+    weakWallAllowed: () => false, wallDeps: { platform: "win32" },
+    spawn: async (start, limits, signal) => { started.push(limits); return answering(described)(start, limits, signal); } });
+  const root = await temp(t);
+  await writeFile(join(root, "mine.mjs"), "export default {};\n");
+  await walled.load("mine", join(root, "mine.mjs"));
+  assert.equal(started.length, 1, "run as its own program");
+  assert.equal(started[0].job, true, "with the job object's limits");
+  await writeFile(join(root, "theirs.mjs"), "export default {};\n");
+  await assert.rejects(walled.load("theirs", join(root, "theirs.mjs")), (error) => error.message === weakWallRefusal);
+  assert.equal(started.length, 1);
+});
+
+test("review: hand-placed plugins run walled unless the owner says otherwise (and yes to it); a package's plugin is walled whatever the tick says", async (t) => {
   const { app, call, root } = await fixture(t);
   await call("plugin-catalog/add-ons/settings", { modes: { packages: "on" } });
   app.security.malware.vet = async () => undefined;
@@ -317,13 +341,20 @@ test("review: hand-placed plugins stay in Branch unless the owner ticks the wall
     "branch-addon.json": JSON.stringify({ format: "branch-addon", id: "pkg", name: "Pkg", plugin: "pkg.mjs" }) });
   const look = await call("plugin-catalog/add-ons/look", { source: folder });
   await call("plugin-catalog/add-ons/install", { source: folder, sha256: look.offer.sha256 });
-  assert.equal(app.addOns.settings().wallEveryPlugin, false, "the tick ships off");
+  // RES-251: the wall ships on for hand-placed plugins too; taking it away needs the owner's yes, never under Lockdown.
+  assert.equal(app.addOns.settings().wallEveryPlugin, true, "the wall ships on");
   assert.equal(app.addOns.walled.holds("pkg"), true);
-  assert.equal(app.addOns.walled.holds("mine"), false, "a plugin file the owner placed keeps running as before");
-  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: true });
-  assert.equal(app.addOns.walled.holds("mine"), true);
-  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false });
+  assert.equal(app.addOns.walled.holds("mine"), true, "a plugin file the owner placed runs as its own program too");
+  await assert.rejects(call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false }), /less careful: plugins you placed yourself would run inside Branch/);
+  assert.equal(app.addOns.walled.holds("mine"), true, "nothing changes without the yes");
+  await call("lockdown", { on: true });
+  await assert.rejects(call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true }), /Lockdown is on/);
+  await call("lockdown", { on: false });
+  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true });
+  assert.equal(app.addOns.walled.holds("mine"), false, "the owner's own choice, once said");
   assert.equal(app.addOns.walled.holds("pkg"), true);
+  await call("plugin-catalog/add-ons/settings", { modes: { lists: "on" } });
+  assert.equal(app.addOns.settings().wallEveryPlugin, false, "a later save keeps the owner's choice");
 });
 
 test("macOS for real: an address the package named is reached through Branch's door", mac, async (t) => {
@@ -463,4 +494,100 @@ test("review: the add-ons card opens in Customize → Plugins and fits 400 px wi
   assert.ok(fits, "Customize › Tools fits inside 400 px");
   const wide = await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth);
   assert.equal(wide, false, "no sideways scrolling at 400 px");
+});
+
+/* RES-251: a plugin the owner already used is not broken. Hand-placed plugins switched on before the wall shipped on
+   keep running inside Branch (recorded one by one, listed once with "Wall it"); a plugin switched on later is walled.
+   Each hand-placed plugin can be let inside by the owner alone, with a yes, never under Lockdown; walling one always goes.
+   Mutation: skip AddOns.grandfather() in src/add-ons/index.ts and the kept plugin is walled on upgrade. */
+test("RES-251 plugins already switched on keep running as before; new ones are walled; one plugin inside needs a yes", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-addons-kept-"));
+  const open = new Set(); // closed before the folder goes, whatever fails on the way
+  t.after(async () => { for (const close of open) await close().catch(() => undefined); await discardTemp(root); });
+  const dataDir = join(root, "data"), workspace = join(root, "workspace");
+  const before = await createBranch({ workspace, dataDir });
+  const owner = before.runtime.owner;
+  // As an older Branch left it: "old" switched on inside, and no record of the wall's first start.
+  before.store.save("settings", owner, "plugin:old", { enabled: true });
+  before.store.save("settings", owner, "plugin:off", { enabled: false });
+  before.store.delete("settings", owner, "add-ons-plugin-wall-kept");
+  await before.close();
+
+  const app = await createBranch({ workspace, dataDir });
+  const server = await startServer(app, { dataDir, port: 0 });
+  const closeFirst = async () => { await server.close(); await app.close(); };
+  open.add(closeFirst);
+  const call = async (path, body) => {
+    const response = await fetch(`${server.url}/api/${path}`, { method: body === undefined ? "GET" : "POST",
+      headers: { authorization: `Bearer ${server.token}`, origin: server.url, "content-type": "application/json" }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
+    return { status: response.status, body: await response.json() };
+  };
+  assert.equal(app.addOns.walled.holds("old"), false, "the plugin the owner already used keeps running as before");
+  assert.equal(app.addOns.walled.holds("off"), true, "one that was off is walled when it is switched on");
+  assert.equal(app.addOns.walled.holds("new"), true, "a new one is walled");
+  const shown = (await call("plugin-catalog/add-ons")).body.settings;
+  assert.deepEqual([shown.grandfathered, shown.insideBranch], [["old"], ["old"]], "listed for the owner, one by one");
+
+  const refused = await call("plugin-catalog/add-ons/inside", { id: "new", inside: true });
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /less careful: the plugin new would run inside Branch/);
+  await call("lockdown", { on: true });
+  assert.equal((await call("plugin-catalog/add-ons/inside", { id: "new", inside: true, confirmLoosening: true })).status, 409, "never under Lockdown");
+  assert.equal((await call("plugin-catalog/add-ons/inside", { id: "old", inside: false })).status, 200, "walling one always goes, Lockdown or not");
+  await call("lockdown", { on: false });
+  assert.equal(app.addOns.walled.holds("old"), true, "walled with one click");
+  assert.deepEqual((await call("plugin-catalog/add-ons")).body.settings.grandfathered, [], "and off the notice");
+  assert.equal((await call("plugin-catalog/add-ons/inside", { id: "new", inside: true, confirmLoosening: true })).status, 200);
+  assert.equal(app.addOns.walled.holds("new"), false, "the owner's own choice, once said");
+  const key = app.sessionTokens.create(owner, { name: "script", scope: "run", minutes: 5 }).token;
+  const keyed = await fetch(`${server.url}/api/plugin-catalog/add-ons/inside`, { method: "POST",
+    headers: { authorization: `Bearer ${key}`, origin: server.url, "content-type": "application/json" }, body: JSON.stringify({ id: "x", inside: true, confirmLoosening: true }) });
+  assert.equal(keyed.status, 401, "a script's key cannot let a plugin inside");
+
+  // Started again, nothing new is kept: the first start is recorded.
+  open.delete(closeFirst); await closeFirst();
+  const again = await createBranch({ workspace, dataDir });
+  open.add(() => again.close());
+  again.store.save("settings", owner, "plugin:later", { enabled: true });
+  assert.equal(again.addOns.walled.holds("later"), true);
+  assert.deepEqual(again.addOns.settings().grandfathered, []);
+});
+
+/* RES-251, as the owner sees it: Customize › Tools › Plugins lists the plugins kept running inside Branch once, with
+   "Wall it" beside each; pressing it walls that plugin. Mutation: drop pluginInsideLive from markLive in
+   public/app/places/customize.js and "Wall it" is greyed. */
+test("RES-251 the kept plugins are listed once in Customize, and Wall it walls one", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-addons-kept-ui-"));
+  const open = new Set();
+  t.after(async () => { for (const close of open) await close().catch(() => undefined); await discardTemp(root); });
+  const dataDir = join(root, "data"), workspace = join(root, "workspace");
+  const before = await createBranch({ workspace, dataDir });
+  await mkdir(join(dataDir, "plugins"), { recursive: true });
+  await writeFile(join(dataDir, "plugins", "old.mjs"), "export default { id: 'old', name: 'Old helper', tools: [] };\n");
+  before.store.save("settings", before.runtime.owner, "plugin:old", { enabled: true });
+  before.store.delete("settings", before.runtime.owner, "add-ons-plugin-wall-kept");
+  await before.close();
+  const app = await createBranch({ workspace, dataDir });
+  const server = await startServer(app, { dataDir, port: 0 });
+  open.add(async () => { await server.close(); await app.close(); });
+  const browser = await chromium.launch({ headless: true });
+  open.add(() => browser.close());
+  await fetch(`${server.url}/api/onboarding`, { method: "POST", headers: { authorization: `Bearer ${server.token}`, origin: server.url, "content-type": "application/json" }, body: "{\"done\":true}" });
+  const page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await signIn(page, server);
+  const place = await openPlace(page, "customize", "tools");
+  await place.locator('[data-act="t9-kind"][data-v="plugins"]').click();
+  await place.locator('[data-act="t9-sel"][data-v="old"]').click();
+  const notice = place.locator(".plug-kept8");
+  await notice.waitFor();
+  assert.match(await notice.innerText(), /Old helper/);
+  const wall = notice.locator('[data-act="plug-wall"][data-id="old"]');
+  assert.equal(await wall.getAttribute("aria-disabled"), null, "Wall it is live");
+  await wall.click();
+  for (let tries = 0; tries < 100 && !app.addOns.walled.holds("old"); tries++) await new Promise((done) => setTimeout(done, 100));
+  assert.equal(app.addOns.walled.holds("old"), true, "walled with one click");
+  await notice.waitFor({ state: "detached" });
+  assert.deepEqual(errors, []);
 });

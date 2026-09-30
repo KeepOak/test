@@ -20,6 +20,8 @@ export interface ChatThread {
   linked?: boolean;
   /** The Trunk this chat's conversation is with. */
   trunkId?: string;
+  /** A group chat or a direct one, for the owner's list of groups (src/channels/group-activation.ts). */
+  kind?: "direct" | "group";
   /** Earlier conversations of this chat, newest first, kept in history. */
   earlier?: string[];
 }

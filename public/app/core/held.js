@@ -7,12 +7,16 @@
 export function hold17(v) {
   if (!v.paused) v.pause();
   const src = v.getAttribute("src");
-  if (!src || v.readyState < 2) return; // nothing decoded (a loop that never played, or one held already)
-  try {
-    const frame = Object.assign(document.createElement("canvas"), { width: v.videoWidth, height: v.videoHeight });
-    frame.getContext("2d").drawImage(v, 0, 0);
-    v.poster = frame.toDataURL();
-  } catch { /* its own still stays its picture */ }
+  if (!src) return; // held already
+  // A loop with no frame yet lets its file go as well: one told to play and held before its first frame arrived went
+  // on loading it after the pause, and kept a decoder while held (tests/window-sleep.test.mjs, on a slow machine).
+  if (v.readyState >= 2) {
+    try {
+      const frame = Object.assign(document.createElement("canvas"), { width: v.videoWidth, height: v.videoHeight });
+      frame.getContext("2d").drawImage(v, 0, 0);
+      v.poster = frame.toDataURL();
+    } catch { /* its own still stays its picture */ }
+  }
   v.dataset.held17 = src;
   v.dataset.at17 = String(v.currentTime);
   v.removeAttribute("src");

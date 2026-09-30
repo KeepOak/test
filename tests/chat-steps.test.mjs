@@ -305,9 +305,8 @@ test("a sender the one list blocks gets no task, no steps and no progress, even 
   const { app, bot, provider } = await fixture(t);
   saveSenderAllowlist(app.store, app.runtime.owner, { rules: [{ channel: "telegram", sender: "42", decision: "block", note: "lost phone" }] });
   bot.say("check the notes");
-  await until(() => bot.state.sent.length, "an answer");
-  await delay(100);
-  assert.deepEqual(bot.state.sent.map((m) => m.text), ["This assistant is private."]);
+  await delay(400);
+  assert.deepEqual(bot.state.sent.map((m) => m.text), [], "a block is silent (UP-CHAT-008)");
   assert.equal(bot.state.edits.length, 0);
   assert.equal(provider.requests.length, 0, "no task started");
 });

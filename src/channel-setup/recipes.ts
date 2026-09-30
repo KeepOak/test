@@ -100,6 +100,8 @@ export const RecipeSchema = z.object({
   noCheck: words.optional(),
   entry: z.record(z.string(), z.unknown()).optional(),
   pairing: words.optional(),
+  /** Group chats: when it answers there, and what the app itself needs for it to see every message. */
+  groups: words.optional(),
   sources: z.array(https).max(10),
 }).strict()
   .refine((recipe) => Boolean(recipe.app) !== Boolean(recipe.noApp), "A recipe has an app or says why there is none")

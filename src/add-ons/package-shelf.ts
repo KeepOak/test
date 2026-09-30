@@ -126,6 +126,7 @@ export class AddOnShelf {
       PluginManifestSchema.shape.id.parse(offer.id);
       const present = await lstat(this.pluginFile(offer.id)).then(() => true, () => false);
       if (present) throw new Error(`There is already a plugin file called ${offer.id}.mjs, so this package was not installed.`);
+      this.store.save("settings", this.owner, `plugin-review:${offer.id}`, { pending: true });
     }
     await this.writeFiles(offer.id, files);
     if (offer.plugin) await this.writePlugin(offer, source);
@@ -137,7 +138,108 @@ export class AddOnShelf {
       plugin: offer.plugin ? { file: offer.plugin.file, sha256: sha256(offer.plugin.code), permissions: offer.plugin.permissions, hosts: offer.plugin.hosts } : null,
       ...(options.origin ? { origin: options.origin } : {}), ...(options.bundled ? { bundled: true } : {}),
     };
-    return this.save(record);
+    this.save(record);
+    await this.snapshot(record, files);
+    return record;
+  }
+  private async snapshot(record: AddOnRecord, files?: ReadonlyMap<string, string>): Promise<void> {
+    const key = `add-on-version:${record.id}:${record.sha256}`;
+    if (this.store.get("settings", this.owner, key)) return;
+    const bodies = files ?? await readPackageFolder(this.folder(record.id));
+    const pluginState = this.store.get("settings", this.owner, `plugin:${record.id}`)?.data ?? null;
+    this.store.save("settings", this.owner, key, { record, files: Object.fromEntries(bodies), pluginState });
+  }
+  versions(id: string): AddOnRecord[] {
+    PluginManifestSchema.shape.id.parse(id);
+    return this.store.list("settings", this.owner).filter(row => row.id.startsWith(`add-on-version:${id}:`))
+      .map(row => (row.data as unknown as { record: AddOnRecord }).record);
+  }
+  async currentFiles(id: string): Promise<Map<string, string>> {
+    const record = this.record(id);
+    if (!record || !(await this.unchanged(record))) throw new Error("Installed add-on changed; evaluate again.");
+    return readPackageFolder(this.folder(id));
+  }
+  /** Retains a checked list candidate for evaluation after its download scratch folder is removed. */
+  async stage(source: string, origin: NonNullable<AddOnRecord["origin"]>): Promise<{ source: string; sha256: string }> {
+    const files = await readPackageSource(source), offer = readOffer(files);
+    const root = join(this.options.dataDir, "add-on-candidates", offer.id, offer.sha256);
+    for (const [name, body] of files) {
+      const target = join(root, ...name.split("/"));
+      await mkdir(dirname(target), { recursive: true }); await writeFile(target, body, "utf8");
+    }
+    this.store.save("settings", this.owner, `add-on-candidate:${offer.id}:${offer.sha256}`, { source: root, origin });
+    return { source: root, sha256: offer.sha256 };
+  }
+  candidateOrigin(id: string, source: string, hash: string): AddOnRecord["origin"] {
+    const row = this.store.get("settings", this.owner, `add-on-candidate:${id}:${hash}`)?.data as
+      { source: string; origin: AddOnRecord["origin"] } | undefined;
+    return row?.source === source ? row.origin : undefined;
+  }
+  /** Keeps the complete package before replacement, restoring it switched off on any failure. */
+  async replace(id: string, source: string, expectedCurrent: string, expectedCandidate: string,
+    options: { origin?: AddOnRecord["origin"]; evaluated?: boolean } = {}): Promise<AddOnRecord> {
+    const previous = this.record(id);
+    if (!previous || previous.sha256 !== expectedCurrent) throw new Error("Installed add-on changed before promotion.");
+    if (previous.origin?.signed === "checked" && options.origin?.signed !== "checked")
+      throw new Error("The installed add-on was signed; prepare a checked signed update from its list before promotion.");
+    const files = await this.currentFiles(id), offer = readOffer(await readPackageSource(source));
+    if (offer.id !== id || offer.sha256 !== expectedCandidate) throw new Error("Candidate package changed before promotion.");
+    if ((offer.plugin || previous.plugin) && !options.evaluated) throw new Error("Evaluate and promote plugin updates before replacing the installed add-on.");
+    await this.snapshot(previous, files);
+    const state = this.store.get("settings", this.owner, `plugin:${id}`)?.data;
+    const review = this.store.get("settings", this.owner, `plugin-review:${id}`)?.data;
+    try {
+      await this.remove(id);
+      const installed = await this.install(source, { expectSha256: expectedCandidate, ...(options.origin ? { origin: options.origin } : {}) });
+      if (state) this.store.save("settings", this.owner, `plugin:${id}`, { ...state, enabled: false });
+      const grew = (installed.plugin?.permissions ?? []).filter(p => !(previous.plugin?.permissions ?? []).includes(p));
+      return grew.length ? this.note(id, { grew }) : installed;
+    } catch (error) {
+      await this.restoreSnapshot(id, previous.sha256);
+      if (state) this.store.save("settings", this.owner, `plugin:${id}`, { ...state, enabled: false });
+      this.restoreReview(id, review);
+      throw error;
+    }
+  }
+  async restore(id: string, hash: string, expectedCurrent: string): Promise<AddOnRecord> {
+    const record = this.record(id);
+    if (!record || record.sha256 !== expectedCurrent) throw new Error("Installed add-on changed before restore.");
+    await this.snapshot(record, await this.currentFiles(id));
+    this.checkedSnapshot(id, hash);
+    const state = this.store.get("settings", this.owner, `plugin:${id}`)?.data;
+    this.switchOff(id);
+    try { return await this.restoreSnapshot(id, hash); }
+    catch (error) { await this.restoreSnapshot(id, record.sha256); throw error; }
+    finally {
+      if (state) this.store.save("settings", this.owner, `plugin:${id}`, { ...state, enabled: false });
+      else this.store.delete("settings", this.owner, `plugin:${id}`);
+    }
+  }
+  private restoreReview(id: string, review: Record<string, unknown> | undefined): void {
+    if (review) this.store.save("settings", this.owner, `plugin-review:${id}`, review);
+    else this.store.delete("settings", this.owner, `plugin-review:${id}`);
+  }
+  private checkedSnapshot(id: string, hash: string): { record: AddOnRecord; files: Map<string, string>; pluginState: Record<string, unknown> | null } {
+    PluginManifestSchema.shape.id.parse(id);
+    if (!/^[a-f0-9]{64}$/.test(hash)) throw new Error("Restore needs a complete SHA-256 fingerprint.");
+    const saved = this.store.get("settings", this.owner, `add-on-version:${id}:${hash}`)?.data as unknown as
+      { record: AddOnRecord; files: Record<string, string>; pluginState: Record<string, unknown> | null } | undefined;
+    if (!saved) throw new Error("No retained add-on has that fingerprint.");
+    const files = new Map(Object.entries(saved.files));
+    const offer = readOffer(files);
+    if (offer.id !== id || offer.sha256 !== hash || saved.record.sha256 !== hash) throw new Error("Saved add-on files do not match their fingerprint.");
+    return { ...saved, files };
+  }
+  private async restoreSnapshot(id: string, hash: string): Promise<AddOnRecord> {
+    const { record, files, pluginState } = this.checkedSnapshot(id, hash);
+    this.options.plugins.disable(id);
+    await this.writeFiles(id, files);
+    await rm(this.pluginFile(id), { force: true });
+    this.store.delete("settings", this.owner, `plugin-catalog:${id}`);
+    const offer = readOffer(files);
+    if (offer.plugin) await this.writePlugin(offer, record.source);
+    if (pluginState) this.store.save("settings", this.owner, `plugin:${id}`, { ...pluginState, enabled: false });
+    return this.save({ ...record, enabled: false, skills: record.skills.map(({ name, description }) => ({ name, description })) });
   }
   private async writeFiles(id: string, files: ReadonlyMap<string, string>): Promise<void> {
     const root = this.folder(id);
@@ -193,7 +295,9 @@ export class AddOnShelf {
     if (record.plugin) {
       // The owner's yes can narrow what the package asked for, never add to it.
       const asked = record.plugin.permissions;
-      const summary = await this.options.plugins.enable(id, allow ? allow.filter((permission) => asked.includes(permission)) : asked);
+      const saved = this.store.get("settings", this.owner, `plugin:${id}`)?.data as { grant?: { permissions: string[] } } | undefined;
+      const allowed = allow ?? saved?.grant?.permissions ?? asked;
+      const summary = await this.options.plugins.enable(id, allowed.filter((permission) => asked.includes(permission)));
       notes.push(...(summary.leftOut ?? []));
     }
     if (offer.filters.length) this.options.filters.adopt(`add-on:${id}`, offer.filters);

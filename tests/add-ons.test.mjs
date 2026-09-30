@@ -20,6 +20,7 @@ import { PipelinesReader } from "../dist/add-ons/pipelines.js";
 import { checkApiVersion, definePlugin } from "../dist/add-ons/sdk.js";
 import { tomlStrings } from "../dist/add-ons/toml-lite.js";
 import { switchedToolTiers } from "../dist/feature-switches.js";
+import { evaluationWall } from "./plugin-evaluation-wall.mjs";
 
 const sha = (text) => createHash("sha256").update(text, "utf8").digest("hex");
 const say = (content) => () => ({ content, toolCalls: [] });
@@ -36,6 +37,11 @@ async function writeTree(root, files) {
     await writeFile(path, body);
   }
   return root;
+}
+/** The plugin evaluation's wall with its program start stood in (tests/plugin-evaluation-wall.mjs), so a build machine without bubblewrap still evaluates. */
+function standInEvaluationWall(app) {
+  const { wallDeps, spawn } = evaluationWall();
+  Object.assign(app.pluginEvaluations.options.wall, { wallDeps, spawn });
 }
 async function fixture(t, steps = [say("ok")]) {
   const root = await mkdtemp(join(tmpdir(), "branch-addons-app-"));
@@ -176,7 +182,7 @@ test("parts ship when needed but packages; switched off, routes refuse in a sent
   assert.deepEqual(overview.settings.modes, Object.fromEntries(parts.map((part) => [part, part === "packages" ? "off" : "when-needed"])));
   assert.ok(app.registry.names().includes("addon.draft") && app.registry.names().includes("addon.search"), "shipped when needed, the tools are there");
   await call("plugin-catalog/add-ons/settings", { modes: Object.fromEntries(parts.map((part) => [part, "off"])) });
-  assert.equal(overview.settings.wallEveryPlugin, false);
+  assert.equal(overview.settings.wallEveryPlugin, true, "RES-251: hand-placed plugins run as their own program, as shipped");
   assert.deepEqual(overview.bundled, [], "nothing is even looked at while packages are off");
   for (const [path, body] of [["look", { source: "/nowhere" }], ["lists/browse", { address: "https://example.com/list.json" }],
     ["filters", { id: "x", name: "x", match: "x", action: "redact" }], ["pipelines/check", { address: "https://p.example" }],
@@ -253,6 +259,12 @@ export default { id: "narrow", name: "Narrow", permissions: ["files.read", "memo
     format: "branch-addon", id: "narrow", name: "Narrow", plugin: "narrow.mjs", permissions: ["files.read", "memory.read"] }) });
   await call("plugin-catalog/add-ons/install", { source: folder, sha256: (await call("plugin-catalog/add-ons/look", { source: folder })).offer.sha256 });
   assert.ok((await app.plugins.list()).some((entry) => entry.id === "narrow" && !entry.enabled), "it is in the plugins list, switched off");
+  standInEvaluationWall(app);
+  const proof = await call("plugin-catalog/evaluate", { id: "narrow", source: folder, suite: { id: "narrow-tasks", cases: [
+    { id: "look", tool: "plugin.narrow.look", args: {}, expected: "looked" },
+  ] } });
+  assert.equal(proof.passed, true);
+  await call("plugin-catalog/promote", { id: "narrow", evaluationId: proof.id });
   // Stand in for the walled program: record what it was asked, answer as the plugin would.
   const asked = [];
   app.addOns.walled.ask = async (text, hosts, request) => {
@@ -295,6 +307,12 @@ test("the add-on that comes with Branch is offered, installed only on a yes, and
   assert.equal(app.addOns.shelf.record("branch-starter"), null, "offering it installs nothing");
   const record = await call("plugin-catalog/add-ons/bundled/install", { id: "branch-starter", sha256: starter.offer.sha256 });
   assert.equal(record.bundled, true);
+  standInEvaluationWall(app);
+  const proof = await call("plugin-catalog/evaluate", { id: "branch-starter", source: record.source, suite: { id: "starter-tasks", cases: [
+    { id: "count", tool: "plugin.branch-starter.count", args: { text: "two words" }, expected: { words: 2, lines: 1, characters: 9 } },
+  ] } });
+  assert.equal(proof.passed, true);
+  await call("plugin-catalog/promote", { id: "branch-starter", evaluationId: proof.id });
   app.addOns.walled.ask = async (_code, _hosts, request) => request.kind === "describe"
     ? { ok: true, plugin: { id: "branch-starter", name: "Branch starter", permissions: ["text.read"], tools: [
       { name: "plugin.branch-starter.glossary", description: "g", permission: "text.read", search: { label: "Branch words" },
@@ -399,8 +417,10 @@ test("lists: a folder marketplace and a signed web list are browsed without inst
   entries = () => [entryFor(true)];
   assert.deepEqual(await web.updates(), [{ id: "weather", from: "1.0.0", to: "1.1.0", list: "Good list" }]);
   assert.equal(app.addOns.shelf.record("weather").origin.version, "1.0.0", "an update is only offered");
-  const updated = await web.update("weather");
-  assert.deepEqual([updated.enabled, updated.origin.version], [false, "1.1.0"], "the new version arrives switched off");
+  await assert.rejects(web.update("weather"), /Evaluate and promote/);
+  const staged = await web.stageUpdate("weather");
+  assert.equal((await app.addOns.shelf.look(staged.source)).offer.id, "weather");
+  assert.equal(app.addOns.shelf.record("weather").origin.version, "1.0.0", "staging keeps the current version until successful comparison");
   await assert.rejects(web.browse("http://lists.example/list.json"), /must use https/);
 });
 
@@ -463,7 +483,11 @@ test("a hand-placed plugin written for a newer interface is refused, and its hoo
   const { app, call, dataDir } = await fixture(t);
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   await writeFile(join(dataDir, "plugins", "future.mjs"), "export default { id: 'future', name: 'Future', apiVersion: 9, tools: [] };\n");
-  await assert.rejects(call("plugins/future/enable", {}), /written for add-on interface 9/);
+  // Walled, as shipped: refused (a Linux computer without bubblewrap cannot start the wall, and says so first).
+  await assert.rejects(call("plugins/future/enable", {}), process.platform === "linux" ? /written for add-on interface 9|needs bubblewrap/ : /written for add-on interface 9/, "walled, as shipped");
+  // Its hook writes into Branch's own folder, which only a plugin running inside Branch can: the owner's choice, with a yes.
+  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true });
+  await assert.rejects(call("plugins/future/enable", {}), /written for add-on interface 9/, "and inside Branch");
   const heard = join(dataDir, "heard.txt");
   await writeFile(join(dataDir, "plugins", "listen.mjs"), `import { appendFile } from "node:fs/promises";
 export default { id: "listen", name: "Listen", apiVersion: 1, tools: [], hooks: [{ event: "run.finished", run: async (p) => appendFile(${JSON.stringify(heard)}, p.event + "\\n") }] };\n`);
@@ -475,7 +499,7 @@ export default { id: "listen", name: "Listen", apiVersion: 1, tools: [], hooks: 
   await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: true });
   assert.equal(app.addOns.walled.holds("listen"), true);
   assert.equal(app.addOns.walled.holds("nothing-installed"), true);
-  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false });
+  await call("plugin-catalog/add-ons/settings", { wallEveryPlugin: false, confirmLoosening: true });
   assert.equal(app.addOns.walled.holds("listen"), false);
 });
 

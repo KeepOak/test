@@ -440,11 +440,11 @@ test("S4 one list says who may message the assistant, and a block anywhere wins"
   const channel = fakeChannel();
   await app.channels.attach(channel.adapter, { activation: "always", pairing: true, allowlist: [] });
   await channel.receive(inbound("hello", "99"));
-  assert.equal(channel.sent.filter((one) => /private/i.test(one.text)).length, 1);
+  assert.equal(channel.sent.length, 0, "a blocked sender is told nothing (UP-CHAT-008)");
   await channel.receive(inbound("hello", "42"));
-  for (let i = 0; i < 200 && channel.sent.length < 2; i++) await delay(20);
-  assert.equal(channel.sent.length, 2);
-  assert.ok(!/private/i.test(channel.sent[1].text));
+  for (let i = 0; i < 200 && channel.sent.length < 1; i++) await delay(20);
+  assert.equal(channel.sent.length, 1);
+  assert.ok(!/private/i.test(channel.sent[0].text));
 });
 
 test("S5 the extra door's checks are a chain, and every step in it must pass", async (t) => {
