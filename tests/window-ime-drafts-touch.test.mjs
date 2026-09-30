@@ -64,7 +64,7 @@ test("Enter while an input method composes never sends; a plain Enter still does
   assert.deepEqual(f.asked, ["こんにちは"]);
 
   /* The palette: a composing Enter keeps it open on the word; Enter afterwards picks. */
-  await page.keyboard.press("Control+k");
+  await page.keyboard.press("ControlOrMeta+k");
   await page.locator("#pal-in").waitFor({ state: "visible" });
   await page.locator("#pal-in").fill("設定");
   await imeEnter(page, "#pal-in", "composing");
@@ -113,7 +113,7 @@ test("on a phone, text boxes are at least 16px and the message box's buttons at 
   // Read in one step: the composer may be drawn again between finding Send and measuring it, which left no box.
   const send = await page.locator("#send").first().evaluate((el) => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; });
   assert.ok(send.width >= 44 && send.height >= 44, `Send is at least 44px (${send.width}×${send.height})`);
-  await page.keyboard.press("Control+k");
+  await page.keyboard.press("ControlOrMeta+k");
   await page.locator("#pal-in").waitFor({ state: "visible" });
   assert.ok(await px("#pal-in", "fontSize") >= 16, "the palette box is at least 16px");
   await page.keyboard.press("Escape");
