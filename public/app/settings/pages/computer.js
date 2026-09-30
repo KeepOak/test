@@ -61,11 +61,21 @@ async function loadAll() {
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   Object.assign(D, { coding: c, notes: n?.settings ?? null, prs: p, devices: d, desktop, wall, reach, appAsk });
   await loadSites();
+  D.phoneViews = await api("phone/view-grants").catch(() => null);
   render();
   await loadComputers17();
 }
 
 export function init() {
+  markLive(["phone-view-add", "phone-view-revoke"]);
+  on("phone-view-add", async () => {
+    try { await api("phone/view-grants", { deviceId: document.getElementById("pv-device").value, profileId: D.phoneViews.profileId, sessionId: document.getElementById("pv-trunk").value, kind: document.getElementById("pv-kind").value, minutes: 5 }); } catch (error) { toast(error.message); }
+    await loadAll();
+  });
+  on("phone-view-revoke", async (el) => {
+    try { await api("phone/view-grants", { id: el.dataset.v }, "DELETE"); } catch (error) { toast(error.message); }
+    await loadAll();
+  });
   markLive(["sw:f15-page-notes-and-send-to-branch-", "sw:f15-try-ideas-on-a-branch", "sw:f15-check-and-format-files-after-editing",
     "sw:f15-draft-a-pull-request-from-a-task", "sw:f15-remember-the-shell", "sw:f15-read-a-file-before-editing-it",
     "sw:f15-keep-large-tool-outputs", "sw:f15-read-jupyter-notebooks", "sw:f15-review-checks-and-a-checklist-per-task",
@@ -219,13 +229,21 @@ const computerMore = () => sec15(t("window.settings.computer.on-a-computer-more"
   + sw("Review checks and a checklist per task", "Checks you write run before a task says it’s done; the checklist shows in the task.")
   + code15(t("window.settings.computer.write-agents-md-for-a-project"), t("window.settings.computer.branch-reads-the-project-and-writes"), "/init"));
 
+function phoneViews() {
+  const views = D.phoneViews;
+  if (!views) return "";
+  const phones = views.phones.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  const trunks = (E.trunks ?? []).filter(t => t.chatSessionId).map(t => `<option value="${esc(t.chatSessionId)}">${esc(t.name)}</option>`).join("");
+  const existing = views.grants.map(g => `<p>${esc(g.kind)} · expires ${esc(new Date(g.expiresAt).toLocaleTimeString())} <button type="button" data-act="phone-view-revoke" data-v="${esc(g.id)}">Revoke</button></p>`).join("");
+  return `<section class="sec"><h2>Phone view · read only</h2><p>Allow a paired phone to view a selected Trunk for five minutes. No mouse, keyboard or browser control is granted. Restarting Branch clears grants.</p><p>Computer view shows the shared screen, including other apps. It does not isolate a Trunk’s desktop.</p><label>Phone <select id="pv-device">${phones}</select></label><label>Trunk <select id="pv-trunk">${trunks}</select></label><label>View <select id="pv-kind"><option value="browser">Trunk’s working browser</option><option value="computer">Shared computer screen</option></select></label><button type="button" data-act="phone-view-add" ${phones && trunks ? "" : "disabled"}>Allow selected view for five minutes</button>${existing}</section>`;
+}
 export function draw() {
   const lev = level();
   let html = `<h1>${esc(t("settings.page.computer"))}</h1><p class="lede">${t("window.settings.computer.the-computers-your-trunks-may-use")}</p>`;
   html += computers() + whichTrunk() + onAComputer() + BROWSER();
   if (lev < 2) html += `<p class="hint">${t("window.settings.computer.switch-to-technical-bottom-left-to")}</p>`;
   else html += `<div class="sec"><h2>${t("settingsGrown.level.technical")}</h2><dl class="kv"></dl></div>`; // the engine gives no sandbox, profile or screen facts
-  html += phones();
+  html += phones() + phoneViews();
   if (lev >= 1) html += browserMore() + code();
   if (lev >= 2) html += codeTechnical();
   if (lev >= 1) html += computerMore();
