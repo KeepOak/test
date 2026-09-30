@@ -10519,6 +10519,5 @@
   "window.sourceReview.publishDraft": "Publish reviewed draft",
   "window.sourceReview.prepare": "Prepare scoped worktree",
   "window.sourceReview.prepared": "Worktree prepared. Ask Branch to edit within the contract, then commit and review it.",
-  "window.sourceReview.queued": "Draft publication requested. Follow its receipt in Inbox.",
   "window.sourceReview.worktreePrepared": "Worktree prepared; committed edits need review"
 }

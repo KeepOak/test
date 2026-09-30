@@ -90,13 +90,14 @@ async function answer(el) {
   const payload = prepare ? prepareInput(form) : { review: review.snapshot.review,
     title: form.elements.title.value.trim(), summary: form.elements.summary.value.trim(), consent: true };
   el.disabled = true;
-  try { await api(route(review.id, prepare ? "approve" : "publish"), payload); }
+  let result;
+  try { result = await api(route(review.id, prepare ? "approve" : "publish"), payload); }
   catch (error) { if (review.who === here() && current === review) { el.disabled = false; toast(error.message); } return; }
   if (review.who !== here() || current !== review || !allowed()) return;
   if (dialog()?.querySelector("[data-source-review]")?.dataset.sourceReview === review.id) closeDlg();
   current = null;
-  toast(t(`window.sourceReview.${prepare ? "prepared" : "queued"}`));
-  await reread();
+  toast(prepare ? t("window.sourceReview.prepared") : result.publication?.reason ?? t(`sourcePublication.${result.publication?.state ?? "checked"}`));
+  await reread(!prepare);
 }
 
 export function initSourceReview(afterChange) {

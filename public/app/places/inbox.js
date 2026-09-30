@@ -432,8 +432,9 @@ export function init() {
   });
   on("allowall", () => openAllowAll());
   on("allowall-go", () => allowAll());
-  initSourceReview(async () => {
+  initSourceReview(async (published) => {
     changeRequests = (await api("self-development/requests").catch(sayOnce)).requests ?? [];
+    if (published) await readSourcePublications();
     renderNow();
   });
   on("selfrev15", (el) => reviewChange(el.dataset.id));
