@@ -508,6 +508,8 @@ The free fallback reads a public results page rather than an interface meant for
 
 `searchEndpoint` still sets the address the free fallback uses, so anything already set up keeps working.
 
+The window can pick the service too, under Settings › Advanced › Web search (`GET`/`POST /api/web-search`, owner only). Once the owner picks one there, that pick wins over the launch settings file; until then the file decides. Without a `keySecret`, a paid service looks for its usual secret name (`BRAVE_SEARCH_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY` or `SERPER_API_KEY`), and the row says whether that secret is saved.
+
 ### Pinned skills and memory retention
 
 Above the composer, **Pinned skill** keeps one enabled skill's full instructions in every turn of that conversation until unpinned (`GET|POST /api/sessions/:id/skill`). `POST /api/memory/hygiene {olderThanDays, action: "preview"|"archive"|"purge"}` reports or removes facts not updated within the period; archived facts are listed by `GET /api/memory/archive` and restored with `POST /api/memory/archive/:id/restore`. Settings › Advanced › **Archive facts unused for** (90 days, 180 days or never; never is where Branch starts) sets aside by itself, once a day, the facts nobody changed or drew on for that long (`GET`/`POST /api/memory/auto-archive { afterDays: 90 | 180 | null }`, owner only): each goes into the archive with a note, keeps its versions and can be restored.

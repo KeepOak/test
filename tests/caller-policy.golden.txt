@@ -2275,6 +2275,8 @@ owner GET /api/voice/voices | here=ok remote=ok phone=ok legacy=ok person=401/32
 owner POST /api/voice/voices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/web-pages | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/web-pages | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/web-search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/web-search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/voice/wake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/voice/wake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4541,6 +4543,8 @@ owner+lockdown GET /api/voice/voices | here=ok remote=ok phone=ok legacy=ok pers
 owner+lockdown POST /api/voice/voices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/web-pages | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/web-pages | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/web-search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/web-search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/voice/wake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/voice/wake | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/voice/dictation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -6807,6 +6811,8 @@ household GET /api/voice/voices | here=400/f6e21c remote=400/f6e21c read=400/f6e
 household POST /api/voice/voices | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/web-pages | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/web-pages | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/web-search | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/web-search | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/voice/wake | here=ok remote=ok read=401/86eff9 run=401/86eff9
 household POST /api/voice/wake | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/voice/dictation | here=ok remote=ok read=401/86eff9 run=401/86eff9
@@ -9073,6 +9079,8 @@ household+lockdown GET /api/voice/voices | here=400/f6e21c remote=400/f6e21c rea
 household+lockdown POST /api/voice/voices | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/web-pages | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/web-pages | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/web-search | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/web-search | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/voice/wake | here=ok remote=ok read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/voice/wake | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/voice/dictation | here=ok remote=ok read=401/86eff9 run=401/86eff9
@@ -11339,6 +11347,8 @@ applock GET /api/voice/voices | here=423/a8f863
 applock POST /api/voice/voices | here=423/a8f863
 applock GET /api/web-pages | here=423/a8f863
 applock POST /api/web-pages | here=423/a8f863
+applock GET /api/web-search | here=423/a8f863
+applock POST /api/web-search | here=423/a8f863
 applock GET /api/voice/wake | here=423/a8f863
 applock POST /api/voice/wake | here=423/a8f863
 applock GET /api/voice/dictation | here=423/a8f863

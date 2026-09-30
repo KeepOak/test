@@ -1321,6 +1321,7 @@ export const ROUTES = {
   "/api/voice/transcribe": "task POST",
   "/api/voice/voices": "look",
   "/api/web-pages": "owner POST", // w911 (A0743, A1452) hook: the switch for reading and crawling web pages
+  "/api/web-search": "owner POST", // wire-greyed: where web searches go (Settings › Advanced › Web search)
   // mac7/wake-pins: the word that starts a turn. Reading says what this computer could do; changing is the owner's.
   "/api/voice/wake": "secret-read",
   // mac7/live-voice: speaking and seeing the words. Reading says which speech program is here and

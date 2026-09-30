@@ -272,7 +272,9 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults", "codex-models",
   "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages",
   // wire-greyed: setting unused facts aside runs by itself once a day.
-  "memory-auto-archive"];
+  "memory-auto-archive",
+  // wire-greyed: where web searches go and the name of the secret sent with them.
+  "web-search"];
 /** One row per automatic job: a loop, a heartbeat, a standing order or a procedure runs its words by itself (as a schedule does, Q168 C). */
 const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "autonomy-loop:", "autonomy-heartbeat:", "autonomy-order:", "autonomy-procedure:",
   // NAS f30facf: each outside service the assistant may call, by its address.
