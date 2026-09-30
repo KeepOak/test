@@ -22,7 +22,7 @@ export function ciQueueSection() {
 }
 
 export function initCiQueue() {
-  markLive(["self-ci-refresh"]);
+  markLive(["self-ci-refresh", "sw:self-ci-repo", "sw:self-ci-selected"]); // both fields are read by Refresh CI below, so neither is greyed
   on("self-ci-refresh", async () => {
     if (busy) return;
     repository = document.getElementById("self-ci-repo")?.value.trim() ?? "";
