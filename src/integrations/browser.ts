@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, rm, stat } from 'node:fs/promises';
+import { mkdir, open, readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join as joinPath } from 'node:path';
 import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
@@ -77,6 +77,11 @@ export const missingBrowser = 'The private browser Branch uses is not installed 
 export const runLimitReached = (message: string): boolean => /^This task has already (opened|taken) \d+ /.test(message);
 /** Where files a website sends are kept, inside the person's workspace. */
 export const downloadFolder = 'downloads';
+/** How long a held download (Downloads may come from › Ask each time) waits for the owner's answer. */
+const heldForMs = 3_600_000;
+/** A held file's name in the held folder: the id it was given. */
+const heldName = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+interface HeldDownload { path: string; name: string; from: string; owner: string; conversation: string; at: number; expiry: NodeJS.Timeout }
 /** What the person is told when a task has wandered too far; it stops and reports instead. */
 const originStop = (limit: number) =>
   `This task has already opened ${limit} different websites, which is as many as one task may. Stop, tell the person what you found and what you still wanted to look at, and let them decide.`;
@@ -192,9 +197,19 @@ export class BranchBrowser {
   sharesWith: ((owner: string, conversation: string, runId: string) => boolean) | undefined;
   /**
    * Downloads ask each time: files a page sent, waiting outside the workspace for the owner's yes, by id. Kept in
-   * memory for an hour (a task that stopped to ask carries on under its own conversation when the owner answers).
+   * memory for an hour (a task that stopped to ask carries on under its own conversation when the owner answers). Each
+   * one's own timer removes it when the hour is up, an older one is never kept, and closing the browser removes them all.
    */
-  private readonly heldDownloads = new Map<string, { path: string; name: string; from: string; owner: string; conversation: string; at: number }>();
+  private readonly heldDownloads = new Map<string, HeldDownload>();
+  /** Held files being removed now, by id, so an answer or close that arrives meanwhile waits for the file to be gone. */
+  private readonly heldRemovals = new Map<string, Promise<void>>();
+  /**
+   * Files in the held folder this launch is not holding (an earlier launch's, or another launch's sharing the folder)
+   * are looked for from the first hold of this launch on, and each is removed once it is an hour old.
+   */
+  private heldLeftoversSwept = false;
+  /** The next look at those files, due when the youngest one left reaches the hour. */
+  private heldLeftoverTimer: NodeJS.Timeout | undefined;
   /** Where held files wait: this computer's temporary folder, never the workspace. Replaced in tests. */
   heldFolder = joinPath(tmpdir(), 'branch-held-downloads');
   /** Each site's small icon for the owner's tabs, as a data: address ("" while unknown or when it has none). */
@@ -1225,41 +1240,83 @@ export class BranchBrowser {
   }
   /** Ask each time: the file is written outside the workspace, with the same name and size limits, until the owner answers. */
   private async holdDownload(download: Download, context: Pick<ToolContext, 'owner' | 'runId'>): Promise<DownloadRecord> {
+    if (this.closed) throw new Error('the browser is closing; the file was not kept');
     const name = safeDownloadName(download.suggestedFilename());
     const ending = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
     if (!this.config.downloadTypes.includes(ending)) throw new Error(`files ending in .${ending || '(nothing)'} are not saved`);
-    for (const [id, held] of this.heldDownloads) if (Date.now() - held.at > 3_600_000) this.dropHeld(id);
+    for (const id of [...this.heldDownloads.keys()]) this.heldEntry(id);
     if (this.heldDownloads.size >= 20) throw new Error('twenty files are already waiting for your yes; answer those first');
     await mkdir(this.heldFolder, { recursive: true });
+    if (!this.heldLeftoversSwept) { this.heldLeftoversSwept = true; await this.sweepHeldLeftovers(); }
     const id = randomUUID(), path = joinPath(this.heldFolder, id);
     const record = await this.stream(download, path, name);
+    if (this.closed) { await rm(path, { force: true }); throw new Error('the browser is closing; the file was not kept'); }
     const conversation = this.store?.run(context.runId)?.sessionId ?? '';
-    this.heldDownloads.set(id, { path, name, from: record.from, owner: context.owner, conversation, at: Date.now() });
+    const expiry = setTimeout(() => void this.dropHeld(id), heldForMs);
+    expiry.unref();
+    this.heldDownloads.set(id, { path, name, from: record.from, owner: context.owner, conversation, at: Date.now(), expiry });
     return { file: '', bytes: record.bytes, from: `${record.from} — ${downloadHeld(name)}`, held: id, name };
   }
-  private dropHeld(id: string): void {
+  /** A held file by id, or undefined once its hour is up (an expired one is removed on the way). */
+  private heldEntry(id: string): HeldDownload | undefined {
+    const held = this.heldDownloads.get(id);
+    if (!held || Date.now() - held.at <= heldForMs) return held;
+    void this.dropHeld(id);
+    return undefined;
+  }
+  /**
+   * Held files this launch has no list for (an earlier launch's list is gone with it) are removed once they are an hour
+   * old, the same hour their own launch keeps them. A younger one is looked at again when it reaches the hour.
+   */
+  private async sweepHeldLeftovers(): Promise<void> {
+    clearTimeout(this.heldLeftoverTimer);
+    this.heldLeftoverTimer = undefined;
+    if (this.closed) return;
+    const names = await readdir(this.heldFolder).catch(() => [] as string[]);
+    let next = Infinity;
+    await Promise.all(names.filter(name => heldName.test(name) && !this.heldDownloads.has(name)).map(async name => {
+      const path = joinPath(this.heldFolder, name);
+      const seen = await stat(path).catch(() => null);
+      if (!seen?.isFile()) return;
+      const left = heldForMs - (Date.now() - seen.mtimeMs);
+      if (left < 0) await rm(path, { force: true }).catch(() => undefined);
+      else next = Math.min(next, left + 1);
+    }));
+    if (next === Infinity || this.closed) return;
+    this.heldLeftoverTimer = setTimeout(() => void this.sweepHeldLeftovers(), next);
+    this.heldLeftoverTimer.unref();
+  }
+  private async dropHeld(id: string): Promise<void> {
     const held = this.heldDownloads.get(id);
     this.heldDownloads.delete(id);
-    if (held) void rm(held.path, { force: true }).catch(() => undefined);
+    if (!held) return;
+    clearTimeout(held.expiry);
+    const removal = rm(held.path, { force: true }).catch(() => undefined).finally(() => this.heldRemovals.delete(id));
+    this.heldRemovals.set(id, removal);
+    await removal;
   }
   /** browser.keep_download: once the owner said yes, the held file moves into the workspace; keep false throws it away. */
   async keepDownload(input: { id: string; keep: boolean }, context: ToolContext) {
+    // An hour-old file is removed before the answer is refused, so a late yes or no leaves nothing behind.
+    const found = this.heldDownloads.get(input.id);
+    if (found && Date.now() - found.at > heldForMs) await this.dropHeld(input.id);
+    await this.heldRemovals.get(input.id);
     const held = this.heldDownloads.get(input.id);
     const conversation = this.store?.run(context.runId)?.sessionId ?? '';
     if (!held || held.owner !== context.owner || held.conversation !== conversation)
       throw new Error('No file with that id is waiting for this conversation.');
-    if (!input.keep) { this.dropHeld(input.id); return { discarded: held.name }; }
+    if (!input.keep) { await this.dropHeld(input.id); return { discarded: held.name }; }
     if (!this.files) throw new Error('saving files from websites needs the workspace');
     for (let attempt = 0; ; attempt++) {
       const relative = await this.freeName(held.name), target = await this.files.checked(relative);
       await mkdir(dirname(target), { recursive: true });
-      try { await copyFile(held.path, target, 1 /* COPYFILE_EXCL */); this.dropHeld(input.id); return { file: relative, from: held.from }; }
+      try { await copyFile(held.path, target, 1 /* COPYFILE_EXCL */); await this.dropHeld(input.id); return { file: relative, from: held.from }; }
       catch (error) { if (attempt > 0 || (error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
     }
   }
   /** Where a held file came from, so the approval names the site. */
   heldHost(id: unknown): string {
-    const held = typeof id === 'string' ? this.heldDownloads.get(id) : undefined;
+    const held = typeof id === 'string' ? this.heldEntry(id) : undefined;
     try { return held ? new URL(held.from.split(' ')[0]!).host : ''; } catch { return ''; }
   }
   /** A name inside the downloads folder that is not taken yet. */
@@ -1506,9 +1563,15 @@ export class BranchBrowser {
     });
     const results = await Promise.allSettled(pending);
     await this.starting?.catch(() => undefined);
-    await this.sandbox?.close(); // w911 (A2019) hook: closes the sandbox browser and stops its container
-    await this.browser?.close();
-    await this.pinProxy?.close();
+    try {
+      await this.sandbox?.close(); // w911 (A2019) hook: closes the sandbox browser and stops its container
+      await this.browser?.close();
+      await this.pinProxy?.close();
+    } finally {
+      clearTimeout(this.heldLeftoverTimer);
+      // Held downloads go last, once no page is left to send another: nothing waits outside the workspace after close.
+      await Promise.all([...[...this.heldDownloads.keys()].map(id => this.dropHeld(id)), ...this.heldRemovals.values()]);
+    }
     this.sessions.clear();
     this.controlled.clear();
     const failures = results.filter(result => result.status === 'rejected');

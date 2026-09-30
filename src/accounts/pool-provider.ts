@@ -5,7 +5,7 @@ import {
   type AccountState, type Failure, failureFor, firstChoice, freshState, httpFailure, orderFor, rateBackoffMs, rest, restMs, smartOrder,
   unavailable,
 } from "./pool.js";
-import type { Account, Pool } from "./settings.js";
+import { primaryAccount, type Account, type Pool } from "./settings.js";
 
 /**
  * One connection answering through several accounts, the way Hermes Agent's credential pools do (owner decision
@@ -44,6 +44,9 @@ export interface PoolHooks {
   record: (account: Account, completion: Completion) => void;
   /** True while someone other than the owner is using Branch on this computer. */
   personIsNotOwner: () => boolean;
+  /** Live subscription media must stop as soon as the owner locks or changes profile. */
+  realtimeAllowed?: () => boolean;
+  realtimePrimaryOnly?: boolean;
   sessionChoice: (sessionId: string) => string | null;
   rememberChoice: (sessionId: string, account: string) => void;
   now: () => number;
@@ -114,6 +117,36 @@ const limitLike = (failure: Failure | null, pool: Pool, state: AccountState): bo
 
 export class AccountPoolProvider {
   constructor(private readonly original: Provider, private readonly hooks: PoolHooks) {}
+
+  realtime: NonNullable<Provider["realtime"]> = async (...args) => {
+    const call = currentAccountCall();
+    const saved = this.hooks.settings();
+    const id = this.hooks.realtimePrimaryOnly ? primaryAccount :
+      (call?.sessionId ? this.hooks.sessionChoice(call.sessionId) : null) ?? saved?.defaultAccount ?? primaryAccount;
+    const current = (): boolean => {
+      const pool = this.hooks.settings(), account = pool?.accounts.find(one => one.id === id);
+      const selected = this.hooks.realtimePrimaryOnly ? primaryAccount :
+        (call?.sessionId ? this.hooks.sessionChoice(call.sessionId) : null) ?? pool?.defaultAccount ?? primaryAccount;
+      return !!call && call.owner === this.hooks.owner && !call.trunk && !this.hooks.personIsNotOwner() &&
+        (this.hooks.realtimeAllowed?.() ?? false) && selected === id &&
+        (!pool ? id === primaryAccount : pool.kind === "chatgpt" && !!account && this.why(account) === null);
+    };
+    if (!current()) throw new Error("The selected live voice account is unavailable.");
+    const chosen = await this.hooks.providerFor(id);
+    if (!current() || (!chosen && id !== primaryAccount)) throw new Error("The selected live voice account is unavailable.");
+    const provider = chosen ?? this.original;
+    if (!provider.realtime) throw new Error("This account cannot hold a live conversation.");
+    const session = await provider.realtime(...args);
+    if (!current()) { session.close(); throw new Error("The selected live voice account changed."); }
+    const ref = Object.freeze({ pool: this.hooks.pool, account: id });
+    call?.note?.("voice.live.account", ref);
+    return new Proxy(session, { get(target, property) {
+      if (property === "consultationAccountRef") return ref;
+      if (property === "consultationCurrent") return current;
+      const value: unknown = Reflect.get(target, property, target);
+      return typeof value === "function" ? (value as (...input: unknown[]) => unknown).bind(target) : value;
+    } });
+  };
 
   complete = async (request: CompletionRequest): Promise<Completion> => {
     const pool = this.hooks.settings();
@@ -347,11 +380,12 @@ export class AccountPoolProvider {
 
 /** The same connection, answering through the pool. Everything but `complete` is the connection's own. */
 export const originalOf = Symbol("branch.accounts.original");
-export function pooled(original: Provider, hooks: PoolHooks): Provider {
+export function pooled(original: Provider, hooks: PoolHooks, realtimeOnly = false): Provider {
   const pool = new AccountPoolProvider(original, hooks);
   return new Proxy(original, {
     get(target, property) {
-      if (property === "complete") return pool.complete;
+      if (property === "complete" && !realtimeOnly) return pool.complete;
+      if (property === "realtime" && target.realtime) return pool.realtime;
       if (property === originalOf) return target;
       const value: unknown = Reflect.get(target, property, target);
       return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
