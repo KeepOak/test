@@ -3357,6 +3357,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ### OpenAI Codex usage-limit refusals, Apache-2.0
 
 How a ChatGPT sign-in's 429 is read in `src/provider-retry.ts` and `src/accounts/pool.ts` is adapted from Codex's `codex-rs/codex-api/src/api_bridge.rs` (https://github.com/openai/codex, commit 8bd5a136, Copyright 2025 OpenAI): only an `error.type` of `usage_limit_reached` is a plan limit, lasting until the body's `resets_at` (seconds since the epoch); `usage_not_included` means the plan does not include that use; any other 429 is a passing rate limit. The code was rewritten in TypeScript for Branch. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
+### Hermes Agent (Nous Research), MIT, and Gemini CLI (Google), Apache-2.0: MCP output as outside text
+
+`guardResult`, the description guard in `definition` and `failureText` in `src/integrations/mcp.ts` follow Hermes Agent's scan of MCP tool descriptions for injection patterns (https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py#L15-L41, Copyright (c) 2025 Nous Research, MIT) and Gemini CLI's hand-over of an MCP tool's error content to the model (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-tool.ts#L455-L477, Apache-2.0). The code was written for Branch around its own guard (`src/content-guard.ts`). The MIT licence text is given under IronClaw above; Gemini CLI is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 
 ### PicoClaw, MIT
 

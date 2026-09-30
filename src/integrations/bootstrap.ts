@@ -442,7 +442,7 @@ export async function startMcp(
     await vet();
     return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
   };
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injection); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -460,7 +460,7 @@ export async function startMcp(
     // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
       ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
-  });
+  }, host.injection);
   if (!names.length) {
     const connection = await connect();
     return connection.close;
@@ -483,6 +483,8 @@ export interface McpHost {
   beforeRestart?: () => void | Promise<void>;
   /** R17-S20: how long a server may take to start, in milliseconds; unset keeps 10 seconds. */
   startupTimeoutMs?: () => number;
+  /** How text that reads like instructions is handled in a server's answers (the web setting); "redact" when unset. */
+  injection?: () => 'warn' | 'redact' | 'block';
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
     acquire(runId: string, id: string): Promise<{ close(): Promise<void> }>;
     /** Forgets a server the owner switched off or removed (src/mcp-own-servers.ts). */
