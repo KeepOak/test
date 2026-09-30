@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch, TelegramAdapter, Scheduler } from "../dist/index.js";
+import { createBranch, TelegramAdapter, Scheduler, telegramInbox } from "../dist/index.js";
 import { effectsOf, idempotencyKey, evidenceFor, checkEvidence, gitHead, TaskJournal } from "../dist/never-break/journal.js";
 import { migrate, migrateDown, formatOf, DataTooNewError } from "../dist/never-break/migrations.js";
 import { recoverAfterRestart, lateNote, releaseInterruptedSchedules } from "../dist/never-break/resume.js";
@@ -500,22 +500,27 @@ test("Telegram picks up where it had read to, so messages sent during a restart 
   assert.deepEqual(seen, ["one", "two", "three"], "nothing answered twice, nothing lost");
 });
 
-test("Telegram never saves past a message still being handled, even when a later one finishes first", async () => {
+test("Telegram keeps a message still being handled in its inbox, so a crash reads it again, even when a later one finishes first", async (t) => {
+  const root = await temp(t);
+  const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider: scripted([say("x")]) });
+  closeFirst(t, () => app.close());
   const saved = [];
   const position = { load: () => 0, save: (value) => saved.push(value) };
   const service = fakeTelegram([update(20, "slow"), update(21, "quick")]);
   const release = {};
   const slowDone = new Promise((done) => { release.slow = done; });
   const handled = [];
-  const adapter = new TelegramAdapter({ id: "tg", token: "fake", fetch: service.fetch, position, pollTimeoutSeconds: 0 });
+  const adapter = new TelegramAdapter({ id: "tg", token: "fake", fetch: service.fetch, position, pollTimeoutSeconds: 0, inbox: telegramInbox(app.store, "fake", "tg") });
+  t.after(() => adapter.stop());
   await adapter.start(async (m) => { if (m.text === "slow") await slowDone; handled.push(m.text); });
   for (let i = 0; i < 100 && !handled.includes("quick"); i++) await delay(10);
   assert.deepEqual(handled, ["quick"]);
-  assert.deepEqual(saved, [20], "the later message settled, but the slow one is still open, so a crash would read it again");
+  assert.equal(saved.at(-1), 22, "Telegram is told both arrived as soon as they were saved");
+  assert.deepEqual(telegramInbox(app.store, "fake", "tg").pending().map((row) => row.updateId), [20], "the slow one waits in the inbox for a restart");
   release.slow();
   for (let i = 0; i < 100 && !handled.includes("slow"); i++) await delay(10);
   await adapter.stop();
-  assert.equal(saved.at(-1), 22, "once both are done the position moves past them");
+  assert.deepEqual(telegramInbox(app.store, "fake", "tg").pending(), [], "once both are done nothing is left to read again");
 });
 
 test("a repeating job cut off by a restart goes back on the list, and a missed turn runs once with a note", async (t) => {

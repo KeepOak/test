@@ -77,7 +77,10 @@ export function optionalFields<T extends z.ZodRawShape>(schema: z.ZodObject<T>) 
 
 /** The screen and keyboard tools (src/integrations/desktop-tools.ts). */
 export const screenTools = ["desktop.screenshot", "desktop.windows", "desktop.read", "desktop.click",
-  "desktop.type", "desktop.key", "desktop.open", "desktop.clipboard"] as const;
+  "desktop.type", "desktop.key", "desktop.open", "desktop.clipboard",
+  // computer-control: the rest of the pointer, and waiting and close-ups, under the same switch.
+  "desktop.move", "desktop.drag", "desktop.scroll", "desktop.zoom", "desktop.wait",
+  "desktop.mouse_down", "desktop.mouse_up", "desktop.hold_key", "desktop.cursor", "desktop.computer"] as const;
 /** The shared Linux desktop tools (src/integrations/linux-desktop-tools.ts). */
 export const sharedDesktopTools = ["desktop.shared.start", "desktop.shared.open", "desktop.shared.type", "desktop.shared.key", "desktop.shared.stop"] as const;
 /** Reading aloud with the computer's own voice (src/voice-service.ts). */

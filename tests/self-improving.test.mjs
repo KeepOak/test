@@ -122,7 +122,8 @@ test("S4 a fact learned in one conversation is cited, with its knowledge base na
   const run = await app.runtime.run({ prompt: "I am planning next spring. Who services the boiler?", permissions: [] });
   assert.equal(run.status, "completed");
   assert.notEqual(run.sessionId, first, "this is a different conversation");
-  const system = provider.requests[0].filter((message) => message.role === "system").map((m) => m.content).join("\n");
+  // Passages travel with the question, as Branch's own note in the turn (src/runtime.ts intoTurn).
+  const system = provider.requests[0].filter((message) => message.role === "system" || message.from === "branch").map((m) => m.content).join("\n");
   assert.match(system, /Dane Heating services the boiler every March/, "the fact is retrieved");
   assert.match(system, /your knowledge base "Around the house"/, "and the knowledge base is named as the source");
   assert.match(system, /Sources in your knowledge bases/);

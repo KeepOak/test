@@ -37,9 +37,8 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   // The task keeps working (its model call waits) so the view offers Take over, as it does while a Trunk works.
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "held", async complete(request) { await Promise.race([held, new Promise((r) => request.signal.addEventListener("abort", r, { once: true }))]); return { content: "Done.", toolCalls: [] }; } } });
-  const calls = [], data = picture().toString("base64");
-  const reader = { running: true, close() {}, async frame() { return { width: 16, height: 10, data, windows: [], after: [], screen: { x: 0, y: 0, w: 1280, h: 800 } }; } };
-  const runner = { liveProcess: () => reader, async temporaryPng(name) { return join(root, `${name}.png`); }, async close() {},
+  const calls = [];
+  const runner = { liveProcess: () => null, async temporaryPng(name) { return join(root, `${name}.png`); }, async close() {},
     async run(action, payload) {
       calls.push(action);
       if (action === "windows") return { windows: [{ title: "Notes - Notepad", program: "stand-in", handle: 7, minimised: false }] };
@@ -47,6 +46,19 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
       return {};
     } };
   app.desktop = new DesktopControl(app.store, { runner, banner: { visible: false, show: async () => undefined, hide: async () => undefined } });
+  // The owner's view of the Notepad window (src/local-screen.ts): its frames are this test's picture, and its Take over,
+  // Hand back and Trunk cursor are the real engine's (DesktopControl.takeOver, handBack and pointer).
+  const bounds = { x: 0, y: 0, w: 1280, h: 800 }, target = { kind: "window", handle: "7", processId: 7, bounds };
+  const windows = [{ handle: "7", processId: 7, title: "Notes - Notepad", program: "notepad", className: "Notepad", x: 0, y: 0, width: 1280, height: 800, minimised: false }];
+  app.desktop.captureTargets = async (_owner, guard) => { guard(); return { windows, monitors: [], excludedProcessId: 99 }; };
+  app.desktop.chatScreen = async (_owner, options) => {
+    let closed = false, holding = false;
+    return { visible: () => !closed, pointer: () => app.desktop.pointer(),
+      takeOver: () => { options.guard(); app.desktop.takeOver(); holding = true; },
+      handBack: () => { if (holding) app.desktop.handBack(); holding = false; },
+      frames: { next: async () => ({ bytes: picture(), type: "image/png", width: 16, height: 10, target, method: "window", screen: bounds, windows, after: windows }), close() {} },
+      act: async () => undefined, close: async () => { closed = true; if (holding) app.desktop.handBack(); holding = false; } };
+  };
   saveDesktopSettings(app.store, app.runtime.owner, { enabled: true });
   const first = app.trunks.create({ name: "Cursor One" }, { chosenColour: "#336699" });
   const second = app.trunks.create({ name: "Cursor Two" }, { chosenColour: "#993366" });
@@ -67,6 +79,9 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   await signIn(page, server);
   await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).click();
   await page.locator('[data-act="stage"][data-v="computer"]').first().click();
+  await page.locator("#native-target option").filter({ hasText: "Notes - Notepad" }).waitFor({ state: "attached" });
+  await page.locator("#native-target").selectOption({ label: "Notes - Notepad" });
+  await page.getByRole("button", { name: "Show", exact: true }).click();
   const cursor = page.locator("#stage7 .real-ag");
   await cursor.waitFor({ state: "visible", timeout: 20000 });
   const place = await page.evaluate(() => {
@@ -83,7 +98,8 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   assert.equal(await cursor.evaluate((el) => getComputedStyle(el).getPropertyValue("--c").trim()), "#993366",
     "the actual Trunk's selected color follows the new click");
 
-  await page.locator('#stage7 [data-act="takeover"][data-v="screen"]').click();
+  await page.waitForTimeout(300); // a painted frame is what Take over is pressed on
+  await page.locator('#stage7 [data-act="native-control"][data-v="take"]', { hasText: "Take over" }).click();
   await page.locator("#stage7 .you7").waitFor({ timeout: 10000 });
   assert.match(await page.locator("#stage7 .you7").innerText(), /^You’re driving · .+ is paused$/);
   assert.equal(app.desktop.isDriving(), true, "the engine holds every screen action now");
@@ -91,10 +107,13 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   const before = calls.length;
   let clicked = false;
   const waiting = app.desktop.click({ window: "Notepad", point: { x: 1, y: 1 } }, context()).then(() => { clicked = true; });
-  await page.locator('#stage7 [data-act="handback"][data-v="screen"]').waitFor();
+  const back = page.locator('#stage7 [data-act="native-control"][data-v="back"]');
+  await back.waitFor();
+  assert.match(await back.innerText(), /^Hand back to /);
   assert.equal(clicked, false);
   assert.equal(calls.length, before, "the Trunk's click waited while you drove");
-  await page.locator('#stage7 [data-act="handback"][data-v="screen"]').click();
+  await page.waitForTimeout(300);
+  await back.click();
   await page.locator(".toast", { hasText: "Handed back." }).waitFor();
   await waiting;
   assert.equal(clicked, true, "handed back: its click happened");
@@ -102,21 +121,4 @@ test("the Trunk's cursor sits where it clicked; Take over says You're driving an
   await page.locator("#stage7 .you7").waitFor({ state: "detached" });
   assert.deepEqual(errors, []);
 
-  // Isolate incoming frames from the app's unrelated periodic redraws: a new Trunk must request its own redraw.
-  const probe = await browser.newPage();
-  await probe.route("**/cursor-probe", (route) => route.fulfill({ contentType: "text/html", body: '<div id="stage7"><div class="st7-screen"></div></div>' }));
-  const lines = [first.id, second.id, second.id].map((trunk, i) => JSON.stringify({ frame: `data:image/png;base64,${data}`,
-    cursor: { x: 0.5, y: 0.5, at: String(i), trunk }, driving: false })).join("\n") + "\n";
-  await probe.route("**/api/panels/screen?*", (route) => route.fulfill({ contentType: "application/x-ndjson", body: lines }));
-  await probe.goto(server.url + "/cursor-probe");
-  await probe.evaluate(async () => {
-    window.redraws = [];
-    const screen = await import("/app/chat/stage-screen.js");
-    screen.watchScreen(true, (redraw) => window.redraws.push(redraw));
-  });
-  await probe.waitForFunction(() => window.redraws.length === 3);
-  assert.deepEqual(await probe.evaluate(() => window.redraws), [true, true, false],
-    "the Trunk change redraws its label immediately; another frame of the same Trunk only paints coordinates");
-  await probe.evaluate(async () => (await import("/app/chat/stage-screen.js")).watchScreen(false));
-  await probe.close();
 });

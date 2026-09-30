@@ -1,0 +1,9 @@
+# Local application sharing
+
+In a conversation, open Computer, choose an external application window, then choose **Share selected window**. Sharing starts in view mode. **Take control** pauses Branch screen actions; clicks on the picture, text, key chords and scroll buttons affect only the selected application. **Hand back** resumes Branch. **Stop sharing**, closing or hiding the view, changing conversations, locking Branch or pressing the native Stop notice ends the view.
+
+The server issues short-lived opaque selection and frame IDs. The browser never submits native handles. Selection re-enumerates the window; frames verify HWND, process, geometry and executable/class provenance before and after capture. Input requires the current visible painted frame, expires after two seconds and consumes that frame before effects. Native input rechecks identity and geometry after focus and refuses the viewer.
+
+Initial support is Windows external native application windows. Displays and browser windows are refused until the desktop host can prove the exact live viewer identity and exclusion. Unknown/missing process provenance is refused. Browser recognition is conservative and cannot identify every renamed or embedded browser; this is not arbitrary browser-viewer exclusion. Unsupported hosts, detached gateways lacking a proved shell capture host and unavailable native permission fail with an explanation. Window capture uses PrintWindow and never substitutes a display screenshot.
+
+This implementation has headless stand-in and source contract evidence. Windows capture, native compilation and real input still require hosted native proof before release. The owner app, desktop and data were not used for testing.

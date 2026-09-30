@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 const source = await readFile(new URL("../public/app/shell/liveupdate.js", import.meta.url), "utf8");
-const keep = source.slice(source.indexOf("async function keepOpen("), source.indexOf("const frames ="));
+const keep = source.slice(source.indexOf("function openNow("), source.indexOf("const frames ="));
 function capture({ chat = null, pending = true, storageError = false } = {}) {
   let saved;
   const context = vm.createContext({ S: { chat, view: "chat", tabs: {}, drafts: {} }, sendingWithoutSession: () => pending,

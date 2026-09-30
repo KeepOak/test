@@ -3,7 +3,11 @@ import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, Outg
 import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
+import { verifyTelegramLaunch, type TelegramLaunch } from "./telegram-init-data.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
+import { MemoryInbox, type InboxRow, type TelegramInbox } from "./telegram-inbox.js";
+import { catchUpLimit } from "./catch-up.js";
+import { backoffDelay, conflictBackoff, maxInCallWaitSeconds, pollBackoff, repeatable, telegramFailure, type TelegramFailure } from "./telegram-retry.js";
 
 /**
  * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
@@ -21,6 +25,11 @@ export interface TelegramOptions {
   refusedRetryMs?: number;
   /** Milliseconds without an update before asking from Telegram's earliest unconfirmed update (a day; tests shorten it). */
   renumberAfterMs?: number;
+  /**
+   * Where each update is written down before Telegram is told it arrived (telegram-inbox.ts): Branch's saved-work
+   * database, so a restart handles only what was not yet handled. Left out, it is kept in memory.
+   */
+  inbox?: TelegramInbox;
   /**
    * Starts even when Telegram cannot be reached yet (the card's bot, connected in the background after
    * its token was checked): the name is learned by the first poll that gets through. Left out, any
@@ -45,6 +54,9 @@ const messageSchema = z.object({
   document: mediaSchema.optional(),
   video: mediaSchema.optional(),
   message_id: z.number(),
+  /** When it was sent (and edited), in seconds: an update sent before Branch started is old news (caughtUp). */
+  date: z.number().optional(),
+  edit_date: z.number().optional(),
   message_thread_id: z.number().int().positive().optional(),
   /** Photo albums as one message: the album a photo came in. */
   media_group_id: z.string().max(64).optional(),
@@ -53,7 +65,7 @@ const messageSchema = z.object({
   voice: voiceSchema.optional(),
   audio: voiceSchema.optional(),
   from: userSchema.optional(),
-  chat: z.object({ id: z.number(), type: z.string(), title: z.string().optional() }).passthrough(),
+  chat: z.object({ id: z.number(), type: z.string(), title: z.string().optional(), is_forum: z.boolean().optional() }).passthrough(),
   entities: z.array(z.object({ type: z.string(), offset: z.number(), length: z.number() })).optional(),
   reply_to_message: z.object({ from: userSchema.optional() }).passthrough().optional(),
 }).passthrough();
@@ -73,7 +85,7 @@ const updateSchema = z.object({
 }).passthrough();
 /** `parameters.retry_after`: Telegram's "too many requests, try again in N seconds" (https://core.telegram.org/bots/api#responseparameters). */
 const responseSchema = z.object({ ok: z.boolean(), result: z.unknown().optional(), description: z.string().optional(),
-  parameters: z.object({ retry_after: z.number().optional() }).passthrough().optional() });
+  parameters: z.object({ retry_after: z.number().optional(), migrate_to_chat_id: z.number().optional() }).passthrough().optional() });
 /**
  * Which words are code, as Telegram message entities rather than a parse mode, so nothing in the words needs escaping:
  * a `pre` entity with a language gets Telegram's code block with the language's name and a copy button. `quiet` sends
@@ -86,6 +98,38 @@ const formatted = (format?: MessageFormat) => ({
 /** Topic addresses remain distinct in the router; Telegram receives the underlying chat and thread. */
 const topicAddress = (chatId: number, threadId?: number): string =>
   threadId === undefined ? String(chatId) : `${chatId}:${threadId}`;
+/**
+ * UP-CHAT-014: a topic is its own conversation only in a forum. In an ordinary group, Telegram gives a reply chain a
+ * `message_thread_id` too, and that must not split one group into a conversation per reply chain.
+ * From OpenClaw (MIT), extensions/telegram/src/bot/helpers.ts `resolveTelegramForumThreadId`.
+ */
+const forumThread = (chat: { is_forum?: boolean | undefined }, threadId: number | undefined): number | undefined =>
+  chat.is_forum ? threadId : undefined;
+/**
+ * UP-CHAT-013: `/cmd@SomeBot` names the bot a command is for (Telegram's form in groups). Adapted from OpenClaw (MIT),
+ * src/auto-reply/commands-registry-normalize.ts `TARGETED_COMMAND_BODY_RE`.
+ */
+const targetedCommand = /^\/([^\s@]+)@([A-Za-z0-9_]+)(?=$|\s|[.!?,;:'")\]}])([\s\S]*)$/u;
+/** Telegram's own limits for a bot's command menu (https://core.telegram.org/bots/api#botcommand). */
+const menuNamePattern = /^[a-z0-9_]{1,32}$/;
+const menuMax = 100, menuTextBudget = 5700, menuDescriptionMax = 256;
+/**
+ * The menu within Telegram's limits: names it accepts, at most 100 commands, and descriptions trimmed so the whole menu
+ * fits the text budget. Adapted from OpenClaw (MIT), extensions/telegram/src/bot-native-command-menu.ts
+ * `fitTelegramCommandsWithinTextBudget`. A name Telegram would refuse is left out rather than renamed, because the
+ * router reads the name as it is.
+ */
+export function telegramMenu(commands: { command: string; description: string }[]): { command: string; description: string }[] {
+  let menu = commands.filter((one) => menuNamePattern.test(one.command)).slice(0, menuMax);
+  while (menu.length) {
+    const names = menu.reduce((total, one) => total + one.command.length, 0);
+    const room = menuTextBudget - names;
+    if (room < menu.length) { menu = menu.slice(0, -1); continue; }
+    const cap = Math.min(menuDescriptionMax, Math.floor(room / menu.length));
+    return menu.map((one) => ({ command: one.command, description: (one.description.trim() || one.command).slice(0, cap) }));
+  }
+  return [];
+}
 const telegramTarget = (address: string): { chat_id: number; message_thread_id?: number } => {
   const [chatId, threadId] = address.split(":");
   return { chat_id: Number(chatId), ...(threadId === undefined ? {} : { message_thread_id: Number(threadId) }) };
@@ -102,8 +146,7 @@ export class TelegramAdapter implements ChannelAdapter {
   private readonly fetch: typeof fetch;
   private readonly pollTimeout: number;
   private username: string | null = null;
-  /** Highest update observed; unlike the request offset, this may include unfinished work. */
-  private seenThrough = 0;
+  /** The offset the next getUpdates asks from: one past the newest update saved in the inbox. */
   private offset = 0;
   private stopping = new AbortController();
   /** P17-D §8: how long to wait before asking again with a token Telegram refused. */
@@ -111,11 +154,25 @@ export class TelegramAdapter implements ChannelAdapter {
   private readonly renumberAfterMs: number;
   /** When an update last arrived (or, at start, when the saved position was last moved on). */
   private lastUpdateAt = Date.now();
-  /** Messages handed over but not settled; the oldest bounds Telegram's next offset. */
-  private readonly inFlight = new Set<number>();
+  /** Every update is saved here before Telegram is told it arrived; the offset moves on as soon as it is. */
+  private readonly inbox: TelegramInbox;
+  private onMessage: ((message: InboundMessage) => Promise<void>) | null = null;
+  /**
+   * Set by the first start() only: the updates that waited while Branch was closed. Every update up to the newest one
+   * sent before the start (`oldThrough`) is caught up; the window closes once Telegram has handed the backlog over.
+   */
+  private backlog: { startedAt: number; oldThrough: number } | null = null;
+  private started = false;
   private loop: Promise<void> | null = null;
   /** P17-D §8: Telegram's refusal of the bot token while polling (revoked or replaced in BotFather), in words, or null. */
   private refused: string | null = null;
+  /** 409 Conflict: another program reads this bot's updates (or a webhook is set), in words, or null. */
+  private conflict: string | null = null;
+  /** Polls failed in a row, and 409s in a row, for the backoff. Kept across the watchdog's restart(). */
+  private failures = 0;
+  private conflicts = 0;
+  /** Groups that became supergroups: the old chat id and the new one (migrate_to_chat_id). */
+  private readonly movedChats = new Map<number, number>();
   /** keepTrying: getMe did not get through at start, so the name is still to be learned. */
   private nameUnknown = false;
   constructor(private readonly options: TelegramOptions) {
@@ -125,10 +182,15 @@ export class TelegramAdapter implements ChannelAdapter {
     this.pollTimeout = options.pollTimeoutSeconds ?? 25;
     this.refusedRetryMs = options.refusedRetryMs ?? 30_000;
     this.renumberAfterMs = options.renumberAfterMs ?? 24 * 60 * 60 * 1000;
+    this.inbox = options.inbox ?? new MemoryInbox();
   }
   botName(): string | null { return this.username; }
-  /** P17-D §8: a refused token stops every message arriving, so it is said, not retried in silence. */
-  health(): ChannelHealth { return this.refused ? { state: "needs attention", reason: this.refused } : { state: "connected" }; }
+  verifyMiniApp(raw: string): TelegramLaunch { return verifyTelegramLaunch(raw, this.options.token); }
+  /** P17-D §8: a refused token (or another program reading this bot) stops every message arriving, so it is said. */
+  health(): ChannelHealth {
+    const reason = this.refused ?? this.conflict;
+    return reason ? { state: "needs attention", reason } : { state: "connected" };
+  }
   async start(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     // P17-D §8: a token revoked while Branch was closed is refused here first. It still starts, so the refusal shows
     // in its health and it comes back by itself once the token works; any other failure stops the start as before.
@@ -137,17 +199,27 @@ export class TelegramAdapter implements ChannelAdapter {
       if (!this.options.keepTrying) throw error;
       this.nameUnknown = true; // the poll below keeps asking, and learns the name once Telegram answers
     });
-    this.offset = Math.max(this.offset, this.options.position?.load() ?? 0); // mac3/never-break
+    const kept = this.inbox.newest();
+    this.offset = Math.max(this.offset, this.options.position?.load() ?? 0, kept ? kept + 1 : 0); // mac3/never-break
     const movedAt = this.options.position?.savedAt?.();
     if (this.offset > 0 && movedAt !== undefined && movedAt < this.lastUpdateAt) this.lastUpdateAt = movedAt;
-    this.seenThrough = Math.max(this.seenThrough, this.offset);
-    this.loop = this.poll(onMessage);
+    if (!this.started) {
+      // Only when Branch starts, not when the watchdog starts the poll again: what waited meanwhile is old news, and so
+      // is an update a restart cut off, so an owner's command is not carried out late or run again after a restart.
+      this.started = true;
+      this.inbox.markCaughtUp();
+      this.backlog = { startedAt: Date.now(), oldThrough: 0 };
+    }
+    this.onMessage = onMessage;
+    this.loop = this.poll().catch(() => undefined); // never an unhandled rejection, even if the loop itself fails
   }
   /** `stoppable`: asked from the poll, so stop() cuts it short instead of waiting up to twenty seconds for it. */
   private async learnName(stoppable = false): Promise<void> {
     const me = userSchema.parse(await this.call("getMe", {}, false, stoppable));
     this.username = me.username ?? null;
   }
+  /** Disconnected for good (router.detach): the inbox rows this bot saved are dropped at once. */
+  forget(): void { this.inbox.forget(); }
   async stop(): Promise<void> {
     this.stopping.abort();
     await this.loop?.catch(() => undefined);
@@ -176,16 +248,21 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   /** Sends a spoken reply as a Telegram voice note. Telegram wants the file as a form upload. */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
+    if (audio.byteLength > this.maxFileBytes) throw new Error("That spoken reply is larger than Telegram's 50 MB limit.");
+    const type = mediaType.split(";")[0]!.toLowerCase();
+    // Local speech may produce WAV; send the playable file without claiming it is an Opus voice bubble.
+    if (!["audio/ogg", "audio/mpeg", "audio/mp3", "audio/mp4", "audio/x-m4a"].includes(type))
+      return this.sendFile(chatId, { name: type.includes("wav") ? "reply.wav" : "reply.audio", mediaType, bytes: audio }, replyToMessageId);
     const form = new FormData();
     const target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
-    const extension = mediaType.includes("mpeg") ? "mp3" : mediaType.includes("wav") ? "wav" : "ogg";
-    form.append("audio", new Blob([new Uint8Array(audio)], { type: mediaType }), `reply.${extension}`);
-    if (replyToMessageId) form.append("reply_to_message_id", replyToMessageId);
-    const response = await this.fetch(`${this.base}/sendAudio`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const extension = ["audio/mpeg", "audio/mp3"].includes(type) ? "mp3" : ["audio/mp4", "audio/x-m4a"].includes(type) ? "m4a" : "ogg";
+    form.append("voice", new Blob([new Uint8Array(audio)], { type: mediaType }), `reply.${extension}`);
+    if (replyToMessageId && /^\d+$/.test(replyToMessageId)) form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
+    const response = await this.fetch(`${this.base}/sendVoice`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw new Error(`Telegram sendAudio failed: ${parsed.description ?? response.status}`);
+    if (!parsed.ok) throw new Error(`Telegram sendVoice failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
     return message.success ? String(message.data.message_id) : undefined;
   }
@@ -243,41 +320,102 @@ export class TelegramAdapter implements ChannelAdapter {
     if (!parsed.ok && !/message is not modified/i.test(parsed.description ?? ""))
       throw Object.assign(new Error(`Telegram editMessageMedia failed: ${parsed.description ?? response.status}`), retryOf(parsed));
   }
-  private async poll(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
+  private async poll(): Promise<void> {
     while (!this.stopping.signal.aborted) {
       try {
-        this.advance(); // Retry a failed position write before asking Telegram to acknowledge it.
+        const renumbered = this.mayBeRenumbered(), asked = Date.now();
         // "callback_query" has to be asked for by name, or a pressed button never arrives at all.
-        const renumbered = this.mayBeRenumbered();
-        const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: renumbered ? 0 : this.offset, timeout: this.pollTimeout, allowed_updates: ["message", "edited_message", "callback_query"] }, true));
+        const updates = z.array(updateSchema).parse(await this.call("getUpdates", { offset: renumbered ? 0 : this.offset,
+          limit: pollLimit, timeout: this.pollTimeout, allowed_updates: ["message", "edited_message", "callback_query"] }, true));
         this.contactAt = Date.now(); // Staying connected: Telegram answered, even with nothing new
-        if (updates.length) this.takeNumbering(updates, renumbered);
+        this.failures = 0; this.conflicts = 0; this.conflict = null;
         if (this.refused || this.nameUnknown) { // P17-D §8: the token works again, or Telegram is reachable at last
           this.refused = null;
           await this.learnName(true).then(() => { this.nameUnknown = false; }, () => undefined);
         }
-        for (const update of updates.sort((a, b) => a.update_id - b.update_id)) {
-          // Telegram irrevocably acknowledges every lower id when getUpdates receives offset.
-          // Repeated polls at the oldest unfinished id must not hand that id to the router twice.
-          if (update.update_id < this.seenThrough) continue;
-          this.seenThrough = update.update_id + 1;
-          // Handed over without waiting: a message sent while a task works is a note for that task,
-          // and it has to be read while the task is still going. The router keeps one task per chat.
-          const pressed = update.callback_query && this.fromButton(update.callback_query);
-          if (pressed) { this.handOver(update.update_id, pressed, onMessage); continue; }
-          const edited = !update.message && update.edited_message ? this.inbound(update.edited_message) : null;
-          const message = update.message ? this.inbound(update.message) : edited ? { ...edited, edited: true } : null;
-          this.handOver(update.update_id, message || null, onMessage);
-        }
+        this.take(updates, renumbered, Date.now() - asked >= heldOpenMs);
       } catch (error) {
         if (this.stopping.signal.aborted) return;
-        // P17-D §8: 401 is Telegram refusing the token itself. Nothing arrives until it is replaced, so it is
-        // reported in the channel's health and asked again only every half minute.
-        const refusedToken = (error as { status?: unknown }).status === 401;
-        if (refusedToken) this.refused = tokenRefused;
-        await this.pause(refusedToken ? this.refusedRetryMs : 2000);
+        // Deciding the wait reads the inbox; if even that fails, the plain backoff still keeps the loop alive.
+        const wait = await this.afterFailure(error as TelegramFailure).catch(() => backoffDelay(pollBackoff, ++this.failures));
+        await this.pause(wait);
       }
     }
+  }
+  /**
+   * Saves what a poll brought to the inbox and moves the offset past it at once: the saved rows are the acknowledgement,
+   * so the next poll waits for new updates instead of being handed the ones still being answered, and never stalls
+   * behind a hundred of them. A failed save throws before the offset moves, so nothing is confirmed that was not kept.
+   */
+  private take(updates: z.infer<typeof updateSchema>[], renumbered: boolean, heldOpen: boolean): void {
+    // A poll Telegram held open found nothing waiting when it was asked: what it brings was sent since the start.
+    if (heldOpen) this.closeBacklog();
+    if (updates.length) {
+      this.lastUpdateAt = Date.now();
+      const sorted = [...updates].sort((a, b) => a.update_id - b.update_id);
+      this.inbox.add(this.rowsOf(sorted));
+      const next = sorted.at(-1)!.update_id + 1;
+      // Asked without the position after a quiet spell: an update below it is Telegram's new numbering, read on from there.
+      this.offset = renumbered ? next : Math.max(this.offset, next);
+      try { this.options.position?.save(this.offset); }
+      catch { /* the inbox holds the updates; the position only says where to ask from after a restart */ }
+    }
+    // Fewer than a full poll: Telegram handed over everything that was waiting, so the backlog is in.
+    if (updates.length < pollLimit) this.closeBacklog();
+    this.drain();
+  }
+  /** Inbox rows for one poll; while the backlog is open, everything up to the newest update sent before the start is old news. */
+  private rowsOf(sorted: z.infer<typeof updateSchema>[]): InboxRow[] {
+    const backlog = this.backlog;
+    if (backlog) for (const update of sorted) {
+      const sent = sentAt(update);
+      if (sent !== undefined && sent * 1000 < backlog.startedAt - clockSkewMs) backlog.oldThrough = Math.max(backlog.oldThrough, update.update_id);
+    }
+    return sorted.map((update) => ({ updateId: update.update_id, update, caughtUp: !!backlog && update.update_id <= backlog.oldThrough }));
+  }
+  /**
+   * The backlog is in: of what waited while Branch was closed, only the newest `catchUpLimit` are answered (as the other
+   * chat apps do, catch-up.ts), and the rest are let go, so a computer off for a week does not answer a week at once.
+   */
+  private closeBacklog(): void {
+    if (!this.backlog) return;
+    this.backlog = null;
+    const old = this.inbox.pending().filter((row) => row.caughtUp && !this.inbox.working.has(row.updateId));
+    for (const row of old.slice(0, Math.max(0, old.length - catchUpLimit))) this.inbox.done(row.updateId);
+  }
+  /**
+   * Hands every waiting update to the router in the order it came, without waiting for any of them: a message sent while
+   * a task works is a note for that task, and has to be read while the task is still going. The router keeps one task
+   * per chat, so each chat's messages are taken in order.
+   */
+  private drain(): void {
+    if (this.backlog || !this.onMessage) return;
+    for (const row of this.inbox.pending()) if (!this.inbox.working.has(row.updateId)) this.handOver(row, this.onMessage);
+  }
+  /** After a failed poll: how long to wait before the next one. */
+  private async afterFailure(failure: TelegramFailure): Promise<number> {
+    // P17-D §8: 401 is Telegram refusing the token itself. Nothing arrives until it is replaced, so it is reported in
+    // the channel's health and asked again only every half minute.
+    if (failure.status === 401) { this.refused = tokenRefused; return this.refusedRetryMs; }
+    // Telegram cannot be asked now: work on what the inbox already holds.
+    this.closeBacklog();
+    this.drain();
+    if (failure.status === 409) return this.afterConflict(failure);
+    if (failure.retryAfter) { this.contactAt = Date.now(); return failure.retryAfter * 1000; } // exactly as asked
+    return backoffDelay(pollBackoff, ++this.failures);
+  }
+  /**
+   * 409: another program is reading this bot's updates, or a webhook is still set, and Telegram serves only one. The
+   * webhook is removed (Branch reads by polling), the problem is shown in the channel's health, and polling backs off.
+   * Telegram did answer, so the watchdog does not count this as a stall and start the poll again.
+   */
+  private async afterConflict(failure: TelegramFailure): Promise<number> {
+    this.contactAt = Date.now();
+    this.conflict = conflictReason;
+    const removed = await this.call("deleteWebhook", { drop_pending_updates: false }, false, true).then(() => true, () => false);
+    // A webhook was the cause and is gone: ask again at once. Anything else waits 30 s, doubling up to ten minutes.
+    if (removed && /webhook/i.test(failure.description ?? "") && this.conflicts === 0) { this.conflicts++; return 0; }
+    return backoffDelay(conflictBackoff, ++this.conflicts);
   }
   /**
    * Telegram numbers a bot's next update afresh after a week without any: "If there are no new updates for at least a
@@ -285,20 +423,12 @@ export class TelegramAdapter implements ChannelAdapter {
    * (https://core.telegram.org/bots/api#update). It can come out below the saved position, and asking with that
    * position would confirm it, and so lose it: "An update is considered confirmed as soon as getUpdates is called with
    * an offset higher than its update_id" (https://core.telegram.org/bots/api#getupdates). So once nothing has arrived
-   * for a day, and nothing is being handled, the bot asks without its position (0: "the earliest unconfirmed update").
-   * That repeats nothing: every answered update was confirmed long before, and updates "will not be kept longer
-   * than 24 hours" (https://core.telegram.org/bots/api#getting-updates).
+   * for a day the bot asks without its position (0: "the earliest unconfirmed update"). That repeats nothing: every
+   * update taken in was confirmed long before, the inbox keeps each update id once, and updates "will not be kept
+   * longer than 24 hours" (https://core.telegram.org/bots/api#getting-updates).
    */
   private mayBeRenumbered(): boolean {
-    return this.offset > 0 && this.inFlight.size === 0 && Date.now() - this.lastUpdateAt >= this.renumberAfterMs;
-  }
-  /** An update below the position, when asked without it, is Telegram's new numbering: read on from there. */
-  private takeNumbering(updates: { update_id: number }[], renumbered: boolean): void {
-    this.lastUpdateAt = Date.now();
-    const lowest = Math.min(...updates.map((update) => update.update_id));
-    if (!renumbered || lowest >= this.offset) return;
-    this.offset = 0; // the next position saved is in the new numbering
-    this.seenThrough = lowest;
+    return this.offset > 0 && Date.now() - this.lastUpdateAt >= this.renumberAfterMs;
   }
   /**
    * Waits before asking again, cut short by stop(): replacing a refused token on its card stops this bot, and the
@@ -306,34 +436,32 @@ export class TelegramAdapter implements ChannelAdapter {
    */
   private pause(ms: number): Promise<void> {
     const signal = this.stopping.signal;
+    if (ms <= 0 || signal.aborted) return Promise.resolve();
     return new Promise((resolve) => {
       const done = () => { clearTimeout(timer); signal.removeEventListener("abort", done); resolve(); };
       const timer = setTimeout(done, ms);
       signal.addEventListener("abort", done, { once: true });
     });
   }
-  /**
-   * mac3/never-break: hands one update to the router without waiting for it, and saves the read
-   * position only up to the oldest message still being handled, so a crash never skips one.
-   */
-  /** Advances both the durable position and Telegram's requested acknowledgement together. */
-  private advance(): void {
-    const oldest = Math.min(...this.inFlight);
-    const safe = Number.isFinite(oldest) ? oldest : this.seenThrough;
-    if (safe <= this.offset) return;
-    try { this.options.position?.save(safe); }
-    catch { return; } // Do not acknowledge an update whose durable position failed to save.
-    this.offset = safe;
-  }
-  private handOver(id: number, message: InboundMessage | null, onMessage: (message: InboundMessage) => Promise<void>): void {
+  /** Hands one inbox row to the router without waiting for it, and marks it done in the inbox once it is settled. */
+  private handOver(row: InboxRow, onMessage: (message: InboundMessage) => Promise<void>): void {
+    const id = row.updateId;
     const settle = () => {
-      this.inFlight.delete(id);
-      this.advance();
+      this.inbox.working.delete(id);
+      try { this.inbox.done(id); } catch { /* not marked: a restart hands it over once more */ }
     };
+    const parsed = updateSchema.safeParse(row.update);
+    const message = parsed.success ? this.toMessage(parsed.data) : null;
     if (!message) { settle(); return; }
-    this.inFlight.add(id);
-    try { void Promise.resolve(onMessage(message)).catch(() => undefined).finally(settle); }
+    this.inbox.working.add(id);
+    try { void Promise.resolve(onMessage(row.caughtUp ? { ...message, caughtUp: true } : message)).catch(() => undefined).finally(settle); }
     catch { settle(); }
+  }
+  private toMessage(update: z.infer<typeof updateSchema>): InboundMessage | null {
+    const pressed = update.callback_query && this.fromButton(update.callback_query);
+    if (pressed) return pressed;
+    const edited = !update.message && update.edited_message ? this.inbound(update.edited_message) : null;
+    return update.message ? this.inbound(update.message) : edited ? { ...edited, edited: true } : null;
   }
   /**
    * A pressed button, as an ordinary addressed message carrying the button's own value. The router
@@ -349,7 +477,8 @@ export class TelegramAdapter implements ChannelAdapter {
     if (!chat || !query.from || query.from.is_bot || !query.data) return null;
     void this.call("answerCallbackQuery", { callback_query_id: query.id }).catch(() => undefined);
     return {
-      channel: this.id, chatId: topicAddress(chat.id, query.message?.message_thread_id), chatKind: chat.type === "private" ? "direct" : "group",
+      channel: this.id, chatId: topicAddress(chat.id, forumThread(chat as { is_forum?: boolean }, query.message?.message_thread_id)),
+      chatKind: chat.type === "private" ? "direct" : "group",
       ...(chat.title ? { chatTitle: chat.title } : {}),
       senderId: String(query.from.id),
       senderName: query.from.username ?? query.from.first_name ?? String(query.from.id),
@@ -357,6 +486,38 @@ export class TelegramAdapter implements ChannelAdapter {
       // keyboard need distinct delivery identities (including a stale-press explanation).
       text: query.data, addressed: true, messageId: query.id,
     };
+  }
+  /** The menu last set for each scope ("" for every chat), so an unchanged one is not sent again (OpenClaw's command hash). */
+  private readonly menuSet = new Map<string, string>();
+  /**
+   * UP-CHAT-015 (CHAT-018, CHAT-161): Branch's commands in Telegram's own "/" menu, from the list the router hands every
+   * app. An empty list clears the menu. A menu Telegram calls too big is sent again with four in five of its commands
+   * until it fits (OpenClaw's BOT_COMMANDS_TOO_MUCH retry).
+   */
+  async setCommands(commands: { command: string; description: string }[]): Promise<void> {
+    await this.putMenu(commands, null);
+  }
+  /** The menu for one private chat (the owner's own), in Telegram's `chat` scope; a private chat's id is its person's. */
+  async setChatCommands(chatId: string, commands: { command: string; description: string }[]): Promise<void> {
+    if (!/^\d+$/.test(chatId)) return;
+    await this.putMenu(commands, { type: "chat", chat_id: Number(chatId) });
+  }
+  private async putMenu(commands: { command: string; description: string }[], scope: { type: "chat"; chat_id: number } | null): Promise<void> {
+    let menu = telegramMenu(commands);
+    const key = JSON.stringify(menu), where = scope ? String(scope.chat_id) : "";
+    if (key === this.menuSet.get(where)) return;
+    const scoped = scope ? { scope } : {};
+    if (!menu.length) { await this.call("deleteMyCommands", scoped); this.menuSet.set(where, key); return; }
+    for (;;) {
+      try {
+        await this.call("setMyCommands", { commands: menu, ...scoped });
+        this.menuSet.set(where, key);
+        return;
+      } catch (error) {
+        if (!/BOT_COMMANDS_TOO_MUCH/i.test(error instanceof Error ? error.message : String(error)) || menu.length <= 1) throw error;
+        menu = menu.slice(0, Math.floor(menu.length * 0.8));
+      }
+    }
   }
   /**
    * A question with buttons to press. Each button's `data` is the answer plus the fingerprint of
@@ -408,12 +569,17 @@ export class TelegramAdapter implements ChannelAdapter {
       entity.type === "mention" && written.slice(entity.offset, entity.offset + entity.length).toLowerCase() === mention);
     const replyToBot = !!this.username && message.reply_to_message?.from?.username === this.username;
     const direct = message.chat.type === "private";
-    const text = mention && mentioned ? written.replace(new RegExp(mention, "ig"), "").trim() : written;
+    // UP-CHAT-013: `/stop@ThisBot` is a command for this bot, so it counts as addressed and is read as `/stop`;
+    // `/stop@OtherBot` is somebody else's command, and this bot lets it go (OpenClaw mention-gating.ts, MIT).
+    const targeted = targetedCommand.exec(written);
+    if (targeted && targeted[2]!.toLowerCase() !== this.username?.toLowerCase()) return null;
+    const aimed = targeted ? `/${targeted[1]}${targeted[3]}` : null;
+    const text = aimed ?? (mention && mentioned ? written.replace(new RegExp(mention, "ig"), "").trim() : written);
     return {
-      channel: this.id, chatId: topicAddress(message.chat.id, message.message_thread_id), chatKind: direct ? "direct" : "group",
+      channel: this.id, chatId: topicAddress(message.chat.id, forumThread(message.chat, message.message_thread_id)), chatKind: direct ? "direct" : "group",
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
-      text, addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
+      text, addressed: direct || mentioned || !!aimed || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
       ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
         name: message.document?.file_name ?? message.video?.file_name ?? `photo-${message.message_id}.jpg`,
@@ -474,17 +640,65 @@ export class TelegramAdapter implements ChannelAdapter {
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     return bytes;
   }
-  private async call(method: string, body: unknown, longPoll = false, stoppable = longPoll): Promise<unknown> {
+  /**
+   * One Bot API request, asked again when Telegram says so (grammY auto-retry, telegram-retry.ts): after "too many
+   * requests" it waits exactly `retry_after` (up to a few seconds; longer is thrown for the caller to schedule), follows
+   * a group's move to a supergroup, and repeats a request that is safe to repeat after a server error or a lost
+   * connection. getUpdates is never asked again here: the poll loop decides how long to wait.
+   */
+  private async call(method: string, body: Record<string, unknown>, longPoll = false, stoppable = longPoll): Promise<unknown> {
+    let payload = this.movedChat(body), floods = 0, failures = 0;
+    for (;;) {
+      try { return await this.callOnce(method, payload, longPoll, stoppable); }
+      catch (error) {
+        const failure = error as TelegramFailure;
+        if (longPoll || (stoppable && this.stopping.signal.aborted)) throw error;
+        const chat = payload.chat_id;
+        if (failure.migrateTo !== undefined && typeof chat === "number" && chat !== failure.migrateTo) {
+          this.movedChats.set(chat, failure.migrateTo);
+          payload = { ...payload, chat_id: failure.migrateTo };
+          continue;
+        }
+        const wait = failure.retryAfter;
+        if (wait && wait <= maxInCallWaitSeconds && floods++ < 3 && method !== "sendChatAction") { await this.sleep(wait * 1000, stoppable); continue; }
+        const lost = failure.status === undefined || failure.status >= 500;
+        if (lost && repeatable.has(method) && failures < 2) { await this.sleep(3000 * 2 ** failures++, stoppable); continue; }
+        throw error;
+      }
+    }
+  }
+  private async callOnce(method: string, body: Record<string, unknown>, longPoll: boolean, stoppable: boolean): Promise<unknown> {
     const timeout = AbortSignal.timeout(longPoll ? (this.pollTimeout + 10) * 1000 : 20000);
     const signal = stoppable ? AbortSignal.any([this.stopping.signal, timeout]) : timeout;
     const response = await this.fetch(`${this.base}/${method}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
     });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw Object.assign(new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`),
-      { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
+    if (!parsed.ok) throw telegramFailure(method, response.status, parsed);
     return parsed.result;
   }
+  /** A request for a group that became a supergroup goes to the supergroup. */
+  private movedChat(body: Record<string, unknown>): Record<string, unknown> {
+    const moved = typeof body.chat_id === "number" ? this.movedChats.get(body.chat_id) : undefined;
+    return moved === undefined ? body : { ...body, chat_id: moved };
+  }
+  private sleep(ms: number, stoppable: boolean): Promise<void> {
+    return stoppable ? this.pause(ms) : new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
+/** Telegram hands out at most this many updates a poll (its own default and ceiling), asked for by name. */
+const pollLimit = 100;
+/** A poll that took this long was held open by Telegram: nothing was waiting when it was asked. */
+const heldOpenMs = 1500;
+/** Telegram's clock and this computer's may differ a little; an update sent this close to the start counts as new. */
+const clockSkewMs = 2000;
+/** What Settings › Chat apps shows while Telegram answers 409 Conflict. */
+export const conflictReason = "Another program is reading this bot's messages (a second Branch, a script, or a webhook), so Telegram "
+  + "turned Branch away. Branch removed any webhook and keeps trying; stop the other program that uses this bot token.";
+/** When an update's message was sent (or edited), in seconds; a button press carries no time of its own. */
+function sentAt(update: { message?: { date?: number | undefined } | undefined; edited_message?: { date?: number | undefined; edit_date?: number | undefined } | undefined }): number | undefined {
+  return update.message?.date ?? update.edited_message?.edit_date ?? update.edited_message?.date;
 }
 
 /** What Telegram shows as a photo: JPEG, PNG or WebP, up to its 10 MB photo limit. */
