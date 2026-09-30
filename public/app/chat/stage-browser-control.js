@@ -20,7 +20,7 @@ import { t } from "../../i18n.js";
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
   busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
-  error: "", typed: "", opening: false, libraryOpen: false, library: null, names: { name: "", runId: null } };
+  error: "", typed: "", opening: false, libraryOpen: false, library: null, libraryRange: null, names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const visible = () => B.shown && !document.hidden && !locked();
@@ -101,7 +101,7 @@ export function watchOwnerBrowser(sid, show, onChange, names = {}) {
   B.onChange = onChange;
   B.names = { name: names.name ?? "", runId: names.runId ?? null };
   const next = show && sid ? sid : null;
-  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, libraryOpen: false, library: null }); }
+  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, libraryOpen: false, library: null, libraryRange: null }); }
   if (next) B.sid = next;
   B.shown = !!next;
   if (!visible()) { if (B.reading || B.timer || owned()) disconnect(); return; }
@@ -168,16 +168,28 @@ function statusHTML() {
   const title = B.opening ? "" : `<b>${t("window.chat.stage.opening-failed")}</b>`;
   return `<div class="browser-status7 ob7-status" role="status">${title}<small>${esc(said)}</small></div>`;
 }
+const libraryDates = () => {
+  const today = new Date(), from = new Date(today.getTime() - 29 * 86400000);
+  return { from: from.toISOString().slice(0, 10), to: today.toISOString().slice(0, 10) };
+};
+function historyRangeHTML() {
+  const range = B.libraryRange ?? libraryDates(), max = libraryDates().to;
+  return `<form class="ob7-library-range" data-form="owner-browser-history-range">
+    <label>${esc(t("window.chat.stage.ob.library-date-from"))}<input class="inp" type="date" name="from" max="${max}" value="${esc(range.from)}" required></label>
+    <label>${esc(t("window.chat.stage.ob.library-date-to"))}<input class="inp" type="date" name="to" max="${max}" value="${esc(range.to)}" required></label>
+    <button class="btn ghost sm" type="submit">${esc(t("window.chat.stage.ob.library-date-apply"))}</button>
+    <small>${esc(t("window.chat.stage.ob.library-date-hint"))}</small></form>`;
+}
 function libraryHTML() {
   const has = hasOwnerBrowser(), change = has && canDrive();
   const button = (action, label, enabled = true) => `<button type="button" class="btn ghost sm" data-act="owner-browser-library-${action}"${enabled ? "" : " disabled"}>${esc(label)}</button>`;
   const bar = `<div class="ob7-library-bar">${button("show", t("window.chat.stage.ob.library"), has)}${button("save", t("window.chat.stage.ob.library-save"), change && B.ready)}</div>`;
   if (!B.libraryOpen) return bar;
-  const saved = B.library, row = (entry, bookmark) => `<li><button type="button" class="btn ghost sm" data-act="owner-browser-library-open" data-url="${esc(entry.url)}"${change ? "" : " disabled"}>${esc(entry.title || entry.url)}</button><small>${esc(entry.url)}</small>${bookmark ? `<button type="button" class="btn ghost sm" data-act="owner-browser-library-remove" data-id="${esc(entry.id)}"${change ? "" : " disabled"}>${esc(t("window.chat.stage.ob.library-remove"))}</button>` : ""}</li>`;
+  const saved = B.library, row = (entry, bookmark) => `<li><button type="button" class="btn ghost sm" data-act="owner-browser-library-open" data-url="${esc(entry.url)}"${change ? "" : " disabled"}>${esc(entry.title || entry.url)}</button><small>${esc(entry.url)}${bookmark ? "" : ` · ${esc(entry.at.slice(0, 10))}`}</small>${bookmark ? `<button type="button" class="btn ghost sm" data-act="owner-browser-library-remove" data-id="${esc(entry.id)}"${change ? "" : " disabled"}>${esc(t("window.chat.stage.ob.library-remove"))}</button>` : ""}</li>`;
   return bar + `<section class="ob7-library"><p>${esc(t("window.chat.stage.ob.library-privacy"))}</p>${button("refresh", t("window.chat.stage.ob.library-refresh"))}
     <b>${esc(t("window.chat.stage.ob.library-bookmarks"))}</b><ul>${saved?.bookmarks?.map(entry => row(entry, true)).join("") || `<li>${esc(t("window.chat.stage.ob.library-empty"))}</li>`}</ul>
-    <b>${esc(t("window.chat.stage.ob.library-history"))}</b><div>${button("history", t(saved?.historyEnabled ? "window.chat.stage.ob.library-disable" : "window.chat.stage.ob.library-enable"), change)}${button("clear", t("window.chat.stage.ob.library-clear"), change && !!saved?.history?.length)}</div>
-    <ul>${saved?.history?.map(entry => row(entry, false)).join("") || `<li>${esc(t("window.chat.stage.ob.library-empty"))}</li>`}</ul></section>`;
+    <b>${esc(t("window.chat.stage.ob.library-history"))}</b><div>${button("history", t(saved?.historyEnabled ? "window.chat.stage.ob.library-disable" : "window.chat.stage.ob.library-enable"), change)}${button("clear", t("window.chat.stage.ob.library-clear"), change && saved?.historyEnabled)}</div>
+    ${saved?.historyEnabled ? historyRangeHTML() : ""}<ul>${saved?.history?.map(entry => row(entry, false)).join("") || `<li>${esc(t("window.chat.stage.ob.library-empty"))}</li>`}</ul></section>`;
 }
 function pageHTML() {
   const ready = !!B.frame, input = owned() || free();
@@ -334,8 +346,12 @@ async function libraryRequest(operation, extra = {}) {
   if (operation !== "list" && !(await ensureDriving())) return;
   await drain();
   if (operation === "bookmark") { await readView(); if (!B.ready || !B.frameId) return; }
-  return send("library", { ...bound(), operation, ...extra,
+  if (operation === "list") B.libraryRange ??= libraryDates();
+  const answer = await send("library", { ...bound(), operation, ...extra,
+    ...(operation === "list" ? { range: B.libraryRange } : {}),
     ...(operation === "bookmark" ? { frameId: B.frameId, tabId: B.tabId } : {}) });
+  if (operation !== "list" && answer?.status === "library" && B.libraryOpen) return libraryRequest("list");
+  return answer;
 }
 function initBrowserLibrary() {
   on("owner-browser-library-show", () => {
@@ -368,6 +384,13 @@ export function initOwnerBrowser() {
   on("owner-browser-reload", () => { void inOrder(() => action("browser.owner_input", { kind: "reload" })); });
   on("owner-browser-yes", confirm); on("owner-browser-no", cancelQuestion);
   document.addEventListener("submit", (event) => {
+    const rangeForm = event.target.closest?.('#stage7 form[data-form="owner-browser-history-range"]');
+    if (rangeForm) {
+      event.preventDefault();
+      const data = new FormData(rangeForm);
+      B.libraryRange = { from: String(data.get("from") ?? ""), to: String(data.get("to") ?? "") };
+      void inOrder(() => libraryRequest("list")); return;
+    }
     const form = event.target.closest?.('#stage7 form[data-form="owner-browser-address"]');
     if (form) { event.preventDefault(); void address(form); }
   }, true);

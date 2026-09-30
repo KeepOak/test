@@ -9,6 +9,28 @@ const schema = z.object({ bookmarks: z.array(entrySchema).max(50).default([]), h
   historyEnabled: z.boolean().default(false), lastUrl: z.string().max(2000).default('') }).strict();
 export type BrowserLibrary = z.infer<typeof schema>;
 const key = (scope: string): string => `browser-library:${scope}`;
+const dayMs = 24 * 60 * 60_000;
+const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+  const at = Date.parse(value);
+  return Number.isFinite(at) && new Date(at).toISOString().slice(0, 10) === value;
+}, 'Use a valid date in YYYY-MM-DD form.');
+/** Inclusive UTC dates, limited to thirty days; external browser history is never read. */
+export const BrowserHistoryRangeSchema = z.object({ from: dateSchema, to: dateSchema }).strict().superRefine((range, context) => {
+  const from = Date.parse(range.from), to = Date.parse(range.to);
+  if (Number.isFinite(from) && Number.isFinite(to) && (to < from || to - from >= 30 * dayMs))
+    context.addIssue({ code: 'custom', message: 'Choose between one and thirty UTC days, with From before To.' });
+  if (range.to > new Date().toISOString().slice(0, 10))
+    context.addIssue({ code: 'custom', message: 'History dates cannot be in the future.' });
+});
+export type BrowserHistoryRange = z.infer<typeof BrowserHistoryRangeSchema>;
+/** Applies the requested date bounds after the existing scope, opt-in and secret checks. Does not change stored history. */
+export function browserHistoryBetween(library: BrowserLibrary, range: BrowserHistoryRange): BrowserLibrary {
+  const checked = BrowserHistoryRangeSchema.parse(range), from = Date.parse(checked.from), until = Date.parse(checked.to) + dayMs;
+  return { ...library, history: library.historyEnabled ? library.history.filter(entry => {
+    const at = Date.parse(entry.at); return at >= from && at < until;
+  }) : [] };
+}
+
 
 /** URLs with credentials or secret-bearing paths cannot become navigable saved entries. Queries/fragments are omitted. */
 function safeAddress(store: Store, raw: string): string | null {
@@ -29,7 +51,9 @@ export function readBrowserLibrary(store: Store, owner: string, scope: string): 
     const title = String(redactLeaksIn(store.secrets.scrubber.deep(entry.title)).value).slice(0, 200);
     return url ? [{ ...entry, url, title }] : [];
   });
-  return { ...found, bookmarks: clean(found.bookmarks), history: clean(found.history).filter(entry => Date.parse(entry.at) >= Date.now() - 30 * 24 * 60 * 60_000), lastUrl: safeAddress(store, found.lastUrl) ?? '' };
+  return { ...found, bookmarks: clean(found.bookmarks), history: found.historyEnabled ? clean(found.history).filter(entry => {
+    const at = Date.parse(entry.at); return at >= Date.now() - 30 * dayMs && at <= Date.now();
+  }) : [], lastUrl: safeAddress(store, found.lastUrl) ?? '' };
 }
 function save(store: Store, owner: string, scope: string, library: BrowserLibrary): BrowserLibrary {
   store.save('settings', owner, key(scope), { ...library }); return library;

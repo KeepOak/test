@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { readBrowserLibrary, saveBrowserPage, changeBrowserLibrary } from './integrations/browser-library.js';
+import { BrowserHistoryRangeSchema, browserHistoryBetween, readBrowserLibrary, saveBrowserPage, changeBrowserLibrary } from './integrations/browser-library.js';
 import type { createBranch } from './index.js';
 import type { ToolContext } from './contracts.js';
 import type { BrowserBinding, BrowserControl } from './browser-control.js';
@@ -27,7 +27,7 @@ const ControlSchema = BoundSchema.extend({ operation: z.enum(['takeover', 'handb
 const ActionSchema = BoundSchema.extend({ frameId: z.string().uuid(), sequence: z.number().int().min(1), tabId: z.string().uuid(),
   tool: z.enum(['browser.navigate', 'browser.tab', 'browser.owner_input']), arguments: z.record(z.string(), z.unknown()), confirmToken: z.string().uuid().optional() });
 const LibrarySchema = z.discriminatedUnion('operation', [
-  BoundSchema.extend({ operation: z.literal('list') }),
+  BoundSchema.extend({ operation: z.literal('list'), range: BrowserHistoryRangeSchema.optional() }),
   BoundSchema.extend({ operation: z.literal('bookmark'), frameId: z.string().uuid(), tabId: z.string().uuid() }),
   BoundSchema.extend({ operation: z.literal('remove'), entryId: z.string().uuid() }),
   BoundSchema.extend({ operation: z.literal('clear') }),
@@ -219,7 +219,11 @@ export class BrowserControlApi {
       check();
       if (control.view().epoch !== input.epoch || scope !== this.libraryScope(binding)) throw new BrowserApiError(409, 'Browser scope changed; refresh before continuing.');
     };
-    if (input.operation === 'list') return { status: 'library', library: readBrowserLibrary(this.app.store, binding.owner, scope) };
+    if (input.operation === 'list') {
+      current();
+      const library = readBrowserLibrary(this.app.store, binding.owner, scope);
+      return { status: 'library', library: input.range ? browserHistoryBetween(library, input.range) : library };
+    }
     const writer = control.view().writer;
     if (writer?.kind !== 'owner' || writer.id !== input.clientId) throw new BrowserApiError(409, 'Take over this browser before changing saved pages.');
     if (input.operation === 'bookmark') {

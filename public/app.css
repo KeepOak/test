@@ -4524,3 +4524,7 @@ audio.docread18m{width:100%}
 .owner-browser7 .ob7-library li{display:flex;align-items:center;gap:8px;margin:4px 0;min-width:0}
 .owner-browser7 .ob7-library li small{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .owner-browser7 .ob7-library li button:first-child{max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+#stage7 .ob7-library-range { display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin:8px 0; }
+#stage7 .ob7-library-range label { display:grid; gap:3px; }
+#stage7 .ob7-library-range small { flex-basis:100%; }
