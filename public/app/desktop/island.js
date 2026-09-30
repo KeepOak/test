@@ -23,6 +23,8 @@ async function current(expected = scope) {
 function retire(reason) {
   ++epoch; scope = ""; clearFiles(); $("owner").hidden = true;
   $("tasks").replaceChildren(); $("trunk").replaceChildren();
+  $("presence").textContent = "Unknown until the engine answers.";
+  $("usage-summary").textContent = "Recorded usage unavailable."; $("usage-history").replaceChildren(); $("usage-basis").textContent = "";
   $("meeting").textContent = "Unavailable until you refresh a connected calendar.";
   message(reason);
 }
@@ -36,6 +38,8 @@ async function refresh() {
     await current(state.scope);
     if (generation !== epoch) return;
     scope = state.scope; $("owner").hidden = false;
+    const presence = state.presence;
+    $("presence").textContent = presence ? `Engine connected · recent active task records: ${presence.running} working, ${presence.waiting} waiting for an answer, ${presence.paused} paused${presence.running + presence.waiting + presence.paused === 0 ? " · idle" : ""}.` : "Engine connected · presence counts unavailable.";
     $("tasks").replaceChildren(...(state.tasks.length ? state.tasks.map(task => item(`${task.title} · ${task.status}`)) : [item("No tasks running")]));
     const selected = $("trunk").value;
     $("trunk").replaceChildren(...state.trunks.map(trunk => { const option = document.createElement("option"); option.value = trunk.id; option.textContent = trunk.name; return option; }));
@@ -55,6 +59,21 @@ async function operation(action) {
   try { await current(captured); await action(captured, generation); }
   catch (error) { message(error.message); }
   finally { busy = false; for (const button of document.querySelectorAll("main button")) button.disabled = false; }
+}
+async function usage(captured, generation) {
+  $("usage-summary").textContent = "Reading stored receipts…"; $("usage-history").replaceChildren();
+  $("usage-basis").textContent = "";
+  let result;
+  try { result = await api("desktop/island/usage"); await current(captured); }
+  catch (error) { if (generation === epoch) $("usage-summary").textContent = `Recorded usage unavailable: ${error.message}`; throw error; }
+  if (generation !== epoch || result.scope !== captured) return;
+  const money = period => !period.tasks ? "No recorded tasks" : !period.priced ? "Cost unknown (no saved price)"
+    : `~$${period.estimatedCost.toFixed(2)}${period.unpriced ? ` plus ${period.unpriced} unpriced tasks` : ""}`;
+  const tokens = period => `${period.input.toLocaleString()} input / ${period.output.toLocaleString()} output tokens`;
+  $("usage-summary").textContent = `Today: ${money(result.today)} · ${tokens(result.today)}. This month: ${money(result.month)} · ${tokens(result.month)}.`;
+  $("usage-history").replaceChildren(...result.history.map(day => item(`${day.date}: ${money(day)} · ${tokens(day)}`)));
+  $("usage-basis").textContent = `${result.costBasis}. ${result.tokenBasis}. ${result.dayBasis}. Last ${result.history.length} recorded days; read ${new Date(result.measuredAt).toLocaleTimeString()}.`;
+  message("Recorded usage refreshed.");
 }
 const base64 = file => new Promise((resolve, reject) => {
   const reader = new FileReader(); reader.onerror = () => reject(new Error(`Cannot read ${file.name}`));
@@ -113,6 +132,7 @@ $("drop").addEventListener("drop", event => {
 $("library").onclick = () => operation(library);
 $("send").onclick = () => operation(send);
 $("meeting-refresh").onclick = () => operation(meeting);
+$("usage-refresh").onclick = () => operation(usage);
 $("copy").onclick = () => operation(async captured => { if (!files.length) throw new Error("Drop files first."); const result = await window.branchIsland.copy(); await current(captured); clearFiles(); message(`${result.copied} files copied.`); });
 $("clear").onclick = clearFiles;
 $("open").onclick = () => window.branchIsland.open();
