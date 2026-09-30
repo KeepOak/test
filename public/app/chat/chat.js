@@ -380,7 +380,9 @@ export function after(main) {
     if (now) box.scrollTop += now.getBoundingClientRect().top - box.getBoundingClientRect().bottom + 24;
     C.readSid = C.sessionId;
     // A scroll box kept from the last draw already has its listener.
-    if (!heard.has(box)) box.addEventListener("scroll", () => { C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    // Only a box still on screen: a scroll the browser queued can land after a redraw replaced the box, and off the page
+    // its sizes read 0, which looked like a reader at the bottom (tests/follow-newest.test.mjs).
+    if (!heard.has(box)) box.addEventListener("scroll", () => { if (!box.isConnected) return; C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
     heard.add(box);
     stillOutOfSight(box);
     lineAfter(box);
