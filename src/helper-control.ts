@@ -5,8 +5,8 @@ import type { Store } from "./store.js";
 
 /**
  * DESIGN-DIRECTION PR 1: steering or stopping one helper (a task another task started) from the helpers frame, by
- * `POST /api/runs/<helper>/steer` and `/cancel`. Stopping one helper aborts its own task only; its siblings and the
- * task that started it carry on (Runtime.cancel aborts one controller). Who may act on a helper is decided here:
+ * `POST /api/runs/<helper>/steer` and `/cancel`. Stopping one helper stops it and the helpers it started (Runtime.cancel
+ * walks src/helper-tree.ts); its siblings and the task that started it carry on. Who may act on a helper is decided here:
  * - the owner, or the household person the task was started for (src/household-approvals.ts startedForHere);
  * - a short-lived key never steers a helper: a steer note is read as the owner's own word (src/steer.ts). Stopping
  *   stays under the key rule every task has (src/key-context.ts keyStopRefusal);

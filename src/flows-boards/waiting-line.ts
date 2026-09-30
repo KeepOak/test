@@ -160,9 +160,13 @@ export class WaitingLine {
     const row = this.store.sqlite.prepare("SELECT id FROM tasks WHERE owner=? AND session_id=? AND status='running' ORDER BY created_at DESC LIMIT 1")
       .get(this.owner, sessionId);
     const working = row ? { id: String(row.id) } : null;
+    // A steered message is handed to the task as its own note; one it can no longer read (it finished meanwhile, or
+    // was already writing its last answer) becomes its own next turn. It is never joined to another message.
     if (working && mode === "steer" && text.length <= 2000) {
-      this.runtime.steer(working.id, text);
-      return { mode, working: true, message: "Passed on to the task that is working; it reads it before its next step." };
+      try {
+        this.runtime.steer(working.id, text, undefined, { lateTurn: true });
+        return { mode, working: true, message: "Passed on to the task that is working; it reads it before its next step." };
+      } catch { /* the task finished between the check and the steer: the message waits its turn below */ }
     }
     const queued = this.runtime.followUp(sessionId, text);
     if (working && mode === "interrupt") {

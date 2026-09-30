@@ -67,7 +67,7 @@ test("over HTTP: the knobs route saves it, and a figure out of range is refused"
   assert.equal((await ask()).body.values.limits.messagesPerConversationHour, 60);
   assert.equal((await ask({ card: "limits", values: { messagesPerConversationHour: 120 } })).body.values.limits.messagesPerConversationHour, 120);
   assert.equal((await ask({ card: "limits", values: { messagesPerConversationHour: 0 } })).status, 400);
-  assert.equal((await ask()).body.values.limits.maxSteps, 60, "the card's other values are kept");
+  assert.equal((await ask()).body.values.limits.maxSteps, null, "the card's other values are kept (the step limit ships as auto)");
 });
 
 test("a chat app's message past the figure is told why in these words, not a vague failure", async (t) => {
