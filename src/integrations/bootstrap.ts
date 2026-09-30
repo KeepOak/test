@@ -674,8 +674,8 @@ function parseVerdict(printed: string): unknown {
 }
 
 function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext): HookRunner {
-  // The shell runs one host command at a time. Hooks for the same event fire together, so they take
-  // turns here, and each waits for any task command still running before it starts.
+  // Hooks for the same event fire together, so they take turns here; the shell itself queues each one behind any
+  // command still running in the same folder (SELF-302, src/integrations/command-turns.ts).
   let turn: Promise<unknown> = Promise.resolve();
   return (hook, payload) => {
     const mine = turn.then(() => runHook(shell, context, hook, payload));
@@ -686,17 +686,12 @@ function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext)
 
 async function runHook(shell: BranchShell, context: (runId: string) => ToolContext, hook: HookConfig, payload: Record<string, unknown>): ReturnType<HookRunner> {
   const scoped = { ...context(String(payload.runId ?? '')), signal: AbortSignal.timeout(hook.timeoutMs + 1000) };
-  for (;;) {
-    try {
-      await shell.whenIdle(scoped.signal);
-      const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
-      // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
-      // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
-      return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Another command started between the shell going quiet and this one asking: wait again.
-      if (!/already active/.test(message) || scoped.signal.aborted) return { ok: false, error: message };
-    }
+  try {
+    const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
+    // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
+    // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
+    return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

@@ -13,7 +13,7 @@ import { esc, render } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { on, has } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
-import { toast } from "../../core/ui.js";
+import { toast, ic } from "../../core/ui.js";
 import { E, refresh, ownerHere, roleLabel } from "../../core/state.js";
 import { people17 } from "../p17-more.js";
 import { face, nameOf } from "../../core/faces.js"; // your-profile
@@ -21,6 +21,7 @@ import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
 import { say } from "../../core/words.js";
 import { reason } from "../../core/why.js";
+import { fact15 } from "../rows15.js";
 
 /* The prototype's words for the engine's seven kinds (src/tool-categories.ts), in the prototype's order. */
 const KINDS = [["read", "Look things up"], ["browse", "Use web pages"], ["files", "Write files"], ["commands", "Run commands"], ["message", "Send messages"], ["spend", "Spend money"], ["settings", "Change how Branch is set up"]];
@@ -88,10 +89,11 @@ function list(all) {
   return `<div class="t9-list">${group(t("glance.local"), here)}${group(t("household.invite.device"), own)}${invite}</div>`;
 }
 
-/* What the person may have Branch do: the engine's effective kinds for a profile, every kind for the owner. */
+/* What the person may have Branch do: the engine's effective kinds for a profile, every kind for the owner. Words, not
+   ticks: it follows from their role and is changed there (window.why.pp-may), so nothing here can be pressed. */
 function mayRows(p) {
   const kinds = p.id === OWNER ? KINDS.map(([k]) => k) : roleOf(p.id)?.categories ?? [];
-  return KINDS.map(([k, l]) => { const yes = kinds.includes(k); return `<label class="chk ${yes ? "" : "no10"}"><input type="checkbox" ${yes ? "checked" : ""} disabled aria-label="${esc(say(l))}" data-why="pp-may"> ${esc(say(l))}</label>`; }).join("") + `<small class="hint">${esc(reason("pp-may"))}</small>`;
+  return KINDS.map(([k, l]) => { const yes = kinds.includes(k); return `<span class="may15 ${yes ? "" : "no10"}">${ic(yes ? "check" : "x", "s")}${esc(say(l))}<span class="sr13">, ${t(yes ? "settings-kit.value.yes" : "settings-kit.value.no")}</span></span>`; }).join("") + `<small class="hint">${esc(reason("pp-may"))}</small>`;
 }
 
 /* The Trunks in the rooms this person was let into, each once, in the order the rooms seat them. The owner's answer seats
@@ -140,12 +142,11 @@ function card(p) {
     <dl class="kv" data-css="margin-top:14px">${facts(p)}</dl>${actions(p)}</div>`;
 }
 
-/* Both are how the engine always works (greyed: PINs are for review): a profile cannot be made without a PIN
-   (ProfileSchema), and each profile's records are its own (profiles.scope()). */
+/* Both are how the engine always works: a profile cannot be made without a PIN (ProfileSchema; greyed, PINs are for
+   review), and each profile's records are its own (profiles.scope()), which is said in words (window.why.pp-own). */
 function eachPerson() {
   const pin = `<input class="sw" type="checkbox" id="pp-pin" checked aria-label="${t("window.settings.people.ask-for-a-pin-when-switching")}" data-sw="set">`; // state: every profile has a PIN
-  const own = `<input class="sw" type="checkbox" id="pp-own" checked aria-label="${t("window.settings.people.keep-conversations-separate")}" data-sw="set">`; // state: each profile's records are its own
-  return `<div class="sec"><h2>${t("window.settings.people.each-person")}</h2><div class="ctl"><b>${t("window.settings.people.ask-for-a-pin-when-switching")}</b>${pin}<small>${t("window.settings.people.four-to-eight-digits-kept-on")}</small></div><div class="ctl"><b>${t("window.settings.people.keep-conversations-separate")}</b>${own}<small>${t("window.settings.people.people-cant-read-each-others-conversations")}</small></div></div>`;
+  return `<div class="sec"><h2>${t("window.settings.people.each-person")}</h2><div class="ctl"><b>${t("window.settings.people.ask-for-a-pin-when-switching")}</b>${pin}<small>${t("window.settings.people.four-to-eight-digits-kept-on")}</small></div>${fact15(t("window.settings.people.keep-conversations-separate"), "pp-own")}</div>`;
 }
 
 /* The prototype's peopleTab(): the list, the card of whoever is picked, and the hint. Settings › People and Team › People. */
