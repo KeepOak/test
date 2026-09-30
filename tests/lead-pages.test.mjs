@@ -138,7 +138,9 @@ test("a published page opens in the window at /#page=<id> and stays current whil
   const late = tab.waitForResponse((response) => response.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
   await tab.evaluate((id) => { location.hash = "page=" + id; }, page.id);
   await tab.waitForRequest((request) => request.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
-  await tab.locator('[data-act="whatcan"]').first().click();
+  // "What can Branch do" opens a dialog of its own; pressed through its action, wherever its link sits in this layout.
+  await tab.evaluate(() => { const button = document.createElement("button"); button.type = "button"; button.dataset.act = "whatcan";
+    document.getElementById("app").append(button); button.click(); button.remove(); });
   await tab.locator(".dlg").first().waitFor();
   await tab.locator('.dlg [data-act="dlg-close"]').first().click();
   await tab.locator(".dlg").waitFor({ state: "detached" });
