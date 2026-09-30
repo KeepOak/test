@@ -149,6 +149,30 @@ A connection added from the catalog for a program on this computer (Ollama, LM S
 
 When a service moves (Perplexity to its Agent API, Moonshot, Qwen and MiniMax gaining a region choice), Branch moves the saved connection when it starts. The connection's name and its key stay as they were; the records as they were are copied once to the `model-connections-before-move` setting, and the record of what Branch did lists each old and new model or address. A Sonar model Perplexity named no replacement for (such as `sonar-reasoning`) is not guessed at: using it says to pick a preset. These moves change a value inside a setting, not the database's shape, so they need no new data format number.
 
+**NAS model through your SSH forward** (`nas-ssh`) connects to an OpenAI-compatible model server
+you run on another computer. Start and keep your own forward open before choosing this connection.
+For example, replace the destination and remote server port in
+`ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:18080:127.0.0.1:8080 user@your-nas`
+with your own values. See the [OpenSSH forwarding documentation](https://man.openbsd.org/ssh#L).
+Branch never starts SSH, reads SSH keys, installs a server or verifies the remote GPU.
+
+Choose **NAS model through your SSH forward**, set its **local port** (18080 in that example),
+enter the server's API key (a placeholder only when your own server needs no key), and choose its
+actual model from its list or enter its name. `nas-model` is a placeholder to replace, not a
+download or a detected model. The address stays `http://127.0.0.1:<port>/v1`; another host, URL or
+port outside 1–65535 is refused. If the forward is closed, the connection cannot answer.
+
+This is a remote model: prompts and embedding inputs leave this computer. Catalogue metadata
+`remoteBehindLoopback: true` excludes it from local-only model routing even though the connection
+listens on loopback. A separately selected embedding connection must honor the same
+`presetRunsLocally` check; endpoint-only embedding selection needs that accompanying change
+before this entry is used for embeddings. No zero price is supplied; ordinary price overrides,
+account constraints and pinned choices still apply. Only this connection's chosen origin gets
+the model-server allowance, with redirects refused and your host/path rules and emergency stop
+still applied. Web tools keep their ordinary network rules. A manually configured generic
+loopback connection cannot reveal whether a forward is behind it; use this NAS entry to record
+that boundary. The remote server decides which models and tool/embedding features work.
+
 ### Which model services work (wave 7)
 
 Every model service Branch knows about is written down in `data/providers.json`, not in code. Each
@@ -177,7 +201,7 @@ by hand; edit the data file and run that command.
 
 <!-- providers:start -->
 
-Branch knows 44 model services (36 online, 7 that run on this computer, and one address of your own). Every one of them has been tested against a fake of the
+Branch knows 45 model services (37 online, 7 that run on this computer, and one address of your own). Every one of them has been tested against a fake of the
 service, not against the real one, so treat this as "Branch speaks the right language", not as
 "this was tried on a live account". Addresses and prices were last checked on 2026-09-16.
 
@@ -210,6 +234,7 @@ service, not against the real one, so treat this as "Branch speaks the right lan
 | Mistral | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types, compare passages | just a key | [Your own API key](https://mistral.ai/terms) |
 | ModelScope | in the cloud | OpenAI | conversation, tools, as it types | just a key | [Your own access token](https://www.modelscope.cn/) |
 | Moonshot (Kimi) | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key](https://platform.kimi.ai/docs/agreement/modeluse) |
+| NAS model through your SSH forward | in the cloud | OpenAI | conversation, tools, as it types, compare passages | The local port of your SSH forward | [Your own remotely hosted model through SSH](https://man.openbsd.org/ssh) (unofficial) |
 | Ollama | on this computer | Ollama | conversation, pictures in, tools, as it types, compare passages | just a key | [Runs on this computer](https://github.com/ollama/ollama/blob/main/LICENSE) |
 | OpenAI | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types, compare passages, speech, pictures out, live conversation | just a key | [Your own API key](https://openai.com/policies/services-agreement/) |
 | OpenAI (Responses API) | in the cloud | OpenAI Responses | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key (Responses route)](https://openai.com/policies/services-agreement/) |
@@ -245,6 +270,7 @@ Services that need something more than a key, or that do not publish a list of t
 - **MiniMax** — International keys use api.minimax.io (the usual choice); keys from the Chinese platform use api.minimax.cn. Branch keeps no price on file for it.
 - **ModelScope** — Alibaba's model hub in its OpenAI-compatible mode. Branch keeps no price on file for it.
 - **Moonshot (Kimi)** — Kimi models. International keys use api.moonshot.ai (the usual choice); keys from the Chinese platform use api.moonshot.cn. Branch keeps no price on file for it.
+- **NAS model through your SSH forward** — Run your own SSH forward to an OpenAI-compatible model server on your NAS first. Branch uses only its 127.0.0.1 port and never starts SSH. Choose the server's real model name. Use its API key, or a placeholder only if your server requires none. Prompts leave this computer; prices are not assumed free. You manage the forward, server and model license. Branch cannot verify the SSH destination or GPU; this connection is excluded from local-only tasks.
 - **Ollama** — Runs on this computer, so nothing leaves it and nothing is charged. Install Ollama and run `ollama serve`. No key needed. An Ollama on another machine at home works too: give its address.
 - **Perplexity** — Answers questions with sources of its own, through Perplexity's Agent API. Pick a preset (fast, low, medium, high, xhigh) or a provider/model name. Older Sonar connections were moved over for you.
 - **Portkey** — A gateway that sits in front of other services and speaks OpenAI's shape. Which model answers depends on the configuration you set up there.

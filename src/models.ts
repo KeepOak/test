@@ -45,12 +45,13 @@ export interface ModelChoice {
 }
 const onThisComputer = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
 /**
- * Whether a connection's address is on this computer. Providers already hand out their own address
- * for the routes they share (embeddings, audio), so no new provider method is needed.
+ * Whether a model stays on this computer. A declared remote forward is never local even though
+ * its transport listens here. Providers hand out their address for shared embeddings and audio.
  */
 export function presetRunsLocally(preset: ModelPreset): boolean {
   // A connection Branch did not write may throw from either accessor; that only means "not local".
   try {
+    if (preset.catalogId && catalogEntry(preset.catalogId)?.remoteBehindLoopback) return false;
     const sharing = preset.provider as { embeddings?: () => { endpoint: string } | null; audio?: () => { endpoint: string } | null };
     const route = sharing.embeddings?.() ?? sharing.audio?.() ?? null;
     if (!route) return false;
