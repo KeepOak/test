@@ -194,6 +194,12 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
     for (const step of steps) input.journal.finish(step.id, "abandoned");
     return { runId, outcome: "gone", steps: [] };
   }
+  // An orchestration parent has no model loop to resume. Reconcile member effects, never replay the team.
+  if (input.store.events(runId).some((event) => event.kind === "run.started" && event.data.teamOrchestration === true)) {
+    for (const step of steps) input.journal.finish(step.id, "abandoned");
+    input.store.finish(runId, "cancelled", "The team orchestration was interrupted. Check its recorded member work and reconcile the team task before sending a new request.");
+    return { runId, outcome: "left-for-team", steps: [] };
+  }
   // Q63: a team task's own turn that the task never named is ended, not carried on: nothing could trace it.
   if (unlinkedTeamParent(input.store, run.sessionId)) {
     for (const step of steps) input.journal.finish(step.id, "abandoned");

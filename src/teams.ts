@@ -89,6 +89,7 @@ export class Teams {
    * The source is who is asking (decided by the caller from the signed-in context, never the body).
    */
   async run(runtime: Runtime, knowledge: Knowledge, id: string, prompt: string, request: { requestId?: string | undefined; source?: string } = {}) {
+    if (runtime.owner !== this.owner) throw new Error("Team and runtime owners differ");
     const team = this.get(id);
     const scope = { owner: this.owner, source: request.source ?? "window" };
     // A request id is a UUID, so the same id in upper or lower case is the same request.
@@ -164,12 +165,31 @@ export class Teams {
   private async dispatch(runtime: Runtime, knowledge: Knowledge, team: Team, prompt: string, claim: TeamTaskClaim, turn: TurnProgress) {
     // The claim must still be this caller's before the runtime is asked for anything; if it moved, only observe.
     if (!this.tasks.held(claim)) return this.observed(claim.scope, claim.taskId);
-    const parent = await this.startParent(runtime, team, prompt, claim, turn);
-    if (parent.status !== "completed") return this.stopBeforeMembers(claim, parent);
-    const context = runtime.context({ runId: parent.id });
+    let result: TeamRunResult | undefined;
+    const parent = await this.startParent(runtime, team, prompt, claim, turn, async (run, context) => {
+      // Use the runtime's filtered words, not the original request that inlet filters may have changed.
+      result = await this.runMembers(runtime, knowledge, team, run.prompt, claim, turn, run, context);
+      return result ? JSON.stringify(result) : "The team's answers were deleted before they could be recorded.";
+    });
+    if (parent.status !== "completed") {
+      if (turn.membersStarted) this.tasks.markNeedsReconciliation(claim,
+        `The team's orchestration ended ${parent.status}; check recorded member work before retrying. ${parent.output.slice(0, 500)}`);
+      else return this.stopBeforeMembers(claim, parent);
+      return this.observed(claim.scope, claim.taskId);
+    }
+    if (!result || !finishLiveTurn(this.store, this.tasks, claim, result)) return this.observed(claim.scope, claim.taskId);
+    return { ...result, taskId: claim.taskId, requestId: this.tasks.get(claim.scope, claim.taskId)!.requestId, state: "completed" as const };
+  }
+  /** Only the team members invoke the model, within the existing live parent's actual reach. */
+  private async runMembers(runtime: Runtime, knowledge: Knowledge, team: Team, prompt: string,
+    claim: TeamTaskClaim, turn: TurnProgress, parent: Run, context: ToolContext): Promise<TeamRunResult | undefined> {
+    runtime.teamCheckpoint(context);
+    if (!this.tasks.held(claim)) throw new StaleTeamTaskClaimError("The team turn is no longer held by this caller");
     this.store.message(team.roomSessionId, { role: "user", content: prompt });
     const tasks = team.members.map((member, index) => ({ id: `m${index}`, prompt: `Your role in team "${team.name}": ${member.role}. ${member.brief}\n\nTask: ${prompt}`, dependsOn: [] as string[] }));
     const specs = new Map(team.members.map((member, index) => [`m${index}`, { ...knowledge.activeSpecialist(this.owner, member.specialistId), agent: member.specialistId }]));
+    for (const spec of specs.values()) if (spec.permissions.some((permission) => !context.permissions.has(permission)))
+      throw new Error("A team member requests permissions outside this turn's original reach");
     // The plan names every member before any starts, so reconcile can say which never ran.
     this.store.event(parent.id, "team.members.planned", { members: team.members.map((member, index) => ({ member: `m${index}`, role: member.role })) });
     // Written on the team's own run before any member starts, as a record of how many were sent.
@@ -179,14 +199,11 @@ export class Teams {
     const answers = team.members.map((member, index) => ({ specialistId: member.specialistId, role: member.role, ...outcomes[`m${index}`]! }));
     const result: TeamRunResult = { teamId: team.id, parentRunId: parent.id, roomSessionId: team.roomSessionId, answers };
     // A conversation the answers go to or came from was deleted while the members worked: nothing is kept or written.
-    if (answersDeletedBeforeRecord(this.store, this.tasks, claim, result)) return this.observed(claim.scope, claim.taskId);
+    if (answersDeletedBeforeRecord(this.store, this.tasks, claim, result)) return undefined;
     // Kept on the task first, so a crash before the finish below can still be finished from it without running anything.
     this.tasks.recordOutcome(claim, result);
     turn.recorded = true;
-    // The finished task and the room's answers are written together, or not at all. If the owner
-    // deleted the room while the members worked, the task is settled for a person instead.
-    if (!finishLiveTurn(this.store, this.tasks, claim, result)) return this.observed(claim.scope, claim.taskId);
-    return { ...result, taskId: claim.taskId, requestId: this.tasks.get(claim.scope, claim.taskId)!.requestId, state: "completed" as const };
+    return result;
   }
   /**
    * Q66: sends the members in batches no bigger than the number of helpers the runtime lets one run
@@ -202,10 +219,12 @@ export class Teams {
   private async fanOutInBatches(runtime: Runtime, context: ToolContext, tasks: FanoutTask[], resolve: Parameters<Runtime["fanout"]>[2]) {
     const outcomes: FanoutOutcome["tasks"] = {};
     for (let next = 0; next < tasks.length;) {
+      runtime.teamCheckpoint(context);
       const atOnce = Math.max(1, subtaskLimits(this.store, this.owner).atOnce);
       const batch = tasks.slice(next, next + atOnce);
       this.store.event(context.runId, "team.batch.started", { members: batch.map((task) => task.id) });
       Object.assign(outcomes, (await runtime.fanout(context, batch, resolve)).tasks);
+      runtime.teamCheckpoint(context);
       next += batch.length;
     }
     return outcomes;
@@ -215,17 +234,18 @@ export class Teams {
    * claim that moved stops here), and only then is the run created in that conversation. The
    * runtime saves the transcript, runs its start hooks and records "run.started" before it calls
    * onStarted, so a crash in between leaves an interrupted run the task has not named yet; the
-   * conversation marks it as a team turn, and recovery after a restart does not carry such a run on
-   * (unlinkedTeamParent, src/never-break/resume.ts). onStarted names the run before its first model
-   * call; if that write is refused (the claim went stale), the runtime ends the run there.
+   * conversation marks it as a team turn. The run.started marker prevents an orchestration parent
+   * being resumed as a general agent after restart. onStarted names the run before member fanout;
+   * if that write is refused (the claim went stale), the runtime ends the run there.
    */
-  private async startParent(runtime: Runtime, team: Team, prompt: string, claim: TeamTaskClaim, turn: TurnProgress): Promise<Run> {
+  private async startParent(runtime: Runtime, team: Team, prompt: string, claim: TeamTaskClaim, turn: TurnProgress,
+    operation: (run: Run, context: ToolContext) => Promise<string>): Promise<Run> {
     const sessionId = this.store.createSession(this.owner);
     this.tasks.linkParentSession(claim, sessionId);
-    const parent = await runtime.run({ prompt: `Team ${team.name}: ${prompt}`, sessionId, onStarted: (run) => {
+    const parent = await runtime.runTeam({ prompt: `Team ${team.name}: ${prompt}`, sessionId, onStarted: (run) => {
       this.tasks.linkParentRun(claim, run.id);
       turn.parentRunId = run.id;
-    } });
+    } }, operation);
     if (turn.parentRunId !== parent.id) throw new StaleTeamTaskClaimError("The team's run could not be linked to this task, so it was stopped before it did anything.");
     return parent;
   }
