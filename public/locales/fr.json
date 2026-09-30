@@ -9838,6 +9838,8 @@
   "window.settings.permissions.off-means-every-message-waits-for": "Désactivé, chaque message attend votre accord.",
   "window.settings.permissions.one-switch-that-stops-every-trunk": "Un seul interrupteur qui empêche tous les Trunks d’envoyer, de modifier ou de dépenser quoi que ce soit.",
   "window.settings.permissions.open-windows-settings": "Ouvrir les Paramètres Windows",
+  "window.settings.permissions.ordinary-settings-scope": "Uniquement les réglages du catalogue. Les changements qui réduisent les protections demandent toujours confirmation, et les réglages épinglés restent fixes.",
+  "window.settings.permissions.ordinary-settings-without-asking": "Autoriser Branch à modifier les réglages ordinaires sans demander",
   "window.settings.permissions.photos-and-scanning-a-code": "Photos et lecture d’un code",
   "window.settings.permissions.pin-a-setting": "Épingler un réglage",
   "window.settings.permissions.pin-ssh-hosts": "Épingler les hôtes SSH",
