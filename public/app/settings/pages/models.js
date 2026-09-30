@@ -200,10 +200,31 @@ async function saveSecondCeiling(box) {
    change is sent over what it said last. Videos are the reach part "video" (a paid service, off until switched on), and
    its service is the engine's video settings (POST /api/reach/video/settings { service }), which it takes only while
    videos are on. */
+let mediaSaving = Promise.resolve();
+const savePictureSettings = (change) => (mediaSaving = mediaSaving.then(async () => {
+  try {
+    const current = await api("media/settings");
+    await api("media/settings", { ...current.settings, ...change });
+    X.media = await api("media/settings");
+  } catch (error) { toast(error.message); }
+  renderNow();
+}));
 async function setPictureModel(v) {
   if (!X.media) { await loadMore(); return; }
-  try { X.media = { ...X.media, ...(await api("media/settings", { ...X.media.settings, imageModel: v })) }; } catch (error) { toast(error.message); }
-  renderNow();
+  await savePictureSettings({ imageModel: v });
+}
+/* A separate picture connection leaves the text model alone. Switching clears an incompatible model override. */
+async function setPictureConnection(v) {
+  if (!X.media) return;
+  await savePictureSettings({ imagePreset: v, imageModel: "" });
+}
+function pictureConnectionRow() {
+  const m = X.media, title = t("window.settings.models.picture-connection");
+  if (!m) return "";
+  const saved = m.settings.imagePreset ?? "", choices = m.pictureConnections ?? [];
+  const options = [["", t("window.settings.models.picture-follow"), false], ...choices.map((p) => [p.id, p.name, false])];
+  if (saved && !choices.some((p) => p.id === saved)) options.push([saved, t("window.settings.models.picture-unavailable"), true]);
+  return row(title, gsel({ id: "m-img-connection", label: title, options, value: saved }), t("window.settings.models.picture-connection-hint"));
 }
 function pictureRow() {
   const m = X.media, where = m?.pictures, title = t("window.settings.models.make-pictures");
@@ -225,7 +246,7 @@ async function setVideoService(v) {
   try { await api("reach/video/settings", { service: v }); X.reach = await api("reach"); } catch (error) { toast(error.message); }
   renderNow();
 }
-const mediaTab = () => pictureRow() + videoRow();
+const mediaTab = () => pictureConnectionRow() + pictureRow() + videoRow();
 
 export function draw() {
   const lv = level();
@@ -288,6 +309,8 @@ export function init() {
   on("m-debate-rounds", (el) => setSecond({ debateExchanges: Number(el.dataset.v) }));
   on("m-img", (el) => setPictureModel(el.dataset.v));
   on("m-vid-svc", (el) => setVideoService(el.dataset.v));
+  document.addEventListener("change", (event) => { if (event.target?.id === "m-img-connection") setPictureConnection(event.target.value); });
+  markLive(["sw:m-img-connection"]);
   markLive(["sw:m-second-by", "m-img", "m-vid-svc", "sw:m-second-max", "m-debate-rounds", "sw:m-debate-max"]);
   markLive(["m-lim", "sw:m-steps", "sw:m-rounds", "sw:m-tokens"]);
   markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", "m-orlist", "m-orco", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);

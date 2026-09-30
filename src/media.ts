@@ -112,8 +112,10 @@ export class MediaTools {
     if (!this.artifacts) throw new Error("Pictures and sounds are switched off because there is nowhere to keep them");
     return this.artifacts;
   }
-  private preset(owner: string) {
-    const chosen = this.models.plan(owner, "media").candidates[0];
+  private preset(owner: string, imagePreset = "") {
+    const chosen = this.models.plan(owner, "media", imagePreset ? { preset: imagePreset } : {}).candidates[0];
+    if (imagePreset && chosen?.id !== imagePreset)
+      throw new Error("The picture connection you selected is unavailable for this task. Choose another under Settings → Models → Media.");
     if (!chosen) throw new Error("No model is connected yet. Add one under Settings → Model.");
     return chosen;
   }
@@ -125,9 +127,11 @@ export class MediaTools {
   /** Makes a picture, or changes one the person already has, and keeps the result as an artifact. */
   async image(input: ImageRequest, context: ToolContext): Promise<Record<string, unknown>> {
     const artifacts = this.artifactStore();
-    const where = providerImages(this.preset(context.owner).provider);
-    if (!where) throw new Error(noImageEndpoint);
     const settings = mediaSettings(this.store, context.owner);
+    const where = providerImages(this.preset(context.owner, settings.imagePreset).provider);
+    if (!where) throw new Error(noImageEndpoint);
+    if (settings.imagePreset && where.bearer)
+      throw new Error("A separate picture connection must use an API key; a sign-in stays on its existing picture route.");
     const model = settings.imageModel || where.defaultModel;
     const cost = estimateImageCost(model, 1, settings.imagePrices, input.size);
     if (context.dryRun)
