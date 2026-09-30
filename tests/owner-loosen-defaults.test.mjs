@@ -15,6 +15,7 @@ import { underShortLivedKey } from "../dist/key-context.js";
 import { dangerousCommand } from "../dist/safety-extras/dangerous-commands.js";
 import { InstallRequestSchema } from "../dist/flows-boards/install-requests.js";
 import { validationText } from "../dist/request-errors.js";
+import { tightenCheck } from "../dist/safety-extras/hooks.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 async function fixture(t) {
@@ -100,4 +101,11 @@ test("install.request names what is wrong instead of 'The request is not valid.'
   assert.equal(wrong.success, false);
   assert.doesNotMatch(validationText(wrong.error), /^The request is not valid\.$/);
   assert.match(validationText(wrong.error), /"why" is missing/);
+});
+
+test("a dangerous command on another computer asks too, as Hermes Agent reads its SSH backend's commands", async (t) => {
+  const { app } = await fixture(t);
+  const call = (value) => ({ tool: "remote.run", permission: "remote.execute", resource: { kind: "command", value }, source: "owner" });
+  assert.equal(tightenCheck(app.store, app.runtime.owner, call("rm -rf ~"), "allow").decision, "ask");
+  assert.equal(tightenCheck(app.store, app.runtime.owner, call("make build"), "allow").decision, "allow");
 });
