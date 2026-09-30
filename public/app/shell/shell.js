@@ -51,7 +51,7 @@ import { simpleButton, initSimple } from "./simple.js"; // RES-704: the Simple /
 
 const WIDE = matchMedia("(min-width: 761px)");
 export const PLACES = [["overview", "home", "Overview"], ["inbox", "inbox", "Inbox"], ["automations", "clock", "Automations"],
-  ["library", "book", "Library"], ["team", "users", "Team"], ["customize", "sliders", "Customize"]];
+  ["library", "book", "Library"], ["team", "users", "Team"], ["customize", "sliders", "Customize"], ["seasons", "star", "Seasons"]];
 
 /* A place's own header, the prototype's placeHead: on a narrow window the button that slides the list in, and Settings.
    It sits in the title-bar row at every width, as the conversation's header does (drawShell). */
