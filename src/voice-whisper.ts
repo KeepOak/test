@@ -211,19 +211,20 @@ export class LocalWhisper {
 
   /**
    * Writes one recording out. `partial` is a live caption: it is answered quickly, or not at all (null) when
-   * the worker is still busy with the last one.
+   * the worker is still busy with the last one. The `signal` aborts the transcription immediately without waiting.
    */
-  async transcribe(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean } = {}): Promise<WhisperHeard | null> {
+  async transcribe(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean } = {}, signal?: AbortSignal): Promise<WhisperHeard | null> {
+    if (signal?.aborted) throw new Error("faster-whisper was cancelled before it started.");
     if (!found.available || !found.python || !found.model) throw new Error(found.how);
     if (bytes.byteLength === 0) throw new Error("That recording has no sound in it.");
     if (bytes.byteLength > whisperMostBytes) throw new Error("That recording is too long to write out here. Keep it under ten minutes.");
     if (options.partial && this.busy) return null;
-    const mine = this.turn.then(() => this.ask(found, bytes, options));
+    const mine = this.turn.then(() => this.ask(found, bytes, options, signal));
     this.turn = mine.catch(() => undefined);
     return mine;
   }
 
-  private async ask(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean }): Promise<WhisperHeard> {
+  private async ask(found: LocalWhisperFound, bytes: Uint8Array, options: { language?: string | null; partial?: boolean }, signal?: AbortSignal): Promise<WhisperHeard> {
     this.busy = true;
     if (this.idle) { clearTimeout(this.idle); this.idle = null; }
     try {
@@ -231,9 +232,12 @@ export class LocalWhisper {
       return await new Promise<WhisperHeard>((resolve, reject) => {
         const id = this.nextId++;
         const timer = setTimeout(() => this.fail(new Error("faster-whisper took more than two minutes, so Branch stopped it.")), whisperRequestMs);
+        const abortListener = () => { this.fail(new Error("faster-whisper was cancelled."), this.child); };
+        if (signal) signal.addEventListener("abort", abortListener);
         this.pending = { id, resolve, reject, timer };
         const line = JSON.stringify({ id, audio: Buffer.from(bytes).toString("base64"), language: options.language || null, partial: !!options.partial });
         this.child!.stdin.write(`${line}\n`);
+        return () => { if (signal) signal.removeEventListener("abort", abortListener); };
       });
     } finally {
       this.busy = false;

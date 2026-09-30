@@ -86,6 +86,17 @@ Branch Agent application code is MIT licensed. Distributed dependencies retain t
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
 
+## Hermes wake-word adapter
+
+`src/voice-wake-kws.ts` adapts threshold and phrase display mapping from
+`tools/wake_word_engines.py` at `a9a54245b2311c705d29050b7f9868c015917aec`
+of https://github.com/NousResearch/hermes-agent. Branch uses an external installed
+sherpa-onnx CLI and owner-supplied models/keywords, with no model downloads.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
 ## OpenClaw realtime voice adaptations
 
 `src/realtime-openai.ts` and `public/app/chat/talklive.js` adapt cancellation,
