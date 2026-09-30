@@ -38,6 +38,31 @@ const createSchema = z.object({
     size: z.number().nonnegative().optional(), duration_secs: z.number().nonnegative().optional(),
   }).passthrough()).default([]),
 }).passthrough();
+/** CHAT-210: a deliberately narrow authored-text claim, consumed by the existing guarded inline fast path.
+ * Discord's Message Object distinguishes DEFAULT user messages from forwards, replies, system and webhook output:
+ * https://docs.discord.com/developers/resources/message#message-object
+ * This adapter does not parse Discord Markdown. Anything with quote/code/link/spoiler markup stays ordinary text.
+ */
+function authoredPlainMessage(message: z.infer<typeof createSchema>, text: string): boolean {
+  if (message.guild_id !== undefined || message.type !== 0 || !text || text !== message.content
+      || message.author.bot || message.mentions.length || message.attachments.length) return false;
+  // These fields mean the transport supplied outside content or a non-user source. Even a null/empty reference is excluded.
+  const outside = ["webhook_id", "application_id", "application", "activity", "message_reference", "message_snapshots",
+    "referenced_message", "interaction", "interaction_metadata", "poll", "call", "role_subscription_data", "resolved"];
+  if (outside.some(key => message[key] !== undefined)) return false;
+  if (!Array.isArray(message.embeds) || message.embeds.length) return false;
+  for (const key of ["components", "sticker_items", "stickers"]) {
+    const value = message[key];
+    if (value !== undefined && (!Array.isArray(value) || value.length)) return false;
+  }
+  // Only ordinary presentation flags (suppressed embeds/notifications) can accompany plain authored text.
+  const flags = message.flags;
+  if (flags !== undefined && (typeof flags !== "number" || !Number.isSafeInteger(flags) || flags < 0
+      || flags > 4096 + 4 || (flags & ~((1 << 2) | (1 << 12))) !== 0)) return false;
+  if (["`", "\"", "'", ">", "<", "[", "]", "|", "\\"].some(mark => text.includes(mark)) || /^[ \t]{4}/m.test(text)) return false;
+  return true;
+}
+
 const payloadSchema = z.object({ op: z.number(), d: z.unknown().optional(), s: z.number().nullish(), t: z.string().nullish() }).passthrough();
 const readySchema = z.object({ user: userSchema, session_id: z.string(), resume_gateway_url: z.string().optional(),
   application: z.object({ id: z.string() }).passthrough().optional() }).passthrough();
@@ -271,6 +296,7 @@ export class DiscordAdapter implements ChannelAdapter {
       ...(message.guild_id ? { chatTitle: `channel ${message.channel_id}` } : {}),
       senderId: message.author.id, senderName: message.author.username ?? message.author.id,
       text: text || message.content, addressed: direct || mentioned || repliedTo, messageId: message.id,
+      ...(authoredPlainMessage(message, text) ? { authoredCommandText: { text, protected: [] } } : {}),
       ...(files.length ? { attachments: files.map((file, index) => {
         const mediaType = file.content_type?.split(";")[0] ?? "application/octet-stream";
         return { name: file.filename ?? `attachment-${index + 1}`, sourceId: `${message.id}:${index}`, mediaType, kind: attachmentKind(mediaType),
