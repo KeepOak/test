@@ -3847,6 +3847,13 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 
+
+## Hermes weekly recap aggregation
+
+`src/weekly-recap.ts` adapts guarded duration aggregation from `agent/insights.py` (`_compute_overview`) in NousResearch/hermes-agent at `16b214e1a1f0544218b1cf8c21b923b4e1c62768`. The listed weekly-review-planning recipe was read for context only. Branch owner scoping, task completion counts, Trunk attribution and manual-time estimate are original integration code.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/agent/insights.py
+
 ### Branch builds Branch (P0 fixes): Hermes Agent (MIT); Codex (Apache-2.0)
 
 - `boundSummaryInput` in `src/compaction-input.ts`, which holds a fold's input to its room by keeping 45% from the start and 55% from the end with a marker naming how much of the middle was left out, is adapted from `_bound_summary_input` in Hermes Agent's `agent/context_compressor.py` (https://github.com/NousResearch/hermes-agent, commit 7083a524a, Copyright (c) 2025 Nous Research, MIT; the licence text is given under IronClaw above).
