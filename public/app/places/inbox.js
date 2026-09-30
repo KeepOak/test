@@ -376,9 +376,9 @@ function importEvents() {
 function drawImportedEvent() {
   const box = dialog()?.querySelector("#event-log-step"), log = importedLog;
   if (!box || !log || activeId() !== log.profile || document.getElementById("app")?.classList.contains("locked-b17")) {
-    stopReplay(); if (box) box.textContent = "Open the log again in the active profile."; return false;
+    stopReplay(); if (box) box.textContent = t("recording.log-reopen"); return false;
   }
-  box.textContent = log.events.length ? `${log.index + 1} / ${log.events.length}\n` + JSON.stringify(log.events[log.index], null, 2) : "No retained events";
+  box.textContent = log.events.length ? `${log.index + 1} / ${log.events.length}\n` + JSON.stringify(log.events[log.index], null, 2) : t("recording.log-no-events");
   return true;
 }
 function advanceImportedEvent(play) {
@@ -395,7 +395,7 @@ async function restartImportedEvent() {
   stopReplay();
   const log = importedLog;
   if (!log || !ownerHere() || activeId() !== log.profile || !drawImportedEvent()) return;
-  if (!window.confirm("Start a new task from this log's original prompt? Current permissions, model rules and tool approvals apply. Previous approvals are not restored. External results may differ.")) return;
+  if (!window.confirm(t("recording.log-restart-confirm"))) return;
   if (!ownerHere() || activeId() !== log.profile || !drawImportedEvent()) return;
   try {
     const done = await api("recordings/restart", { jsonl: log.text, confirmed: true });
