@@ -3976,6 +3976,14 @@ Licensed under the Apache License, Version 2.0 (the License); you may not use th
 
 The Trunk import preview/apply flow adapts the staged manifest review in [hermes_cli/profile_distribution.py](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/profile_distribution.py) (`plan_install`/`install_distribution`), reviewed on 2026-09-29. The implementation uses Branch Trunk JSON and its existing import route; no archive installer is included.
 
+## Hermes Agent Codex notification scope
+
+src/asks/codex-conversation.ts adapts _notification_scope_ids and
+_notification_belongs_to_turn from Hermes Agent's
+[agent/transports/codex_app_server_session.py](https://github.com/NousResearch/hermes-agent/blob/a4c31d592b9d8916ffed9ab80ebee48ba428c172/agent/transports/codex_app_server_session.py).
+The functions were translated to TypeScript for Branch's existing app-server transport.
+The transcript-prefix cache and Branch account/conversation binding are original code.
+
 MIT License
 
 Copyright (c) 2025 Nous Research
