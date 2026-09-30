@@ -4,6 +4,7 @@ import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
 import { personalMode, requirePersonal } from "./settings.js";
 import type { SignIn } from "./signin.js";
+import { PersonalAccountId } from "./accounts.js";
 
 const instant = z.string().datetime({ offset: true });
 const calendarId = z.string().trim().min(1).max(254).refine((s) => !/[\x00-\x20\x7f]/.test(s));
@@ -11,6 +12,8 @@ export const FreeSlotsSchema = z.object({
   from: instant, to: instant,
   googleCalendars: z.array(calendarId).max(10).default([]),
   microsoftSchedules: z.array(z.string().trim().email().max(254)).max(10).default([]),
+  googleAccount: PersonalAccountId.optional().describe("Google account ID from gmail.accounts; omitted uses the selected Google account."),
+  microsoftAccount: PersonalAccountId.optional().describe("Microsoft account ID from outlook.accounts; omitted uses the selected Microsoft account."),
   minutes: z.number().int().min(5).max(480).default(30),
   stepMinutes: z.number().int().min(5).max(120).default(15),
   max: z.number().int().min(1).max(50).default(10),
@@ -170,11 +173,19 @@ export class CalendarAvailability {
 
   async find(input: unknown, context: ToolContext) {
     const query = FreeSlotsSchema.parse(input);
+    // Resolve both owner namespaces before the first await and keep them pinned through every provider read.
+    return this.deps.signIns.google.withAccount(query.googleAccount, () =>
+      this.deps.signIns.microsoft.withAccount(query.microsoftAccount, () => this.findBound(query, context)));
+  }
+
+  private async findBound(query: Query, context: ToolContext) {
     const identities = { google: this.deps.signIns.google.mailPreviewIdentity(), microsoft: this.deps.signIns.microsoft.mailPreviewIdentity() };
     const busy = [...await this.google(query, context), ...await this.microsoft(query, context)];
     if (query.googleCalendars.length) this.check("google", context, identities.google);
     if (query.microsoftSchedules.length) this.check("microsoft", context, identities.microsoft);
     return { from: query.from, to: query.to, timeZone: "UTC", calendarsCompared: query.googleCalendars.length + query.microsoftSchedules.length,
+      accounts: { google: query.googleCalendars.length ? this.deps.signIns.google.accountId() : null,
+        microsoft: query.microsoftSchedules.length ? this.deps.signIns.microsoft.accountId() : null },
       minutes: query.minutes, slots: commonFreeSlots(query, busy), booked: false,
       note: "Availability at the time of this request only. No event was booked. Tentative and away times count as busy; specify working windows for business hours." };
   }
@@ -182,7 +193,7 @@ export class CalendarAvailability {
 
 export function registerCalendarAvailability(registry: Pick<ToolRegistry, "register">, helper: CalendarAvailability): void {
   registry.register({ name: "calendars.free_slots", permission: "personal.read", parameters: FreeSlotsSchema,
-    description: "Find common free slots across named Google calendars and Microsoft work/school schedules. Uses only calendars the signed-in owner can access; does not book anything.",
+    description: "Find common free slots across named Google calendars and Microsoft work/school schedules. Choose Google/Microsoft account IDs from gmail.accounts/outlook.accounts, or use the selected accounts. Uses only calendars those owner accounts can access; does not book anything.",
     execute: (input, context) => helper.find(input, context) });
 }
 
