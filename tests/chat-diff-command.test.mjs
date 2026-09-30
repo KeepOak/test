@@ -21,6 +21,10 @@ function repo(workspace) {
 test("/diff needs git.read for the chat, then shows the change fenced; a friend gets nothing", async (t) => {
   const { app, sent, say, root } = await chatFixture(t);
   repo(join(root, "workspace"));
+  // With "Your own chats have your full access" on (the default) the owner's own chat reads Git as the window does.
+  await say("owner-1", "/diff");
+  assert.match(last(sent), /^Tracked Git changes \(workspace folder\):/);
+  app.channels.setPermissionSettings({ ownerChats: false });
   await say("owner-1", "/diff");
   assert.match(last(sent), /cannot read Git changes\. Allow git\.read/);
   app.channels.setPermissionSettings({ extras: true, rules: [{ channel: "tg", sender: "owner-1", allow: ["git.read"], note: "my phone" }] });
