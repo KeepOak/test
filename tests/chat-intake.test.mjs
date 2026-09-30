@@ -70,7 +70,7 @@ const from = { id: 42, first_name: "Ann" }, chat = { id: 501, type: "private" };
 
 test("what the Trunk sees ships on; presence ships off; a bad value is refused", () => {
   const rows = new Map(), store = { get: (_t, _o, id) => (rows.has(id) ? { data: rows.get(id) } : undefined), save: (_t, _o, id, data) => rows.set(id, data) };
-  assert.deepEqual(readChatIntake(store, "o"), { edited: true, albums: true, splitWaitMs: 1000, watchdog: true, reconnectMinutes: 3, stalledAfterSeconds: 90, presence: false });
+  assert.deepEqual(readChatIntake(store, "o"), { edited: true, albums: true, telegramMedia: true, splitWaitMs: 1000, watchdog: true, reconnectMinutes: 3, stalledAfterSeconds: 90, presence: false });
   assert.equal(saveChatIntake(store, "o", { splitWaitMs: 3000 }).splitWaitMs, 3000);
   assert.equal(readChatIntake(store, "o").edited, true, "the fields not named keep their value");
   assert.throws(() => saveChatIntake(store, "o", { splitWaitMs: 2000 }));
