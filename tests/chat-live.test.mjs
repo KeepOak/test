@@ -718,3 +718,19 @@ test("the switches are read and changed over the app's own address, and bad valu
   assert.equal((await call("channels/live", { steering: "always" })).ok, false);
   assert.equal((await (await call("channels")).json()).live.steering, "on");
 });
+
+test("live status: a browser picture still being taken when the task finishes is never sent afterwards (CHAT-225)", async () => {
+  const chat = fakeChat();
+  chat.adapter.sendFile = async (chatId, file) => { chat.calls.push({ op: "file", chatId, file }); return "p1"; };
+  let release;
+  const shot = new Promise((resolve) => { release = resolve; });
+  const live = new LiveStatus({ adapter: chat.adapter, chatId: "c1", messageId: "q1",
+    picture: () => shot }, async (text) => ({ text, blocked: false }), fast);
+  live.start();
+  live.refreshPicture();
+  // finish waits a bounded time for the picture, then ends the task without it.
+  await live.finish("done", "Done.");
+  release({ bytes: new Uint8Array([1, 2, 3]), caption: "A late page" });
+  await delay(100);
+  assert.equal(chat.calls.filter((c) => c.op === "file").length, 0, "the late picture stays unsent");
+});

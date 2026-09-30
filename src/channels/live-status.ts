@@ -284,21 +284,25 @@ export class LiveStatus {
   }
   private quoteTarget(): string | undefined { return this.target.quote ? this.target.quote() : this.target.messageId; }
   private pictureWork: Promise<void> | null = null;
+  private picturesClosed = false;
   private async takePicture(): Promise<void> {
-    if (this.closed || !this.permitted() || this.pictures >= this.mostPictures || Date.now() < this.pausedUntil) return;
+    if (this.closed || this.picturesClosed || !this.permitted() || this.pictures >= this.mostPictures || Date.now() < this.pausedUntil) return;
     this.pictures++;
     this.pictureAt = Date.now();
     let shot: { bytes: Uint8Array; caption: string } | null = null;
     try { shot = await this.target.picture!(); } catch { shot = null; }
     if (!shot?.bytes.length) { this.pictures--; return; }
+    // A capture can outlive finish's bounded wait; it must not enqueue another picture after cleanup.
+    if (this.closed || this.picturesClosed) return;
     await this.enqueue(() => this.sendPicture(shot!));
   }
   private async sendPicture(shot: { bytes: Uint8Array; caption: string }): Promise<void> {
     const bytes = shot.bytes;
-    if (!this.permitted()) return;
+    if (this.closed || this.picturesClosed || !this.permitted()) return;
     // The page the picture shows, else what the step was; every word through the chat's outbound check.
     const caption = (shot!.caption ? await this.checked(shot!.caption) : null) ?? await this.checked(statusOf(this.pictureCaption));
-    if (caption === null) return;
+    // Caption checks may outlive finish's wait just like the screenshot itself.
+    if (caption === null || this.closed || this.picturesClosed || !this.permitted()) return;
     if (this.target.adapter.maxFileBytes && bytes.length > this.target.adapter.maxFileBytes) return;
     const file = { name: "branch-browser.jpg", mediaType: "image/jpeg", bytes, caption };
     this.lastPicture = file;
@@ -308,6 +312,10 @@ export class LiveStatus {
         if (this.pictureId) await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, buttons);
         // Pictures follow the chat's quoting rule like the steps message (#700), not a quote on every one.
         else this.pictureId = await this.target.adapter.sendPicture!(this.target.chatId, file, buttons, this.quoteTarget()) ?? null;
+        // An already-started first send can return its id after finish skipped cleanup.
+        // The same applies to an in-flight edit: remove its controls when it settles.
+        if ((this.closed || this.picturesClosed) && this.pictureId && this.permitted())
+          await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, []);
       } else await this.target.adapter.sendFile!(this.target.chatId, file, this.quoteTarget());
     } catch (error) {
       const wait = retryAfterMs(error);
@@ -332,6 +340,8 @@ export class LiveStatus {
     if (this.pictureDue) { clearTimeout(this.pictureDue); this.timers.delete(this.pictureDue); this.pictureDue = null; }
     if (this.pictureWork) await Promise.race([this.pictureWork, new Promise((done) => { setTimeout(done, 5000).unref?.(); })]);
     this.pictureWork = null;
+    // Close picture admission before queueing the final edit: delayed captures and queued sends stop here.
+    this.picturesClosed = true;
     // The task is over: its last picture stays, without buttons that could no longer do anything.
     if (this.pictureId && this.lastPicture && this.inPlace && this.permitted()) {
       const { pictureId, lastPicture } = this;
