@@ -11,6 +11,7 @@ import type { Store } from "./store.js";
  */
 export const auditActions = [
   "approval.decided", "secret.used", "policy.changed", "channel.paired",
+  "channel.message",
   "data.exported", "profile.switched", "practice.switched",
   // Trying somebody else's AI-tool server from Settings reaches outside this computer, so it is
   // kept alongside the rest: which server, which tool, and how it ended.
