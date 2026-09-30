@@ -2,6 +2,8 @@ import { app, powerMonitor, powerSaveBlocker } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopGateway } from "./gateway-runtime.js";
+import { desktopGatewayRollback } from "./gateway-rollback.js";
+import { installedAppRoot } from "./install-root.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
 import { serveDesktopControl } from "./gateway-control.js";
 import { applyGatewayLive, gatewayApplyOwner } from "./gateway-live.js";
@@ -44,6 +46,10 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
     gateway = await startDesktopGateway({ dataDir, engineFile: fileURLToPath(new URL("./engine-process.js", import.meta.url)),
       port: await rememberedPort(join(dataDir, "local-port.json")), version: app.getVersion(),
       close: async () => { power.close(); await control.close(); },
+      rollBack: desktopGatewayRollback({ dataDir, target: installedAppRoot(app.isPackaged, process.platform, process.execPath),
+        version: app.getVersion(), platform: process.platform,
+        stop: async () => { if (!gateway) throw new Error("The desktop gateway is not available to stop safely."); await gateway.stop(); },
+        exit: () => app.exit(0) }),
       onOwnerOff: () => { void gateway?.stop().finally(() => app.exit(0)); },
       worker: (env, ready, checking) => retainedDesktopWorker(options, env, ready, checking, owner.control, (hooks, next) => { live = hooks; host = next; },
         () => { void gateway?.stop().finally(() => app.exit(0)); }, power) });

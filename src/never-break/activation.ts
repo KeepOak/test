@@ -172,6 +172,20 @@ export class ActivationWriteError extends Error {
   }
 }
 
+/** A recovery decision reads existing evidence without creating, migrating or replacing the journal. */
+export function readCurrentActivation(path: string): ActivationEntry | null {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    db.exec("PRAGMA busy_timeout=2000");
+    const found = formatOf(db), understood = migrations.at(-1)?.version ?? 0;
+    if (!Number.isSafeInteger(found.version) || found.version < 1 || !Number.isSafeInteger(found.readableBy)
+        || found.readableBy < 0 || found.readableBy > understood)
+      throw new Error("The activation journal format cannot be read safely by this recovery.");
+    const row = db.prepare("SELECT * FROM activations WHERE state IN ('activated','rolling-back') ORDER BY id DESC LIMIT 1").get();
+    return row ? entryOf(row as Record<string, unknown>) : null;
+  } finally { db.close(); }
+}
+
 const parse = <T>(text: unknown, fallback: T): T => {
   try { return text === null || text === undefined ? fallback : JSON.parse(String(text)) as T; } catch { return fallback; }
 };
