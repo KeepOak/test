@@ -4516,3 +4516,8 @@ audio.docread18m{width:100%}
 .tl-past19+#conversation{padding-top:16px}
 #conversation:has(+.tl-after19){padding-bottom:0}
 .tl-after19{padding-top:16px}
+
+/* Owner browser page controls. */
+.owner-browser7 .ob7-extras,.owner-browser7 .ob7-find{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 12px;border-bottom:1px solid #e6e9ec;background:#fff;color:#3b4650}
+.owner-browser7 .ob7-find input{flex:1;min-width:150px;padding:6px 8px;border:1px solid #c9d2da;border-radius:6px;color:inherit;background:#fff}
+.owner-browser7 .ob7-find small{min-width:120px;color:inherit}
