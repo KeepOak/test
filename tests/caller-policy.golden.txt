@@ -329,6 +329,8 @@ owner GET /api/channels/pairings/remove | here=ok remote=ok phone=ok legacy=ok p
 owner POST /api/channels/pairings/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/be5052 run=401/be5052 nobody=401/40daee
 owner GET /api/channels/parity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/channels/parity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/6e3ab5 run=401/6e3ab5 nobody=401/40daee
+owner GET /api/channels/telegram-depth | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/channels/telegram-depth | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/channels/permissions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/channels/permissions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/channels/slack-automations | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -2587,6 +2589,8 @@ owner+lockdown GET /api/channels/pairings/remove | here=ok remote=ok phone=ok le
 owner+lockdown POST /api/channels/pairings/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/be5052 run=401/be5052 nobody=401/40daee
 owner+lockdown GET /api/channels/parity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/channels/parity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/6e3ab5 run=401/6e3ab5 nobody=401/40daee
+owner+lockdown GET /api/channels/telegram-depth | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/channels/telegram-depth | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/channels/permissions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/channels/permissions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/channels/slack-automations | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4845,6 +4849,8 @@ household GET /api/channels/pairings/remove | here=400/fb6b79 remote=400/fb6b79 
 household POST /api/channels/pairings/remove | here=400/fb6b79 remote=400/fb6b79 read=401/be5052 run=401/be5052
 household GET /api/channels/parity | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household POST /api/channels/parity | here=400/fb6b79 remote=400/fb6b79 read=401/6e3ab5 run=401/6e3ab5
+household GET /api/channels/telegram-depth | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
+household POST /api/channels/telegram-depth | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household GET /api/channels/permissions | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household POST /api/channels/permissions | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household GET /api/channels/slack-automations | here=400/fb6b79 remote=400/fb6b79 read=401/86eff9 run=401/86eff9
@@ -7103,6 +7109,8 @@ household+lockdown GET /api/channels/pairings/remove | here=400/fb6b79 remote=40
 household+lockdown POST /api/channels/pairings/remove | here=400/fb6b79 remote=400/fb6b79 read=401/be5052 run=401/be5052
 household+lockdown GET /api/channels/parity | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household+lockdown POST /api/channels/parity | here=400/fb6b79 remote=400/fb6b79 read=401/6e3ab5 run=401/6e3ab5
+household+lockdown GET /api/channels/telegram-depth | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
+household+lockdown POST /api/channels/telegram-depth | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household+lockdown GET /api/channels/permissions | here=400/fb6b79 remote=400/fb6b79 read=400/fb6b79 run=400/fb6b79
 household+lockdown POST /api/channels/permissions | here=400/fb6b79 remote=400/fb6b79 read=401/55661c run=401/55661c
 household+lockdown GET /api/channels/slack-automations | here=400/fb6b79 remote=400/fb6b79 read=401/86eff9 run=401/86eff9
@@ -9361,6 +9369,8 @@ applock GET /api/channels/pairings/remove | here=423/a8f863
 applock POST /api/channels/pairings/remove | here=423/a8f863
 applock GET /api/channels/parity | here=423/a8f863
 applock POST /api/channels/parity | here=423/a8f863
+applock GET /api/channels/telegram-depth | here=423/a8f863
+applock POST /api/channels/telegram-depth | here=423/a8f863
 applock GET /api/channels/permissions | here=423/a8f863
 applock POST /api/channels/permissions | here=423/a8f863
 applock GET /api/channels/slack-automations | here=423/a8f863

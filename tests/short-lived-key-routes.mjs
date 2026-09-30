@@ -186,6 +186,7 @@ export const ROUTES = {
   "/api/channels/pairings/approve": "owner POST",
   "/api/channels/pairings/remove": "owner POST",
   "/api/channels/parity": "owner POST",
+  "/api/channels/telegram-depth": "look",
   "/api/channels/permissions": "owner POST",
   "/api/channels/slack-automations": "secret-read",
   "/api/channels/slack-automations/run": "task POST",
