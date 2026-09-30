@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
+import { openSettingsPage, settingsWindow, setLevel } from "./settings-window.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
@@ -84,5 +85,30 @@ test("Rewrite short notes picks a note, shows the suggestion and keeps it only w
   await page.locator('[data-act="ad-rw-keep"]').click();
   await page.waitForTimeout(800);
   assert.equal((await read("reach/notes")).notes[0].body, SUGGESTION);
+  assert.deepEqual(errors, []);
+});
+
+test("Rewrite short notes opens nothing late: another dialog opened while the notes were read stays on screen", { timeout: 180000 }, async (t) => {
+  let slow = false;
+  const route = (page) => page.route("**/api/reach/notes", async (request) => {
+    if (slow && request.request().method() === "GET") await new Promise((done) => setTimeout(done, 2500));
+    await request.continue();
+  });
+  const { page, errors, call } = await settingsWindow(t, { route, name: "rewrite-late" });
+  await call("/api/reach/notes", { title: "Survey", body: "the tower was measured again, it is 41 m tall" });
+  await openSettingsPage(page, "general");
+  await setLevel(page, "technical");
+  await openSettingsPage(page, "advanced");
+  await page.locator('[data-act="ad-rewrite"]').waitFor();
+  slow = true;
+  const read = page.waitForResponse((response) => response.url().endsWith("/api/reach/notes"), { timeout: 15000 });
+  await page.locator('[data-act="ad-rewrite"]').click();
+  await page.locator('[data-act="ad-orders"]').first().click();
+  await page.locator(".dlg").first().waitFor();
+  const shown = await page.locator(".dlg h2").first().innerText();
+  await read;
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator("#ad-rw-note").count(), 0, "the rewrite dialog did not open over the newer one");
+  assert.equal(await page.locator(".dlg h2").first().innerText(), shown, "the dialog opened meanwhile is still the one shown");
   assert.deepEqual(errors, []);
 });

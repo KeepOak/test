@@ -66,3 +66,26 @@ test("Advanced: a standing instruction for one Trunk is kept, listed and removed
   await until(async () => (await call("/api/autonomy/instructions")).instructions.length === 0, "Remove takes it away");
   assert.deepEqual(errors, []);
 });
+
+test("Advanced: the standing-instruction dialog opens nothing late over a dialog opened meanwhile", async (t) => {
+  let slow = false;
+  const route = (page) => page.route("**/api/autonomy/instructions", async (request) => {
+    if (slow && request.request().method() === "GET") await new Promise((done) => setTimeout(done, 2500));
+    await request.continue();
+  });
+  const { page, errors } = await settingsWindow(t, { name: "held-fno-late", route, before: (app) => { app.trunks.create({ name: "Scout" }); } });
+  await openSettingsPage(page, "general");
+  await setLevel(page, "advanced");
+  await openSettingsPage(page, "advanced");
+  slow = true;
+  const read = page.waitForResponse((response) => response.url().endsWith("/api/autonomy/instructions"), { timeout: 15000 });
+  await page.locator('[data-act="ad-fno"]').click();
+  await page.locator('[data-act="ad-orders"]').first().click();
+  await page.locator(".dlg").first().waitFor();
+  const shown = await page.locator(".dlg h2").first().innerText();
+  await read;
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator("#fno-text").count(), 0, "the instruction dialog did not open over the newer one");
+  assert.equal(await page.locator(".dlg h2").first().innerText(), shown);
+  assert.deepEqual(errors, []);
+});

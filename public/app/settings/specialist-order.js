@@ -9,6 +9,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { toast, openDlg, closeDlg } from "../core/ui.js";
 import { gsel } from "../core/gsel.js";
+import { viewFence } from "../core/view-fence.js";
 import { t } from "../../i18n.js";
 
 const W = (key, vars) => t(`window.settings.advanced.${key}`, vars);
@@ -22,8 +23,10 @@ function kept(list) {
 }
 
 async function openOrder() {
+  const still = viewFence("ad-fno");
   let list = [];
-  try { list = (await api("autonomy/instructions")).instructions ?? []; } catch (error) { toast(error.message); return; }
+  try { list = (await api("autonomy/instructions")).instructions ?? []; } catch (error) { if (still()) toast(error.message); return; }
+  if (!still()) return; // closed, replaced, another person or locked while the list was read: nothing is shown late
   const title = W("from-now-on-for-a-specialist");
   if (!E.trunks.length) { openDlg({ title, body: `<p class="lead-b17">${esc(W("fno-none"))}</p>${kept(list)}` }); return; }
   const pick = gsel({ id: "fno-trunk", label: W("fno-trunk"), options: E.trunks.map((trunk) => [trunk.id, trunk.name]) });
