@@ -41,11 +41,7 @@ test("every file the page loads is on the server's allowlist and answers 200", a
   const css = await readFile(new URL("app.css", publicDir), "utf8");
   for (const m of css.matchAll(/url\(["']?(\/[^"')]+)["']?\)/g)) referenced.add(m[1]);
   assert.ok(referenced.has("/app/main.js") && referenced.has("/app/core/api.js") && referenced.has("/app.css"), "the scan found the window's modules and stylesheet");
-  /* The worker names the files it keeps; every one of them has to be served too. */
-  const worker = await readFile(new URL("service-worker.js", publicDir), "utf8");
-  const shell = /const SHELL = \[([\s\S]*?)\];/.exec(worker);
-  assert.ok(shell, "the worker lists the files it keeps");
-  for (const m of shell[1].matchAll(/"([^"]+)"/g)) referenced.add(m[1]);
+  /* The legacy worker URL is a retirement response; it names no cached shell assets. */
   for (const path of ["/service-worker.js", "/manifest.webmanifest"]) referenced.add(path);
   /* Wave 8: the small box is included by a page of the owner's OWN, so nothing here imports it and
      the scan above cannot see it. It is served only while the owner has switched it on, so switching
