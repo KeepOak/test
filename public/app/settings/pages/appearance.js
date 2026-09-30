@@ -96,7 +96,7 @@ function petSection() {
   const cards = all.map(([v, l]) => petCard(v, l, kind)).join("");
   const where = pets?.on ? segAct(t("window.settings.appearance.where-it-walks"), t("window.settings.appearance.it-keeps-out-of-the-way"), [["side", t("window.settings.appearance.the-list")], ["status", t("window.settings.appearance.status-bar")], ["dock", t("window.settings.appearance.by-the-message-box")]], W.petWhere, "petwhere15") : "";
   const name = pets ? `<div class="ctl"><b>${t("accounts.field.name")}</b><span class="right"><input class="inp" id="pet-name" value="${esc(pets.name ?? "")}" aria-label="${t("window.settings.appearance.pet-name")}" maxlength="20" data-sw="set" data-css="width:140px"></span><small>${t("window.settings.appearance.pat-it-for-a-tip")}</small></div>` : "";
-  const style = ownerHere() ? segAct("Pixel or 3D", "Classic Trunk faces use pixel art or existing rendered 3D art. Squirrel, owl and hedgehog use pixel sprites or voxel models. Painted pets and character videos keep their own art.", [["pixel", "Pixel"], ["3d", "3D"]], D.settings?.look?.style ?? "pixel", "visual-style") : "";
+  const style = ownerHere() ? segAct(t("window.settings.appearance.style-title"), t("window.settings.appearance.style-note"), [["pixel", t("window.settings.appearance.style-pixel")], ["3d", t("window.settings.appearance.style-3d")]], D.settings?.look?.style ?? "pixel", "visual-style") : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.the-pet")}</h2>${style}<div class="pets12">${cards}</div>${row}${where}${name}</div>`;
 }
 
