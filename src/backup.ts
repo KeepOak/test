@@ -197,7 +197,10 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   "memory-snapshot:",
   // The programs each Trunk has opened on this computer (src/desktop-app-ask.ts): the record stands in for the owner's
   // yes to opening them again, so a file must never write one.
-  "desktop-apps-used:"];
+  "desktop-apps-used:",
+  // RES-408: the last check of a personal sign-in (src/personal/signin.ts): this computer's own recent result, gone in
+  // 15 minutes; a file putting one in place would show a connection as working that was never checked here.
+  "personal-connection-health:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**

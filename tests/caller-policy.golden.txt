@@ -929,18 +929,24 @@ owner GET /api/personal/signin/google/start | here=ok remote=ok phone=ok legacy=
 owner POST /api/personal/signin/google/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/google/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/google/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/signin/google/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/signin/google/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/microsoft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/microsoft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/microsoft/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/microsoft/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/microsoft/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/microsoft/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/signin/microsoft/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/signin/microsoft/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/spotify | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/spotify | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/spotify/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/spotify/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/signin/spotify/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/signin/spotify/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/signin/spotify/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/signin/spotify/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/spotify/now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/spotify/now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -3173,18 +3179,24 @@ owner+lockdown GET /api/personal/signin/google/start | here=ok remote=ok phone=o
 owner+lockdown POST /api/personal/signin/google/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/google/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/google/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/signin/google/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/signin/google/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/microsoft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/microsoft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/microsoft/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/microsoft/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/microsoft/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/microsoft/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/signin/microsoft/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/signin/microsoft/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/spotify | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/spotify | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/spotify/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/spotify/start | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/signin/spotify/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/signin/spotify/secret | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/signin/spotify/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/signin/spotify/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/spotify/now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/spotify/now | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -5417,18 +5429,24 @@ household GET /api/personal/signin/google/start | here=400/f6e21c remote=400/f6e
 household POST /api/personal/signin/google/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/google/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/google/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/signin/google/test | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/signin/google/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/microsoft | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/microsoft | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/microsoft/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/microsoft/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/microsoft/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/microsoft/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/signin/microsoft/test | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/signin/microsoft/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/spotify | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/spotify | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/spotify/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/spotify/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/signin/spotify/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/signin/spotify/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/personal/signin/spotify/test | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/signin/spotify/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/spotify/now | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/spotify/now | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/personal/switch | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -7661,18 +7679,24 @@ household+lockdown GET /api/personal/signin/google/start | here=400/f6e21c remot
 household+lockdown POST /api/personal/signin/google/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/google/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/google/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/signin/google/test | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/signin/google/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/microsoft | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/microsoft | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/microsoft/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/microsoft/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/microsoft/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/microsoft/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/signin/microsoft/test | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/signin/microsoft/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/spotify | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/spotify | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/spotify/start | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/spotify/start | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/signin/spotify/secret | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/signin/spotify/secret | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/signin/spotify/test | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/signin/spotify/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/spotify/now | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/spotify/now | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/switch | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -9905,18 +9929,24 @@ applock GET /api/personal/signin/google/start | here=423/a8f863
 applock POST /api/personal/signin/google/start | here=423/a8f863
 applock GET /api/personal/signin/google/secret | here=423/a8f863
 applock POST /api/personal/signin/google/secret | here=423/a8f863
+applock GET /api/personal/signin/google/test | here=423/a8f863
+applock POST /api/personal/signin/google/test | here=423/a8f863
 applock GET /api/personal/signin/microsoft | here=423/a8f863
 applock POST /api/personal/signin/microsoft | here=423/a8f863
 applock GET /api/personal/signin/microsoft/start | here=423/a8f863
 applock POST /api/personal/signin/microsoft/start | here=423/a8f863
 applock GET /api/personal/signin/microsoft/secret | here=423/a8f863
 applock POST /api/personal/signin/microsoft/secret | here=423/a8f863
+applock GET /api/personal/signin/microsoft/test | here=423/a8f863
+applock POST /api/personal/signin/microsoft/test | here=423/a8f863
 applock GET /api/personal/signin/spotify | here=423/a8f863
 applock POST /api/personal/signin/spotify | here=423/a8f863
 applock GET /api/personal/signin/spotify/start | here=423/a8f863
 applock POST /api/personal/signin/spotify/start | here=423/a8f863
 applock GET /api/personal/signin/spotify/secret | here=423/a8f863
 applock POST /api/personal/signin/spotify/secret | here=423/a8f863
+applock GET /api/personal/signin/spotify/test | here=423/a8f863
+applock POST /api/personal/signin/spotify/test | here=423/a8f863
 applock GET /api/personal/spotify/now | here=423/a8f863
 applock POST /api/personal/spotify/now | here=423/a8f863
 applock GET /api/personal/switch | here=423/a8f863
