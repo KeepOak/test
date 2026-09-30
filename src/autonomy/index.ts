@@ -31,6 +31,9 @@ export interface ChatsHost {
   link(owner: string, input: unknown): unknown;
   deliver(channel: string, chatId: string, text: string, key?: string): Promise<unknown>;
   summary(): { channels: { id: string; kind: string }[] };
+  /** Exact owner-DM destination, revalidated by the channel router immediately before linking. */
+  handoff?(owner: string, input: unknown): Promise<{ title: string; sent: boolean; queued: number }>;
+  assertHandoffSource?(owner: string, sourceSessionId: string): void;
 }
 
 export interface AutonomyDeps {
