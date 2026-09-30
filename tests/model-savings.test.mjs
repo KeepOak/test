@@ -581,10 +581,11 @@ test("review: service_tier goes only to OpenAI's own address or Azure, on both O
 
 test("review: current Claude models have prices, so a Claude cache ping can keep its cap", async () => {
   const { tablePrice } = await import("../dist/pricing.js");
-  assert.deepEqual(tablePrice("claude-opus-5"), { input: 5, output: 25, cached: 0.5 });
-  assert.deepEqual(tablePrice("claude-sonnet-4-5-20250929"), { input: 3, output: 15, cached: 0.3 });
-  assert.deepEqual(tablePrice("claude-haiku-4-5"), { input: 1, output: 5, cached: 0.1 });
-  assert.deepEqual(tablePrice("claude-sonnet-5"), { input: 2, output: 10, cached: 0.2 });
+  assert.deepEqual(tablePrice("claude-opus-5"), { input: 5, output: 25, cached: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 });
+  assert.deepEqual(tablePrice("claude-sonnet-4-5-20250929"), { input: 3, output: 15, cached: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 });
+  assert.deepEqual(tablePrice("claude-haiku-4-5"), { input: 1, output: 5, cached: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 });
+  assert.deepEqual(tablePrice("claude-sonnet-5"), { input: 2, output: 10, cached: 0.2, cacheWrite: 2.5, cacheWrite1h: 4 });
+  assert.deepEqual(tablePrice("claude-opus-5-5"), { input: 4, output: 20, cached: 0.2, cacheWrite: 5, cacheWrite1h: 8 });
 });
 
 test("review: a mixture is priced at its dearest known member, and its summed cost meets the task limit and the month", async (t) => {

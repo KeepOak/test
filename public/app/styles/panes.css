@@ -1,0 +1,37 @@
+/* area: panes (RES-703 / SELF-308, chat/panes.js): conversations side by side under one message box. Each pane is a
+   card with its tab on top; the active one (where the box writes) has an accent ring and a tinted tab, and the box
+   names it in its "to" pill. Between two panes a handle shares their width. Below 1000px only the main pane shows. */
+.panes19{grid-template-columns:var(--cols19);gap:0;padding:6px 12px 4px}
+.pn19{display:flex;flex-direction:column;min-width:0;min-height:0;border-radius:var(--r3-17,16px);background:var(--bg);box-shadow:inset 0 0 0 1px var(--hair17,var(--line));transition:box-shadow .15s var(--ease17,ease)}
+.pn19.beside15{border-left:0}
+.pn19>#scroll{min-width:0}
+.pn19 .thread{max-width:min(var(--thread-w,720px),100%)}
+.pn19.on19{box-shadow:inset 0 0 0 2px var(--accent),var(--sh2-17,none)}
+.tab19{flex:none;display:flex;align-items:center;gap:8px;height:38px;padding:0 4px 0 10px;border-bottom:1px solid var(--hair17,var(--line));border-radius:var(--r3-17,16px) var(--r3-17,16px) 0 0;font-size:13px;color:var(--ink-2);cursor:grab;outline-offset:-2px}
+.tab19 b{font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tab19 .icon-btn{width:26px;height:26px;flex:none}
+.pn19.on19>.tab19{background:var(--accent-tint);color:var(--ink)}
+.pn19.on19>.tab19 b{font-weight:600}
+.live19{flex:none;width:7px;height:7px;border-radius:50%;background:var(--accent);animation:live19 1.6s ease-in-out infinite}
+@keyframes live19{50%{opacity:.35}}
+@media (prefers-reduced-motion:reduce){.live19{animation:none}}
+.pz19{position:relative;cursor:col-resize;touch-action:none}
+.pz19::after{content:"";position:absolute;top:35%;bottom:35%;left:3px;width:1px;border-radius:1px;background:var(--hair17,var(--line));transition:background .15s}
+.pz19:hover::after{left:2px;width:3px;background:var(--accent)}
+.wait19{display:flex;align-items:center;gap:8px;margin:0;padding:8px 10px;border-radius:var(--r2-17,12px);background:var(--accent-tint);color:var(--ink);font-size:13px}
+.wait19 .btn{margin-left:auto}
+.to19{flex:none;align-self:center;display:inline-flex;align-items:center;gap:6px;max-width:180px;margin:0 2px;padding:3px 10px 3px 3px;border-radius:999px;background:var(--accent-tint);color:var(--ink);font-size:12.5px}
+.to19 b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:999px){
+  .panes19{grid-template-columns:minmax(0,1fr);padding:0}
+  .panes19>.pn19:not(.main19),.panes19>.pz19,.main19>.tab19,.to19{display:none}
+  .pn19,.pn19.on19{box-shadow:none;border-radius:0}
+}
+/* One box under several panes: wider than a single conversation's, so the pill and the chips leave room to write. */
+.main:has(.panes19) .composer{max-width:min(960px,100%)}
+/* Writing to another pane: the model and mode chips (and the cost so far) are the main conversation's, so they step aside. */
+.composer.away19 .chip-c,.composer.away19 .c-flags{display:none}
+/* Too many panes for the room: each keeps a readable width and the row scrolls sideways; the handles rest. */
+.panes19.tight19{overflow-x:auto;overscroll-behavior-x:contain;scroll-snap-type:x proximity}
+.panes19.tight19>.pn19{scroll-snap-align:start}
+.panes19.tight19>.pz19{pointer-events:none}

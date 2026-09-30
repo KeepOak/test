@@ -20,7 +20,10 @@
  * The ideas follow Hermes Agent's `tools/threat_patterns.py` and its tirith command check (MIT);
  * the patterns were written here (see THIRD_PARTY_NOTICES.md).
  */
-export type ScanKind = "escape" | "homograph" | "pipe-to-shell";
+import { dangerousCommand } from "./dangerous-commands.js";
+
+/** Owner ruling 2026-09-30: "dangerous" is a command on Hermes Agent's dangerous-command list (./dangerous-commands.ts). */
+export type ScanKind = "escape" | "homograph" | "pipe-to-shell" | "dangerous";
 export interface ScanFinding { kind: ScanKind; detail: string }
 
 /** C0 controls other than tab, line feed and carriage return; DEL; C1 controls. */
@@ -112,8 +115,12 @@ function pipeFinding(command: string): ScanFinding | null {
 /** Everything the scan finds in one command, most serious first. */
 export function scanCommand(command: string): ScanFinding[] {
   const read = shellReading(command);
-  return [escapeFinding(command), homographFinding(read), pipeFinding(read)]
+  return [escapeFinding(command), homographFinding(read), pipeFinding(read), dangerousFinding(command, read)]
     .filter((finding): finding is ScanFinding => finding !== null);
+}
+function dangerousFinding(command: string, read: string): ScanFinding | null {
+  const found = dangerousCommand(command, read);
+  return found ? { kind: "dangerous", detail: `it is a dangerous command (${found})` } : null;
 }
 
 export type Decision = "allow" | "ask" | "deny";
