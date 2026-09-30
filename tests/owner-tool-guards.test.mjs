@@ -93,6 +93,7 @@ const NOT_TOOL_GUARDS = {
   "src/sessions.ts": "its requireOwner is about owning a conversation, not the profile switch",
   "src/runtime.ts": "startedFor decides whom a new task is for; it records the person, it guards nothing",
   "src/web-pages.ts": "the owner check guards the HTTP switch, not the tool",
+  "src/integrations/browser.ts": "browser.watch_change's isOwner check only re-confirms, before the page is kept for Take over, that the window is still on the owner who started the task; it refuses and never grants",
   "src/browser-control-api.ts": "its isOwner check refuses the owner's browser controls (/api/panels/browser) to anybody else; it defines no tool, and every page action goes through that tool's own hand-pressed gate",
   "src/sdk-kit.ts": "the owner check guards the HTTP switch, not a tool",
   "src/index.ts": "hands store.profiles.requireOwner to the guards listed above",
