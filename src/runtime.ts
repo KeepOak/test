@@ -2630,6 +2630,21 @@ ${run.output.slice(0, 6000)}`;
       return this.guards.call(run.id, { ...call, arguments: prepared.seenText }, () => this.callTool(call, context, prepared));
     }); // wave mac2 (guards)
   }
+  /** RPC calls are the original task's calls, never a new owner action or raw registry dispatch. */
+  async callFromScript(tool: string, args: unknown, context: ToolContext, callId: string): Promise<unknown> {
+    context.signal.throwIfAborted();
+    const run = this.store.run(context.runId);
+    if (!run || run.owner !== context.owner) throw new Error("Code mode requires its original running task.");
+    if (tool === "tools.script") throw new Error("A script cannot start another script.");
+    const outside = this.outsideReach(tool, context);
+    if (outside) throw new Error(outside);
+    context.budget.step(context.signal);
+    if (context.budget.remaining() <= 0) throw new BudgetError("Token budget exhausted");
+    const argumentsText = JSON.stringify(args ?? {});
+    // An approval is left to the ordinary task; scripts never create an implicit owner yes.
+    gateToolUse(this, tool, args, context, argumentFingerprint(tool, argumentsText), "policy");
+    return this.oneCall(run, context, { id: callId, name: tool, arguments: argumentsText });
+  }
   /**
    * Which of a reply's calls may go at the same time. With the "fewer rounds" part off this is one
    * call per group, which is the loop exactly as it was. The rules themselves are in
