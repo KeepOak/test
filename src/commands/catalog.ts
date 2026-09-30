@@ -70,6 +70,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("preset", ["permissions", "approvals"], "[name]", "when Branch checks with you before doing something", [...W, "terminal"], "owner", { ...was("terminal"), bareLooks: true, route: { method: "POST", path: "/api/policy" }, newAliases: added(["approvals"], "terminal") }),
   entry("memory", [], "[words]", "facts it has saved", [...W, "terminal"], "look", was("terminal")),
   entry("skills", [], "", "skills installed here", [...W, "terminal"], "look", was("terminal")),
+  entry("verbose", [], "[off|new|all|full|default]", "the steps level for this direct chat; on its own, cycle the level", ["chat"], "look", { whileWorking: true }),
   // CHAT-205: pin one skill to this conversation (src/commands/steer-skill.ts); /skill off unpins it.
   entry("skill", [], "[name|off]", "pin a skill to this conversation so it applies to every turn; on its own, which one is pinned", ["window", "phone", "terminal", "chat"], "run", { bareLooks: true }),
   entry("plan", [], "[on|off]", "turn a short plan first on or off", [...W, "terminal"], "look", was("terminal")),
@@ -140,6 +141,8 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // ---- end r17-h ----
   // A change to Branch itself, asked for from a chat app (src/self-development-requests.ts). It only files
   // a request; the owner's yes or no is given in the Branch app, never with a command.
+  // CHAT-096 / CHAT-200: when this chat's replies are spoken (src/channels/chat-voice.ts); the Voice settings still decide whether at all.
+  entry("voice", ["tts"], "[on|always|off]", "spoken replies in this chat: to voice notes (on), to every message (always), or never (off)", ["chat"], "run", { bareLooks: true }),
   entry("improve", [], "<what to change in Branch>", "ask the owner for a change to Branch itself; only the owner answers, in the Branch app", ["chat"], "run"),
   // mac7/learn: a map of a folder of code or a knowledge base, and a guided walk through it. Building
   // a map reads a whole folder and a tour may ask a model, and every /api/learn route is the owner's,
@@ -150,6 +153,16 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // at this computer with its own key: never from a chat app, a phone or the browser dashboard,
   // each of which reaches Branch as another computer does.
   entry("adapt", ["unblock"], "[what it said | yes <line>]", "what a stopped task is missing, what would fix it and what that costs; with yes and the offer's line, get it and carry on", ["window", "terminal"], "owner", { bareLooks: true, route: { method: "POST", path: "/api/adapt/go" } }),
+  // ---- the chat-parity build (Hermes Agent and OpenClaw): home chat, what is working, naming a conversation, the full list ----
+  // CHAT-190: where results sent "home" go. Owner only; from a chat app it is taken only from the owner's own account in a
+  // direct chat, before any command is read (`homeGate` in src/channels/home-chat.ts), exactly as /platform is.
+  entry("sethome", [], "[off | <chat app> [chat]]", "the chat that gets schedule results and notices sent home; from your own account in a chat, make it that one", [...W, "terminal"], "owner", { bareLooks: true }),
+  // CHAT-196: every task working now and the helpers each started; in a chat, only that chat's own
+  entry("agents", ["tasks", "subagents"], "", "what is working now, with the helpers each task started", ALL, "look"),
+  // CHAT-193: OpenClaw /name, Hermes /title
+  entry("title", ["name", "rename"], "<name>", "give this conversation a name", ["window", "phone", "terminal", "chat"], "run"),
+  // CHAT-204: Hermes and OpenClaw /commands
+  entry("commands", [], "", "every command you can use here, with what each does", ALL, "look"),
 ];
 
 const bare = (name: string): string => name.replace(/^\//, "").replace(/@[\w.-]+$/, "").toLowerCase();

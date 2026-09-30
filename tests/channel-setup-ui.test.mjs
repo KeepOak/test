@@ -73,7 +73,7 @@ test("the chat-app wizard: every app, ships off, the bot page and the code, and 
   const { page, errors, outside, call } = await signedIn(t);
   assert.equal((await call("/api/channel-setup")).mode, "off", "guided setup ships off");
   await openChannels(page);
-  assert.equal(await page.locator('[data-act="ch-open"]').count(), 56);
+  assert.equal(await page.locator('[data-act="ch-open"]').count(), 57);
   await openWizard(page, "telegram");
   const dlg = page.locator(".dlg");
   assert.equal(await dlg.locator(".dlg-h h2").textContent(), "Set up Telegram");
@@ -232,7 +232,7 @@ test("the phone shows the same panel as links: the store for this phone and the 
   await openApp("telegram");
   const card = page.locator("#connect-body");
   await card.locator("a").first().waitFor();
-  assert.equal(answers.list.channels.length, 56, "every chat app the window offers is offered here");
+  assert.equal(answers.list.channels.length, 57, "every chat app the window offers is offered here");
   assert.equal(await card.getByRole("link", { name: "Get the app" }).getAttribute("href"), "https://apps.apple.com/app/id686449807", "the iPhone store on an iPhone");
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://t.me/BotFather?text=%2Fnewbot");
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").getAttribute("type"), "password");
@@ -242,7 +242,7 @@ test("the phone shows the same panel as links: the store for this phone and the 
   assert.deepEqual(await page.evaluate(() => globalThis.posted.map((post) => post.path)), ["/api/channel-setup/telegram/check"]);
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").inputValue().then((value) => value.length), 45, "a refused token stays to be corrected");
   await page.locator('[data-act="back"]').first().click();
-  assert.equal(await page.locator('[data-act="ph-ch"]').count(), 56, "the phone lists every chat app the window offers");
+  assert.equal(await page.locator('[data-act="ph-ch"]').count(), 57, "the phone lists every chat app the window offers");
   await page.locator(`[data-act="ph-ch"][data-v="bluesky"]`).click();
   await page.locator("#connect-handle").waitFor();
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://bsky.app/settings/app-passwords");
@@ -285,5 +285,18 @@ test("the wizard connects without a restart and says when it could not; who answ
   await page.getByText("Signal is disconnected").waitFor();
   assert.equal((await call("/api/channel-setup/signal")).setUpHere, false);
   assert.deepEqual(outside, [], "nothing left this computer");
+  assert.deepEqual(errors, []);
+});
+
+/* The personal-number WhatsApp card says the ban risk first, before any step, and names the official path. */
+test("the personal-number WhatsApp wizard shows the risk before anything is set up", async (t) => {
+  const { page, errors, outside } = await signedIn(t);
+  await openChannels(page);
+  await openWizard(page, "whatsapp-web");
+  const alert = page.locator('.dlg [role="alert"]').first();
+  assert.match(await alert.textContent(), /unofficial client.*can be banned.*spare number.*Cloud API/s);
+  assert.match(await page.locator(".dlg .chw-steps12").textContent(), /Link/, "a Link step to scan the bridge's code");
+  assert.match(await page.locator(".dlg").textContent(), /administrator rights/);
+  assert.deepEqual(outside, []);
   assert.deepEqual(errors, []);
 });
