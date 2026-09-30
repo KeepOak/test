@@ -66,7 +66,7 @@ const kept = (name: string): boolean => !/\.(d\.c?ts|map)$/.test(name);
  * change it is into it (dist/build-info.json, as packaging does) and records every file. Written beside and renamed
  * into place, so a cut-off copy is never taken for a build. Answers what `current.json` keeps for it.
  */
-export async function stageLive(input: { source: string; appRoot: string; commit: string; version: string; now?: Date; withEngine?: boolean }): Promise<{ dir: string; manifest: LiveManifest; digest: string }> {
+export async function stageLive(input: { source: string; appRoot: string; commit: string; version: string; now?: Date; withEngine?: boolean; ancestors?: string[] }): Promise<{ dir: string; manifest: LiveManifest; digest: string }> {
   const dir = liveBuildDir(input.appRoot, input.commit), part = `${dir}.part`;
   // A window-only build holds the window's files alone: the engine that serves them keeps its own code.
   const withEngine = input.withEngine !== false;
@@ -81,7 +81,8 @@ export async function stageLive(input: { source: string; appRoot: string; commit
     if (!found?.isDirectory() || found.isSymbolicLink()) throw new Error(`The build has no ${top} folder, so nothing was changed.`);
     await cp(from, join(part, top), { recursive: true, verbatimSymlinks: true, filter: (path) => kept(path) });
   }
-  if (withEngine) await writeFile(join(part, "dist", "build-info.json"), `${JSON.stringify({ commit: input.commit, builtAt: (input.now ?? new Date()).toISOString() })}\n`);
+  if (withEngine) await writeFile(join(part, "dist", "build-info.json"), `${JSON.stringify({ commit: input.commit,
+    ancestors: (input.ancestors ?? []).filter(sha => commitShape.test(sha)).slice(0, 2000), builtAt: (input.now ?? new Date()).toISOString() })}\n`);
   const { manifest, digest } = await writeManifest(part, input.commit, input.version, input.now);
   await removeTree(dir);
   await rename(part, dir);
