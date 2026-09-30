@@ -4424,6 +4424,10 @@ audio.docread18m{width:100%}
 .hb18c .b18c{position:absolute;right:-2px;bottom:-2px;width:calc(var(--s) * .42);height:calc(var(--s) * .42);min-width:12px;min-height:12px;border-radius:50%;display:grid;place-items:center;background:var(--raise);color:var(--ink-2);box-shadow:0 0 0 1.5px var(--raise)}
 .hb18c .b18c svg.i{width:70%;height:70%}
 
+/* area: goal undo */
+/* The goal strip sticks below the merged title row, not under it, so Pause, Stop and Undo can be pressed. */
+:root:has(.titlebar.merged14) #scroll>.goal6:first-child{margin-top:var(--tb-h,52px)}
+
 /* area: mermaid diagrams */
 /* The prototype's diagram card: the drawing on the card's fill, the text that drew it folded under it. The drawing is a
    sealed frame (chat/diagram.js); its height comes back from the frame. */

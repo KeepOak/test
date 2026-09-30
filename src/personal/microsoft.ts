@@ -108,7 +108,25 @@ export class MicrosoftConnector {
       : await this.call("/messages", { method: "POST", json: { subject: value.subject, body: { contentType: "Text", content: value.text },
         toRecipients: recipients(value.to), ccRecipients: recipients(value.cc) } });
     const { id } = z.object({ id: z.string() }).passthrough().parse(made);
-    return { draftId: id, sent: false, note: "The draft is in your Outlook drafts. Branch never sends it; you do." };
+    return { draftId: id, to: [...value.to, ...value.cc], subject: value.subject ?? "", sent: false,
+      note: "The draft is in your Outlook drafts. Branch never sends it; you do." };
+  }
+
+  /**
+   * Undoing a goal (src/goal-undo.ts): deletes one draft Branch wrote, only while Outlook still says it is a draft. Once the
+   * owner has sent it, it is a sent message and is left alone; one already gone is said to be gone.
+   */
+  async deleteDraft(id: string): Promise<"deleted" | "gone" | "sent"> {
+    const path = `/messages/${encodeURIComponent(id)}`, gone = (error: unknown) => /\((404|410)\)/.test(String((error as Error)?.message));
+    let found: { isDraft?: boolean | undefined; "@odata.etag"?: string | undefined };
+    try { found = z.object({ isDraft: z.boolean().optional(), "@odata.etag": z.string().max(400).optional() }).passthrough().parse(await this.call(`${path}?$select=isDraft`)); }
+    catch (error) { if (gone(error)) return "gone"; throw error; }
+    const tag = found["@odata.etag"];
+    // Deleted only as that very draft: sent (or changed) since it was read, Outlook refuses the delete, and it is left alone.
+    if (found.isDraft !== true || !tag) return "sent";
+    try { await this.call(path, { method: "DELETE", headers: { "if-match": tag } }); }
+    catch (error) { if (/\(412\)/.test(String((error as Error)?.message))) return "sent"; if (gone(error)) return "gone"; throw error; }
+    return "deleted";
   }
 
   async events(input: unknown, now = new Date()) {

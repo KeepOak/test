@@ -72,17 +72,63 @@ export function findResidue(db: DatabaseSync, runIds: readonly string[]): Residu
   };
 }
 
+/**
+ * A memory checkpoint froze every fact as it was; putting one back must not bring a removed fact, or a gone task's name,
+ * back. Drops the removed facts, and every fact learned only from these tasks, from each checkpoint; with `rename`, the
+ * facts that stay stop naming tasks that are gone.
+ */
+export function scrubCheckpoints(db: DatabaseSync, runs: ReadonlySet<string>, removedFacts: readonly { id: string; owner: string }[], rename = true,
+  keptFacts: readonly { id: string; owner: string }[] = []): void {
+  if (!has(db, "memory_checkpoints")) return;
+  const removed = new Set(removedFacts.map((fact) => `${fact.owner}\u0000${fact.id}`));
+  const kept = new Set(keptFacts.map((fact) => `${fact.owner}\u0000${fact.id}`));
+  for (const row of db.prepare("SELECT id, owner, memories FROM memory_checkpoints").all()) {
+    const before = frozen(row.memories);
+    const after = before.filter((entry) => kept.has(`${String(row.owner)}\u0000${text(entry.id)}`)
+      || (!removed.has(`${String(row.owner)}\u0000${text(entry.id)}`) && !learnedOnlyFrom(runs, entry.data ?? {})))
+      .map((entry) => { const next = rename ? scrubbed(runs, entry.data ?? {}) : null; return next ? { ...entry, data: next } : entry; });
+    if (JSON.stringify(after) !== JSON.stringify(before))
+      db.prepare("UPDATE memory_checkpoints SET memories=? WHERE id=?").run(JSON.stringify(after), String(row.id));
+  }
+}
+
+/** Every copy of one fact kept beside it: archived, earlier wordings, and its place in search (words, meaning, uses). */
+function dropFactCopies(db: DatabaseSync, fact: { id: string; owner: string }): void {
+  if (has(db, "memory_archive")) db.prepare("DELETE FROM memory_archive WHERE owner=? AND id=?").run(fact.owner, fact.id);
+  if (has(db, "memory_versions")) db.prepare("DELETE FROM memory_versions WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
+  if (has(db, "memory_terms")) {
+    if (has(db, "memory_search")) db.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=? AND memory_id=?)").run(fact.owner, fact.id);
+    db.prepare("DELETE FROM memory_terms WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
+  }
+  for (const table of ["memory_vectors", "memory_uses"]) if (has(db, table)) db.prepare(`DELETE FROM ${table} WHERE owner=? AND memory_id=?`).run(fact.owner, fact.id);
+}
+
+/**
+ * Undoing a goal (src/goal-undo.ts) forgets its facts through the memory service, which keeps each one's last wording as a
+ * version so an ordinary Forget can be taken back. A goal undone is meant to be gone: these remove the kept versions, the
+ * archived copies, its place in search and the checkpoint copies of those facts, and the suggestions its tasks left waiting.
+ * Call in a transaction.
+ */
+export function forgetFactCopies(db: DatabaseSync, runIds: readonly string[], facts: readonly { id: string; owner: string }[],
+  keptFacts: readonly { id: string; owner: string }[] = []): void {
+  const runs = new Set(runIds);
+  const kept = new Set(keptFacts.map((fact) => `${fact.owner}\u0000${fact.id}`));
+  for (const fact of facts) dropFactCopies(db, fact);
+  if (has(db, "memory_archive"))
+    for (const row of db.prepare("SELECT rowid AS k, owner, id, data FROM memory_archive").all())
+      if (!kept.has(`${String(row.owner)}\u0000${String(row.id)}`) && learnedOnlyFrom(runs, parse(row.data)))
+        db.prepare("DELETE FROM memory_archive WHERE rowid=?").run(Number(row.k));
+  scrubCheckpoints(db, runs, facts, false, keptFacts); // the goal's tasks stay in the history, so the facts that stay keep naming them
+  if (has(db, "memory_proposals"))
+    db.prepare("DELETE FROM memory_proposals WHERE json_extract(data,'$.runId') IN (SELECT value FROM json_each(?))").run(JSON.stringify(runIds));
+}
+
 /** Removes the residue and every copy of a removed fact (its versions, archive, index, suggestions); call inside a transaction. */
 export function forgetResidue(db: DatabaseSync, runIds: readonly string[], residue: Residue): void {
   const runs = new Set(runIds), list = JSON.stringify(runIds);
   for (const fact of residue.facts) {
-    for (const table of ["memory", "memory_archive"]) if (has(db, table)) db.prepare(`DELETE FROM ${table} WHERE owner=? AND id=?`).run(fact.owner, fact.id);
-    if (has(db, "memory_versions")) db.prepare("DELETE FROM memory_versions WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
-    if (has(db, "memory_terms")) {
-      if (has(db, "memory_search")) db.prepare("DELETE FROM memory_search WHERE rowid IN (SELECT row_id FROM memory_terms WHERE owner=? AND memory_id=?)").run(fact.owner, fact.id);
-      db.prepare("DELETE FROM memory_terms WHERE owner=? AND memory_id=?").run(fact.owner, fact.id);
-    }
-    for (const table of ["memory_vectors", "memory_uses"]) if (has(db, table)) db.prepare(`DELETE FROM ${table} WHERE owner=? AND memory_id=?`).run(fact.owner, fact.id);
+    if (has(db, "memory")) db.prepare("DELETE FROM memory WHERE owner=? AND id=?").run(fact.owner, fact.id);
+    dropFactCopies(db, fact);
   }
   // An archived fact, and the earlier wordings of one that stays, are handled by the same rule.
   for (const table of ["memory", "memory_archive", "memory_versions"]) {
@@ -94,17 +140,7 @@ export function forgetResidue(db: DatabaseSync, runIds: readonly string[], resid
       if (next) db.prepare(`UPDATE ${table} SET data=? WHERE rowid=?`).run(JSON.stringify(next), Number(row.k));
     }
   }
-  // A memory checkpoint froze every fact as it was; putting one back must not bring a removed fact, or a gone task's name, back.
-  if (has(db, "memory_checkpoints")) {
-    const removed = new Set(residue.facts.map((fact) => `${fact.owner}\u0000${fact.id}`));
-    for (const row of db.prepare("SELECT id, owner, memories FROM memory_checkpoints").all()) {
-      const before = frozen(row.memories);
-      const after = before.filter((entry) => !removed.has(`${String(row.owner)}\u0000${text(entry.id)}`) && !learnedOnlyFrom(runs, entry.data ?? {}))
-        .map((entry) => { const next = scrubbed(runs, entry.data ?? {}); return next ? { ...entry, data: next } : entry; });
-      if (JSON.stringify(after) !== JSON.stringify(before))
-        db.prepare("UPDATE memory_checkpoints SET memories=? WHERE id=?").run(JSON.stringify(after), String(row.id));
-    }
-  }
+  scrubCheckpoints(db, runs, residue.facts);
   if (has(db, "memory_proposals")) db.prepare("DELETE FROM memory_proposals WHERE json_extract(data,'$.runId') IN (SELECT value FROM json_each(?))").run(list);
   if (has(db, "todos")) db.prepare("DELETE FROM todos WHERE run_id IN (SELECT value FROM json_each(?))").run(list);
   if (has(db, "board_cards")) db.prepare("DELETE FROM board_cards WHERE run_id IN (SELECT value FROM json_each(?))").run(list);
