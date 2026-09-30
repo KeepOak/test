@@ -9069,6 +9069,28 @@ from those sections as set up.
 apply to the same program list on every system; the loader names refused include the macOS
 `DYLD_*` family.
 
+## Music clips
+
+`media.music { connection, prompt, instrumental?, save? }` generates one 30-second MP3 clip with
+Google's documented `lyria-3-clip-preview` API. `connection` is the id of a configured Gemini
+API-key connection at Google's own address; the text model answering the conversation can stay
+on another connection. The clip is kept as a task artifact, with optional `save: "theme.mp3"`
+under the workspace media folder. Returned text contains the provider's lyrics or structure.
+The request accepts no arbitrary endpoint, sign-in token, automatic fallback or input uploads.
+
+The existing `media.write` permission controls each call and its save target. This initial route
+is owner-only; local-only sound/tasks, separately configured Trunk accounts and multi-account or
+capped key pools are refused. Music pricing is unknown, so enabled task/monthly dollar caps also
+refuse it rather than recording a free call. Practice reports what would be requested and sends
+nothing. The network policy pins the allowed address, rejects redirects, bounds the JSON/MP3
+response to the artifact limit, and honors cancellation and a three-minute timeout.
+
+This delivers a bounded music tool alongside the existing `media.speak` speech tool. Full songs,
+provider/account failover, dedicated window controls and complete music cost/account attribution
+remain future work. Disable `media.music` through the tool policy or remove its registration to
+roll back availability. Source approach reviewed: OpenClaw's MIT music runtime; no code copied.
+The request contract is documented in [Google's music generation guide](https://ai.google.dev/gemini-api/docs/generate-content/music-generation).
+
 ## Models, cheaper and smarter (R17-E)
 
 Seven cards. Counting what the service says and the round-by-round chart ship on, since they only read

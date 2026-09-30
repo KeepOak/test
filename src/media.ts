@@ -6,7 +6,7 @@ import { z } from "zod";
 import type { Artifact, RunArtifacts } from "./artifacts.js";
 import { maximumImageBytes, parseImages, type ImagePart, type ToolContext } from "./contracts.js";
 import type { WorkspaceFiles } from "./files.js";
-import type { ModelRouter } from "./models.js";
+import { keptOnThisComputer, type ModelRouter } from "./models.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import { supportsImages } from "./providers.js";
 import type { ToolRegistry } from "./registry.js";
@@ -28,6 +28,12 @@ import {
 import { mediaInfo, videoLimits } from "./media-video.js";
 import { decodePng, pngSignature } from "./media-decode.js";
 import { estimateImageCost, mediaSettings } from "./media-settings.js";
+import { generateMusicClip, MusicRequestSchema, musicClipModel, type MusicRequest } from "./media-music.js";
+import { currentPerson } from "./people/context.js";
+import { startedWithShortLivedKey } from "./key-context.js";
+import { currentAccountCall } from "./accounts/context.js";
+import { accountsServiceFor } from "./accounts/service.js";
+import { readKnobs } from "./knobs/settings.js";
 
 /** The most any one file the media tools read may weigh: enough for a long recording, not a disk. */
 export const maximumMediaBytes = 32 * 1024 * 1024;
@@ -150,6 +156,37 @@ export class MediaTools {
     if (!source) return generateOpenAi(where, model, input, this.policy, this.fetch, signal);
     const mask = input.edit?.mask ? await this.source(input.edit.mask) : null;
     return editOpenAi(where, model, input, source, mask, this.policy, this.fetch, signal);
+  }
+
+  /** One explicitly chosen API-key music connection; account limits are refused until its cost can be attributed. */
+  async music(input: MusicRequest, context: ToolContext): Promise<Record<string, unknown>> {
+    if (currentPerson() || startedWithShortLivedKey() || !this.store.profiles.isOwner() || this.store.profiles.scope() !== context.owner
+      || (context.source && context.source !== "owner")) throw new Error("Only the owner can generate music with this connection.");
+    if (keptOnThisComputer() || this.keepAudioHere(context.owner)) throw new Error("This task keeps sound on this computer, so it cannot ask a music service.");
+    const trunk = currentAccountCall()?.trunk;
+    if ((context.trunk && !trunk) || (trunk && (!trunk.keys.copyFromOwner || Object.keys(trunk.keys.accounts).length || Object.keys(trunk.keys.next ?? {}).length)))
+      throw new Error("Music cannot use a Trunk's separately selected accounts yet. Choose the owner's single-key music connection.");
+    const preset = this.models.presets.get(input.connection);
+    if (!preset) throw new Error("That music connection is not set up.");
+    const service = accountsServiceFor(this.models), found = service?.poolFor(preset), pool = found ? service?.pool(found.pool) : null;
+    if ((found && found.kind !== "api-key") || (pool && (pool.accounts.length > 1
+      || (pool.defaultAccount !== null && pool.defaultAccount !== "primary")
+      || pool.accounts.some((account) => account.id !== "primary" || account.disabled || account.monthlyCapUsd !== null))))
+      throw new Error("Music needs a single API-key account with no dollar cap; its account cost is not attributed yet.");
+    const budget = this.store.get("settings", context.owner, "usage_budget")?.data;
+    if (readKnobs(this.store, context.owner, "limits").spendCapDollars !== null || (budget?.pauseAtBudget !== false && typeof budget?.maxMonthlyDollars === "number"))
+      throw new Error("Music's price is not on file, so it cannot run while a task or monthly dollar cap is enabled.");
+    const where = providerImages(preset.provider);
+    if (!where || where.kind !== "gemini" || where.bearer) throw new Error("Select a Google Gemini API-key connection for music.");
+    const cost = { amount: null, currency: "USD", confidence: "unknown", note: "Music cost is not on file; this is not a free-call claim." };
+    if (context.dryRun) return { wouldMake: "a music clip", connection: input.connection, model: musicClipModel, seconds: 30, cost };
+    const artifacts = this.artifactStore();
+    const made = await generateMusicClip(where, input, this.policy, this.fetch, AbortSignal.any([context.signal, AbortSignal.timeout(180000)]));
+    context.signal.throwIfAborted();
+    const kept = await artifacts.write(context.runId, `music-${randomUUID().slice(0, 8)}.mp3`, "audio/mpeg", made.bytes);
+    const saved = input.save ? await this.keep(context.owner, input.save, made.bytes) : null;
+    this.store.event(context.runId, "music.generated", { connection: input.connection, model: musicClipModel, bytes: made.bytes.length, cost: null });
+    return { ...(kept as Artifact), connection: input.connection, model: musicClipModel, lyrics: made.lyrics, cost, ...(saved ? { savedAs: saved.path } : {}) };
   }
 
   /** A picture from the workspace, checked for size and kind, ready to show a model. */
@@ -291,6 +328,13 @@ export class MediaTools {
 
 const pathSchema = z.string().min(1).max(500);
 export function registerMedia(registry: ToolRegistry, media: MediaTools): void {
+  registry.register({
+    name: "media.music", permission: "media.write",
+    description: "Generate a 30-second music clip using an explicitly selected Google Gemini API-key connection. The MP3 is kept with this task and can be saved into the workspace. Its price is unknown; account and dollar-cap constraints may refuse it.",
+    parameters: MusicRequestSchema,
+    target: (input, context) => input.save ? media.savePath(context.owner, input.save) : "a new music clip",
+    execute: (input, context) => media.music(input, context),
+  });
   registry.register({
     name: "media.image", permission: "media.write",
     description: "Make a picture from a description, or change a picture already in the workspace. The finished picture is kept with this task, and saved into the workspace when a file name is given.",
