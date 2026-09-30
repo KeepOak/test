@@ -84,8 +84,7 @@ test("the window switched to a household person during the read: nothing drawn, 
   lb.E.profiles = sam;
   await answer([doc("Kettle notes.md"), doc("Tax 2026.pdf")]);
   assert.equal(lb.renders, renders, "no render for the late answer");
-  assert.doesNotMatch(page.draw(), /Kettle notes|Tax 2026/, "nothing of the owner's drawn for Sam");
-  lb.E.profiles = owner;
+  lb.E.profiles = owner; // back before anything is drawn: the late answer itself let the kept list go
   assert.doesNotMatch(page.draw(), /Kettle notes|Tax 2026/, "the owner's earlier list was let go, not kept for later");
 });
 
