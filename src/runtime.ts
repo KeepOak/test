@@ -1898,10 +1898,7 @@ ${run.output.slice(0, 6000)}`;
     let placementReady = false;
     let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
-      place = this.coding ? await this.coding.placeTask(run, context, parent).catch((error: unknown) => {
-        if (context.ownCopy) throw error;
-        return null;
-      }) : null;
+      place = this.coding ? await this.coding.placeTask(run, context, parent) : null;
       if (context.ownCopy && !place) throw new Error("The task's required saved project copy could not be restored. It was not continued in a shared workspace.");
       placementReady = true;
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a

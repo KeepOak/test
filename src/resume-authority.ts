@@ -1,3 +1,4 @@
+import { TrunkSchema } from "./trunks/record.js";
 import type { Run } from "./contracts.js";
 import type { RunSource } from "./policy.js";
 import type { Store } from "./store.js";
@@ -77,7 +78,13 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
   if (depth > 3 || lineage.some((record) => typeof record.start.parentRunId === "string"
     && parentDepth(records.get(record.start.parentRunId)!) >= depth)) unavailable();
   const agent = consistent("agent"), source = consistent("source");
-  if (typeof agent === "string" && !agent.startsWith("mode:") && !store.get("specialists", root.owner, agent)) unavailable();
+  if (typeof agent === "string" && agent.startsWith("trunk:")) {
+    const trunkId = agent.slice("trunk:".length);
+    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(trunkId)) unavailable();
+    const record = store.get("governance", root.owner, agent);
+    if (!record || record.data.id !== trunkId || record.data.paused === true || !TrunkSchema.safeParse(record.data).success) unavailable();
+    if (lineage.some((record) => store.events(record.run.id).some((event) => event.kind === "trunk.turn" && event.data.trunkId !== trunkId))) unavailable();
+  } else if (typeof agent === "string" && !agent.startsWith("mode:") && !store.get("specialists", root.owner, agent)) unavailable();
   // Explicit false never grants delegation. Practice mode and required isolation can only become stricter.
   return { permissions: [...permissions], depth, delegates: lineage.every((record) => record.start.delegates === true),
     dryRun: lineage.some((record) => record.start.dryRun === true),
