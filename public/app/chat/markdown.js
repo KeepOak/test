@@ -4,6 +4,7 @@
 import MarkdownIt from "../vendor/markdown-it-15.0.2/markdown-it.js";
 import { chartCard } from "./chart.js";
 import { diagramCard } from "./diagram.js";
+import { cachedMarkdown } from "./markdown-cache.js";
 
 /* markdown-it (Vitaly Puzrin/Alex Kocharin, MIT) is vendored with its notices. Parser configuration
    follows OpenClaw's Markdown parser approach (OpenClaw Foundation, MIT), adapted to Branch's cards. */
@@ -30,7 +31,7 @@ parser.renderer.rules.fence = (tokens, index, options, env, renderer) => {
 export const inlineText = (words) => parser.renderInline(String(words ?? ""));
 
 export function text(markdown) {
-  return parser.render(String(markdown ?? ""));
+  return cachedMarkdown(markdown, (source) => parser.render(source));
 }
 
 /* Markdown as the plain words a one-line preview shows (a sidebar row, a search hit): no "#", "**", "`", "|" or list
