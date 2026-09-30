@@ -1,13 +1,15 @@
 import { $, esc, renderNow } from "../core/dom.js";
-import { openDlg, closeDlg, toast } from "../core/ui.js";
+import { openDlg, closeDlg, toast, dialog } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
-import { ownerHere, refresh } from "../core/state.js";
+import { S, ownerHere, activeId, refresh } from "../core/state.js";
 import { showTool } from "../places/customize.js";
 import { t } from "../../i18n.js";
 
 let preview = null, ticket = 0;
+/* The window is not behind the App lock. */
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
 export function openGitHubSkill() {
   if (!ownerHere()) { toast(t("github-skill.owner")); return; }
   preview = null; ticket++;
@@ -25,32 +27,37 @@ function showPreview() {
     foot: `<button class="btn ghost" type="button" data-act="sk-git">${t("action.back")}</button><button class="btn pri" type="button" data-act="github-skill-install" ${result.blocked ? "disabled" : ""}>${t("github-skill.approve")}</button>` });
 }
 async function inspect(button) {
-  if (!ownerHere()) return;
-  const mine = ++ticket, form = $("#github-skill-form");
+  if (!ownerHere() || !unlocked()) return;
+  const mine = ++ticket, form = $("#github-skill-form"), profile = activeId();
+  const still = () => mine === ticket && form === $("#github-skill-form") && ownerHere() && activeId() === profile && unlocked();
   if (!form) return;
   button.disabled = true;
   try {
     const treeSha = $("#github-skill-sha").value.trim();
     const result = await api("skill-installs/github", { owner: $("#github-skill-owner").value.trim(),
       repo: $("#github-skill-repo").value.trim(), path: $("#github-skill-path").value.trim(), ...(treeSha ? { treeSha } : {}) });
-    if (mine !== ticket || form !== $("#github-skill-form") || !ownerHere()) return;
+    if (!still()) return;
     preview = result; showPreview();
-  } catch (error) { if (mine === ticket && form === $("#github-skill-form")) toast(error.message); }
+  } catch (error) { if (still()) toast(error.message); }
   finally { if (button.isConnected) button.disabled = false; }
 }
+/* Approve installs the exact preview shown. After the page is read again, the new skill is shown only if nothing newer
+   happened meanwhile: the same person on the same page, unlocked, no dialog opened and no newer GitHub skill started. */
 async function install(button) {
-  if (!ownerHere() || !preview || preview.blocked) return;
-  const mine = ticket, shown = $("#github-skill-preview"), chosen = preview.ticket;
+  if (!ownerHere() || !unlocked() || !preview || preview.blocked) return;
+  const mine = ticket, shown = $("#github-skill-preview"), chosen = preview.ticket, profile = activeId();
+  const here = () => ownerHere() && activeId() === profile && unlocked();
   button.disabled = true;
   try {
     const result = await api("skill-installs/github/install", { ticket: chosen, approve: true });
     if (result.record?.ok === false) throw new Error(result.record.error);
-    if (mine !== ticket || shown !== $("#github-skill-preview") || !ownerHere()) return;
-    preview = null; ticket++; closeDlg();
+    if (mine !== ticket || shown !== $("#github-skill-preview") || !here()) return;
+    preview = null; closeDlg();
+    const done = ++ticket, view = S.view;
     await refresh();
-    if (!ownerHere()) return;
+    if (ticket !== done || !here() || S.view !== view || dialog()) return;
     showTool("skills", result.result.skill.id); renderNow(); toast(t("window.flows.conn.skill-added"));
-  } catch (error) { if (mine === ticket && shown === $("#github-skill-preview")) { preview = null; toast(error.message); } }
+  } catch (error) { if (mine === ticket && shown === $("#github-skill-preview") && here()) { preview = null; toast(error.message); } }
   finally { if (button.isConnected) button.disabled = !preview; }
 }
 export function initGitHubSkills() {
