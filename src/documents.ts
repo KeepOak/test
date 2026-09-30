@@ -13,7 +13,8 @@ import { EmbeddingClient, cosine, defaultEmbeddingModel, fuseRanks, packVector, 
 import { localEmbedder } from "./local-models.js";
 import { embeddingFetch } from "./embeddings.js";
 import { providerEmbeddings } from "./providers.js";
-import { errorText } from "./contracts.js";
+import { errorText, type ToolContext } from "./contracts.js";
+import { assistantIdentity } from "./identity.js";
 import { allowAll, WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import type { RunSource } from "./policy.js";
 import { Citations, type Citation } from "./citations.js";
@@ -31,10 +32,25 @@ const passageChars = 900;
 const candidates = 20;
 const scanLimit = 5000;
 
+/** Initial Library-entry actor, never an imported content-author claim. */
+const DocumentAddedBySchema = z.object({
+  kind: z.enum(["person", "assistant", "trunk"]), name: z.string().min(1).max(200),
+  trunkId: z.string().max(100).optional(), runId: z.string().max(100).optional(),
+}).strict();
+export type DocumentAddedBy = z.infer<typeof DocumentAddedBySchema>;
+function readAddedBy(value: unknown): DocumentAddedBy | null {
+  if (typeof value !== "string") return null;
+  try {
+    const found = DocumentAddedBySchema.safeParse(JSON.parse(value));
+    return found.success ? found.data : null;
+  } catch { return null; }
+}
+
 export interface DocumentMetadata {
   id: string; name: string; filePath: string | null; fileType: string; fileSize: number;
   status: "indexed" | "needs_helper" | "failed"; note: string; chunks: number; embedded: number; updatedAt: string;
   uploaded?: boolean;
+  addedBy?: DocumentAddedBy | null;
 }
 export interface DocumentPassage {
   documentId: string; source: string; passage: number; text: string; highlight: string; score: number;
@@ -120,7 +136,7 @@ export class DocumentLibrary {
     this.db.exec(`CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
       file_path TEXT, file_type TEXT NOT NULL, file_size INTEGER NOT NULL, status TEXT NOT NULL,
       note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`);
-    for (const [column, definition] of [["note", "TEXT NOT NULL DEFAULT ''"], ["status", "TEXT NOT NULL DEFAULT 'indexed'"]])
+    for (const [column, definition] of [["note", "TEXT NOT NULL DEFAULT ''"], ["status", "TEXT NOT NULL DEFAULT 'indexed'"], ["added_by", "TEXT"]])
       if (!this.db.prepare("PRAGMA table_info(documents)").all().some((row) => row.name === column))
         this.db.exec(`ALTER TABLE documents ADD COLUMN ${column} ${definition}`);
     const chunkColumns = this.db.prepare("PRAGMA table_info(document_chunks)").all().map((row) => String(row.name));
@@ -190,7 +206,7 @@ export class DocumentLibrary {
       id: String(row.id), name: String(row.name), filePath: row.file_path === null ? null : String(row.file_path),
       fileType: String(row.file_type), fileSize: Number(row.file_size), status: String(row.status) as DocumentMetadata["status"],
       note: String(row.note ?? ""), chunks: Number(row.chunks), embedded: Number(row.embedded), updatedAt: String(row.updated_at),
-      uploaded: Boolean(row.uploaded),
+      uploaded: Boolean(row.uploaded), addedBy: readAddedBy(row.added_by),
     }));
   }
   view(owner: string) {
@@ -200,15 +216,27 @@ export class DocumentLibrary {
     };
   }
 
+  /** Snapshot the initial actor so renaming/removing a Trunk preserves provenance. */
+  addedByTool(context: ToolContext): DocumentAddedBy {
+    if (context.trunk) {
+      const trunk = this.store.get("governance", context.owner, `trunk:${context.trunk}`)?.data;
+      const name = typeof trunk?.name === "string" ? trunk.name : context.trunk;
+      return { kind: "trunk", name, trunkId: context.trunk, runId: context.runId };
+    }
+    return { kind: "assistant", name: assistantIdentity(this.store, context.owner).name, runId: context.runId };
+  }
+
   /** Adds a document from pasted text, a workspace file, or uploaded file bytes. */
   async add(
     owner: string, input: unknown, signal = AbortSignal.timeout(120000), embed: boolean | "background" = true,
+    addedBy?: DocumentAddedBy,
   ): Promise<DocumentMetadata> {
     const value = AddSchema.parse(input);
+    const attribution = addedBy ? DocumentAddedBySchema.parse(addedBy) : null;
     const source = await this.sourceOf(value);
     const id = randomUUID(), now = new Date().toISOString();
-    this.db.prepare("INSERT INTO documents VALUES(?,?,?,?,?,?,?,?,?,?)")
-      .run(id, owner, source.name, source.path, source.type, source.bytes, "indexed", "", now, now);
+    this.db.prepare("INSERT INTO documents(id,owner,name,file_path,file_type,file_size,status,note,created_at,updated_at,added_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+      .run(id, owner, source.name, source.path, source.type, source.bytes, "indexed", "", now, now, attribution ? JSON.stringify(attribution) : null);
     if (value.content !== undefined) this.db.prepare("INSERT INTO document_uploads VALUES(?,?,?)")
       .run(id, owner, decodeUpload(value.content));
     await this.index(owner, id, source.text, signal, embed, source.note, source.helper);
@@ -515,7 +543,7 @@ export function registerDocuments(registry: ToolRegistry, library: DocumentLibra
       path: z.string().min(1).max(500).optional(),
       text: z.string().min(1).max(200000).optional(),
     }).strict(),
-    execute: async (input, context) => library.add(context.owner, input, context.signal),
+    execute: async (input, context) => library.add(context.owner, input, context.signal, true, library.addedByTool(context)),
   });
   registry.register({
     name: "documents.remove", permission: "documents.write",

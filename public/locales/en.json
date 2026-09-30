@@ -8549,6 +8549,8 @@
   "window.places.library.count-things-remembered": "{count} things remembered",
   "window.places.library.count-things-remembered.one": "{count} thing remembered",
   "window.places.library.disagree": "Disagree",
+  "window.places.library.doc-added-by": "Added by {name}",
+  "window.places.library.doc-added-by-unknown": "Added by not recorded",
   "window.places.library.doc-keep": "Keep it",
   "window.places.library.doc-kept": "Kept in your documents, and searched with them.",
   "window.places.library.doc-name": "Name",

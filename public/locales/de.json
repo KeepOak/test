@@ -8549,6 +8549,8 @@
   "window.places.library.count-things-remembered": "{count} Dinge gemerkt",
   "window.places.library.count-things-remembered.one": "{count} Ding gemerkt",
   "window.places.library.disagree": "Widerspruch",
+  "window.places.library.doc-added-by": "Hinzugefügt von {name}",
+  "window.places.library.doc-added-by-unknown": "Nicht erfasst, wer es hinzugefügt hat",
   "window.places.library.doc-keep": "Behalten",
   "window.places.library.doc-kept": "In deinen Dokumenten behalten und mit ihnen durchsucht.",
   "window.places.library.doc-name": "Name",

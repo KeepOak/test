@@ -3468,7 +3468,7 @@ async function documentsApi(app: Branch, request: IncomingMessage, path: string)
   }
   if (request.method === "GET" && path === "/api/documents") return library.view(owner);
   if (request.method === "POST" && path === "/api/documents")
-    return library.add(owner, await readBody(request, documentBodyBytes));
+    return library.add(owner, await readBody(request, documentBodyBytes), undefined, true, { kind: "person", name: owner });
   if (request.method === "POST" && path === "/api/documents/search")
     return { results: await library.search(owner, await readBody(request)) };
   if (request.method === "POST" && path === "/api/documents/reindex") {
