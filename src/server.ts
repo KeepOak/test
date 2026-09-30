@@ -4378,6 +4378,21 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         }
         // ---- end phase2/shell ----
         // ---- R17-C: files, voice, devices and personal connectors under /api/personal (src/personal/api.ts). ----
+        if (path.startsWith("/api/personal/whoop/")) {
+          const guard = () => {
+            if (throughDoor(request) || app.sessionLock.shut() || request.headers["x-branch-origin"] !== "window")
+              throw new HttpError(403, "Use private wearable data in the unlocked owner's app window");
+          };
+          guard(); const whoop = app.personal.whoop; whoop.account.guard(); let answer: unknown;
+          if (path === "/api/personal/whoop/status" && request.method === "GET") answer = await whoop.account.status(guard);
+          else if (path === "/api/personal/whoop/configure" && request.method === "POST") answer = await whoop.account.configure(await readBody(request, 4000), guard);
+          else if (path === "/api/personal/whoop/start" && request.method === "POST") answer = await whoop.account.start(guard);
+          else if (path === "/api/personal/whoop/disable" && request.method === "POST") answer = await whoop.account.disable(guard);
+          else if (path === "/api/personal/whoop/read" && request.method === "POST") answer = await whoop.read(await readBody(request, 4000), guard);
+          else if (path === "/api/personal/whoop/revoke" && request.method === "POST") answer = await whoop.revoke(await readBody(request, 4000), guard);
+          else throw new HttpError(404, "Unknown WHOOP action");
+          send(response, 200, answer); return;
+        }
         if (path.startsWith("/api/personal/oura/")) {
           const guard = () => {
             if (throughDoor(request) || app.sessionLock.shut() || request.headers["x-branch-origin"] !== "window")

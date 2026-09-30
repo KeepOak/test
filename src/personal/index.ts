@@ -9,6 +9,7 @@ import { HomeControl, registerHomeControl } from "./home-control.js";
 import { MailSearch, registerMailSearch, type MailClient } from "./mail-search.js";
 import { MicrosoftConnector, registerMicrosoft } from "./microsoft.js";
 import { OuraDaily } from "./oura.js";
+import { WhoopDaily } from "./whoop.js";
 import { personalMode, personalParts, personalTools, savePersonalMode, type PersonalMode, type PersonalPart } from "./settings.js";
 import { SignIn } from "./signin.js";
 import { registerSpokenBrief, SpokenBrief } from "./spoken-brief.js";
@@ -63,6 +64,7 @@ export class Personal {
   readonly google: GoogleConnector;
   readonly microsoft: MicrosoftConnector;
   readonly oura: OuraDaily;
+  readonly whoop: WhoopDaily;
   readonly spotify: SpotifyConnector;
   readonly x: XSearch;
   readonly home: HomeControl;
@@ -82,6 +84,7 @@ export class Personal {
     this.google = new GoogleConnector(store, owner, deps.fetch, this.signIns.google);
     this.microsoft = new MicrosoftConnector(store, owner, deps.fetch, this.signIns.microsoft);
     this.oura = new OuraDaily({ store, owner, oauth: deps.oauth, fetch: deps.fetch, secret: deps.secret, requireOwner: deps.requireOwner });
+    this.whoop = new WhoopDaily({ store, owner, oauth: deps.oauth, fetch: deps.fetch, secret: deps.secret, requireOwner: deps.requireOwner });
     this.spotify = new SpotifyConnector(store, owner, deps.fetch, this.signIns.spotify);
     this.x = new XSearch(store, owner, deps.fetch, (name) => deps.secret(name, "searching X"));
     this.home = new HomeControl(store, owner, deps.fetch, (name) => deps.secret(name, "Home Assistant"));

@@ -20,6 +20,7 @@ import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the 
 import { attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
 import { initPractice, loadPractice, practiceMenu, practiceNext } from "./practice-next.js";
 import { initOura } from "../flows/oura.js";
+import { initWhoop } from "../flows/whoop.js";
 
 const Q = { temporary: false, who: null, whoFor: null, pending: null, error: null };
 
@@ -28,7 +29,7 @@ function menu() {
     + mi("insert", "at", t("rooms.mentionList"), "<kbd>@</kbd>", 'data-v="@"') + mi("skills15", "slash", t("window.chat.plus.skill"), "<kbd>/</kbd>") + "<hr>"
     + `<div class="row-in"><span class="ic-t">${ic("ghost", "s")}${t("window.chat.plus.temporary")}</span><input class="sw" type="checkbox" id="pm-temp" data-sw="temp" ${Q.temporary ? "checked" : ""} ${S.chat ? "disabled" : ""} aria-label="${t("window.chat.plus.temporary")}"></div><div class="row-in"><span class="ic-t">${ic("help", "s")}${t("more.askFirst")}</span><input class="sw" type="checkbox" id="pm-ask" data-sw="askqs" ${asksFirst() ? "checked" : ""} aria-label="${t("more.askFirst")}"></div>`
     + practiceMenu() + whoRows() + "<hr>" + mi("goal-fill", "target", t("window.chat.plus.goal"), "<kbd>/goal</kbd>") // handled in goal.js
-    + mi("prompts-fill", "star", t("settings-kit.name.prompts"), "<kbd>/</kbd>") + mi("oura", "star", "Private Oura summaries", "Opt-in daily data"); // handled in messages.js
+    + mi("prompts-fill", "star", t("settings-kit.name.prompts"), "<kbd>/</kbd>") + mi("oura", "star", "Private Oura summaries", "Opt-in daily data") + mi("whoop", "star", "Private WHOOP summaries", "Opt-in sleep and recovery"); // handled in messages.js
 }
 
 /* Who answers the open conversation, as the engine said when it was opened; a room is chosen through its members instead.
@@ -141,6 +142,7 @@ function insert(text) {
 
 export function initPlus() {
   initOura();
+  initWhoop();
   markLive(["plusmenu", "attach", "add-folder", "unattach", "insert", "sw:pm-temp", "who", "skills15"]);
   initAttach();
   initPractice();
