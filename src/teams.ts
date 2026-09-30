@@ -169,7 +169,9 @@ export class Teams {
     const parent = await this.startParent(runtime, team, prompt, claim, turn, async (run, context) => {
       // Use the runtime's filtered words, not the original request that inlet filters may have changed.
       result = await this.runMembers(runtime, knowledge, team, run.prompt, claim, turn, run, context);
-      return result ? JSON.stringify(result) : "The team's answers were deleted before they could be recorded.";
+      return result ? JSON.stringify({ teamId: team.id, parentRunId: run.id,
+        members: result.answers.map(({ role, runId, status }) => ({ role, runId, status })) })
+        : "The team's answers were deleted before they could be recorded.";
     });
     if (parent.status !== "completed") {
       if (turn.membersStarted) this.tasks.markNeedsReconciliation(claim,
