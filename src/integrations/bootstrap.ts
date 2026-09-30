@@ -446,7 +446,7 @@ export async function startMcp(
     await vet();
     return openMcp(server, await credentials(), guard, host?.cache, host?.startupTimeoutMs?.());
   };
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injection); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -464,7 +464,7 @@ export async function startMcp(
     // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
       ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
-  });
+  }, host.injection);
   if (!names.length) {
     const connection = await connect();
     return connection.close;
@@ -489,6 +489,8 @@ export interface McpHost {
   beforeRestart?: () => void | Promise<void>;
   /** R17-S20: how long a server may take to start, in milliseconds; unset keeps 10 seconds. */
   startupTimeoutMs?: () => number;
+  /** How text that reads like instructions is handled in a server's answers (the web setting); "redact" when unset. */
+  injection?: () => 'warn' | 'redact' | 'block';
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
     acquire(runId: string, id: string): Promise<{ close(): Promise<void> }>;
     /** Forgets a server the owner switched off or removed (src/mcp-own-servers.ts). */
@@ -671,8 +673,8 @@ function parseVerdict(printed: string): unknown {
 }
 
 function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext): HookRunner {
-  // The shell runs one host command at a time. Hooks for the same event fire together, so they take
-  // turns here, and each waits for any task command still running before it starts.
+  // Hooks for the same event fire together, so they take turns here; the shell itself queues each one behind any
+  // command still running in the same folder (SELF-302, src/integrations/command-turns.ts).
   let turn: Promise<unknown> = Promise.resolve();
   return (hook, payload) => {
     const mine = turn.then(() => runHook(shell, context, hook, payload));
@@ -683,17 +685,12 @@ function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext)
 
 async function runHook(shell: BranchShell, context: (runId: string) => ToolContext, hook: HookConfig, payload: Record<string, unknown>): ReturnType<HookRunner> {
   const scoped = { ...context(String(payload.runId ?? '')), signal: AbortSignal.timeout(hook.timeoutMs + 1000) };
-  for (;;) {
-    try {
-      await shell.whenIdle(scoped.signal);
-      const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
-      // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
-      // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
-      return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Another command started between the shell going quiet and this one asking: wait again.
-      if (!/already active/.test(message) || scoped.signal.aborted) return { ok: false, error: message };
-    }
+  try {
+    const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
+    // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
+    // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
+    return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

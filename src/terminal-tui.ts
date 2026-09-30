@@ -437,6 +437,7 @@ export class Tui {
     return commandMode(this.runtime.store, this.runtime.owner, "terminal");
   }
   newConversation(): void {
+    if (this.conversation.sessionId) this.runtime.stopHelpers(this.conversation.sessionId); // helper-lifecycle
     this.conversation.reset();
     this.printed = 0;
     this.go(CHAT);

@@ -132,7 +132,7 @@ test("Guilded: a Bearer socket, answers when mentioned, never answers itself, an
   assert.equal(link.headers["guilded-last-message-id"], undefined, "the first connection never asks for history");
   await until(() => world.channel.health().state === "connected", "welcomed");
 
-  await pairingWalk(context, { label: "Guilded", sent: world.sent,
+  await pairingWalk(context, { label: "Guilded", sent: world.sent, group: true,
     say: async (text) => world.say(link, { content: `@Branch ${text}`, mentions: { users: [{ id: "GBOT" }] } }) });
   const reply = world.api.calls.at(-1);
   assert.equal(reply.path, "/channels/CH1/messages");
@@ -319,7 +319,9 @@ test("QQ bot: token, gateway, identify, heartbeats, passive replies to each kind
   world.push(link, "AT_MESSAGE_CREATE", { channel_id: "CHAN-1", guild_id: "GUILD-1", author: { id: "QBOT", bot: true }, content: "<@!QBOT> my own words" });
   world.push(link, "DIRECT_MESSAGE_CREATE", { guild_id: "DMG-1", channel_id: "DMC-1", author: { id: "U-77", username: "friend" }, content: "hi in a dm" });
   await until(() => world.posts().some((c) => c.path === "/dms/DMG-1/messages"), "the guild DM gets a pairing offer at its own address");
-  await until(() => world.posts().some((c) => c.path === "/v2/groups/GROUP-1/messages"), "the group gets a pairing offer at its own address");
+  // UP-CHAT-007: a group is never sent a code; its request waits for the owner.
+  await until(() => context.app.channels.summary().pending.some((p) => p.senderId.includes("OPENID-A")), "the group request waits for the owner");
+  assert.ok(!world.posts().some((c) => c.path === "/v2/groups/GROUP-1/messages"), "no code is posted in the group");
   assert.ok(!world.posts().some((c) => c.path.startsWith("/channels/")), "the bot's own channel message is not answered");
 
   link.socket.destroy();
@@ -461,7 +463,6 @@ test("Mumble: a stranger is refused when pairing is off, and a refused password 
   const said = () => textsFrom(link).map((f) => htmlToText(textField(f.fields, 5)));
   await refusalWalk(context, { label: "Mumble", sent: said,
     say: async (text) => link.send(MumbleType.TextMessage, [[1, 11], [2, 5], [5, text]]) });
-  assert.deepEqual(numberList(textsFrom(link).at(-1).fields, 2), [11]);
 
   const locked = await mumbleServer(t, { reject: 4 });
   const refused = new MumbleChannel({ id: "m2", open: locked.open, username: "branch", password: MUMBLE_PASSWORD, passwordName: "MUMBLE_PASSWORD", retryBaseMs: 200 });

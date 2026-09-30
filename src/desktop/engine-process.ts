@@ -208,7 +208,11 @@ async function start(config: EngineConfig): Promise<void> {
     if (!inUse) { dropLiveWindow(); return { changed: [], ms: 0 }; }
     return useLiveWindow(appRoot, inUse, ownWindowFile);
   });
-  link.handle("carry-on", () => resumeHandedOver({ store: branch.store, runtime: branch.runtime }).map(({ runId }) => runId));
+  link.handle("carry-on", () => resumeHandedOver({ store: branch.store, runtime: branch.runtime }).map(({ runId, resumed }) => {
+    // A chat's task is answered in that chat when it finishes here (the older engine said nothing for it).
+    void branch.channels.carryOnReply(runId, resumed).catch((error: Error) => diagnose("channels", "warn", `A chat's handed-over task could not be answered: ${error.message}`));
+    return runId;
+  }));
   // A window or helper of the app died: written into the same record of failures the engine keeps.
   link.handle("crash", (args) => {
     const report = args as { where?: unknown; message?: unknown };

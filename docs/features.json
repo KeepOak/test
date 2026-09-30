@@ -378,7 +378,7 @@
           "Telegram: pairing for unknown senders, allowlist, group activation by mention or reply, one conversation per chat",
           "integrations file starts a Telegram channel from a locker secret, and the HTTP API lists it"
         ],
-        "detail": "Unknown senders receive a six-digit code; the owner approves it in Settings \u2192 Channels (or the API); allowlisted ids skip pairing; pairing can be disabled so unknown senders are told the assistant is private."
+        "detail": "Unknown senders receive a six-digit code; the owner approves it in Settings \u2192 Channels (or the API); allowlisted ids skip pairing; codes are only sent in direct chats, once per code, with at most three waiting per app; pairing can be disabled, and a refused sender is sent nothing."
       },
       "remaining": ""
     },
