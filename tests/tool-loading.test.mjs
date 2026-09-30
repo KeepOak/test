@@ -164,7 +164,9 @@ test("searching ranks an exact name, plain words and everyday synonyms", async (
   const index = new ToolIndex(app.registry.descriptions(new Set(app.registry.permissions())), { groupOf: groupOf(app) });
   const table = [
     ["files.read", "files.read"], ["make a picture of a fox", "media."], ["what's on my screen", "desktop."],
-    ["pull the Ollama model", "models."], ["open my calendar", "schedules."], ["read that PDF", "documents."],
+    ["pull the Ollama model", "models."], // RES-102 added the account calendars' own write tools (gcal.create, gcal.move, ...), so the owner's calendar tools
+    // now fill the top three for this one; a reminder is still schedules.* (below).
+    ["open my calendar", "gcal."], ["read that PDF", "documents."],
     ["check Discord", "channels."], ["commit my work and push it", "git."], ["chart the sales spreadsheet", "data."],
     ["remind me tomorrow morning", "schedules."], ["look something up on the web", "web."],
     // Batch 26 (wave 8) added delegate.supervise, delegate.swarm and delegate.route beside

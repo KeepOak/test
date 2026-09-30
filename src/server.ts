@@ -48,6 +48,7 @@ import { suggestSkills } from "./skill-suggest.js";
 import { healthReport, startedCleanly } from "./health.js";
 import { noModelWords } from "./no-model.js";
 import { maximumBackupBytes } from "./backup.js";
+import { skillMarketplaceApi } from "./skill-marketplace.js";
 import { chatCompletion, modelsList } from "./openai-compat.js";
 import { AnthropicProvider, GeminiProvider, OpenAIProvider } from "./providers.js";
 import { allPresets, findPreset } from "./providers/presets.js";
@@ -1891,6 +1892,8 @@ async function api(
     const { url } = z.object({ url: z.string().url().max(2000) }).strict().parse(await readBody(request));
     return app.skillRegistry.browse(url);
   }
+  if (path === "/api/skill-marketplace" || path.startsWith("/api/skill-marketplace/"))
+    return skillMarketplaceApi(app.skillMarketplace, request.method ?? "GET", path, () => readBody(request));
   // The owner's yes to a registry's signing key, by the fingerprint browsing showed them (src/registry-install.ts).
   if (request.method === "POST" && path === "/api/registry/trust") {
     const { url, fingerprint } = z.object({ url: z.string().url().max(2000), fingerprint: z.string().regex(/^[0-9a-fA-F]{64}$/) }).strict().parse(await readBody(request));
@@ -4298,6 +4301,25 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           const input = request.method === "GET" ? Object.fromEntries(new URL(request.url ?? "/", "http://local").searchParams) : await readBody(request);
           send(response, 200, await tasteApi.handle(app.runtime.owner, request.method ?? "GET", path, input, authorizeTaste));
           return;
+        }
+        if (["/api/mobile-push", "/api/mobile-push/register", "/api/mobile-push/unregister", "/api/mobile-push/revoke"].includes(path)) {
+          app.store.profiles.requireOwner("Mobile push notifications");
+          if (app.sessionLock.locked() || lockdownActive(app.store, app.runtime.owner)) throw new HttpError(423, "Unlock Branch and turn off Lockdown first.");
+          if (path === "/api/mobile-push" || path === "/api/mobile-push/revoke") {
+            if (key !== "window" || throughDoor(request)) throw new HttpError(403, "Configure mobile push in the app window on this computer.");
+            if (request.method === "GET" && path === "/api/mobile-push") { send(response, 200, app.mobilePush.view()); return; }
+            if (request.method !== "POST") throw new HttpError(405, "Use GET or POST.");
+            const body = await readBody(request, 4096);
+            const answer = path.endsWith("/revoke") ? app.mobilePush.unregister(z.object({ id: z.string().regex(/^[a-f0-9]{16}$/) }).strict().parse(body).id)
+              : app.mobilePush.configure(body);
+            send(response, 200, answer); return;
+          }
+          if (request.method !== "POST") throw new HttpError(405, "Use POST.");
+          const device = gateway.keyDevice(supplied);
+          if (!device || key !== "phone" || !device.keyFingerprint) throw new HttpError(403, "A paired phone's own current key is required.");
+          const answer = path.endsWith("/unregister") ? app.mobilePush.unregister(device.id)
+            : await app.mobilePush.register(device.id, device.keyFingerprint, await readBody(request, 8192));
+          send(response, 200, answer); return;
         }
         if (handlesBrowserApiPath(path) || path === capturedApiSkillsPath) {
           const stopped = new AbortController();

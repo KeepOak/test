@@ -1923,6 +1923,14 @@ owner GET /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401
 owner POST /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/never-break/drill | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/never-break/drill | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/277489 run=401/277489 nobody=401/40daee
+owner GET /api/mobile-push | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/mobile-push | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/mobile-push/register | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/mobile-push/register | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/mobile-push/revoke | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/mobile-push/revoke | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/mobile-push/unregister | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/mobile-push/unregister | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/secrets | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/secrets | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/74bab3 run=401/74bab3 nobody=401/40daee
 owner GET /api/secrets/audit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2043,6 +2051,10 @@ owner GET /api/skill-installs | here=ok remote=ok phone=ok legacy=ok person=401/
 owner POST /api/skill-installs | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/skill-installs/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/skill-installs/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-installs/github | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-installs/github | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-installs/github/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-installs/github/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/skill-installs/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/skill-installs/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/skill-installs/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2258,6 +2270,20 @@ owner GET /api/self-development/merge/test-copy/start | here=ok remote=403/4bac8
 owner POST /api/self-development/merge/test-copy/start | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/self-development/merge/test-copy/status | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/self-development/merge/test-copy/status | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-marketplace | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-marketplace | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-marketplace/browse | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-marketplace/browse | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-marketplace/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-marketplace/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-marketplace/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-marketplace/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-marketplace/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-marketplace/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-marketplace/sources | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-marketplace/sources | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/skill-marketplace/trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/skill-marketplace/trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/usage/glance | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/usage/glance | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/usage/by-trunk | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4206,6 +4232,14 @@ owner+lockdown GET /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok p
 owner+lockdown POST /api/helper-defaults | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/never-break/drill | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/never-break/drill | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/277489 run=401/277489 nobody=401/40daee
+owner+lockdown GET /api/mobile-push | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/mobile-push | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/mobile-push/register | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/mobile-push/register | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/mobile-push/revoke | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/mobile-push/revoke | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/mobile-push/unregister | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/mobile-push/unregister | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/secrets | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/secrets | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/74bab3 run=401/74bab3 nobody=401/40daee
 owner+lockdown GET /api/secrets/audit | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4326,6 +4360,10 @@ owner+lockdown GET /api/skill-installs | here=ok remote=ok phone=ok legacy=ok pe
 owner+lockdown POST /api/skill-installs | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/skill-installs/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/skill-installs/export | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-installs/github | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-installs/github | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-installs/github/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-installs/github/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/skill-installs/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/skill-installs/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/skill-installs/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4541,6 +4579,20 @@ owner+lockdown GET /api/self-development/merge/test-copy/start | here=ok remote=
 owner+lockdown POST /api/self-development/merge/test-copy/start | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/self-development/merge/test-copy/status | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/self-development/merge/test-copy/status | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-marketplace | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-marketplace | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-marketplace/browse | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-marketplace/browse | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-marketplace/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-marketplace/inspect | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-marketplace/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-marketplace/install | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-marketplace/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-marketplace/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-marketplace/sources | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-marketplace/sources | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/skill-marketplace/trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/skill-marketplace/trust | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/usage/glance | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/usage/glance | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/usage/by-trunk | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6489,6 +6541,14 @@ household GET /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=400/
 household POST /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/never-break/drill | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/never-break/drill | here=400/f6e21c remote=400/f6e21c read=401/277489 run=401/277489
+household GET /api/mobile-push | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/mobile-push | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/mobile-push/register | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/mobile-push/register | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/mobile-push/revoke | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/mobile-push/revoke | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/mobile-push/unregister | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/mobile-push/unregister | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/secrets | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/secrets | here=400/f6e21c remote=400/f6e21c read=401/74bab3 run=401/74bab3
 household GET /api/secrets/audit | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6609,6 +6669,10 @@ household GET /api/skill-installs | here=400/f6e21c remote=400/f6e21c read=400/f
 household POST /api/skill-installs | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/skill-installs/export | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/skill-installs/export | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/skill-installs/github | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-installs/github | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/skill-installs/github/install | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-installs/github/install | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/skill-installs/inspect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/skill-installs/inspect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/skill-installs/install | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6824,6 +6888,20 @@ household GET /api/self-development/merge/test-copy/start | here=400/f6e21c remo
 household POST /api/self-development/merge/test-copy/start | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/self-development/merge/test-copy/status | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household POST /api/self-development/merge/test-copy/status | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/skill-marketplace | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-marketplace | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/skill-marketplace/browse | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-marketplace/browse | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/skill-marketplace/inspect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-marketplace/inspect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/skill-marketplace/install | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-marketplace/install | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/skill-marketplace/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-marketplace/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/skill-marketplace/sources | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-marketplace/sources | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/skill-marketplace/trust | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/skill-marketplace/trust | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/usage/glance | here=ok remote=ok read=ok run=ok
 household POST /api/usage/glance | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/usage/by-trunk | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8772,6 +8850,14 @@ household+lockdown GET /api/helper-defaults | here=400/f6e21c remote=400/f6e21c 
 household+lockdown POST /api/helper-defaults | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/never-break/drill | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/never-break/drill | here=400/f6e21c remote=400/f6e21c read=401/277489 run=401/277489
+household+lockdown GET /api/mobile-push | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/mobile-push | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/mobile-push/register | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/mobile-push/register | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/mobile-push/revoke | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/mobile-push/revoke | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/mobile-push/unregister | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/mobile-push/unregister | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/secrets | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/secrets | here=400/f6e21c remote=400/f6e21c read=401/74bab3 run=401/74bab3
 household+lockdown GET /api/secrets/audit | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8892,6 +8978,10 @@ household+lockdown GET /api/skill-installs | here=400/f6e21c remote=400/f6e21c r
 household+lockdown POST /api/skill-installs | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/skill-installs/export | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/skill-installs/export | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-installs/github | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-installs/github | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-installs/github/install | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-installs/github/install | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/skill-installs/inspect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/skill-installs/inspect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/skill-installs/install | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9107,6 +9197,20 @@ household+lockdown GET /api/self-development/merge/test-copy/start | here=400/f6
 household+lockdown POST /api/self-development/merge/test-copy/start | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/self-development/merge/test-copy/status | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/self-development/merge/test-copy/status | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-marketplace | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-marketplace | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-marketplace/browse | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-marketplace/browse | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-marketplace/inspect | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-marketplace/inspect | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-marketplace/install | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-marketplace/install | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-marketplace/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-marketplace/remove | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-marketplace/sources | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-marketplace/sources | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/skill-marketplace/trust | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/skill-marketplace/trust | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/usage/glance | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/usage/glance | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/usage/by-trunk | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -11055,6 +11159,14 @@ applock GET /api/helper-defaults | here=423/a8f863
 applock POST /api/helper-defaults | here=423/a8f863
 applock GET /api/never-break/drill | here=423/a8f863
 applock POST /api/never-break/drill | here=423/a8f863
+applock GET /api/mobile-push | here=423/a8f863
+applock POST /api/mobile-push | here=423/a8f863
+applock GET /api/mobile-push/register | here=423/a8f863
+applock POST /api/mobile-push/register | here=423/a8f863
+applock GET /api/mobile-push/revoke | here=423/a8f863
+applock POST /api/mobile-push/revoke | here=423/a8f863
+applock GET /api/mobile-push/unregister | here=423/a8f863
+applock POST /api/mobile-push/unregister | here=423/a8f863
 applock GET /api/secrets | here=423/a8f863
 applock POST /api/secrets | here=423/a8f863
 applock GET /api/secrets/audit | here=423/a8f863
@@ -11175,6 +11287,10 @@ applock GET /api/skill-installs | here=423/a8f863
 applock POST /api/skill-installs | here=423/a8f863
 applock GET /api/skill-installs/export | here=423/a8f863
 applock POST /api/skill-installs/export | here=423/a8f863
+applock GET /api/skill-installs/github | here=423/a8f863
+applock POST /api/skill-installs/github | here=423/a8f863
+applock GET /api/skill-installs/github/install | here=423/a8f863
+applock POST /api/skill-installs/github/install | here=423/a8f863
 applock GET /api/skill-installs/inspect | here=423/a8f863
 applock POST /api/skill-installs/inspect | here=423/a8f863
 applock GET /api/skill-installs/install | here=423/a8f863
@@ -11390,6 +11506,20 @@ applock GET /api/self-development/merge/test-copy/start | here=423/a8f863
 applock POST /api/self-development/merge/test-copy/start | here=423/a8f863
 applock GET /api/self-development/merge/test-copy/status | here=423/a8f863
 applock POST /api/self-development/merge/test-copy/status | here=423/a8f863
+applock GET /api/skill-marketplace | here=423/a8f863
+applock POST /api/skill-marketplace | here=423/a8f863
+applock GET /api/skill-marketplace/browse | here=423/a8f863
+applock POST /api/skill-marketplace/browse | here=423/a8f863
+applock GET /api/skill-marketplace/inspect | here=423/a8f863
+applock POST /api/skill-marketplace/inspect | here=423/a8f863
+applock GET /api/skill-marketplace/install | here=423/a8f863
+applock POST /api/skill-marketplace/install | here=423/a8f863
+applock GET /api/skill-marketplace/remove | here=423/a8f863
+applock POST /api/skill-marketplace/remove | here=423/a8f863
+applock GET /api/skill-marketplace/sources | here=423/a8f863
+applock POST /api/skill-marketplace/sources | here=423/a8f863
+applock GET /api/skill-marketplace/trust | here=423/a8f863
+applock POST /api/skill-marketplace/trust | here=423/a8f863
 applock GET /api/usage/glance | here=423/a8f863
 applock POST /api/usage/glance | here=423/a8f863
 applock GET /api/usage/by-trunk | here=423/a8f863
