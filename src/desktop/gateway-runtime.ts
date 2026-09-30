@@ -11,6 +11,7 @@ export interface DesktopGatewayOptions {
   worker(env: NodeJS.ProcessEnv, ready: (version: string, provisional?: boolean) => void, checking: () => void): DesktopWorkerOptions;
   onWorker?: GatewayOptions["onWorker"];
   onOwnerOff?: GatewayOptions["onOwnerOff"];
+  rollBack?: GatewayOptions["rollBack"];
   close?: () => Promise<void>;
 }
 
@@ -35,6 +36,7 @@ export async function startDesktopGateway(options: DesktopGatewayOptions): Promi
     },
     ...(options.onWorker ? { onWorker: options.onWorker } : {}),
     ...(options.onOwnerOff ? { onOwnerOff: options.onOwnerOff } : {}),
+    ...(options.rollBack ? { rollBack: options.rollBack } : {}),
   }, options.close ?? (async () => undefined));
   try { await gateway.start(); return gateway; }
   catch (error) { await gateway.stop().catch(() => undefined); throw error; }

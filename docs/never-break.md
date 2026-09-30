@@ -39,6 +39,18 @@ after each message is handled, and a schedule is claimed in the database before 
 
 ### Desktop gateway draft
 
+The desktop gateway now wires its first-minutes update watchdog to automatic recovery for
+flat packaged installs. Recovery requires a matching watch and complete activation record,
+verified current/previous files, and a rollback assessment that leaves saved-work data unchanged.
+Activation and saved-work format evidence are opened read-only. Missing, unreadable or mismatched
+evidence, a required schema downgrade, and versioned app folders are explicitly refused; the
+gateway continues normal worker crash recovery after a refusal.
+
+The existing detached rollback script is dispatched before the gateway is stopped. Scheduler
+dispatch must succeed, or its direct fallback must emit a successful process-spawn event. That
+acknowledges dispatch, not a restored running app. Versioned pointer rollback belongs to its
+separate update path, and installed recovery acceptance remains pending.
+
 The desktop candidate starts a windowless stock Electron broker with `--branch-gateway` and a
 separate single-instance lock. It retains the encrypted device vault, Stop notices and Mac login
 service. Its worker owns the database; its shell windows join the proved public gateway. An absent
