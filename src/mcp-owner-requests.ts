@@ -24,6 +24,8 @@ const bounded = (preset: { provider: { name: string; keepsOwnTime?: boolean } })
   boundedProviders.has(preset.provider.name) && !preset.provider.keepsOwnTime;
 // Reused owner-request adapters inherit the app's gate for this exact store.
 const storeLockGates = new WeakMap<Store, () => boolean>();
+interface StoreWindowState { generation: number; active: Set<AbortController> }
+const storeWindows = new WeakMap<Store, StoreWindowState>();
 
 type Settings = z.infer<typeof McpOwnerRequestSettings>;
 type Answer = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> };
@@ -37,12 +39,18 @@ export class McpOwnerRequests {
   private windowUntil = 0;
   private windowOwner = '';
   private windowGeneration = 0;
-  private readonly active = new Set<AbortController>();
+  private readonly storeWindow: StoreWindowState;
   private readonly pending = new Map<string, Pending>();
   private readonly rates = new Map<string, number[]>();
   constructor(private readonly store: Store, private readonly owner: () => string,
     private readonly models: ModelRouter, locked?: () => boolean) {
     if (locked) storeLockGates.set(store, locked);
+    let state = storeWindows.get(store);
+    if (!state) {
+      state = { generation: 0, active: new Set<AbortController>() };
+      storeWindows.set(store, state);
+    }
+    this.storeWindow = state;
   }
   private locked(): boolean {
     return storeLockGates.get(this.store)?.() ?? true;
@@ -69,6 +77,7 @@ export class McpOwnerRequests {
       this.closeWindow();
       throw new Error('The owner window is unavailable.');
     }
+    this.windowGeneration = this.storeWindow.generation;
     this.windowOwner = this.owner(); this.windowUntil = Date.now() + 15_000;
     return { requests: [...this.pending.values()].filter(p => p.owner === this.owner())
       .map(({ id, server, kind, details }) => ({ id, server, kind, details })),
@@ -76,16 +85,17 @@ export class McpOwnerRequests {
   }
   closeWindow(): void {
     this.windowUntil = 0;
-    this.windowGeneration++;
-    for (const stop of this.active) stop.abort();
+    this.storeWindow.generation++;
+    for (const stop of this.storeWindow.active) stop.abort();
     for (const item of this.pending.values()) item.finish({ action: 'cancel' });
   }
   private ready(): boolean {
-    return !this.locked() && Date.now() < this.windowUntil && this.windowOwner === this.owner()
+    return !this.locked() && this.windowGeneration === this.storeWindow.generation
+      && Date.now() < this.windowUntil && this.windowOwner === this.owner()
       && this.store.profiles.isOwner() && !lockdownActive(this.store, this.owner());
   }
   private requireWindow(generation: number): void {
-    if (!this.ready() || generation !== this.windowGeneration) throw new Error('The owner window is unavailable.');
+    if (!this.ready() || generation !== this.storeWindow.generation) throw new Error('The owner window is unavailable.');
   }
   capabilities(server: string): ClientCapabilities {
     if (!this.ready()) return {};
@@ -169,7 +179,7 @@ export class McpOwnerRequests {
     if (!preset || !bounded(preset)) throw new Error('The approved model is unavailable.');
     const run = this.store.createRun(this.owner(), `Approved model request from ${server}`);
     const stop = new AbortController();
-    this.active.add(stop);
+    this.storeWindow.active.add(stop);
     const requestSignal = AbortSignal.any([signal, stop.signal, AbortSignal.timeout(30_000)]);
     let usageRecorded = false;
     const timer = setInterval(() => { if (!this.ready() || !this.settings(server).sampling) stop.abort(); }, 500);
@@ -190,7 +200,7 @@ export class McpOwnerRequests {
         error instanceof ProviderStreamError ? error.usage : undefined, false);
       this.store.finish(run.id, 'failed', 'The approved server request did not finish.');
       throw new Error('The approved model request failed.');
-    } finally { clearInterval(timer); this.active.delete(stop); }
+    } finally { clearInterval(timer); this.storeWindow.active.delete(stop); }
   }
   private async elicit(server: string, input: unknown, signal: AbortSignal) {
     const settings = this.guard(server, 'elicitation');
