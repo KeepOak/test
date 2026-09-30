@@ -160,7 +160,8 @@ export class MicrosoftConnector {
       .parse(await this.call(`${path}?$select=id,type`));
     if (event["@odata.etag"] !== v.etag) throw new Error("This event changed. List it again and confirm the updated event.");
     if (event.type !== "singleInstance") throw new Error("Recurring events must be changed in Outlook Calendar.");
-    const json = "starts" in v ? { start: at(v.starts), end: at(v.ends), ...microsoftDayBefore } : undefined;
+    const moved = action === "move" ? CalendarMoveSchema.parse(input) : null;
+    const json = moved ? { start: at(moved.starts), end: at(moved.ends), ...microsoftDayBefore } : undefined;
     const result = await this.call(path, { method: action === "delete" ? "DELETE" : "PATCH",
       headers: { "if-match": v.etag }, ...(json ? { json } : {}) });
     return { action, id: v.id, result };
