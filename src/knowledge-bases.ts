@@ -18,7 +18,7 @@ import { filterIsSet, filterSql, nothingMatchedNote, RetrievalFilterSchema,
   type RetrievalFilter } from "./retrieval-filters.js";
 import type { Store } from "./store.js";
 import { SqliteVectors, comfortableChunkCount, type VectorBackend } from "./vector-store.js";
-import { chooseVectorStore, VectorStoreSettingsSchema, type VectorStoreSettings, type VectorServiceDependencies } from "./vector-store-file.js";
+import { chooseVectorStore, externalVectorStore, VectorStoreSettingsSchema, type VectorStoreSettings, type VectorServiceDependencies } from "./vector-store-file.js";
 import type { RerankablePassage } from "./documents.js";
 
 /**
@@ -157,7 +157,7 @@ export class KnowledgeBases {
   /** Configuration only: deleting never opens a connection just to discover what is configured. */
   vectorDeletionChoice(owner: string): VectorStoreSettings | null {
     const settings = this.vectorStoreSettings(owner);
-    return settings.vectorsIn === "qdrant" || settings.vectorsIn === "chroma" ? settings : null;
+    return externalVectorStore(settings) ? settings : null;
   }
   /** A pending delete cannot be undone by another index/search while the service is offline. */
   private vectorsWaiting(owner: string): boolean {

@@ -18,10 +18,11 @@ async function openSource() {
   try {
     const { vectorStore: settings, backend, backendNote } = await api("knowledge");
     openDlg({ title: t("vectors.source.title"), body: `<p class="hint">${t("vectors.source.explanation")}</p>
-      <label>${t("vectors.source.where")}${gsel({ id: "vector-source", sw: "vector-source", label: t("vectors.source.where"), options: [["database", t("vectors.source.database")], ["file", t("vectors.source.file")], ["qdrant", "Qdrant"], ["chroma", "Chroma"]], value: settings.vectorsIn })}</label>
+      <label>${t("vectors.source.where")}${gsel({ id: "vector-source", sw: "vector-source", label: t("vectors.source.where"), options: [["database", t("vectors.source.database")], ["file", t("vectors.source.file")], ["qdrant", "Qdrant"], ["chroma", "Chroma"], ["pinecone", "Pinecone"]], value: settings.vectorsIn })}</label>
       ${field("vector-file", "vectors.source.path", settings.vectorsFile, 400)}
       ${field("vector-url", "vectors.source.url", settings.vectorsUrl, 500)}
       ${field("vector-secret", "vectors.source.secret", settings.vectorsSecret, 200)}
+      <label>${t("nativeMemory.locality")}${gsel({ id: "vector-locality", sw: "vector-locality", label: t("nativeMemory.locality"), options: [["direct", t("nativeMemory.direct")], ["forwarded", t("nativeMemory.forwarded")]], value: settings.vectorsRemoteBehindLoopback ? "forwarded" : "direct" })}</label>
       ${field("vector-tenant", "vectors.source.tenant", settings.chromaTenant, 120)}
       ${field("vector-database", "vectors.source.chromaDatabase", settings.chromaDatabase, 120)}
       <p class="hint">${t("vectors.source.retained")}</p><p class="hint">${esc(backend)}${backendNote ? `: ${esc(backendNote)}` : ""}</p>`, foot: `<button class="btn pri" type="button" data-act="vector-source-save">${t("embeddings.source.save")}</button>` });
@@ -34,11 +35,11 @@ async function saveSource(el) {
   const value = (id) => form.querySelector(`#${id}`).value.trim();
   el.disabled = true;
   try {
-    const result = await api("knowledge/vectors", { vectorsIn, vectorsFile: value("vector-file"), vectorsUrl: value("vector-url"), vectorsSecret: value("vector-secret"), chromaTenant: value("vector-tenant"), chromaDatabase: value("vector-database") });
+    const result = await api("knowledge/vectors", { vectorsIn, vectorsFile: value("vector-file"), vectorsUrl: value("vector-url"), vectorsSecret: value("vector-secret"), vectorsRemoteBehindLoopback: value("vector-locality") === "forwarded", chromaTenant: value("vector-tenant"), chromaDatabase: value("vector-database") });
     if (dialog() === form) closeDlg();
     toast(result.note || t("embeddings.source.saved"));
   } catch (error) { toast(error.message); if (el.isConnected) el.disabled = false; }
 }
-markLive(["vector-source-open", "vector-source-save", "sw:vector-source", "sw:vector-file", "sw:vector-url", "sw:vector-secret", "sw:vector-tenant", "sw:vector-database"]);
+markLive(["vector-source-open", "vector-source-save", "sw:vector-source", "sw:vector-file", "sw:vector-url", "sw:vector-secret", "sw:vector-locality", "sw:vector-tenant", "sw:vector-database"]);
 on("vector-source-open", openSource);
 on("vector-source-save", saveSource);

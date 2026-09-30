@@ -5823,16 +5823,19 @@ never starts up broken and it never fails a search in silence. And **nothing is 
 changing it**: the vectors you already had stay where they were, and the new place fills up the next
 time you press **Read it again**.
 
-**Qdrant and Chroma native adapters.** Library's **Where meaning vectors are kept** chooser can use
-an existing Qdrant REST service or Chroma v2 tenant/database. This is an owner opt-in; Branch installs
+**Qdrant, Chroma and Pinecone native adapters.** Library's **Where meaning vectors are kept** chooser can use
+an existing Qdrant REST service, Chroma v2 tenant/database or Pinecone dense cosine serverless index.
+Pinecone uses its existing data-plane address and requires a matching embedding dimension; see
+[Pinecone vector store](pinecone-vector-store.md). This is an owner opt-in; Branch installs
 no server, SDK or embedding function. Set `vectorsUrl`, an optional `vectorsSecret` locker name,
 and for Chroma `chromaTenant`/`chromaDatabase` (defaults `default_tenant`/`default_database`). Keys
-are resolved only for the selected destination. The default key headers are `api-key` and
+are resolved only in the exact locker project captured when the connection is saved, for the selected destination. The default key headers are `api-key` and
 `x-chroma-token`; the API also accepts `vectorsHeader` and `vectorsTimeoutMs` (500–30,000ms).
 Opening or saving the chooser reads configuration only. A service connection is first used when
 indexing, searching or explicitly deleting; a failure leaves word search available. The owner's
 host/path rules govern local services too, outside services use the ordinary network guard, and a
 task restricted to this computer refuses an off-computer store before resolving its key.
+Mark a forwarded loopback connection with `vectorsRemoteBehindLoopback` so that it remains outside.
 
 Each physical namespace includes the person, embedding generation and dimensions. Stored payloads
 hold passage identifiers and fingerprints, without passage text. Reads validate scope and generation;
@@ -5840,7 +5843,7 @@ changed embedding routes never compare equal-size incompatible vectors. Re-read 
 fill a newly selected store. Changing or removing a connection leaves earlier vectors at their
 original destination, so clean the selected service before switching if those should be gone.
 
-**Delete everything** captures the currently selected Qdrant/Chroma connection in its deletion
+**Delete everything** captures the currently selected native vector connection in its deletion
 journal and deletes only that person's entries in Branch namespaces, across generations, then
 verifies they are empty. It keeps service collections and other owners' entries. Knowledge-base
 files remain on this computer and can be read again. An offline service keeps cleanup pending;
@@ -5851,9 +5854,11 @@ connection. Earlier destinations are not inventoried automatically and remain th
 
 Qdrant listing is bounded to 2,048 collections, Chroma to 2,000 collections, reads to 50,000 passages
 per generation and transport responses to 8 MiB. Exceeding these limits fails visibly and retains
-pending cleanup. Milvus, Elasticsearch, Postgres, Redis, Pinecone, Weaviate, MongoDB and Azure native
+pending cleanup. Pinecone lists at most 2,048 namespaces, with the same per-namespace reading cap;
+its eventual consistency can keep successful deletion pending until statistics settle.
+Milvus, Elasticsearch, Postgres, Redis, Weaviate, MongoDB and Azure native
 adapters remain unimplemented; QMD retrieval remains outside the accepted scope. This change is
-RES-321's Qdrant/Chroma slice, not delivery of every memory, session or vector backend.
+RES-321's native vector slice, not delivery of every memory, session or vector backend.
 
 ### Writing your own place to keep the vectors, end to end
 
@@ -6742,7 +6747,7 @@ going to be built. They are written down here so nobody goes looking for them.
   only inside the Branch Agent app, whose own window carries the Stop notice; see "Using this
   computer's screen and keyboard".
 - **Outside vector databases need an explicit choice.** The default is SQLite on this computer.
-  Qdrant and Chroma are owner-selected native knowledge-base vector stores; the other requested
+  Qdrant, Chroma and Pinecone are owner-selected native knowledge-base vector stores; the other requested
   native database adapters remain pending. Saved facts still use the built-in memory backend or
   the explicitly selected Branch-protocol outside memory service.
 - **No crash reporting service.** Nothing is sent to Sentry or anywhere like it. Problems are
@@ -8269,12 +8274,12 @@ backup and the diagnostics folder both already understand is the whole design.
 
 **What is not applicable, and why.** Written down here so nobody goes looking.
 
-- **A memory service reached over the network** (the QMD-style long-term store). Not applicable:
-  it is another product's hosted service, and pointing Branch at it would mean everything the
-  assistant remembers about you living on somebody else's computer. That is the one thing this app
-  promises not to do.
-- **MongoDB, or any other database server, for conversations.** Not applicable, for the same
-  reason and for a second one: there is no server to run and no second machine in this design.
+- **QMD-style retrieval.** QMD was explicitly declined and is not implemented. Separate owner-selected
+  native Mem0/Honcho conversation context is described in [Native memory context](native-memory-context.md);
+  it does not upload or replace accepted Branch facts.
+- **Alternative stores for conversations.** The requested memory/file/MongoDB session adapters
+  remain implementation gaps. Conversations currently use the SQLite Store; no unused adapter
+  interface or export copy is presented as runtime backend replacement.
 - **A graph database for a personal knowledge base.** Not applicable as a *database*: the map of
   what is mentioned with what is built in the same SQLite file (`src/knowledge-graph.ts`), which is
   what a house-sized knowledge base actually needs. A separate graph server would be a service to
