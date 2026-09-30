@@ -116,6 +116,19 @@ test("a published page opens in the window at /#page=<id> and stays current whil
   await tab.waitForResponse((response) => response.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
   await tab.waitForTimeout(500);
   assert.equal(await tab.locator("[data-page19]").count(), 0, "a closed page stays closed");
+
+  // A newer open while an older one is still being read: the older answer never replaces what is on screen now.
+  const other = await f.app.registry.execute("pages.publish", { title: "Nightly report", body: "Night 2" }, f.app.runtime.context());
+  await tab.evaluate(() => { location.hash = ""; });
+  const slow = tab.waitForResponse((response) => response.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  await tab.evaluate((id) => { location.hash = "page=" + id; }, page.id);
+  await tab.waitForRequest((request) => request.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  await tab.evaluate((id) => { location.hash = "page=" + id; }, other.id);
+  await tab.locator(`[data-page19="${other.id}"]`).waitFor({ timeout: 15000 });
+  await slow;
+  await tab.waitForTimeout(500);
+  assert.equal(await tab.locator(`[data-page19="${page.id}"]`).count(), 0, "the older page did not open over the newer one");
+  assert.equal(await tab.locator(`[data-page19="${other.id}"]`).count(), 1, "the newer page is still the one shown");
   assert.deepEqual(errors, []);
 });
 
@@ -134,4 +147,12 @@ test("a live page shows only the file it was bound to: another project's file of
   assert.doesNotMatch((await f.api(`asks/pages/${page.id}/export`)).body.html, /Another project/, "nor handed on");
   f.app.store.projects.setActive(owner, { active: "default" });
   assert.match((await f.api(`asks/pages/${page.id}`)).body.page.body, /The workspace's plan/, "back in its own project, it shows again");
+
+  // A switch that lands between the check and the read: the bytes still come from the path that was checked.
+  const files = f.app.asks.pages["files"], checked = files.checked.bind(files);
+  files.checked = async (...args) => { const where = await checked(...args); f.app.store.projects.setActive(owner, { active: "other" }); return where; };
+  const raced = (await f.api(`asks/pages/${page.id}`)).body.page;
+  files.checked = checked;
+  assert.doesNotMatch(raced.body, /Another project/, "a switch mid-read never shows the other project's file");
+  assert.match(raced.body, /The workspace's plan/);
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { open as openFile } from "node:fs/promises";
 import { z } from "zod";
 import { pageStyle, redactText, RedactionSchema } from "../conversation-share.js";
 import type { WorkspaceFiles } from "../files.js";
@@ -101,6 +102,23 @@ const fromRow = (row: Record<string, unknown>): AnswerPage => ({
   sourcePath: row.source_path ? String(row.source_path) : null, format: row.format === "markdown" ? "markdown" : "text",
 });
 
+/**
+ * A live page's file, read once through the full path it was checked at: the bytes shown and the date they carry come
+ * from that one path, never from a second lookup that a project or worktree switch could send elsewhere. As
+ * WorkspaceFiles.read: no link at the end, no hard link, a plain file, and no bigger than a page may show.
+ */
+async function readAt(where: string): Promise<{ content: string; changed: string }> {
+  const handle = await openFile(where, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+  try {
+    const info = await handle.stat();
+    if (info.nlink > 1) throw new Error("Hardlink path denied");
+    if (!info.isFile() || info.size > liveBytes) throw new Error("File is too big to show or is not regular");
+    return { content: await handle.readFile("utf8"), changed: info.mtime.toISOString() };
+  } finally {
+    await handle.close();
+  }
+}
+
 export class AnswerPages {
   constructor(private readonly store: Store, private readonly owner: string, private readonly files?: WorkspaceFiles) {
     store.sqlite.exec(`CREATE TABLE IF NOT EXISTS asks_pages(id TEXT PRIMARY KEY, owner TEXT NOT NULL, title TEXT NOT NULL,
@@ -120,11 +138,12 @@ export class AnswerPages {
     const existing = value.id ? this.find(value.id) : null;
     if (value.id && !existing) throw new Error("That page was not found");
     const sourcePath = value.sourcePath ? value.sourcePath.replace(/\\/g, "/").replace(/^\.\//, "") : null;
+    let where: string | null = null;
     if (sourcePath) {
       if (!this.files) throw new Error("A live page needs the workspace, and there is none here.");
-      await this.files.read(sourcePath, liveBytes); // outside the workspace, hidden, a link or too big: refused now
+      where = await this.files.checked(sourcePath); // outside the workspace or hidden: refused now
+      await readAt(where); // a link, a hard link or too big: refused now, at the very path that is kept
     }
-    const where = sourcePath && this.files ? await this.files.checked(sourcePath) : null;
     const now = new Date().toISOString(), id = existing?.id ?? randomUUID();
     this.store.sqlite.prepare(`INSERT INTO asks_pages(id, owner, title, question, body, sources, revision, created_at, updated_at, source_path, format, source_where)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
@@ -146,8 +165,7 @@ export class AnswerPages {
       const bound = this.store.sqlite.prepare("SELECT source_where FROM asks_pages WHERE id=? AND owner=?").get(page.id, this.owner)?.source_where;
       if (!bound || await this.files.checked(page.sourcePath) !== String(bound))
         return { ...page, body: "", missing: `${page.sourcePath} was published from another project or worktree; switch back to it to see this page.` };
-      const { content } = await this.files.read(page.sourcePath, liveBytes);
-      const changed = await stat(await this.files.checked(page.sourcePath)).then((info) => info.mtime.toISOString(), () => page.updatedAt);
+      const { content, changed } = await readAt(String(bound));
       return { ...page, body: content, updatedAt: changed };
     } catch (error) {
       return { ...page, body: "", missing: `${page.sourcePath} cannot be read now: ${error instanceof Error ? error.message : String(error)}` };
