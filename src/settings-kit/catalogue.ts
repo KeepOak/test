@@ -617,7 +617,7 @@ export const settingsCatalogue: readonly SettingSpec[] = [...safety, ...reach, .
 export const neverTouched: readonly RegExp[] = [
   /^lockdown$/, /^session-lock$/, /^model-connections/, /^local-model-connections$/, /^local-model-setups$/,
   /^secret/, /^credential/, /^people/, /^remote/, /pairing/, /^deferred:/, /^move-in:/,
-  /^feature-switches-migration$/, /^webhook-addresses$/, /^sender-allowlist$/, /^telegram-setup$/,
+  /^feature-switches-migration$/, /^policy-commands-allow-migration$/, /^webhook-addresses$/, /^sender-allowlist$/, /^telegram-setup$/,
   // mac7/lockout: which chat service is being turned away, as the Connections card shows it.
   // Branch writes it; a file or a preset that could write it could tell the owner a service was
   // fine while it was being refused, or invent one that was not.
