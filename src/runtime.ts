@@ -1723,6 +1723,8 @@ ${run.output.slice(0, 6000)}`;
     const budget = parent?.budget ?? new Budget(options.budget ?? knobs.taskBudget(this.store, this.owner)); // R17-S09
     // ── R17-A (Trunks): a Trunk's turn carries its own instructions, memory scope, tools and model. ──
     const trunk = parent ? null : this.trunkShape(options);
+    if (authority && authority.trunkId !== trunk?.trunkId)
+      throw new Error("The original task's Trunk scope is unavailable or its conversation now routes to another Trunk. Reconcile it before continuing.");
     // eng-trunk-controls: a paused Trunk starts nothing new, whoever asks; said in words, above the first await.
     const paused = trunk ? this.trunkPaused(trunk.trunkId) : null;
     if (paused) throw new Error(paused);

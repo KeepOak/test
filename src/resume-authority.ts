@@ -5,7 +5,7 @@ import type { Store } from "./store.js";
 
 export interface ResumeAuthority {
   permissions: string[]; depth: number; delegates: boolean; dryRun: boolean; ownCopy: boolean;
-  agent?: string; source: RunSource;
+  agent?: string; trunkId?: string; source: RunSource;
 }
 const sources = new Set(["owner", "trigger", "schedule", "mcp", "a2a", "acp", "channel"]);
 function unavailable(): never { throw new Error("The task's complete saved authority is unavailable or conflicting. Reconcile its original permissions, helper identity and project before continuing."); }
@@ -78,19 +78,28 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
   if (depth > 3 || lineage.some((record) => typeof record.start.parentRunId === "string"
     && parentDepth(records.get(record.start.parentRunId)!) >= depth)) unavailable();
   const agent = consistent("agent"), source = consistent("source");
-  if (typeof agent === "string" && agent.startsWith("trunk:")) {
-    const trunkId = agent.slice("trunk:".length);
-    if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(trunkId)) unavailable();
-    const record = store.get("governance", root.owner, agent);
+  const trunkIds = new Set<string>();
+  for (const record of records.values()) for (const event of store.events(record.run.id)) {
+    if (event.kind !== "trunk.turn") continue;
+    const id = event.data.trunkId;
+    if (typeof id !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id)) unavailable();
+    trunkIds.add(id);
+  }
+  if (trunkIds.size > 1) unavailable();
+  const trunkId = [...trunkIds][0];
+  if (trunkId) {
+    const record = store.get("governance", root.owner, `trunk:${trunkId}`);
     if (!record || record.data.id !== trunkId || record.data.paused === true) unavailable();
-    // Saved records also carry lifecycle metadata outside the editable, strict core schema.
     const core = Object.fromEntries(Object.keys(TrunkSchema.shape).map((key) => [key, record.data[key]]));
     if (!TrunkSchema.safeParse(core).success) unavailable();
-    if (lineage.some((record) => store.events(record.run.id).some((event) => event.kind === "trunk.turn" && event.data.trunkId !== trunkId))) unavailable();
+  }
+
+  if (typeof agent === "string" && agent.startsWith("trunk:")) {
+    if (!trunkId || agent !== `trunk:${trunkId}`) unavailable();
   } else if (typeof agent === "string" && !agent.startsWith("mode:") && !store.get("specialists", root.owner, agent)) unavailable();
   // Explicit false never grants delegation. Practice mode and required isolation can only become stricter.
   return { permissions: [...permissions], depth, delegates: lineage.every((record) => record.start.delegates === true),
     dryRun: lineage.some((record) => record.start.dryRun === true),
     ownCopy: lineage.some((record) => record.start.ownCopy === true || record.requiredCopy),
-    ...(typeof agent === "string" ? { agent } : {}), source: source as RunSource };
+    ...(typeof agent === "string" ? { agent } : {}), ...(trunkId ? { trunkId } : {}), source: source as RunSource };
 }
