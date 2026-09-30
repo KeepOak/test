@@ -12,7 +12,7 @@ import { S, E, save, refresh, ownName, ownerHere, defaultTrunk } from "../core/s
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
-import { ic, av, toast } from "../core/ui.js";
+import { ic, av, toast, dialog } from "../core/ui.js";
 import { text, plain } from "../chat/markdown.js";
 import { openConversation, startConversation, addDockItem, addSendPrefix } from "../chat/chat.js";
 import { attachedChips, pickFiles, readyUploads, filesSent, hasFiles, moveFiles } from "../chat/attach.js";
@@ -22,8 +22,10 @@ import { t } from "../../i18n.js";
 import { initHistoryIdeas } from "./history-ideas.js";
 import { initTodayActivity } from "./today-activity.js";
 import { initHomeConversation } from "./home-conversation.js";
+import { initHomeListKeys } from "./home-accessibility.js";
 
 const H = { sid: undefined, messages: [], sending: false, mark: "", seeing: false, left: null, picked: null, row: null, carried: null };
+let homeOpener = null;
 const BUSY = ["running", "queued", "waiting", "needs_input"];
 
 /* ---------- who the panel talks to ---------- */
@@ -105,7 +107,7 @@ function snapRow() {
 function panel() {
   const draft = S.drafts.home19 ?? "";
   const words = esc(t("window.chat.composer.message-to", { name: nameNow() }));
-  return `<section class="hm19 glass" aria-label="${t("window.home.label", { name: esc(nameNow()) })}">
+  return `<section class="hm19 glass" role="region" aria-keyshortcuts="Escape" aria-label="${t("window.home.label", { name: esc(nameNow()) })}">
     <header class="hm19-h">${faceHere(30)}<b class="grow">${esc(nameNow())}</b>
       ${ownerHere() ? '<button class="btn ghost" type="button" data-act="history-ideas">Ideas</button>' : ""}
       ${ownerHere() ? '<button class="btn ghost" type="button" data-act="today-activity">Today</button>' : ""}
@@ -113,7 +115,8 @@ function panel() {
       <button class="icon-btn" type="button" data-act="home19-new" aria-label="${t("comfort.field.newConversation")}" data-tip="${t("comfort.field.newConversation")}"${homeTrunk() ? " disabled" : ""}>${ic("plus", "s")}</button>
       <button class="icon-btn" type="button" data-act="home19-full" aria-label="${t("window.home.full")}" data-tip="${t("window.home.full")}">${ic("panel", "s")}</button>
       <button class="icon-btn" type="button" data-act="home19" aria-label="${t("window.home.close")}">${ic("x", "s")}</button></header>
-    <div class="hm19-scroll" id="home19-scroll"><div class="thread">${thread()}</div></div>
+    <p class="home-sr" role="status" aria-live="polite" aria-atomic="true">${H.sending || busy() ? esc(t("window.chat.typing")) : ""}</p>
+    <div class="hm19-scroll" id="home19-scroll" tabindex="0" role="region" aria-label="Home conversation messages"><div class="thread">${thread()}</div></div>
     <div class="hm19-dock">${snapRow()}<div id="home19-attached">${attachedChips("home19")}</div><form class="composer hm19-box" id="home19-form"><button class="c-btn" type="button" data-act="home19-attach" aria-label="${t("window.home.attach")}" data-tip="${t("window.home.attach")}">${ic("clip")}</button><textarea id="home19-prompt" rows="1" placeholder="${words}" aria-label="${words}">${esc(draft)}</textarea>
       <button class="c-btn send${draft.trim() ? " ready" : ""}" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button></form></div></section>`;
 }
@@ -215,18 +218,22 @@ simplePart({ name: "home19", take: () => panelOpen(), hide: () => { if (panelOpe
 
 /** The title row's button that opens and closes the panel. */
 export function homeButton() {
-  return `<button class="tb-btn" type="button" data-act="home19" aria-pressed="${panelOpen()}" aria-label="${t("window.home.label", { name: esc(nameNow()) })}" data-tip="${t("window.home.label", { name: esc(nameNow()) })}">${ic("chat", "s")}</button>`;
+  return `<button class="tb-btn" type="button" data-act="home19" aria-expanded="${panelOpen()}" aria-controls="home19" aria-label="${t("window.home.label", { name: esc(nameNow()) })}" data-tip="${t("window.home.label", { name: esc(nameNow()) })}">${ic("chat", "s")}</button>`;
 }
 
 function toggle() {
   const open = !panelOpen();
+  if (open) homeOpener = document.activeElement;
   keep({ open });
   H.seeing = false;
   renderNow();
   if (open) $("#home19-prompt")?.focus();
+  else if (homeOpener?.isConnected && !homeOpener.closest?.("#home19")) homeOpener.focus({ preventScroll: true });
+  else document.querySelector('[data-act="home19"][aria-controls="home19"]')?.focus({ preventScroll: true });
 }
 
 export function initHome() {
+  initHomeListKeys();
   initHistoryIdeas();
   initTodayActivity();
   initHomeConversation();
@@ -246,7 +253,13 @@ export function initHome() {
     e.target.closest("form")?.querySelector(".send")?.classList.toggle("ready", !!e.target.value.trim());
   });
   document.addEventListener("submit", (e) => { if (e.target.id === "home19-form") { e.preventDefault(); send(); } });
-  document.addEventListener("keydown", (e) => { if (e.target.id === "home19-prompt" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+  document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape" && e.target.closest?.("#home19") && panelOpen() && !dialog() && !document.querySelector(".pop, .palette, .gsel-pop")) {
+      e.preventDefault(); e.stopImmediatePropagation(); toggle(); return;
+    }
+    if (e.target.id === "home19-prompt" && e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat) { e.preventDefault(); send(); }
+  }, true);
   document.addEventListener("selectionchange", notePicked);
   document.addEventListener("pointerdown", notePickedRow, true);
   document.addEventListener("focusin", notePickedRow);

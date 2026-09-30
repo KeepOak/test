@@ -14,8 +14,8 @@ function body(today) {
   const count = `${today.capped ? "At least " : ""}${today.count} done today`;
   return `<section aria-label="Today's completed tasks"><h3>Today · ${esc(count)}</h3>
     <p>${esc(today.date)} · ${esc(today.timezone)}. Recorded completed primary owner runs; outcomes have not been independently verified.</p>
-    ${today.rows.map((row) => `<p><button type="button" class="btn ghost" data-act="today-source" data-v="${esc(row.sessionId)}">${esc(row.title)}</button>
-      <small>${esc(new Date(row.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))} · Completed · ${esc(row.id)}</small></p>`).join("") || "<p>No eligible completed tasks recorded today.</p>"}
+    <div role="list" data-home-list aria-label="Recorded completed tasks today">${today.rows.map((row) => `<p role="listitem"><button type="button" class="btn ghost" data-act="today-source" data-v="${esc(row.sessionId)}" aria-label="Open conversation for ${esc(row.title)}, completed ${esc(row.completedAt)}, task ${esc(row.id)}">${esc(row.title)}</button>
+      <small>${esc(new Date(row.completedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }))} · Completed · ${esc(row.id)}</small></p>`).join("") || "<p>No eligible completed tasks recorded today.</p>"}</div>
     <p>${esc(today.history)} ${today.capped ? "The 1,000-row read limit was reached; the count is a lower bound." : ""}
       ${today.count > today.listed ? `Showing the newest ${today.listed} of ${today.count} retained completions.` : ""}</p></section>`;
 }

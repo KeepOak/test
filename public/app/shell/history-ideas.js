@@ -9,10 +9,10 @@ import { startConversation, openConversation } from "../chat/chat.js";
 let feed = [];
 function card(idea) {
   return `<article><h3>${esc(idea.title)}</h3><p>${esc(idea.reason)}</p>
-    <ul>${idea.sources.map((s) => `<li><button type="button" class="btn ghost" data-act="history-idea-source" data-v="${esc(s.sessionId)}">${esc(s.title)}</button>
+    <ul data-home-list aria-label="Source conversations for ${esc(idea.title)}">${idea.sources.map((s) => `<li><button type="button" class="btn ghost" data-act="history-idea-source" data-v="${esc(s.sessionId)}" aria-label="Open source conversation: ${esc(s.title)}, ${esc(s.createdAt)}, recorded ${esc(s.status)}">${esc(s.title)}</button>
       <small>${esc(s.createdAt)} · Recorded: ${esc(s.status)} · ${esc(s.id)}</small></li>`).join("")}</ul>
     <details><summary>Preview composer draft</summary><pre>${esc(idea.draft)}</pre></details>
-    <button type="button" class="btn" data-act="history-idea-draft" data-v="${esc(idea.id)}">Put in composer</button></article>`;
+    <button type="button" class="btn" data-act="history-idea-draft" data-v="${esc(idea.id)}" aria-label="Put idea in composer: ${esc(idea.title)}">Put in composer</button></article>`;
 }
 async function show() {
   if (!ownerHere()) return;

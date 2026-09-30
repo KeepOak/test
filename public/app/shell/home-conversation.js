@@ -16,7 +16,7 @@ function body(view) {
     ${pin ? `<p><b>${esc(pin.title)}</b></p><button type="button" class="btn pri" data-act="home-conversation-open" data-v="${esc(pin.sessionId)}">Open Home conversation</button><button type="button" class="btn ghost" data-act="home-conversation-unpin">Unpin</button>` : `<p>${view.unavailable ? "The saved conversation is unavailable. Unpin it or choose another." : "No Home conversation pinned."}</p>${view.unavailable ? '<button type="button" class="btn ghost" data-act="home-conversation-unpin">Unpin unavailable conversation</button>' : ""}`}
     <p><button type="button" class="btn" data-act="home-conversation-create">Create empty Home conversation</button></p>
     <h3>Pin an existing conversation</h3><p>Newest 100 eligible conversations. Temporary, archived, deleted, shared, imported and helper conversations are unavailable.</p>
-    ${view.conversations.map((row) => `<p><button type="button" class="btn ghost" data-act="home-conversation-pin" data-v="${esc(row.sessionId)}">${esc(row.title)}</button><small>${esc(row.createdAt)}</small></p>`).join("") || "<p>No eligible conversations yet.</p>"}`;
+    <div role="list" data-home-list aria-label="Eligible Home conversations">${view.conversations.map((row) => `<p role="listitem"><button type="button" class="btn ghost" data-act="home-conversation-pin" data-v="${esc(row.sessionId)}" aria-label="Pin as Home conversation: ${esc(row.title)}, created ${esc(row.createdAt)}">${esc(row.title)}</button><small>${esc(row.createdAt)}</small></p>`).join("") || "<p>No eligible conversations yet.</p>"}</div>`;
 }
 async function show() {
   if (!ownerHere() || busy) return;
@@ -25,6 +25,7 @@ async function show() {
     const view = await api("home-conversation");
     if (!sameActor(before) || ticket !== generation) return;
     frame = openDlg({ title: "Home conversation", body: body(view), wide: true });
+    frame.querySelector('[data-act="home-conversation-open"], [data-act="home-conversation-create"]')?.focus({ preventScroll: true });
   } catch (error) { if (sameActor(before)) toast(error.message); }
 }
 async function change(action, sessionId) {
@@ -36,6 +37,7 @@ async function change(action, sessionId) {
     const view = await api("home-conversation", { action, ...(sessionId ? { sessionId } : {}) });
     if (!sameActor(before) || ticket !== generation || dialog() !== previous) return;
     frame = openDlg({ title: "Home conversation", body: body(view), wide: true });
+    frame.querySelector('[data-act="home-conversation-open"], [data-act="home-conversation-create"]')?.focus({ preventScroll: true });
   } catch (error) { if (sameActor(before) && dialog() === previous) toast(error.message); }
   finally { busy = false; if (dialog() === previous) previous.querySelectorAll("button").forEach((button) => { button.disabled = false; }); }
 }
