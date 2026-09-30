@@ -30,8 +30,11 @@ export class PrivateIndexStore {
     try {
       this.store.sqlite.prepare(`DELETE FROM ${privateIndexTable} WHERE owner=? AND service=? AND account=?`).run(this.owner, service, account);
       const insert = this.store.sqlite.prepare(`INSERT INTO ${privateIndexTable} VALUES(?,?,?,?,?,?,?,?,?,?)`);
-      for (const item of items.slice(0, 75)) insert.run(this.owner, service, account, item.kind, item.id,
-        item.title, item.text, item.sourceTime, now.toISOString(), expires);
+      for (const item of items.slice(0, 75)) {
+        if (item.id.length > 1024 || item.sourceTime.length > 80) continue;
+        insert.run(this.owner, service, account, item.kind, item.id,
+          item.title.slice(0, 600), item.text.slice(0, 600), item.sourceTime, now.toISOString(), expires);
+      }
       this.store.sqlite.exec("COMMIT");
     } catch (error) { this.store.sqlite.exec("ROLLBACK"); throw error; }
   }
