@@ -3727,6 +3727,28 @@ The assistant has these tools, each of which asks first whether the connected pr
 
 **What is deliberately not here.** On its own the assistant does not make videos (switch on *Making videos* under *Reach and platform* to use OpenAI's or Google's video service with your own key), and on its own it cannot pull still frames out of one: that needs a video decoder this app does not ship. With your own ffmpeg and the switch below turned on, it can (see *Watching and saving videos*). `media.info` exists so it can still reason about a video's length and shape. Sound editing is limited to trimming uncompressed WAV.
 
+**Pictures through your ChatGPT sign-in** use `gpt-image-2` through the native JSON picture route
+used by Codex, after your existing sign-in opt-in. Branch's existing **unofficial, may stop working**
+standing for that third-party sign-in remains; reading the official client's request format does
+not mean OpenAI endorses Branch. Settings offers `gpt-image-2` when the signed-in primary
+connection is eligible, without reading a token. Clear another picture-model override before
+using this route. `media.image` makes a picture or edits one PNG/JPEG/WebP from the workspace;
+masked edits are refused. Output is one decoded PNG up to 5 MB; the result reports its actual
+dimensions separately from the size requested. A practice run reads no token and
+makes no request.
+
+Only the owner's own task can use this route. Local-only tasks, household profiles, short-lived
+keys, outside task sources, pinned helpers, a separately chosen conversation connection/account,
+and Trunks with separately chosen or unpermitted sign-ins refuse it. It uses the one enabled
+primary account, with no account fallback; a multi-account or account-capped pool is refused.
+Task/monthly dollar caps and enabled model cost thresholds also refuse it because picture usage
+and any charge are not attributed to those budgets. Cost stays **unknown**, never free; the plan's
+picture allowance is not measured here. Tokens remain private, the address is fixed to the
+original ChatGPT backend, requests pass through the network rules with redirects refused, and
+errors contain only the status. A real account, picture output and plan allowance still need
+acceptance proof. Turning off that sign-in or choosing an API-key picture connection restores
+the ordinary picture route.
+
 Reading a file is `media.read` and counts as looking, not changing; making a picture, speaking and trimming are `media.write` and are held to your approval rules like any other change. Each of those tools tells the approval rules the workspace path it would write (`media/poster.png`), so a rule about that folder fires on the path the file really gets rather than the bare name that was asked for. Every result is signed by the ordinary tool receipt, so what was made and where it was saved can be checked afterwards. A practice run reports what it would have made without calling the provider.
 
 ### Watching and saving videos (bucket 17)
