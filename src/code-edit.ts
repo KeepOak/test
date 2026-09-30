@@ -34,10 +34,10 @@ export class CodeEditor {
   constructor(private readonly files: WorkspaceFiles, private readonly observer?: WriteObserver) {}
 
   /** The file's current text, or null when it does not exist yet. */
-  private async original(path: string): Promise<string | null> {
+  private async original(path: string, context?: ToolContext): Promise<string | null> {
     try {
       // selfdev: a large file (Branch's own docs are a megabyte) is changed in place by its find and replace text.
-      return (await this.files.read(path, largeFileBytes)).content;
+      return (await this.files.read(path, largeFileBytes, context)).content;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return null;
@@ -49,7 +49,7 @@ export class CodeEditor {
 
   /** Applies a whole unified diff or nothing at all. */
   async patch(text: string, context: ToolContext): Promise<{ files: ChangeSummary[] }> {
-    const changed = await this.writeAll(await this.planPatch(text), context, { readFirst: true });
+    const changed = await this.writeAll(await this.planPatch(text, context), context, { readFirst: true });
     this.notifyPatched(changed, context);
     return { files: changed };
   }
@@ -62,10 +62,10 @@ export class CodeEditor {
    * Works out what a unified diff would do to every file it names, without writing anything. A
    * part that does not fit throws here, before a single file has been touched.
    */
-  async planPatch(text: string): Promise<PlannedChange[]> {
+  async planPatch(text: string, context?: ToolContext): Promise<PlannedChange[]> {
     const planned: PlannedChange[] = [];
     for (const file of parsePatch(text)) {
-      const before = await this.original(file.path);
+      const before = await this.original(file.path, context);
       if (file.created && before !== null)
         throw new Error(`Patch refused: "${file.path}" already exists but the patch creates it`);
       planned.push({ path: file.path, before, after: applyHunks(file, before) });
@@ -88,7 +88,7 @@ export class CodeEditor {
     const guard = this.files.readFirst;
     // With the switch off nothing is looked at, so every refusal is exactly what it was before.
     if (context.readFirstExempt || !guard?.holds(context.runId)) return;
-    for (const path of paths) await guard.require(context.runId, await this.files.checked(path), path);
+    for (const path of paths) await guard.require(context.runId, await this.files.checked(path, false, context), path);
   }
 
   /**
@@ -111,24 +111,26 @@ export class CodeEditor {
         summaries.push(summarise(item.path, item.before, item.after, summaries));
       }
     } catch (error) {
-      for (const item of done.reverse()) await this.undo(item.path, item.before);
+      for (const item of done.reverse()) await this.undo(item.path, item.before, context);
       throw error;
     }
     return summaries;
   }
 
-  private async undo(path: string, before: string | null): Promise<void> {
+  private async undo(path: string, before: string | null, context: ToolContext): Promise<void> {
     try {
-      if (before === null) await rm(await this.files.checked(path), { force: true });
-      else await this.files.write(path, before, AbortSignal.timeout(10000));
+      if (before === null) await rm(await this.files.checked(path, false, context), { force: true });
+      else await this.files.write(path, before, AbortSignal.timeout(10000), largeFileBytes, context);
     } catch { /* The rollback is best effort; the original failure is what the caller sees. */ }
   }
 
   private async save(path: string, content: string, context: ToolContext): Promise<void> {
-    const token = this.observer ? await this.observer.before(path, context) : undefined;
-    await this.files.write(path, content, context.signal, largeFileBytes);
+    // Owner ruling 2026-09-30: a file outside the workspace (Full access) has no workspace history to keep.
+    const watched = this.observer && !this.files.beyondWorkspace(path, context) ? this.observer : undefined;
+    const token = watched ? await watched.before(path, context) : undefined;
+    await this.files.write(path, content, context.signal, largeFileBytes, context);
     this.files.readFirst?.noteWritten(context.runId, this.files.addressOf(path)); // mac7/coding-next
-    if (this.observer) await this.observer.after(path, context, token);
+    if (watched) await watched.after(path, context, token);
   }
 
   /**
@@ -139,7 +141,7 @@ export class CodeEditor {
     input: { path: string; find: string; replace: string; expectedOccurrences: number; replaceAll?: boolean },
     context: ToolContext,
   ): Promise<ChangeSummary & { matched?: string }> {
-    const existing = await this.original(input.path);
+    const existing = await this.original(input.path, context);
     // An empty `find` on a file that is not there yet creates it, as other agents' edit tools do.
     if (existing === null && input.find !== "") throw new Error(`Edit refused: "${input.path}" does not exist`);
     if (existing !== null) await this.mustHaveRead([input.path], context); // mac7/coding-next
