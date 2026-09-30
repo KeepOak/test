@@ -6,7 +6,7 @@
    mixture in liveMixtures). With no OpenRouter connection, "Only ones I list" stays greyed with its reason. OpenRouter's
    list itself is covered by tests/models-mix-openrouter.test.mjs: asking openrouter.ai would leave this computer. */
 const path = require("node:path");
-const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT ?? "playwright";
 const { chromium } = require(PW);
 const { start } = require(path.join(__dirname, "stub-model-b6.cjs"));
 

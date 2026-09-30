@@ -14,6 +14,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { thinkingLevels } from "../dist/thinking-levels.js";
 import { openSettingFor } from "./places.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const all = ["low", "medium", "high"];
 
@@ -28,7 +29,7 @@ test("K1 only the providers that send a level are offered one, and only for mode
   assert.deepEqual(thinkingLevels("chatgpt", "gpt-5.6-terra"), effort());
   // GPT-6 review (Mac mini): the ChatGPT default is GPT-6 Sol at medium, so its Thinking list must offer levels,
   // not say the model "does not take a thinking setting".
-  for (const model of ["gpt-6-sol", "gpt-6-luna"]) assert.deepEqual(thinkingLevels("chatgpt", model), effort(), `${model} takes a thinking level`);
+  for (const model of ["gpt-6-sol", "gpt-6.1-sol", "gpt-6-luna"]) assert.deepEqual(thinkingLevels("chatgpt", model), effort(), `${model} takes a thinking level`);
   assert.deepEqual(thinkingLevels("openai-responses", "gpt-5.5"), effort());
   // Integration review: Azure OpenAI builds the same body as the OpenAI-shaped connection.
   assert.deepEqual(thinkingLevels("azure-openai", "o4-mini"), effort());
@@ -41,6 +42,10 @@ test("K1 only the providers that send a level are offered one, and only for mode
   assert.deepEqual(thinkingLevels("anthropic-vertex", "claude-opus-4-1@20250805"), budget);
   assert.deepEqual(thinkingLevels("anthropic", "claude-3-7-sonnet-latest"), budget);
   assert.deepEqual(thinkingLevels("anthropic", "claude-3-5-haiku-latest"), unknown);
+  for (const model of ["sonnet", "opus", "claude-sonnet-4-6", "claude-opus-4-5", "anthropic/claude-opus-4-6"])
+    assert.deepEqual(thinkingLevels("claude-subscription", model), effort(), `${model} takes a subscription effort level`);
+  for (const model of ["haiku", "claude-haiku-4-5", "claude-sonnet-4-5"])
+    assert.deepEqual(thinkingLevels("claude-subscription", model), unknown, `${model} does not take subscription effort`);
   for (const provider of ["gemini", "ollama", "cohere", "bedrock", "claude-code", "scripted"])
     assert.deepEqual(thinkingLevels(provider, "gpt-5.5"), { how: "none", levels: [], sent: false }, `${provider} sends no level, so none is offered`);
 });
@@ -56,7 +61,8 @@ test("K2 the providers that send a level are exactly the ones the map knows", as
       || /\b(openaiBody|anthropicBody)\(request/.test(text)) senders.push(file);
   }
   assert.deepEqual(senders.map((file) => file.split(/[\\/]/).slice(-2).join("/")).sort(),
-    ["providers/azure-openai.ts", "providers/openai-responses.ts", "src/chatgpt-provider.ts", "src/providers.ts"],
+    ["providers/azure-openai.ts", "providers/claude-subscription-history.ts", "providers/claude-subscription.ts",
+      "providers/openai-responses.ts", "src/chatgpt-provider.ts", "src/providers.ts"],
     "a provider started or stopped sending a thinking level: update src/thinking-levels.ts");
   // Every provider those files define is one the map says sends a level.
   for (const file of senders)
@@ -184,7 +190,7 @@ test("K5 dogfood B9: the model chip carries the thinking level, chosen from its 
   const menu = page.locator("#app > .pop");
   assert.ok(await menu.getByText("Thinking", { exact: true }).isVisible(), "the menu has a Thinking part");
   await menu.locator('[data-act="pick-think"][data-v="medium"]').click();
-  await page.waitForFunction(async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
+  await waitInPage(page, async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
     headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") } })).json()).reasoning === "medium", sessionId, { timeout: 10000 });
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => /· medium$/.test(document.querySelector('#composer [data-act="modelmenu2"] .lbl')?.textContent.trim() ?? ""), null, { timeout: 10000 });

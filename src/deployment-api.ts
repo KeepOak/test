@@ -8,6 +8,7 @@ import { daemonCommand, daemonLauncherName, daemonTaskName, type DaemonAction, t
 import { launchdLabel } from "./install/launchd.js";
 import { systemdUnitName } from "./install/systemd.js";
 import { readRunning, sessionTokenFileName } from "./install/running.js";
+import { loadGatewayConfig } from "./never-break/gateway-config.js";
 import { listUpdateBackups, readFirstStart, readUpdateBackup, writeUpdateBackup } from "./install/update-backup.js";
 import { takeDataCopy } from "./install/data-copy.js";
 import { uninstallCommands, type UninstallCommandDeps } from "./install/uninstall-commands.js";
@@ -240,7 +241,11 @@ async function suggestion(app: Branch, context: DeploymentContext, platform: Nod
   const installed = Boolean(context.executable && context.installRoot);
   const note = await readRunning(context.dataDir).catch(() => null);
   const inBackground = note?.mode === "daemon" && note.pid === process.pid;
-  const background = inBackground || (installed && (await daemonCommand("status", daemonOptions(context, platform)).catch(() => null))?.installed === true);
+  // The saved gateway choice (Settings › General and › Gateway) is how Branch keeps working with the window closed; with it
+  // on, the system's own service list is not asked at all.
+  const gatewayChosen = await loadGatewayConfig(context.dataDir).then(({ config }) => config.mode !== "off", () => false);
+  const background = inBackground || gatewayChosen
+    || (installed && (await daemonCommand("status", daemonOptions(context, platform)).catch(() => null))?.installed === true);
   const onboarded = (app.store.get("settings", owner, "onboarding")?.data as { done?: unknown } | undefined)?.done === true;
   return { bar: nextSuggestion({ owner: here, onboarded, settings: suggestionsSettings(app.store, owner), installed,
     background, autoUpdate: readComfort(app.store, owner, "notify").autoUpdate }) };

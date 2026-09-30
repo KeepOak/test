@@ -73,7 +73,7 @@ test("the chat-app wizard: every app, ships off, the bot page and the code, and 
   const { page, errors, outside, call } = await signedIn(t);
   assert.equal((await call("/api/channel-setup")).mode, "off", "guided setup ships off");
   await openChannels(page);
-  assert.equal(await page.locator('[data-act="ch-open"]').count(), 55);
+  assert.equal(await page.locator('[data-act="ch-open"]').count(), 56);
   await openWizard(page, "telegram");
   const dlg = page.locator(".dlg");
   assert.equal(await dlg.locator(".dlg-h h2").textContent(), "Set up Telegram");
@@ -232,7 +232,7 @@ test("the phone shows the same panel as links: the store for this phone and the 
   await openApp("telegram");
   const card = page.locator("#connect-body");
   await card.locator("a").first().waitFor();
-  assert.equal(answers.list.channels.length, 55, "every chat app the window offers is offered here");
+  assert.equal(answers.list.channels.length, 56, "every chat app the window offers is offered here");
   assert.equal(await card.getByRole("link", { name: "Get the app" }).getAttribute("href"), "https://apps.apple.com/app/id686449807", "the iPhone store on an iPhone");
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://t.me/BotFather?text=%2Fnewbot");
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").getAttribute("type"), "password");
@@ -242,10 +242,47 @@ test("the phone shows the same panel as links: the store for this phone and the 
   assert.deepEqual(await page.evaluate(() => globalThis.posted.map((post) => post.path)), ["/api/channel-setup/telegram/check"]);
   assert.equal(await page.locator("#connect-TELEGRAM_BOT_TOKEN").inputValue().then((value) => value.length), 45, "a refused token stays to be corrected");
   await page.locator('[data-act="back"]').first().click();
-  assert.equal(await page.locator('[data-act="ph-ch"]').count(), 55, "the phone lists every chat app the window offers");
+  assert.equal(await page.locator('[data-act="ph-ch"]').count(), 56, "the phone lists every chat app the window offers");
   await page.locator(`[data-act="ph-ch"][data-v="bluesky"]`).click();
   await page.locator("#connect-handle").waitFor();
   assert.equal(await card.getByRole("link", { name: "Make the bot" }).getAttribute("href"), "https://bsky.app/settings/app-passwords");
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth));
+  assert.deepEqual(errors, []);
+});
+
+/* CHAT-147: an app set up here connects there and then, and the wizard says what really happened. Signal with a program
+   that is not on this computer is the honest failure, and needs no network and runs nothing. The Save step offers the
+   owner's Trunks with the default one chosen, never a "Branch" of its own. */
+test("the wizard connects without a restart and says when it could not; who answers is a Trunk, never Branch", async (t) => {
+  const { page, errors, outside, call } = await signedIn(t);
+  await call("/api/trunks", { name: "Scout" });
+  await call("/api/trunks", { name: "Ivy" });
+  const trunks = await call("/api/trunks");
+  await openChannels(page);
+  await openWizard(page, "signal");
+  const dlg = page.locator(".dlg");
+  await next(page);
+  await page.locator('[data-chf="path"]').fill("/nonexistent-branch-test/signal-cli");
+  await page.locator('[data-chf="account"]').fill("+15551234567");
+  await next(page);
+  await dlg.getByText("Signal is saved but not connected").waitFor();
+  assert.match(await dlg.textContent(), /nothing at \/nonexistent-branch-test\/signal-cli/, "the engine's own reason");
+  assert.equal(((await call("/api/channels")).channels ?? []).some((c) => c.id === "signal"), false, "not reported as connected");
+  assert.equal((await call("/api/channel-setup/signal")).setUpHere, true, "kept, so it connects at the next start");
+
+  await next(page);
+  const who = dlg.locator('[data-act="chw-who"]');
+  assert.deepEqual(await who.allTextContents(), trunks.trunks.map((tr) => (tr.id === trunks.defaultId ? `${tr.name} · default` : tr.name)));
+  // The owner's default Trunk (#594/#726, named "Branch Agent") is a Trunk like the others, so it is offered too; Branch itself never is.
+  assert.deepEqual([...(await who.allTextContents())].map((text) => text.split(" · ")[0]).sort(), trunks.trunks.map((tr) => tr.name).sort(), "every Trunk, and only Trunks");
+  assert.ok(trunks.trunks.some((tr) => tr.id === trunks.defaultId), "the default is one of the Trunks");
+  const home = (trunks.trunks.find((tr) => tr.id === trunks.defaultId) ?? trunks.trunks[0]).name;
+  assert.equal(await dlg.locator('[data-act="chw-who"][aria-pressed="true"]').textContent().then((text) => text.split(" · ")[0]), home, "the default Trunk is chosen");
+  assert.equal(await dlg.getByRole("button", { name: "Branch", exact: true }).count(), 0, "no brand-voiced Branch conversation");
+
+  await dlg.locator('[data-act="chw-remove"]').click();
+  await page.getByText("Signal is disconnected").waitFor();
+  assert.equal((await call("/api/channel-setup/signal")).setUpHere, false);
+  assert.deepEqual(outside, [], "nothing left this computer");
   assert.deepEqual(errors, []);
 });

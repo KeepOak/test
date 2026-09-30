@@ -30,7 +30,7 @@
 //   STUB_PORT=33533 PORT=3533 TOKEN=<hex> node design/redesign/tools/verify-delight-catalogue.cjs
 // It takes about six minutes; three of them are the naps.
 const http = require("node:http");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { mkdirSync } = require("node:fs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, STUB_PORT = process.env.STUB_PORT;

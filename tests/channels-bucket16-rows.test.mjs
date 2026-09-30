@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fixture, httpService } from "./channels-parity-kit.mjs";
-import { parityServices } from "../dist/channels/connectors.js";
+import { parityServices } from "../dist/channels/parity-services.js";
 import { channelEntry } from "../dist/channels/catalog.js";
 import { ChannelConfigSchema, loadIntegrations } from "../dist/integrations/bootstrap.js";
 

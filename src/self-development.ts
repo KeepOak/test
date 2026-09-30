@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
@@ -11,16 +11,19 @@ import type { Projects } from "./projects.js";
 import type { ToolRegistry } from "./registry.js";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
-import { ContractTermsSchema, selfDevelopmentLine, selfDevelopmentLockdownRefusal, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
+import { ContractTermsSchema, selfDevelopmentBase, selfDevelopmentBaseWords, selfDevelopmentLine, selfDevelopmentLockdownRefusal, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
 import { lockdownActive } from "./lockdown.js";
+import { canonicalRepo, primaryRepo } from "./desktop/repo-pair.js";
 
-export const branchRepository = "stabrea/Branch-Agent";
+/** Branch's own repository; the old stabrea/Branch-Agent name is read as this one (src/desktop/repo-pair.ts). */
+export const branchRepository = primaryRepo;
+const isBranchRepository = (repo: string): boolean => canonicalRepo(repo) === canonicalRepo(branchRepository);
 const nameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/, "Use lowercase letters, digits and dashes");
 /**
  * A change to Branch itself starts from, and is proposed back to, one line only: the line Beta builds
  * (src/desktop/dev-build.ts `betaLine`). Nothing reaches the running app except as a merged change there.
  */
-const baseSchema = z.string().refine((value) => value === selfDevelopmentLine, `A change to Branch itself starts from ${selfDevelopmentLine}, the line Beta builds, and is proposed back to it.`);
+const baseSchema = z.string().refine(selfDevelopmentBase, `A change to Branch itself starts from ${selfDevelopmentBaseWords}, and is proposed back to it.`);
 const repositorySchema = z.string().url().default(`https://github.com/${branchRepository}.git`);
 
 export interface SelfDevelopmentDeps {
@@ -35,6 +38,10 @@ export interface SelfDevelopmentDeps {
   contracts: ContractBook;
   /** Q12: the audit record, where each widening is written. */
   store: Store;
+  /** A direct, persisted local-owner Full Access choice in this very conversation. */
+  fullAccessOwner?: (context: ToolContext) => string | null;
+  /** selfdev: the task is the owner's own turn through their designated default Trunk (src/runtime.ts `ownersDefaultTurn`). */
+  ownersDefaultTurn?: (context: ToolContext) => boolean;
 }
 
 const present = (path: string): Promise<boolean> => stat(path).then(() => true, () => false);
@@ -51,7 +58,8 @@ function repositoryAddress(input: string): { repo: string; url: URL } {
     throw new Error("Use the official Branch-Agent repository or your own GitHub fork of it.");
   // Rebuild from the repository name so credentials or other URL parts supplied by a caller can
   // never survive into the clone command. Do not replace this with input sanitising.
-  return { repo: parsed.repo, url: new URL(`https://github.com/${parsed.repo}.git`) };
+  const repo = isBranchRepository(parsed.repo) ? branchRepository : parsed.repo;
+  return { repo, url: new URL(`https://github.com/${repo}.git`) };
 }
 
 function sourceChangeFolder(workspace: string, name: string): string {
@@ -62,20 +70,41 @@ async function ensureSource(deps: SelfDevelopmentDeps, repository: { repo: strin
   const source = join(deps.workspace, sourceFolder);
   const exists = deps.exists ?? present;
   await deps.policy.assertAllowed(repository.url, "Branch Agent source repository");
+  // selfdev: a checkout with no commit is what a cut clone leaves behind; it is cloned again rather than used.
+  if ((await exists(source)) && await emptyCheckout(deps, source, signal)) await rm(source, { recursive: true, force: true, maxRetries: 5 });
   if (!(await exists(source))) {
-    await run(deps, deps.workspace, ["clone", "--origin", "origin", repository.url.href, sourceFolder], signal, 180_000);
+    // Branch's history is large: a clone is given half an hour. One cut short (a slow link, the task stopped) is
+    // removed at once, so the next attempt clones again instead of finding a checkout with nothing in it.
+    try { await run(deps, deps.workspace, ["clone", "--origin", "origin", repository.url.href, sourceFolder], signal, 1_800_000); }
+    catch (error) { await rm(source, { recursive: true, force: true, maxRetries: 5 }).catch(() => undefined); throw error; }
   }
-  const origin = repositoryAddress(await run(deps, source, ["remote", "get-url", "origin"], signal));
+  const address = await run(deps, source, ["remote", "get-url", "origin"], signal);
+  const origin = repositoryAddress(address);
   if (origin.repo.toLowerCase() !== repository.repo.toLowerCase())
     throw new Error(`The existing ${sourceFolder} belongs to ${origin.repo}, not ${repository.repo}.`);
+  // A checkout cloned before the move to KeepOak still names stabrea/Branch-Agent: it is pointed at the new name, so
+  // pushes and pull requests go straight there rather than through GitHub's redirect.
+  if (githubRepositoryOf(address).repo !== origin.repo) await run(deps, source, ["remote", "set-url", "origin", origin.url.href], signal);
   return source;
+}
+
+/**
+ * selfdev: a checkout whose HEAD Git says is unborn, with no worktree made from it: what a clone cut short leaves
+ * (a later fetch may have added the base, but no worktree can be made from it). Any other answer keeps it.
+ */
+async function emptyCheckout(deps: SelfDevelopmentDeps, source: string, signal: AbortSignal): Promise<boolean> {
+  if (await (deps.exists ?? present)(join(source, ".branch-worktrees"))) return false;
+  const head = await deps.git({ cwd: source, args: ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], timeoutMs: 60_000 }, signal);
+  if (head.status !== "failed" || head.stdout.trim()) return false;
+  const inside = await deps.git({ cwd: source, args: ["rev-parse", "--is-inside-work-tree"], timeoutMs: 60_000 }, signal);
+  return inside.status === "completed" && inside.stdout.trim() === "true";
 }
 
 async function ensureUpstream(deps: SelfDevelopmentDeps, source: string, fork: boolean, signal: AbortSignal): Promise<string> {
   if (!fork) return "origin";
   const official = `https://github.com/${branchRepository}.git`;
   const current = await run(deps, source, ["remote", "get-url", "upstream"], signal).catch(() => "");
-  if (current && githubRepositoryOf(current).repo.toLowerCase() !== branchRepository.toLowerCase())
+  if (current && !isBranchRepository(githubRepositoryOf(current).repo))
     throw new Error(`The existing upstream remote is ${githubRepositoryOf(current).repo}, not ${branchRepository}.`);
   if (!current) await run(deps, source, ["remote", "add", "upstream", official], signal);
   return "upstream";
@@ -90,10 +119,12 @@ function projectInstructions(name: string, base: string): string {
     `A refused call means the contract does not cover it; ask the owner and use ${widenToolName} rather than working around it.`,
     `Commands run only through shell.execute, with cwd set to a folder under branch-agent-source/.branch-worktrees/self-${name} that the contract's allowed paths cover whole, behind the OS sandbox; its writes stay in that folder.`,
     "Run node scripts/review.mjs with the focused test files for the change, then inspect git.diff before offering the result.",
+    "For an owner-reviewed merge, first commit all scoped edits, then run node scripts/review.mjs --jobs 1 followed by the contract's exact expectedTests list through shell.execute in this worktree. Only a successful review on a clean, unchanged commit records merge test evidence. Finish this task before the owner opens its review in Inbox; unrelated tasks can continue.",
     "On Windows these commands run inside WSL; when one says WSL is not ready (no Node.js or no bubblewrap there), tell the owner plainly what is missing and offer to set it up, and set it up only after the owner's yes.",
     `When the owner asks for a pull request, use github.pull_request_from_changes with name ${name}, targetRepository ${branchRepository}, and base ${base}.`,
     "The pull-request summary must include a Why merge this section in plain words, and the test evidence: each command run and its pass and fail counts.",
-    "Open a draft; never merge it, never send to a shared line, and never change a repository's settings or branch protection. The owner reviews and merges; Beta builds it after that.",
+    "Open it as a draft, and never send to a shared line or change a repository's settings or branch protection.",
+    "To finish it, wait with github.wait_for_checks until every check on the exact commit has passed (pending is never passed; when one fails, read why with github.check_logs, fix it and push again, or run a flaky one again with github.rerun_failed_checks), then call branch.finish_source_change with this worktree, the repository and the pull request number: in the owner's selected Full Access it gets an independent read-only review and merges the checked commit; otherwise the owner reviews and merges it in Inbox. Include branch.finish_source_change in the contract's permissions for that. Beta builds a merged change and tries it on a copy of the owner's data before it swaps in.",
   ].join(" ");
 }
 
@@ -139,10 +170,10 @@ async function bindContract(
  */
 async function proposedTo(deps: SelfDevelopmentDeps, source: string, remote: string, signal: AbortSignal): Promise<string[]> {
   const pushes = (await run(deps, source, ["remote", "get-url", "--push", "--all", "origin"], signal)).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const origins = [...new Set(pushes.map((address) => githubRepositoryOf(address).repo.toLowerCase()))];
+  const origins = [...new Set(pushes.map((address) => canonicalRepo(githubRepositoryOf(address).repo)))];
   if (origins.length !== 1) throw new Error("The source checkout's origin does not push to exactly one GitHub repository, so no worktree was made.");
   if (remote !== "upstream") return origins;
-  const upstream = githubRepositoryOf(await run(deps, source, ["remote", "get-url", "upstream"], signal)).repo.toLowerCase();
+  const upstream = canonicalRepo(githubRepositoryOf(await run(deps, source, ["remote", "get-url", "upstream"], signal)).repo);
   return [...new Set([...origins, upstream])];
 }
 
@@ -162,15 +193,15 @@ export async function prepareBranchSourceChange(
       reason: `From ${repository.repo} at ${input.base}. Paths ${terms.allowedPaths.join(", ")}; tools ${terms.permissions.join(", ")}`.slice(0, 500),
       runId: runId ? runId.slice(0, 64) : null, outcome: "pending" });
   const source = await ensureSource(deps, repository, signal);
-  const remote = await ensureUpstream(deps, source, repository.repo.toLowerCase() !== branchRepository.toLowerCase(), signal);
-  await run(deps, source, ["fetch", remote, input.base], signal, 180_000);
+  const remote = await ensureUpstream(deps, source, !isBranchRepository(repository.repo), signal);
+  await run(deps, source, ["fetch", remote, input.base], signal, 900_000);
   const copyName = `self-${input.name}`, branch = `branch/self-${input.name}`;
   const folder = `${sourceFolder}/.branch-worktrees/${copyName}`;
   const exists = deps.exists ?? present;
   const existing = await exists(sourceChangeFolder(deps.workspace, input.name));
   const contract = await bindContract(deps, { source, folder, ref: `${remote}/${input.base}`, remote, runId, terms, existing }, signal);
   if (!existing)
-    await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal);
+    await run(deps, source, ["worktree", "add", "-b", branch, `.branch-worktrees/${copyName}`, contract.sourceSha], signal, 600_000);
   const projectId = `branch-agent-${input.name}`;
   const instructions = projectInstructions(input.name, input.base);
   deps.projects.save(deps.owner, { id: projectId, name: `Branch Agent: ${input.name}`, instructions,
@@ -189,7 +220,7 @@ const toolName = "branch.prepare_source_change";
 export const PrepareSourceChangeSchema = z.object({
   name: nameSchema, repository: repositorySchema, base: baseSchema.default(selfDevelopmentLine), contract: ContractTermsSchema,
 }).strict();
-const contractDescription = "contract: the terms this change is held to, written down before anything changes: allowedPaths (globs inside the worktree, such as src/ui/** or tests/button.test.mjs), permissions (every tool name that may change something, such as files.write, git.commit, github.pull_request_from_changes), expectedTests, definitionOfDone, sideEffects and rollbackPlan.";
+const contractDescription = "contract: the terms this change is held to, written down before anything changes: allowedPaths (globs inside the worktree, such as src/ui/** or tests/button.test.mjs), permissions (every tool name that may change something, such as files.write, git.commit, github.pull_request_from_changes, branch.finish_source_change), expectedTests, definitionOfDone, sideEffects and rollbackPlan.";
 
 /** Only the owner, in the Branch app, may start or widen a change to Branch itself. */
 /**
@@ -197,15 +228,18 @@ const contractDescription = "contract: the terms this change is held to, written
  * context a tool call carries: a helper a chat's task set going carries its own context, but its record leads back
  * to the chat (src/key-context.ts, `runOrigin`).
  */
-function ownerOnly(context: ToolContext, store: Store): void {
+export function ownerOnly(context: ToolContext, store: Store, defaultTurn?: (context: ToolContext) => boolean,
+  doing = "prepare Branch Agent source changes"): void {
   const origin = context.runId ? runOrigin(store, context.runId) : null;
   // A household person's task records source "owner" too, so it is told apart by whose it is (NAS c7bbf84), and
   // the window must be on the owner's profile, as `ownerWorkOnly` and `Runtime.ownersOwnTask` ask.
   // NAS 9993ab7: a Trunk's turn records the owner's source too, so it is refused by its context, as remove-branch,
   // the one-button install and the password book already do.
-  if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || !store.profiles.isOwner() || context.trunk || context.trunkKeys
+  // selfdev: the owner's designated default Trunk is their own assistant, so its turn is the owner's; any other Trunk is refused.
+  if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || !store.profiles.isOwner() || context.trunk
+    || (context.trunkKeys && defaultTurn?.(context) !== true)
     || (origin && (origin.source !== "owner" || origin.shortLivedKey || origin.keyIds.length > 0 || origin.personProfileId || origin.lentTo)))
-    throw new Error("Only the owner in the Branch app can prepare Branch Agent source changes.");
+    throw new Error(`Only the owner in the Branch app can ${doing}.`);
   if (lockdownActive(store, context.owner)) throw new Error(selfDevelopmentLockdownRefusal);
 }
 
@@ -217,7 +251,7 @@ function registerSelfDevelopment(deps: SelfDevelopmentDeps): void {
     parameters: PrepareSourceChangeSchema,
     target: (args) => sourceChangeFolder(deps.workspace, String(args.name)),
     execute: (input, context: ToolContext) => {
-      ownerOnly(context, deps.store);
+      ownerOnly(context, deps.store, deps.ownersDefaultTurn);
       return prepareBranchSourceChange(deps, input, context.signal, context.runId ?? "");
     },
   });
@@ -225,18 +259,19 @@ function registerSelfDevelopment(deps: SelfDevelopmentDeps): void {
 }
 
 /**
- * Q12: a wider (or otherwise changed) contract, as a new revision. The approval policy puts every
- * call of this tool to the owner and never keeps the yes (`contractHold`), so each widening is one
- * explicit answer. The old revisions stay readable, and the widening is written in the audit record.
+ * Q12: a wider (or otherwise changed) contract, as a new revision. A direct owner's
+ * selected Full Access authorizes it; otherwise each widening needs a fresh explicit
+ * answer. The old revisions stay readable, and the widening is written in the audit record.
  */
 const widenTarget = (name: string): string => `the self-development contract of self-${name}`;
 
 /**
- * Q12: who said yes to this widening. It is the newest "allowed" answer to this very question, in
- * this conversation, given after the contract's newest revision was written, so one yes widens once.
- * With none (a call that never met the question) the widening is refused.
+ * Q12: a direct local owner may select Full Access for this conversation. Otherwise the
+ * newest "allowed" answer to this exact question must follow the prior revision.
  */
 function widenedBy(deps: SelfDevelopmentDeps, context: ToolContext, name: string, after: string): string {
+  const selected = deps.fullAccessOwner?.(context);
+  if (selected) return selected; // the saved mode is authorization, not a fabricated approval.decided answer
   const session = context.runId ? deps.store.run(context.runId)?.sessionId : undefined;
   const subject = `${widenToolName} on ${widenTarget(name)}`;
   const answer = session ? deps.store.audit.list(deps.owner, { action: "approval.decided", from: after, limit: 200 })
@@ -249,13 +284,13 @@ function registerWidening(deps: SelfDevelopmentDeps): void {
   deps.registry.register({
     name: widenToolName,
     permission: "git.remote",
-    description: "Ask the owner to widen the contract of a Branch Agent self-development worktree: more allowed paths, more tools, or changed tests, done, side effects or rollback. The owner is asked every time. Give only the terms that change and the reason.",
+    description: "Widen the contract of a Branch Agent self-development worktree: more allowed paths, more tools, or changed tests, done, side effects or rollback. Outside the owner's selected Full Access, each change asks the owner. Give only the terms that change and the reason.",
     parameters: z.object({ name: nameSchema, reason: z.string().trim().min(1).max(500), changes: ContractTermsSchema.partial().strict() }).strict(),
     // Named without the source folder's path: Branch's never-break check reads "branch-agent" in a
     // changing call's target as Branch's own service and would refuse the question before it is put.
     target: (args) => widenTarget(String(args.name)),
     execute: async (input, context: ToolContext) => {
-      ownerOnly(context, deps.store);
+      ownerOnly(context, deps.store, deps.ownersDefaultTurn);
       const folder = `${sourceFolder}/.branch-worktrees/self-${input.name}`;
       const current = deps.contracts.current(deps.owner, folder);
       if (!current) throw new Error(`${folder} has no contract to widen.`);

@@ -16,10 +16,12 @@ import { closeDlg, ic, openDlg, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { demonstrationButtons, forgetDemonstration, initDemonstrations } from './browser-demonstrations.js';
+import { networkLearningButtons, initNetworkLearning } from './network-learning.js';
 
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
-  busy: false, onChange: null, meta: "", pointer: null, text: "", textTimer: 0, wheel: null, lockWatch: false,
+  busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
   error: "", typed: "", opening: false, names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
@@ -71,11 +73,7 @@ async function readView() {
     if (B.profile) params.set("profile", B.profile);
     const answer = await api(`panels/browser?${params}`, undefined, "GET", controller.signal);
     if (B.reading !== controller || B.sid !== sid || !visible()) return;
-    B.control = answer.control; B.page = answer.page ?? B.page;
-    B.frameId = answer.frameId ?? ""; B.tabId = answer.tabId ?? ""; B.ready = answer.ready === true;
-    B.frame = answer.page?.frame ? `data:image/jpeg;base64,${answer.page.frame}` : "";
-    const meta = JSON.stringify([B.control, B.page?.url, B.page?.title, B.page?.tabs, B.ready, !!B.frame]);
-    const redraw = B.meta !== meta; B.meta = meta; changed(redraw);
+    applyView(answer);
   } catch (error) {
     if (error.name !== "AbortError" && B.reading === controller) {
       clearFrame(); B.meta = "";
@@ -86,7 +84,16 @@ async function readView() {
     }
   } finally { if (B.reading === controller) B.reading = null; schedule(); }
 }
+/** A view of the page (read, or handed back with an input's answer): the picture, and a redraw only when more changed. */
+function applyView(answer) {
+  B.control = answer.control; B.page = answer.page ?? B.page;
+  B.frameId = answer.frameId ?? ""; B.tabId = answer.tabId ?? ""; B.ready = answer.ready === true;
+  B.frame = answer.page?.frame ? `data:image/jpeg;base64,${answer.page.frame}` : "";
+  const meta = JSON.stringify([B.control, B.page?.url, B.page?.title, B.page?.tabs, B.ready, !!B.frame, B.error]);
+  const redraw = B.meta !== meta; B.meta = meta; changed(redraw);
+}
 function disconnect() {
+  forgetDemonstration();
   clearTimeout(B.timer); B.timer = 0;
   B.reading?.abort(); B.reading = null; clearFrame();
   if (B.pending) { B.pending = null; closeDlg(); }
@@ -121,7 +128,7 @@ export function ownerBrowserButtons(runId, name) {
   const back = task && (owned() || !B.control.writer)
     ? btn("owner-browser-handback", t("window.chat.stage.hand-back-to", { name: esc(name) }), "btn pri sm", task) : "";
   const take = owned() || free() ? "" : btn("owner-browser-take", t("action.take-over"), back ? "btn sm" : "btn pri sm");
-  return back + take + stop;
+  return back + take + demonstrationButtons() + networkLearningButtons() + stop;
 }
 /** Who is driving, in words, for the stage's pill. */
 export function ownerBrowserHolder(name) {
@@ -137,7 +144,8 @@ const canDrive = () => visible() && (owned() || free() || !hasOwnerBrowser()) &&
 /* The owner's input is sent in the order it was given, one request at a time: nothing typed or clicked while an earlier
    request is still going is dropped. */
 let chain = Promise.resolve();
-const inOrder = (work) => { chain = chain.then(work, work); return chain; };
+/* Any other input seals the letters waiting to go, so they reach the page before it, as they were typed. */
+const inOrder = (work) => { B.textJob = null; chain = chain.then(work, work); return chain; };
 const iconOf = (tab) => (tab.icon ? `<img class="ob7-ico" alt="" src="${esc(tab.icon)}">`
   : `<span class="ob7-ico ob7-letter" aria-hidden="true">${esc((hostOf(tab.url)[0] ?? "").toUpperCase())}</span>`);
 function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; } }
@@ -192,6 +200,8 @@ function accept(answer, path, body) {
   const failed = answer.status === "refused" || answer.status === "failed" || answer.ok === false;
   if (failed) B.error = answer.reason || answer.error || t("window.chat.stage.ob.failed");
   else if (path === "action") B.error = "";
+  // An input's answer carries the page as it is now: drawn at once, and the next input is aimed at it.
+  if (path === "action" && answer.view?.status === "ready" && B.control) { applyView(answer.view); return; }
   if (B.control && !failed) staleFrame(); else clearFrame();
   B.meta = ""; changed(true);
 }
@@ -202,15 +212,17 @@ async function drain() {
 async function send(path, body) {
   if (B.busy || !B.sid) return null;
   B.busy = true; clearTimeout(B.timer);
+  let seen = false;
   try {
     await drain();
     const answer = await api(`panels/browser/${path}`, body);
     if (B.sid === body.sessionId) accept(answer, path, body);
+    seen = answer?.view?.status === "ready";
     return answer;
   } catch (error) {
     B.error = error.message; clearFrame(); changed(true);
     return { status: "error", code: error.status, error: error.message };
-  } finally { B.busy = false; schedule(0); }
+  } finally { B.busy = false; schedule(seen ? undefined : 0); } // an answer that brought the page needs no second look
 }
 /** Nobody drives (or nothing is open yet): the owner's first input takes the browser, opening one if needed. */
 async function ensureDriving() {
@@ -258,15 +270,22 @@ function point(event, img) {
   const x = (event.clientX - rect.left - (rect.width - w) / 2) / w, y = (event.clientY - rect.top) / h;
   return x >= 0 && x <= 1 && y >= 0 && y <= 1 ? { x, y } : null;
 }
-function flushText() {
-  clearTimeout(B.textTimer); B.textTimer = 0;
-  if (!B.text) return;
-  if (B.pending) { B.textTimer = setTimeout(flushText, 100); return; }
-  const text = B.text; B.text = "";
-  if (text.length > 8192) { toast(t("window.chat.stage.ob.paste-long")); return; }
-  void inOrder(() => action("browser.owner_input", { kind: "text", text }));
+/* Typing: the first letter goes to the page at once. Letters typed while it is on its way join the next input that is
+   still waiting its turn, so fast typing is a few inputs rather than one per letter, and nothing waits on a timer.
+   Any other input (a key, click, scroll or address) seals it first, so the page gets everything in the order it was made. */
+function flushText() { B.textJob = null; }
+function typeText(text) {
+  if (!text) return;
+  if (B.textJob) { B.textJob.text += text; return; }
+  const job = { text };
+  void inOrder(async () => {
+    if (B.textJob === job) B.textJob = null;
+    while (B.pending && visible()) await pause(100);
+    if (job.text.length > 8192) { toast(t("window.chat.stage.ob.paste-long")); return; }
+    await action("browser.owner_input", { kind: "text", text: job.text });
+  });
+  B.textJob = job; // after inOrder, which seals whatever was waiting before
 }
-function typeText(text) { if (!text) return; B.text += text; clearTimeout(B.textTimer); B.textTimer = setTimeout(flushText, 70); }
 /* Scrolling arrives as many small steps: they are added up and sent as one while the last one is still going. */
 function flushWheel() {
   const wheel = B.wheel;
@@ -302,6 +321,9 @@ function pointerUp(event) {
 const inPage = (event) => event.target.closest?.("#stage7 .owner-browser7-page");
 
 export function initOwnerBrowser() {
+  initNetworkLearning({ bound: () => ({ ...bound(), tabId: B.tabId }), available: owned, onChange: changed });
+  initDemonstrations({ bound: () => ({ ...bound(), tabId: B.tabId }), available: owned, onChange: changed,
+    inOrder: work => { flushText(); return inOrder(work); } });
   markLive(["owner-browser-adopt", "owner-browser-stop", "owner-browser-take", "owner-browser-handback",
     "owner-browser-tab", "owner-browser-tab-close", "owner-browser-new-tab", "owner-browser-back", "owner-browser-forward",
     "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys"]);

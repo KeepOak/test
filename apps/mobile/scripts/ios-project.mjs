@@ -40,7 +40,7 @@ function appFiles(text) {
   out = addToList(out, APP_GROUP_ID, "children", [...APP_SOURCES.map(([name, n]) => `${id(n)} /* ${name} */`), `${id(0x10)} /* branch-native.json */`, `${id(0x11)} /* App.entitlements */`]);
   out = addToList(out, "504EC3001FED79650016851F", "files", APP_SOURCES.map(([name, n]) => `${id(0x100 + n)} /* ${name} in Sources */`));
   out = addToList(out, "504EC3021FED79650016851F", "files", [`${id(0x110)} /* branch-native.json in Resources */`]);
-  out = out.replaceAll("\t\t\t\tMARKETING_VERSION = 1.0;", "\t\t\t\tMARKETING_VERSION = 0.19.3;");
+  out = out.replaceAll("\t\t\t\tMARKETING_VERSION = 1.0;", "\t\t\t\tMARKETING_VERSION = 0.19.4;");
   return out.replaceAll("\t\t\t\tINFOPLIST_FILE = App/Info.plist;", "\t\t\t\tCODE_SIGN_ENTITLEMENTS = App/App.entitlements;\n\t\t\t\tINFOPLIST_FILE = App/Info.plist;");
 }
 
@@ -56,7 +56,7 @@ function extensionSettings(debug) {
 \t\t\t\tINFOPLIST_FILE = ShareExtension/Info.plist;
 \t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 15.0;
 \t\t\t\tLD_RUNPATH_SEARCH_PATHS = (\n\t\t\t\t\t"$(inherited)",\n\t\t\t\t\t"@executable_path/Frameworks",\n\t\t\t\t\t"@executable_path/../../Frameworks",\n\t\t\t\t);
-\t\t\t\tMARKETING_VERSION = 0.19.3;
+\t\t\t\tMARKETING_VERSION = 0.19.4;
 \t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = com.keepoak.branchagent.share;
 \t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
 \t\t\t\tSKIP_INSTALL = YES;

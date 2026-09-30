@@ -33,6 +33,7 @@ import { MatrixAdapter } from '../channels/matrix.js';
 import { SignalAdapter } from '../channels/signal-cli.js';
 import { connectWebSocket, type WebSocketConnect } from '../channels/ws-client.js';
 import { WebConfigSchema, type WebAccess } from './web.js';
+import { LaunchMcp, followLaunchFile } from './launch-mcp.js';
 import { HookSchema, type Hooks, type HookRunner, type HookConfig } from '../hooks.js';
 import type { ToolContext } from '../contracts.js';
 import type { NetworkPolicy } from '../network-policy.js';
@@ -40,7 +41,7 @@ import type { GitTools } from './git.js';
 import { GitHubAccess, GitHubConfigSchema, type TokenSource } from './github.js';
 import { GitHubAppSettingsSchema, chooseGitHubTokenSource } from './github-app.js';
 import { registerGitHub, registerGitRemote } from './git-tools.js';
-import { GitLabAccess, GitLabConfigSchema, registerGitLab } from './gitlab.js';
+import { GitLabAccess, GitLabConfigSchema } from './gitlab.js';
 import { LinearAccess, LinearConfigSchema } from './linear.js';
 import { JiraAccess, JiraConfigSchema } from './jira.js';
 import { IssueAccess, registerIssues, type IssueTrackers } from './issue-tools.js';
@@ -168,6 +169,8 @@ export interface ChannelHost { router: ChannelRouter; secret: (name: string) => 
   slackEvents?: (channelId: string, event: unknown, botUserId: string | null) => void;
   /** Version control on this computer, so the remote and GitHub tools can be switched on here. */
   git?: GitTools; activeSecret?: (name: string) => Promise<string>;
+  /** RES-719: GitLab named in the launch file, handed to the engine's own GitLab connection (src/gitlab-connection.ts). */
+  gitlab?: (settings: unknown) => void;
   /** The workspace, so the browser can send a file to a website and keep one it sends back. */
   files?: WorkspacePaths;
   /** Where screenshots and saved pages are kept, beside the private database. */
@@ -192,11 +195,16 @@ export interface ChannelHost { router: ChannelRouter; secret: (name: string) => 
   /** The owner's own MCP servers, kept in the store (src/mcp-own-servers.ts); started with the launch file's. */
   ownMcp?: { startSaved(launchIds: readonly string[]): Promise<void>; closeAll(): Promise<void> };
   /** The command-line tools the owner allowed (src/own-clis.ts), handed to the shell for each command. */
-  ownClis?: { attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[]): void } }
+  ownClis?: { attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[],
+    launchPrograms?: Record<string, { path: string; args: string[] }>): void } }
 
 /** Sending work to a server is off until the owner turns it on; GitHub needs a saved token too. */
 export const GitConfigSchema = z.object({
-  remote: z.boolean().default(false),
+  /**
+   * Sending and receiving work (git.clone, git.push, git.pull). Off by default; the owner's ruling (2026-09-27) is that
+   * it ships on once GitHub is connected, so with a `github` block and no word here it is on. `false` still keeps it off.
+   */
+  remote: z.boolean().optional(),
   github: GitHubConfigSchema.partial().optional(),
   /** bucket-18: GitHub App (A2227). Exchange private key for installation tokens instead of personal access token. */
   githubApp: GitHubAppSettingsSchema.optional(),
@@ -280,6 +288,9 @@ async function readConfig(path: string | undefined, env: NodeJS.ProcessEnv, chan
 
 export async function loadIntegrations(registry: ToolRegistry, path?: string, env = process.env, secrets?: SecretResolver, channels?: ChannelHost) {
   const closers: (() => Promise<void>)[] = [];
+  // The launch file's MCP servers and the watch on the file close with the rest, but only a running server is counted.
+  const following: (() => Promise<void>)[] = [];
+  let mcpRunning = 0;
   /** The live browser, when one is configured, so Settings can offer the sign-in-once window. */
   const hosted: {
     browser?: BranchBrowser; issues?: IssueAccess;
@@ -290,7 +301,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
   const before = new Set(registry.names());
   const close = async () => {
     for (const name of registry.names()) if (!before.has(name)) registry.unregister(name);
-    const results = await Promise.allSettled(closers.map(stop => stop()));
+    const results = await Promise.allSettled([...closers, ...following].map(stop => stop()));
     const errors = results.filter(result => result.status === 'rejected');
     if (errors.length) throw new Error(`Failed to close ${errors.length} integration(s)`);
   };
@@ -305,9 +316,22 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
   if (new Set(config.mcp.map(server => server.id)).size !== config.mcp.length)
     throw new Error('MCP server IDs must be unique');
   try {
-    for (const server of config.mcp) {
+    // The file's MCP servers follow the file while Branch runs (launch-mcp.ts): added, removed or changed ones take
+    // effect by the next turn, with nothing else restarted. Only this section is followed; the others are read once.
+    const launch = new LaunchMcp(async (server) => {
       const stop = await startMcp(registry, server, env, policy, channels?.mcp);
-      if (stop) closers.push(stop);
+      // Stopping a server takes its tools out too (its tools are named mcp.<id>.<tool>), not only its program.
+      const prefix = `mcp.${McpConfigSchema.parse(server).id}.`;
+      return async () => {
+        await stop?.();
+        for (const name of registry.names()) if (name.startsWith(prefix)) registry.unregister(name);
+      };
+    });
+    following.push(() => launch.close());
+    mcpRunning = (await launch.apply(config.mcp, true)).started.length;
+    if (path) {
+      const stopFollowing = followLaunchFile(path, async () => (await readConfig(path, env, channels))?.mcp ?? [], launch);
+      following.push(async () => stopFollowing());
     }
     if (config.browser) {
       const browser = new BranchBrowser(config.browser);
@@ -319,6 +343,8 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       browser.tracer = channels?.tracer as never;
       // w911 (A2019) hook: the browser sandbox; its settings are read when a task first opens a page.
       if (channels?.store) { const kept = channels.store as Store; browser.sandbox = new BrowserSandbox(kept, () => kept.secrets); }
+      // What a page address carries out (src/egress-guard.ts): the values the locker has unlocked this launch.
+      if (channels?.store) { const kept = channels.store as Store; browser.egressSecrets = () => kept.secrets.scrubber.values(); }
       // The quirks of particular websites live in the skills the owner installed, not in the
       // browser tool, so they are read fresh each time: installing a skill needs no restart.
       const skillStore = channels?.store as SiteSkillSource | undefined;
@@ -358,7 +384,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       if (tunedStore && tunedOwner) created.tuning = () => commandTuning(tunedStore, tunedOwner, env);
       await created.ready();
       registerShell(registry, created); closers.push(() => created.close());
-      channels?.ownClis?.attach(created, Object.keys(config.shell.executables));
+      channels?.ownClis?.attach(created, Object.keys(config.shell.executables), config.shell.executables);
       // A command line the owner can keep open, from the very same list of programs. It is closed
       // with everything else here, so nothing it started outlives the app.
       const store = channels?.store as Store | undefined;
@@ -383,7 +409,7 @@ export async function loadIntegrations(registry: ToolRegistry, path?: string, en
       await channels!.router.attach(adapter, { activation: channel.activation, pairing: channel.pairing, allowlist: channel.allowlist });
       closers.push(() => adapter.stop());
     }
-    return { close, count: closers.length, hosted };
+    return { close, count: closers.length + mcpRunning, hosted };
   } catch (error) { await close().catch(() => undefined); throw error; }
 }
 
@@ -483,6 +509,15 @@ function guardedSocket(policy: NetworkPolicy | undefined): WebSocketConnect | un
   };
 }
 
+/**
+ * One entry of the connections file's `channels` list, checked with the file's own shapes and built the same way,
+ * for a chat app set up in the window (src/channel-setup/live.ts). Its channel is not attached here.
+ */
+export async function buildChannelEntry(entry: unknown, env: NodeJS.ProcessEnv, host: ChannelHost, policy: NetworkPolicy | undefined): Promise<ChannelAdapter> {
+  const parsed = ChannelConfigSchema.safeParse(entry);
+  if (!parsed.success) throw new Error(`The saved settings are not complete: ${parsed.error.issues.map((issue) => issue.message).join('; ').slice(0, 300)}`);
+  return buildChannel(parsed.data, env, host, policy);
+}
 /** Builds the adapter one configured channel asks for, with its secrets and network guards. */
 async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host: ChannelHost, policy: NetworkPolicy | undefined): Promise<ChannelAdapter> {
   // Wave mac3 (channels-parity): IRC, XMPP, Mastodon and the rest are built in their own files.
@@ -559,8 +594,8 @@ async function buildEmail(channel: Extract<ChannelConfig, { type: 'email' }>, en
 /** Turns on the tools that reach a server: sending and receiving work, and GitHub when set up. */
 function enableGit(registry: ToolRegistry, config: z.infer<typeof GitConfigSchema>, host: ChannelHost | undefined, policy: NetworkPolicy | undefined): void {
   if (!host?.git) throw new Error('Version control settings are configured but this launch cannot host them');
-  if (config.remote) registerGitRemote(registry, host.git);
-  if (config.gitlab) enableGitLab(registry, config.gitlab, host, policy);
+  if (config.remote ?? (config.github !== undefined)) registerGitRemote(registry, host.git);
+  if (config.gitlab) enableGitLab(config.gitlab, host, policy);
   if (!config.github) return;
   if (!policy || !host.activeSecret) throw new Error('GitHub needs the network settings and the secrets locker');
   const secret = host.activeSecret;
@@ -576,15 +611,14 @@ function enableGit(registry: ToolRegistry, config: z.infer<typeof GitConfigSchem
   registerGitHub(registry, new GitHubAccess(config.github, policy, tokenSource), host.git);
 }
 
-/** Reading from GitLab; the token comes out of the active project's secrets at the moment of a call. */
-function enableGitLab(registry: ToolRegistry, settings: unknown, host: ChannelHost, policy: NetworkPolicy | undefined): void {
+/**
+ * RES-719: GitLab named in the launch file hands its address and token name to the engine's own GitLab connection
+ * (src/gitlab-connection.ts), which registers the tools; the token is still read from the active project at each call.
+ */
+function enableGitLab(settings: unknown, host: ChannelHost, policy: NetworkPolicy | undefined): void {
   if (!policy || !host.activeSecret) throw new Error('GitLab needs the network settings and the secrets locker');
-  const secret = host.activeSecret, name = GitLabConfigSchema.parse(settings).tokenSecret;
-  registerGitLab(registry, new GitLabAccess(settings, policy, async () => {
-    const value = await secret(name).catch(() => '');
-    if (!value) throw new Error(`Connect GitLab first: save a secret called ${name} in the active project holding a GitLab personal access token.`);
-    return value;
-  }));
+  if (!host.gitlab) throw new Error('GitLab is configured but this launch cannot host it');
+  host.gitlab(GitLabConfigSchema.parse(settings));
 }
 
 /**
@@ -631,8 +665,8 @@ function parseVerdict(printed: string): unknown {
 }
 
 function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext): HookRunner {
-  // The shell runs one host command at a time. Hooks for the same event fire together, so they take
-  // turns here, and each waits for any task command still running before it starts.
+  // Hooks for the same event fire together, so they take turns here; the shell itself queues each one behind any
+  // command still running in the same folder (SELF-302, src/integrations/command-turns.ts).
   let turn: Promise<unknown> = Promise.resolve();
   return (hook, payload) => {
     const mine = turn.then(() => runHook(shell, context, hook, payload));
@@ -643,17 +677,12 @@ function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext)
 
 async function runHook(shell: BranchShell, context: (runId: string) => ToolContext, hook: HookConfig, payload: Record<string, unknown>): ReturnType<HookRunner> {
   const scoped = { ...context(String(payload.runId ?? '')), signal: AbortSignal.timeout(hook.timeoutMs + 1000) };
-  for (;;) {
-    try {
-      await shell.whenIdle(scoped.signal);
-      const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
-      // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
-      // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
-      return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Another command started between the shell going quiet and this one asking: wait again.
-      if (!/already active/.test(message) || scoped.signal.aborted) return { ok: false, error: message };
-    }
+  try {
+    const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
+    // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
+    // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
+    return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

@@ -57,7 +57,7 @@ const REVIEWED = [
   "/api/attachments/file",
   "/api/runs/:id", "/api/runs/:id/inspect", "/api/runs/:id/steps", "/api/runs/:id/live", "/api/runs/:id/plan", "/api/runs/:id/receipts", "/api/runs/:id/recording",
   "/api/audit", "/api/audit/export.csv", "/api/usage", "/api/prompts", "/api/approvals/categories",
-  "/api/trunks", "/api/trunks/rooms/:id", "/api/trunks/conversations/:id", "/api/collab/events", "/api/teams/:id/handoffs",
+  "/api/trunks", "/api/trunks/:id/files", "/api/trunks/rooms/:id", "/api/trunks/conversations/:id", "/api/collab/events", "/api/teams/:id/handoffs",
   "/api/memory/tidy", "/api/memory/archive", "/api/memory/checkpoints", "/api/memory/export", "/api/memory/learned",
   "/api/memory/proposals", "/api/memory/versions", "/api/labels", "/api/seasons", "/api/seasons/morning",
   "/api/connections/catalog", "/api/mcp/catalogue", "/api/release-notes",

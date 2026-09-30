@@ -7,6 +7,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { newWindow } from "./new-window-places.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const deferred = () => { let settle; const promise = new Promise((done) => { settle = done; }); return { promise, settle }; };
 
@@ -45,6 +46,6 @@ test("a switch of person noticed while the window follows a link keeps the linke
   await going;
   assert.deepEqual(restarts, [], "the old page did not restart over the link it was following");
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
-  await page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id, sessionId, { timeout: 15000 });
+  await waitInPage(page, async (id) => (await import("/app/core/state.js")).S.chat === id, sessionId, { timeout: 15000 });
   assert.deepEqual(errors, []);
 });

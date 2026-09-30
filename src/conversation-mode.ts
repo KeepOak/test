@@ -14,7 +14,7 @@ import { presetRules, type Policy, type PolicyPresetName, type PolicyRule } from
  * Q59: a web action is any tool that reaches beyond the workspace (src/tool-reach.ts): it sends a
  * request over the network, or acts on a web page or another program's window. The registry says
  * which tools those are, and Ask first, Plan and Auto each ask before every one of them.
- *   full  Full access   nothing is checked with you (commands no rule covers still ask, as always)
+ *   full  Full access   commands no rule covers go ahead; the owner's named rules still apply
  *
  * The rule that decides what a conversation may do:
  *
@@ -93,7 +93,8 @@ export function policyForMode(policy: Policy, mode: ConversationMode, locked = f
     return { ...policy, rules: [refusal!, ...own.filter((rule) => rule.decision === "deny"), ...planQuestions(own), ...questions] };
   }
   if (mode === "ask") return { ...policy, rules: [...own.filter((rule) => rule.decision !== "allow"), ...lines] };
-  return { ...policy, rules: [...own.filter((rule) => !broadYes(rule)), ...lines] };
+  return { ...policy, ...(mode === "full" ? { unmatchedCommands: "allow" as const } : {}),
+    rules: [...own.filter((rule) => !broadYes(rule)), ...lines] };
 }
 
 /* ---------- what a new conversation starts on ---------- */

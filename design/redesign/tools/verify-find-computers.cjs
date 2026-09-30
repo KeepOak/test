@@ -4,7 +4,7 @@
 // then: PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-find-computers.cjs
 // It never presses Pair on a real computer (that would hand it an invitation); Pair is proven on stand-ins in
 // tests/find-computers.test.mjs and tests/find-computers-window.test.mjs.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 const BASE = `http://127.0.0.1:${PORT}`;

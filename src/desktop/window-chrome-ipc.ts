@@ -4,8 +4,8 @@ import type { BrowserWindow, IpcMain, IpcMainInvokeEvent, TitleBarOverlayOptions
  * DG-176: the window has no operating-system title bar, as the approved sample has none; the app's own top row is
  * the top of the window. On Windows and Linux the minimise, maximise and close buttons are drawn over that row
  * (`titleBarOverlay`). Only this window's own page, at Branch's own address, may say what the row under them looks
- * like, and it can say nothing but light, dark, or the one colour the row is (#rrggbb, as the page measured it under
- * the controls: every theme, light or dark, following the computer's setting or not).
+ * like: light, dark, a #rrggbb colour, or a bounded one-pixel sample taken by this authenticated window. The sample
+ * keeps the glyphs readable over a painted scene and never returns its pixel to the page.
  *
  * The overlay's colour is that colour made fully see-through, so the row's own look (a see-through theme, a picture
  * behind the glass) shows under the buttons unchanged, while the system still shades a hovered button against it
@@ -43,10 +43,23 @@ export function overlayFor(look: boolean | string): TitleBarOverlayOptions {
 }
 
 const isLook = (look: unknown): look is boolean | string => typeof look === "boolean" || (typeof look === "string" && /^#[0-9a-fA-F]{6}$/.test(look));
+type SampleRequest = { sample: { x: number; y: number } };
+function samplePoint(look: unknown): SampleRequest["sample"] | null {
+  if (!look || typeof look !== "object" || Object.keys(look).length !== 1 || !("sample" in look)) return null;
+  const sample = look.sample;
+  if (!sample || typeof sample !== "object" || Object.keys(sample).length !== 2 || !("x" in sample) || !("y" in sample)) return null;
+  return typeof sample.x === "number" && typeof sample.y === "number"
+    && Number.isInteger(sample.x) && Number.isInteger(sample.y) ? sample as SampleRequest["sample"] : null;
+}
+/** Electron's NativeImage bitmap is BGRA; the page never receives these bytes. */
+export function pixelFromBitmap(bitmap: Uint8Array): string {
+  if (bitmap.length < 4) throw new Error("Window look sample unavailable");
+  return `#${[bitmap[2], bitmap[1], bitmap[0]].map((value) => value!.toString(16).padStart(2, "0")).join("")}`;
+}
 
 export function registerWindowLookIpc(
   ipc: Pick<IpcMain, "handle" | "removeHandler">,
-  window: Pick<BrowserWindow, "webContents" | "on" | "setTitleBarOverlay">,
+  window: Pick<BrowserWindow, "webContents" | "on" | "setTitleBarOverlay" | "getContentBounds" | "isDestroyed">,
   origin: string,
   platform: NodeJS.Platform = process.platform,
 ): void {
@@ -56,11 +69,34 @@ export function registerWindowLookIpc(
       new URL(event.senderFrame?.url ?? "about:blank").origin !== origin)
       throw new Error("Window look access denied");
   };
+  let generation = 0;
+  let shownColor = "";
+  const show = (look: boolean | string) => {
+    const options = overlayFor(look);
+    if (shownColor === options.color) return;
+    window.setTitleBarOverlay(options);
+    shownColor = options.color ?? "";
+  };
   ipc.handle(windowLookChannel, (event, look: unknown) => {
     authorized(event);
+    const point = samplePoint(look);
+    if (point) {
+      if (platform === "darwin") return true;
+      const bounds = window.getContentBounds();
+      if (point.x < 0 || point.y < 0 || point.x >= bounds.width || point.y >= Math.min(bounds.height, overlayHeight))
+        throw new Error("Window look sample point is outside the title row");
+      const mine = ++generation;
+      return window.webContents.capturePage({ x: point.x, y: point.y, width: 1, height: 1 }).then((image) => {
+        authorized(event);
+        if (window.isDestroyed()) throw new Error("Window look access denied");
+        if (mine === generation) show(pixelFromBitmap(image.toBitmap()));
+        return true;
+      });
+    }
     if (!isLook(look)) throw new Error("Light, dark or one colour as #rrggbb only");
-    if (platform !== "darwin") window.setTitleBarOverlay(overlayFor(look));
+    generation++;
+    if (platform !== "darwin") show(look);
     return true;
   });
-  window.on("closed", () => ipc.removeHandler(windowLookChannel));
+  window.on("closed", () => { generation++; ipc.removeHandler(windowLookChannel); });
 }

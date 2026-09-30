@@ -15,6 +15,7 @@ const rules = [({ last }) => (last?.role === "user" && /write the note/.test(Str
 async function twoTrunks(t) {
   const { app } = await fixture(t, rules);
   on(app);
+  app.trunks.ensureDefault(true);
   const ada = app.trunks.create({ name: "Ada" });
   const bo = app.trunks.create({ name: "Bo" });
   await app.trunks.introduced();

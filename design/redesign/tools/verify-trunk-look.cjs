@@ -12,10 +12,11 @@
 //   7. Remove Trunk… asks first (naming what happens to its room), removes it, and the lists update without a reload.
 // Run on a throwaway engine: PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-trunk-look.cjs
 // It makes its own Trunks and a room, and a model connection answered by a stand-in on 127.0.0.1:1337 for Which model.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
 const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -40,10 +41,11 @@ const trunk = async (id) => (await api("trunks")).trunks.find((t) => t.id === id
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 const GIF = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
 
-/* The characters on disk: every folder under public/art/agents with a still, and Branch's own spirit. */
+/* The characters on disk a Trunk can wear: every folder under public/art/agents with a still. Branch's own figure is not
+   one of them: the mascot is the logo only (#654, core/art17.js looks17). */
 function onDisk() {
   const dir = path.join(__dirname, "../../../public/art/agents");
-  return ["branch", ...fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name, "still.webp"))).map((d) => d.name)];
+  return [...fs.readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory() && fs.existsSync(path.join(dir, d.name, "still.webp"))).map((d) => d.name)];
 }
 
 /* A stand-in model service where the catalog's "jan" listens, so the engine has a preset to offer Which model. */
@@ -61,7 +63,7 @@ async function signIn(page) {
   await page.getByLabel("Session token").fill(TOKEN);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.waitForSelector("#side .machine");
-  if (await page.isVisible(".ob9")) await page.click('.ob9 [data-act="ob-close"]');
+  if (await page.isVisible(".ob9")) await page.keyboard.press("Escape"); // Skip shows only after Welcome
 }
 /* The editor, opened as the owner opens it: Customize › Trunks › Edit. */
 async function openEditor(page, id) {
@@ -210,11 +212,11 @@ async function otherTabs(page, id, preset) {
   const spend = (await api("state")).approvalCategories?.find((c) => c.id === "spend");
   check("Spend money is greyed because the engine has no spending tool", spend && spend.tools.length === 0, `GET /api/state approvalCategories spend.tools=${JSON.stringify(spend?.tools)}`);
   if (preset) {
-    // Stress test: Which model is the window's ordinary select; Default ("") follows the conversation's model.
-    await page.selectOption(".dlg #tm-model-sel", preset);
+    // Stress test: Which model is the window's own dropdown (core/gsel.js); Default ("") follows the conversation's model.
+    await pickGsel(page.locator(".dlg #tm-model-sel"), preset);
     await settle(page);
-    check("Which model saves the engine's preset", (await trunk(id)).model === preset && (await page.inputValue(".dlg #tm-model-sel")) === preset, `GET model=${(await trunk(id)).model}`);
-    await page.selectOption(".dlg #tm-model-sel", "");
+    check("Which model saves the engine's preset", (await trunk(id)).model === preset && (await gselShown(page.locator(".dlg #tm-model-sel"))).value === preset, `GET model=${(await trunk(id)).model}`);
+    await pickGsel(page.locator(".dlg #tm-model-sel"), "");
     await settle(page);
     check("Default gives it back to the conversation's model", (await trunk(id)).model === "", "");
   } else check("Which model", false, "no model preset: the stand-in on 127.0.0.1:1337 could not start");
@@ -263,12 +265,11 @@ async function removal(page, id, sid, room) {
   check("the engine removed it", !all.trunks.some((t) => t.id === id), "GET /api/trunks");
   check("its room of two is removed, as the dialog said", !all.rooms.some((r) => r.id === room.id), "");
   check("the Trunks list updates without a reload", (await page.locator(`.prow [data-act="edit"][data-id="${id}"]`).count()) === 0, "Customize › Trunks row gone");
-  /* Both conversations are Branch's own now, so each row draws Branch's character (core/ui.js av), not the room's stack
-     of faces or the Trunk's pebble, emoji or photo. */
-  const branch = all.characters.find((c) => c.id === "branch");
+  /* Both conversations have no Trunk now, so each row draws the face of a conversation with no Trunk (core/ui.js av):
+     never the room's stack of faces, the Trunk's pebble, emoji or photo, nor any character (the mascot is the logo only). */
   const side = await page.evaluate(([r, s]) => [r, s].map((id) => { const f = document.querySelector(`#side .row[data-id="${id}"] .avw`); return { stack: !!f?.querySelector(".stack"), own: !!f?.querySelector(".pbl, .emoji15, .photo-tl"), still: f?.querySelector("[data-m17]")?.dataset.m17 ?? null }; }), [room.sessionId, sid]);
-  check("the sidebar updates without a reload", side.every((f) => !f.stack && !f.own && f.still === branch.still),
-    `the room's conversation no longer draws the room's faces and the Trunk's no longer wears its face; both draw Branch's: ${JSON.stringify(side)}`);
+  check("the sidebar updates without a reload", side.every((f) => !f.stack && !f.own && !f.still),
+    `the room's conversation no longer draws the room's faces and the Trunk's no longer wears its face; neither draws a character: ${JSON.stringify(side)}`);
   const kept = await call(`sessions/${sid}`);
   check("its conversation stays, as the dialog said", kept.ok && kept.data.sessionId === sid, `GET /api/sessions/{id} ${kept.status}`);
   const memory = (await api("memory/export")).records ?? [];

@@ -42,6 +42,8 @@ export const PoolUpdateSchema = z.object({
   strategy: z.enum(strategies).optional(),
   autoSwitch: z.boolean().optional(),
   defaultAccount: accountName.nullable().optional(),
+  /** MODEL-050: helpers per account at once before the next helper takes another account. */
+  jobsPerAccount: z.number().int().min(1).max(16).optional(),
 }).strict();
 export const NoticeSchema = z.object({ pool: poolName }).strict();
 export const RemoveSchema = z.object({ pool: poolName, account: accountName }).strict();
@@ -139,6 +141,7 @@ async function replaceKey(service: AccountsService, pool: Pool, account: string,
   await service.deps.store.locker.set(service.deps.owner, keyProject(pool.pool), keyName(account), key);
   service.dropBuilt(pool.pool, account);
   service.statesOf(pool.pool).delete(account);
+  service.rests.forget(service.deps.owner, pool.pool, account); // a new key starts with no rest
 }
 
 export function updatePool(service: AccountsService, input: unknown) {
@@ -154,6 +157,7 @@ export function updatePool(service: AccountsService, input: unknown) {
     if (asked.defaultAccount) accountIn(pool, asked.defaultAccount);
     pool.defaultAccount = asked.defaultAccount;
   }
+  if (asked.jobsPerAccount !== undefined) pool.jobsPerAccount = asked.jobsPerAccount;
   save(service, settings);
   return viewPool(service, pool);
 }
@@ -172,6 +176,7 @@ export async function removeAccount(service: AccountsService, input: unknown) {
   service.dropBuilt(pool.pool, asked.account);
   service.statesOf(pool.pool).delete(asked.account);
   service.ledger.forget(service.deps.owner, pool.pool, asked.account);
+  service.rests.forget(service.deps.owner, pool.pool, asked.account);
   note(service, `${account.label} (${pool.pool})`, "An account was removed and its key or sign-in taken out of the locker", "removed");
   return viewPool(service, pool);
 }
@@ -255,6 +260,18 @@ export function connectionName(service: AccountsService, pool: string): string {
   return program?.name ?? pool;
 }
 
+/**
+ * QA retest 2026-09-28 (m8): the list of the model that answers now (the owner's default), or null when that model has no
+ * list (one on this computer). A list's "used next" is only true of the list the next answer comes from.
+ */
+function answeringPool(service: AccountsService): string | null {
+  const models = service.deps.models;
+  if (!models.configured) return null;
+  const id = models.plan(service.deps.owner, "").choice.presetId;
+  const preset = models.presets.get(id);
+  return preset ? service.poolFor(preset)?.pool ?? null : null;
+}
+
 /** Every connection that can have several accounts, with its list (a list of one until more are added). */
 export async function viewAll(service: AccountsService) {
   const settings = service.settings();
@@ -271,7 +288,7 @@ export async function viewAll(service: AccountsService) {
   if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
   await service.readIdentities();
   if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
-  const pools = [];
+  const pools = [], answering = answeringPool(service);
   for (const [id, about] of seen) {
     const draft = { ...settings, pools: [...settings.pools] };
     const view = viewPool(service, poolOf(draft, id, about.kind, new Date(service.now())));
@@ -283,7 +300,7 @@ export async function viewAll(service: AccountsService) {
       ? { key: "accounts.notice.own-plans", service: about.name, text: poolingNotice(about.name) } : null;
     // An extra ChatGPT account whose sign-in turned out to be one Branch already had was merged into it (src/accounts/dedupe.ts).
     const merged = about.kind === "chatgpt" && service.mergedInto.size ? { mergedInto: Object.fromEntries(service.mergedInto) } : {};
-    pools.push({ ...view, name: about.name, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
+    pools.push({ ...view, name: about.name, answering: id === answering, notice, signedIn: signIn?.signedIn ?? null, signInProblems: signIn?.problems ?? null, ...merged });
   }
   if (someoneElse(service)) return { mode: settings.mode, pools: sharedWithPerson(service, seen), household: true };
   return { mode: settings.mode, pools };

@@ -56,7 +56,7 @@ async function fixture(t, parts, { width = 1440, height = 950, off = [] } = {}) 
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await signIn(page, server);
-  return { app, call, callRaw, page, errors, scout, ledger };
+  return { app, call, callRaw, page, errors, scout, ledger, home: app.trunks.ownerDefault() };
 }
 const send = async (page, text) => { await page.locator("#prompt").fill(text); await page.locator("#prompt").press("Enter"); };
 
@@ -103,9 +103,9 @@ const readyToSend = (page) => page.waitForFunction(() => !document.querySelector
 const lastReply = (page) => page.locator("#conversation .b").last();
 /** The conversation open in the side list. */
 const openChat = (page) => page.evaluate(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
-/* A Trunk's face beside a reply, not Branch's own: Branch's is its mark (.brand) or, since every face became a moving
-   character (public/app/core/figures.js), the "branch" character, whose art is /art/branch-*. */
-const TRUNK_FACE = '.gut .av:not(.brand):not(:has([data-m17^="/art/branch-"]))';
+/* A Trunk's face beside a reply: not the neutral tile of a conversation with no Trunk (.none18c), nor older marks
+   of Branch (.brand, or the "branch" character whose art is /art/branch-*). */
+const TRUNK_FACE = '.gut .av:not(.brand):not(.none18c):not(:has([data-m17^="/art/branch-"]))';
 /* A reply is signed by a Trunk when its face (not Branch's own mark) stands beside it. Its words stream in before its
    author is read (GET /api/trunks/conversations/<id>), so the face is waited for. */
 const signedSoon = (reply) => reply.locator(TRUNK_FACE).first().waitFor({ state: "attached", timeout: 15000 }).then(() => true, () => false);
@@ -127,7 +127,7 @@ test("with choosing a Trunk switched off, nothing new shows and @name goes to th
   // Choosing a Trunk for a conversation ships when needed (the ship-on rule); the owner switches it off here.
   const f = await fixture(t, [], { off: ["conversations"] });
   await send(f.page, "hello");
-  await f.page.locator("#conversation").getByText("Your assistant here.").waitFor({ timeout: 15000 });
+  await f.page.locator("#conversation").getByText(`${f.home.name} here.`, { exact: true }).waitFor({ timeout: 15000 });
   await readyToSend(f.page);
   // WINDOW BUG: public/app/chat/plus.js:28 whoRows() offers every Trunk under "Who answers in this conversation" even
   // with the engine's "conversations" part off, where choosing one is refused (src/trunks/api.ts:56).
@@ -143,7 +143,7 @@ test("with choosing a Trunk switched off, nothing new shows and @name goes to th
 test("choosing who answers: Talking to on an empty conversation, then every reply signed by that Trunk", async (t) => {
   const f = await fixture(t, ["conversations"]);
   await send(f.page, "hello");
-  await f.page.locator("#conversation").getByText("Your assistant here.").waitFor({ timeout: 15000 });
+  await f.page.locator("#conversation").getByText(`${f.home.name} here.`, { exact: true }).waitFor({ timeout: 15000 });
   await readyToSend(f.page);
   const pop = await whoMenu(f.page);
   assert.match(await pop.innerText(), /Who answers in this conversation[\s\S]*Branch[\s\S]*Ledger[\s\S]*Scout/i);
@@ -157,17 +157,19 @@ test("choosing who answers: Talking to on an empty conversation, then every repl
   // Back to your assistant: the next reply is not Scout's, and Scout's reply keeps its name.
   await (await whoMenu(f.page)).locator('[data-act="who"][data-v=""]').click();
   await send(f.page, "And you?");
-  await f.page.waitForFunction(() => /Your assistant here\./.test([...document.querySelectorAll("#conversation .b")].at(-1)?.textContent ?? ""), null, { timeout: 15000 });
+  await f.page.waitForFunction((words) => [...document.querySelectorAll("#conversation .b")].at(-1)?.textContent.includes(words), `${f.home.name} here.`, { timeout: 15000 });
   await readyToSend(f.page);
-  const signs = await f.page.$$eval("#conversation .b", (nodes, face) => nodes.map((node) => Boolean(node.querySelector(face))), TRUNK_FACE);
-  assert.equal(signs.filter(Boolean).length, 1, "only Scout's reply carries Scout's face");
+  const scoutReply = f.page.locator("#conversation .b").filter({ hasText: "Scout here." });
+  assert.equal(await scoutReply.locator(TRUNK_FACE).count(), 1, "Scout's earlier reply keeps its own face after the handback");
+  assert.equal(await scoutReply.locator(`[data-rk="t:${f.home.id}"]`).count(), 0, "the earlier Scout reply is never relabeled as the default");
+  assert.equal(await lastReply(f.page).locator(`[data-rk="t:${f.home.id}"]`).count(), 1, "the handback reply carries the default assistant's own face");
   assert.deepEqual(f.errors, []);
 });
 
 test("@ in the message box: the list offers the Trunks, Enter picks one, and sending makes it answer here", async (t) => {
   const f = await fixture(t, ["conversations"]);
   await send(f.page, "hello");
-  await f.page.waitForFunction(() => /Your assistant here\./.test(document.getElementById("conversation").textContent));
+  await f.page.waitForFunction((words) => document.getElementById("conversation").textContent.includes(words), `${f.home.name} here.`);
   await readyToSend(f.page);
   await f.page.locator("#prompt").fill("");
   await f.page.locator("#prompt").pressSequentially("@");
@@ -184,6 +186,127 @@ test("@ in the message box: the list offers the Trunks, Enter picks one, and sen
   const info = await f.call(`/api/trunks/conversations/${await openChat(f.page)}`);
   assert.equal(info.kind, "trunk");
   assert.equal(info.trunk.name, first);
+  assert.deepEqual(f.errors, []);
+});
+
+test("a room send waits for its identity instead of becoming an ordinary task", async (t) => {
+  const f = await fixture(t, ["conversations", "rooms"]);
+  const room = (await f.call("/api/trunks/rooms", { name: "Loading room", members: [f.scout.id, f.ledger.id] })).room;
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "attached" });
+  let release, reached;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const loading = new Promise((resolve) => { reached = resolve; });
+  await f.page.route(`**/api/trunks/conversations/${room.sessionId}`, async (route) => {
+    reached();
+    await gate;
+    await route.continue();
+  });
+  const posts = [];
+  f.page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (path === "/api/run" || /\/send$|\/say$/.test(path))) posts.push(path);
+  });
+  await openRow(f.page, room.sessionId);
+  await loading;
+  try {
+    await send(f.page, "@scout what is the price?");
+    await f.page.locator("#prompt").press("Enter"); // repeated Enter cannot duplicate a held send
+    // Leave the exact identity read pending while the Enter handler gets its turn.
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.deepEqual(posts, [], "no task is sent before the room identity is known");
+  } finally { release(); }
+  await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent));
+  assert.deepEqual(posts, [`/api/trunks/rooms/${room.id}/send`]);
+  const messages = f.app.store.sessionView(f.app.runtime.owner, room.sessionId).messages;
+  assert.equal(messages.filter((m) => m.role === "user" && m.content === "@scout what is the price?").length, 1);
+  assert.ok(messages.some((m) => m.role === "assistant" && m.content === "@scout: Scout here, in the room."));
+  assert.deepEqual(f.errors, []);
+});
+
+test("a failed room identity read keeps the draft and retry sends to that room", async (t) => {
+  const f = await fixture(t, ["conversations", "rooms"]);
+  const room = (await f.call("/api/trunks/rooms", { name: "Retry room", members: [f.scout.id, f.ledger.id] })).room;
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "attached" });
+  let fail = true;
+  await f.page.route(`**/api/trunks/conversations/${room.sessionId}`, (route) => fail
+    ? route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "Test identity unavailable" }) })
+    : route.continue());
+  const posts = [];
+  f.page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (path === "/api/run" || /\/send$|\/say$/.test(path))) posts.push(path);
+  });
+  await openRow(f.page, room.sessionId);
+  await send(f.page, "@scout what is the price?");
+  await f.page.getByText("Couldn't load this conversation. Your message was not sent. Try sending again.", { exact: true }).waitFor({ timeout: 5000 });
+  assert.deepEqual(posts, []);
+  assert.equal(await f.page.locator("#prompt").inputValue(), "@scout what is the price?");
+  assert.equal(await openChat(f.page), room.sessionId);
+  fail = false;
+  await f.page.locator("#prompt").press("Enter");
+  await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent));
+  assert.deepEqual(posts, [`/api/trunks/rooms/${room.id}/send`]);
+  assert.deepEqual(f.errors, []);
+});
+
+test("a room identity timeout ends the wait and leaves the draft for a real retry", async (t) => {
+  const f = await fixture(t, ["conversations", "rooms"]);
+  const room = (await f.call("/api/trunks/rooms", { name: "Timeout room", members: [f.scout.id, f.ledger.id] })).room;
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "attached" });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const path = `**/api/trunks/conversations/${room.sessionId}`;
+  await f.page.route(path, async (route) => { await gate; await route.continue().catch(() => {}); });
+  const posts = [];
+  f.page.on("request", (request) => {
+    const url = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (url === "/api/run" || /\/send$|\/say$/.test(url))) posts.push(url);
+  });
+  try {
+    await openRow(f.page, room.sessionId);
+    await send(f.page, "@scout what is the price?");
+    await f.page.getByText("Couldn't load this conversation. Your message was not sent. Try sending again.", { exact: true }).waitFor({ timeout: 20_000 });
+    assert.deepEqual(posts, []);
+    assert.equal(await f.page.locator("#prompt").inputValue(), "@scout what is the price?");
+  } finally { release(); }
+  await f.page.unroute(path);
+  await f.page.locator("#prompt").press("Enter");
+  await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent));
+  assert.deepEqual(posts, [`/api/trunks/rooms/${room.id}/send`]);
+  assert.deepEqual(f.errors, []);
+});
+
+test("switching rooms while identity loads never sends the old draft into the new room", async (t) => {
+  const f = await fixture(t, ["conversations", "rooms"]);
+  const first = (await f.call("/api/trunks/rooms", { name: "First room", members: [f.scout.id, f.ledger.id] })).room;
+  const next = (await f.call("/api/trunks/rooms", { name: "Next room", members: [f.scout.id, f.ledger.id] })).room;
+  await f.page.reload();
+  await f.page.locator("#app #side").waitFor({ state: "attached" });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  await f.page.route(`**/api/trunks/conversations/${first.sessionId}`, async (route) => { await gate; await route.continue(); });
+  const posts = [];
+  f.page.on("request", (request) => {
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "POST" && (path === "/api/run" || /\/send$|\/say$/.test(path))) posts.push(path);
+  });
+  try {
+    await openRow(f.page, first.sessionId);
+    await send(f.page, "@scout what is the price?");
+    await openRow(f.page, next.sessionId);
+  } finally { release(); }
+  await f.page.getByText("The conversation changed. Your message was not sent.", { exact: true }).waitFor();
+  assert.deepEqual(posts, []);
+  assert.equal(await openChat(f.page), next.sessionId);
+  assert.equal(await f.page.locator("#prompt").inputValue(), "");
+  await openRow(f.page, first.sessionId);
+  assert.equal(await f.page.locator("#prompt").inputValue(), "@scout what is the price?");
+  await f.page.locator("#prompt").press("Enter");
+  await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent));
+  assert.deepEqual(posts, [`/api/trunks/rooms/${first.id}/send`]);
   assert.deepEqual(f.errors, []);
 });
 

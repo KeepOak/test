@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { Run, Event } from "./contracts.js";
-import { estimateCost, type ModelPrice } from "./pricing.js";
+import { estimateCost, tokenCountsOf, type ModelPrice, type TokenCounts } from "./pricing.js";
+import { countedUsageTask } from "./conversation-bootstrap.js";
 
 export interface UsageAggregate {
   date: string;
@@ -90,18 +91,20 @@ export class UsageStore {
     return timestamp.split("T")[0] || timestamp;
   }
 
-  /** Tokens as the provider reported them, falling back to the runtime's own estimate. */
-  private runTokens(runId: string): { input: number; output: number } {
-    const usage = this.db
-      .prepare(`SELECT estimated_input, estimated_output, reported_input, reported_output FROM usage WHERE run_id = ?`)
-      .get(runId) as
-      | { estimated_input: number; estimated_output: number; reported_input: number; reported_output: number }
-      | undefined;
-    if (!usage) return { input: 0, output: 0 };
-    return {
-      input: usage.reported_input || usage.estimated_input || 0,
-      output: usage.reported_output || usage.estimated_output || 0,
-    };
+  /**
+   * Tokens as the provider reported them, falling back to the runtime's own estimate, with the prompt-cache reads and
+   * writes (parts of the input) so each is priced at its own rate (src/pricing.ts tokenCountsOf).
+   */
+  private runTokens(runId: string): TokenCounts {
+    const row = this.db.prepare(`SELECT * FROM usage WHERE run_id = ?`).get(runId) as Record<string, unknown> | undefined;
+    if (!row) return { input: 0, output: 0 };
+    const count = (column: string): number => Number(row[column] ?? 0) || 0;
+    return tokenCountsOf({
+      estimatedInput: count("estimated_input"), estimatedOutput: count("estimated_output"),
+      reportedInput: count("reported_input"), reportedOutput: count("reported_output"),
+      reportedCachedInput: count("reported_cached_input"), reportedCacheWrite: count("reported_cache_write"),
+      reportedCacheWrite1h: count("reported_cache_write_hour"),
+    });
   }
 
   /** Dollars this task spent on something that is not tokens, from its `spend.recorded` events. */
@@ -157,7 +160,7 @@ export class UsageStore {
     const runs = this.db
       .prepare(
         `SELECT id, session_id, status, created_at, source FROM tasks
-         WHERE created_at >= ? AND status NOT IN ('running', 'needs_input')
+         WHERE created_at >= ? AND status NOT IN ('running', 'needs_input') AND ${countedUsageTask(this.db)}
          ORDER BY created_at DESC`
       )
       .all(cutoff) as Array<{ id: string; session_id: string; status: string; created_at: string; source: string }>;
@@ -355,7 +358,7 @@ export class UsageStore {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
     const runs = this.db
-      .prepare(`SELECT id FROM tasks WHERE status NOT IN ('running', 'needs_input') AND created_at >= ? ORDER BY created_at DESC`)
+      .prepare(`SELECT id FROM tasks WHERE status NOT IN ('running', 'needs_input') AND created_at >= ? AND ${countedUsageTask(this.db)} ORDER BY created_at DESC`)
       .all(monthStart) as Array<{ id: string }>;
 
     let total = 0, cost = 0, unpricedRuns = 0;

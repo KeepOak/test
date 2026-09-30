@@ -7,7 +7,10 @@ import { markLive } from "../../core/features.js";
 import { toast, openDlg } from "../../core/ui.js";
 import { seg15 } from "../rows15.js";
 import { sections17, init17, load17 } from "../p17-advanced.js";
+import { initMarket } from "../market.js"; // RES-720
 import { t } from "../../../i18n.js";
+import { tunnelSeg, loadTunnel, initTunnel, tunnelLive } from "../tunnel-seg.js";
+import { restart as restartEngine } from "./self.js";
 
 /* The engine's own values: show the thinking (GET/POST /api/knobs, reasoning card, merged), the activity log
    (GET/POST /api/diagnostics/log/settings, merged), the model on this computer (GET /api/local-models), the browser's
@@ -19,6 +22,7 @@ import { t } from "../../../i18n.js";
    POST /api/heartbeat/switches, merged), checks and retries (flows-boards part "recipe-checks"), USB triggers (reach part
    "usb"). Tools: the readiness check (autonomy part "readiness"), searching X (personal part "x-search") and video tools
    (GET/POST /api/media/programs { mode }, merged). A three-way switch shows on unless "off" and turns on as "when-needed".
+   Reach webhooks from outside is the owner's public door for webhooks only (../tunnel-seg.js).
    Crash reports need a linked destination first, so they stay greyed; every other greyed row says why under itself
    (core/why.js, the locale's window.why.*). */
 const D = { knobs: null, log: null, local: null, profiles: null, orders: null, retrieval: null, providers: null, history: null,
@@ -53,7 +57,8 @@ const checked = (id) => (WIRES[id][0]() ? "checked" : "");
 
 async function loadAll() {
   const keys = Object.keys(PATHS).filter((key) => !household() || !OWNER_ONLY.has(key));
-  const got = await Promise.all(keys.map((key) => api(PATHS[key]).catch((error) => { toast(error.message); return null; })));
+  const [got] = await Promise.all([Promise.all(keys.map((key) => api(PATHS[key]).catch((error) => { toast(error.message); return null; }))),
+    household() ? null : loadTunnel()]);
   const raw = Object.fromEntries(keys.map((key, i) => [key, got[i]]));
   Object.assign(D, raw, { knobs: raw.knobs?.values ?? null, profiles: raw.profiles?.profiles ?? null, orders: raw.orders?.orders ?? null });
   render();
@@ -89,8 +94,9 @@ export function draw() {
   html += "<dl class=\"kv\" data-css=\"background:none;padding:0\">";
   html += [[t("window.settings.advanced.version"), s.version], [t("addons.pipelines.address"), location.host]].filter(([, v]) => v).map(([k, v]) => "<dt>" + k + "</dt><dd>" + esc(v) + "</dd>").join("");
   html += "</dl>";
-  /* Restart relaunches through the desktop app's bridge only (the engine's own route refuses on Windows and outside a
-     supervisor), so it stays greyed here. Open logs shows what the engine wrote down (GET /api/logs) in a new window. */
+  /* Restart: the desktop app starts itself again through its own bridge; in a browser tab the engine is restarted
+     (POST /api/dashboard/restart, as Branch itself › Restart the engine), and the engine says in its own words when it
+     cannot. Open logs shows what the engine wrote down (GET /api/logs) in a new window. */
   html += `<div class=\"acts\"><button class=\"btn sm\" type=\"button\" data-act=\"restart16\">${t("server.restart")}</button><button class=\"btn ghost sm\" type=\"button\" data-act=\"adv-logs\">${t("window.settings.advanced.open-logs")}</button></div>`;
   html += "</div>";
   html += localTile() + browserTile();
@@ -119,7 +125,7 @@ export function draw() {
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.checks-and-retries-in-procedures")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-checks-and-retries-in-procedures")} aria-label=\"${t("window.settings.advanced.checks-and-retries-in-procedures")}\" data-sw=\"set\"><small>${t("window.settings.advanced.a-step-can-check-its-own")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("autonomy.part.procedures")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-procedures-that-start-themselves\" aria-label=\"${t("autonomy.part.procedures")}\" data-sw=\"set\"><small>${t("window.settings.advanced.on-a-clock-or-after-a")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.start-when-a-usb-device-is")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-start-when-a-usb-device-is-plugged-in")} aria-label=\"${t("window.settings.advanced.start-when-a-usb-device-is")}\" data-sw=\"set\"><small>${t("window.settings.advanced.only-for-triggers-you-make")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.reach-webhooks-from-outside")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.reach-webhooks-from-outside")}\"><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"reach-webhooks-from-outside\">${t("accounts.switch.off")}</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"reach-webhooks-from-outside\">cloudflared</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"reach-webhooks-from-outside\">ngrok</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"reach-webhooks-from-outside\">Tailscale</button></span></span><small></small></div>`;
+    html += household() ? `<div class=\"ctl\"><b>${t("window.settings.advanced.reach-webhooks-from-outside")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.reach-webhooks-from-outside")}\"><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"knobs-owner-only\">${t("accounts.switch.off")}</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"knobs-owner-only\">cloudflared</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"knobs-owner-only\">ngrok</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"knobs-owner-only\">Tailscale</button></span></span><small></small></div>` : tunnelSeg(); // the owner's public door for webhooks (../tunnel-seg.js)
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.use-what-the-trigger-sent")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-use-what-the-trigger-sent\" aria-label=\"${t("window.settings.advanced.use-what-the-trigger-sent")}\" data-sw=\"set\"><small>${t("window.settings.advanced.payload-and-field-path-in-the")}</small></div>`;
     html += "</div>";
 
@@ -139,7 +145,7 @@ export function draw() {
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.from-now-on-for-a-specialist")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"from-now-on-for-a-specialist\">${t("window.settings.advanced.add-one")}</button></span><small>${t("window.settings.advanced.a-standing-instruction-kept-by-one")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.share-a-trunk")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"share-a-trunk\">${t("window.settings.p17-usage.export-2")}</button></span><small>${t("window.settings.advanced.through-git-as-a-skill-bundle")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.custom-modes")}</b><span class=\"right\"><code class=\"code15\">.branch/modes.json</code></span><small>${t("window.settings.advanced.your-own-modes-one-can-hand")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.agent-marketplace")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"agent-marketplace\">${t("window.settings.advanced.browse")}</button></span><small>${t("window.settings.advanced.trunks-others-made-each-with-a")}</small></div>`;
+    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.agent-marketplace")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"mk-open\">${t("window.settings.advanced.browse")}</button></span><small>${t("window.settings.advanced.trunks-others-made-each-with-a")}</small></div>`;
     html += "</div>";
 
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.library-more")}</h2>`;
@@ -197,12 +203,21 @@ async function chooseOutside(el) {
   await loadAll();
 }
 
+function restartNow() {
+  const desktop = window.branchDesktop?.restartBranch;
+  if (!desktop) return restartEngine();
+  return Promise.resolve().then(() => desktop()).catch((error) => toast(error.message));
+}
+
 export function init() {
+  initMarket(); // RES-720
   init17();
   on("adv-logs", () => openLogs());
+  on("restart16", () => restartNow());
   on("ad-orders", () => openOrders());
   on("ad-outside", (el) => chooseOutside(el));
-  markLive(["adv-logs", "ad-orders", "ad-outside", "sw:ad-facts", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
+  initTunnel();
+  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "sw:ad-facts", ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "ad-facts") { await saveFacts(e.target); return; }
     const wire = WIRES[e.target.id];
@@ -215,4 +230,4 @@ export function init() {
 
 export async function load() { await Promise.all([loadAll(), load17()]); }
 
-export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "sw:ad-facts": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };
+export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "sw:ad-facts": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };

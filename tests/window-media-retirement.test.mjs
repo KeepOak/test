@@ -41,7 +41,7 @@ test("an artwork redraw reuses its playing node before retiring unused media", a
   assert.equal(kept.source, "/pool-probe-same.webm");
 });
 
-test("Branch uses its logo while a Trunk keeps its own animated character", async (t) => {
+test("a conversation with no Trunk wears a neutral face while a Trunk keeps its own animated character", async (t) => {
   const { page } = await newWindow(t);
   const result = await page.evaluate(async () => {
     const [{ av }, { E }, { looks17 }] = await Promise.all([import("/app/core/ui.js"), import("/app/core/state.js"), import("/app/core/art17.js")]);
@@ -54,8 +54,9 @@ test("Branch uses its logo while a Trunk keeps its own animated character", asyn
       offered: looks17().some((look) => look.id === "branch"),
       trunk: av({ id: "12345678-1234-1234-1234-123456789abc", name: "Scout", character: character.id }) };
   });
-  assert.match(result.main, /av brand/);
-  assert.match(result.main, /mark-face/);
+  // A conversation with no Trunk wears the neutral tile: the mascot is the logo only (tests/loose-conversation-face).
+  assert.match(result.main, /av none18c/);
+  assert.doesNotMatch(result.main, /mark-face|av brand/);
   assert.doesNotMatch(result.main, /data-m17|data-rk="branch"/);
   assert.doesNotMatch(result.legacy, /data-m17|branch-wave|anim-idle/);
   assert.equal(result.offered, false);

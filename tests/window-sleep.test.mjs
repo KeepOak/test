@@ -10,33 +10,67 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 const MIN = 60 * 1000;
+/* A wait with no limit of its own (an engine promise, or a read inside the page) fails after `ms`, naming what it waited
+   for, instead of holding the file until the test runner ends it at 360 s with nothing said (seen on CI, on the base too). */
+async function bounded(what, promise, ms = 60000) {
+  let timer;
+  const late = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${typeof what === "function" ? what() : what} did not finish within ${ms / 1000} s`)), ms); });
+  try { return await Promise.race([promise, late]); } finally { clearTimeout(timer); }
+}
 
+/* The engine's picture read and drawn once more before the clock is moved: the last coherent snapshot, with nothing of
+   the setup left to arrive after the jump. The page's clock is Playwright's and does not move by itself here, so nothing
+   in this may wait on a page timer: a read that failed on the network would wait for one that never fires (api.js
+   backAgain, CI #664: "the setup's refresh and draw in the page did not finish within 60 s"). Quiet, a failed read fails
+   at once and the refresh is asked again. Every request is answered by the held route, whatever happens to its own
+   fetch, and a step that runs past its limit names the reads still in flight. */
 async function syncSetup(page, delayRefresh) {
-  let release = () => {}, received = () => {}, finished = false;
+  let release = () => {}, received = () => {}, finished = false, routeError = null;
   const held = new Promise((resolve) => { release = resolve; });
   const captured = new Promise((resolve) => { received = resolve; });
-  const delayed = async (route) => { const response = await route.fetch(); received(); await held; await route.fulfill({ response }); };
+  const pending = new Map();
+  const track = (request) => { const path = new URL(request.url()).pathname; if (path.startsWith("/api/") && path !== "/api/events/stream") pending.set(request, `${request.method()} ${path}`); };
+  const done = (request) => pending.delete(request);
+  page.on("request", track); page.on("requestfinished", done); page.on("requestfailed", done);
+  const inFlight = () => `in flight: ${[...pending.values()].join(", ") || "nothing"}${routeError ? `; the held route failed: ${routeError.message}` : ""}`;
+  const delayed = async (route) => {
+    try {
+      const response = await bounded("the held engine refresh's own answer", route.fetch());
+      received(); await held; await route.fulfill({ response });
+    } catch (error) { routeError = error; await route.continue().catch(() => {}); }
+  };
   if (delayRefresh) await page.route("**/api/state", delayed, { times: 1 });
   const ready = page.evaluate(async () => {
-    const { refresh, E } = await import("/app/core/state.js"), { renderNow } = await import("/app/core/dom.js");
-    await refresh();
+    const [{ refresh, E }, { renderNow }, { link }] = await Promise.all([import("/app/core/state.js"), import("/app/core/dom.js"), import("/app/core/api.js")]);
+    const quiet = link.quiet;
+    link.quiet = true;
+    try {
+      for (let tries = 1; ; tries++) {
+        try { await refresh(); break; } catch (error) { if (tries >= 5) throw error; }
+      }
+    } finally { link.quiet = quiet; }
     renderNow();
     if ((E.state?.runs ?? []).some((run) => ["running", "queued"].includes(run.status))) throw new Error("Sleep fixture still has setup tasks running");
   }).then(() => { finished = true; });
   try {
     if (delayRefresh) {
       let timeout;
-      try { await Promise.race([captured, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error("Setup refresh was never captured")), 30000); })]); }
+      try { await Promise.race([captured, new Promise((_, reject) => { timeout = setTimeout(() => reject(new Error(`Setup refresh was never captured; ${inFlight()}`)), 30000); })]); }
       finally { clearTimeout(timeout); }
       assert.equal(finished, false, "clock readiness waits for the deliberately held engine refresh");
       release();
     }
-    await ready;
-  } finally { release(); if (delayRefresh) await page.unroute("**/api/state", delayed); }
+    await bounded(() => `the setup's refresh and draw in the page (${inFlight()})`, ready);
+  } finally {
+    release();
+    if (delayRefresh) await bounded("letting go of the held engine refresh", page.unroute("**/api/state", delayed));
+    page.off("request", track); page.off("requestfinished", done); page.off("requestfailed", done);
+  }
 }
 
 async function fixture(t, { delayRefresh = false } = {}) {
@@ -51,7 +85,14 @@ async function fixture(t, { delayRefresh = false } = {}) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
   const browser = await chromium.launch({ headless: true });
-  t.after(async () => { release(); await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  /* Ending the test is bounded too: a report comes only once it has ended, so a stuck close looked like a silent hang. */
+  t.after(async () => {
+    release();
+    await bounded("closing the browser", browser.close());
+    await bounded("closing the server", server.close());
+    await bounded("closing the engine", app.close());
+    await discardTemp(root);
+  });
   const call = (path, body) => fetch(new URL(path, server.url), {
     method: body === undefined ? "GET" : "POST",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" },
@@ -65,7 +106,7 @@ async function fixture(t, { delayRefresh = false } = {}) {
     if (character) await call(`/api/trunks/${trunk.id}`, { character });
     trunks[name] = trunk;
   }
-  await app.trunks.introduced(); // creation returns before its model task completes; a late reply correctly wakes the window
+  await bounded("the Trunks' introductions", app.trunks.introduced()); // creation returns before its model task completes; a late reply correctly wakes the window
   await call("/api/delight/settings", { pets: { on: true, kind: "fennec" }, background: { on: true } });
   const page = await browser.newPage({ viewport: { width: 1366, height: 900 }, reducedMotion: "no-preference", serviceWorkers: "block" });
   const errors = [];
@@ -97,8 +138,17 @@ async function fixture(t, { delayRefresh = false } = {}) {
 }
 
 const face = (page, trunk) => page.locator(`#side [data-rk="t:${trunk.id}"]`).first();
-/* A face held still has let its file go (core/held.js): data-held17 names the loop it shows. */
-const loopOf = (page, trunk) => face(page, trunk).evaluate((el) => { const v = el.querySelector("video"); return v?.getAttribute("src") ?? v?.dataset.held17 ?? el.querySelector("img")?.getAttribute("src") ?? ""; });
+/* A face read in one call in the page: its loop (a face held still has let its file go, core/held.js, and data-held17
+   names the loop it shows), whether it rests, or whether its loop is paused. The side list is drawn again as the
+   engine's reads land, and a face found first and read after (locator.evaluate) could be the row just replaced, whose
+   loop had already moved to the new row: that read "" for a Trunk at work on a busy runner. */
+const onFace = (page, trunk, what) => page.evaluate(([id, what]) => {
+  const el = document.querySelector(`#side [data-rk="t:${id}"]`), v = el?.querySelector("video");
+  if (what === "rest") return !!el?.classList.contains("rest18");
+  if (what === "paused") return !!v?.paused;
+  return v?.getAttribute("src") ?? v?.dataset.held17 ?? el?.querySelector("img")?.getAttribute("src") ?? "";
+}, [trunk.id, what]);
+const loopOf = (page, trunk) => onFace(page, trunk, "loop");
 const playing = (page) => page.evaluate(() => [...document.querySelectorAll("video")].filter((v) => !v.paused).length);
 async function waitFor(page, predicate, arg) {
   try { await page.waitForFunction(predicate, arg); }
@@ -109,10 +159,10 @@ async function waitFor(page, predicate, arg) {
     throw error;
   }
 }
-const open = (page, trunk) => page.evaluate(async (id) => {
+const open = (page, trunk) => bounded(`opening ${trunk.name}'s conversation in the page`, page.evaluate(async (id) => {
   const { openConversation } = await import("/app/chat/chat.js");
   await openConversation(id); // finish its message/extras reads before advancing the clock
-}, trunk.chatSessionId);
+}, trunk.chatSessionId));
 /* Waits (no fixed sleep) until a face's loop matches, and, with still, until that loop is paused. */
 const settled = (page, trunk, pattern, still = false) => waitFor(page, ([id, source, still]) => {
   const el = document.querySelector(`#side [data-rk="t:${id}"]`), v = el?.querySelector("video");
@@ -130,7 +180,7 @@ test("left alone, every face, the pet and the scene fall asleep; after ten minut
   await waitFor(page, () => document.documentElement.classList.contains("doze18") && !!document.querySelector("#side .petbox.zz11"));
   await settled(page, trunks.Ledger, /ember\/sleep/);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "a character plays its sleeping loop");
-  assert.equal(await face(page, trunks.Ledger).evaluate((el) => el.classList.contains("rest18")), true);
+  assert.equal(await onFace(page, trunks.Ledger, "rest"), true);
   assert.equal(await page.locator("#side .petbox.zz11").count(), 1, "the pet naps");
   assert.equal(await page.locator("#bgLayer .paint11").evaluate((el) => el.getAnimations().every((a) => a.playState === "paused")), true, "the scene's drift holds");
   await page.clock.fastForward(8 * MIN + 5000);
@@ -138,10 +188,13 @@ test("left alone, every face, the pet and the scene fall asleep; after ten minut
     && [...document.querySelectorAll("video")].every((v) => v.paused) && !document.getAnimations().some((a) => a.playState === "running"));
   assert.equal(await playing(page), 0, "no loop plays after the long sleep");
   // Held still, a loop gives back its decoder: none has a frame loaded, and those that had played keep their loop's name.
-  const decoders = await page.evaluate(() => [...document.querySelectorAll("video")].map((v) => ({ ready: v.readyState, held: !!v.dataset.held17 })));
+  const decoders = await page.evaluate(() => [...document.querySelectorAll("video")].map((v) => ({ loop: v.getAttribute("src") ?? v.dataset.held17, ready: v.readyState, held: !!v.dataset.held17 })));
   assert.deepEqual(decoders.filter((v) => v.ready !== 0), [], "no held loop keeps a decoder");
   assert.ok(decoders.some((v) => v.held), "the loops that played were held, not only paused");
-  assert.equal(await page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running").length), 0, "no CSS animation runs");
+  // Named, so a failure says what still moves (a transition of the pet's box slid it in on a redraw while it slept).
+  const running = await page.evaluate(() => document.getAnimations().filter((a) => a.playState === "running")
+    .map((a) => `${a.animationName ?? a.transitionProperty ?? "animation"} on .${[...a.effect?.target?.classList ?? []].join(".")}`));
+  assert.deepEqual(running, [], "no CSS animation runs");
   assert.deepEqual(errors, []);
 });
 
@@ -153,7 +206,7 @@ test("only the open conversation's Trunk stays awake while you use the window; h
   assert.equal(await page.evaluate(() => document.documentElement.classList.contains("doze18")), false, "the window is awake while you use it");
   assert.match(await loopOf(page, trunks.Ledger), /ember\/idle/, "the open conversation's face stays awake");
   assert.match(await loopOf(page, trunks.Scout), /kite\/sleep/, "a face whose conversation is not open sleeps");
-  assert.equal(await face(page, trunks.Scout).evaluate((el) => el.querySelector("video").paused), true, "and, fallen asleep, lies still");
+  assert.equal(await onFace(page, trunks.Scout, "paused"), true, "and, fallen asleep, lies still");
   assert.equal(await page.evaluate(() => [...document.querySelectorAll("#side [data-rk] video")].filter((v) => !v.paused).map((v) => v.closest("[data-rk]").dataset.rk).every((k, _, all) => k === all[0])), true, "only the open conversation's face moves in the list");
   await face(page, trunks.Scout).hover();
   await settled(page, trunks.Scout, /kite\/idle/);
@@ -163,15 +216,42 @@ test("only the open conversation's Trunk stays awake while you use the window; h
 
 test("input wakes the window and the open conversation's face at once, gently", async (t) => {
   const { page, errors, trunks } = await fixture(t);
+  const defaultId = await page.evaluate(async () => (await import("/app/core/state.js")).defaultTrunk()?.id);
+  assert.ok(defaultId, "the empty chat belongs to the owner's default Trunk");
+  assert.equal(await page.locator(".hero11 [data-rk]").getAttribute("data-rk"), `t:${defaultId}`);
   await page.clock.fastForward(10 * MIN + 5000);
   await waitFor(page, () => document.documentElement.classList.contains("still18"));
   await page.mouse.move(700, 400);
-  await waitFor(page, () => !document.documentElement.classList.contains("doze18"));
-  assert.equal(await page.evaluate(() => document.documentElement.classList.contains("wake18")), true, "the window plays its wake");
+  // Read in the moment the window wakes: its wake class lasts 0.7 s, which a slow machine can spend between two reads.
+  const woke = await (await page.waitForFunction(() => {
+    const html = document.documentElement;
+    return !html.classList.contains("doze18") && { wake: html.classList.contains("wake18"), hero: document.querySelector(".hero11 video")?.getAttribute("src") ?? "" };
+  })).jsonValue();
+  assert.equal(woke.wake, true, "the window plays its wake");
   assert.equal(await page.locator("#side .petbox.zz11").count(), 0, "the pet wakes");
-  assert.match(await page.locator(".hero11 video").getAttribute("src"), /anim-idle/, "Branch, whose conversation is open, wakes");
+  assert.match(woke.hero, /\/idle[./]/, "the visible default Trunk wakes with the empty chat, in the same moment");
   assert.ok(await playing(page) > 0, "loops play again");
   assert.match(await loopOf(page, trunks.Scout), /kite\/sleep/, "a Trunk whose conversation is not open sleeps on");
+  assert.deepEqual(errors, []);
+});
+
+test("the first press wakes the window and still opens the conversation it pressed", async (t) => {
+  const { page, errors, trunks } = await fixture(t);
+  const row = page.locator(`#side .row[data-id="${trunks.Ledger.chatSessionId}"]`);
+  await row.waitFor(); // the sidebar may still be drawing its rows on a slow machine
+  const box = await row.boundingBox();
+  assert.ok(box);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.clock.fastForward(10 * MIN + 5000);
+  await waitFor(page, () => document.documentElement.classList.contains("still18"));
+  await page.evaluate(() => addEventListener("pointerdown", (event) => {
+    window.sleepPressedTarget = event.target.closest(".row");
+  }, { capture: true, once: true }));
+  await page.mouse.down();
+  assert.equal(await page.evaluate(() => window.sleepPressedTarget?.isConnected), true, "waking keeps the pressed row until its click");
+  await page.mouse.up();
+  await waitInPage(page, async (id) => (await import("/app/core/state.js")).S.chat === id,
+    trunks.Ledger.chatSessionId, { timeout: 5000 });
   assert.deepEqual(errors, []);
 });
 
@@ -182,7 +262,7 @@ test("a Trunk at work never sleeps", async (t) => {
   await page.clock.fastForward(10 * MIN + 5000);
   await settled(page, trunks.Ledger, /ember\/sleep/);
   assert.match(await loopOf(page, trunks.Busy), /tide\/work/, "its working loop stays");
-  assert.equal(await face(page, trunks.Busy).evaluate((el) => el.classList.contains("rest18")), false);
+  assert.equal(await onFace(page, trunks.Busy, "rest"), false);
   assert.match(await loopOf(page, trunks.Ledger), /ember\/sleep/, "the others sleep");
   assert.deepEqual(errors, []);
 });

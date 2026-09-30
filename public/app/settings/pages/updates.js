@@ -13,7 +13,7 @@ import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { channelSection, initChannel, loadChannel, channelStatus } from "../updates-channel.js";
 import { holdingTasks, lastLook, waitingLine } from "../../shell/autoupdate.js";
-import { clock, failDetail, failedWords, installing, keptWords, stageWords, targetWords, updateNow } from "../../shell/updating.js";
+import { clock, failDetail, failedWords, gentleWords, installing, keptWords, stageWords, targetWords, updateNow } from "../../shell/updating.js";
 
 let comfortData = null;
 /* What removing Branch would take away and keep, as the engine surveys it (POST /api/remove-branch/plan, which only
@@ -137,9 +137,9 @@ function statusCard(autoUpdate) {
   const s = updateNow() ?? channelStatus(), problem = lastLook.problem, waiting = waitingLine(), look = lastLook.plan;
   if (!s && !problem && !look) return "";
   if (installing(s)) {
-    const running = s.stages.find((stage) => stage.state === "running");
+    const running = s.stages.find((stage) => stage.state === "running"), why = gentleWords(s);
     return card(`${esc(stageWords(running))}… <time data-upd-since="${esc(running.startedAt)}">${clock(Date.now() - Date.parse(running.startedAt))}</time>`,
-      esc(targetWords(s)), { busy: true, button: btn("upd18-open", t("window.updates.card.show-progress"), false) });
+      esc(targetWords(s)), { busy: true, extra: why ? `<p>${esc(why)}</p>` : "", button: btn("upd18-open", t("window.updates.card.show-progress"), false) });
   }
   if (s?.phase === "error" || problem?.message) {
     const again = s?.release?.available ? btn("u-now", t("window.updates.card.try-again")) : btn("u-check", t("window.settings.updates.check-now"), false);
@@ -182,11 +182,11 @@ function draw() {
   if (version) html += "<p class=\"lede\">Branch Agent " + esc(version) + ".</p>" + notesRow(version);
   if (!notOwner() && bridgeHere()) html += statusCard(autoUpdate);
 
-  // The prototype's "Updating" section, under its heading. The switch says how often it really looks: every five minutes on Beta, once a day on Stable (src/comfort/auto-update.ts).
+  // The prototype's "Updating" section, under its heading. The switch says how often it really looks: every minute on Beta, once a day on Stable (src/comfort/auto-update.ts).
   html += `<div class="sec upd18-self"><h2>${t("window.settings.updates.updating")}</h2><div class="ctl"><b>${t("comfort.update.install")}</b><input class="sw" type="checkbox" id="u-auto" ${autoUpdate ? "checked" : ""} aria-label="${t("comfort.update.install")}" data-sw="set"><small>${t(beta ? "window.updates.card.checks-every-few-minutes" : "window.settings.updates.checks-every-day")}</small></div></div>`;
 
-  /* The rest, quieter: What's new (the notes this build ships, flows/whatsnew.js), undoing an update (greyed: it goes
-     through the desktop app's own flow), the channel, and the copy of the data folder. */
+  /* The rest, quieter: What's new (the notes this build ships, flows/whatsnew.js), undoing an update (greyed: going back
+     is `branch rollback` in a terminal, which says first whether it would lose work), the channel, and the copy of the data folder. */
   html += `<details class="adv upd18-more" id="u-more"${moreOpen ? " open" : ""}><summary>${esc(t("window.updates.card.more"))}</summary>`;
   html += `<div class="ctl"><b>${t("window.settings.updates.whats-new")}</b><span class="right"><button class="btn sm" type="button" data-act="whatsnew13">${t("window.settings.updates.whats-new")}</button></span><small></small></div>`;
   html += `<div class="ctl"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class="right"><button class="btn sm" type="button" data-act="soon" data-why="undo-the-last-update">${t("strip.undo")}</button></span><small></small></div>`;

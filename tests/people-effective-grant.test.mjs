@@ -82,7 +82,11 @@ test("a person's own /api/trunks names the Trunks in their rooms, and only those
   await f.ok("/api/trunks/rooms", { name: "Owner only", members: [ledger.id, pip.id], people: [] });
   await f.ok("/api/profiles/switch", { profileId: sam.id, pin: "5678" });
   const mine = await f.ok("/api/trunks");
-  assert.deepEqual(mine.trunks, [], "still no Trunk list for a person");
+  const ownDefault = f.app.trunks.personDefault();
+  assert.equal(ownDefault.scope, `profile:${sam.id}`);
+  assert.deepEqual(mine.trunks.map((trunk) => trunk.id), [ownDefault.trunk.id], "only Sam's own default is listed");
+  assert.ok(f.app.store.ownsSession(ownDefault.scope, mine.trunks[0].chatSessionId));
+  assert.ok(mine.trunks.every((trunk) => ![scout.id, ledger.id, quill.id, pip.id].includes(trunk.id)), "no owner Trunk becomes Sam's own");
   assert.deepEqual(mine.rooms.map((room) => room.name).sort(), ["Homework", "Sums"]);
   const names = [...new Set(mine.rooms.flatMap((room) => room.roster.map((trunk) => trunk.name)))].sort();
   assert.deepEqual(names, ["Quill", "Scout"], "not Ledger or Pip, whose room is not theirs");

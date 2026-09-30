@@ -14,7 +14,7 @@ import { t, language, formatNumber } from "../../i18n.js";
 import { liveHead } from "../places/inboxwork.js"; // long-work: time so far and Pause
 
 const SHOWN = 8;
-const L = { runId: null, snap: null, ctl: null, open: new Set(), all: false, frame: 0, onAsk: () => {}, onGone: () => {} };
+const L = { runId: null, snap: null, ctl: null, open: new Set(), all: false, frame: 0, onAsk: () => {}, onGone: () => {}, onShow: () => {} };
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const waitingAsk = (snap) => (snap?.steps ?? []).some((s) => s.kind === "ask" && s.state === "waiting");
 
@@ -65,7 +65,9 @@ function take(snap) {
 function draw() {
   L.frame = 0;
   const block = document.getElementById("live-steps");
-  if (!block) return;
+  // The first steps have no block to go in yet: the reply area is drawn again with it, rather than waiting for
+  // something else to redraw the chat (on a slow machine nothing may, and the steps never showed).
+  if (!block) { if (liveShown()) L.onShow(); return; }
   const box = $("#scroll");
   const atEnd = box && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   block.innerHTML = lines();
@@ -138,9 +140,10 @@ function lines() {
 }
 
 /* The chat hands in what to do when a question appears (read the waiting questions, so its card shows). */
-export function initLive({ onAsk, onGone }) {
+export function initLive({ onAsk, onGone, onShow }) {
   L.onAsk = onAsk;
   L.onGone = onGone;
+  L.onShow = onShow ?? onGone;
   on("live-all", () => { L.all = true; draw(); });
   // A line opened stays open while the list is drawn again (toggle does not bubble, so it is heard on the way down).
   document.addEventListener("toggle", (event) => {

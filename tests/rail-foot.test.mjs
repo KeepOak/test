@@ -121,15 +121,19 @@ test("DG-093 a Trunk's conversation offers a new conversation with it, and New c
   const session = await page.evaluate(() => document.querySelector('#side .row[aria-current="true"]').dataset.id);
   const chosen = new Map(app.trunks.conversations.chosen());
   assert.equal(chosen.get(session), ada.id, "Ada answers in the new conversation");
+  // trunk-one-row: inside Ada's timeline New conversation starts fresh with Ada: a new line in the same timeline, no new row.
+  const rows = await page.locator("#side .row").count();
   await page.locator('#side [data-act="newmenu"]').click();
-  await page.getByRole("menuitem", { name: /^New conversation/ }).click();
-  await page.waitForFunction(() => !document.querySelector('#side .row[aria-current="true"]'));
-  assert.equal(await page.locator("#conversation .b, #conversation .u").count(), 0, "a plain new conversation");
+  await page.getByRole("menuitem", { name: /^New conversation(?! with)/ }).click();
+  await page.locator(`#scroll .tl-sep19[data-tl="${session}"]`).waitFor();
+  assert.equal(await page.locator('#side .row[aria-current="true"]').getAttribute("data-line"), ada.id, "still Ada's timeline");
+  assert.equal(await page.locator("#side .row").count(), rows, "no new row");
+  assert.equal(await page.locator("#conversation .b, #conversation .u").count(), 0, "a fresh conversation");
   assert.deepEqual(errors, []);
 });
 
 test("DG-093 without Trunks a conversation's menu offers no Trunk to start with", async (t) => {
-  const { page, errors } = await signedIn(t, 1440, {}, async (app) => { await app.runtime.run({ prompt: "Plain one" }); });
+  const { page, errors } = await signedIn(t, 1440, {}, async (app) => { app.trunks.setMode("trunks", { mode: "off" }); await app.runtime.run({ prompt: "Plain one" }); });
   const row = page.locator("#side .row[data-id]").first();
   await row.waitFor();
   await row.click({ button: "right" });
@@ -194,4 +198,3 @@ test.skip("DG-094 in French the icon line speaks French", async (t) => {
   assert.equal((await page.locator('.lx-place-link[data-place="overview"]').innerText()).trim().length > 0, true);
   assert.deepEqual(errors, []);
 });
-

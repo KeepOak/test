@@ -6,7 +6,8 @@ import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 import { voiceSettings, type AudioProvider, type VoiceSettings } from "./voice.js";
-import { LocalSpeechSchema, Transcription, type AudioClip, type SttRoute, type TranscriptionResult } from "./voice-stt.js";
+import { LocalSpeechSchema, runProgram, Transcription, type AudioClip, type SttRoute, type TranscriptionResult } from "./voice-stt.js";
+import { LocalWhisper, type LocalWhisperFound, type WhisperChoice } from "./voice-whisper.js";
 import { Speech, SpeakRequestSchema, type ProgramLocator, type SpeakRequest, type SpokenAudio, type TtsRoute } from "./voice-tts.js";
 
 /**
@@ -30,14 +31,25 @@ export function audioOf(provider: Provider | undefined): AudioProvider | null {
 /** Whether a connection speaks Gemini's shape rather than the OpenAI one. */
 export const isGemini = (provider: Provider | undefined): boolean => provider?.name === "gemini";
 
-/** Which service should write a recording out, given what the owner chose and what is connected. */
-export function sttRouteFor(settings: VoiceSettings, provider: Provider | undefined): VoiceRoute<SttRoute> {
+/** What of the owner's voice settings the free speech program on this computer reads (src/voice-whisper.ts). */
+export const whisperChoice = (settings: VoiceSettings): WhisperChoice => ({
+  localSpeechExecutable: settings.localSpeechExecutable, localSpeechModel: settings.localSpeechModel,
+  localSpeechKind: settings.localSpeechKind, language: settings.language,
+});
+
+/**
+ * Which service should write a recording out, given what the owner chose and what is connected. `freeHere` is
+ * whether a free speech program on this computer is ready (RES-709): left on "auto", that is used before any
+ * paid service, so nothing is sent or charged.
+ */
+export function sttRouteFor(settings: VoiceSettings, provider: Provider | undefined, freeHere = false): VoiceRoute<SttRoute> {
   const audio = audioOf(provider);
   if (settings.keepAudioOnThisComputer)
     return { kind: "local", provider: null, reason: "You asked for audio to stay on this computer" };
   if (settings.sttRoute === "local") return { kind: "local", provider: null, reason: "You chose the speech program on this computer" };
   if (settings.sttRoute === "gemini") return { kind: "gemini", provider: audio, reason: "You chose Gemini" };
   if (settings.sttRoute === "openai") return { kind: "openai", provider: audio, reason: "You chose your model provider" };
+  if (freeHere) return { kind: "local", provider: null, reason: "A free speech program on this computer is ready, so nothing is sent or charged" };
   if (isGemini(provider)) return { kind: "gemini", provider: audio, reason: `${provider?.name} is connected, and it can write speech out` };
   if (settings.localSpeechExecutable && !audio)
     return { kind: "local", provider: null, reason: "No connected model offers this, but a speech program is set up here" };
@@ -81,6 +93,8 @@ export interface VoiceSystem {
   runProgram?: (file: string, args: string[], signal?: AbortSignal) => Promise<string>;
   /** Where a program lives on the search path, without starting it. */
   locate?: ProgramLocator;
+  /** RES-709: faster-whisper on this computer. Left out, the real one unless `runProgram` was handed in; null for none. */
+  whisper?: LocalWhisper | null;
 }
 
 /** Everything the voice screens and routes need in one object, so callers never wire it up twice. */
@@ -102,10 +116,18 @@ export class VoiceService {
     const given: VoiceSystem = typeof system === "function" ? { runProgram: system } : system ?? {};
     this.platform = given.platform ?? process.platform;
     const where = { platform: this.platform, ...(given.locate ? { locate: given.locate } : {}) };
-    this.transcription = given.runProgram ? new Transcription(policy, fetchImpl, given.runProgram) : new Transcription(policy, fetchImpl);
+    // A test that hands in its own program runner starts no program, so it gets no speech worker either.
+    const whisper = given.whisper !== undefined ? given.whisper : given.runProgram ? null : new LocalWhisper();
+    this.transcription = new Transcription(policy, fetchImpl, given.runProgram ?? runProgram, whisper);
     this.speech = given.runProgram ? new Speech(policy, fetchImpl, given.runProgram, where) : new Speech(policy, fetchImpl, undefined, where);
   }
   settings(owner: string): VoiceSettings { return voiceSettings(this.store, owner); }
+  /** The free speech program on this computer, as it stands for this owner's settings (RES-709). */
+  localSpeech(owner: string): LocalWhisperFound | null {
+    return this.transcription.whisper?.find(whisperChoice(this.settings(owner))) ?? null;
+  }
+  /** Ends the speech worker, if one is running. */
+  close(): void { this.transcription.whisper?.stop(); }
   /** The connection that answers for this owner right now, for whichever conversation is open. */
   private provider(owner: string, sessionId = "voice"): Provider | undefined {
     return this.models.plan(owner, sessionId).candidates[0]?.provider;
@@ -116,7 +138,7 @@ export class VoiceService {
     const tts = ttsRouteFor(settings, provider, this.platform);
     const off = tts.kind === "windows" && settings.systemVoice === "off";
     const reason = systemVoiceOffMessage(this.platform, settings.keepAudioOnThisComputer);
-    return { stt: sttRouteFor(settings, provider), tts: off ? { ...tts, reason } : tts, settings };
+    return { stt: sttRouteFor(settings, provider, !!this.localSpeech(owner)?.available), tts: off ? { ...tts, reason } : tts, settings };
   }
   /** The computer's own voices, or none without asking the computer while that voice is switched off. */
   async systemVoiceNames(owner: string): Promise<string[]> {
@@ -128,7 +150,7 @@ export class VoiceService {
     // Bucket 17 hook: a chosen speech plug-in does the work instead.
     const byEngine = await this.engines?.listen(owner, clip, settings.keepAudioOnThisComputer, options.signal);
     if (byEngine) return byEngine;
-    const route = sttRouteFor(settings, this.provider(owner));
+    const route = sttRouteFor(settings, this.provider(owner), !!this.localSpeech(owner)?.available);
     return this.transcription.transcribe(clip, {
       kind: route.kind, provider: route.provider,
       local: LocalSpeechSchema.parse({ executable: settings.localSpeechExecutable, model: settings.localSpeechModel, kind: settings.localSpeechKind }),

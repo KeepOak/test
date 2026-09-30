@@ -1,7 +1,7 @@
 /* Settings › General, 1:1 with the prototype's page, from the engine:
    Starting up: GET /api/deployment (autostart, daemon). Start with Windows is POST /api/deployment/autostart { enabled };
-   keep working when the window closes installs or removes the background engine, POST /api/deployment/daemon
-   { action: "install" | "uninstall" }. The engine refuses both, in its own words, unless Branch is installed.
+   Keep working when the window closes is the same saved gateway mode used on Settings › Gateway and the footer;
+   it never installs the separate scheduled daemon or claims the gateway is running until underGateway is true.
    Where Branch runs: "Add a computer" is Settings › Computer's own (flows/computers.js comp-add).
    Projects: places/project.js (GET /api/projects, each with its conversation count; Edit opens that project's
    instructions editor).
@@ -28,12 +28,15 @@ import { t } from "../../../i18n.js";
 import { P, loadProjects as readProjects, conversationsWord } from "../../places/project.js"; // area projects: counts and the editor
 
 let deployment = null;
+let gateway = null;
 let comfort = null; // the engine's comfort cards (values), the owner's only
 
 async function loadProjects() {
   try {
-    const [, d, c] = await Promise.all([ownerHere() ? readProjects() : null, api("deployment"), ownerHere() ? api("comfort").catch((error) => { toast(error.message); return null; }) : null]);
+    const [, d, g, c] = await Promise.all([ownerHere() ? readProjects() : null, api("deployment"), ownerHere() ? api("never-break").catch(() => null) : null,
+      ownerHere() ? api("comfort").catch((error) => { toast(error.message); return null; }) : null]);
     deployment = d;
+    gateway = g;
     comfort = c?.values ?? null;
   } catch (error) { toast(error.message); }
   renderNow();
@@ -83,11 +86,18 @@ function technical() {
   return `<div class="sec x15-sec"><h2>${t("window.settings.general.summaries-technical")}</h2>${knobSeg(t("window.settings.general.room-to-plan-for"), t("window.settings.general.overrides-what-the-model-says-it"), "compaction", "contextWindowTokens", [[null, t("window.settings.general.models-own")], [128000, "128k"], [200000, "200k"], [1000000, "1M"]], room)}${ctl("f15-repair-the-history-before-each-call", t("window.settings.general.repair-the-history-before-each-call"), t("window.settings.general.fixes-a-broken-tool-call-or"), kitOn("safety-history-repair"))}</div>`;
 }
 
+function backgroundStatus() {
+  if (!gateway) return t("gatewayChoice.unavailable");
+  const saved = gateway.mode !== "off";
+  if (gateway.underGateway === true) return saved ? t("gatewayChoice.running") : t(gateway.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater");
+  return saved ? t("gatewayChoice.saved") : t("gatewayChoice.off");
+}
+
 export function draw() {
   const lv = level(), starts = !!deployment?.autostart?.enabled, platform = deployment?.platform, computer = !onPhone();
   return `<h1>${t("settings.page.general")}</h1><p class="lede">${t("window.settings.general.how-branch-starts-and-behaves-on")}</p>
     ${computer && starts && startsWithWindows(platform) ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.general.branch-starts-with-windows")}</b><p>${t("window.settings.general.it-waits-in-the-tray-and")}</p></div></div>` : ""}
-    ${computer ? `<div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), t("window.settings.general.trunks-finish-what-they-started"), !!deployment?.daemon?.installed)}</div>` : ""}
+    ${computer ? `<div class="sec"><h2>${t("window.settings.general.starting-up")}</h2>${ctl("g-start", t(startKey(platform)), t("window.settings.general.opens-quietly-in-the-tray"), starts)}${ctl("g-tray", t("window.settings.general.keep-working-when-the-window-closes"), backgroundStatus(), gateway ? gateway.mode !== "off" : false)}</div>` : ""}
     ${ownerHere() ? where() : ""}
     <div class="sec"><h2>${t("memory.movein.kind.project")}</h2><div class="rows">${ownerHere() ? P.all.map(project).join("") : ""}</div></div>
     <div class="sec"><h2>${t("window.settings.general.keyboard")}</h2>${computer ? `<div class="ctl"><b>${t("comfort.keys.title")}</b><span class="right"><button class="btn sm" type="button" data-act="shortcuts">${t("window.settings.general.show-all")}</button></span><small>${t("window.settings.general.ctrl-k-to-find-anything-ctrl")}</small></div>` : ""}${K.kit ? ctl("g-cmds", t("commands.card.switch"), t("window.settings.general.commands-here"), kitOn("command-catalog")) : ""}</div>
@@ -100,9 +110,11 @@ const where = () => `<div class="sec"><h2>${t("window.flows.setup.step-where")}<
 
 /* ---------- starting up ---------- */
 async function startUp(el) {
+  // An unread gateway is never switched blind: the row stays off and says it could not be verified.
+  if (el.id === "g-tray" && !gateway) { el.checked = false; toast(t("gatewayChoice.unavailable")); return; }
   try {
     if (el.id === "g-start") await api("deployment/autostart", { enabled: el.checked });
-    else await api("deployment/daemon", { action: el.checked ? "install" : "uninstall" });
+    else await api("never-break", { mode: el.checked ? "on" : "off" });
   } catch (error) { toast(error.message); }
   await loadProjects();
 }

@@ -18,6 +18,7 @@ import { ownerOnly, registrars } from "./tools.js";
 import { BackgroundScreen } from "./background-screen.js";
 import { UsbTrigger, type UsbLister } from "./usb.js";
 import type { VideoDeps } from "./video.js";
+import { Continuity } from "./continuity.js";
 
 /**
  * Bucket R17-I (mac7/r17-i): reach and platform — other computers side by side, Trunks across
@@ -38,9 +39,13 @@ export interface ReachDeps {
   secret: (name: string, purpose: string) => Promise<string>;
   /** The other computers: bucket 23's node list today (see src/reach/machines.ts). */
   machines: MachineDirectory;
+  /** Refuses ownership transfer while a managed program from this conversation still runs. */
+  assertContinuityQuiescent: (sessionId: string) => void;
   version: string;
   platform: NodeJS.Platform;
   backgroundExec: PosixExec;
+  /** Waits while the owner has taken over this computer's screen (DesktopControl.whileDriving). */
+  screenHeld?: (runId: string, signal: AbortSignal) => Promise<void>;
   git: GitRunner;
   usbLister: UsbLister;
   relayPollMs?: number;
@@ -55,6 +60,7 @@ const nameKey = "reach-machine-name";
 
 export class Reach {
   readonly machines: MachineWindow;
+  readonly continuity: Continuity;
   readonly remoteTrunks: RemoteTrunks;
   readonly relay: RelayAdapter;
   readonly git: AgentGit;
@@ -72,6 +78,7 @@ export class Reach {
     const { runtime } = deps, store = runtime.store, owner = runtime.owner;
     const link = { fetcher: deps.fetch, secret: (name: string) => deps.secret(name, "another computer running Branch") };
     this.machines = new MachineWindow(store, owner, deps.machines, link.fetcher, link.secret);
+    this.continuity = new Continuity(runtime, deps.machines, link, deps.assertContinuityQuiescent);
     this.remoteTrunks = new RemoteTrunks(store, owner, deps.machines, link);
     this.relay = new RelayAdapter({ store, owner, fetcher: deps.fetch, secret: (name) => deps.secret(name, "the chat relay"), pollMs: deps.relayPollMs ?? 5000 });
     this.git = new AgentGit({ store, owner, files: deps.files, policy: deps.policy, git: deps.git, appVersion: deps.version });
@@ -80,7 +87,8 @@ export class Reach {
     const models = this.modelAccess();
     this.notes = new Notes(store, owner, models);
     this.arena = new Arena(store, owner, models);
-    this.background = new BackgroundScreen({ store, owner, exec: deps.backgroundExec, platform: deps.platform });
+    this.background = new BackgroundScreen({ store, owner, exec: deps.backgroundExec, platform: deps.platform,
+      ...(deps.screenHeld ? { held: deps.screenHeld } : {}) });
     deps.registry.onRunFinished(async (context) => this.background.closeRun(context.runId));
     for (const part of reachParts) this.sync(part);
     byRuntime.set(runtime, this);

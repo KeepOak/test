@@ -355,6 +355,8 @@ export class McpServer {
 
   /** Methods that need an initialized session; `undefined` means the method is unknown. */
   private async dispatch(session: McpSession, method: string, params: Record<string, unknown>): Promise<unknown> {
+    // While the owner shares nothing, nothing is offered: no tools (branch.ask included), resources or prompts.
+    if (!this.sharing().enabled) return notSharing(method);
     switch (method) {
       case 'tools/list': return { tools: this.listTools() };
       case 'tools/call': return this.callTool(session, params);
@@ -507,7 +509,10 @@ export class McpServer {
     const parsed = z.object({ prompt: z.string().trim().min(1).max(16000) }).strict().safeParse(args);
     if (!parsed.success) return failure('Give a "prompt" saying what you want Branch to do.');
     try {
-      const run = await this.runtime.run({ prompt: parsed.data.prompt, source: 'mcp' });
+      // Bound to what the owner shares: the task may use only the permissions the shared tools need, and as a task from
+      // outside it asks before any change (cappedPolicy), whatever the owner's own setting is.
+      const permissions = [...new Set([...this.exposed()].filter((name) => this.registry.names().includes(name)).map((name) => this.registry.permissionOf(name)))];
+      const run = await this.runtime.run({ prompt: parsed.data.prompt, source: 'mcp', permissions });
       await this.recordCall(run.id, 'branch.ask', parsed.data, run.output, run.status === 'completed');
       this.announceRun(run.id);
       return { content: [{ type: 'text', text: run.output }], isError: run.status !== 'completed' };
@@ -890,4 +895,16 @@ export async function startMcpServer(
     ...options,
   };
   return new McpServer(registry, store, runtime, knowledge, files, defaultOptions);
+}
+
+/** What a client is answered while the owner shares nothing: empty lists, and a plain refusal for anything else. */
+function notSharing(method: string): unknown {
+  if (method === 'tools/list') return { tools: [] };
+  if (method === 'resources/list') return { resources: [] };
+  if (method === 'prompts/list') return { prompts: [] };
+  if (method === 'logging/setLevel') return {};
+  if (method === 'tools/call') return failure('Branch is not sharing anything with other AI tools. Turn it on in Settings, under Sharing with other AI tools.');
+  if (['resources/read', 'resources/subscribe', 'resources/unsubscribe', 'prompts/get'].includes(method))
+    throw new Error('Branch is not sharing anything with other AI tools. Turn it on in Settings, under Sharing with other AI tools.');
+  return undefined;
 }

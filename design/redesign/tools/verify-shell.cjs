@@ -3,7 +3,7 @@
 // window-only control, from the window's DOM or storage). Page errors are recorded and must be zero.
 // Run: PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-shell.cjs
 // Use a throwaway engine (BRANCH_DATA_DIR=<fresh temp dir>): it makes Trunks and conversations and changes settings.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT || "3328", TOKEN = process.env.TOKEN;
 const BASE = `http://127.0.0.1:${PORT}`;

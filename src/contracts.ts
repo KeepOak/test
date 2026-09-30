@@ -141,13 +141,19 @@ export interface Message {
 export interface Usage {
   input: number;
   output: number;
-  /** Input tokens the provider served from its own prompt cache, when it reports them. */
+  /** Input tokens the provider served from its own prompt cache, when it reports them. Part of `input`. */
   cachedInput?: number | undefined;
+  /** Input tokens written to the provider's prompt cache (Anthropic's cache_creation_input_tokens). Part of `input`. */
+  cacheWrite?: number | undefined;
+  /** Of `cacheWrite`, the tokens written to the one-hour cache, when the provider says (charged at its own rate). */
+  cacheWrite1h?: number | undefined;
 }
 export const UsageSchema = z.object({
   input: z.number().int().nonnegative(),
   output: z.number().int().nonnegative(),
   cachedInput: z.number().int().nonnegative().optional(),
+  cacheWrite: z.number().int().nonnegative().optional(),
+  cacheWrite1h: z.number().int().nonnegative().optional(),
 });
 export interface ToolDescription {
   name: string;
@@ -305,9 +311,18 @@ export interface Event {
   data: Record<string, unknown>;
   createdAt: string;
 }
-export interface BudgetOptions {
+/** A task's step and token limits. `Infinity` is "no limit" (the owner's choice, or auto on a connection that is not billed). */
+export interface BudgetLimits {
   maxSteps: number;
   maxTokens: number;
+}
+export interface BudgetOptions extends BudgetLimits {
+  /**
+   * The limits that hold while a connection billed per token (an API key) answers. The owner's "auto" is no limit on a
+   * sign-in or a model on this computer, which cost nothing more per token, and these finite figures on a key, which
+   * does; they count only the steps and tokens spent while such a connection answered.
+   */
+  billed?: BudgetLimits;
 }
 export class BudgetError extends Error {
   override name = "BudgetError";
@@ -321,34 +336,66 @@ export class NeedsInputError extends Error {
   spoken?: boolean;
   constructor(readonly question: string) { super(question); }
 }
+const validLimit = (value: number): boolean => value === Infinity || (Number.isInteger(value) && value >= 1);
 export class Budget {
   steps = 0;
   tokens = 0;
+  /** Steps and tokens spent while a connection billed per token answered (see BudgetOptions.billed). */
+  billedSteps = 0;
+  billedTokens = 0;
+  private billedNow = false;
   constructor(
     // The whole prompt (tool catalog included) is charged every round, so a task with several tool
     // calls needs room; the per-run and delegated budgets can still be set lower.
-    readonly limits: BudgetOptions = { maxSteps: 60, maxTokens: 200000 },
+    private readonly options: BudgetOptions = { maxSteps: 60, maxTokens: 200000 },
   ) {
-    if (
-      !Number.isInteger(limits.maxSteps) ||
-      limits.maxSteps < 1 ||
-      !Number.isInteger(limits.maxTokens) ||
-      limits.maxTokens < 1
-    )
+    const all = [options, ...(options.billed ? [options.billed] : [])];
+    if (!all.every((limits) => validLimit(limits.maxSteps) && validLimit(limits.maxTokens)))
       throw new Error("Invalid budget");
+  }
+  /** The limits in force now: the billed ones too while a billed connection answers. */
+  get limits(): BudgetLimits {
+    const billed = this.billedNow ? this.options.billed : undefined;
+    if (!billed) return { maxSteps: this.options.maxSteps, maxTokens: this.options.maxTokens };
+    return {
+      maxSteps: Math.min(this.options.maxSteps, this.steps + billed.maxSteps - this.billedSteps),
+      maxTokens: Math.min(this.options.maxTokens, this.tokens + billed.maxTokens - this.billedTokens),
+    };
+  }
+  /** Says whether the connection answering the next request is billed per token, before it is stepped or charged. */
+  answeredBy(billed: boolean): void {
+    this.billedNow = billed;
   }
   step(signal: AbortSignal): void {
     signal.throwIfAborted();
-    if (++this.steps > this.limits.maxSteps)
+    const limit = this.limits.maxSteps;
+    this.steps++;
+    if (this.billedNow) this.billedSteps++;
+    if (this.steps > limit)
       throw new BudgetError("Step budget exhausted");
   }
   charge(tokens: number): void {
+    const limit = this.limits.maxTokens;
     this.tokens += tokens;
-    if (this.tokens > this.limits.maxTokens)
+    if (this.billedNow) this.billedTokens += tokens;
+    if (this.tokens > limit)
       throw new BudgetError("Token budget exhausted");
   }
   remaining(): number {
     return Math.max(0, this.limits.maxTokens - this.tokens);
+  }
+  /**
+   * One of `parts` equal shares of what is left, for work handed to several helpers at once; `steps` fixes each share's
+   * steps instead. No limit stays no limit, and the billed limits are shared the same way.
+   */
+  share(parts: number, steps?: number): BudgetOptions {
+    const part = (left: number, least: number): number => left === Infinity ? Infinity : Math.max(least, Math.floor(left / parts));
+    const billed = this.options.billed;
+    return {
+      maxSteps: steps ?? part(this.options.maxSteps - this.steps, 2),
+      maxTokens: part(this.options.maxTokens - this.tokens, 1),
+      ...(billed ? { billed: { maxSteps: steps ?? part(billed.maxSteps - this.billedSteps, 2), maxTokens: part(billed.maxTokens - this.billedTokens, 1) } } : {}),
+    };
   }
 }
 export interface ToolContext {
@@ -359,6 +406,10 @@ export interface ToolContext {
   budget: Budget;
   permissions: ReadonlySet<string>;
   depth: number;
+  /** workbench (SELF-302): this helper's lead asked for it to work in its own copy of the project (a git worktree). */
+  ownCopy?: boolean;
+  /** helper-lifecycle: this helper's lead let it hand work on (start helpers of its own); src/helper-tree.ts. */
+  delegates?: boolean;
   /** Set for delegated specialists: memory reads are limited to shared facts and this agent's own. */
   agent?: string;
   /** FQ-routing.isolated-agents: the Trunk this work is for, set on a Trunk's turn and carried through every
@@ -378,6 +429,12 @@ export interface ToolContext {
    * write to. The shell runs it behind the OS sandbox with writes held to this folder, or refuses.
    */
   writesConfinedTo?: string;
+  /**
+   * selfdev: set only by the runtime, for a command in the owner's selected Full Access (src/runtime.ts
+   * `ownerFullAccessFor`): a command held to the self-development worktree may then reach the network (npm
+   * install, downloads) while its writes stay held to that folder. Never set for anyone else.
+   */
+  ownerFullAccess?: boolean;
   /**
    * mac7/eval-honesty: a question asked in isolation — a grader marking work Branch itself did.
    * Nothing the owner has remembered, written down, installed or asked for standing reaches it, and
@@ -440,7 +497,7 @@ export interface ToolContext {
    * mac7/lockdown-fix: set on a Trunk's turn (and carried into its sub-tasks and side jobs): the keys
    * it may use. A sign-in account never answers for it (src/accounts/trunk-guard.ts).
    */
-  trunkKeys?: { copyFromOwner: boolean; accounts: Record<string, string> };
+  trunkKeys?: { copyFromOwner: boolean; accounts: Record<string, string>; next?: Record<string, string[]> | undefined };
 }
 export interface ToolDefinition<T = unknown> {
   name: string;
@@ -465,6 +522,13 @@ export interface ToolDefinition<T = unknown> {
    * a tool whose permission does not say enough declares it here.
    */
   reach?: "local" | "outbound";
+  /**
+   * selfdev (SELF-022): a tool that mostly waits, each of its own steps bounded, may run this long in one call even past
+   * the owner's tool time limit: github.wait_for_checks (it only looks), so a long CI run or merge queue is waited on in
+   * a few calls rather than dozens the loop guard would refuse, and branch.finish_source_change, whose independent
+   * review and ready-then-merge must not be cut off half-way. The task can still be stopped at any moment.
+   */
+  waitsUpToMs?: number;
   execute: (args: T, context: ToolContext) => Promise<unknown>;
   /** What this call would touch, for the approval policy, when the arguments alone do not say. */
   target?: (args: T, context: ToolContext) => string | null;

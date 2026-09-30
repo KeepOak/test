@@ -237,3 +237,67 @@ test("with no model set up nothing is listed and every task is refused in plain 
   assert.equal(models.configured, false);
 });
 const finishedSetup = (app) => app.store.get("settings", app.runtime.owner, "onboarding")?.data?.done === true;
+
+test("a task kept on this computer never falls back to a connection elsewhere, nor do the later turns of its conversation", async (t) => {
+  const { saveRoutingSettings } = await import("../dist/local-routing.js");
+  const here = (name, behaviour) => Object.assign(scripted(name, behaviour), { embeddings: () => ({ endpoint: "http://127.0.0.1:11434/v1/embeddings" }) });
+  let down = true;
+  const local = here("here", () => { if (down) throw new ProviderHttpError(503); return { content: "here answered", toolCalls: [] }; });
+  const cloud = scripted("cloud");
+  const { app } = await fixture(t, [
+    { id: "cloud", name: "Cloud", provider: cloud, model: "c" },
+    { id: "here", name: "Here", provider: local, model: "h" },
+  ], { retryPolicy: { maxRetries: 1, baseDelayMs: 1, maxDelayMs: 5 } });
+  app.runtime.models.configure("local", { fallbackOrder: ["cloud"] });
+  saveRoutingSettings(app.store, "local", { enabled: true });
+  const kept = await app.runtime.run({ prompt: "Tidy this note: my passport number is 123456789 and my address is 1 Elm St" });
+  assert.equal(kept.status, "failed", "the model here is down, so the task fails honestly");
+  assert.equal(cloud.calls, 0, "it was not sent to the cloud connection in the fallback order");
+  assert.ok(kinds(app, kept, "model.routed").some((event) => event.private === true));
+  down = false;
+  const first = await app.runtime.run({ prompt: "My bank account number is 12345678, please remember the sort code 01-02-03" });
+  assert.equal(first.output, "here answered");
+  const later = await app.runtime.run({ prompt: "Now summarise that in one line", sessionId: first.sessionId });
+  assert.equal(later.output, "here answered", "the next turn carries the same words, so it stays here too");
+  assert.equal(cloud.calls, 0);
+  // A side job that names its own connection elsewhere (the advisor here) is answered here instead.
+  const { saveSecondOpinionSettings } = await import("../dist/second-opinion.js");
+  saveSecondOpinionSettings(app.store, "local", { advisor: true, advisorPreset: "cloud" });
+  const advised = await app.runtime.run({ prompt: "And my date of birth is 1 May 1990", sessionId: first.sessionId });
+  assert.equal(advised.output, "here answered");
+  await app.runtime.idle?.();
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(cloud.calls, 0, "the advisor did not reach the cloud connection");
+  assert.ok(kinds(app, advised, "model.kept_here").some((event) => event.wanted === "cloud"), "and it says the advisor was answered here");
+  saveSecondOpinionSettings(app.store, "local", { advisor: false });
+  // An ordinary task in another conversation is not held here.
+  const plain = await app.runtime.run({ prompt: "What is the capital of Peru?" });
+  assert.equal(plain.output, "cloud answered");
+});
+
+test("a task kept on this computer with no model here is refused, never sent elsewhere", async (t) => {
+  const { saveRoutingSettings } = await import("../dist/local-routing.js");
+  const cloud = scripted("cloud");
+  const { app } = await fixture(t, [{ id: "cloud", name: "Cloud", provider: cloud, model: "c" }]);
+  saveRoutingSettings(app.store, "local", { enabled: true });
+  const refused = await app.runtime.run({ prompt: "my password is hunter2, keep it safe" });
+  assert.equal(refused.status, "failed");
+  assert.match(refused.output, /stay on this computer/);
+  assert.equal(cloud.calls, 0);
+});
+
+test("a caller other than the owner cannot name a cloud model to take a private task off this computer", async (t) => {
+  const { saveRoutingSettings } = await import("../dist/local-routing.js");
+  const here = Object.assign(scripted("here"), { embeddings: () => ({ endpoint: "http://127.0.0.1:11434/v1/embeddings" }) });
+  const cloud = scripted("cloud");
+  const { app } = await fixture(t, [
+    { id: "cloud", name: "Cloud", provider: cloud, model: "c" },
+    { id: "here", name: "Here", provider: here, model: "h" },
+  ]);
+  saveRoutingSettings(app.store, "local", { enabled: true });
+  const outside = await app.runtime.run({ prompt: "my passport number is 123456789, summarise it", model: "cloud", source: "channel" });
+  assert.equal(outside.output, "here answered", "a chat app's choice of model does not beat the owner's rule");
+  assert.equal(cloud.calls, 0);
+  const owners = await app.runtime.run({ prompt: "my passport number is 123456789, summarise it", model: "cloud" });
+  assert.equal(owners.output, "cloud answered", "the owner's own explicit choice still wins");
+});

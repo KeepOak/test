@@ -54,9 +54,10 @@ test("Codex's failed turn decides the reason: a model its sign-in cannot use is 
   const stdout = failedTurn(JSON.stringify({ type: "error", status: 400, error: { type: "invalid_request_error",
     message: "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account." } }));
   await assert.rejects(provider("codex", { code: 1, stdout, stderr: mcpWarning }).complete(request()), (error) => {
-    assert.match(error.message, /model this sign-in cannot use/);
-    assert.match(error.message, /codex's own settings/);
-    assert.doesNotMatch(error.message, /sign in again|cloudflare|gpt-6-sol|Grant/i);
+    // QA 2026-09-28: Branch names the model it chose and offers the ones Codex takes, never the program's own words.
+    assert.match(error.message, /cannot use gpt-5\.6-terra with this sign-in/);
+    assert.match(error.message, /gpt-5\.6-luna, gpt-5\.6-sol, gpt-5\.5\) in Settings › Models › Connections/);
+    assert.doesNotMatch(error.message, /sign in again|cloudflare|gpt-6-sol|Grant|own settings/i);
     return true;
   });
 });

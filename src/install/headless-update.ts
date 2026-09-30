@@ -208,10 +208,13 @@ export async function headlessUpdate(input: HeadlessUpdateInput): Promise<number
   const to = status.release!.latestVersion;
   if (!input.yes) { input.print(`Version ${to} is ready (you have ${input.version}). Run \`branch update --yes\` to install it.`); return 0; }
   input.print(`Updating Branch Agent from ${input.version} to ${to}...`);
-  const { script, stagedDir } = await updater.install().catch((error: unknown) => {
+  const installed = await updater.install().catch((error: unknown) => {
     input.print(error instanceof Error ? error.message : String(error));
     return { script: null, stagedDir: "" };
   });
+  // The terminal's update is always the packaged one: it hands the updater no live hooks (src/hot-update/).
+  if ("live" in installed) { input.print(installed.live.words); return 0; }
+  const { script, stagedDir } = installed;
   if (!script) return 1;
   if (!stopped.report || !stopped.report.stopped) {
     input.print(`${stopped.report?.message ?? "Branch Agent was not closed."} Nothing was changed; the update can be run again once Branch has closed.`);

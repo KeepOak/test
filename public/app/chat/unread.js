@@ -14,6 +14,7 @@ import { on } from "../core/actions.js";
 import { mi, toast, closePop } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { lineTrunk, lineOf } from "./trunkline.js"; // trunk-one-row
 
 const U = { inbox: null, at: 0, keep: new Set(), last: null, marking: new Set(), drawn: new Set() };
 const sid = (s) => s.sessionId ?? s.id;
@@ -33,14 +34,18 @@ async function markConversation(id, unread) {
   await refresh();
 }
 
-/* The open conversation is read: when it opens, and whenever a reply lands in it, unless it was just marked unread. */
+/* The open conversation is read: when it opens, and whenever a reply lands in it, unless it was just marked unread. In a
+   Trunk's timeline that is every conversation of the Trunk, since all of them are on screen (trunk-one-row). */
 function readOpen() {
   if (U.last !== S.chat) { U.keep.clear(); U.last = S.chat; }
-  const s = S.view === "chat" && S.chat ? find(S.chat) : null;
-  if (!s?.unread || U.keep.has(S.chat) || U.marking.has(S.chat)) return;
-  const id = S.chat;
-  U.marking.add(id);
-  markConversation(id, false).catch((error) => { U.keep.add(id); toast(error.message); }).finally(() => U.marking.delete(id));
+  if (S.view !== "chat") return;
+  const trunk = lineTrunk(), open = trunk ? lineOf(trunk).map(sid) : [S.chat];
+  const ids = open.filter((id) => id && find(id)?.unread && !U.keep.has(id) && !U.marking.has(id));
+  if (!ids.length) return;
+  for (const id of ids) U.marking.add(id);
+  Promise.all(ids.map((id) => api("read-marks", { conversation: id, unread: false }))).then(() => refresh())
+    .catch((error) => { for (const id of ids) U.keep.add(id); toast(error.message); })
+    .finally(() => { for (const id of ids) U.marking.delete(id); });
 }
 
 async function flipOne(el) {

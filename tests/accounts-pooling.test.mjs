@@ -6,6 +6,7 @@
  * one account, or with the switch off, nothing moves. Every service is a stand-in; nothing reaches a provider.
  */
 import test from "node:test";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -33,7 +34,7 @@ const ok = (who) => ({ content: `from ${who}`, toolCalls: [] });
  * anything else answers), and an empty list answers. `calls` says which account was asked, in order.
  */
 function pool({ kind = "chatgpt", accounts = ["a", "b", "c"], strategy = "priority", autoSwitch = true, script = {}, refresh, model = "m1", states = new Map(), defaultAccount = null } = {}) {
-  const calls = [], notes = [], refreshed = [];
+  const calls = [], notes = [], refreshed = [], slept = [];
   let clock = Date.parse(at);
   const saved = { pool: "p", kind, strategy, autoSwitch, defaultAccount, accounts: accounts.map((id) => (typeof id === "string" ? acct(id) : id)) };
   const provider = (id) => ({ name: "stand-in", async complete() {
@@ -45,6 +46,7 @@ function pool({ kind = "chatgpt", accounts = ["a", "b", "c"], strategy = "priori
   const cursor = { value: 0 };
   const make = (asModel) => new AccountPoolProvider(provider("original"), {
     owner: "owner", pool: "p", model: asModel, settings: () => saved, states, cursor, now: () => clock,
+    sleep: async (ms) => { slept.push(ms); clock += ms; },
     providerFor: async (id) => provider(id),
     ...(refresh ? { refresh: async (id) => { refreshed.push(id); return refresh(id); } } : {}),
     capReached: () => false, record: () => undefined, personIsNotOwner: () => false,
@@ -53,7 +55,7 @@ function pool({ kind = "chatgpt", accounts = ["a", "b", "c"], strategy = "priori
   const provided = make(model);
   const ask = (as = provided) => withAccountCall({ sessionId: "s", note: (k, data) => notes.push({ kind: k, data }) },
     () => as.complete({ messages: [{ role: "user", content: "hi" }], tools: [], signal: new AbortController().signal }));
-  return { saved, calls, notes, refreshed, ask, other: (asModel) => make(asModel), tick: (ms) => { clock += ms; } };
+  return { saved, calls, notes, refreshed, slept, ask, other: (asModel) => make(asModel), tick: (ms) => { clock += ms; }, now: () => clock };
 }
 
 test("R1 rotation order: fill first keeps to the first healthy account; take turns and least used spread the work", async () => {
@@ -161,6 +163,7 @@ test("R9 a real task on Claude Code: the owner's plan runs out, the next of thei
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  await fakeClaudeAccounts(t, service);
   const seen = [];
   const spawn = async (row, prompt, signal, limits, home) => {
     const who = home ? home.path.split(/[\\/]/).pop() : "primary";

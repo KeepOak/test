@@ -7,7 +7,7 @@
 // gateway.proposed.json in DATA_DIR, as the gateway.propose tool would. The routes under test are the real ones: snapshot
 // restore, proposal accept and discard, and the rest below. What the script changes is read first and put back at the end,
 // except "Don't ask again", which the engine keeps for good (that is its job).
-const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const { readFileSync, writeFileSync, rmSync, existsSync } = require("node:fs");
 const { join } = require("node:path");
 

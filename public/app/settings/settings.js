@@ -1,7 +1,7 @@
 /* Settings area: one nav panel, one page at a time. Every page is in pages/<id>.js; parts.js has shared helpers.
    Search uses a module variable (not S.setQ) to persist between draws without rebuilding state. */
 
-import { $, esc, renderNow, paint } from "../core/dom.js";
+import { $, esc, renderNow, paint, afterDraw } from "../core/dom.js";
 import { S, E, level, save, ownerHere } from "../core/state.js";
 import { on, has } from "../core/actions.js";
 import { ic, closePop } from "../core/ui.js";
@@ -32,6 +32,7 @@ import * as achievements from "./pages/achievements.js";
 import * as self from "./pages/self.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { levelChosen } from "../shell/simple.js"; // RES-704: the Simple / Advanced switch remembers the advanced level
 import * as chatapps from "./pages/chatapps.js"; // pass 17 part D §8
 import * as data from "./pages/data.js"; // privacy: Settings › Your data
 import { noticed } from "../shell/scene.js";
@@ -88,7 +89,7 @@ export async function openSetting(row) {
   searchText = "";
   S.view = "settings";
   closePop();
-  if (level() < row.level) { S.level = ["regular", "advanced", "technical"][row.level]; save(); }
+  if (level() < row.level) { S.level = ["regular", "advanced", "technical"][row.level]; levelChosen(S.level); save(); }
   if (row.tab) models.showTab(row.tab);
   jumping = { ...row, until: Date.now() + 5000 }; // set before the page is drawn: a redraw with nothing new calls no after()
   await go(row.page);
@@ -192,6 +193,15 @@ export function draw() {
   </div>`;
 }
 
+/* Where the person was before Settings (a conversation or a place), so Esc takes them back there: the "?" list's
+   "Close anything: Esc" (QA pass 2). Read after every drawing, so it is whatever was last on screen outside Settings. */
+let before = "chat";
+afterDraw(() => { if (S.view !== "settings") before = S.view; });
+export function leaveSettings() {
+  S.view = before;
+  renderNow();
+}
+
 export function init() {
   if (has("setpage")) return;
   initKit();
@@ -224,6 +234,7 @@ export function init() {
 
   on("setlevel", (el) => {
     S.level = el.dataset.v;
+    levelChosen(S.level); // RES-704: an advanced level is remembered for the Simple switch, and leaves Simple
     save(); // the level is one of the window's kept choices (core/state.js SAVED)
     renderNow();
   });

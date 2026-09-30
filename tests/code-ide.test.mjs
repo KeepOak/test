@@ -8,6 +8,7 @@ import { createServer } from "node:http";
 import { existsSync } from "node:fs";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, saveLanguageServerSettings, saveDebugSettings, savePolicy, NetworkPolicy, GitHubAccess, GitLabAccess, registerGitLab, exportAgent, openAgent, importAgent } from "../dist/index.js";
+import { gitlabToolNames } from "../dist/gitlab-switch.js";
 import { registerGitHubProject } from "../dist/integrations/git-tools.js";
 import { GitRunner, locateGit } from "../dist/integrations/git-run.js";
 
@@ -368,10 +369,13 @@ async function fakeApi(t, routes) {
 test("GitHub checks and releases come back in plain words, with the token only in the header", async (t) => {
   const { app } = await fixture(t);
   const api = await fakeApi(t, {
-    "/repos/me/thing/commits/main/check-runs": {
+    "/repos/me/thing/commits/main": { sha: "a".repeat(40) },
+    [`/repos/me/thing/commits/${"a".repeat(40)}/status`]: { sha: "a".repeat(40), total_count: 0, statuses: [] },
+    [`/repos/me/thing/commits/${"a".repeat(40)}/check-runs`]: {
+      total_count: 2,
       check_runs: [
-        { name: "tests", status: "completed", conclusion: "success", details_url: "https://example.invalid/1" },
-        { name: "lint", status: "completed", conclusion: "failure", details_url: "https://example.invalid/2" },
+        { id: 1, head_sha: "a".repeat(40), name: "tests", status: "completed", conclusion: "success", details_url: "https://example.invalid/1" },
+        { id: 2, head_sha: "a".repeat(40), name: "lint", status: "completed", conclusion: "failure", details_url: "https://example.invalid/2" },
       ],
     },
     "/repos/me/thing/releases": [{ tag_name: "v1.2.0", name: "Winter", published_at: "2026-01-02T00:00:00Z", body: "notes", html_url: "https://example.invalid/r" }],
@@ -399,7 +403,10 @@ test("GitLab issues, releases and pipelines read through the same network rules"
     "/projects/group%2Fthing/pipelines": [{ id: 9, ref: "main", status: "success", web_url: "https://example.invalid/p", updated_at: "2026-02-03T00:00:00Z" }],
   });
   const policy = new NetworkPolicy({ allowPrivateAddresses: true });
-  registerGitLab(app.registry, new GitLabAccess({ apiBase: api.base }, policy, async () => "glpat_fake_bbb"));
+  // RES-719: the engine registers GitLab's tools for its own connection; here they are put back over a stand-in access.
+  for (const name of gitlabToolNames) app.registry.unregister(name);
+  const access = new GitLabAccess({ apiBase: api.base }, policy, async () => "glpat_fake_bbb");
+  registerGitLab(app.registry, () => access);
 
   const issues = await app.runtime.executeTool("gitlab.issues", { project: "group/thing" });
   assert.deepEqual(issues.issues.map((issue) => issue.number), [4]);
@@ -436,7 +443,9 @@ test("publishing a folder asks first and never writes a sign-in into the reposit
 test("a GitLab address outside the allowed list is refused before anything is sent", async (t) => {
   const { app } = await fixture(t);
   const policy = new NetworkPolicy({ allowedHosts: ["gitlab.com"] });
-  registerGitLab(app.registry, new GitLabAccess({ apiBase: "https://elsewhere.invalid/api/v4" }, policy, async () => "glpat_fake_bbb"));
+  for (const name of gitlabToolNames) app.registry.unregister(name);
+  const access = new GitLabAccess({ apiBase: "https://elsewhere.invalid/api/v4" }, policy, async () => "glpat_fake_bbb");
+  registerGitLab(app.registry, () => access);
   await assert.rejects(app.runtime.executeTool("gitlab.issues", { project: "group/thing" }), /not on the allowed list/);
 });
 

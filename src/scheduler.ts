@@ -15,6 +15,7 @@ import { Heartbeat, automationHealth, quietSwitches, quietWord, saveQuietSwitche
 import { nextCronOccurrence, nextWallOccurrence, validCron } from "./recurrence.js";
 import { underProject } from "./project-scope.js"; // dogfood-ux-3
 import { defaultProjectId } from "./projects.js"; // dogfood-ux-3
+import { conversationRateRefusal } from "./knobs/apply.js";
 
 const timezone = z.string().min(1).max(64).refine((zone) => {
   try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); return true; } catch { return false; }
@@ -380,6 +381,16 @@ export class Scheduler {
     const project = typeof record.data.project === "string" ? record.data.project : defaultProjectId;
     return underProject(project, () => this.turn(record, now, trigger, payload, advance, found));
   }
+  /**
+   * The conversation a plain schedule's turns go on in: the one its last turn used, while it is still there, out of
+   * Recently Deleted, not busy with another task, and under this conversation's hourly limit (a schedule every minute
+   * would reach it). Otherwise this turn starts a new one, which becomes the schedule's conversation from then on.
+   */
+  private threadFor(data: Record<string, unknown>): string | undefined {
+    const id = typeof data.threadId === "string" ? data.threadId : null, owner = this.runtime.owner;
+    if (!id || !this.store.ownsSession(owner, id) || this.store.conversations.inBin(id) || this.store.conversations.busy([id])) return undefined;
+    return conversationRateRefusal(this.store, owner, id) ? undefined : id;
+  }
   private async turn(record: SavedRecord, now: Date, trigger: string, payload: unknown, advance: boolean, found: unknown): Promise<Run | undefined> {
     const startedAt = now.toISOString(), data = record.data;
     const history = (Array.isArray(data.history) ? data.history as HistoryEntry[] : []).slice(-(historyLimit - 1));
@@ -397,8 +408,10 @@ export class Scheduler {
       // A Trunk's own schedule, like its routines, does not run while Trunks are switched off: it says why instead.
       const held = madeBy ? this.trunkHeld(madeBy) : null;
       if (held) throw new Error(held);
+      // QA retest 2026-09-28 (m5): a plain schedule's turns go on in one conversation of its own, not a new one each time.
+      const thread = !route && !madeBy ? this.threadFor(data) : undefined;
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
-        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[],
+        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[], ...(thread ? { sessionId: thread } : {}),
         source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
@@ -416,6 +429,7 @@ export class Scheduler {
       const kept = run.status === "completed" && !saidNothingNew(run.output);
       this.store.save("schedules", record.owner, record.id, {
         ...data, runId: run.id, runCount: Number(data.runCount ?? 0) + 1, history: [...history, entry],
+        ...(!route && !madeBy && data.kind !== "reminder" && data.kind !== "evaluation" ? { threadId: run.sessionId } : {}),
         lastRunAt: startedAt, lastResult: kept ? run.output.slice(0, 4000) : data.lastResult ?? null,
         ...(delivery ? { delivery } : {}), ...this.afterTurn(data, now, run.status, advance),
       });

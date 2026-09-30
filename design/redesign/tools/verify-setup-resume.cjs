@@ -22,7 +22,7 @@ const { mkdtempSync, mkdirSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 
 const load = (name) => {
-  try { return require(name); } catch { return require(`C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/${name}`); }
+  return require(name); // the repo's own node_modules
 };
 const { chromium } = load("playwright");
 const dist = (file) => import(pathToFileURL(resolve(__dirname, "../../../dist", file)).href);

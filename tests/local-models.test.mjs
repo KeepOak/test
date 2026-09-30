@@ -364,14 +364,21 @@ test("L3 a simple task that would cost too much in the cloud uses the free model
   assert.equal(cheap.kind, "unchanged", "a cheap simple task is left alone");
 });
 
-test("L3 when the local server is down the task falls back to the cloud model", () => {
+test("L3 a private task never falls back to the cloud; a cheap one may when the model here is down", () => {
   const shape = classifyTask("Summarise this: my passport number and my address");
   const down = chooseRoute(rules(), shape, { localPreset: "here", cloudPreset: "cloud", localUp: false, cloudCost: 0.0001 });
-  assert.equal(down.preset, "cloud");
-  assert.match(down.reason, /not answering/);
+  assert.deepEqual([down.preset, down.kind, down.private], ["here", "local", true], "it stays here and fails honestly");
+  assert.match(down.reason, /not sent anywhere else/);
   const nowhere = chooseRoute(rules(), shape, { localPreset: null, cloudPreset: "cloud", localUp: false, cloudCost: 0.0001 });
-  assert.equal(nowhere.preset, null);
-  assert.match(nowhere.reason, /No model is set up on this computer/);
+  assert.deepEqual([nowhere.preset, nowhere.kind, nowhere.private], [null, "refused", true]);
+  assert.match(nowhere.reason, /no model is set up here/);
+  const hard = classifyTask("Search the web and refactor: my passport number " + "context ".repeat(1200));
+  assert.equal(chooseRoute(rules(), hard, { localPreset: "here", cloudPreset: "cloud", localUp: true, cloudCost: 1 }).preset, "here",
+    "a private task stays here even when it is long or tool-heavy");
+  const cheap = classifyTask("Write me a haiku about rain");
+  const fallback = chooseRoute(rules({ costCeilingDollars: 0.001 }), cheap, { localPreset: "here", cloudPreset: "cloud", localUp: false, cloudCost: 0.05 });
+  assert.deepEqual([fallback.preset, fallback.private], ["cloud", undefined], "a task kept here only to save money may still go to the cloud");
+  assert.match(fallback.reason, /not answering/);
 });
 
 test("L3 routing off changes nothing, and the personal-details test catches what people paste", () => {
@@ -498,4 +505,14 @@ test("L6 pictures and context length are read from what the runtime reports", ()
   assert.equal(localModelSupportsImages("llama3.2:3b", ["llama"]), false);
   assert.equal(contextLengthOf({ "llama.context_length": 8192, "general.parameter_count": 3 }), 8192);
   assert.equal(contextLengthOf(undefined), null);
+});
+
+test("local-runtime health is red, not optional, when a connection answers from this computer and nothing runs here", async () => {
+  const nothing = async () => { throw new Error("connection refused"); };
+  const runtimes = new LocalRuntimes({ ollamaBaseUrl: "http://127.0.0.1:9", lmStudioBaseUrl: "http://127.0.0.1:9", fetch: nothing });
+  const optional = await runtimes.health();
+  assert.equal(optional.ok, true, "with no connection here, a missing runtime is only optional");
+  const needed = await runtimes.health(true);
+  assert.equal(needed.ok, false);
+  assert.match(needed.summary, /answers from this computer, but no model is running here/);
 });

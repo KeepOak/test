@@ -15,6 +15,7 @@ import { startServer } from "../dist/server.js";
 import { codexPlanWindows } from "../dist/rate-limit-headers.js";
 import { claudePlanWindows, planWindowTitle } from "../dist/plan-windows.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 
 const NOW = Date.parse("2026-09-26T12:00:00Z");
 const b64 = (value) => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -55,7 +56,7 @@ test("Claude Code: rate_limit_event lines give each window; utilization is a fra
   assert.equal(answerFrom(row, JSON.stringify({ result: "plain" })), "plain", "one JSON object still reads");
 });
 
-async function open(dataDir, root) {
+async function open(t, dataDir, root) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir });
   const real = globalThis.fetch;
   const answer = () => new Response(["response.output_text.delta", "response.completed"].map((type) =>
@@ -68,6 +69,8 @@ async function open(dataDir, root) {
   const spawn = async () => ({ code: 0, stdout: claudeLines, stderr: "" });
   registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.spawnAgent = spawn;
+  await fakeClaudeAccounts(t, service);
   service.deps.chatgpt = { accessToken: async () => token, status: async () => ({ signedIn: true }) };
   service.noteSignIn("cli-claude-code", "primary", { installed: true, signedIn: true,
     identity: { authMethod: "claude.ai" }, message: "Fixture subscription signed in." });
@@ -82,7 +85,7 @@ test("one row per sign-in account (not per model), measured on request, kept acr
   const root = await mkdtemp(join(tmpdir(), "branch-plan-windows-"));
   t.after(() => discardTemp(root));
   const dataDir = join(root, "data");
-  let branch = await open(dataDir, root);
+  let branch = await open(t, dataDir, root);
   try {
     assert.ok(branch.ids.length > 1, "several ChatGPT models share one sign-in");
     let rows = (await branch.call("/api/usage/glance")).rows;
@@ -107,7 +110,7 @@ test("one row per sign-in account (not per model), measured on request, kept acr
     assert.match(claude.windows[0].from, /as Claude Code reported it on its own answers/); // plain words since 2026-09-27
   } finally { await branch.close(); }
 
-  branch = await open(dataDir, root);
+  branch = await open(t, dataDir, root);
   try {
     const rows = (await branch.call("/api/usage/glance")).rows;
     assert.deepEqual(rows.find((r) => r.connection === "chatgpt").windows.map((w) => w.remaining), [12, 71], "kept across a restart, with its time measured");

@@ -1,5 +1,5 @@
 import { createHmac, randomBytes } from "node:crypto";
-import { lstat, readFile, writeFile } from "node:fs/promises";
+import { lstat, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -20,8 +20,15 @@ async function readKey(path: string): Promise<Buffer | null> {
   try {
     if ((await lstat(path)).isSymbolicLink()) throw new Error("The question key must not be a link");
     const saved = await readFile(path);
-    if (saved.length !== 32) throw new Error("The question key file is damaged; move it aside to start a new one");
-    return saved;
+    if (saved.length === 32) return saved;
+    // QA retest 2026-09-28 (TRUNK-180): a damaged key used to stop every start ("move it aside to start a new one") and
+    // left the gateway restarting the engine until it gave up. It is put aside here and a new key made: a question
+    // asked under the old key is then a new question, so a yes carried across the restart is asked for again, never
+    // taken as given.
+    const aside = `${path}.unreadable-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    await rename(path, aside);
+    console.error(`The question key file was damaged; it was put aside as ${aside} and a new one made. Questions waiting for a yes will be asked again.`);
+    return null;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;

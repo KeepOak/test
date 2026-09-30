@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { rm, stat } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import { z } from "zod";
 import type { Store } from "./store.js";
 import type { Runtime } from "./runtime.js";
 import type { Run } from "./contracts.js";
 import { isReadOnlyPermission } from "./policy.js";
-import { estimateCost, pricingSettings, type CostConfidence } from "./pricing.js";
+import { estimateCost, pricingSettings, type CostConfidence, type TokenCounts } from "./pricing.js";
 import { findSuite, type EvaluationTask, type SuiteEntry } from "./evaluation-suites.js";
 import { gradeTask, type GradeMethod } from "./evaluation-grading.js";
 import { applyGates, EvaluationGateSchema, readTrajectory, runtimeJudge, scoreTrajectory, type GateVerdict } from "./evaluation-run.js";
@@ -108,10 +110,12 @@ export class SuiteRunner {
     if (missing.length)
       return { id: task.id, runId: null, status: "skipped", passed: false, skipped: true, score: 0, method: "skipped", problem: `Skipped: ${missing.join(", ")} is not installed`, reason: null, ms: 0, tokens: 0, dollars: null, tags: task.tags };
     const began = Date.now();
+    const named = await this.namedFiles(task);
     const run = await this.execute(task, request, readOnly);
-    const grade = run.status === "completed"
+    const graded = run.status === "completed"
       ? await gradeTask(this.runtime, task, run.output)
       : { score: 0, passed: false, method: "checks" as const, problem: run.output.slice(0, 200), reason: null };
+    const grade = await this.attributed(named, graded);
     const tokens = this.tokensFor(run.id);
     const outcome: TaskOutcome = {
       id: task.id, runId: run.id, status: run.status, passed: grade.passed, skipped: false,
@@ -119,9 +123,41 @@ export class SuiteRunner {
       ms: Date.now() - began, tokens: tokens.input + tokens.output,
       dollars: this.costOf(model, tokens).amount, tags: task.tags, costBasis: tokens.basis,
     };
-    return task.scorers?.length ? await this.applyScorers(task, outcome, run.output) : outcome;
+    const scored = task.scorers?.length ? await this.applyScorers(task, outcome, run.output) : outcome;
+    await this.tidy(named);
+    return scored;
   }
 
+  /**
+   * The files a task's checks name, as they were before it ran (null when absent). A file already there proves nothing,
+   * so it has to be written by this run to count; and what the run created is taken away again afterwards, so an
+   * evaluation leaves the workspace as it found it and the next run cannot pass on this one's leftovers.
+   */
+  private async namedFiles(task: EvaluationTask): Promise<Map<string, { mtimeMs: number; size: number } | null>> {
+    const found = new Map<string, { mtimeMs: number; size: number } | null>();
+    const workspace = resolve(this.runtime.workspace);
+    for (const file of (task.checks as { files?: string[] } | undefined)?.files ?? []) {
+      const full = resolve(workspace, file), inside = relative(workspace, full);
+      if (!inside || inside.startsWith("..") || isAbsolute(inside)) continue;
+      const info = await stat(full).catch(() => null);
+      found.set(full, info ? { mtimeMs: info.mtimeMs, size: info.size } : null);
+    }
+    return found;
+  }
+  private async attributed<T extends { passed: boolean; score: number; problem: string | null }>(named: Map<string, { mtimeMs: number; size: number } | null>, grade: T): Promise<T> {
+    let stale: string | null = null;
+    for (const [full, before] of named) {
+      const now = await stat(full).catch(() => null);
+      if (before && now && now.mtimeMs === before.mtimeMs && now.size === before.size) stale ??= relative(this.runtime.workspace, full);
+    }
+    if (!stale || !grade.passed) return grade;
+    return { ...grade, passed: false, score: 0,
+      problem: `${stale} was already in the workspace before this task and it did not write it, so it proves nothing` };
+  }
+  /** Takes away the named files this evaluation created, once everything that reads them has. */
+  private async tidy(named: Map<string, { mtimeMs: number; size: number } | null>): Promise<void> {
+    for (const [full, before] of named) if (!before) await rm(full, { force: true }).catch(() => undefined);
+  }
   /** Wave 7: the task's own scorers, run over its record. Every one has to pass for the task to. */
   private async applyScorers(task: EvaluationTask, outcome: TaskOutcome, answer: string): Promise<TaskOutcome> {
     const trajectory = readTrajectory(this.store, outcome.runId, { ms: outcome.ms, tokens: outcome.tokens, dollars: outcome.dollars });
@@ -166,11 +202,11 @@ export class SuiteRunner {
    * mac7/eval-honesty: the provider's own count when it gave one, Branch's estimate otherwise, and
    * which of the two it was — so a figure worked out from a guess is never printed as a bill.
    */
-  private tokensFor(runId: string): { input: number; output: number; basis: "reported" | "estimated" } {
+  private tokensFor(runId: string): TokenCounts & { basis: "reported" | "estimated" } {
     return ledgerTokens(this.store.usage(runId));
   }
 
-  private costOf(model: string, tokens: { input: number; output: number }) {
+  private costOf(model: string, tokens: TokenCounts) {
     return estimateCost(model, tokens, pricingSettings(this.store, this.owner).overrides);
   }
 

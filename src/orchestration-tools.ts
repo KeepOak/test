@@ -4,6 +4,7 @@ import type { ToolContext } from "./contracts.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
 import type { Knowledge } from "./knowledge.js";
+import { HelperSelectionSchema, helperRouteTarget, type HelperSelection } from "./delegation.js";
 
 /**
  * Tools for working with several specialists at once: a parallel fan-out that splits this task's
@@ -12,7 +13,10 @@ import type { Knowledge } from "./knowledge.js";
  */
 /** Most children one task may run at the same time; the delegation limit in the runtime. */
 const parallelConcurrency = 4;
+/** A share of tokens as the model and the event log read it: a figure, or "no limit". */
+const shown = (tokens: number): number | string => (tokens === Infinity ? "no limit" : tokens);
 const ParallelTaskSchema = z.object({
+  ...HelperSelectionSchema.shape,
   specialist: z.string().min(1).max(200),
   prompt: z.string().min(1).max(8000),
 }).strict();
@@ -43,12 +47,11 @@ export async function pooled<T, R>(items: T[], limit: number, work: (item: T, in
  */
 export async function runParallel(runtime: Runtime, knowledge: Knowledge, context: ToolContext, input: unknown) {
   const { tasks, failFast } = ParallelSchema.parse(input);
-  const share = Math.max(1, Math.floor(context.budget.remaining() / tasks.length));
-  const steps = Math.max(2, Math.floor((context.budget.limits.maxSteps - context.budget.steps) / tasks.length));
+  const shares = context.budget.share(tasks.length), share = shares.maxTokens;
   const stop = new AbortController();
   const budgets: Budget[] = [];
   const branches = await pooled(tasks, Math.min(tasks.length, parallelConcurrency), async (task, index) => {
-    const budget = new Budget({ maxSteps: steps, maxTokens: share });
+    const budget = new Budget(shares);
     budgets.push(budget);
     const branch: ToolContext = { ...context, budget, signal: AbortSignal.any([context.signal, stop.signal]) };
     const outcome = await oneBranch(runtime, knowledge, branch, task, index);
@@ -59,14 +62,14 @@ export async function runParallel(runtime: Runtime, knowledge: Knowledge, contex
   const spent = budgets.reduce((total, budget) => total + Math.min(budget.tokens, share), 0);
   if (context.runId)
     runtime.store.event(context.runId, "delegation.parallel", {
-      share, spent, failFast,
+      share: shown(share), spent, failFast,
       branches: branches.map((b) => ({ id: b.id, specialist: b.specialist, status: b.status, ...(b.runId ? { runId: b.runId } : {}) })),
     });
   // The branches spent from their own share; the total comes off this task's budget afterwards,
   // once every result is recorded, so a budget that runs out never loses work already paid for.
   context.budget.charge(spent);
   return {
-    branches, spent, tokensEach: share,
+    branches, spent, tokensEach: shown(share),
     synthesise: "Combine these branch answers into one answer for the person, and say plainly where a branch failed or where two disagree.",
   };
 }
@@ -78,7 +81,7 @@ async function oneBranch(
   const id = `b${index + 1}`;
   try {
     const spec = knowledge.activeSpecialist(branch.owner, task.specialist);
-    const { run } = await runtime.delegateChecked(task.prompt, branch, spec.permissions, spec.instructions, { agent: task.specialist });
+    const { run } = await runtime.delegateChecked(task.prompt, branch, spec.permissions, spec.instructions, { agent: task.specialist, ...(task.model ? { model: task.model } : {}), ...(task.accountRef ? { accountRef: task.accountRef } : {}) });
     return { id, specialist: task.specialist, runId: run.id, status: run.status, output: run.output.slice(0, 4000) };
   } catch (error) {
     return { id, specialist: task.specialist, status: "failed", output: "", error: errorText(error) };
@@ -93,7 +96,7 @@ async function oneBranch(
  */
 export async function handOff(
   runtime: Runtime, knowledge: Knowledge, context: ToolContext,
-  input: { specialist: string; brief: string; reason?: string },
+  input: { specialist: string; brief: string; reason?: string } & HelperSelection,
 ) {
   const from = context.agent ?? "the main task";
   const refusal = runtime.handoffs.refusal(context.agent, input.specialist);
@@ -109,7 +112,7 @@ export async function handOff(
       runtime.store.message(sessionId, { role: "system",
         content: `Handed over from ${from} to ${input.specialist}${reason ? `: ${reason}` : "."}` });
   }
-  const { run, result } = await runtime.delegateChecked(input.brief, context, spec.permissions, spec.instructions, { agent: input.specialist });
+  const { run, result } = await runtime.delegateChecked(input.brief, context, spec.permissions, spec.instructions, { agent: input.specialist, ...(input.model ? { model: input.model } : {}), ...(input.accountRef ? { accountRef: input.accountRef } : {}) });
   return { specialist: input.specialist, runId: run.id, status: run.status, output: run.output.slice(0, 4000), resolved: result.status === "resolved" };
 }
 
@@ -119,6 +122,7 @@ export function registerOrchestration(registry: ToolRegistry, runtime: Runtime, 
     description: "Run up to six specialists at once, each on a share of this task's budget. One failure leaves the rest running unless failFast. Combine their answers yourself.",
     permission: "specialists.use",
     parameters: ParallelSchema,
+    target: (a) => helperRouteTarget(a.tasks),
     execute: async (a, c) => runParallel(runtime, knowledge, c, a),
   });
   registry.register({
@@ -127,10 +131,12 @@ export function registerOrchestration(registry: ToolRegistry, runtime: Runtime, 
     permission: "specialists.use",
     parameters: z.object({
       specialist: z.string().min(1).max(200),
+      ...HelperSelectionSchema.shape,
       brief: z.string().trim().min(1).max(4000),
       /** Why this belongs to them rather than you. It is shown in the conversation. */
       reason: z.string().trim().max(300).default(""),
     }).strict(),
+    target: (a) => helperRouteTarget([a]),
     execute: async (a, c) => handOff(runtime, knowledge, c, a),
   });
   registerScratch(registry, runtime);

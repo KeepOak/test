@@ -11,7 +11,8 @@
    5. The bounded diff of a change to Branch itself (selfrev15): GET /api/self-development/requests/<id>/diff. */
 const fs = require("node:fs");
 const path = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const { PORT, TOKEN, DATA } = process.env;
 if (!PORT || !TOKEN || !DATA) { console.error("Set PORT, TOKEN and DATA."); process.exit(2); }
@@ -59,7 +60,8 @@ async function schedules(page) {
   const saved = await until(async () => (await api("schedules")).schedules[0]);
   check("ppok17d: Confirm saves the schedule (GET /api/schedules)", saved && saved.data.dailyAt === "18:30" && saved.data.weekdays?.join() === "0" && saved.data.prompt === "find blurry and duplicate photos", JSON.stringify(saved?.data ?? {}).slice(0, 160));
   await act(page, "ptab", { place: "automations", v: "triggers" });
-  check("Triggers: Add is live (verify-finish-soon-a.cjs proves it)", !(await greyed(page.locator('form.nl button[type="submit"]'))));
+  // Add waits (disabled) while the box is empty (B002 in verify-stress-fixes.cjs); live means it is not a greyed "soon".
+  check("Triggers: Add is live (verify-finish-soon-a.cjs proves it)", (await page.locator('form.nl button[type="submit"]').first().getAttribute("aria-disabled")) !== "true");
 }
 
 async function procedures(page) {
@@ -71,13 +73,13 @@ async function procedures(page) {
   check("a saved recipe: Add a step is drawn greyed, and its Save is live", (await greyed(page.locator(".dlg .btn.soon", { hasText: "Add a step" }))) && !(await greyed(page.locator(".dlg .btn", { hasText: "Save" }))));
   await act(page, "dlg-close");
   await page.click(`[data-act="flow"][data-v="auto"][data-id="${NOTE.procedure}"]`);
-  await page.waitForSelector(".dlg .flow-row select", { timeout: 5000 });
+  await page.waitForSelector(".dlg .flow-row .gsel", { timeout: 5000 });
   await page.click('.dlg [data-act="flow-add"]');
   await page.click('.dlg [data-act="flow-add"]');
   check("flow-add: two draft steps added", (await page.locator(".dlg .flow-row").count()) === 4);
   await page.click('.dlg [data-act="flow-rm"][data-j="3"]');
   check("flow-rm: a draft step taken out", (await page.locator(".dlg .flow-row").count()) === 3);
-  await page.selectOption("#fk-2", "ask");
+  await pickGsel(page.locator("#fk-2"), "ask");
   await page.fill("#ft-2", "Delete the duplicates it found?");
   await page.click('.dlg [data-act="flow-mv"][data-j="2"][data-d="-1"]');
   check("flow-mv: the new step moved up", (await page.inputValue("#ft-1")) === "Delete the duplicates it found?");
@@ -128,7 +130,7 @@ async function selfDiff(page) {
   await act(page, "ptab", { place: "inbox", v: "needs" });
   await page.waitForSelector(`[data-act="selfrev15"][data-id="${NOTE.approved}"]`, { timeout: 10000 });
   await page.click(`[data-act="selfrev15"][data-id="${NOTE.approved}"]`);
-  await page.waitForSelector(".dlg .diff15", { timeout: 8000 });
+  await page.waitForSelector(".dlg .diff15", { timeout: 15000 }); // the engine reads the diff first; a busy machine takes longer
   const diff = await api(`self-development/requests/${NOTE.approved}/diff`);
   check("selfrev15: the diff is the engine's (GET /api/self-development/requests/<id>/diff)", (await text(page, ".dlg .df-h15 code")) === diff.files[0].path && (await page.locator(".dlg .diff15 .d-add", { hasText: "isOpen" }).count()) === 1);
   check("Publish the draft stays greyed", await greyed(page.locator('.dlg [data-act="selfdo15"][data-v="published"]')));

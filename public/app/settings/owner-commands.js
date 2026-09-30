@@ -8,7 +8,7 @@ import { t } from "../../i18n.js";
 export function ownerCommandCard(state) {
   const saved = state.ownerCommands;
   if (!saved) return "";
-  return `<div class="rows"><div class="ctl"><b>${esc(t("window.chat-command.title"))}</b><span class="right"><button class="btn sm" type="button" data-act="chat-command-edit">${esc(t("ov.open"))}</button></span><small>${esc(t(saved.on ? "window.chat-command.on" : "window.chat-command.off"))}</small></div></div>`;
+  return `<div class="rows"><div class="ctl"><b>${esc(t("window.chat-command.title"))}</b><span class="right"><button class="btn sm" type="button" data-act="chat-command-edit">${esc(t("ov.open"))}</button></span><small>${esc(t(saved.on ? "window.chat-command.on" : "window.chat-command.off"))}</small>${state.ownerNamed === false && (state.approved ?? []).length ? `<small>${esc(t("window.chat-command.none-yet"))}</small>` : ""}</div></div>`;
 }
 export function initOwnerCommands(state, reload) {
   markLive(["chat-command-edit", "chat-command-save", "sw:chat-command-on", "sw:chat-command-pin", "sw:chatCommandAccount"]);
@@ -16,7 +16,7 @@ export function initOwnerCommands(state, reload) {
     try {
       const lock = await api("lock");
       const kinds = new Map((state.channels ?? []).map((channel) => [channel.id, channel.kind]));
-      const pairs = (state.approved ?? []).filter((pair) => ["telegram", "discord"].includes(kinds.get(pair.channel)));
+      const pairs = (state.approved ?? []).filter((pair) => ["telegram", "discord", "slack"].includes(kinds.get(pair.channel)));
       const rows = pairs.map((pair) => {
         const checked = state.ownerCommands.accounts.some((account) => account.channel === pair.channel && account.sender === pair.senderId);
         return `<label class="ctl"><input type="checkbox" data-sw="chatCommandAccount" data-chat-command-account data-channel="${esc(pair.channel)}" value="${esc(pair.senderId)}" ${checked ? "checked" : ""}><span>${esc(pair.name)} · ${esc(pair.channel)} · ${esc(pair.senderId)}</span></label>`;

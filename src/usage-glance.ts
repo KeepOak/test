@@ -23,6 +23,9 @@ export const UsageGlanceSettingsSchema = z.object({
   ring: z.enum(glanceRingChoices).default("shown"),
   /** At 95% used, offer to ask running tasks to save their progress. "ask" only ever asks. */
   saveProgress: z.enum(saveProgressChoices).default("ask"),
+  /** The desktop app's tray icon rings with what the connection in use has left (src/desktop/tray-ring.ts). Shipped on;
+      it reads the same share as the ring, once a minute, and draws only the logo when there is none. */
+  tray: z.enum(glanceRingChoices).default("shown"),
 }).strict();
 export type UsageGlanceSettings = z.infer<typeof UsageGlanceSettingsSchema>;
 const settingsKey = "usage-glance";
@@ -107,6 +110,8 @@ export type UsageGlance =
   | { available: false }
   | { available: true; settings: UsageGlanceSettings; tightest: GlanceTightest | null; crossings: GlanceCrossing[];
     running: number; rows: LimitRow[]; summary: string; empty: boolean; month?: GlanceMonth;
+    /** Verified account labels are still being read; the open usage surface may hydrate them progressively. */
+    identitiesPending?: true;
     /** A plan signed in on this computer that is not a connection yet (src/usage-limits-api.ts addableNow). */
     addable?: { program: string; connectionName: string; note: string }[] };
 

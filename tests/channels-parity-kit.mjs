@@ -15,7 +15,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { acceptKey, frame, readFrame } from "../dist/ws.js";
 import { saveParitySwitches } from "../dist/channels/parity-switch.js";
-import { parityServices } from "../dist/channels/connectors.js";
+import { parityServices } from "../dist/channels/parity-services.js";
 import { saveChatLiveSwitches } from "../dist/channels/chat-live-settings.js";
 import { saveChatIntake } from "../dist/channels/intake-settings.js";
 

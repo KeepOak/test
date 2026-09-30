@@ -1,0 +1,68 @@
+/**
+ * CHAT-003: every chat app in the setup catalog (data/channel-setup.json), and how it is tested for real. `local` apps
+ * run against a real server on this computer that `node scripts/real-chat/servers.mjs up` fetches and starts (nothing
+ * of the owner's is used, no account anywhere); every other app says exactly why it cannot be, in one line. The table
+ * in docs/chat-parity.md is written from this list (`node scripts/real-chat/table.mjs`).
+ */
+export const LOCAL = {
+  irc: "Ergo 2.19.1 (one Go binary, 7 MB) on 127.0.0.1:16667",
+  xmpp: "Prosody 0.12 (apt, about 2 MB) in the BranchCI WSL distro, STARTTLS with a certificate from a throwaway local CA",
+  matrix: "tuwunel 1.9.3 (a Conduit fork, one Rust binary, 32 MB) in the BranchCI WSL distro on 127.0.0.1:16167",
+  email: "GreenMail 2.1.14 (one Java jar, 11 MB) SMTP 127.0.0.1:13025 and IMAP 127.0.0.1:13143",
+  mqtt: "Mosquitto (apt, under 1 MB) in the BranchCI WSL distro on 127.0.0.1:11883",
+  ntfy: "ntfy 2.28.0 (one Go binary, 30 MB; its server does not run on Windows) in the BranchCI WSL distro on 127.0.0.1:18090",
+  mumble: "Mumble server 1.5 (apt, 7.5 MB with its libraries) in the BranchCI WSL distro on 127.0.0.1:16473, its own self-signed certificate",
+  deltachat: "deltachat-rpc-server 2.62.0 (one Windows binary, 23 MB) on the GreenMail server above; the person is a second copy that joins by the assistant's invite",
+  nostr: "an in-memory relay from nak 0.20.7 (one Go binary, 42 MB) on 127.0.0.1:17447; the person's client is nak too",
+  simplex: "smp-server 6.5.0 (45 MB) and two simplex-chat 7.0.3 programs (12 MB .deb) in a network namespace of their own in the BranchCI WSL distro, each program's API bridged to 127.0.0.1",
+  gotify: "Gotify 3.1.1 (one Go binary, 12 MB) on 127.0.0.1:18080; send-only, so the walk is a delivery the person's client reads",
+};
+const account = (what) => `needs ${what}; there is no local or sandbox server for it`;
+/** Why each other app is not tested for real, in words someone can act on. */
+export const SKIPPED = {
+  telegram: "needs a bot token; Telegram's test environment only takes a bot made by a test-server user account, and making one is an account on Telegram's servers, which this harness never does",
+  discord: account("a Discord bot token and a server to add it to"),
+  slack: account("a Slack workspace and an app token"),
+  whatsapp: account("a WhatsApp Business number (Meta Cloud API)"),
+  messenger: account("a Facebook Page and a Meta app"),
+  instagram: account("an Instagram business account and a Meta app"),
+  signal: "needs a phone number registered with Signal for signal-cli; Signal has no test server",
+  mattermost: "a local Mattermost server is a Docker image of about 1 GB (over the 100 MB limit without asking)",
+  rocketchat: "a local Rocket.Chat server needs MongoDB and a Docker image of about 1.5 GB (over the 100 MB limit without asking)",
+  googlechat: account("a Google Workspace account and a Chat app"),
+  msteams: account("a Microsoft 365 tenant (incoming webhook)"),
+  zulip: "a local Zulip server is a Docker install of several GB (over the 100 MB limit without asking)",
+  feishu: account("a Feishu / Lark developer account"),
+  dingtalk: account("a DingTalk developer account"),
+  wecom: account("a WeCom (WeChat Work) organisation"),
+  line: account("a LINE Messaging API channel"),
+  viber: account("a Viber bot account"),
+  twitch: account("a Twitch account and an OAuth token"),
+  imessage: "needs a Mac with Messages signed in to an Apple ID",
+  bluebubbles: "needs a Mac running the BlueBubbles server, signed in to an Apple ID",
+  "msteams-bot": account("an Azure Bot registration"),
+  webex: account("a Webex bot token"),
+  "synology-chat": "needs a Synology NAS running Synology Chat",
+  zalo: account("a Zalo Official Account"),
+  flock: account("a Flock workspace and app"),
+  pumble: account("a Pumble workspace and app"),
+  mastodon: "a local Mastodon server needs PostgreSQL, Redis and Ruby (several hundred MB; over the limit without asking)",
+  bluesky: account("a Bluesky account (its local PDS needs Docker and DNS)"),
+  reddit: account("a Reddit account and a script app"),
+  discourse: "a local Discourse server is a Docker install of several GB (over the 100 MB limit without asking)",
+  "x-dm": account("an X developer account with Direct Message access"),
+  twist: account("a Twist workspace and integration"),
+  "nextcloud-talk": "a local Nextcloud with Talk needs a web server, PHP and a database (several hundred MB; over the limit without asking)",
+  sms: account("a Twilio phone number"),
+  pushover: account("a Pushover application token"),
+  threema: account("a Threema Gateway ID (paid)"),
+  homeassistant: "a local Home Assistant is several hundred MB of Python packages (over the limit without asking)",
+  keybase: "needs a Keybase account signed in to the keybase program",
+  vk: account("a VK community token"),
+  "qq-bot": account("a QQ bot registration"),
+  guilded: account("a Guilded bot token"),
+  revolt: "a local Revolt server is a Docker install of several services (over the 100 MB limit without asking)",
+  kook: account("a KOOK bot token"),
+  "wechat-mp": account("a WeChat Official Account"),
+  "wecom-app": account("a WeCom organisation and self-built app"),
+};

@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { z } from "zod";
 import { lineDiff } from "./workspace-history.js";
 import { languageOf } from "./code-search.js";
-import type { WorkspaceFiles, WriteObserver } from "./files.js";
+import { largeFileBytes, type WorkspaceFiles, type WriteObserver } from "./files.js";
 import type { ToolContext } from "./contracts.js";
 import type { ToolRegistry } from "./registry.js";
 import { parsePatch, applyHunks, patchFileList, patchTargets } from "./patch.js";
@@ -36,12 +36,13 @@ export class CodeEditor {
   /** The file's current text, or null when it does not exist yet. */
   private async original(path: string): Promise<string | null> {
     try {
-      return (await this.files.read(path)).content;
+      // selfdev: a large file (Branch's own docs are a megabyte) is changed in place by its find and replace text.
+      return (await this.files.read(path, largeFileBytes)).content;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code === "ENOENT") return null;
-      if (error instanceof Error && error.message.includes("32 KiB"))
-        throw new Error(`"${path}" is larger than 32 KiB, which these tools cannot change`);
+      if (error instanceof Error && error.message.includes("8 MiB"))
+        throw new Error(`"${path}" is larger than 8 MiB, which these tools cannot change`);
       throw error;
     }
   }
@@ -125,7 +126,7 @@ export class CodeEditor {
 
   private async save(path: string, content: string, context: ToolContext): Promise<void> {
     const token = this.observer ? await this.observer.before(path, context) : undefined;
-    await this.files.write(path, content, context.signal);
+    await this.files.write(path, content, context.signal, largeFileBytes);
     this.files.readFirst?.noteWritten(context.runId, this.files.addressOf(path)); // mac7/coding-next
     if (this.observer) await this.observer.after(path, context, token);
   }

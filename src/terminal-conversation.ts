@@ -1,5 +1,6 @@
 import type { Event, ImagePart, Run } from "./contracts.js";
 import type { Runtime } from "./runtime.js";
+import { carryable, carryOn } from "./carry-on.js"; // QA R1 follow-up
 import type { Store } from "./store.js";
 import type { PendingApproval } from "./approvals.js";
 import type { ReasoningEffort } from "./models.js";
@@ -129,24 +130,28 @@ export class Conversation {
   }
 
   private async execute(prompt: string): Promise<void> {
+    const images = this.attachments.map((file) => file.image).filter((image): image is ImagePart => !!image);
+    const text = prompt + attachedText(this.attachments);
+    this.attachments = [];
+    await this.perform(prompt, (active) => this.runtime.run({
+      prompt: text, signal: active.controller.signal,
+      ...(this.sessionId ? { sessionId: this.sessionId } : {}), ...(this.model ? { model: this.model } : {}),
+      ...(this.reasoning !== undefined ? { reasoning: this.reasoning } : {}), ...(images.length ? { images } : {}),
+      ...(this.plan ? { plan: true } : {}), ...(this.verify ? { verify: true } : {}), ...(this.dryRun ? { dryRun: true } : {}),
+      ...(this.temporary && !this.sessionId ? { temporary: true } : {}),
+      onStarted: (started) => { active.run = started; this.progress(active); },
+      onTextDelta: (delta) => { this.progress(active); this.streamDelta(delta); },
+    }));
+  }
+  /** One task shown here: its steps while it works, then its answer or its question. */
+  private async perform(prompt: string, start: (active: ActiveRun) => Promise<Run>): Promise<void> {
     const active: ActiveRun = { controller: new AbortController(), eventId: 0, steps: [] };
     this.active = active;
     this.steps = active.steps;
     this.changed("work");
-    const images = this.attachments.map((file) => file.image).filter((image): image is ImagePart => !!image);
-    const text = prompt + attachedText(this.attachments);
-    this.attachments = [];
     const poll = setInterval(() => this.progress(active), this.pollIntervalMs);
     try {
-      const run = await this.runtime.run({
-        prompt: text, signal: active.controller.signal,
-        ...(this.sessionId ? { sessionId: this.sessionId } : {}), ...(this.model ? { model: this.model } : {}),
-        ...(this.reasoning !== undefined ? { reasoning: this.reasoning } : {}), ...(images.length ? { images } : {}),
-        ...(this.plan ? { plan: true } : {}), ...(this.verify ? { verify: true } : {}), ...(this.dryRun ? { dryRun: true } : {}),
-        ...(this.temporary && !this.sessionId ? { temporary: true } : {}),
-        onStarted: (started) => { active.run = started; this.progress(active); },
-        onTextDelta: (delta) => { this.progress(active); this.streamDelta(delta); },
-      });
+      const run = await start(active);
       this.sessionId = run.sessionId;
       this.progress(active);
       this.report(run, prompt);
@@ -219,8 +224,26 @@ export class Conversation {
       this.say("bad", `[${error instanceof Error ? error.message : String(error)}]`);
       return;
     }
+    // QA R1 follow-up: the task that asked carries on as itself, and after a yes the engine runs the approved call.
+    const waitingRun = carryable(this.runtime, waiting.runId, "owner");
+    if (waitingRun && !this.busy) return this.carry(waitingRun, { decision, fingerprint: waiting.fingerprint });
     this.queue.push(this.awaitingPrompt);
     await this.drain();
+  }
+  /** QA R1 follow-up: carries the answered task on, shown here as a task of its own is (progress, then its answer). */
+  private async carry(run: Run, answer: { decision: "allow" | "deny"; fingerprint: string }): Promise<void> {
+    this.busy = true;
+    try {
+      await this.perform(this.awaitingPrompt, (active) => carryOn(this.runtime, run, answer, {
+        signal: active.controller.signal,
+        onStarted: (started) => { active.run = started; this.progress(active); },
+        onTextDelta: (delta) => { this.progress(active); this.streamDelta(delta); },
+      }));
+      while (this.queue.length && !this.closing) await this.execute(this.queue.shift()!);
+    } finally {
+      this.busy = false;
+      this.changed("work");
+    }
   }
   /** New events since last time, as one short row each; Ctrl+E shows what is behind them. */
   private progress(active: ActiveRun): void {
@@ -319,6 +342,8 @@ export function runCost(store: Store, run: Run, used: Record<string, number>): s
   const estimate = estimateCost(model, {
     input: used.reportedInput ?? used.estimatedInput ?? 0,
     output: used.reportedOutput ?? used.estimatedOutput ?? 0,
+    // Cache reads and writes, parts of the reported input, are priced at their own rates.
+    cached: used.reportedCachedInput ?? 0, cacheWrite: used.reportedCacheWrite ?? 0, cacheWrite1h: used.reportedCacheWrite1h ?? 0,
   }, overrides);
   return estimate.amount === null ? null : `${model} · ${formatCost(estimate)}`;
 }

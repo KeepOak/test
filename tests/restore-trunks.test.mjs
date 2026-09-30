@@ -60,7 +60,7 @@ test("a backup carries the Trunks and nothing else of governance; a restore brin
   const cut = record(app, helper.id);
   assert.equal(cut.name, "Helper");
   assert.deepEqual(cut.permissions, ["files.read"], "look-only: its own reads");
-  assert.deepEqual([cut.mcpServers, cut.reach, cut.keys, cut.paused], [[], { channels: [], commands: false }, { copyFromOwner: true, accounts: {} }, true]);
+  assert.deepEqual([cut.mcpServers, cut.reach, cut.keys, cut.paused], [[], { channels: [], commands: false, sandboxed: false }, { copyFromOwner: true, accounts: {} }, true]);
   const whole = record(app, snapshot.tables.governance.find((row) => JSON.parse(row.data).name === "Second").id.slice("trunk:".length));
   assert.ok(whole.permissions.length > 1 && whole.permissions.every((p) => p.endsWith(".read")), "a Trunk that named none gets every look, never the whole set");
   for (const reach of ["web.read", "browser.read", "research.read", "history.read"]) assert.equal(whole.permissions.includes(reach), false, `${reach} reaches past this computer`);
@@ -95,7 +95,7 @@ test("giving a Trunk back needs the owner's separate yes, is refused under Lockd
   const given = await call("/api/restore/trunks", { id: helper.id, answer: "give", confirmLoosening: true });
   assert.equal(given.status, 200, given.text);
   const back = record(app, helper.id);
-  assert.deepEqual([back.permissions, back.mcpServers, back.reach, back.keys, back.paused], [had.permissions, had.mcpServers, had.reach, had.keys, false]);
+  assert.deepEqual([back.permissions, back.mcpServers, back.reach, back.keys, back.paused], [had.permissions, had.mcpServers, { ...had.reach, sandboxed: false }, had.keys, false]);
   assert.ok(app.store.audit.list(app.runtime.owner, { limit: 50 }).some((entry) => entry.action === "policy.changed" && /Helper/.test(entry.subject) && /files\.write/.test(entry.reason)));
   const kept = await call("/api/restore/trunks", { id: second.id, answer: "keep" });
   assert.deepEqual(kept.body.trunks, [], "nothing waits any more");

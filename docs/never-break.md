@@ -37,6 +37,34 @@ Chat connections and the scheduler clock run in the worker, next to the store th
 makes them survive a restart is that their position is written down: the Telegram offset is saved
 after each message is handled, and a schedule is claimed in the database before it runs.
 
+### Desktop gateway draft
+
+The desktop candidate starts a windowless stock Electron broker with `--branch-gateway` and a
+separate single-instance lock. It retains the encrypted device vault, Stop notices and Mac login
+service. Its worker owns the database; its shell windows join the proved public gateway. An absent
+desktop preference migrates to ON, while a saved OFF is preserved. Closing a shell leaves the
+broker and engine running.
+
+Live adoption uses a private named pipe (a local socket elsewhere), with nonce/HMAC proof in both
+directions. Its authority is published atomically under `dataDir/desktop-control/`; that whole
+folder, including temporary writes, is protected from model reads and changes. No renderer or
+public HTTP route receives that authority. The broker verifies its own staged files again, permits
+one adoption at a time, pins its renderer acknowledgment chain, and records an update only after
+the page has restored and drawn. Failed pages restore the old engine and window. Proved engine
+adoption/rollback refreshes gateway readiness so public requests wait for the serving worker.
+
+Isolated tests cover engine crash replacement, shell close/rejoin, live module/draft/caret retention,
+active-task drain/adoption and failed-page rollback. Packaged installation, Windows job escape,
+gateway implementation replacement and overlapping shell handoff remain draft acceptance work.
+Native capture through a detached broker is refused until the shell's ownership can be proved.
+
+The owner can enable **Keep awake** in Settings. The retained gateway asks Electron to prevent app
+suspension while it is desired and running, then releases that request when switched off or closed.
+The screen may turn off; lid closure, manual sleep and OS or battery policy can still suspend the
+computer. The engine checkpoints saved work on suspend and wakes due schedules and queued
+deliveries on resume; chat adapters retry their existing connections. Settings separates the saved
+choice from the broker's actual OS request.
+
 Ideas studied (MIT, reimplemented, see `THIRD_PARTY_NOTICES.md`): Hermes' restart-loop breaker
 (`gateway/restart_loop_guard.py`: boots chained by gap, auto-resume skipped once tripped), Hermes'
 lifecycle ledger (a "running" sentinel left behind means the last exit was unclean), and OpenClaw's
@@ -114,8 +142,10 @@ outright when there is no such copy.
 On the update side: a power cut in the moment between the two renames of the swap leaves the
 program at `<name>.previous`. The gateway's start-up repair puts it back when Branch runs as a
 background service; the app window on its own has nothing to run the repair, so the owner has to
-rename it back. On Windows the swap is a copy (`robocopy /MIR`), not a rename, so a power cut in the
-middle leaves a mixed folder that only the previous-version copy can repair. The canary check pauses
+rename it back. On Windows an installed copy has a folder per version and switches by one rename of
+`current.json` (see docs/configuration.md), so there is no moment without a whole program; only a
+portable copy still swaps by copying (`robocopy /MIR`), where a power cut in the middle leaves a
+mixed folder that only the previous-version copy can repair. The canary check pauses
 the copy's timed jobs and silences webhooks, but a tool a resumed self-test task runs could still
 reach the network; the check only resumes its own made-up task, which only lists files.
 

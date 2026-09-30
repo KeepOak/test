@@ -310,29 +310,32 @@ switch ($Action) {
     if ($request.name) {
       $node = Find-Named $root $request.name
       if ($node -eq $null) { throw ('Nothing in that window is called "' + $request.name + '". Use desktop.read to see what is there.') }
+      # Where it is on the screen, for the owner's live view to draw the Trunk's cursor (the middle of what was pressed).
+      $box = $node.Current.BoundingRectangle
+      $at = @()
+      if (-not $box.IsEmpty) { $at = @([int]($box.X + $box.Width / 2), [int]($box.Y + $box.Height / 2)) }
       $pattern = $null
       Assert-CaptureInput $handle
       if ($node.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pattern)) {
-        $pattern.Invoke(); $result = @{ how = 'invoke'; name = $node.Current.Name }
+        $pattern.Invoke(); $result = @{ how = 'invoke'; name = $node.Current.Name; at = $at }
       } elseif ($node.TryGetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern, [ref]$pattern)) {
-        $pattern.Toggle(); $result = @{ how = 'toggle'; name = $node.Current.Name }
+        $pattern.Toggle(); $result = @{ how = 'toggle'; name = $node.Current.Name; at = $at }
       } elseif ($node.TryGetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern, [ref]$pattern)) {
-        $pattern.Select(); $result = @{ how = 'select'; name = $node.Current.Name }
+        $pattern.Select(); $result = @{ how = 'select'; name = $node.Current.Name; at = $at }
       } elseif ($node.TryGetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern, [ref]$pattern)) {
-        $pattern.Expand(); $result = @{ how = 'expand'; name = $node.Current.Name }
+        $pattern.Expand(); $result = @{ how = 'expand'; name = $node.Current.Name; at = $at }
       } else {
         if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was clicked.' }
         Assert-CaptureInput $handle
-        $box = $node.Current.BoundingRectangle
         [BranchDesktop]::Click([int]($box.X + $box.Width / 2), [int]($box.Y + $box.Height / 2))
-        $result = @{ how = 'point'; name = $node.Current.Name }
+        $result = @{ how = 'point'; name = $node.Current.Name; at = $at }
       }
     } else {
       if ($request.expectedTarget) {
         if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was clicked.' }
         $point = Capture-Point $handle
         [BranchDesktop]::Click($point.x, $point.y)
-        $result = @{ how = 'point'; name = '' }
+        $result = @{ how = 'point'; name = ''; at = @($point.x, $point.y) }
         break
       }
       $rect = New-Object BranchDesktop+RECT
@@ -342,7 +345,7 @@ switch ($Action) {
       if ($x -gt $rect.Right -or $y -gt $rect.Bottom) { throw 'That point is outside the window.' }
       if (-not (Bring-Forward $handle)) { throw 'Windows would not bring that window to the front, so nothing was clicked.' }
       [BranchDesktop]::Click($x, $y)
-      $result = @{ how = 'point'; name = '' }
+      $result = @{ how = 'point'; name = ''; at = @($x, $y) }
     }
   }
   'scroll' {
@@ -769,7 +772,15 @@ function failureText(status: string, stderr: string): string {
 /** What one live frame comes back as: the frame and the windows open just before and just after it. */
 export interface LiveAnswer {
   width: number; height: number; data: string; windows: unknown; after: unknown;
-  target?: NativeCaptureTarget; method?: 'monitor' | 'window'; screen?: { x: number; y: number; w: number; h: number };
+  target?: NativeCaptureTarget; method?: 'monitor' | 'window'; screen?: ScreenBox;
+}
+/** Where a screen sits among the computer's screens, in the pixels clicks are reported in. */
+export interface ScreenBox { x: number; y: number; w: number; h: number }
+/** A screen box, from what a script answered, or undefined when it is not one. */
+export function screenBox(value: unknown): ScreenBox | undefined {
+  const box = value as Partial<ScreenBox> | null;
+  const whole = (n: unknown): n is number => typeof n === "number" && Number.isFinite(n);
+  return box && whole(box.x) && whole(box.y) && whole(box.w) && whole(box.h) && box.w > 0 && box.h > 0 ? { x: box.x, y: box.y, w: box.w, h: box.h } : undefined;
 }
 /** The longest line one frame may be (a 1280-wide JPEG in base64 is well under this). */
 const liveLineBytes = 8 * 1024 * 1024;
@@ -871,9 +882,11 @@ export class LiveScreenProcess {
         JSON.stringify(answer.screen) !== JSON.stringify(this.target.bounds))
         throw new Error('The captured target changed. Open a fresh view before using it.');
     }
+    // The screen the frame is of: the pinned target's bounds, or the box the script reported (for the Trunk's cursor).
+    const screen = this.target ? this.target.bounds : screenBox(answer.screen);
     return { width: Number(answer.width) || 0, height: Number(answer.height) || 0, data: String(answer.data ?? ''),
       windows: answer.windows, after: answer.after,
-      ...(this.target ? { target: this.target, method: this.target.kind, screen: this.target.bounds } : {}) };
+      ...(this.target ? { target: this.target, method: this.target.kind } : {}), ...(screen ? { screen } : {}) };
   }
   /** Lets the program go; nothing runs after this. */
   close(): void {

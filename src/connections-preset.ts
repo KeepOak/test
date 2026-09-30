@@ -12,6 +12,7 @@ import { audit } from "./audit.js";
 import { migrateRecords, describeMove } from "./provider-migrations.js";
 import { type ConnectionCheck, connectionCheck } from "./local-connection-policy.js";
 import { pinnedFetch } from "./pinned-fetch.js";
+import { claudeSubscriptionModels, claudeSubscriptionPreset } from "./providers/claude-models.js";
 
 /**
  * Adding a model connection in plain language: pick a service, paste the key, answer whatever else
@@ -124,8 +125,10 @@ export async function forgetConnection(deps: FromPresetDeps, id: string): Promis
     throw new Error(`There is no connection called "${id}"`);
   store.save("settings", deps.owner, connectionsSetting, { connections: kept });
   deps.locker.remove(deps.owner, connectionProject, secretNameFor(id));
-  // Exactly this one, never everything whose name begins the same way.
-  deps.models.remove(id);
+  // Known Claude model choices share one saved connection; unrelated ids are still removed exactly.
+  if (!known && claudeSubscriptionPreset(id)) {
+    for (const entry of claudeSubscriptionModels) deps.models.remove(entry.presetId);
+  } else deps.models.remove(id);
   audit(store, deps.owner, { action: "connection.changed", actor: deps.owner, subject: id,
     reason: "A connection to a model service was removed, and its key taken out of the locker", outcome: "removed" });
   return { id, removed: true };

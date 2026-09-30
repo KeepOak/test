@@ -37,9 +37,16 @@ const PartialDisplay = z.object({
   cleanup: z.boolean().optional(),
   noEdit: z.enum(["summary", "each", "off"]).optional(),
   groups: z.enum(["kinds", "off"]).optional(),
+  /**
+   * Pictures of Branch's browser while a task works in it (the way GrokBot and Muse show their browser in a chat): a
+   * picture of the page after the task's first browser step and then now and again, with the step as its caption. A
+   * direct chat only; password and code boxes are covered, and a borrowed browser is never pictured.
+   */
+  pictures: z.enum(["browser", "off"]).optional(),
 }).strict();
 export const stepsDisplayDefaults = {
   detail: "all", grouping: "one", lineChars: 120, commands: "show", overflow: "roll", cleanup: false, noEdit: "summary", groups: "kinds",
+  pictures: "browser",
 } as const satisfies Required<z.infer<typeof PartialDisplay>>;
 export type StepsDisplay = { -readonly [K in keyof typeof stepsDisplayDefaults]-?: NonNullable<z.infer<typeof PartialDisplay>[K]> };
 export type StepsDisplayChange = z.infer<typeof PartialDisplay>;
