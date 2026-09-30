@@ -149,9 +149,12 @@ test("a message that carried a picture and a sound keeps its player after the co
   await chip(page).filter({ hasText: "dot.png" }).waitFor();
   await attachSound(page);
 
-  // The server saves these words with "[attached files: dot.png (picture), …]" after them (src/runtime.ts attachmentsNote).
+  // The server saves these words with "[attached files: dot.png (picture), …]" after them (src/runtime.ts attachmentsNote);
+  // the bubble leaves that note out, since each file has its own row under it (chat.js withoutFileNote).
   await sendAndAwaitRedraw(page, "a picture and a note", 1);
-  assert.match(await page.locator("#conversation .u[data-i15]:not(.umedia15)").first().innerText(), /attached files: dot\.png/, "this is the redrawn, saved message");
+  const words = await page.locator("#conversation .u[data-i15]:not(.umedia15)").first().innerText();
+  assert.match(words, /^a picture and a note/, "this is the redrawn, saved message");
+  assert.doesNotMatch(words, /attached files?:/, "the file is named once, in its own row");
   assert.equal(await page.locator("#conversation .media15.audio").count(), 1, "the redrawn message still carries its player");
   assert.deepEqual(errors, []);
 });

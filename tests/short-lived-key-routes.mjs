@@ -16,6 +16,7 @@
  * ":id" stands for any task, conversation or item id.
  */
 export const ROUTES = {
+  "/api/monitors/:id/prices": "owner GET", // owner price history; Trunk tool reads stay creator-bound
   "/api/taste": "prefix",
   "/api/panels/browser/demonstration": "owner POST",
   "/api/panels/browser/network": "owner POST",
@@ -119,7 +120,7 @@ export const ROUTES = {
   "/api/decisions/urgency": "owner POST",
   "/api/approvals/categories": "owner POST",
   "/api/artifacts": "look",
-  "/api/artifacts/file": "look",
+  "/api/artifacts/file": "secret-read",
   "/api/artifacts/read": "look", // dogfood-ux-2: one kept file's words, as /api/artifacts/file shows a picture
   "/api/artifacts/page": "task POST",
   "/api/artifacts/save": "task POST",
@@ -167,10 +168,12 @@ export const ROUTES = {
   "/api/channel-setup/": "prefix",
   "/api/channel-setup/sample": "look",
   "/api/channel-setup/sample/check": "owner POST",
+  "/api/channel-setup/sample/link": "owner POST", // a bridge on this computer: its pairing code (WhatsApp, personal number)
   "/api/channels": "look",
   "/api/channels/addresses": "secret-read",
   "/api/channels/addresses/rotate": "owner POST",
   "/api/channels/addresses/settings": "owner POST",
+  "/api/channels/allowlist": "owner POST", // CHAT-156: who may message Branch; a short-lived key cannot read it either
   "/api/channels/catalog": "look",
   "/api/channels/deliveries/sample/retry": "other POST",
   "/api/channels/link": "owner POST",
@@ -239,6 +242,7 @@ export const ROUTES = {
   // are the owner's alone, and every change is the owner's.
   "/api/delight": "look",
   "/api/delight/achievements": "secret-read",
+  "/api/weekly-recap": "owner GET,POST", // private counts and the owner's explicit manual-time estimate
   "/api/delight/noticed": "owner POST",
   "/api/delight/settings": "owner POST",
   "/api/delight/told": "owner POST",
@@ -307,6 +311,11 @@ export const ROUTES = {
   "/api/flows/check": "other POST",
   "/api/flows/runs/:id": "look",
   "/api/folder-trust": "owner POST",
+  "/api/github-device": "owner POST", // SELF-021: the owner's GitHub device connection (client ID, and what is connected)
+  "/api/github-device/begin": "owner POST", // SELF-021: starts GitHub's device sign-in
+  "/api/github-device/cancel": "owner POST",
+  "/api/github-device/disconnect": "owner POST", // SELF-021: the token taken out of the locker
+  "/api/github-device/poll": "owner POST", // SELF-021: finishes the sign-in and keeps the token in the locker
   "/api/gitlab": "owner POST", // RES-719: the GitLab switch
   "/api/gitlab/connect": "owner POST", // RES-719: a token checked with GitLab, then kept in the locker
   "/api/gitlab/disconnect": "owner POST", // RES-719: the token taken out of the locker
@@ -484,6 +493,7 @@ export const ROUTES = {
   "/api/trunks/:id/retire": "owner POST",
   "/api/trunks/:id/avatar": "owner POST",
   "/api/trunks/:id/export": "look",
+  "/api/trunks/:id/inbox": "look",
   "/api/trunks/:id/keys": "look",
   "/api/trunks/:id/routines": "owner POST",
   "/api/trunks/:id/watch": "owner POST",
@@ -549,12 +559,15 @@ export const ROUTES = {
   "/api/personal/signin/google": "secret-read",
   "/api/personal/signin/google/start": "owner POST",
   "/api/personal/signin/google/secret": "owner POST",
+  "/api/personal/signin/google/test": "owner POST",
   "/api/personal/signin/microsoft": "secret-read",
   "/api/personal/signin/microsoft/start": "owner POST",
   "/api/personal/signin/microsoft/secret": "owner POST",
+  "/api/personal/signin/microsoft/test": "owner POST",
   "/api/personal/signin/spotify": "secret-read",
   "/api/personal/signin/spotify/start": "owner POST",
   "/api/personal/signin/spotify/secret": "owner POST",
+  "/api/personal/signin/spotify/test": "owner POST",
   "/api/personal/spotify/now": "other POST",
   "/api/personal/switch": "owner POST",
   "/api/personal/tunnel": "secret-read",
@@ -800,6 +813,7 @@ export const ROUTES = {
   "/api/mcp/servers/sample/remove": "owner POST",
   "/api/mcp/servers/sample/start": "owner POST",
   "/api/mcp/servers/sample/stop": "owner POST",
+  "/api/mcp/servers/sample/timeout": "owner POST",
   "/api/mcp/settings": "owner POST",
   "/api/mcp/signin": "owner POST",
   "/api/mcp/snapshots": "look",
@@ -901,6 +915,9 @@ export const ROUTES = {
   "/api/people/me/pin": "other POST",
   "/api/people/me/sign-out": "other POST",
   "/api/people/oidc/callback": "pre-auth GET",
+  "/api/people/rooms": "look",
+  "/api/people/rooms/:id": "look",
+  "/api/people/rooms/:id/message": "other POST",
   "/api/people/settings": "secret-read",
   "/api/people/shares": "owner POST",
   "/api/people/shares/export": "secret-read",
@@ -1010,6 +1027,7 @@ export const ROUTES = {
   "/api/remove-branch": "owner POST",
   "/api/remove-branch/plan": "owner POST",
   "/api/recordings": "owner POST",
+  "/api/recordings/restart": "owner POST", // RES-512: a new task from a checked event log, after the owner's yes
   "/api/recipes/:id/steps": "owner POST", // finish-soon-a: a saved recipe's steps moved or taken out, a new version to verify
   "/api/reflection": "look",
   "/api/reflection/batches/:id/accept": "other POST",
@@ -1073,6 +1091,7 @@ export const ROUTES = {
   "/api/runs/:id/plan": "task POST",
   "/api/runs/:id/receipts": "look",
   "/api/runs/:id/recording": "look",
+  "/api/runs/:id/recording/events": "look", // RES-512: the same task's retained events as JSONL, scrubbed as the recording is
   "/api/runs/:id/result": "look", // Q52: what a finished task made and how it was checked, like its receipts (classified in Q64)
   // mac7/smoke-fixes (B4): one task's steps, for `branch trace`. "look" on purpose, not an
   // oversight — it carries none of the task's words, and `inspect` beside it already shows a
@@ -1099,6 +1118,7 @@ export const ROUTES = {
   "/api/schedules": "other POST",
   "/api/schedules/": "prefix",
   "/api/schedules/:id": "look",
+  "/api/schedules/:id/dashboard": "secret-read", // RES-189: the owner's retained dashboard; no short-lived key reads it
   "/api/schedules/:id/gate": "owner POST",
   "/api/schedules/:id/remove": "other POST",
   "/api/schedules/:id/trigger": "task POST",

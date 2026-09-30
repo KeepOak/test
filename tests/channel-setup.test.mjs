@@ -24,11 +24,11 @@ const telegramToken = `123456789:${"A".repeat(35)}`;
 
 /* ---------- the recipes ---------- */
 
-test("every channel Branch supports has exactly one recipe, and there are 56", () => {
+test("every channel Branch supports has exactly one recipe, and there are 57", () => {
   const supported = supportedChannels().map((channel) => channel.id).sort();
   const written = recipes().map((recipe) => recipe.id).sort();
   assert.deepEqual(written, supported);
-  assert.equal(written.length, 56);
+  assert.equal(written.length, 57);
   for (const channel of supportedChannels()) assert.equal(recipeFor(channel.id).family, channel.family, channel.id);
 });
 
@@ -316,7 +316,7 @@ test("the routes: anyone with the app's key may look, only the owner may save, a
     headers: { authorization: `Bearer ${token}`, ...(body ? { "content-type": "application/json" } : {}) }, ...(body ? { body: JSON.stringify(body) } : {}) })
     .then(async (r) => ({ status: r.status, body: await r.json() }));
   const list = await call("GET", "/api/channel-setup");
-  assert.deepEqual([list.status, list.body.mode, list.body.count], [200, "off", 56]);
+  assert.deepEqual([list.status, list.body.mode, list.body.count], [200, "off", 57]);
   const panel = await call("GET", "/api/channel-setup/telegram");
   assert.equal(panel.body.command.posix, "branch connect telegram");
   assert.equal(panel.body.codes.ios.size > 20, true);
@@ -343,7 +343,7 @@ test("the setup table in the docs is the one the recipes write (node scripts/cha
   const book = JSON.parse(await readFile(new URL("data/channel-setup.json", root), "utf8"));
   const docs = await readFile(new URL("docs/configuration.md", root), "utf8");
   assert.equal(replaceSetupTable(docs, renderSetupTable(book)), docs, "run node scripts/channel-setup-table.mjs");
-  assert.equal(renderSetupTable(book).split("\n").length, 2 + 56);
+  assert.equal(renderSetupTable(book).split("\n").length, 2 + 57);
 });
 
 /* ---------- integration review (adversarial pass) ---------- */

@@ -31,6 +31,8 @@ export interface DoctorDeps {
 }
 export interface DoctorOptions {
   fix: boolean;
+  /** Unattended update checks cannot launch package installers. Manual --fix keeps the existing repair behavior. */
+  browserRepair?: "manual";
   port: number;
   workspace: string;
   /** True when Branch is already listening on that address, so it is in use by design. */
@@ -82,7 +84,8 @@ async function checkBrowser(options: DoctorOptions, deps: DoctorDeps): Promise<D
   if (await installed())
     return { name: "Web browsing", ok: true, summary: "The private browser Branch uses to read pages is installed." };
   const fix = "Branch needs a small private browser to read web pages. Run: npx playwright install chromium --only-shell";
-  if (!options.fix) return { name: "Web browsing", ok: false, summary: "The private browser Branch uses to read pages is missing.", fix };
+  if (!options.fix || options.browserRepair === "manual")
+    return { name: "Web browsing", ok: false, summary: "The private browser Branch uses to read pages is missing.", fix };
   try {
     await (deps.run ?? runCommand)("npx", ["playwright", "install", "chromium", "--only-shell"]);
     return { name: "Web browsing", ok: true, repaired: true, summary: "The private browser was missing, so it was downloaded just now." };

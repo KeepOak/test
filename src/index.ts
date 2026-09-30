@@ -39,6 +39,7 @@ import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
 import { isCurrentFact, memoryScope, registerMemory } from "./memory.js";
+import { registerMemoryImages } from "./memory-images.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
@@ -62,7 +63,7 @@ import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { holdTaskBrowser } from "./browser-hold.js";
 import { MiniAppSessions } from "./miniapp/sessions.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
-import { runOrigin } from "./key-context.js";
+import { runOrigin, startedWithShortLivedKey } from "./key-context.js";
 import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
 import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
@@ -140,7 +141,7 @@ import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRu
 import { startDictation, type SoundStreamRunner, type SpeechStreamRunner } from "./voice-dictation-run.js"; // mac7/live-voice
 import { soundStreamRunner, speechStreamRunner } from "./voice-dictation-host.js"; // mac7/live-voice
 import type { LocalWhisper } from "./voice-whisper.js"; // RES-709
-import { wakeCaptureRunner, wakeRunner } from "./voice-wake-host.js"; // mac7/wake-mic
+import { wakeCaptureRunner, wakeRunner, wakeStreamRunner } from "./voice-wake-host.js"; // mac7/wake-mic
 // Bucket 17.
 import { MediaUnderstanding, registerMediaUnderstanding } from "./media-understand.js";
 import { SpeechEngineService } from "./speech-engine-service.js";
@@ -150,6 +151,10 @@ import { LiveConversations } from "./realtime-voice.js";
 import { liveRefusal } from "./live-refusal.js"; // phase2/rooms
 import { registerModelSwitch } from "./model-switch.js";
 import { registerSettingsTools } from "./settings-kit/tools.js";
+import { registerUpdateTool } from "./comfort/update-tool.js";
+import { newestPassing } from "./comfort/update-now.js";
+import { ownBuild } from "./hot-update/window-files.js";
+import { primaryRepo } from "./desktop/repo-pair.js"; // the repository updates come from
 import { registerHelpSearch } from "./help-search.js";
 import { settingsKitWriters } from "./settings-kit/writers.js";
 import { GitTools } from "./integrations/git.js";
@@ -177,6 +182,7 @@ import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
 import { registerSdkKit } from "./sdk-kit.js"; // bucket 21
 import { GitLabConnection } from "./gitlab-connection.js"; // RES-719
+import { GitHubDeviceConnection } from "./github-device-connection.js";
 import { gitlabLaunch } from "./gitlab-switch.js"; // RES-719
 import { registerGitLab } from "./integrations/gitlab.js"; // RES-719
 import { WebPages, registerWebPages } from "./web-pages.js"; // w911 (A0743, A1452) hook
@@ -189,6 +195,8 @@ import { Research, registerResearch } from "./research.js";
 import { Monitors, registerMonitors, trunksSwitchedOff } from "./monitors.js";
 // Wave 8: watching a rectangle of the screen for a change, off unless the owner asks twice.
 import { ScreenWatches, registerScreenWatches } from "./screen-watch.js";
+import { readScreenText } from "./screen-watch-ocr.js";
+import { registerLocalOcr } from "./local-ocr.js";
 import { MorningBrief, registerBrief } from "./brief.js";
 import { DesktopControl } from "./integrations/desktop.js";
 import { LinuxDesktopSandbox } from "./integrations/linux-desktop.js";
@@ -247,7 +255,7 @@ import { registerCheckpoints, SnapshotStore, systemGit, type GitCall } from "./c
 // Wave mac2 (goal-undo): working toward a goal in rounds, and going back to an earlier message.
 import { GoalMode, goalUndoSettings } from "./goal-mode.js";
 import { Rewinds } from "./rewind.js";
-import { isReadOnlyPermission } from "./policy.js";
+import { isReadOnlyPermission, migrateUnmatchedCommands } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
 import { offerPullRequestFromChanges, watchFinishedTasks, type PullRequestDeps } from "./pr-hook.js"; // bucket-18 (A0300)
@@ -425,6 +433,7 @@ export async function createBranch(options: {
   if (journalReset) console.error(journalReset);
   // --- end mac3/never-break ---
   migrateFeatureSwitches(store, options.owner ?? "local", existedBefore);
+  migrateUnmatchedCommands(store, options.owner ?? "local"); // owner ruling 2026-09-30: commands no rule covers run
   const lockerKey = options.lockerKey ?? new FileLockerKey(join(dataDir, "locker.key"));
   store.openLocker(lockerKey);
   // The key every approval question is fingerprinted with, kept for this install so a question kept across a restart
@@ -620,17 +629,29 @@ export async function createBranch(options: {
   registerWorkbookTools(registry, workbooks);
   runtime.learningRules = (sessionId) => workbooks.rules(sessionId); // sealed: only its own tools, every browser step asks
   // P17-D §4: small decisions on the owner's own connections, asked with no tools (src/decision-models.ts).
-  const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset) => {
+  const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset, origin) => {
     // Temporary, so a decision never adds a conversation to the list.
     const run = store.createRun(runtime.owner, "Making a small decision", undefined, true, "owner");
+    // A decision made for a task is that task's: it answers to the same asker (the start record names its parent, so
+    // runOrigin reads the task's source), under the same Trunk and accounts, and joins its privacy and spending.
+    if (origin) {
+      store.event(run.id, "run.started", { source: "owner", parentRunId: origin.runId, label: "decision", ...(origin.dryRun ? { dryRun: true } : {}) });
+      runtime.joinSideRun(run.id, origin.runId);
+    }
     let answer: ShapedAnswer | undefined;
     try {
-      answer = await runtime.shaped(run, runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) }), text, shape, preset);
+      // A decision made for a task stops with it and is paid from its budget (a list filter); any other has a minute.
+      const signal = origin ? AbortSignal.any([origin.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000);
+      const context = runtime.context({ runId: run.id, permissions: [], signal, ...(origin ? { budget: origin.budget } : {}), ...(origin?.dryRun ? { dryRun: true } : {}) });
+      const scoped = { ...context, ...(origin?.trunk ? { trunk: origin.trunk } : {}), ...(origin?.trunkKeys ? { trunkKeys: origin.trunkKeys } : {}) };
+      answer = await runtime.shaped(run, scoped, text, shape, preset);
       return answer;
     } finally {
+      if (origin) runtime.leaveSideRun(run.id);
       store.finish(run.id, answer?.status === "resolved" ? "completed" : "failed", answer?.status === "refused" ? answer.reason : "");
     }
   });
+  runtime.listFilter = (rule, lines, origin) => decisionModels.filterList(rule, lines, origin); // models-ui: long lists filtered before a task reads them
   runtime.journal = journalHook(journal, (text) => runtime.hideSecrets(text)); // mac3/never-break: nothing secret is written down
   // FQ-execution.browser: a tool's own steps (a browser.flow click) are judged as the tool they stand for.
   registry.judgeStep = (tool, args, context, target, index) => runtime.judgeStep(tool, args, context, target, index);
@@ -653,6 +674,8 @@ export async function createBranch(options: {
   // Locking the app: after a quiet spell the locker stays shut until the owner unlocks it again.
   const sessionLock = new SessionLock(store, runtime.owner);
   runtime.fullAccessLocked = () => sessionLock.locked();
+  // Owner ruling 2026-09-30: in the owner's Full access the file tools reach the whole computer (src/files.ts).
+  files.wholeComputer = (context) => context !== undefined && runtime.ownerFullMode(context);
   store.secrets.gate = () => sessionLock.require();
   // Batch 26 (wave 8): the owner's own password manager, asked at the call boundary and only when
   // they have switched it on. It waits for the same unlock the locker does.
@@ -708,7 +731,7 @@ export async function createBranch(options: {
     (tool) => { const permission = registry.permissionOf(tool); return permission !== "" && !isReadOnlyPermission(permission); });
   runtime.turnStarted = (run) => rewinds.turnStarted(run);
   const goals = new GoalMode(runtime, store);
-  registerSkills(registry, store);
+  registerSkills(registry, store, () => skillPackages);
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
   runtime.attachmentsFiled = async (session, owner, refs) => {
@@ -720,6 +743,10 @@ export async function createBranch(options: {
     }
   };
   registerDocuments(registry, documents);
+  registerLocalOcr(registry, files, (context) => {
+    if (context.owner !== runtime.owner) throw new Error("Local OCR is the owner's alone");
+    store.profiles.requireOwner("Local OCR");
+  }, (text) => runtime.hideSecrets(text));
   registerAttachmentTools(registry, store, attachments);
   registry.register(environmentTool((runId) => runtime.channelOf(runId))); // where Branch is running, on request
   runtime.documents = documents;
@@ -765,6 +792,7 @@ export async function createBranch(options: {
   // database — see the comment on `MemoryReview.provider`.
   store.review.provider = memory.backend;
   registerMemory(registry, store, memory.retrieval, memory.backend);
+  registerMemoryImages(registry, { store, attachments, provider: memory.backend });
   const selfDevelopment: SelfDevelopmentDeps = {
     workspace, owner: options.owner ?? "local", projects: store.projects, registry, policy: web.policy,
     git: (input, signal) => gitRunner.run(input, signal), contracts: selfContracts, store,
@@ -1180,7 +1208,8 @@ ${result.output || "(it said nothing)"}`;
   // Wave 8: watching one rectangle of the screen for a change. Off unless the owner switches it on
   // AND has using the screen switched on; the picture is never kept, only a fingerprint of it.
   const screenWatches = new ScreenWatches(store, (region) => desktop.captureRegion(region),
-    () => desktop.enabled(runtime.owner), deliverMessage, watchTrunks);
+    () => desktop.enabled(runtime.owner), deliverMessage, watchTrunks,
+    async (picture) => runtime.hideSecrets(await readScreenText(picture)));
   registerScreenWatches(registry, screenWatches);
   const brief = new MorningBrief(store, monitors, documents, deliverMessage);
   registerBrief(registry, brief);
@@ -1211,6 +1240,8 @@ ${result.output || "(it said nothing)"}`;
   registerSdkKit(registry, store);
   // RES-719: GitLab set up in the window (Settings › Advanced › GitLab); its tools reach the index only once connected.
   const gitlab = new GitLabConnection({ store, policy: web.policy });
+  const githubDevice = new GitHubDeviceConnection({ store, owner: runtime.owner, policy: web.policy, locked: () => sessionLock.locked() });
+  releaseOnLock.push(async () => githubDevice.cancel());
   registerGitLab(registry, (who) => gitlab.access(who));
   // w911 (A0743, A1452) hook: web.page and web.crawl (switched off until the owner turns them on).
   const webPages = new WebPages({ store, web, registry, runtime }); registerWebPages(registry, webPages);
@@ -1565,6 +1596,8 @@ ${result.output || "(it said nothing)"}`;
   const wake = startWakeWord({
     store, owner: runtime.owner, runner: options.wake?.runner ?? wakeRunner(),
     capture: options.wake?.capture ?? wakeCaptureRunner(),
+    stream: wakeStreamRunner(),
+    ...(voice.transcription.whisper ? { whisper: voice.transcription.whisper } : {}),
     // Integration review: being locked is a state the listener asks about before every window and
     // before every start, so a settings save cannot reopen the microphone on a locked Branch.
     locked: () => sessionLock.locked(),
@@ -1617,6 +1650,11 @@ ${result.output || "(it said nothing)"}`;
   // ── end mac7/r17-g ──
   // ── r17-h: flows and boards (src/flows-boards/). Every part ships off. ──
   const flowsBoards = new FlowsBoards({ runtime, registry, flows, knowledge, queue: runQueue, asks,
+    requireInstallOwner: () => {
+      store.profiles.requireOwner("Answering an install request");
+      if (startedWithShortLivedKey()) throw new Error("Answer install requests with the owner's full access.");
+      if (sessionLock.locked()) throw new Error("Unlock Branch before answering an install request.");
+    },
     fetch: () => web.policy.guard(globalThis.fetch), ...(process.env.BRANCH_OSV_ENDPOINT ? { osvEndpoint: process.env.BRANCH_OSV_ENDPOINT } : {}) });
   // ── end r17-h ──
   // ── R17-F: learning, deeper (src/learning-more/). Every part ships off. ──
@@ -1639,6 +1677,7 @@ ${result.output || "(it said nothing)"}`;
   // eng-connectors: whether another person's server is started as Branch starts or only when a task needs it, and
   // what it last said its tools are. The launch file's servers and the owner's own (kept in the store) share it.
   const mcpHost = {
+    injectionPolicy: () => web.injectionPolicy,
     connectWhen: () => readLifecycleSettings(store, store.profiles.scope()).connect,
     cache: {
       read: (id: string) =>
@@ -1947,6 +1986,7 @@ ${result.output || "(it said nothing)"}`;
     flows,
     /** RES-719: GitLab as a connection of its own. */
     gitlab,
+    githubDevice,
     /** Wave 8: the things still to be done, written down where the owner can see them. */
     todos,
     wiki,
@@ -1977,6 +2017,7 @@ ${result.output || "(it said nothing)"}`;
       git,
       /** A secret from whichever project is active right now, for GitHub's personal access token. */
       gitlab: (settings: unknown) => gitlabLaunch.set(store, settings),
+      githubToken: (config: { apiBase: string }) => githubDevice.token(config.apiBase),
       activeSecret: async (name: string) => {
         const project = store.projects.active(runtime.owner).id;
         const value = (await store.secrets.resolve(runtime.owner, project, [name], { purpose: "integration" }))[name]!;
@@ -2028,6 +2069,7 @@ ${result.output || "(it said nothing)"}`;
     close: () => (closing ??= (async () => {
       // bucket-18 (A0300): nothing is sent to GitHub while the app is closing.
       stopPullRequests();
+      githubDevice.cancel();
       stopOfferingPullRequests();
       pullRequestStop.abort(new Error("Branch is closing"));
       await stopSourcePublications();
@@ -2077,6 +2119,11 @@ ${result.output || "(it said nothing)"}`;
   };
   // Changing Branch's own settings by asking, saved through the same writers as the window's (src/settings-kit/tools.ts).
   registerSettingsTools(registry, store, () => settingsKitWriters(branch));
+  // Branch's own updates, asked about or asked for by the owner (src/comfort/update-tool.ts).
+  const updateFacts = { version: String(createRequire(import.meta.url)("../package.json").version), commit: ownBuild,
+    newestPassing: newestPassing(primaryRepo) };
+  registerUpdateTool(registry, store, updateFacts);
+  channels.updateFacts = updateFacts;
   registerHelpSearch(registry); // what Branch knows about itself, from its own handbook
   // Wave 9: a graph flow left working when the app closed picks up at the box after the last one
   // that finished, with the state exactly as that box left it. Nothing is started again from the
@@ -2562,3 +2609,5 @@ export * from "./flow-yaml.js";
 export * from "./sdk-kit.js";
 export * from "./web-pages-settings.js"; // w911 (A0743, A1452) hook
 export * from "./sdk-starters.js";
+
+export * from "./scheduled-dashboards.js";

@@ -128,7 +128,7 @@ async function installNow() {
   if (installing || !desktop?.installUpdate || !ownerHere()) return;
   installing = true;
   goingAway();
-  try { await desktop.installUpdate(false); } catch (error) {
+  try { const status = await desktop.installUpdate(false); if (status?.waitingForTasks || status?.phase === "available") goingAway(false); } catch (error) {
     goingAway(false);
     toast(ownWords(error));
     U.at = 0;
