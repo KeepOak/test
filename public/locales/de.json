@@ -4395,6 +4395,7 @@
   "recording.page.speed": "Tempo",
   "recording.page.steps": "Alle Schritte",
   "recording.page.title": "Eine Aufgabe, Schritt für Schritt",
+  "recording.save-events": "Ereignisprotokoll speichern (JSONL)",
   "recordings.back": "Schritt zurück",
   "recordings.box-words": "{boxes} Ablauf-Kästchen; insgesamt {words} Wörter Kontext genutzt.",
   "recordings.counts": "{rounds} Runden mit dem Modell, {actions} Aktionen, {failed} gescheitert, insgesamt {seconds} s",
