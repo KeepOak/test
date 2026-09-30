@@ -181,17 +181,19 @@ export function resolveBaseUrl(entry: CatalogEntry, extras: Record<string, strin
     return value;
   });
   const address = filled.replace(/\/$/, "");
-  if (entry.remoteBehindLoopback) assertForwardAddress(address);
+  if (entry.remoteBehindLoopback) assertForwardAddress(address, entry);
   return address;
 }
 /** Forwarded connections expose only a chosen loopback port, never a remote host or arbitrary URL. */
-function assertForwardAddress(address: string): void {
+function assertForwardAddress(address: string, entry: CatalogEntry): void {
+  // The path is the catalogue entry's own (its address with the port filled in), so only the port can change.
+  const path = new URL(entry.baseUrl.replaceAll(/\{[a-z]+\}/gi, "1")).pathname;
   let url: URL;
   try { url = new URL(address); } catch { throw new Error("The SSH forward needs a valid port from 1 to 65535"); }
   const port = Number(url.port || (url.protocol === "http:" ? 80 : 0));
   if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" ||
       !Number.isInteger(port) || port < 1 || port > 65535 || url.username || url.password ||
-      url.pathname !== "/v1" || url.search || url.hash)
+      url.pathname !== path || url.search || url.hash)
     throw new Error("The SSH forward must use http://127.0.0.1:<port>/v1 with a port from 1 to 65535");
 }
 function choicesFor(entry: CatalogEntry, key: string): string[] | undefined {
