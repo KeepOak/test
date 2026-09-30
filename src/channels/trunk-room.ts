@@ -34,12 +34,12 @@ export class ChannelTrunkRooms {
     if (new Set(sent.members).size !== sent.members.length) throw new Error("Each Trunk may appear once.");
     for (const id of sent.members) { this.trunks.records.get(id); const refusal = this.channels.trunkIdReach(sent.connection, id); if (refusal) throw new Error(refusal); }
     const room = this.trunks.rooms.create({ name: sent.name, members: sent.members, rule: "tag" });
-    this.store.save("settings", this.runtime.owner, "channel-trunk-rooms", [...before, { connection: sent.connection, chatId: sent.chatId, roomId: room.id, members: sent.members, handoff: sent.handoff, enabled: true }]);
+    this.store.save("settings", this.runtime.owner, "channel-trunk-rooms", { rooms: [...before, { connection: sent.connection, chatId: sent.chatId, roomId: room.id, members: sent.members, handoff: sent.handoff, enabled: true }] });
     return this.list();
   }
   disable(input: unknown) {
     const { roomId } = z.object({ roomId: z.string().uuid() }).strict().parse(input);
-    this.store.save("settings", this.runtime.owner, "channel-trunk-rooms", this.bindings().map((b) => b.roomId === roomId ? { ...b, enabled: false } : b));
+    this.store.save("settings", this.runtime.owner, "channel-trunk-rooms", { rooms: this.bindings().map((b) => b.roomId === roomId ? { ...b, enabled: false } : b) });
     for (const [id, bound] of this.runRooms) if (bound === roomId) this.runtime.cancel(id);
     return this.list();
   }
