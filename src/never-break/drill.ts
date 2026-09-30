@@ -47,7 +47,7 @@ async function exerciseRollback(root: string): Promise<Pick<RecoveryDrill, "ok" 
   await writeFile(join(target, "worker.cjs"), goodWorker);
   await saveGatewayConfig(dataDir, { ...defaultGatewayConfig(), mode: "on", startSeconds: 2 });
   const journal = new ActivationJournal(join(root, "activation.sqlite"));
-  let gateway: Gateway | null = null, crashed = false, ready = false;
+  let gateway = null as Gateway | null, crashed = false, ready = false;
   const start = async () => {
     ready = false;
     gateway = new Gateway({ dataDir, script: join(target, "worker.cjs"), args: [], port: 0,
