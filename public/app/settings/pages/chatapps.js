@@ -15,7 +15,7 @@
 import { esc, render } from "../../core/dom.js";
 import { level, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
-import { toast } from "../../core/ui.js";
+import { toast, openDlg } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
 import { stepsCard, initSteps } from "../chat-steps.js";
 import { phoneAccessCard, initPhoneAccess, loadPhoneAccess } from "../phone-access.js";
@@ -28,7 +28,7 @@ import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.j
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null, watchdogLog: [] };
 const STEPS = "Show steps in chats";
 /* owner-dm-full: the owner's own verified direct chat runs with the owner's full access (GET /api/channels
    `permissions.ownerChats`, saved with POST /api/channels/permissions { ownerChats }). On as Branch ships. */
@@ -42,6 +42,7 @@ async function loadApps() {
   const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   A.channels = live?.channels ?? [];
   A.intake = live?.intake ?? null;
+  A.watchdogLog = live?.watchdogLog ?? [];
   A.live = live?.live ?? null;
   A.ownerCommands = live?.ownerCommands ?? null;
   A.ownerNamed = live?.ownerNamed !== false; // owner-dm-signin: no chat account is marked as the owner's yet
@@ -73,7 +74,19 @@ export function draw() {
   if (kinds.length) html += `<div class="sec x15-sec"><h2>${esc(t("window.chat-reply.title"))}</h2>${kinds.map((id) => replyStyleRows(id, nameOf(id), quotes(id))).join("")}</div>`;
   if (lv >= 1) html += advanced(on);
   if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
+  if (lv >= 2) html += `<div class="ctl"><b>${esc(t("window.p17d.watchdog-log"))}</b><button type="button" class="btn sm" data-act="ca-watchdog-log">${esc(t("ov.open"))}</button><small>${esc(t("window.p17d.watchdog-log-hint"))}</small></div>`;
   return html;
+}
+async function showWatchdogLog() {
+  if (E.profiles?.isOwner === false) return;
+  await loadApps();
+  if (E.profiles?.isOwner === false) return;
+  const rows = [...(A.watchdogLog ?? [])].reverse().map((row) => {
+    const at = new Date(row.at);
+    const outcome = ["stalled", "restarted", "failed"].includes(row.outcome) ? row.outcome : "stalled";
+    return `<div class="prow"><span class="grow"><b>${esc(nameOf(row.kind))}</b><small>${esc(t(`window.p17d.watchdog-log-${outcome}`))}</small></span><time datetime="${esc(row.at)}">${esc(Number.isFinite(at.getTime()) ? at.toLocaleString() : "")}</time></div>`;
+  }).join("");
+  openDlg({ title: t("window.p17d.watchdog-log"), body: `<p class="hint">${esc(t("window.p17d.watchdog-log-hint"))}</p>${rows || `<p class="empty">${esc(t("window.p17d.watchdog-log-empty"))}</p>`}` });
 }
 
 /* Each switch: the field it saves. */
@@ -127,9 +140,10 @@ async function saveSteps(on) {
 }
 
 export function init() {
+  on("ca-watchdog-log", showWatchdogLog);
   initFormatting();
   initReplyStyle();
-  markLive(["sw:f15-show-steps-in-chats", "sw:" + id15(OWN_FULL), "ca-split", "ca-reconnect", "sw:ca-stall17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["sw:f15-show-steps-in-chats", "sw:" + id15(OWN_FULL), "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-watchdog-log", ...Object.keys(SW).map((id) => "sw:" + id)]);
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
   document.addEventListener("change", (e) => {
