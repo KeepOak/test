@@ -9,6 +9,19 @@ const sections = [
   "",
   "Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.",
   "",
+  // Browser bundles vendored under public/app/vendor are not in package-lock.json, so their notices are written here.
+  "The browser also includes the pinned markdown-it 15.0.2 ESM bundle (MIT) at",
+  "`public/app/vendor/markdown-it-15.0.2/markdown-it.js`. Its upstream license and",
+  "the notices for bundled entities (BSD-2-Clause), linkify-it, mdurl, punycode.js",
+  "and uc.micro (MIT) are retained alongside the bundle. See that folder's README",
+  "for the official package source, version and checksum.",
+  "",
+  "The browser also includes the unchanged DOMPurify 3.4.16 ES module (Cure53 and",
+  "contributors, Apache-2.0 or MPL-2.0; used here under Apache-2.0) at",
+  "`public/app/vendor/dompurify-3.4.16/purify.js`, with its upstream license banner and",
+  "Apache `LICENSE` retained alongside. See that folder's README for the source commit",
+  "and checksum.",
+  "",
 ];
 for (const [path, entry] of Object.entries(lock.packages)) {
   if (!path || entry.dev) continue;
