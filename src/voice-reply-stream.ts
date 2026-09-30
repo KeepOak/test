@@ -51,6 +51,7 @@ export class SpokenReplyStream {
     const matches = run.status === "completed" && this.current(run) &&
       prepareSpokenText(this.scrub(this.raw)) === prepareSpokenText(this.scrub(run.output));
     if (matches) for (const tail of this.chunker.flush()) this.say(tail);
+    if (this.ended) return;
     this.complete = matches && this.sentences > 0 && !this.ended;
     this.emit("ended", { complete: this.complete, sentences: this.sentences, status: run.status });
     this.ended = true; this.clear();
@@ -64,6 +65,7 @@ export class SpokenReplyStream {
   private clear(): void { this.off?.(); this.off = undefined; if (this.timer) clearInterval(this.timer); this.timer = undefined; }
 
   private say(raw: string): void {
+    if (this.ended) return;
     // Scrub assembled prose before splitting to the request boundary: split secrets stay together.
     for (const text of spokenSentences(this.scrub(raw))) {
       if (!text || this.sentences >= 128) { if (text) this.stop(); return; }

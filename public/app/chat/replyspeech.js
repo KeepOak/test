@@ -64,13 +64,15 @@ class ReplySpeech {
       while (this.queue.length && !this.stopped && generation === this.generation) {
         const text = this.queue.shift(); this.bytes -= text.length;
         const voice = await this.voice();
-        if (this.stopped || generation !== this.generation || !this.current(this.sessionId)) break;
+        if (this.stopped || generation !== this.generation) break;
+        if (!this.current(this.sessionId)) { this.stop(true); break; }
         this.abort = new AbortController();
         const sound = await apiBlob("voice/speak", { text, voice, speed: this.speed }, this.abort.signal);
-        if (this.stopped || generation !== this.generation || !this.current(this.sessionId)) break;
+        if (this.stopped || generation !== this.generation) break;
+        if (!this.current(this.sessionId)) { this.stop(true); break; }
         await this.play(sound);
       }
-    } catch (error) { if (!this.stopped && error.name !== "AbortError") { toast(error.message); this.stop(); } }
+    } catch (error) { if (!this.stopped && generation === this.generation && error.name !== "AbortError") { toast(error.message); this.stop(); } }
     finally {
       this.playing = false;
       if (this.queue.length && !this.stopped) void this.pump();
@@ -82,9 +84,10 @@ class ReplySpeech {
     const audio = this.audio = new Audio(this.url);
     return new Promise((resolve, reject) => {
       this.doneAudio = resolve;
-      audio.onended = () => this.clearPlayback();
-      audio.onerror = () => { this.clearPlayback(); reject(new Error("The spoken sentence could not be played.")); };
-      audio.play().then(() => { this.heard = true; }, (error) => { this.clearPlayback(); reject(error); });
+      audio.onended = () => { if (this.audio === audio) this.clearPlayback(); };
+      audio.onerror = () => { if (this.audio === audio) this.clearPlayback(); reject(new Error("The spoken sentence could not be played.")); };
+      audio.play().then(() => { if (this.audio === audio && !this.stopped) this.heard = true; },
+        (error) => { if (this.audio === audio) this.clearPlayback(); reject(error); });
     });
   }
   async finish(run) {

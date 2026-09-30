@@ -154,7 +154,10 @@ export function stream(prefixes, onEvent, onEnd, onReady) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer = drain(buffer + decoder.decode(value, { stream: true }), (kind, data) => {
-        if (kind === "ready") { onReady?.(data); return; }
+        if (kind === "ready") {
+          if (Number.isInteger(data?.after) && data.after > (last ?? 0)) last = data.after;
+          onReady?.(data); return;
+        }
         const seen = kind === "end" ? data?.after : data?.id;
         if (Number.isInteger(seen) && seen > (last ?? 0)) last = seen;
         if (kind === "end") onEnd?.(data); else if (wanted(kind)) onEvent(kind, data);
@@ -184,7 +187,7 @@ export async function streamOnce(path, onEvent, signal) {
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer = drain(buffer + decoder.decode(value, { stream: true }), onEvent);
+    buffer = drain(buffer + decoder.decode(value, { stream: true }), (kind, data) => { if (kind !== "ready") onEvent(kind, data); });
   }
 }
 
