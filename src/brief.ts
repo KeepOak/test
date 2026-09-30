@@ -83,10 +83,13 @@ export function assembleBrief(settings: BriefSettings, content: BriefContent, no
   const bound: Record<string, string> = {
     date: new Intl.DateTimeFormat("en-GB", { timeZone: settings.timezone, weekday: "long", day: "numeric", month: "long" }).format(now),
   };
-  for (const section of briefSections)
+  for (const section of briefSections) {
+    // Health and news only speak about pages the owner chose; with none chosen, their headings are left out.
+    const optional = section === "health" || section === "news";
     bound[section] = settings.sections.includes(section) && content[section].length
       ? content[section].map((line) => `- ${line}`).join("\n")
-      : settings.sections.includes(section) ? nothing : "";
+      : settings.sections.includes(section) && !optional ? nothing : "";
+  }
   const text = substitute(settings.template, bound);
   // A section that was switched off leaves its heading with an empty body; drop both.
   return text.replace(/\n\*\*[^*]+\*\*\n(?=\n|$)/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -156,8 +159,7 @@ export class MorningBrief {
   private sourceLines(owner: string, section: "health" | "news"): string[] {
     const sources = this.selectedSources(this.settings(owner));
     return this.sourceReader?.lines(owner, sources, section)
-      ?? [sources.some((source) => source.section === section) ? "Source reading is unavailable in this Branch instance."
-        : `No public ${section} sources selected.`];
+      ?? (sources.some((source) => source.section === section) ? ["Source reading is unavailable in this Branch instance."] : []);
   }
   private unchanged(owner: string, settings: BriefSettings): void {
     this.store.profiles.requireOwner("Reading brief sources");

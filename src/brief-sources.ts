@@ -66,7 +66,7 @@ export class BriefSources {
     const cache = CacheSchema.safeParse(this.store.get("settings", owner, cacheId)?.data);
     const current = cache.success && cache.data.signature === signatureOf(sources) ? cache.data.snapshots : [];
     const selected = sources.filter((source) => source.section === section);
-    if (!selected.length) return [`No public ${section} sources selected.`];
+    if (!selected.length) return []; // no heading at all until the owner picks a page for it
     return selected.map((source) => {
       const snapshot = current.find((item) => item.section === section && item.sourceUrl === source.url && item.label === source.label);
       const citation = `[${words(source.label)}](${link(snapshot?.url ?? source.url)})`;
