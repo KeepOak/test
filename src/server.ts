@@ -4931,8 +4931,9 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     const readable = () => !!scope && scopeWhileUnlocked(app) === scope && app.store.profiles.isOwner()
       && app.store.ownsSession(scope, session);
     if (!readable()) throw new HttpError(404, "Conversation not found");
-    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
-      session, response, readable);
+    // The stream is read only while the view shows the browser, so it observes plan steps as a fast read does (#996).
+    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser,
+      plan: session => app.runtime.orchestration.plan(session), observeSteps: true }, session, response, readable);
     return true;
   }
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
