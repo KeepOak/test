@@ -1155,7 +1155,7 @@ export class Store {
     const result = this.db
       .prepare(
         `UPDATE schedules SET data=json_set(data,'$.statusBeforeTrigger',json_extract(data,'$.status'),'$.status','running'),updated_at=?
-         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed')
+         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed','interrupted')
          AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(data,'$.triggerSlots') WHERE json_extract(value,'$.slot')=?))
          RETURNING *`,
       )
