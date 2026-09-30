@@ -45,6 +45,7 @@ import { GitLabAccess, GitLabConfigSchema } from './gitlab.js';
 import { LinearAccess, LinearConfigSchema } from './linear.js';
 import { JiraAccess, JiraConfigSchema } from './jira.js';
 import { IssueAccess, registerIssues, type IssueTrackers } from './issue-tools.js';
+import type { InjectionPolicy } from '../content-guard.js';
 // Wave mac3 (channels-parity): the chat services added to match other assistants, all behind a switch.
 import { ParityChannelSchema, buildParityChannel, isParityChannel, type ParityChannelConfig } from '../channels/parity-config.js';
 
@@ -445,7 +446,7 @@ export async function startMcp(
     await vet();
     return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
   };
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injectionPolicy); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -463,7 +464,7 @@ export async function startMcp(
     // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
       ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
-  });
+  }, host.injectionPolicy);
   if (!names.length) {
     const connection = await connect();
     return connection.close;
@@ -478,6 +479,8 @@ async function vetLaunch(server: unknown, host: McpHost | undefined): Promise<vo
 }
 /** What `loadIntegrations` needs to run outside servers on demand rather than at startup. */
 export interface McpHost {
+  /** Read fresh when outside descriptions or replies are used. Unset defaults to redaction. */
+  injectionPolicy?: () => InjectionPolicy;
   connectWhen(): 'startup' | 'on-demand';
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;

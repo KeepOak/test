@@ -16,6 +16,20 @@
 
 `src/channels/mail-auth.ts` ports the comment/quote-aware Authentication-Results clause and property parsing and sender-authentication decision from `plugins/platforms/email/adapter.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/plugins/platforms/email/adapter.py), Copyright (c) 2025 Nous Research, MIT. Branch considers only the first header, uses exact optional authserv-id pins, and uses exact domain alignment for SPF/DKIM fallback. The MIT license is reproduced elsewhere in this document under Hermes Agent.
 
+### MCP tool error feedback
+
+`src/integrations/mcp-errors.ts` adapts Gemini CLI's MCP tool error-result handling, with Branch's
+credential redaction, text-only limit and outside-content guard. Source:
+https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-tool.ts
+(Copyright Google LLC, Apache-2.0). The Apache-2.0 license text is reproduced in this document.
+
+### MCP outside-content scanning
+
+`src/integrations/mcp-content.ts` adapts Hermes Agent's description scanning and scans both cached
+and live tools using Branch's existing content detector. Copyright (c) 2025 Nous Research, MIT;
+https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py
+and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this document.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
