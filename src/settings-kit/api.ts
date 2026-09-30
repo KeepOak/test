@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { taskSettingsPreview, applyTaskSettings } from "./task-settings.js";
 import { errorText } from "../request-errors.js";
 import type { Store } from "../store.js";
 import { audit } from "../audit.js";
@@ -36,6 +37,8 @@ export interface SettingsKitDeps {
   guard?: ((target: string) => string | null) | undefined;
   /** The tools Branch has, which a move of the approval preset is weighed on (see changesFor). */
   tools?: ToolLister | undefined;
+  /** Whether App lock is on now; task settings ask it again after their body has been read (src/settings-kit/task-settings.ts). */
+  locked?: (() => boolean) | undefined;
 }
 
 function ownerOnly(deps: SettingsKitDeps, what: string): void {
@@ -215,6 +218,8 @@ export async function settingsKitApi(deps: SettingsKitDeps, method: string, path
     return { ...openFile(deps.store, deps.owner, deps.workspace, key.data), lastSave: lastSave(deps.store, deps.owner, key.data), limit: perFileBytes };
   }
   if (method !== "POST") throw new SettingsKitError(404, "Not found");
+  if (path === "/api/settings-kit/task-preview") return taskSettingsPreview(deps, await body());
+  if (path === "/api/settings-kit/task-apply") return applyTaskSettings(deps, await body());
   if (path === "/api/settings-kit/preview") {
     const { proposals } = proposalsFor(Source.parse(await body()));
     return changesFor(deps.store, deps.owner, proposals, deps.tools);
