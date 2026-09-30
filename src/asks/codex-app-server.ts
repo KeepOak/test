@@ -9,6 +9,7 @@ import { cleanChildEnvironment } from "../child-env.js";
 import { agentPromptFrom } from "../providers/cli-agent.js";
 import { startCall } from "../windows-command.js";
 import { assertRealAgentAllowed } from "../providers/real-agent-guard.js"; // owner-dm-signin: never the real program from a test
+import { CodexConversations, codexNotificationMatches, codexNotificationScope } from "./codex-conversation.js";
 
 /**
  * A0601: Codex's app-server as a backend. Where the owner has OpenAI's `codex` program installed and
@@ -202,8 +203,9 @@ export class CodexAppServerProvider implements Provider {
 
 /* ---- QA 2026-09-28: a warm Codex app-server per account ----
    Starting Codex (its own tool servers and hooks) took most of the 8-16 s before the first word. One app-server per
-   Codex account folder is kept running after its first turn and reused: each turn opens a new, ephemeral, read-only
-   thread on it (Branch sends the whole conversation each time, so no Codex thread is resumed). Opening a thread starts
+   Codex account folder is kept running after its first turn and reused. Exact transcript growth in the same owner
+   conversation reuses its ephemeral, read-only thread and sends only the new messages. Changed context and concurrent
+   calls open a fresh thread with Branch's whole transcript. Opening a thread starts
    Codex's own tool servers and hooks, which took about 5 s, so the next turn's thread is opened as soon as a turn ends
    and waits, ready, for the next question on the same model and folder. It stops after ten idle minutes, is started
    again after a crash, and every copy stops when Branch closes. */
@@ -212,6 +214,7 @@ type Waiter = (message: Message) => void;
 const lostMark = Symbol("lost");
 
 class WarmCodex {
+  private readonly conversations = new CodexConversations();
   private readonly child: AppServerChild;
   private nextId = 1;
   private readonly waiting = new Map<number, { resolve: Waiter; reject: (error: Error) => void }>();
@@ -256,12 +259,13 @@ class WarmCodex {
       this.child.send(approval ? { id: message.id, result: { decision: "decline" } } : { id: message.id, error: { code: -32601, message: "Not supported" } });
       return;
     }
-    const thread = (message.params as { threadId?: unknown } | undefined)?.threadId;
-    if (typeof thread === "string") this.threads.get(thread)?.(message);
+    const thread = codexNotificationScope(message).threadId;
+    if (thread) this.threads.get(thread)?.(message);
   }
   private lost(error: Error): void {
     if (this.gone) return;
     this.gone = error;
+    this.conversations.clear();
     clearTimeout(this.idle);
     this.forget();
     for (const waiter of this.waiting.values()) waiter.reject(error);
@@ -273,22 +277,28 @@ class WarmCodex {
     clearTimeout(this.idle);
     if (this.active === 0 && !this.gone) (this.idle = setTimeout(() => this.stop(), idleMs)).unref?.();
   }
-  /** One turn: a new thread on Branch's model and folder, the conversation as its request, the words as they come. */
+  /** Exact transcript continuations reuse a conversation's thread; changed context and parallel calls start fresh. */
   async turn(request: CompletionRequest, thread: CodexThreadOptions, timeoutMs: number, started: number): Promise<Completion> {
     request.signal.throwIfAborted();
     const key = JSON.stringify([thread.model ?? "", thread.cwd ?? ""]);
     this.active++;
     clearTimeout(this.idle);
+    const continuation = this.conversations.acquire(request, thread.model, thread.cwd);
     try {
       const setupBudget = Math.min(thread.silenceMs || timeoutMs, Math.max(1, timeoutMs - (performance.now() - started)));
-      const threadId = await this.startThread(request, thread, setupBudget);
+      const threadId = continuation.turn?.threadId ?? await this.startThread(request, thread, setupBudget);
       request.signal.throwIfAborted();
       const remaining = timeoutMs - (performance.now() - started);
       if (remaining <= 0) { this.stop(); throw new Error("Codex took too long and was stopped. Ask again, or pick another model."); }
-      const answered = await this.answer(threadId, request, thread.silenceMs ?? 0, remaining);
+      const { codexTurnId, ...answered } = await this.answer(threadId, request, thread.silenceMs ?? 0, remaining, continuation.text);
+      if (codexTurnId) this.conversations.finish(continuation.turn, request, threadId, answered.content);
+      else this.conversations.discard(continuation.turn); // older protocols without a turn id stay one-shot
       if (!this.gone && !this.spare) this.spare = { key, id: this.open(thread) }; // the next question's thread, ready
       this.spare?.id.catch(() => { this.spare = null; });
       return answered;
+    } catch (error) {
+      this.conversations.discard(continuation.turn);
+      throw error;
     } finally {
       this.active--;
       this.rest();
@@ -330,9 +340,12 @@ class WarmCodex {
     if (!threadId) throw new Error(`Codex did not open a conversation: ${opened.error?.message ?? "no reason given"}`);
     return threadId;
   }
-  private answer(threadId: string, request: CompletionRequest, silenceMs: number, timeoutMs: number): Promise<Completion> {
-    return new Promise<Completion>((resolve, reject) => {
+  private answer(threadId: string, request: CompletionRequest, silenceMs: number, timeoutMs: number, input = agentPromptFrom(request)): Promise<Completion & { codexTurnId: string | null }> {
+    return new Promise((resolve, reject) => {
       let text = "", settled = false, quiet: ReturnType<typeof setTimeout> | undefined;
+      let turnId: string | null = null;
+      let accepted = false;
+      const pending: Message[] = [];
       const finish = (error: Error | null): void => {
         if (settled) return;
         settled = true;
@@ -341,7 +354,7 @@ class WarmCodex {
         this.threads.delete(threadId);
         if (error) reject(error);
         else if (!text.trim()) reject(new Error("Codex answered with nothing at all."));
-        else resolve({ content: text.trim(), toolCalls: [] });
+        else resolve({ content: text.trim(), toolCalls: [], codexTurnId: turnId });
       };
       const hush = (): void => {
         clearTimeout(quiet);
@@ -353,10 +366,18 @@ class WarmCodex {
       timer.unref?.();
       request.signal.addEventListener("abort", abort, { once: true });
       hush();
-      this.threads.set(threadId, (message) => {
+      const receive = (message: Message): void => {
+        if (settled) return;
+        if (message.method === lostMark.description) { finish(this.gone ?? new Error("Codex stopped before it finished answering.")); return; }
+        // Bind early notifications to the accepted turn id before processing any words.
+        if (!accepted) {
+          if (pending.length >= 64) { interrupt(); finish(new Error("Codex sent too many events before accepting its turn.")); }
+          else pending.push(message);
+          return;
+        }
+        if (!codexNotificationMatches(message, threadId, turnId)) return;
         hush();
         const params = message.params ?? {};
-        if (message.method === lostMark.description) finish(this.gone ?? new Error("Codex stopped before it finished answering."));
         if (message.method === "item/agentMessage/delta" && typeof params.delta === "string") { text += params.delta; request.onTextDelta?.(params.delta); }
         if (message.method === "item/completed") {
           const item = params.item as { type?: string; text?: string } | undefined;
@@ -366,10 +387,17 @@ class WarmCodex {
           const turn = params.turn as { status?: string; error?: { message?: string } | null } | undefined;
           finish(turn?.status === "completed" ? null : new Error(`Codex stopped without finishing: ${turn?.error?.message ?? turn?.status ?? "no reason given"}`));
         }
-      });
+      };
+      this.threads.set(threadId, receive);
       if (request.signal.aborted) { abort(); return; }
-      this.ask("turn/start", { threadId, input: [{ type: "text", text: agentPromptFrom(request), text_elements: [] }] })
-        .then((started) => { if (started.error) finish(new Error(`Codex refused the request: ${started.error.message ?? "no reason given"}`)); })
+      this.ask("turn/start", { threadId, input: [{ type: "text", text: input, text_elements: [] }] })
+        .then((started) => {
+          const turn = started.result?.turn as { id?: unknown } | undefined;
+          turnId = typeof turn?.id === "string" ? turn.id : null;
+          if (started.error) finish(new Error(`Codex refused the request: ${started.error.message ?? "no reason given"}`));
+          accepted = true;
+          for (const message of pending.splice(0)) receive(message);
+        })
         .catch((error: Error) => finish(error));
     });
   }
