@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   },
   openExternal: (url: unknown) => ipcRenderer.invoke("branch:open-external", url),
   keepOakViewStatus: () => ipcRenderer.invoke("branch:keepoak-view-status"),
+  keepOakTeam: () => ipcRenderer.invoke("branch:keepoak-team-read"),
+  changeKeepOakTeam: (input: unknown) => ipcRenderer.invoke("branch:keepoak-team-change", input),
   openKeepOakView: () => ipcRenderer.invoke("branch:keepoak-view-open"),
   disconnectKeepOakView: () => ipcRenderer.invoke("branch:keepoak-view-disconnect"),
   restartBranch: () => ipcRenderer.invoke("branch:restart"),

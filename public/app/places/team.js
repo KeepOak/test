@@ -1,7 +1,7 @@
 /* Team: people, shared work, usage, rules.
    The header follows the prototype's final renderTeam: "People", with the lede and the keepoak.com banner of the
    workspace's tabs (Live now, Teams of specialists, Activity, Usage, Rules), or the household lede and no banner (People,
-   Groups, Shared, Signing in). The banner's Connect stays greyed: the engine does not reach keepoak.com.
+   Groups, Shared, Signing in). The desktop owner's banner reaches the isolated KeepOak membership bridge.
    Live now: each task working on this computer (state.runs), under the person using Branch here (GET /api/profiles) and
    the Trunk whose conversation it is (its chatSessionId), else Branch's own assistant (state.identity); how long it has
    run, its model, and for a task with a plan (GET /api/runs/<id>/plan, read once when the tab opens) the step it is on
@@ -34,6 +34,7 @@ import { api } from "../core/api.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { keepOakWorkspaceBanner, initKeepOakWorkspace } from './keepoak-workspace.js';
 
 const tabs = [["live", "Live now"], ["people", "People"], ["groups", "Groups"],
   ["shared", "Shared"], ["agents", "Teams of specialists"], ["activity", "Activity"],
@@ -171,7 +172,7 @@ export async function after() {
 function head(tab) {
   const workspace = WORKSPACE.has(tab);
   const lede = workspace ? t("window.places.team.everyone-who-uses-branch-and-what") : t("window.places.team.everyone-who-uses-branch-on-this");
-  const banner = workspace ? `<div class="ko-banner"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>${t("window.places.team.your-keepoak-com-team-is-optional")}</b><small>${t("window.places.team.people-on-this-computer-and-on")}</small></span><button class="btn pri sm" type="button" data-act="ko-start">${t("action.connect")}</button></div>` : "";
+  const banner = keepOakWorkspaceBanner();
   return `<div class="team-top"><h1>${t("people.admin.people")}</h1></div><p class="lede">${lede}</p>${banner}`;
 }
 
@@ -180,7 +181,7 @@ export function draw() {
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
 
   let html = `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place">
-    ${head(tab)}
+      ${head(tab)}
     ${tabBar(tabs.filter(([id]) => id !== "signin" || ownerHere()).map(([id, label]) => [id, say(label), counts()[id] ?? 0]), "team", tab)}`;
 
   if (tab === "live") html += liveTab();
@@ -193,6 +194,7 @@ export function draw() {
 }
 
 export function init() {
+  initKeepOakWorkspace();
   markLive(["ptab", "p-open-team", "si-mode", "si-chain", "si-stay", "si-link"]);
   on("si-mode", (el) => saveSignin("people/settings", { mode: el.dataset.v }));
   on("si-chain", (el) => toggleChain(el.dataset.v));
