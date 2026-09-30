@@ -3656,3 +3656,7 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
+
+### OpenClaw per-agent workspaces (idea only), MIT
+
+`src/trunks/shell-fence.ts` follows OpenClaw's stance on per-agent workspaces (`docs/concepts/multi-agent.md`, https://github.com/openclaw/openclaw, commit 1794d8b): an agent's workspace is its default working folder, not a hard sandbox, and its state is kept outside it. No code was taken. OpenClaw is under the MIT licence (Copyright (c) 2026 OpenClaw Foundation), whose text is given under IronClaw above.

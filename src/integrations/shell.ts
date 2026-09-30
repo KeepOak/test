@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import { WorkspaceFiles } from '../files.js';
@@ -12,6 +12,7 @@ import { sandboxShape, shapeChoice, type WallContext } from '../sandbox.js';
 import { openWall } from '../sandbox-backends.js'; // wave mac3 (os-sandbox)
 import { withPassedEnvironment } from '../knobs/environment.js'; // R17-S10
 import { checkRunner, heldCover, npmScript, wslHeldPlan, wslHeldRunner, wslHeldStart, wslProbe, wslReadiness } from './wsl-held.js';
+import { fenceRefusal, trunkFence } from '../trunks/shell-fence.js';
 
 /** Longest a command waits for its Windows job object before running with sampled limits. */
 const jobStartupMs = 1000;
@@ -75,10 +76,15 @@ export class BranchShell {
     if (!executable) throw new Error('Executable alias is not configured');
     const signal = AbortSignal.any([context.signal, stopping]);
     signal.throwIfAborted();
+    // A Trunk's own folder (src/trunks/shell-fence.ts) is made on demand, as code.run and files.write make it.
+    const fence = trunkFence(context);
+    if (fence) await mkdir(fence.own, { recursive: true });
     // Q12: the same folder the self-development contract judged (commandFolder), checked as a workspace path.
     const cwd = await new WorkspaceFiles(context.workspace).checked(input.cwd, true);
     if (cwd !== commandFolder(context.workspace, input.cwd)) throw new Error('Command cwd must be a workspace directory');
     if (!(await stat(cwd)).isDirectory()) throw new Error('Command cwd must be a workspace directory');
+    const fenced = fence && fenceRefusal(fence, cwd, input.args);
+    if (fenced) throw new Error(fenced);
     const confined = context.writesConfinedTo ? await confinedFolder(context.writesConfinedTo, cwd) : null;
     const tuned = this.tuning(); // R17-S10
     const limitMs = tuned.timeoutMs ?? this.config.timeoutMs;
