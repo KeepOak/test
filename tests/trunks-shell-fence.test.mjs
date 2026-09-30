@@ -119,3 +119,9 @@ test("behind the wall a Trunk's program cannot read the other Trunks' folders",
     assert.ok(osSandbox.unreadable.includes(join(f.home, bob)), "the other Trunk's folder is hidden");
     assert.ok(!osSandbox.unreadable.includes(join(f.home, ada)), "its own is not");
   });
+
+test("a call that names no workspace is in no Trunk's folder, so nothing is fenced and nothing throws", () => {
+  // The wall is asked about with a context that has no workspace yet (os-sandbox W2/W3 on macOS and Linux).
+  assert.equal(trunkFence({}), null);
+  assert.deepEqual(fencedFolders({}), []);
+});

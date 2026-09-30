@@ -51,6 +51,8 @@ function forms(path: string): string[] {
  * who asked, so a helper carrying a specialist's name instead of the Trunk's is held all the same.
  */
 export function trunkFence(context: Pick<ToolContext, "workspace">): TrunkFence | null {
+  // A call that names no workspace (the wall is asked about before a task's place is known) runs in no Trunk's folder.
+  if (!context.workspace) return null;
   const own = resolve(context.workspace), id = basename(own);
   if (basename(dirname(own)) !== trunkFilesHome) return null;
   const home = dirname(own);
