@@ -10594,5 +10594,15 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "sourceRollout.published": "Veröffentlichung des Entwurfs aufgezeichnet.",
+  "sourceRollout.unknown": "Für diesen PR ist lokal kein bestätigter Merge aufgezeichnet.",
+  "sourceRollout.merged": "Merge lokal bestätigt; der laufende Engine-Build belegt noch nicht, dass er diese Änderung enthält.",
+  "sourceRollout.running": "Der laufende Engine-Build enthält den bestätigten Merge.",
+  "sourceRollout.reviewedHead": "Geprüfter PR-Commit",
+  "sourceRollout.merge": "Bestätigter Merge-Commit",
+  "sourceRollout.engine": "Commit der laufenden Engine",
+  "sourceRollout.confirmed": "Merge aufgezeichnet",
+  "sourceRollout.observed": "Engine-Identität beobachtet",
+  "sourceRollout.localOnly": "Nur lokale Belege. Dies prüft weder den entfernten Rollout noch den Zustand der Anwendung oder Tests. Ein neueres Fenster allein belegt keine Engine-Aktualisierung."
 }

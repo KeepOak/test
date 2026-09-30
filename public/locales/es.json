@@ -10594,5 +10594,15 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "sourceRollout.published": "Publicación del borrador registrada.",
+  "sourceRollout.unknown": "No hay una fusión confirmada de esta PR registrada localmente.",
+  "sourceRollout.merged": "Fusión confirmada localmente; el motor en ejecución aún no demuestra que contiene este cambio.",
+  "sourceRollout.running": "La compilación del motor en ejecución incluye la fusión confirmada.",
+  "sourceRollout.reviewedHead": "Commit de PR revisado",
+  "sourceRollout.merge": "Commit de fusión confirmado",
+  "sourceRollout.engine": "Commit del motor en ejecución",
+  "sourceRollout.confirmed": "Fusión registrada",
+  "sourceRollout.observed": "Identidad del motor observada",
+  "sourceRollout.localOnly": "Solo evidencia local. Esto no verifica el despliegue remoto, el funcionamiento de la aplicación ni las pruebas. Una ventana más reciente no demuestra la actualización del motor."
 }
