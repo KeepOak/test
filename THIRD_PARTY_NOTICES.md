@@ -3736,6 +3736,10 @@ Copyright (c) 2025 Nous Research
 
 The off-value aliases, bare-hour duration behavior and earliest idle/max-age expiry calculation in `src/channels/thread-lifecycle.ts` are adapted from OpenClaw `src/auto-reply/reply/commands-session.ts`, https://github.com/openclaw/openclaw/blob/main/src/auto-reply/reply/commands-session.ts (MIT). Branch uses its own saved threads, scoped sessions and next-message reset behavior.
 
+## OpenClaw Telegram poll and forward helpers
+
+The poll snapshot formatter and forwarded-origin normalization in `src/channels/telegram-content.ts` are adapted from OpenClaw `extensions/telegram/src/bot/body-helpers.ts`, https://github.com/openclaw/openclaw/blob/main/extensions/telegram/src/bot/body-helpers.ts (MIT). Branch validates and bounds the fields, quotes user-supplied labels and keeps forwarded origin separate from the authenticated current sender. Sticker handling uses Branch's existing attachment path.
+
 MIT License
 
 Copyright (c) 2026 OpenClaw Foundation

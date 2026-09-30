@@ -4,6 +4,7 @@ import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
+import { telegramForwardContext, telegramPollContent, telegramStickerContent, telegramStickerSchema } from "./telegram-content.js";
 
 /**
  * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
@@ -43,6 +44,7 @@ const mediaSchema = voiceSchema.extend({ file_unique_id: z.string().optional(), 
 const messageSchema = z.object({
   photo: z.array(mediaSchema).optional(),
   document: mediaSchema.optional(),
+  sticker: telegramStickerSchema.optional(),
   video: mediaSchema.optional(),
   message_id: z.number(),
   message_thread_id: z.number().int().positive().optional(),
@@ -416,8 +418,10 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   private inbound(message: z.infer<typeof messageSchema>): InboundMessage | null {
     const spoken = message.voice ?? message.audio;
-    const media = message.document ?? message.video ?? message.photo?.at(-1);
-    const written = message.text ?? (spoken || media ? message.caption ?? "" : undefined);
+    const sticker = message.sticker && !message.sticker.is_animated && !message.sticker.is_video ? message.sticker : undefined;
+    const media = message.document ?? message.video ?? message.photo?.at(-1) ?? sticker;
+    const extra = [telegramPollContent(message.poll), telegramStickerContent(message.sticker)].filter(Boolean).join("\n");
+    const written = message.text ?? (spoken || media || extra ? message.caption ?? "" : undefined);
     if (written === undefined || !message.from || message.from.is_bot) return null;
     const mention = this.username ? `@${this.username.toLowerCase()}` : null;
     const mentioned = !!mention && (message.entities ?? []).some((entity) =>
@@ -429,12 +433,13 @@ export class TelegramAdapter implements ChannelAdapter {
       channel: this.id, chatId: topicAddress(message.chat.id, message.message_thread_id), chatKind: direct ? "direct" : "group",
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
-      text, addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
+      text: [telegramForwardContext(message.forward_origin), text, extra].filter(Boolean).join("\n"),
+      addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
       ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
-        name: message.document?.file_name ?? message.video?.file_name ?? `photo-${message.message_id}.jpg`,
+        name: message.document?.file_name ?? message.video?.file_name ?? (sticker ? `sticker-${message.message_id}.webp` : `photo-${message.message_id}.jpg`),
         sourceId: media.file_unique_id ?? media.file_id,
-        mediaType: message.document?.mime_type ?? message.video?.mime_type ?? "image/jpeg",
+        mediaType: message.document?.mime_type ?? message.video?.mime_type ?? (sticker ? "image/webp" : "image/jpeg"),
         kind: message.document ? "document" as const : message.video ? "video" as const : "picture" as const,
         ...(media.file_size !== undefined ? { size: media.file_size } : {}),
         bytes: () => this.downloadAttachment(media.file_id, media.file_size),
