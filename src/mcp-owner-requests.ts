@@ -24,7 +24,7 @@ const bounded = (preset: { provider: { name: string; keepsOwnTime?: boolean } })
   boundedProviders.has(preset.provider.name) && !preset.provider.keepsOwnTime;
 // Reused owner-request adapters inherit the app's gate for this exact store.
 const storeLockGates = new WeakMap<Store, () => boolean>();
-interface StoreWindowState { generation: number; active: Set<AbortController> }
+interface StoreWindowState { generation: number; active: Set<AbortController>; pending: Set<Pending> }
 const storeWindows = new WeakMap<Store, StoreWindowState>();
 
 type Settings = z.infer<typeof McpOwnerRequestSettings>;
@@ -47,7 +47,7 @@ export class McpOwnerRequests {
     if (locked) storeLockGates.set(store, locked);
     let state = storeWindows.get(store);
     if (!state) {
-      state = { generation: 0, active: new Set<AbortController>() };
+      state = { generation: 0, active: new Set<AbortController>(), pending: new Set<Pending>() };
       storeWindows.set(store, state);
     }
     this.storeWindow = state;
@@ -87,7 +87,7 @@ export class McpOwnerRequests {
     this.windowUntil = 0;
     this.storeWindow.generation++;
     for (const stop of this.storeWindow.active) stop.abort();
-    for (const item of this.pending.values()) item.finish({ action: 'cancel' });
+    for (const item of this.storeWindow.pending) item.finish({ action: 'cancel' });
   }
   private ready(): boolean {
     return !this.locked() && this.windowGeneration === this.storeWindow.generation
@@ -132,13 +132,18 @@ export class McpOwnerRequests {
     return new Promise(resolve => {
       const id = randomUUID();
       const finish = (answer: Answer) => {
-        clearInterval(timer); signal.removeEventListener('abort', cancel); this.pending.delete(id); resolve(answer);
+        clearInterval(timer); signal.removeEventListener('abort', cancel);
+        const item = this.pending.get(id);
+        if (item) this.storeWindow.pending.delete(item);
+        this.pending.delete(id); resolve(answer);
       };
       const cancel = () => finish({ action: 'cancel' });
       const expires = Date.now() + 120_000;
       const timer = setInterval(() => { if (!this.ready() || Date.now() >= expires) cancel(); }, 1000);
       timer.unref?.(); signal.addEventListener('abort', cancel, { once: true });
-      this.pending.set(id, { id, server, kind, details, owner: this.owner(), settings: JSON.stringify(settings), finish });
+      const item = { id, server, kind, details, owner: this.owner(), settings: JSON.stringify(settings), finish };
+      this.pending.set(id, item);
+      this.storeWindow.pending.add(item);
     });
   }
   async install(client: Client, server: string): Promise<void> {
