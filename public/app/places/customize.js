@@ -23,6 +23,7 @@ import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./lea
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
 import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: live lines under faces, and empty lists
 import { lockdownOn } from "../chat/approvals.js";
+import { insideSection, initPluginInside, pluginInsideLive } from "./plugin-inside.js"; // RES-251
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -36,6 +37,8 @@ let mcpServers = [];
 let ownServers = [];
 let clis = { programs: [], launch: [] };
 let plugins = [];
+/* RES-251: the add-on settings (GET /api/plugin-catalog/add-ons settings): where each hand-placed plugin runs. */
+let addOnSettingsNow = null;
 let agents = [];
 let suggestions = [];
 let revisions = [];
@@ -181,7 +184,7 @@ function detail(k, x) {
      it. A launch-file server's stays greyed under its own name. */
   const onOff = k === "mcp" ? `<input type="checkbox" class="sw" data-sw="${x.own ? "tool9g" : "tool9g-launch"}" data-k="${k}" data-id="${esc(x.id)}" ${x.own?.on ? "checked" : ""} aria-label="${t("window.places.customize.name-on-or-off", { name: esc(x.name) })}">` : "";
   return `<div class="t9-detail"><div class="t9-dh"><span class="ico-tile t9i" data-css="width:40px;height:40px">${ic(KINDS.find(([id]) => id === k)[2], 's')}</span><span class="grow"><b>${esc(x.name)}</b><small>${esc(x.sub)}</small></span>${onOff}</div>
-    ${startProblem(x)}${who}${contextRow(k, x)}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
+    ${startProblem(x)}${who}${contextRow(k, x)}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) + insideSection(x, addOnSettingsNow, itemsOf("plugins"), reloadShown) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
 }
 
 /* A server that did not start says so on its row; anything else shows whether it is on. The learning card has neither. */
@@ -305,6 +308,7 @@ async function readTools() {
   // finish-soon-a: a plugin installed as an add-on package can be removed through the add-on shelf; one you put in the folder yourself cannot.
   const fromShelf = new Set(listOf(shelf, "installed").filter((r) => r.plugin).map((r) => r.id));
   return { mcpServers: listOf(mcp, "servers"), ownServers: listOf(own, "servers"), clis: { programs: listOf(cl, "programs"), launch: listOf(cl, "launch") },
+    addOnSettingsNow: shelf?.settings ?? null,
     plugins: listOf(plugs, "plugins").map((p) => ({ ...p, fromShelf: fromShelf.has(p.id ?? p.name) })), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules"), contextModes: listOf(ctx, "sources") };
 }
 /* The picked skill's SKILL.md, once. */
@@ -319,14 +323,14 @@ async function readDoc() {
 }
 /* Another area (an add dialog) reads the tool lists again after it added something. */
 export async function reloadTools() {
-  ({ mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes } = await readTools());
+  ({ mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, addOnSettingsNow } = await readTools());
 }
 
 /* The other Branch computers are read once, the first time Specialists is opened. */
 let nodesRead = false;
 export async function after() {
   const tab = S.tabs.customize || "trunks";
-  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices]);
+  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices, addOnSettingsNow]);
   if (tab === "tools") { await reloadTools(); await readDoc(); }
   else if (tab === "channels") {
     const [setup, live] = await Promise.all([read("channel-setup"), read("channels")]);
@@ -340,7 +344,7 @@ export async function after() {
     if (dash) renderNow(); // parity B6: the dashboard's switch (places/dashsw.js)
   }
   else if (tab === "specialists" && !nodesRead) { nodesRead = true; nodes = listOf(await owners("asks/nodes"), "nodes"); }
-  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices]))) renderNow();
+  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices, addOnSettingsNow]))) renderNow();
 }
 
 /* Removing a skill (POST /api/skills/{id}/remove, naming the revision it was shown at), one of your own servers
@@ -442,7 +446,12 @@ function redrawGrid() {
   if (grid) greyOut(paint(grid, channelGrid()));
 }
 
+/* RES-251: after a plugin's place changed, the lists are read again and drawn. */
+async function reloadShown() { await reloadTools(); renderNow(); }
+
 export function init() {
+  markLive(pluginInsideLive);
+  initPluginInside(reloadShown);
   markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
   on("tool-retry", (el) => retryServer(el));
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "tool9g") switchServer(e.target); });

@@ -8,6 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { fork } from "node:child_process";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,12 +21,12 @@ const entry = fileURLToPath(new URL("./fixtures/engine-in-node.mjs", import.meta
 const NEW = "b".repeat(40);
 
 /** An engine's process under Node, as Electron's utility process looks to EngineHost. */
-function nodeChild(home, file, started) {
+function nodeChild(home, file, started, extra = {}) {
   const child = fork(entry, [], {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
     env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot, TEMP: process.env.TEMP, TMP: process.env.TMP,
       HOME: home, USERPROFILE: home, APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "local"),
-      ...(file ? { BRANCH_TEST_ENGINE_FILE: file } : {}) },
+      ...(file ? { BRANCH_TEST_ENGINE_FILE: file } : {}), ...extra },
   });
   started.push({ child, file: file ?? null });
   return {
@@ -47,11 +48,11 @@ async function liveBuild() {
 }
 test.after(async () => { if (staged) await discardTemp(staged.appRoot); });
 
-async function setUp(t, model) {
+async function setUp(t, model, extra = {}) {
   const home = await mkdtemp(join(tmpdir(), "branch-hot-engine-"));
   const started = [];
   const host = new EngineHost({
-    fork: () => nodeChild(home, null, started),
+    fork: () => nodeChild(home, null, started, extra),
     config: { dataDir: join(home, "state"), workspace: join(home, "work"), version: "0.0.0", executable: null, installRoot: null,
       packaged: false, loginItem: null, appPid: process.pid, testHooks: false,
       providerEnv: { BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: model.endpoint, BRANCH_MODEL: "m", BRANCH_API_KEY: "test-key" } },
@@ -127,6 +128,90 @@ test("a task still working stops after a whole step, carries on in the new engin
   assert.equal(question.filter((message) => message.role === "tool").length, 2, "the new engine carried on with both results");
   const session = (await call(`/api/sessions/${run.sessionId}`)).body;
   assert.equal(session.messages.filter((message) => message.content === "Finished after the update.").length, 1);
+});
+
+/** A chat service's side (Mattermost-shaped): the answers Branch posts back to its webhook. */
+async function chatService(t) {
+  const replies = [];
+  const server = createServer((request, response) => {
+    let raw = ""; request.on("data", (chunk) => { raw += chunk; });
+    request.on("end", () => { try { replies.push(JSON.parse(raw)); } catch { replies.push({ raw }); } response.writeHead(200, { "content-type": "application/json" }); response.end("{}"); });
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  t.after(() => new Promise((done) => { server.closeAllConnections(); server.close(() => done()); }));
+  return { hook: `http://127.0.0.1:${server.address().port}/hooks/branch`, replies };
+}
+
+test("a chat app's turn handed to a newer engine is answered in that chat once, by the new engine, never with a failure", { timeout: 240000 }, async (t) => {
+  const model = await scriptedModel(t, [{ tool: "checklist.read", args: {} }, { tool: "files.list", args: {}, held: true }, { text: "Answered after the update." }]);
+  const chat = await chatService(t), secret = "hot-chat-token-0123456789";
+  const config = await mkdtemp(join(tmpdir(), "branch-hot-chat-"));
+  t.after(() => discardTemp(config));
+  const integrations = join(config, "integrations.json");
+  await writeFile(integrations, JSON.stringify({ web: { allowPrivateAddresses: true }, channels: [{ id: "mattermost", type: "chat", service: "mattermost",
+    webhookUrlSecret: "HOT_CHAT_HOOK", secretSecret: "HOT_CHAT_SECRET", activation: "always", pairing: false, allowlist: ["user-9"] }] }));
+  const extra = { BRANCH_INTEGRATIONS: integrations, HOT_CHAT_HOOK: chat.hook, HOT_CHAT_SECRET: secret };
+  const { host, url, started, call } = await setUp(t, model, extra);
+  const live = await liveBuild();
+  const address = (await call("/api/channels/addresses")).body.addresses.find((one) => one.channel === "mattermost")?.address;
+  assert.ok(address, "the chat service's address is there");
+  const posted = fetch(new URL(new URL(address, url).pathname, url), { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: secret, post_id: "p-hot-1", channel_id: "c1", channel_name: "town-square", user_id: "user-9", user_name: "alice", text: "What is on today?" }) });
+  posted.catch(() => undefined);
+  await model.until(2);
+  const run = (await call("/api/state")).body.runs.find((each) => each.prompt.includes("What is on today?"));
+  const handing = host.handOver({ fork: () => nodeChild(join(live.appRoot, "h"), live.engine, started, extra), commit: NEW, drainMs: 0, settleMs: 60000 });
+  await until(async () => (await events(call, run.id)).some((event) => event.kind === "run.handover_asked"));
+  model.release(1);
+  const outcome = await handing;
+  assert.equal(outcome.ok, true, outcome.why ?? "");
+  assert.deepEqual(outcome.handedOver, [run.id]);
+  assert.equal((await posted).status, 200, "the chat service's post was answered by the engine it reached");
+  for (const end = Date.now() + 60000; chat.replies.length < 1 && Date.now() < end;) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(chat.replies.length >= 1, "the chat got its answer");
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(chat.replies.length, 1, `one answer, once: ${JSON.stringify(chat.replies)}`);
+  assert.match(JSON.stringify(chat.replies[0]), /Answered after the update\./);
+  assert.doesNotMatch(JSON.stringify(chat.replies), /could not finish/);
+  assert.equal(model.asked.length, 3, "no step was asked of the model twice");
+});
+
+test("a chat app's turn carried through two engine updates back to back is answered once, by the last engine", { timeout: 300000 }, async (t) => {
+  const model = await scriptedModel(t, [{ tool: "checklist.read", args: {} }, { tool: "files.list", args: {}, held: true },
+    { tool: "checklist.read", args: {}, held: true }, { text: "Answered after two updates." }]);
+  const chat = await chatService(t), secret = "hot-chat-token-0123456789";
+  const config = await mkdtemp(join(tmpdir(), "branch-hot-chat-"));
+  t.after(() => discardTemp(config));
+  const integrations = join(config, "integrations.json");
+  await writeFile(integrations, JSON.stringify({ web: { allowPrivateAddresses: true }, channels: [{ id: "mattermost", type: "chat", service: "mattermost",
+    webhookUrlSecret: "HOT_CHAT_HOOK", secretSecret: "HOT_CHAT_SECRET", activation: "always", pairing: false, allowlist: ["user-9"] }] }));
+  const extra = { BRANCH_INTEGRATIONS: integrations, HOT_CHAT_HOOK: chat.hook, HOT_CHAT_SECRET: secret };
+  const { host, url, started, call } = await setUp(t, model, extra);
+  const live = await liveBuild();
+  const address = (await call("/api/channels/addresses")).body.addresses.find((one) => one.channel === "mattermost")?.address;
+  const posted = fetch(new URL(new URL(address, url).pathname, url), { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ token: secret, post_id: "p-hot-2", channel_id: "c1", channel_name: "town-square", user_id: "user-9", user_name: "alice", text: "What is on this week?" }) });
+  posted.catch(() => undefined);
+  // Each engine in turn is working on the task when the next takes over: it stops after its step and is carried on.
+  const working = async () => (await call("/api/state")).body.runs.find((each) => each.status === "running");
+  for (const [hop, step] of [[1, 1], [2, 2]]) {
+    await model.until(step + 1);
+    const run = await until(working);
+    const handing = host.handOver({ fork: () => nodeChild(join(live.appRoot, `h${hop}`), live.engine, started, extra), commit: NEW, drainMs: 0, settleMs: 60000 });
+    await until(async () => (await events(call, run.id)).some((event) => event.kind === "run.handover_asked"));
+    model.release(step);
+    const outcome = await handing;
+    assert.equal(outcome.ok, true, outcome.why ?? "");
+    assert.deepEqual(outcome.handedOver, [run.id], `update ${hop} carried the chat's task on`);
+  }
+  assert.equal((await posted).status, 200);
+  await model.until(4);
+  for (const end = Date.now() + 60000; chat.replies.length < 1 && Date.now() < end;) await new Promise((resolve) => setTimeout(resolve, 100));
+  assert.ok(chat.replies.length >= 1, "the chat got its answer");
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  assert.equal(chat.replies.length, 1, `one answer, once: ${JSON.stringify(chat.replies)}`);
+  assert.match(JSON.stringify(chat.replies[0]), /Answered after two updates\./);
+  assert.equal(model.asked.length, 4, "no step was asked of the model twice");
 });
 
 test("a new engine that fails its check is ended and the app's own engine carries the work on instead", { timeout: 240000 }, async (t) => {
