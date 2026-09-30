@@ -94,9 +94,28 @@ test("Q011: a blank group chat waits for a name and two Trunks, and the engine's
 test("Q005: a new Trunk's conversation shows its hello where the owner is looking, with no reopening", async (t) => {
   const f = await windowFor(t);
   await ready(f.page);
-  await f.page.locator('[data-act="newmenu"]').first().click();
-  await f.page.locator('.pop [data-act="new-trunk"]').click();
+  const trunks = async () => (await f.call("/api/trunks")).body.trunks.length;
+  const before = await trunks();
+  const ask = async () => {
+    await f.page.locator('[data-act="newmenu"]').first().click();
+    await f.page.locator('.pop [data-act="new-trunk"]').click();
+    await f.page.locator("#nt-name").waitFor();
+  };
+  // TRUNK-026: a new Trunk asks for its name first; Create waits for one, and Cancel leaves nothing behind.
+  await ask();
+  const create = f.page.locator('.dlg [data-act="new-trunk-create"]');
+  assert.equal(await create.isDisabled(), true, "Create waits for a name");
+  await f.page.locator("#nt-name").fill("   ");
+  assert.equal(await create.isDisabled(), true, "a blank name is no name");
+  await f.page.locator('.dlg [data-act="dlg-close"]').last().click();
+  await f.page.locator("#nt-name").waitFor({ state: "detached" });
+  assert.equal(await trunks(), before, "cancelling made no Trunk");
+  await ask();
+  await f.page.locator("#nt-name").fill("Research");
+  await create.click();
   await f.page.locator("#conversation").getByText(HELLO).waitFor({ timeout: 20000 });
+  assert.equal(await trunks(), before + 1, "one Trunk, made once");
+  assert.ok((await f.call("/api/trunks")).body.trunks.some((one) => one.name === "Research"), "it has the name the owner gave");
   assert.equal(await f.page.locator("#prompt").isEditable(), true, "the message box is ready");
 });
 

@@ -14,7 +14,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 /* Redesign: in the new window a Trunk's studio is "Edit Trunk…" (flows/trunk.js), opened from its conversation row's
-   menu; "New Trunk" makes "Trunk N" at once, with no studio (flows/trunk.js newTrunk). Its colours are prototype.html's eight swatches (COLOURS), each named by
+   menu; "New Trunk" asks for a name, then makes it, with no studio (flows/trunk.js newTrunk). Its colours are prototype.html's eight swatches (COLOURS), each named by
    its colour; there is no "any colour" picker, no Letters face and no "Follow my theme" in the design. */
 const PROTOTYPE = ["#2F8C86", "#D8612A", "#8A5AA8", "#5E8C4A", "#4F6FA8", "#C9982E", "#B84A6B", "#56616B"];
 
@@ -77,6 +77,9 @@ test("DG-105 a chosen colour is kept as #rrggbb and comes back chosen after a re
   /* New Trunk, the way a person makes one: the + menu's New Trunk names it and opens its conversation. */
   await page.getByRole("button", { name: "New conversation, Trunk, room or automation" }).click();
   await page.getByRole("menuitem", { name: "New Trunk" }).click();
+  await page.locator("#nt-name").fill("Painter");
+  await page.locator('.dlg [data-act="new-trunk-create"]').click();
+  await page.locator("#nt-name").waitFor({ state: "detached" });
   let made;
   for (let i = 0; i < 50 && !made; i++) { made = (await (await call("GET", "/api/trunks")).json()).trunks[0]; if (!made) await page.waitForTimeout(100); }
   assert.ok(made, "New Trunk made one");

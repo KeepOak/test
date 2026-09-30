@@ -192,8 +192,10 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   // The owner's faces rule: Branch's mascot is only the logo, so the empty welcome shows a line icon, not a pose.
   assert.equal(await card.locator('.empty18c :is(img, video)').count(), 0, "no mascot in the empty welcome");
   assert.equal(await card.locator(".empty18c .ico18c svg.i").count(), 1, "a line icon instead");
-  // The create: it makes "Trunk 1" and opens its conversation; its name and what it is for come from its editor.
+  // The create (TRUNK-026): it asks for a name, makes that Trunk and opens its conversation; what it is for comes from its editor.
   await card.locator(".empty18c").getByRole("button", { name: "New Trunk" }).click();
+  await page.locator("#nt-name").fill("Trunk 1");
+  await page.locator('.dlg [data-act="new-trunk-create"]').click();
   await until(async () => app.trunks.records.list().length === 1);
   const made = app.trunks.records.list()[0];
   assert.equal(made.name, "Trunk 1");
