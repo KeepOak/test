@@ -50,7 +50,7 @@ test("RES-102: a move with an old etag changes nothing", async () => {
 
 test("RES-102: every calendar change is registered and put to the owner once, even in Full Access", () => {
   const names = [];
-  registerGoogle({ register: (tool) => names.push(tool.name) }, {});
+  registerGoogle({ register: (tool) => names.push(tool.name) }, new GoogleConnector(fakeStore(), "local", fetch, writer("")));
   for (const name of ["gcal.create", "gcal.move", "gcal.delete"]) {
     assert.ok(names.includes(name));
     assert.equal(personalHold(name, {}, "owner")?.onceOnly, true);
