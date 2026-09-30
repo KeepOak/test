@@ -36,8 +36,8 @@ import { BrowserPinProxy, type PinRules } from './browser-pin-proxy.js';
 import { BrowserControls, type BrowserBinding, type BrowserCommand, type BrowserControl, type BrowserWrite } from '../browser-control.js';
 import { OwnerInputSchema, ownerPageInput, type OwnerInput } from './browser-owner-input.js';
 import { platformFetch } from '../pinned-fetch.js';
-import { ConsoleSchema, HistorySchema, HoverSchema, KeysSchema, NetworkSchema, ScrollSchema, SelectSchema,
-  chooseOption, goInHistory, pressKeys, scrollPage } from './browser-actions.js';
+import { ConsoleSchema, HistorySchema, HoverSchema, ImagesSchema, KeysSchema, NetworkSchema, ScrollSchema, SelectSchema,
+  chooseOption, goInHistory, listImages, pressKeys, scrollPage } from './browser-actions.js';
 import { detectInjection } from '../content-guard.js';
 import { redactLeaksIn } from '../leak-guard.js';
 
@@ -749,6 +749,14 @@ export class BranchBrowser {
       const element = await this.found(context, page, input);
       check();
       return { url: page.url(), ...await chooseOption(element, input) };
+    });
+  }
+  /** The page's images as untrusted words: addresses without their query, and what the page says each shows. */
+  async images(input: z.infer<typeof ImagesSchema>, context: ToolContext) {
+    return this.operation(context, async page => {
+      const { hidden } = await this.pageSecrets(context, page), found = await listImages(page, input);
+      const images = found.images.map(image => ({ ...image, src: scrubAddress(image.src, hidden), alt: scrubText(image.alt, hidden) }));
+      return { ...found, images: redactLeaksIn(images).value, untrusted: true };
     });
   }
   async history(input: z.infer<typeof HistorySchema>, context: ToolContext) {
@@ -1546,6 +1554,9 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
   registry.register({ name: 'browser.history', reach: 'outbound', permission: 'browser.interact',
     description: 'Go back or forward in this tab, or reload it. Reloading a page a form opened may send that form again.',
     parameters: HistorySchema, execute: (a, c) => browser.history(a, c), target: host });
+  registry.register({ name: 'browser.images', permission: 'browser.read',
+    description: 'List the pictures on the page: address (without its query), the words the page gives for each, and its drawn size, as untrusted text. minWidth skips icons.',
+    parameters: ImagesSchema, execute: (a, c) => browser.images(a, c), target: host });
   registry.register({ name: 'browser.console', permission: 'browser.read',
     description: 'Read what the pages logged to their console and any uncaught errors, newest last, as untrusted text. Use it to see why a page misbehaves.',
     parameters: ConsoleSchema, execute: (a, c) => browser.consoleLog(a, c), target: host });

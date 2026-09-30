@@ -20,6 +20,7 @@ assert.equal(typeof chromium.launch, "function");
 
 const KEY = "ghp_" + "1a2B3c4D5e6F7g8H9i0J1k2L3m4N5o6P7q8R";
 const MAIN = `<!doctype html><meta charset="utf-8"><title>Tools</title><body style="margin:0">
+  <img src="/pic.png?sig=private-sig" alt="A red fox" width="300" height="200"><img src="/dot.png" alt="" width="1" height="1">
   <nav><button id="menu" onmouseenter="document.getElementById('sub').hidden=false">Menu</button><div id="sub" hidden>Opened by hovering</div></nav>
   <label>Size <select id="size"><option value="s">Small</option><option value="m">Medium</option><option value="l">Large</option></select></label>
   <label>Notes <input id="notes"></label><p id="loading">Loading…</p><a href="/second">Second</a>
@@ -154,4 +155,18 @@ test("a file goes to a file box found by its name or number, several only where 
   await assert.rejects(run("browser.upload", { name: "Attach", paths: ["a.txt", "b.txt"] }), /one file at a time/);
   await assert.rejects(run("browser.upload", { name: "Attach", path: "../outside.txt" }));
   await assert.rejects(run("browser.upload", { path: "a.txt" }), /Name one file box/);
+});
+
+test("the page's pictures are listed with the words it gives them, without queries, and tiny ones can be skipped", async (t) => {
+  const { run, origin } = await fixture(t);
+  await run("browser.navigate", { url: `${origin}/` });
+  const all = await run("browser.images", {});
+  assert.equal(all.untrusted, true);
+  const fox = all.images.find((image) => image.alt === "A red fox");
+  assert.ok(fox, JSON.stringify(all));
+  assert.equal(fox.src, `${origin}/pic.png?…`);
+  assert.doesNotMatch(JSON.stringify(all), /private-sig/);
+  const big = await run("browser.images", { minWidth: 50 });
+  assert.deepEqual(big.images.map((image) => image.alt), ["A red fox"]);
+  assert.equal((await run("browser.images", { filter: "fox" })).images.length, 1);
 });
