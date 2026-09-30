@@ -137,7 +137,7 @@ export async function conversationModeApi(app: ModeApp, method: string, url: URL
 
 /**
  * Q013: what a conversation Branch opens by itself starts on (a new Trunk's own conversation, a room): the start the owner
- * chose for new conversations (Ask first unless they picked another), never looser than their own setting in Settings ›
+ * chose for new conversations (Full access unless they picked another), never looser than their own setting in Settings ›
  * Permissions, and never looser than Ask first under Lockdown, as the window's start is (`view`). Null when it follows
  * the owner's setting: they chose "follow", or their setting is the stricter one.
  */

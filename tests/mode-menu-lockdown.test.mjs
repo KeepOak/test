@@ -24,6 +24,8 @@ async function windowFixture(t) {
     return response.json();
   };
   await call("/api/onboarding", { done: true });
+  // Owner ruling 2026-09-30: new conversations ship on Full access; this menu is walked from an owner who chose Ask first.
+  await call("/api/conversation-mode/settings", { newConversation: "ask" });
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 }, serviceWorkers: "block" });

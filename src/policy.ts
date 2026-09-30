@@ -390,8 +390,9 @@ function unmatched(policy: Policy, request: PolicyRequest): PolicyOutcome {
  * Tasks the owner did not start themselves (a trigger, a schedule, a chat app, another AI tool over
  * MCP, A2A or ACP) never get more freedom than "Ask before changes": standing yeses do not apply to
  * them. That holds under "No approvals" too (0.18.1): the default setting frees the owner's own
- * tasks, never something started from outside. A schedule counts as outside even when the owner
- * made it — nobody is there when it runs — so its change waits in the owner's window.
+ * tasks, never something started from outside. Owner ruling (2026-09-30): a schedule or check-in the owner made
+ * themselves is the owner's own work, as Hermes Agent's and OpenClaw's cron jobs are, and the runtime passes it here as
+ * "owner" (src/runtime.ts `ownersSchedule`); one a chat, a Trunk, a household person or a key made stays outside.
  */
 export function cappedPolicy(policy: Policy, source: RunSource): Policy {
   if (source === "owner") return policy;

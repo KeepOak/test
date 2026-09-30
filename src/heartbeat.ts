@@ -264,6 +264,7 @@ export class Heartbeat {
     try {
       const run = await this.runtime.run({
         prompt: heartbeatPrompt(checklist), permissions: this.permissions(), source: "schedule",
+        ownerSchedule: true, // owner ruling 2026-09-30: the owner's own check-in runs under their setting, as Hermes Agent's cron jobs do
         onStarted: (started) => { entry.runId = started.id; this.store.event(started.id, "heartbeat.started", { trigger }); },
         onTextDelta: () => undefined,
       });

@@ -65,7 +65,7 @@ test("from the window with no conversation it takes the owner's choice for a new
   const { app, api } = await fixture(t);
   await api("/api/commands/run", { surface: "window", line: "/bg write the note" });
   const fromWindow = await backgroundRun(app, "write the note");
-  assert.equal(readConversationMode(app.store, app.runtime.owner, fromWindow.sessionId)?.mode, "ask");
+  assert.equal(readConversationMode(app.store, app.runtime.owner, fromWindow.sessionId)?.mode, "full", "Full access, the owner's default (owner ruling 2026-09-30)");
   await api("/api/commands/run", { surface: "phone", line: "/bg say hello" });
   const fromPhone = await backgroundRun(app, "say hello");
   assert.equal(readConversationMode(app.store, app.runtime.owner, fromPhone.sessionId), null, "another surface follows the owner's rules, as before");

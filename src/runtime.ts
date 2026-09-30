@@ -633,6 +633,11 @@ export interface RunOptions {
   dryRun?: boolean;
   /** Who started this task; defaults to the owner's own app or command line. */
   source?: RunSource;
+  /**
+   * Owner ruling 2026-09-30: a schedule or check-in the owner made themselves (src/scheduler.ts `ownerMade`). With
+   * source "schedule" it runs under the owner's own approval setting, as Hermes Agent's and OpenClaw's cron jobs do.
+   */
+  ownerSchedule?: boolean;
   /** The chat app a chat's message came in on ("telegram"), told to the model with where it runs (src/environment.ts). */
   channel?: string;
   /** Ask for a short plan first and work through it step by step. */
@@ -1633,6 +1638,7 @@ ${run.output.slice(0, 6000)}`;
       callerKind: currentCaller().kind, callerDoor: currentCaller().throughDoor,
       ...(options.resumeFrom ? { resumedFrom: options.resumeFrom } : {}),
       ...(options.originFrom ? { originFrom: options.originFrom } : {}), // mac7/outside-resume
+      ...(options.ownerSchedule && context.source === "schedule" && !parent ? { ownerSchedule: true } : {}), // owner ruling 2026-09-30
       ...(startedWithShortLivedKey() || inherited ? { shortLivedKey: true } : {}),
       // bucket 19: which key, so only that key may answer the questions this task asks.
       ...(shortLivedKeyMark().keyId ? { shortLivedKeyId: shortLivedKeyMark().keyId } : {}),
@@ -4228,8 +4234,29 @@ ${run.output.slice(0, 6000)}`;
     // Wave mac2 (guards): with folder trust on, a task in a folder the owner does not trust asks first.
     // R17-S19: with "confirm sensitive browser steps" on, those steps ask every time (src/comfort/browser-safety.ts).
     // mac7/outside-resume: held by the task's own record too, so work carried on from outside stays held.
-    const held = source !== "owner" ? source : this.recordedSource(runId) ?? "owner";
+    const recorded = source !== "owner" ? source : this.recordedSource(runId) ?? "owner";
+    // Owner ruling 2026-09-30: the owner's own schedules and check-ins run as the owner's work, as Hermes Agent's cron jobs
+    // (the normal toolset; only dangerous commands held) and OpenClaw's do. Other outside work keeps "Ask before changes".
+    const held = recorded === "schedule" && this.ownersSchedule(runId) ? "owner" : recorded;
     return withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner);
+  }
+  /** A task of a schedule or check-in the owner made themselves, with no household person or short-lived key behind it. */
+  private ownersSchedule(runId?: string): boolean {
+    if (!runId) return false;
+    const origin = runOrigin(this.store, runId);
+    if (origin.source !== "schedule" || origin.shortLivedKey || origin.personProfileId || origin.lentTo) return false;
+    const seen = new Set<string>(), queue = [runId];
+    let owners = false;
+    while (queue.length && seen.size < 20) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const started = this.store.events(id).find((event) => event.kind === "run.started")?.data;
+      if (!started) continue;
+      if (started.source === "schedule") { if (started.ownerSchedule !== true) return false; owners = true; }
+      for (const next of [started.parentRunId, started.resumedFrom, started.originFrom]) if (typeof next === "string") queue.push(next);
+    }
+    return owners;
   }
   /** Redesign phase 1: the owner's policy as this task's conversation has narrowed or widened it. */
   private conversationPolicy(runId?: string): Policy {
@@ -4237,7 +4264,8 @@ ${run.output.slice(0, 6000)}`;
     const mode = this.heldConversationMode(saved, runId);
     const held = mode ? policyForMode(saved, mode, lockdownActive(this.store, this.owner), this.registry.outboundTools()) : saved; // Q59
     // Owner ruling 2026-09-30: commands no rule covers run for the owner; a household person's or short-lived key's task still asks.
-    return runId && this.store.run(runId) && !this.ownersOwnTask(runId) ? { ...held, unmatchedCommands: "ask" } : held;
+    const others = runId && this.store.run(runId) && !this.ownersOwnTask(runId) && !this.ownersSchedule(runId);
+    return others ? { ...held, unmatchedCommands: "ask" } : held;
   }
   /** The mode this task's conversation holds it to, or null when it follows the owner's setting. */
   private heldConversationMode(saved: Policy, runId?: string): ConversationMode | null {

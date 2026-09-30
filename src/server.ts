@@ -1,4 +1,4 @@
-import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
+import { ownerScheduleReach, reachWords } from "./schedule-reach.js"; // dogfood
 import {
   createServer,
   type IncomingMessage,
@@ -2640,8 +2640,9 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
     app.store.profiles.requireOwner("Your schedules");
     const proposal = await proposeSchedule(await readBody(request), { now: new Date(),
       defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) });
-    // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
-    const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
+    // Dogfood: the card shows what the schedule may use, and saving keeps exactly that. Owner ruling 2026-09-30: the owner's
+    // tools, as Hermes Agent's cron jobs get, unless the words say it only reads (src/schedule-reach.ts `ownerScheduleReach`).
+    const permissions = ownerScheduleReach(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);

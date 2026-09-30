@@ -71,7 +71,8 @@ export class TrunkRoutines {
     // Dogfood: the least the routine's words need (src/schedule-reach.ts), plus what a taught routine must have.
     const least = leastPermissions(value.prompt, [...context.permissions]);
     const saved = this.scheduler.create(context, {
-      ...(extra.length ? { permissions: [...least, ...extra.filter((p) => context.permissions.has(p))] } : {}),
+      // Always named: a Trunk's routine keeps the least its words need, never an owner schedule's reach (src/scheduler.ts `ownerMade`).
+      permissions: [...least, ...extra.filter((p) => context.permissions.has(p))],
       prompt: `[Trunk @${trunk.handle}] ${value.name}\n${value.prompt}`, kind: "task",
       dueAt: value.dueAt ?? firstTurn(value),
       ...(value.intervalMs ? { intervalMs: value.intervalMs } : {}),

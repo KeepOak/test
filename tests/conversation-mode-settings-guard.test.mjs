@@ -25,6 +25,8 @@ async function served(t, preset = "ask-before-changes") {
   const server = await startServer(app, { dataDir, port: 0 });
   t.after(async () => { app.store.profiles.switch({ profileId: null }); await server.close(); await app.close(); await discardTemp(root); });
   savePolicy(app.store, app.runtime.owner, { preset });
+  // Owner ruling 2026-09-30: new conversations ship on Full access; these owners chose Ask first, so the guard has room to work.
+  saveConversationModeSettings(app.store, app.runtime.owner, { newConversation: "ask" });
   const call = (method, route, body) => fetch(server.url + route, {
     method,
     headers: { authorization: `Bearer ${server.token}`, ...(method === "GET" ? {} : { "content-type": "application/json" }) },
@@ -38,7 +40,7 @@ async function served(t, preset = "ask-before-changes") {
    Mutation M2: delete the 409 throw after newConversationRefusal in conversationModeApi → the same. */
 test("Auto for new conversations needs the owner's yes to loosening, and says why in the engine's words", async (t) => {
   const { call, saved } = await served(t);
-  assert.equal(await saved(), "ask", "Ask first is the default");
+  assert.equal(await saved(), "ask", "this owner starts new conversations on Ask first");
   const unconfirmed = await call("POST", path, { newConversation: "auto" });
   assert.equal(unconfirmed.status, 409);
   assert.equal(unconfirmed.body.error, 'This makes Branch less careful: new conversations would start on Auto instead of Ask first. Tick "Yes, make it less careful" to go ahead.');
