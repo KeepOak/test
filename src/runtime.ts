@@ -2004,7 +2004,10 @@ ${run.output.slice(0, 6000)}`;
         ...(options.continuing ? { continuing: true } : {}),
       }, options.style);
       };
-      output = place && this.coding ? await this.coding.inPlace(place.scope, () => work({ ...context, workspace: place.workspace })) : await work(context);
+      const workingPlace = place;
+      output = workingPlace && this.coding
+        ? await this.coding.inPlace(workingPlace.scope, () => work({ ...context, workspace: workingPlace.workspace }))
+        : await work(context);
     } catch (error) {
       status = this.failureStatus(context, error);
       // mac7/speed: a task that stops must still say something a person can act on. A model service

@@ -7,6 +7,7 @@ export interface ResumeAuthority {
   permissions: string[]; depth: number; delegates: boolean; dryRun: boolean; ownCopy: boolean;
   agent?: string; trunkId?: string; source: RunSource;
 }
+type AuthorityRecord = { run: Run; start: Record<string, unknown>; requiredCopy: boolean; borrowedCopy: boolean };
 const sources = new Set(["owner", "trigger", "schedule", "mcp", "a2a", "acp", "channel"]);
 function unavailable(): never { throw new Error("The task's complete saved authority is unavailable or conflicting. Reconcile its original permissions, helper identity and project before continuing."); }
 
@@ -14,7 +15,7 @@ function unavailable(): never { throw new Error("The task's complete saved autho
 export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, runId: string, owner: string, registered: readonly string[]): ResumeAuthority {
   const root = store.run(runId);
   if (!root || !root.project) unavailable();
-  const records = new Map<string, { run: Run; start: Record<string, unknown>; requiredCopy: boolean; borrowedCopy: boolean }>();
+  const records = new Map<string, AuthorityRecord>();
   const visiting = new Set<string>();
   let permissions = new Set(registered);
   const visit = (id: string): void => {
@@ -46,18 +47,24 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
       && typeof event.data.branch === "string" && (event.data.branch.startsWith("branch/helper-") || event.data.branch.startsWith("branch/fork-"))) });
   };
   visit(runId);
-  const initial = records.get(runId)!;
+  const initial: AuthorityRecord | undefined = records.get(runId);
+  if (!initial) unavailable();
   if (root.owner !== owner && initial.start.lentTo !== owner) unavailable();
-  const lineage: typeof initial[] = [], seen = new Set<string>();
+  const lineage: AuthorityRecord[] = [], seen = new Set<string>();
   let id: string | undefined = runId;
   while (id) {
     if (seen.has(id)) unavailable();
     seen.add(id);
-    const record = records.get(id)!;
+    const record: AuthorityRecord | undefined = records.get(id);
+    if (!record) unavailable();
     if (record.run.sessionId !== root.sessionId) unavailable();
     lineage.push(record);
-    const links = [record.start.resumedFrom, record.start.originFrom].filter((link): link is string => typeof link === "string");
-    const sameTask = [...new Set(links.filter((link) => records.get(link)!.run.sessionId === root.sessionId))];
+    const links: string[] = [record.start.resumedFrom, record.start.originFrom].filter((link): link is string => typeof link === "string");
+    const sameTask: string[] = [...new Set(links.filter((link: string): boolean => {
+      const linked: AuthorityRecord | undefined = records.get(link);
+      if (!linked) unavailable();
+      return linked.run.sessionId === root.sessionId;
+    }))];
     if (typeof record.start.resumedFrom === "string" && !sameTask.includes(record.start.resumedFrom)) unavailable();
     if (sameTask.length > 1) unavailable();
     id = sameTask[0];
@@ -68,7 +75,7 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
     return values[0];
   };
   const savedDepth = consistent("depth");
-  const parentDepth = (record: typeof initial, seen = new Set<string>()): number => {
+  const parentDepth = (record: AuthorityRecord, seen = new Set<string>()): number => {
     if (seen.has(record.run.id)) unavailable();
     seen.add(record.run.id);
     if (typeof record.start.depth === "number") return record.start.depth;
