@@ -121,8 +121,9 @@ test("a published page opens in the window at /#page=<id> and stays current whil
   const other = await f.app.registry.execute("pages.publish", { title: "Nightly report", body: "Night 2" }, f.app.runtime.context());
   await tab.evaluate(() => { location.hash = ""; });
   const slow = tab.waitForResponse((response) => response.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  const asked = tab.waitForRequest((request) => request.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
   await tab.evaluate((id) => { location.hash = "page=" + id; }, page.id);
-  await tab.waitForRequest((request) => request.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  await asked;
   await tab.evaluate((id) => { location.hash = "page=" + id; }, other.id);
   await tab.locator(`[data-page19="${other.id}"]`).waitFor({ timeout: 15000 });
   await slow;
@@ -135,15 +136,22 @@ test("a published page opens in the window at /#page=<id> and stays current whil
   await tab.locator('.dlg [data-act="dlg-close"]').last().click();
   await tab.locator(".dlg").waitFor({ state: "detached" });
   await tab.evaluate(() => { location.hash = ""; });
+  // The page's answer is held until the other dialog has come and gone, so the order is certain.
+  let release;
+  const held = new Promise((resolve) => { release = resolve; });
+  await tab.unrouteAll({ behavior: "ignoreErrors" });
+  await tab.route(`**/api/asks/pages/${page.id}`, async (route) => { await held; await route.continue(); });
   const late = tab.waitForResponse((response) => response.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  const askedAgain = tab.waitForRequest((request) => request.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
   await tab.evaluate((id) => { location.hash = "page=" + id; }, page.id);
-  await tab.waitForRequest((request) => request.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  await askedAgain;
   // "What can Branch do" opens a dialog of its own; pressed through its action, wherever its link sits in this layout.
   await tab.evaluate(() => { const button = document.createElement("button"); button.type = "button"; button.dataset.act = "whatcan";
     document.getElementById("app").append(button); button.click(); button.remove(); });
   await tab.locator(".dlg").first().waitFor();
   await tab.locator('.dlg [data-act="dlg-close"]').first().click();
   await tab.locator(".dlg").waitFor({ state: "detached" });
+  release();
   await late;
   await tab.waitForTimeout(500);
   assert.equal(await tab.locator("[data-page19]").count(), 0, "opened and closed meanwhile: the page is not brought back");
