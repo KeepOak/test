@@ -39,6 +39,15 @@ after each message is handled, and a schedule is claimed in the database before 
 
 ### Desktop gateway draft
 
+An installed desktop engine establishes a doctor baseline on its first accepted start. Later
+version or saved-state schema changes run the existing doctor checks in that same database owner.
+A live successor waits until handover acceptance before starting them. Completed reports, including
+unresolved prerequisites, are saved as `doctor-after-update` and summarized in updater diagnostics;
+ordinary restarts do not repeat them. The Git probe has a ten-second limit and is cancelled on
+engine shutdown. These unattended checks never bind another port, call a model, or launch a
+package installer. A missing browser remains an explicit manual `branch doctor --fix` step.
+Config-specific migration repairs and automatic package installation remain separate work.
+
 The desktop candidate starts a windowless stock Electron broker with `--branch-gateway` and a
 separate single-instance lock. It retains the encrypted device vault, Stop notices and Mac login
 service. Its worker owns the database; its shell windows join the proved public gateway. An absent
