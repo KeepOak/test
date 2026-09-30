@@ -70,7 +70,7 @@ export function initGitHubDevice() {
   on("github-device-begin", () => change("github-device/begin", {}));
   on("github-device-disconnect", () => change("github-device/disconnect", {}));
   on("github-device-cancel", () => view?.flow && change("github-device/cancel", { flowId: view.flow.flowId }));
-  markLive(["github-device-save", "github-device-begin", "github-device-disconnect", "github-device-cancel"]);
+  markLive(["sw:github-device-client", "github-device-save", "github-device-begin", "github-device-disconnect", "github-device-cancel"]);
   document.addEventListener("visibilitychange", async () => {
     if (document.hidden) { stop(); return; }
     if (!present()) return;
