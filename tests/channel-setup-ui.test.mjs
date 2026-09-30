@@ -272,6 +272,7 @@ test("the wizard connects without a restart and says when it could not; who answ
 
   await next(page);
   const who = dlg.locator('[data-act="chw-who"]');
+  await who.first().waitFor(); // the Save step reads the direct-message choices before it is drawn
   assert.deepEqual(await who.allTextContents(), trunks.trunks.map((tr) => (tr.id === trunks.defaultId ? `${tr.name} · default` : tr.name)));
   // The owner's default Trunk (#594/#726, named "Branch Agent") is a Trunk like the others, so it is offered too; Branch itself never is.
   assert.deepEqual([...(await who.allTextContents())].map((text) => text.split(" · ")[0]).sort(), trunks.trunks.map((tr) => tr.name).sort(), "every Trunk, and only Trunks");

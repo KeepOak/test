@@ -511,8 +511,11 @@ export class ChannelRouter {
   /** Called after the request body is read, so a changed profile or lock cannot save stale settings. */
   saveIntake(input: unknown): ChatIntake {
     this.store.profiles.requireOwner("Changing chat intake");
-    if (this.appLocked() || lockedDown(this.store, this.runtime.owner)) throw new Error("Unlock Branch and turn off Lockdown before changing chat intake.");
     const change = ChatIntakeSchema.partial().strict().parse(input ?? {});
+    // Who may send direct messages is a safety choice; the other intake fields keep saving under Lockdown, where nothing goes out.
+    const namesDm = typeof input === "object" && input !== null && "dmPolicies" in input; // partial() still fills defaults
+    if (namesDm && (this.appLocked() || lockedDown(this.store, this.runtime.owner)))
+      throw new Error("Unlock Branch and turn off Lockdown before changing who may message a chat app.");
     for (const [channel, policy] of Object.entries(change.dmPolicies ?? {})) {
       const adapter = this.adapters.get(channel)?.adapter;
       if (!adapter) throw new Error("The selected chat app is no longer connected.");
