@@ -8123,6 +8123,14 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 
 ### The rest
 
+Local faster-whisper captions and completed recordings prefer the installed package's Silero VAD.
+The existing offline worker keeps the VAD and speech model warm, excludes neural-classified silence,
+and preserves 400 ms of speech padding. If its local VAD asset or runtime cannot load, recognition
+continues without neural filtering and the Voice status reports that fallback after first use.
+No model or package is fetched. Installed sherpa VAD dictation also accepts complete Whisper ONNX
+bundles (`<name>-encoder[.int8].onnx`, matching decoder, `<name>-tokens.txt`, `silero_vad.onnx`)
+alongside transducer bundles. An explicitly named streaming program still wins.
+
 - **Connections** (`src/connections-preset.ts`): `activePreset` is which connection answers by
   default in this workspace, `fallbackOrder` the connections to try in order when one fails, and
   `cooldownMs` how long a failed connection rests before it is tried again.

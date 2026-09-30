@@ -194,6 +194,8 @@ export function startDictation(deps: DictationDeps): LiveDictation {
   };
 
   const heardWords = (written: string, final = true): void => {
+    if (!speech) return;
+    try { if (mustStop()) { release(false); return; } } catch { release(false); return; }
     const clean = cleanWords(written);
     if (!clean) return;
     lastSpeechAt = now();

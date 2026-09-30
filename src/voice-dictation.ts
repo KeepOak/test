@@ -157,17 +157,34 @@ export function dictationEngine(
 }
 
 /** Upstream Apache-2.0 sherpa-onnx VAD microphone CLI, 040afe360a38. External program only.
- * Prefer finished segments when the owner already supplied the full transducer + Silero bundle. */
+ * Prefer finished segments when the owner supplied a complete transducer/Whisper + Silero bundle. */
 function vadDictationEngine(voice: VoiceSettings, present: ProgramPresent): DictationEngine | null {
   const file = "sherpa-onnx-vad-microphone-offline-asr", model = voice.localSpeechModel;
   if (!model || !present(file)) return null;
-  const assets = ["silero_vad.onnx", "tokens.txt", "encoder.onnx", "decoder.onnx", "joiner.onnx"];
-  if (!assets.every((asset) => existsSync(join(model, asset)))) return null;
+  const vad = join(model, "silero_vad.onnx");
+  if (!existsSync(vad)) return null;
+  const asr = sherpaVadAsr(model, voice.language);
+  if (!asr) return null;
   return { available: true, kind: "own-microphone", command: { file, args: [
-    `--silero-vad-model=${join(model, assets[0]!)}`, `--tokens=${join(model, assets[1]!)}`,
-    `--encoder=${join(model, assets[2]!)}`, `--decoder=${join(model, assets[3]!)}`,
-    `--joiner=${join(model, assets[4]!)}`,
-  ] }, how: "Your installed sherpa-onnx VAD microphone program stays loaded while you dictate and writes each finished speech segment once. It uses the Silero and transducer models you supplied, opens the microphone itself, and stops when you stop dictating. Branch downloads nothing." };
+    `--silero-vad-model=${vad}`, ...asr,
+  ] }, how: "Your installed sherpa-onnx VAD microphone program stays loaded while you dictate and writes each finished speech segment once. It uses the Silero and complete speech models you supplied, opens the microphone itself, and stops when you stop dictating. Branch downloads nothing." };
+}
+
+/** Flags/layouts in the pinned sherpa VAD microphone and offline Whisper CLI sources. */
+function sherpaVadAsr(model: string, language: string): string[] | null {
+  const files = ["tokens.txt", "encoder.onnx", "decoder.onnx", "joiner.onnx"];
+  if (files.every(file => existsSync(join(model, file))))
+    return files.map((file, index) => `--${["tokens", "encoder", "decoder", "joiner"][index]}=${join(model, file)}`);
+  const names = ["tiny.en", "base.en", "tiny", "base", "small.en", "small", "medium.en", "medium", "large"];
+  for (const name of names) for (const precision of [".int8", ""]) {
+    const encoder = join(model, `${name}-encoder${precision}.onnx`), decoder = join(model, `${name}-decoder${precision}.onnx`);
+    const tokens = join(model, `${name}-tokens.txt`);
+    if ([encoder, decoder, tokens].every(file => existsSync(file))) return [
+      `--whisper-encoder=${encoder}`, `--whisper-decoder=${decoder}`, `--tokens=${tokens}`, "--num-threads=1",
+      ...(language ? [`--whisper-language=${language}`] : []),
+    ];
+  }
+  return null;
 }
 
 const missingProgram = (platform: string): string =>
