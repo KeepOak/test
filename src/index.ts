@@ -27,6 +27,7 @@ import { registerHumanTasks } from "./deferred.js";
 import { BackgroundProcesses, registerProcesses } from "./processes.js";
 import { CodeRunner, registerCodeRun } from "./code-run.js";
 import { HandOff, registerHandOff } from "./coding/hand-off.js";
+import { heldHandOffCommands } from "./coding/hand-off-commands.js";
 import { CredentialResolver } from "./credential-cli.js";
 import { OsPermissions, probeReader } from "./os-permissions.js";
 import { Runtime, argumentFingerprint } from "./runtime.js";
@@ -162,11 +163,15 @@ import { fromHelper, registerHelperMessages, tellTask } from "./helper-messages.
 import { askForHandoffs, registerLeadUsage } from "./lead-usage.js"; // workbench (SELF-307)
 import { openWork } from "./open-work.js"; // workbench (SELF-307)
 import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
-import { registerGit } from "./integrations/git-tools.js";
+import { githubAccessForPublication, registerGit } from "./integrations/git-tools.js";
 import { repositoryPath } from "./integrations/github.js";
+import { PluginEvaluations } from "./plugin-evaluations.js";
+import { createTasteLearning } from "./taste/integration.js";
 import { offerSelfDevelopment, type SelfDevelopmentDeps } from "./self-development.js";
 import { offerSourceRequests, SourceChangeRequests } from "./self-development-requests.js";
 import { SelfDevelopmentMerges } from "./self-development-merge.js";
+import { offerContractTests } from "./self-development-tests.js";
+import { gatedCall } from "./coding/gated.js";
 import { ContractBook, contractGuard, contractPreflight } from "./self-development-contract.js"; // Q12
 import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
@@ -247,7 +252,9 @@ import { isReadOnlyPermission } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
 import { offerPullRequestFromChanges, watchFinishedTasks, type PullRequestDeps } from "./pr-hook.js"; // bucket-18 (A0300)
-import { computerGhOpener } from "./integrations/gh-pull-request.js"; // selfdev
+import { computerGhOpener, computerGhPublicationFinder } from "./integrations/gh-pull-request.js"; // selfdev
+import { sourcePublicationQueue, startSourcePublications } from "./self-development-publication-hook.js";
+import { assertContinuityTool, continuityRunChain } from "./reach/continuity-store.js";
 import { protectedTarget } from "./never-break/protected.js"; // bucket-18 integration review
 import { OpenApiTools, registerOpenApiTools } from "./openapi-tools.js";
 import { redactLeaksIn } from "./leak-guard.js";
@@ -256,6 +263,7 @@ import { SecurityService } from "./security-audit/service.js";
 // mac2/fly-core: the learning core switch and its on-demand tool.
 import { flyCoreSettings } from "./fly-core/settings.js";
 import { setWallEdge } from "./sandbox-wall.js"; // wave mac3 (os-sandbox)
+import { wallSettings } from "./sandbox.js";
 import { setFlyCoreMode, syncSuggestTool } from "./fly-core/tool.js";
 // mac3/never-break: the gateway's settings and the one tool that suggests a change to them.
 import { loadGatewayConfig } from "./never-break/gateway-config.js";
@@ -744,8 +752,9 @@ export async function createBranch(options: {
   // Q12: Branch changing its own source is held to a contract written before anything changes.
   const selfContracts = new ContractBook(store.sqlite);
   // Branch builds Branch: a coding job handed to the owner's own Claude Code or Codex, inside one folder (src/coding/hand-off.ts).
+  // SELF-083: a handed-off Claude Code's commands are weighed and run as the task's own shell.execute, held to its folder.
   registerHandOff(registry, new HandOff({ store, owner: runtime.owner, workspace, dataDir, book: selfContracts,
-    git: (options, signal) => gitRunner.run(options, signal) }));
+    git: (options, signal) => gitRunner.run(options, signal), commands: heldHandOffCommands({ registry, store, runtime }) }));
   // FQ-memory.providers: an outside memory service the owner switches on in Settings replaces this
   // computer's database for the assistant's remember/recall/forget loop, not only sits beside it —
   // src/memory-provider.ts reads the owner's choice fresh on every call, and web.policy is the same
@@ -780,9 +789,12 @@ export async function createBranch(options: {
   // Offered, like the setup tools, only while sending Git work to a remote is switched on (src/self-development.ts).
   const finishTool = "branch.finish_source_change";
   const registerFinish = (): void => registry.register({ name: finishTool, permission: "git.remote", group: "code",
-    description: "Finish this task's exact tested Branch source draft only in the owner's selected Full Access conversation: independent read-only review, every check verified finished and passed on the exact commit (run github.wait_for_checks first), then a normal GitHub merge pinned to that commit. Refuses if any evidence changes.",
+    description: "Finish this task's exact tested Branch source draft only in the owner's selected Full Access conversation: independent read-only review, every check verified finished and passed on the exact commit (run github.wait_for_checks first), then a normal GitHub merge pinned to that commit (or, when the base merges through GitHub's merge queue, that commit joins the queue: wait with github.wait_for_checks until it says merged). Refuses if any evidence changes.",
     parameters: z.object({ worktree: z.string().regex(/^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/),
       repo: repositoryPath, number: z.number().int().positive() }).strict(),
+    // Its independent review is a model's answer and the merge waits on GitHub: cut off half-way, a draft is left ready
+    // but not merged, which no retry can finish (ToolDefinition.waitsUpToMs).
+    waitsUpToMs: 900_000,
     target: (input) => String(input.worktree), execute: (input, context) => sourceMerges.autoFinish(input, context) });
   const offerFinish = (): void => {
     const remote = registry.names().includes("git.push"), offered = registry.names().includes(finishTool);
@@ -791,6 +803,7 @@ export async function createBranch(options: {
   };
   offerFinish();
   registry.onToolsChanged(offerFinish);
+  offerContractTests(registry, selfContracts, sourceMerges, (name, args, context) => gatedCall({ runtime, registry }, name, args, context), options.owner ?? "local");
   offerSourceRequests(runtime, sourceRequests);
   const contractChecks = { store, owner: options.owner ?? "local", workspace, registry, book: selfContracts,
     git: (input: GitRunOptions, signal: AbortSignal) => gitRunner.run(input, signal) };
@@ -853,6 +866,13 @@ export async function createBranch(options: {
     guard: (path) => protectedTarget({ tool: "files.read", readOnly: true, args: { path }, target: path, workspace: files.base }, runtime.protectedAreas),
     // selfdev: with no saved GitHub connection, a change to Branch itself opens with this computer's own `gh` sign-in.
     openWithComputerGh: computerGhOpener(),
+    findPublication: async (entry, signal) => {
+      const lookup = { repo: entry.repository, pushRepo: entry.pushRepo, branch: entry.branch, base: entry.base, sha: entry.sha };
+      if (entry.adapter === "computer") return computerGhPublicationFinder()(lookup, signal);
+      const github = githubAccessForPublication(registry);
+      if (!github) throw new Error("The saved GitHub connection is unavailable.");
+      return github.findPublication(lookup, signal);
+    },
   };
   const stopOfferingPullRequests = offerPullRequestFromChanges(pullRequestDeps);
   const stopPullRequests = watchFinishedTasks(pullRequestDeps, (work) => {
@@ -915,6 +935,7 @@ export async function createBranch(options: {
   const trunkSandboxed = (id: string | undefined): boolean =>
     !!id && (store.get("governance", runtime.owner, `trunk:${id}`)?.data as { reach?: { sandboxed?: unknown } } | undefined)?.reach?.sandboxed === true;
   registry.beforeTool = async (name, args, context) => {
+    assertContinuityTool(store, runtime.owner, context.runId);
     const held = await priorToolGuard?.(name, args, context);
     if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
       && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
@@ -926,7 +947,8 @@ export async function createBranch(options: {
     if (remoteTools.includes(name)) throw new Error(outsideRemoteRefusal(who, name));
     if (name !== heldOnly) throw new Error(outsideProgramRefusal(who, name));
     store.event(context.runId, "sandbox.outside_caller", { tool: name, who });
-    return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.workspace };
+    // SELF-083: a command already held to a narrower folder (a hand-off's) stays held there.
+    return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.writesConfinedTo ?? context.workspace };
   };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
@@ -997,7 +1019,7 @@ export async function createBranch(options: {
   registerRunExport(registry, store, version);
   const skillRegistry = new SkillRegistry(store, runtime.owner, web.policy);
   // Skill packages people can hand to each other, and single-file plugins the owner switches on.
-  const skillPackages = new SkillPackages(store, runtime.owner, registry, { store, policy: web.policy });
+  const skillPackages = new SkillPackages(store, runtime.owner, registry, { store, policy: web.policy, fetchImpl: web.policy.guard(globalThis.fetch) });
   skillPackages.replayRecipe = (recipe, _event, runId) => replayNamedRecipe(knowledge, store, runtime, recipe, runId);
   const packageProblems = skillPackages.restore();
   // Model connections a plugin brought; nothing is registered until a plugin is switched on, so
@@ -1024,6 +1046,8 @@ export async function createBranch(options: {
   const addOns = new AddOns({ store, runtime, registry, plugins, dataDir, policy: web.policy,
     vet: (command, args) => vetAddOn(command, args),
     secret: async (name) => (await store.secrets.resolve(runtime.owner, "default", [name], { purpose: "pipelines" }).catch(() => ({} as Record<string, string>)))[name] ?? null });
+  const pluginEvaluations = new PluginEvaluations({ store, owner: runtime.owner, catalog: pluginCatalog, plugins,
+    shelf: addOns.shelf, wall: { unreadable: () => [dataDir, ...wallSettings(store, runtime.owner).unreadable], timeoutMs: 10000 } });
   // ── end bucket-15 ──
   // Drafts of better versions of a skill, tried against real tasks as a practice run first.
   const skillRevisions = new SkillRevisions(store, runtime.owner);
@@ -1099,6 +1123,8 @@ ${result.output || "(it said nothing)"}`;
   processes.finished.add(() => { void scheduler.heartbeat.wake("a background command finished").catch(() => undefined); });
   // workbench (SELF-304): a command the assistant may run once it may also leave running, and be woken when it ends.
   processes.commandPrograms = () => ownClis.commandPrograms();
+  // SELF-304: while Branch's own source is checked out, a program left running is walled by the shell, as a held command is.
+  processes.heldLauncher = (input, context, timeoutMs) => ownClis.launchHeld(input, context, timeoutMs);
   // selfdev (SELF-304): a program left running with wakeOnExit or wakeOnText wakes its own conversation, as a follow-up
   // of the task that started it, so the assistant is told instead of checking on it.
   processes.waker = ({ sessionId, runId, text }) => {
@@ -1574,7 +1600,14 @@ ${result.output || "(it said nothing)"}`;
   releaseOnLock.push(async () => dictation.stop()); // locking Branch lets go of the microphone
   // ── end mac7/live-voice ──
   // ── r17-i: reach and platform (src/reach/). Every part ships off. ──
+  const taste = createTasteLearning(store, runtime, trunks);
+  runtime.taste = taste;
   const reachParts = new Reach({ runtime, registry, router: channels, files, policy: web.policy, fetch: web.policy.guard(globalThis.fetch),
+    assertContinuityQuiescent: (sessionId) => {
+      const busy = processes.list().some((process) => process.status === "running" && (process.sessionId === sessionId
+        || continuityRunChain(store, process.runId).some((id) => store.run(id)?.sessionId === sessionId)));
+      if (busy) throw new Error("Stop this conversation's background programs before transferring it to another computer.");
+    },
     secret: async (name, purpose) => (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!,
     machines: { list: () => (askMode(store, runtime.owner, "nodes") === "off" ? [] : asks.nodes.nodes()) }, version, ...platformRunners(),
     screenHeld: (runId, signal) => desktop.whileDriving({ runId }, signal) }); // a take-over holds background app use too
@@ -1627,6 +1660,8 @@ ${result.output || "(it said nothing)"}`;
     policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
   const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
   registerBudding(registry, budding);
+  const sourcePublications = sourcePublicationQueue(pullRequestDeps);
+  const stopSourcePublications = startSourcePublications(pullRequestDeps);
   scheduler.onTick.add(async () => { void budding.tick().catch(() => undefined); });
   const ownClis = new OwnClis({ store, owner: () => runtime.owner, workspace: () => runtime.workspace });
   const replyFlags = new ReplyFlags(store, () => runtime.owner);
@@ -1892,6 +1927,9 @@ ${result.output || "(it said nothing)"}`;
     pluginProblems,
     /** Where plugins came from, with the fingerprint each one had when it was accepted. */
     pluginCatalog,
+    pluginEvaluations,
+    taste,
+    sourcePublications,
     /** Drafted better versions of a skill: the changed lines, the trial, and the owner's answer. */
     skillRevisions,
     evaluation,
@@ -1995,6 +2033,7 @@ ${result.output || "(it said nothing)"}`;
       stopPullRequests();
       stopOfferingPullRequests();
       pullRequestStop.abort(new Error("Branch is closing"));
+      await stopSourcePublications();
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
