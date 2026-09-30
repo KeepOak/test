@@ -278,7 +278,7 @@ const safety: SettingSpec[] = [
     fields: [
       { field: "preset", label: "How careful", t: "settings-kit.field.policy-preset", guard: "guard", initial: "off",
         kind: { type: "choice", options: ["read-only", "careful", "ask-before-changes", "workspace", "off"] } },
-      { field: "unmatchedCommands", label: "A command no rule mentions", t: "settings-kit.field.unmatched", guard: "guard", initial: "ask",
+      { field: "unmatchedCommands", label: "A command no rule mentions", t: "settings-kit.field.unmatched", guard: "guard", initial: "allow", // owner ruling 2026-09-30
         kind: { type: "choice", options: ["ask", "allow"] } },
     ],
     // The approval rules are worked out from the preset, so the preset is saved the way the card saves it.
@@ -647,7 +647,7 @@ export const settingsCatalogue: readonly SettingSpec[] = [...safety, ...reach, .
 export const neverTouched: readonly RegExp[] = [
   /^lockdown$/, /^session-lock$/, /^model-connections/, /^local-model-connections$/, /^local-model-setups$/,
   /^secret/, /^credential/, /^people/, /^remote/, /pairing/, /^deferred:/, /^move-in:/,
-  /^feature-switches-migration$/, /^webhook-addresses$/, /^sender-allowlist$/, /^telegram-setup$/,
+  /^feature-switches-migration$/, /^policy-commands-allow-migration$/, /^webhook-addresses$/, /^sender-allowlist$/, /^telegram-setup$/,
   // mac7/lockout: which chat service is being turned away, as the Connections card shows it.
   // Branch writes it; a file or a preset that could write it could tell the owner a service was
   // fine while it was being refused, or invent one that was not.

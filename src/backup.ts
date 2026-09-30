@@ -158,7 +158,7 @@ export const thisComputerSettings: readonly string[] = [
   // NAS dd7589d: running code names its Python program in full, the same class. And the records Branch writes about
   // its own state here, which the catalogue never touches either: the switch migration and which chat service is
   // being turned away (a file must never say a service is fine while it is refused).
-  "code-run", "feature-switches-migration", "webhook-waits",
+  "code-run", "feature-switches-migration", "policy-commands-allow-migration", "webhook-waits",
   // NAS 360099c: a program on this disk and its arguments, which the decision judge starts as they are, and the folder
   // the vector store makes its database in. Both only mean something on this computer.
   "jev-decisions", "vector-store",
