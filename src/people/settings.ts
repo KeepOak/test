@@ -41,10 +41,12 @@ export const IdentityLinkSchema = z.object({
 }).strict().refine((link) => link.subject || link.email, "Link a subject or an email address");
 export type IdentityLink = z.infer<typeof IdentityLinkSchema>;
 
+/** Said when the last check is taken away (Team › Signing in), shown to the owner as it is. */
+export const peopleChainEmpty = "Keep at least one way for people to prove it's them: a PIN, a passkey or an identity service.";
 export const PeopleSettingsSchema = z.object({
   mode: FeatureModeSchema.default("off"),
   /** Every person passes all of these. At least one; the PIN alone to start with. */
-  chain: z.array(z.enum(signInMethods)).min(1).max(3).default(["pin"]),
+  chain: z.array(z.enum(signInMethods)).min(1, peopleChainEmpty).max(3).default(["pin"]),
   /** Extra checks for particular profiles, added to the chain above. */
   extra: z.record(z.string().uuid(), z.array(z.enum(signInMethods)).max(3)).default({}),
   /** How long a person stays signed in, in minutes. */

@@ -5,6 +5,7 @@ import {
 } from "./manage.js";
 import type { AccountsService } from "./service.js";
 import { primaryAccount } from "./settings.js";
+import { mergeChatGPTDuplicates } from "./dedupe.js";
 import type { OAuthConnections } from "../oauth.js";
 import { type SignInsHost, SignInRefused, checkProgram, pasteSignInCode, signInOptions, startGeminiSignIn, startProgramSignIn, stopProgramSignIn } from "./sign-ins.js";
 import { lockdownActive } from "../lockdown.js";
@@ -56,8 +57,12 @@ export async function accountsApi(request: IncomingMessage, path: string, host: 
   if (!service) throw new AccountsApiError(404, "Several accounts per connection is not available in this launch.");
   const url = new URL(request.url ?? "/", "http://x");
   if (request.method === "GET" && path === "/api/accounts") return viewAll(service);
-  if (request.method === "GET" && path === "/api/accounts/session")
-    return viewSession(service, z.string().uuid().or(z.literal("")).parse(url.searchParams.get("sessionId") ?? ""));
+  if (request.method === "GET" && path === "/api/accounts/session") {
+    const session = z.string().uuid().or(z.literal("")).parse(url.searchParams.get("sessionId") ?? "");
+    viewSession(service, session); // validates conversation ownership before asking any program.
+    await service.readIdentities();
+    return viewSession(service, session);
+  }
   // The sign-ins that could be made (src/accounts/sign-ins.ts): no account is in them, so they answer with the switch off.
   // A household person sees none of the owner's sign-ins (hardening-3), so this read is the owner's too.
   if (request.method === "GET" && path === "/api/accounts/sign-ins") {
@@ -105,7 +110,8 @@ async function chatgptLogin(service: AccountsService, body: unknown) {
   inChatGPTList(service, account);
   const auth = service.chatgptAccounts.auth(account);
   const prompt = await auth.startDeviceLogin();
-  void auth.waitForDeviceLogin().then(() => service.ensureChatGPTPresets()).catch(() => undefined);
+  // Signed in as an account Branch already has: merged into that one, never kept as a second (src/accounts/dedupe.ts).
+  void auth.waitForDeviceLogin().then(() => mergeChatGPTDuplicates(service, { fresh: account })).then(() => service.ensureChatGPTPresets()).catch(() => undefined);
   return { account, userCode: prompt.userCode, verificationUrl: prompt.verificationUrl, expiresAt: prompt.expiresAt };
 }
 /** Stops an extra account's sign-in that is waiting for the browser (the window's Back or close). */

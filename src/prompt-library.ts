@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Store } from "./store.js";
+import { shippedUnlessChosen } from "./ship-on.js";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { scanSkill, describeFindings } from "./skill-scan.js";
 
@@ -14,7 +15,7 @@ import { scanSkill, describeFindings } from "./skill-scan.js";
  * more than the person using it could already do by typing. The idea of prompts in groups with a
  * command each follows LibreChat's prompt groups (MIT); the code is written for Branch.
  *
- * The switch ships off:
+ * The switch ships on (the owner's rule, src/ship-on.ts): a saved prompt is only ever a message the owner could type.
  *   off          nothing can be saved or used, and a typed `/name` is what it always was
  *   when-needed  saved commands work when typed, but no menu lists them (`/prompts` does)
  *   on           saved commands work and every `/` menu lists them
@@ -62,9 +63,12 @@ export interface SavedPrompt {
 type Reader = Pick<Store, "get">;
 type Writer = Pick<Store, "get" | "save">;
 
+// The owner's rule (ships on, 2026-09-26): saved prompts are the owner's own messages, and every / menu lists them; none of (a)–(f).
+export const promptLibraryShipsAs: FeatureMode = "on";
+
 export function promptLibrarySettings(store: Reader, owner: string): PromptLibrarySettings {
   const saved = PromptLibrarySettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : PromptLibrarySettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, { mode: promptLibraryShipsAs }) : PromptLibrarySettingsSchema.parse({});
 }
 export function savePromptLibrarySettings(store: Writer, owner: string, input: unknown): PromptLibrarySettings {
   const value = PromptLibrarySettingsSchema.parse(input ?? {});

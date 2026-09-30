@@ -8,7 +8,8 @@
 // starts its engines on port 0 in its own temporary folder. The checks never run alongside the test files, because
 // tests/window-files.test.mjs adds probe files to public/app while it runs.
 // Never runs `npm test`, never the clean-uninstall, uninstall-last-step or console-calibration tests, never `node --test`
-// with no file, and refuses a test file that names the installed app's or the preview's ports.
+// with no file, never a test that drives the real screen (marked "// real-screen-test"), and refuses a test file that
+// names the installed app's or the preview's ports.
 import { spawn, spawnSync } from "node:child_process";
 import { createWriteStream, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +20,8 @@ const GATES = ["tests/redesign-gate-ui.test.mjs", "tests/redesign-approvals-exac
   "tests/window-files.test.mjs", "tests/inbox-live-refresh.test.mjs"];
 const BANNED = /clean-uninstall|uninstall-last-step|console-calibration/i;
 const OWNER_PORTS = /\b(3210|3299|3300)\b/;
+// A test that drives this computer's real screen, keyboard or windows starts with this line (tests/real-screen.mjs).
+const REAL_SCREEN = "// real-screen-test";
 
 let logs = "";
 const children = new Set();
@@ -40,7 +43,9 @@ function parseArgs(argv) {
     const file = relative(process.cwd(), resolve(arg)).replaceAll("\\", "/");
     if (!file.startsWith("tests/") || !existsSync(file) || !statSync(file).isFile()) fail(`${arg} is not a file under tests/`);
     if (BANNED.test(file)) fail(`${file} is never run on this machine`);
-    const line = readFileSync(file, "utf8").split("\n").findIndex((text) => OWNER_PORTS.test(text));
+    const source = readFileSync(file, "utf8");
+    if (source.split(/\r?\n/).some((text) => text.trim() === REAL_SCREEN)) fail(`${file} drives this computer's real screen; it is never run from here`);
+    const line = source.split("\n").findIndex((text) => OWNER_PORTS.test(text));
     if (line >= 0) fail(`${file}:${line + 1} names port 3210, 3299 or 3300; run it by hand if it is safe`);
     if (!GATES.includes(file) && !extra.includes(file)) extra.push(file);
   }

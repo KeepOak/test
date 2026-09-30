@@ -32,7 +32,7 @@ async function remove(name) {
   await loadAll();
 }
 
-const VAULT_NAME = { bitwarden: "vault-autofill.service.bitwarden", onepassword: "vault-autofill.service.1password" };
+const VAULT_NAME = { bitwarden: "vault-autofill.service.bitwarden", onepassword: "vault-autofill.service.1password", windows: "vault-autofill.service.windows" };
 async function chooseVault(v) {
   const service = VAULT_SERVICE[v];
   if (!service) return;
@@ -58,5 +58,5 @@ function rows() {
 export function draw() {
   const bitwarden = credentials?.enabled && (credentials.services ?? []).includes("bitwarden");
   const status = bitwarden ? `<div class="status"><span class="sdot "></span><div><b>${t("window.settings.secrets.bitwarden-is-connected")}</b><p>${t("window.settings.secrets.branch-asks-bitwarden-to-fill-a")}</p></div></div>` : "";
-  return `<h1>${t("window.settings.secrets.saved-sign-ins")}</h1><p class="lede">${t("window.settings.secrets.sign-ins-branch-may-fill-for")}</p>${status}<div class="sec"><h2>${t("window.settings.secrets.branch-may-fill")}</h2><div class="rows">${rows()}</div></div>${secrets17(level17(), credentials?.services)}`;
+  return `<h1>${t("window.settings.secrets.saved-sign-ins")}</h1><p class="lede">${t("window.settings.secrets.sign-ins-branch-may-fill-for")}</p>${status}<div class="sec"><h2>${t("window.settings.secrets.branch-may-fill")}</h2><div class="rows">${rows()}</div></div>${secrets17(level17(), credentials?.services, credentials?.platform)}`;
 }

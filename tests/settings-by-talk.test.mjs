@@ -27,6 +27,8 @@ import { savePins } from "../dist/settings-kit/pins.js";
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-settings-talk-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  // The learning core ships when needed (the ship-on rule); these tests move it from off, so the owner switches it off first.
+  app.learningCore.configure({ mode: "off" });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const owner = app.runtime.owner;
   /** A context for a task begun the given way. */

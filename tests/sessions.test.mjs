@@ -41,7 +41,7 @@ test("a branch gets its own copy of the files, under its own names, and keeps th
   const asked = app.store.sessionView("local", run.sessionId).messages.find((one) => one.role === "user");
   const source = asked.attachments[0];
 
-  const branch = app.store.branchSession("local", { sessionId: run.sessionId, messageId: asked.messageId });
+  const branch = (await app.store.branchSession("local", { sessionId: run.sessionId, messageId: asked.messageId }));
   const carried = app.store.sessionView("local", branch.sessionId).messages
     .find((one) => one.role === "user").attachments[0];
   assert.notEqual(carried.id, source.id, "the branch knows the file by a name of its own");
@@ -105,9 +105,9 @@ test("branching requires both grants and refuses other owners or mismatched mess
   const own = seed(app.store), other = seed(app.store, "other");
   for (const permissions of [["history.read"], ["sessions.branch"]])
     await assert.rejects(app.registry.execute("sessions.branch", point(own), app.runtime.context({ permissions })), /Permission denied/);
-  assert.throws(() => app.store.branchSession("local", point(other)), /Conversation not found/);
+  await assert.rejects(app.store.branchSession("local", point(other)), /Conversation not found/);
   assert.throws(() => app.store.sessionView("local", other.sessionId), /Conversation not found/);
-  assert.throws(() => app.store.branchSession("local", { sessionId: own.sessionId, messageId: other.messages[0].messageId }), /Branch message not found/);
+  await assert.rejects(app.store.branchSession("local", { sessionId: own.sessionId, messageId: other.messages[0].messageId }), /Branch message not found/);
 });
 
 test("unsafe branch boundaries are rejected without repairing or mutating the source", async (t) => {
@@ -116,10 +116,10 @@ test("unsafe branch boundaries are rejected without repairing or mutating the so
   app.store.message(view.sessionId, { role: "assistant", content: "Pending", toolCalls: [{ id: "pending", name: "files.write", arguments: "{}" }] });
   app.store.message(view.sessionId, { role: "user", content: "After missing result" });
   const source = app.store.sessionView("local", view.sessionId);
-  assert.throws(() => app.store.branchSession("local", point(source, 1)), /without tool requests/);
-  assert.throws(() => app.store.branchSession("local", point(source, 2)), /unfinished tool requests/);
+  await assert.rejects(app.store.branchSession("local", point(source, 1)), /without tool requests/);
+  await assert.rejects(app.store.branchSession("local", point(source, 2)), /unfinished tool requests/);
   assert.deepEqual(app.store.sessionView("local", view.sessionId), source);
-  assert.equal(app.store.branchSession("local", point(source)).copiedMessages, 1);
+  assert.equal((await app.store.branchSession("local", point(source))).copiedMessages, 1);
 });
 
 test("branch copying is atomic on write failure and checks size only through its chosen point", async (t) => {
@@ -129,15 +129,15 @@ test("branch copying is atomic on write failure and checks size only through its
   const count = () => Number(db.prepare("SELECT COUNT(*) AS n FROM sessions").get().n);
   const before = count();
   db.exec("CREATE TRIGGER fail_branch_copy BEFORE INSERT ON messages BEGIN SELECT RAISE(ABORT,'fixture copy failure'); END");
-  assert.throws(() => app.store.branchSession("local", point(view)), /fixture copy failure/);
+  await assert.rejects(app.store.branchSession("local", point(view)), /fixture copy failure/);
   assert.equal(count(), before);
   assert.equal(Number(db.prepare("SELECT COUNT(*) AS n FROM session_branches").get().n), 0);
   db.exec("DROP TRIGGER fail_branch_copy");
   app.store.message(view.sessionId, { role: "user", content: "x".repeat(4 * 1024 * 1024) });
   const large = db.prepare("SELECT source_id FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1").get(view.sessionId);
-  assert.throws(() => app.store.branchSession("local", { sessionId: view.sessionId, messageId: Number(large.source_id) }), /4 MiB/);
+  await assert.rejects(app.store.branchSession("local", { sessionId: view.sessionId, messageId: Number(large.source_id) }), /4 MiB/);
   assert.equal(count(), before);
-  assert.equal(app.store.branchSession("local", point(view)).copiedMessages, 1);
+  assert.equal((await app.store.branchSession("local", point(view))).copiedMessages, 1);
 });
 
 test("authenticated session API exposes branch history and rejects other owners", async (t) => {
@@ -149,7 +149,9 @@ test("authenticated session API exposes branch history and rejects other owners"
   assert.equal((await fetch(server.url + "/api/sessions/" + own.sessionId)).status, 401);
   const response = await fetch(server.url + "/api/sessions/" + own.sessionId, { headers });
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), own);
+  // #505 (Dogfood D14): the owner is told which project the conversation is filed under, so the window can say so.
+  assert.deepEqual(await response.json(), { ...own, project: app.store.sessionProject(own.sessionId) ?? null });
+  assert.equal(app.store.sessionProject(own.sessionId), "default", "a conversation begun with no project named is the default project's");
   const denied = await fetch(server.url + "/api/sessions/" + other.sessionId, { headers });
   assert.equal(denied.status, 400);
   assert.match((await denied.json()).error, /Conversation not found/);

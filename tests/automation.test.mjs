@@ -140,3 +140,42 @@ test("an authenticated webhook triggers a schedule with its payload; manual and 
   assert.equal((await view.json()).hookPath, `/hooks/${record.id}`);
   assert.equal((await fetch(`${server.url}/hooks/00000000-0000-0000-0000-000000000000`, { method: "POST" })).status, 401);
 });
+
+test("a hand or webhook trigger takes the schedule in one write, so a turn that started meanwhile is not doubled", async (t) => {
+  const { app, context, provider } = await fixture(t);
+  const record = app.scheduler.create(context, { prompt: "once only", dueAt: past, kind: "task", intervalMs: 3600000 });
+  // The clock claims the schedule right after the trigger has looked at it (another process, or a tick in between).
+  const read = app.store.get.bind(app.store);
+  let interleaved = false;
+  app.store.get = (table, owner, id) => {
+    const found = read(table, owner, id);
+    if (table === "schedules" && id === record.id && !interleaved) {
+      interleaved = true;
+      assert.ok(app.store.claimSchedule("local", record.id, new Date().toISOString()), "the other caller took it");
+    }
+    return found;
+  };
+  await assert.rejects(app.scheduler.trigger("local", record.id, undefined, "webhook"), /running right now/);
+  assert.equal(provider.requests.length, 0, "the trigger did not start a second turn");
+});
+
+test("a trigger puts the schedule's own status back, and the same delivery key starts one turn", async (t) => {
+  const { app, context, provider } = await fixture(t);
+  const paused = app.scheduler.create(context, { prompt: "paused job", dueAt: past, kind: "task", intervalMs: 3600000 });
+  app.store.save("schedules", "local", paused.id, { ...app.store.get("schedules", "local", paused.id).data, status: "paused" });
+  await app.scheduler.trigger("local", paused.id, undefined, "local");
+  assert.equal(app.store.get("schedules", "local", paused.id).data.status, "paused", "a paused job stays paused");
+  assert.equal(app.store.get("schedules", "local", paused.id).data.statusBeforeTrigger, undefined);
+  const once = app.scheduler.create(context, { prompt: "one-off", dueAt: past, kind: "task" });
+  await app.scheduler.tick(new Date("2020-01-02T00:00:00.000Z"));
+  assert.equal(app.store.get("schedules", "local", once.id).data.status, "completed");
+  const first = await app.scheduler.trigger("local", once.id, undefined, "webhook", "delivery-1");
+  const again = await app.scheduler.trigger("local", once.id, undefined, "webhook", "delivery-1");
+  assert.equal(again.id, first.id, "the repeated delivery hands back the turn it already started");
+  assert.equal(app.store.get("schedules", "local", once.id).data.status, "completed", "a finished one-off stays finished");
+  const before = provider.requests.length;
+  assert.equal((await app.scheduler.tick(new Date("2020-01-03T00:00:00.000Z"))).length, 0, "the clock does not run it again");
+  assert.equal(provider.requests.length, before);
+  const other = await app.scheduler.trigger("local", once.id, undefined, "webhook", "delivery-2");
+  assert.notEqual(other.id, first.id, "a new delivery key is a new turn");
+});

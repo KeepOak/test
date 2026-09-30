@@ -1,11 +1,12 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { unsetRecord } from "../ship-on.js";
 import { audit } from "../audit.js";
 
 /**
  * mac7/r17-g: the safety extras (re-audit rows R17-061 … R17-067). Each part has the owner's
- * three-way switch — off, when needed, on — kept in a settings record of its own, and every one
- * ships off, the scans that can only tighten included (no owner design asks for them to start on).
+ * three-way switch — off, when needed, on — kept in a settings record of its own. What each ships as is
+ * `safetyShipsOn` below (the owner's ship-on rule, src/ship-on.ts); a saved record that cannot be read is off.
  *
  *   off          the part does nothing at all; its tools are not in the catalog
  *   when-needed  the part works where the work calls for it (each part says what that means)
@@ -25,6 +26,27 @@ export type SafetyMode = z.infer<typeof ModeSchema>;
 const RecordSchema = z.object({ mode: ModeSchema.default("off") }).strict();
 
 export const safetyKey = (part: SafetyPart): string => `safety-${part}`;
+
+/** What each part is while the owner never set it. */
+export const safetyShipsOn: Partial<Record<SafetyPart, SafetyMode>> = {
+  // The owner's rule (ships on, 2026-09-26): the scan can only make an answer stricter, and "when needed" reads only
+  // commands that would run without asking; none of (a)–(f).
+  "command-scan": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): a tamper-evident chain over what the assistant was allowed, refused and
+  // asked, kept on this computer; none of (a)–(f).
+  "activity-chain": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): every call a script makes goes through the one gate with the task's own
+  // permissions, and a call that would be asked about is left to the task; none of (a)–(f).
+  "tool-scripts": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): runs only add-ons the owner installed, in a sealed worker with caps; none of (a)–(f).
+  "wasm-add-ons": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): holds nothing until the owner enrols an authenticator and picks the yeses; none of (a)–(f).
+  "code-approvals": "when-needed",
+  // Defaults audit (2026-09-28): history repair tidies only the copy sent, and repairs only broken pairs; a call id reused
+  // in a later answer (as local models do) is its own call now (src/safety-extras/history-repair.ts). None of (a)–(f).
+  "history-repair": "when-needed",
+  // Kept off, by the owner's rule: progress-judge asks the model on its own every few rounds (a).
+};
 
 /** What each part is, in the owner's words, for the card and for a refusal. */
 export const safetyLabels: Record<SafetyPart, string> = {
@@ -49,14 +71,16 @@ export const safetyTools: Record<SafetyPart, readonly string[]> = {
 };
 
 /** For src/feature-switches.ts: each part with tools — its settings record, why it is loaded, and its tools. */
-export const safetyToolFeatures: readonly (readonly [string, string, readonly string[]])[] = safetyParts
+export const safetyToolFeatures: readonly (readonly [string, string, readonly string[], SafetyMode])[] = safetyParts
   .filter((part) => safetyTools[part].length > 0)
-  .map((part) => [safetyKey(part), `${safetyLabels[part].charAt(0).toLowerCase()}${safetyLabels[part].slice(1)} is switched on`, safetyTools[part]] as const);
+  .map((part) => [safetyKey(part), `${safetyLabels[part].charAt(0).toLowerCase()}${safetyLabels[part].slice(1)} is switched on`, safetyTools[part], safetyShipsOn[part] ?? "off"] as const);
 
 type Reader = Pick<Store, "get">;
 
 export function safetyMode(store: Reader, owner: string, part: SafetyPart): SafetyMode {
-  const saved = RecordSchema.safeParse(store.get("settings", owner, safetyKey(part))?.data ?? {});
+  const found = store.get("settings", owner, safetyKey(part));
+  if (unsetRecord(found?.data)) return safetyShipsOn[part] ?? "off";
+  const saved = RecordSchema.safeParse(found?.data ?? {});
   return saved.success ? saved.data.mode : "off";
 }
 

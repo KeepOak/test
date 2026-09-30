@@ -53,6 +53,8 @@ async function fixture(t, script) {
       parameters: z.object({}).strict(), execute: async () => ({ ran: name }) });
   }
   app.channels.mergeWindowMs = 0;
+  // The steps line above a reply in an app without edits waits for a slow task; a busy test machine is not one.
+  app.channels.liveTiming = { ...app.channels.liveTiming, progressAfterMs: 60_000 };
   const chat = fakeChat();
   await app.channels.attach(chat.adapter, { activation: "always", pairing: true, allowlist: ["owner"] });
   return { app, chat, root };
@@ -173,7 +175,7 @@ test("the owner's own paired account is a chat like any other, and can still ans
     "the owner's own paired account gets the same short list as anybody else");
   assert.equal(app.store.run(lastRun(app).id).status, "needs_input", "a chat's task waits for a yes");
   assert.equal(await app.channels.handle(message("y", from)), "replied");
-  assert.match(chat.sent.at(-1), /Noted/, "a bare y still answers the question the chat is waiting on");
+  assert.match(chat.sent.at(-1), /Done\./, "a bare y still answers the question the chat is waiting on");
 });
 
 test("putting the settings back turns the switch off and leaves the owner's own lines alone", async (t) => {
@@ -267,7 +269,7 @@ test("a yes from a chat still answers a question about the short list every chat
   assert.equal(await app.channels.handle(message("read README.md")), "replied");
   assert.equal(app.store.run(lastRun(app).id).status, "needs_input");
   assert.equal(await app.channels.handle(message("y")), "replied");
-  assert.match(chat.sent.at(-1), /Noted/, "a yes about the short list stopped working");
+  assert.match(chat.sent.at(-1), /Done\./, "a yes about the short list stopped working");
 });
 
 test("a household person on this computer cannot write a line, and the owner still can", async (t) => {
@@ -312,7 +314,7 @@ test("under the default No approvals a chat's change waits for the owner's windo
     assert.equal(await app.channels.handle(message("use the new thing")), "replied");
     assert.equal(app.store.run(lastRun(app).id).status, "needs_input", `approvals ${approvals}: the change did not wait`);
     assert.equal(await app.channels.handle(message("y")), "replied");
-    if (approvals) assert.match(chat.sent.at(-1), /Noted/, "the switch did not let the chat's yes land");
+    if (approvals) assert.match(chat.sent.at(-1), /Done\./, "the switch did not let the chat's yes land");
     else {
       assert.match(chat.sent.at(-1), /Branch app window/, "the chat was not told the yes belongs in the window");
       assert.equal(app.store.run(lastRun(app).id).status, "needs_input", "a chat answered its own question");
@@ -334,7 +336,7 @@ test("with the switch on, that person on that app may say yes to what their own 
   const { app, chat } = await stoppedOnAsk(t, [line({ approvals: true })]);
   assert.deepEqual(mayApprove(app), ["invented.power"]);
   assert.equal(await app.channels.handle(message("y")), "replied");
-  assert.match(chat.sent.at(-1), /Noted/, "the switch did not let the yes land");
+  assert.match(chat.sent.at(-1), /Done\./, "the switch did not let the yes land");
   const decided = app.store.audit.list(app.runtime.owner, { action: "approval.decided" });
   assert.equal(decided.length, 1, "the yes was not written down");
   assert.equal(decided[0].outcome, "allowed");
@@ -370,7 +372,7 @@ test("the switch never reaches a name a chat may never have, and never a standin
     "a standing rule was written from a chat");
   // The one-off yes still works, so the refusal above is about "always" and nothing else.
   assert.equal(await app.channels.handle(message("y")), "replied");
-  assert.match(chat.sent.at(-1), /Noted/);
+  assert.match(chat.sent.at(-1), /Done\./);
 });
 
 test("a line's yes works one to one only, never in a group where anybody paired could press it", async (t) => {
@@ -384,7 +386,7 @@ test("a line's yes works one to one only, never in a group where anybody paired 
   assert.equal(app.store.audit.list(app.runtime.owner, { action: "approval.decided" }).length, 0);
   // One to one, the same person on the same line still may.
   assert.equal(await app.channels.handle(message("y")), "replied");
-  assert.match(chat.sent.at(-1), /Noted/, "the line's yes stopped working one to one as well");
+  assert.match(chat.sent.at(-1), /Done\./, "the line's yes stopped working one to one as well");
 });
 
 test("a person with no line of their own gets nothing from somebody else's switch", async (t) => {
@@ -428,7 +430,7 @@ test("typing a in a chat is answered in a sentence, and is never sent on to the 
     "a standing rule was written from a chat");
   /* And the one-off yes still lands, so the refusal is about "always" and nothing else. */
   assert.equal(await app.channels.handle(message("y")), "replied");
-  assert.match(chat.sent.at(-1), /Noted/);
+  assert.match(chat.sent.at(-1), /Done\./);
 });
 
 test("a chat is never offered the letter for a standing yes it cannot give", async () => {
@@ -455,7 +457,7 @@ test("a line naming everybody, or every app, never lends its yes however the box
   /* The same line, naming the person and the app, still works: this refuses * and nothing more. */
   const { app, chat } = await stoppedOnAsk(t, [line({ approvals: true })]);
   assert.equal(await app.channels.handle(message("y")), "replied");
-  assert.match(chat.sent.at(-1), /Noted/, "naming the person and the app stopped working too");
+  assert.match(chat.sent.at(-1), /Done\./, "naming the person and the app stopped working too");
 });
 
 test("a line naming everybody still adds what it allows; only its yes is refused", async (t) => {

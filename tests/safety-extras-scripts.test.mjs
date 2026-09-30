@@ -15,7 +15,9 @@ import { z } from "zod";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { readScriptAnswer, ToolScripts, windowsScriptRefusal } from "../dist/safety-extras/tool-scripts.js";
+import { readScriptAnswer, ToolScripts } from "../dist/safety-extras/tool-scripts.js";
+import { wslProbe, wslReadiness } from "../dist/integrations/wsl-held.js";
+import { evaluateBud } from "../dist/seasons/bud-evaluation.js";
 import { scriptAnswerMarker } from "../dist/safety-extras/script-host.js";
 
 const mac = { skip: process.platform !== "darwin" && "macOS's own sandbox is only on macOS" };
@@ -46,15 +48,45 @@ async function served(t, steps = []) {
   return { app, api, root, looked, ran };
 }
 
-test("off refuses, and Windows refuses", async (t) => {
+test("ships when needed; switched off refuses, and missing WSL explains setup", async (t) => {
   const { app, api } = await served(t);
   const context = app.runtime.context({ runId: app.store.createRun(app.runtime.owner, "x").id });
+  assert.equal(app.registry.names().includes("tools.script"), true, "ships when needed: the tool is in the catalog");
+  await api("/api/safety-extras/switch", { part: "tool-scripts", mode: "off" });
   await assert.rejects(app.safetyExtras.scripts.run({ source: "export default 1", tools: ["notes.lookup"], timeoutMs: 5000 }, context), /switched off/);
   assert.equal(app.registry.names().includes("tools.script"), false);
   await api("/api/safety-extras/switch", { part: "tool-scripts", mode: "on" });
   assert.equal(app.registry.names().includes("tools.script"), true);
-  const windows = new ToolScripts({ host: app.runtime, registry: app.registry, unreadable: () => [], wallDeps: { platform: "win32" } });
-  await assert.rejects(windows.run({ source: "export default 1", tools: ["notes.lookup"], timeoutMs: 5000 }, context), new RegExp(windowsScriptRefusal.slice(0, 30)));
+  const windows = new ToolScripts({ host: app.runtime, registry: app.registry, unreadable: () => [],
+    wallDeps: { platform: "win32", probe: async () => ({ missing: true, code: null, stdout: "", stderr: "" }) } });
+  await assert.rejects(windows.run({ source: "export default 1", tools: ["notes.lookup"], timeoutMs: 5000 }, context), /WSL is not set up/);
+});
+
+const wslReady = process.platform === "win32" && await wslReadiness(wslProbe) === null;
+test("Windows scripts use real WSL with gated RPC and cannot read Windows data or reach the network", { skip: !wslReady && "needs WSL Node and bubblewrap" }, async (t) => {
+  const { app, api, root, looked } = await served(t);
+  await api("/api/safety-extras/switch", { part: "tool-scripts", mode: "on" });
+  const secret = join(root, "data", "secret.txt");
+  await writeFile(secret, "private");
+  const linuxSecret = secret.replaceAll("\\", "/").replace(/^([A-Za-z]):/, (_, drive) => `/mnt/${drive.toLowerCase()}`);
+  const context = app.runtime.context({ runId: app.store.createRun(app.runtime.owner, "x").id });
+  const source = `import { readFile } from 'node:fs/promises'; import { networkInterfaces } from 'node:os';
+    export default async branch => ({ platform: process.platform, note: await branch.call('notes.lookup', { q: 'WSL' }),
+      secret: await readFile(${JSON.stringify(linuxSecret)}, 'utf8').then(() => 'leaked', () => 'blocked'),
+      network: await fetch('http://127.0.0.1:9', { signal: AbortSignal.timeout(1000) }).then(() => 'reached', () => 'blocked'),
+      isolatedNetwork: Object.keys(networkInterfaces()).every(name => name === 'lo'),
+      unnamed: await branch.call('files.write', {}).then(() => 'ran', () => 'blocked') });`;
+  const result = await app.safetyExtras.scripts.run({ source, tools: ["notes.lookup"], timeoutMs: 60000 }, context);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.deepEqual(result.result, { platform: "linux", note: { note: "about WSL" }, secret: "blocked", network: "blocked", isolatedNetwork: true, unnamed: "blocked" });
+  assert.deepEqual(looked, ["WSL"]);
+  const candidate = { source: "async function build(input, branch) { return branch.call('notes.lookup', input); }", tools: ["notes.lookup"] };
+  const cases = [{ input: { q: "simulation" }, expected: "simulated", replies: [{ tool: "notes.lookup", args: { q: "simulation" }, result: "simulated" }] }];
+  const evaluation = await evaluateBud(app.safetyExtras.scripts, candidate, undefined, cases, context);
+  assert.equal(evaluation.promoted, true, JSON.stringify(evaluation));
+  assert.deepEqual(looked, ["WSL"], "evaluation does not call the live tool");
+  const undeclared = await evaluateBud(app.safetyExtras.scripts, { ...candidate, tools: ["files.read"] }, undefined, cases, context);
+  assert.equal(undeclared.promoted, false);
 });
 
 // Kept apart from the refusals above so that the two of them still run on Windows: only the plan

@@ -149,6 +149,12 @@ export class ToolLoader {
   private readonly counts = new Map<string, number>();
   private readonly usedAt = new Map<string, number>();
   private readonly asked = new Set<string>();
+  /**
+   * selfdev: tools the task named in tools.describe, newest last. tools.describe answers "loaded, call it now",
+   * and a model whose tools are its own (Claude through the owner's subscription) can call only what its tool list
+   * holds, so these travel in full even past the ceiling, never squeezed out by a guess. At most `namedKept`.
+   */
+  private readonly named = new Set<string>();
   /** Tools that have already travelled to the model in full in this task; see `plan()`. */
   private readonly sent = new Set<string>();
   private readonly preloaded: PreloadedTool[];
@@ -290,6 +296,8 @@ export class ToolLoader {
       // "that does not exist" would go looking for something else instead of saying so.
       if (this.hidden.has(here)) { (this.nameHidden ? switchedOff : unknown).push(this.nameHidden ? here : asked); continue; }
       this.asked.add(here);
+      this.named.delete(here); this.named.add(here);
+      while (this.named.size > namedKept) this.named.delete(this.named.values().next().value!);
       const found = this.found(here, entry.purpose, entry.note, true);
       loaded.push(here === asked ? found
         : { ...found, use: `${asked} is called ${here} here. ${found.use}` });
@@ -424,6 +432,7 @@ export class ToolLoader {
       this.asked.has(hit.entry.name) && !this.preloaded.some((p) => p.name === hit.entry.name) ? "found" : "merit";
     const role = new Map<string, Role>([...inUse.map((hit) => [hit.entry.name, "use"] as const),
       ...onMerit.map((hit) => [hit.entry.name, found(hit)] as const), ...kept.map((hit) => [hit.entry.name, "kept"] as const)]);
+    for (const name of this.named) if (role.has(name)) role.set(name, "named");
     const waiting = rest.filter((hit) => hit.mode === "when-needed" && !this.hidden.has(hit.entry.name)).map((hit) => hit.entry);
     const plan = this.fit(core, wanted.map((hit) => hit.entry), listable, rest.length, role, waiting);
     for (const entry of plan.loaded) this.sent.add(entry.name);
@@ -446,8 +455,11 @@ export class ToolLoader {
       const descriptions = this.render([...core, ...loaded], indexed, deferred, sourceIndex(waiting, shown, indexed, this.sourceOf));
       if (estimateTokens(descriptions) < this.budgetTokens || (!loaded.length && !lines))
         return { loaded: [...core, ...loaded], indexed, deferred, descriptions };
-      if (loaded.length) loaded = withoutWeakest(loaded, role);
-      else lines = Math.max(0, lines - 4);
+      const fewer = loaded.length ? withoutWeakest(loaded, role, core) : loaded;
+      if (fewer.length < loaded.length) loaded = fewer;
+      else if (lines) lines = Math.max(0, lines - 4);
+      // Only tools the task named itself are left: they travel, as tools.describe said they would.
+      else return { loaded: [...core, ...loaded], indexed, deferred, descriptions };
     }
     return { loaded: core, indexed: [], deferred: total, descriptions: this.render(core, [], total, sourceIndex(waiting, new Set(), [], this.sourceOf)) };
   }
@@ -480,16 +492,19 @@ export class ToolLoader {
  * not — it simply cannot take them all.
  */
 /** What a loaded tool is to this round: one the task is using, one that won a place on merit, or one only kept from before. */
-type Role = "use" | "found" | "merit" | "kept";
+type Role = "use" | "found" | "merit" | "kept" | "named";
+/** selfdev: how many tools named in tools.describe are kept in full at once. */
+const namedKept = 24;
 /**
  * The loaded tools less the one the section can best spare, the last of the weakest kind: a tool only kept from an earlier
  * round goes first; then one that won a place on merit whose toolbox still has another tool loaded, so every toolbox that
  * won a place keeps one while the budget allows; then any tool that won on merit; then one the task found or named
  * itself; a tool in use goes last of all.
  */
-function withoutWeakest(loaded: readonly ToolEntry[], role: ReadonlyMap<string, Role>): ToolEntry[] {
+function withoutWeakest(loaded: readonly ToolEntry[], role: ReadonlyMap<string, Role>, always: readonly ToolEntry[] = []): ToolEntry[] {
   const inBox = new Map<string, number>();
-  for (const entry of loaded) inBox.set(entry.group, (inBox.get(entry.group) ?? 0) + 1);
+  // A pinned tool travels whatever happens, so a box that has one still has a tool when its last loaded one goes.
+  for (const entry of [...always, ...loaded]) inBox.set(entry.group, (inBox.get(entry.group) ?? 0) + 1);
   const roleOf = (entry: ToolEntry): Role => role.get(entry.name) ?? "merit";
   const lastWhere = (keep: (entry: ToolEntry) => boolean): number => {
     for (let at = loaded.length - 1; at >= 0; at--) if (keep(loaded[at]!)) return at;
@@ -497,9 +512,10 @@ function withoutWeakest(loaded: readonly ToolEntry[], role: ReadonlyMap<string, 
   };
   const at = [lastWhere((entry) => roleOf(entry) === "kept"),
     lastWhere((entry) => roleOf(entry) === "merit" && (inBox.get(entry.group) ?? 0) > 1),
-    lastWhere((entry) => roleOf(entry) === "merit"), lastWhere((entry) => roleOf(entry) === "found")]
-    .find((found) => found >= 0) ?? loaded.length - 1;
-  return [...loaded.slice(0, at), ...loaded.slice(at + 1)];
+    lastWhere((entry) => roleOf(entry) === "merit"), lastWhere((entry) => roleOf(entry) === "found"),
+    lastWhere((entry) => roleOf(entry) !== "named")]
+    .find((found) => found >= 0) ?? -1;
+  return at < 0 ? [...loaded] : [...loaded.slice(0, at), ...loaded.slice(at + 1)];
 }
 
 function shareOut<T extends { entry: { group: string }; score: number; at: number }>(ranked: readonly T[], room: number): T[] {

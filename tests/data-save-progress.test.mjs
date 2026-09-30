@@ -101,6 +101,8 @@ test("DG-055 the switch still saves the question at 95%, and it comes back after
   const before = (await call("/api/usage/glance/settings")).settings.saveProgress;
   const box = page.getByRole("checkbox", { name: "Offer to save progress at 95%", exact: true });
   await box.waitFor({ state: "visible", timeout: 10000 });
+  // The page reads the engine's settings after it is drawn: the switch is pressed once it shows what the engine has.
+  await page.waitForFunction(({ ask }) => document.getElementById("u-ckpt")?.checked === ask, { ask: before === "ask" }, { timeout: 10000 });
   assert.notEqual(await box.getAttribute("aria-disabled"), "true", "the switch is live");
   const saved = page.waitForResponse((response) => response.request().method() === "POST" && new URL(response.url()).pathname === "/api/usage/glance/settings");
   await box.click();

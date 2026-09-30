@@ -1,6 +1,7 @@
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
 import { ProviderStreamError } from "./contracts.js";
+import { overflowWordsIn, statedIn } from "./context-words.js";
 
 const quotaCodes = [
   "insufficient_quota",
@@ -21,6 +22,14 @@ const knownCodes = [
   "slow_down",
   // dogfood D22: a request longer than the model's context window (src/model-context.ts learns the room from it).
   "context_length_exceeded",
+  // Account pools (src/accounts/pool.ts failureFor): a plan's own limit, and a model the account is not entitled to.
+  "usage_limit_reached",
+  "plan_limit_reached",
+  // A ChatGPT plan that does not include this use (openai/codex codex-rs/codex-api/src/api_bridge.rs, Apache-2.0).
+  "usage_not_included",
+  "model_not_found",
+  "model_not_available",
+  "unsupported_model",
 ] as const;
 export type ProviderErrorCode = (typeof knownCodes)[number];
 
@@ -28,12 +37,21 @@ export type ProviderErrorCode = (typeof knownCodes)[number];
 export class ProviderHttpError extends Error {
   override name = "ProviderHttpError";
   readonly code: ProviderErrorCode | undefined;
+  /** The refusal's own words name a tool's name (a server that allows fewer characters in one). */
+  aboutToolNames = false;
+  /**
+   * When a plan limit the refusal reported ends (ms since the epoch): the body's `error.resets_at` (seconds since the
+   * epoch) or `error.resets_in_seconds`, as ChatGPT's usage_limit_reached says it (openai/codex api_bridge.rs).
+   */
+  resetsAtMs: number | undefined;
   constructor(
     readonly status: number,
     readonly retryAfterMs?: number,
     code?: string,
     readonly classificationAvailable = true,
     readonly retryAfterRecognized = true,
+    /** Dogfood follow-up: the model's maximum context, in tokens, when the service's refusal stated it. */
+    readonly contextLimit?: number,
   ) {
     const safeCode = knownCodes.find((known) => known === code);
     super(
@@ -64,8 +82,9 @@ export function parseRetryAfter(
   now = Date.now(),
 ): number | undefined {
   if (!value) return undefined;
-  if (/^\d+$/.test(value.trim()))
-    return Math.min(Number.MAX_SAFE_INTEGER, Number(value.trim()) * 1000);
+  // Seconds, whole or with a fraction ("1.5"): several services send the fraction, and a wait they asked for is kept.
+  if (/^\d+(\.\d+)?$/.test(value.trim()))
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(Number(value.trim()) * 1000));
   if (
     !/^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(
       value.trim(),
@@ -82,27 +101,41 @@ export async function rejectedHttpResponse(
   response: Response,
   signal?: AbortSignal,
 ): Promise<ProviderHttpError> {
-  const details = await readErrorCodes(response);
+  const read = await readErrorCodes(response);
   signal?.throwIfAborted();
+  // A refusal for a request's size is a 400 or 413; a rate limit or an outage that mentions tokens is not an overflow.
+  const sized = response.status === 400 || response.status === 413;
+  const details = sized ? read : { ...read, codes: read.codes.filter((one) => one !== "context_length_exceeded"), contextLimit: undefined };
   const { codes } = details;
   const code =
     codes.find((value) => quotaCodes.some((quota) => quota === value)) ??
     codes.find((value) => knownCodes.some((known) => known === value));
   const header = response.headers.get("retry-after"),
     retryAfter = parseRetryAfter(header);
-  return new ProviderHttpError(
+  const refused = new ProviderHttpError(
     response.status,
     retryAfter,
     code,
     details.complete,
     header === null || retryAfter !== undefined,
+    ...(details.contextLimit ? [details.contextLimit] : []),
   );
+  if (details.aboutToolNames) refused.aboutToolNames = true;
+  if (details.resetsAtMs !== undefined) refused.resetsAtMs = details.resetsAtMs;
+  return refused;
 }
 
 interface ErrorDetails {
   codes: string[];
   complete: boolean;
+  /** Dogfood follow-up: the maximum context a "too long" refusal stated (never the words themselves). */
+  contextLimit?: number;
+  aboutToolNames?: boolean;
+  /** When the plan limit the refusal reported ends, if it said (see ProviderHttpError.resetsAtMs). */
+  resetsAtMs?: number;
 }
+/** A refusal naming a tool's name: `tools[0].function.name`, "tool name", `tools.0.name`. Read from the words alone. */
+const toolNameWords = /function\.name|tool[ _]name|\btools?(?:\[\d+\]|\.\d+)(?:\.function)?\.name/i;
 const unavailableErrorDetails = (): ErrorDetails => ({
   codes: [],
   complete: false,
@@ -125,9 +158,11 @@ async function readErrorCodes(response: Response): Promise<ErrorDetails> {
       if (bytes > 16384) return unavailableErrorDetails();
       chunks.push(next.value);
     }
-    return timedOut
-      ? unavailableErrorDetails()
-      : parseErrorCodes(Buffer.concat(chunks).toString("utf8"));
+    if (timedOut) return unavailableErrorDetails();
+    const text = Buffer.concat(chunks).toString("utf8");
+    let details: ErrorDetails;
+    try { details = parseErrorCodes(text); } catch { details = unavailableErrorDetails(); } // not JSON: no codes to read
+    return { ...details, aboutToolNames: toolNameWords.test(text) };
   } catch {
     return unavailableErrorDetails();
   } finally {
@@ -139,19 +174,29 @@ async function readErrorCodes(response: Response): Promise<ErrorDetails> {
 function parseErrorCodes(body: string): ErrorDetails {
   const shape = z.object({
     error: z.object({
-      code: z.string().optional(),
-      type: z.string().optional(),
+      code: z.string().nullish(),
+      type: z.string().nullish(),
+      message: z.string().max(4000).nullish(),
+      resets_at: z.number().finite().nonnegative().nullish(),
+      resets_in_seconds: z.number().finite().nonnegative().nullish(),
     }),
   });
   const parsed = shape.safeParse(JSON.parse(body));
-  return parsed.success
-    ? {
-        codes: [parsed.data.error.code, parsed.data.error.type].filter(
-          (value): value is string => value !== undefined,
-        ),
-        complete: true,
-      }
-    : unavailableErrorDetails();
+  if (!parsed.success) return unavailableErrorDetails();
+  const { code, type, message, resets_at, resets_in_seconds } = parsed.data.error;
+  const resetsAtMs = resets_at != null ? resets_at * 1000 : resets_in_seconds != null ? Date.now() + resets_in_seconds * 1000 : undefined;
+  // Dogfood follow-up: Anthropic says "prompt is too long: N tokens > M maximum" under a general invalid_request_error,
+  // and other services say it only in words; any of them is read as the one overflow code, with the maximum it states.
+  const overflow = !!message && overflowWordsIn(message);
+  const limit = overflow && message ? statedIn(message) : null;
+  return {
+    codes: [overflow ? "context_length_exceeded" : undefined, code ?? undefined, type ?? undefined].filter(
+      (value): value is string => value !== undefined,
+    ),
+    complete: true,
+    ...(limit ? { contextLimit: limit } : {}),
+    ...(resetsAtMs !== undefined && Number.isFinite(resetsAtMs) ? { resetsAtMs } : {}),
+  };
 }
 
 /** True for failures where trying another configured model is reasonable: retryable HTTP classes or a failed connection. */
@@ -174,6 +219,19 @@ export function outOfCredit(error: unknown): boolean {
     error = error.cause;
   }
   if (error instanceof ProviderHttpError) return error.status === 402 || quotaCodes.some((code) => code === error.code);
+  return error instanceof Error && (error.name === "AccountLimitError" || error.name === "ProgramLimitError");
+}
+
+/**
+ * True when a sign-in's plan has reached its limit (ChatGPT's usage_limit_reached, a pool or an installed program that says
+ * so): the plan's window, not a spent balance. Such a task may move to another plan (src/runtime.ts fallBack).
+ */
+export function planLimitReached(error: unknown): boolean {
+  for (let depth = 0; error instanceof ProviderStreamError && depth < 4; depth++) {
+    if (error.estimatedOutput > 0 || error.usage !== undefined) return false;
+    error = error.cause;
+  }
+  if (error instanceof ProviderHttpError) return error.status === 429 && (error.code === "usage_limit_reached" || error.code === "plan_limit_reached");
   return error instanceof Error && (error.name === "AccountLimitError" || error.name === "ProgramLimitError");
 }
 

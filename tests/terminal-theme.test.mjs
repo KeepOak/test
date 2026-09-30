@@ -178,11 +178,12 @@ test("the language setting takes German, from the terminal and from the window",
   await assert.rejects(saveLook(store, owner, { language: "xx" }));
 });
 
-test("the terminal's three switches all start off and take only on, off or when needed", async (t) => {
+test("the terminal's three switches all ship when needed and take only on, off or when needed", async (t) => {
   const app = await workspace(t);
   const { store } = app, owner = app.runtime.owner;
-  assert.deepEqual(terminalSwitches(store, owner), { mouse: "off", sidePane: "off", oak: "off" });
-  assert.deepEqual(saveTerminalSwitch(store, owner, "oak", "when-needed"), { mouse: "off", sidePane: "off", oak: "when-needed" });
+  // The ship-on rule (src/terminal-theme.ts terminalSwitchesShipOn).
+  assert.deepEqual(terminalSwitches(store, owner), { mouse: "when-needed", sidePane: "when-needed", oak: "when-needed" });
+  assert.deepEqual(saveTerminalSwitch(store, owner, "oak", "off"), { mouse: "when-needed", sidePane: "when-needed", oak: "off" });
   assert.throws(() => saveTerminalSwitch(store, owner, "oak", "sometimes"));
   assert.throws(() => saveTerminalSwitch(store, owner, "everything", "on"));
 });

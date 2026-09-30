@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { optionalFields } from "../feature-switches.js"; // Q65
 import type { Store } from "../store.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 
 /**
  * The owner's two switches for memory and skills that keep themselves in shape. Both ship off.
@@ -15,8 +16,8 @@ import type { Store } from "../store.js";
  * - `off`: nothing is drafted, and asking for one says the switch is off.
  * - `when-needed`: a skill is drafted only when asked — "make this into a skill", the button, or
  *   accepting a skill idea — and the assistant sees one short tool for the first of those.
- * - `on`: also after a finished task that looked like a repeatable procedure, and a look back may
- *   suggest one.
+ * - `on`: also a look back may suggest one. (A skill is never drafted after a task just because it used
+ *   several tools; the Gardener's four triggers decide that, src/seasons/triggers.ts.)
  *
  * Whatever the positions, nothing is written or switched on without the owner saying yes.
  *
@@ -36,10 +37,15 @@ export const ReflectionSettingsSchema = z.object({
 export type ReflectionSettings = z.infer<typeof ReflectionSettingsSchema>;
 
 const settingsKey = "reflection";
+/**
+ * The owner's rule (ships on, 2026-09-26): "when needed" drafts a new skill only when the owner asks; none of (a)–(f). Looking back
+ * stays off: it asks the model at every compaction by itself (a).
+ */
+export const reflectionShipsOn: Partial<ReflectionSettings> = { newSkills: "when-needed" };
 
 export function reflectionSettings(store: Store, owner: string): ReflectionSettings {
   const saved = ReflectionSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : ReflectionSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, reflectionShipsOn) : ReflectionSettingsSchema.parse({});
 }
 
 /**
@@ -49,7 +55,10 @@ export function reflectionSettings(store: Store, owner: string): ReflectionSetti
  */
 export function saveReflectionSettings(store: Store, owner: string, input: unknown): ReflectionSettings {
   const patch = optionalFields(ReflectionSettingsSchema).parse(input ?? {});
+  const before = store.get("settings", owner, settingsKey)?.data;
   const value = ReflectionSettingsSchema.parse({ ...reflectionSettings(store, owner), ...patch });
   store.save("settings", owner, settingsKey, { ...value });
+  // Over an unreadable record both switches read off; writing them down keeps them off (src/ship-on.ts savedFields).
+  markChosen(store, owner, settingsKey, savedFields(before, ReflectionSettingsSchema.safeParse(before ?? {}).success, patch, reflectionShipsOn));
   return value;
 }

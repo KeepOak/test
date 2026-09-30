@@ -432,6 +432,8 @@ function soon(el) {
    its data-sw for one without an id; a field that only shows a value (readonly) or carries one (hidden) is left as is. */
 export function greyOut(root) {
   for (const el of root.querySelectorAll("[data-act]")) if (!isLive(el.dataset.act) || !has(el.dataset.act)) soon(el);
+  /* The window's own dropdown (core/gsel.js) is live as the select it replaced was: by its "sw:" id. */
+  for (const el of root.querySelectorAll(".gsel")) if (!isLive("sw:" + (el.id || el.dataset.sw))) { soon(el); el.disabled = true; }
   for (const el of root.querySelectorAll("input, select, textarea")) {
     if (el.type === "hidden" && !el.dataset.sw) continue;
     if (el.readOnly && !el.dataset.sw) continue;

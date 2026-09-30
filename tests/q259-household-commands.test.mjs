@@ -352,7 +352,7 @@ test("task details: /inspect, /steps, /trajectory and the Markdown export find o
   const beforeRuns = app.store.runs(app.runtime.owner).length;
   assert.equal((await call("POST", `/api/runs/${owners.id}/replay`, {})).status, 400);
   assert.equal(app.store.runs(app.runtime.owner).length, beforeRuns, "no task was started");
-  const pairing = await call("GET", "/api/agents/pairing");
+  const pairing = await call("POST", "/api/agents/pairing", {});
   assert.deepEqual([pairing.status, pairing.body.error], [400, refusal]);
   for (const path of ["/api/brief", "/api/research"]) {
     const read = await call("GET", path);
@@ -364,7 +364,7 @@ test("task details: /inspect, /steps, /trajectory and the Markdown export find o
   assert.equal((await call("GET", "/api/research")).status, 200, "control: the owner's research");
   for (const part of ["inspect", "steps", "trajectory"]) assert.equal((await call("GET", `/api/runs/${owners.id}/${part}`)).status, 200, `control: ${part}`);
   assert.match((await call("GET", `/api/sessions/${owners.sessionId}/export?format=markdown`)).text, /owner's task/);
-  assert.equal((await call("GET", "/api/agents/pairing")).status, 200, "control: the owner's pairing link");
+  assert.equal((await call("POST", "/api/agents/pairing", {})).status, 200, "control: the owner's pairing link");
 });
 
 /* S22, S23 */

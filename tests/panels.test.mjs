@@ -11,6 +11,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { panelsWork } from "../dist/panels-work.js";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const ROOT = join(import.meta.dirname, "..");
 const quiet = { name: "scripted", async complete() { return { content: "Here is a short answer.", toolCalls: [] }; } };
@@ -93,7 +94,13 @@ test("a real task's command waiting on a yes shows in Terminal with the command 
       : { content: "done", toolCalls: [] };
   } };
   const { app } = await world(t, provider);
-  await app.runtime.run({ prompt: "which node is this" }).catch(() => undefined);
+  // The command tool comes with the terminal integration, so a stand-in of it is registered and given to the task: a
+  // tool that is not there, or not the task's, is refused without a question (#498), and this one must be asked about.
+  const { z } = await import("zod");
+  app.registry.register({ name: "shell.execute", permission: "shell.execute", description: "stand-in",
+    parameters: z.object({ executable: z.string(), args: z.array(z.string()) }).strict(), execute: async () => ({ ran: false }),
+    target: (input) => input.executable });
+  await app.runtime.run({ prompt: "which node is this", permissions: ["shell.execute"] }).catch(() => undefined);
   const [run] = app.store.runs(app.runtime.owner);
   const entries = panelsWork(app.store, app.runtime.owner, run.sessionId).terminal.entries;
   assert.deepEqual(entries.map((e) => [e.tool, e.what, e.state]), [["shell.execute", "node --version", "waiting"]]);
@@ -195,7 +202,7 @@ async function newWindow(t, { width = 1440, height = 950 } = {}) {
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   const conversation = async () => {
-    await page.locator(`.list [data-act="chat"][data-id="${seeded.session}"]`).click();
+    await openChat(page, seeded.session);
     await page.locator("#conversation .b").first().waitFor({ timeout: 30000 });
   };
   const call = (path, body) => fetch(new URL(path, server.url), { method: body === undefined ? "GET" : "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }).then((r) => r.json());

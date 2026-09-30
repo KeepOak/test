@@ -13,7 +13,9 @@ import { buildReport, reportFormats, type Report } from "./reports.js";
 import { FeatureModeSchema, modeOf, optionalFields, settleSwitch, type FeatureMode } from "./feature-switches.js";
 import type { ModelPrice } from "./pricing.js";
 import type { Store } from "./store.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 import type { UsageAggregate } from "./usage.js";
+import { countedUsageTask } from "./conversation-bootstrap.js";
 
 export const usageReportRanges = ["7d", "30d", "90d"] as const;
 export type UsageReportRange = (typeof usageReportRanges)[number];
@@ -33,12 +35,16 @@ export const UsageReportRequestSchema = z.object({
 }).strict();
 
 const settingsKey = "usage-report";
+// The owner's rule (ships on, 2026-09-26): the report is made on this computer and sent nowhere; none of (a)–(f).
+export const usageReportShipsAs: FeatureMode = "when-needed";
 const dayMs = 24 * 60 * 60 * 1000;
 const lengthOf: Record<UsageReportRange, number> = { "7d": 7, "30d": 30, "90d": 90 };
 
 export function usageReportSettings(store: Pick<Store, "get">, owner: string): UsageReportSettings {
-  const saved = UsageReportSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data);
-  const value = saved.success ? saved.data : UsageReportSettingsSchema.parse({});
+  const saved = UsageReportSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
+  const value = saved.success
+    ? shippedUnlessChosen(store, owner, settingsKey, saved.data, { mode: usageReportShipsAs })
+    : UsageReportSettingsSchema.parse({});
   const mode: FeatureMode = modeOf(value);
   return { ...value, mode, enabled: mode !== "off" };
 }
@@ -48,6 +54,8 @@ export function saveUsageReportSettings(store: Pick<Store, "get" | "save">, owne
   const wanted = optionalFields(UsageReportSettingsSchema).parse(input ?? {});
   const next = UsageReportSettingsSchema.parse({ ...current, ...wanted, ...settleSwitch(current, wanted) });
   store.save("settings", owner, settingsKey, next);
+  if (wanted.mode !== undefined || wanted.enabled !== undefined) markChosen(store, owner, settingsKey, ["mode"]);
+  markChosen(store, owner, settingsKey, sentKeys(wanted).filter((field) => field !== "mode" && field !== "enabled"));
   return next;
 }
 
@@ -142,7 +150,7 @@ export function peopleUsing(db: DatabaseSync, from: string, until: string, names
     `SELECT t.owner AS owner, COUNT(*) AS n,
        COALESCE(SUM(MAX(u.reported_input, u.estimated_input) + MAX(u.reported_output, u.estimated_output)), 0) AS tokens
      FROM tasks t LEFT JOIN usage u ON u.run_id = t.id
-     WHERE t.created_at >= ? AND t.created_at <= ? AND t.status NOT IN ('running','needs_input')
+     WHERE t.created_at >= ? AND t.created_at <= ? AND t.status NOT IN ('running','needs_input') AND ${countedUsageTask(db, "t")}
      GROUP BY t.owner ORDER BY n DESC, t.owner`,
   ).all(from, until) as Array<{ owner: string; n: number; tokens: number | null }>;
   return rows.map((row) => ({ name: names.get(row.owner) ?? "Someone no longer on this computer", tasks: Number(row.n), tokens: Number(row.tokens ?? 0) }))

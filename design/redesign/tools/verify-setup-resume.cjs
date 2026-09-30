@@ -5,13 +5,14 @@
      node design/redesign/tools/verify-setup-resume.cjs
    Proves, each through the engine's own GET routes:
      - a fresh engine lands straight in setup, and a reload while setup is due never shows the window first
-     - choices made in steps 1 to 5 are saved as they are made, survive leaving halfway, a reload, clearing this
-       browser's storage, and reopening from both Guide entries (Onboarding at the step left on, Set up Branch at Welcome)
+     - pass 18c's three steps (Welcome, Models, Your first Trunk): how far setup got is saved as it goes, survives leaving
+       halfway, a reload, clearing this browser's storage, and reopening from both Guide entries (Onboarding at the step
+       left on, Set up Branch at Welcome)
      - the trust box, once ticked, stays ticked and Start works straight away
-     - a setting changed in Settings shows in setup
      - opening setup and passing every step without changing anything changes no saved setting (the settings table is
        compared whole, before and after)
-     - the Guide hint is the engine's count of steps done, and Done once setup is finished; finishing re-runs the checks
+     - the Guide hint is the engine's count of Overview's eight "Finish setting up" steps done, never Done while any is
+       left, also once the wizard is finished
      - Show tips and pop-ups: off in the Guide menu is off in Settings too, keeps the New to Branch? card and setup away
        after a reload, achievements are still counted with nothing handed over to celebrate, and an approval still shows
    Screenshots go to %TEMP%/claude-session-files/setup-resume. */
@@ -21,7 +22,7 @@ const { mkdtempSync, mkdirSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 
 const load = (name) => {
-  try { return require(name); } catch { return require(`C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/${name}`); }
+  return require(name); // the repo's own node_modules
 };
 const { chromium } = load("playwright");
 const dist = (file) => import(pathToFileURL(resolve(__dirname, "../../../dist", file)).href);
@@ -48,6 +49,7 @@ const at = async (page) => Number(await page.locator('.ob-rail li.now button').g
 const ticks = (page) => page.$$eval(".ob-rail li.done button", (bs) => bs.map((b) => Number(b.dataset.v)));
 const pressedIn = (page, sel) => page.locator(`.ob9 ${sel}`).getAttribute("aria-pressed");
 const onboarding = () => api("onboarding");
+const FINISH = ["where", "yours", "reach", "tools", "keep", "people", "more", "check"]; // Overview's Finish setting up
 const go = async (page, i) => { await page.locator(`.ob-rail [data-act="ob-go"][data-v="${i}"]`).click(); await until(`step ${i}`, async () => (await at(page)) === i); };
 const next = async (page) => { const was = await at(page); await page.locator('.ob9 [data-act="ob-next"]').click(); await until("the next step", async () => (await at(page)) !== was); };
 const skip = async (page) => { await page.locator('.ob9 [data-act="ob-close"]').click(); await ob(page).waitFor({ state: "detached" }); await settle(page, 600); };
@@ -112,31 +114,21 @@ async function freshLanding(page) {
   await shot(page, "01-fresh-welcome");
 }
 
-/* 2. Steps 1 to 5: each choice is saved as it is made; then setup is left halfway. */
+/* 2. The three steps: each is saved as it is passed; then setup is left halfway. */
 async function makeChoices(page) {
   await page.locator(".ob9 .ob-agree").click();
   await until("the trust box saved", async () => (await onboarding()).trust === true);
   check("Welcome: ticking the box is saved with when (GET /api/onboarding trust, trustAt)", (await onboarding()).trustAt);
   await next(page); // Start
-  check("Start goes to Where Branch runs", (await at(page)) === 1);
-  await page.locator('.ob9 [data-act="ob-set"][data-v="later"]').click();
-  await until("where saved", async () => (await onboarding()).where === "later");
-  check("Where: Later is saved (GET /api/onboarding where)", true);
-  await next(page); // Models
-  await next(page); // Make it yours
-  await page.locator('.ob9 [data-act="ob15"][data-k="look"][data-v="dark"]').click();
-  await page.locator('.ob9 [data-act="ob15"][data-k="asks"][data-v="plan"]').click();
-  await until("asks saved", async () => (await api("conversation-mode/settings")).settings.newConversation === "plan");
-  const look = await until("look saved", async () => { const s = await api("state"); return s.preferences?.followSystem === false && s.preferences?.appearance === "forest" ? s.preferences : null; });
-  check("Make it yours: Dark and Plan first are saved (GET /api/state preferences, GET /api/conversation-mode/settings)", look);
-  await next(page); // Trunks
-  // The owner's own path: the setup that opened by itself, a few steps in, and a plain reload (nothing cleared).
+  check("Start goes to Models", (await at(page)) === 1);
+  await next(page); // Your first Trunk
+  // The owner's own path: the setup that opened by itself, a step in, and a plain reload (nothing cleared).
   await until("the step saved", async () => (await onboarding()).step === "trunks");
   await page.reload();
   await ob(page).waitFor({ state: "visible", timeout: 30000 });
   const p = await probe(page);
   check("a plain reload mid-setup goes straight back to setup, the window never shown first", p.sawSetup && !p.shellBeforeSetup, JSON.stringify(p));
-  check("and resumes at the step it was on (Your first Trunks)", (await at(page)) === 4, String(await at(page)));
+  check("and resumes at the step it was on (Your first Trunk)", (await at(page)) === 2, String(await at(page)));
   await page.locator('.ob9 [data-act="ob-tpl"][data-i="0"]').click();
   const tplName = await page.locator('.ob9 [data-act="ob-tpl"][data-i="0"] b').innerText();
   await shot(page, "02-halfway-trunks");
@@ -145,8 +137,8 @@ async function makeChoices(page) {
   const trunks = await until("the Trunk", async () => (await api("trunks")).trunks.some((t) => t.name === tplName));
   check("Trunks: a template picked and then Skip for now is still made (GET /api/trunks)", trunks, tplName);
   const after = await onboarding();
-  check("leaving halfway keeps the step and the steps done (GET /api/onboarding)", after.step === "trunks" && ["welcome", "where", "models", "yours", "trunks"].every((id) => after.completed.includes(id)), `${after.step} · ${after.completed}`);
-  check("leaving halfway is noted as skipped, and changes nothing else", after.skipped === true && after.where === before.where && after.trust === true);
+  check("leaving halfway keeps the step and the steps done (GET /api/onboarding)", after.step === "trunks" && ["welcome", "models", "trunks"].every((id) => after.completed.includes(id)), `${after.step} · ${after.completed}`);
+  check("leaving halfway is noted as skipped, and changes nothing else", after.skipped === true && after.trust === true && !after.finishedAt && before.trust === true);
   return tplName;
 }
 
@@ -155,22 +147,19 @@ async function reopen(page, tplName) {
   await reload(page);
   check("after skipping, a reload lands in the window (setup is not due)", (await ob(page).count()) === 0);
   await guide(page);
-  const view = await onboarding(), n = ["welcome", "where", "models", "yours", "trunks", "reach", "tools", "keep", "people", "more", "check"].filter((id) => view.completed.includes(id)).length;
+  const view = await onboarding(), n = FINISH.filter((id) => view.completed.includes(id)).length;
   const hint = await hintText(page);
-  check("Guide: the Onboarding hint is the engine's count", hint === `${n} of 11 done`, hint);
+  check("Guide: the Onboarding hint is the engine's count of the Finish setting up steps", hint === `${n} of 8 done`, hint);
   check("Guide: Set up Branch is still there", (await page.locator('.pop [data-act="onboard"]').count()) === 1);
 
   await shot(page, "03-guide-menu");
   await page.locator('.pop [data-act="onboard-resume"]').click();
   await ob(page).waitFor();
-  check("Guide › Onboarding opens at the step left on (Your first Trunks)", (await at(page)) === 4, String(await at(page)));
+  check("Guide › Onboarding opens at the step left on (Your first Trunk)", (await at(page)) === 2, String(await at(page)));
   const ticked = await ticks(page);
-  check("the rail ticks the steps done", [0, 1, 2, 3].every((j) => ticked.includes(j)) && !ticked.includes(5), JSON.stringify(ticked));
+  check("the rail ticks the steps done", [0, 1].every((j) => ticked.includes(j)), JSON.stringify(ticked));
   await go(page, 1);
-  check("Where shows Later, as saved", (await pressedIn(page, '[data-act="ob-set"][data-v="later"]')) === "true" && (await pressedIn(page, '[data-act="ob-set"][data-v="this"]')) === "false");
-  await go(page, 3);
-  check("Make it yours shows Dark and Plan first, as saved", (await pressedIn(page, '[data-k="look"][data-v="dark"]')) === "true" && (await pressedIn(page, '[data-k="asks"][data-v="plan"]')) === "true");
-  await go(page, 4);
+  await go(page, 2);
   check("Trunks shows the Trunk made as made", (await pressedIn(page, '[data-act="ob-tpl"][data-i="0"]')) === "true", tplName);
   await shot(page, "04-reopened-trunks");
   // Setup was opened again and not left: a reload goes straight back to it, at the step it was on.
@@ -179,13 +168,13 @@ async function reopen(page, tplName) {
   await ob(page).waitFor({ state: "visible", timeout: 30000 });
   let p = await probe(page);
   check("after reopening from the Guide, a plain reload goes straight into setup, the window never shown first", p.sawSetup && !p.shellBeforeSetup, JSON.stringify(p));
-  check("at the saved step", (await at(page)) === 4, String(await at(page)));
+  check("at the saved step", (await at(page)) === 2, String(await at(page)));
   await page.evaluate(() => { try { localStorage.clear(); } catch (error) { return error.message; } return ""; });
   await page.reload();
   await ob(page).waitFor({ state: "visible", timeout: 30000 });
   p = await probe(page);
   check("with this browser's storage cleared, a reload still goes straight into setup", p.sawSetup && !p.shellBeforeSetup, JSON.stringify(p));
-  check("and resumes at the saved step (the engine's)", (await at(page)) === 4, String(await at(page)));
+  check("and resumes at the saved step (the engine's)", (await at(page)) === 2, String(await at(page)));
   await shot(page, "05-reload-straight-to-setup");
   await skip(page);
   await guide(page);
@@ -197,69 +186,24 @@ async function reopen(page, tplName) {
   check("the trust box cannot be unticked once accepted", await page.locator("#ob-trust").isChecked() && (await onboarding()).trust === true);
   await next(page);
   check("Start goes on without asking again", (await at(page)) === 1);
-  check("Set up Branch shows the same saved choices (Where: Later)", (await pressedIn(page, '[data-act="ob-set"][data-v="later"]')) === "true");
   await skip(page);
 }
 
-/* 4. A setting changed in Settings shows in setup. */
-async function fromSettings(page) {
-  await page.locator('.welcome10 [data-act="welcome-x"]').click({ timeout: 3000 }).catch(() => undefined); // it sits over Settings
-  await page.keyboard.press("Control+,");
-  await page.locator(".settings").waitFor();
-  await page.locator('[data-act="setlevel"][data-v="technical"]').first().click().catch(() => undefined);
-  await page.locator('[data-act="setpage"][data-v="notifications"]').first().click();
-  await settle(page, 1200);
-  await page.locator('[data-act="n-update"][data-v="install"]').first().click();
-  await until("install updates saved", async () => (await api("comfort")).values?.notify?.autoUpdate === "install");
-  await api("conversation-mode/settings", { newConversation: "ask", confirmLoosening: true }); // what Settings › Permissions saves after its confirm
-  await page.keyboard.press("Escape");
-  await settle(page, 400);
-  await guide(page);
-  await page.locator('.pop [data-act="onboard"]').click();
-  await ob(page).waitFor();
-  await go(page, 7);
-  await page.locator("#ob-upd:not([disabled])").waitFor({ timeout: 15000 }); // read when the step opens (#391)
-  check("Settings › Notifications' Install when idle shows in setup's Keep it running (GET /api/comfort)", await page.locator("#ob-upd").isChecked());
-  await go(page, 3);
-  check("Ask first set outside setup shows in Make it yours (GET /api/conversation-mode/settings)", (await pressedIn(page, '[data-k="asks"][data-v="ask"]')) === "true" && (await pressedIn(page, '[data-k="asks"][data-v="plan"]')) === "false");
-  await shot(page, "06-settings-shows-in-setup");
-  await skip(page);
-}
-
-/* 5. Opening setup and passing every step without changing anything changes no saved setting. */
-async function openAt(page, step) {
-  await guide(page);
-  await page.locator('.pop [data-act="onboard"]').click();
-  await ob(page).waitFor();
-  await go(page, step);
-}
+/* 4. (Pass 18c: Keep it running and Make it yours are no longer setup steps; they wait on Overview's Finish setting up,
+   which opens their Settings pages, so there is nothing of theirs to show in setup.)
+   5. Opening setup and passing every step without changing anything changes no saved setting. */
 async function passThrough(page, app) {
-  // Keep it running, the first time it is passed: the owner's ship-on rule may switch its defaults on, once (#391).
-  await openAt(page, 7);
-  await page.locator("#ob-gw:not([disabled])").waitFor({ timeout: 15000 });
-  await next(page);
-  await until("the first pass saved", async () => (await onboarding()).completed.includes("keep"));
-  await skip(page);
-  // The person's own choice afterwards: the gateway off. Passing the step again must keep it off.
-  await openAt(page, 7);
-  await page.locator("#ob-gw:not([disabled])").waitFor({ timeout: 15000 });
-  if (await page.locator("#ob-gw").isChecked()) await page.locator("#ob-gw").click({ force: true });
-  await until("the gateway off", async () => (await api("never-break")).mode === "off");
-  check("Keep it running shows the switch as saved and a change is saved at once (GET /api/never-break)", !(await page.locator("#ob-gw").isChecked()));
-  await skip(page);
   const before = await snapshot(app);
   await guide(page);
   await page.locator('.pop [data-act="onboard"]').click();
   await ob(page).waitFor();
-  for (let i = 0; i < 10; i++) await next(page);
-  await until("the checks", async () => !(await page.locator(".ob-checks .spin").count()), 30000);
+  for (let i = 0; i < 2; i++) await next(page);
   await shot(page, "07-passed-every-step");
   await skip(page);
   await settle(page, 800);
   const after = await snapshot(app);
   const changed = diff(before, after);
   check("passing every step without changes changes no saved setting (settings table, mode, gateway, comfort, Trunks)", changed.length === 0, changed.join(", ") || `${Object.keys(before.rows).length} settings compared`);
-  check("the gateway switched off stays off after Keep it running is passed again", after.gw === "off", after.gw);
 }
 
 /* 6. Show tips and pop-ups. */
@@ -306,13 +250,13 @@ async function popups(page, app) {
   check("Don't show again is kept by the engine: no card after a reload", (await card.count()) === 0);
 }
 
-/* 7. Finishing: Done in the Guide, and reopening shows it all set with the checks run again. */
+/* 7. Finishing: the wizard's last step ends setup; the Guide still counts what waits on Overview, and reopening lands
+   on the last step. */
 async function finish(page) {
   await guide(page);
   await page.locator('.pop [data-act="onboard-resume"]').click();
   await ob(page).waitFor();
-  await go(page, 10);
-  await until("the checks", async () => !(await page.locator(".ob-checks .spin").count()), 30000);
+  await go(page, 2);
   await page.locator('.ob9 [data-act="ob-done"]').click();
   await ob(page).waitFor({ state: "detached" });
   const view = await onboarding();
@@ -320,13 +264,11 @@ async function finish(page) {
   await settle(page, 1200);
   await page.locator('[data-act="tour-end"]').click().catch(() => undefined);
   await guide(page);
-  check("Guide: the Onboarding hint reads Done", (await hintText(page)) === "Done");
+  const n = FINISH.filter((id) => view.completed.includes(id)).length;
+  check("Guide: the Onboarding hint still counts the Finish setting up steps, not Done", (await hintText(page)) === `${n} of 8 done`, await hintText(page));
   await page.locator('.pop [data-act="onboard-resume"]').click();
   await ob(page).waitFor();
-  check("reopening after finishing lands on the Health check", (await at(page)) === 10);
-  const running = await page.locator(".ob-checks li").count();
-  await until("the checks again", async () => !(await page.locator(".ob-checks .spin").count()), 30000);
-  check("and the checks run again, live", running > 0);
+  check("reopening after finishing lands on the last step", (await at(page)) === 2);
   await shot(page, "10-finished-reopened");
   await skip(page);
 }
@@ -380,7 +322,6 @@ async function approvalsStay(page) {
     await freshLanding(page);
     const tplName = await makeChoices(page);
     await reopen(page, tplName);
-    await fromSettings(page);
     await passThrough(page, app);
     await popups(page, app);
     await finish(page);

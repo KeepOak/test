@@ -15,7 +15,7 @@ import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 import { runProgram } from "./voice-stt.js";
-import { freeBytesAt, refuseWithoutReserve } from "./attachments.js";
+import { diskOf, freeBytesAt, holdDisk } from "./attachments.js";
 
 /**
  * Bucket 17: a video or a sound file understood rather than merely listed. ffmpeg (the owner's
@@ -93,13 +93,19 @@ export class MediaUnderstanding {
   async understandFile(owner: string, path: string, name: string, mediaType: string, signal?: AbortSignal): Promise<Understood> {
     const settings = this.settings(owner);
     const ffmpeg = await this.locate("ffmpeg", settings);
-    return this.scratch(async (dir) => {
-      const input = join(dir, `input${scratchEnding(name)}`);
-      // attach-followups: the working copy (a film may be gigabytes) keeps the disk's reserve free, as a file sent does.
-      refuseWithoutReserve("A working copy of this file", await (this.deps.freeBytes ?? freeBytesAt)(dir), (await stat(path)).size);
-      await copyFile(path, input);
-      return this.fromFile(owner, ffmpeg, settings, input, dir, mediaType, null, signal);
-    });
+    // attach-followups, attach-3: the working copy (a film may be gigabytes) keeps the disk's reserve free, counting the
+    // other copies being made right now, and holds its bytes until the private folder is gone.
+    const size = (await stat(path)).size;
+    let release = (): void => undefined;
+    try {
+      return await this.scratch(async (dir) => {
+        const [disk, free] = await Promise.all([diskOf(dir), (this.deps.freeBytes ?? freeBytesAt)(dir)]);
+        release = holdDisk("A working copy of this file", disk, free, size);
+        const input = join(dir, `input${scratchEnding(name)}`);
+        await copyFile(path, input);
+        return this.fromFile(owner, ffmpeg, settings, input, dir, mediaType, null, signal);
+      });
+    } finally { release(); }
   }
   private async fromFile(owner: string, ffmpeg: string, settings: MediaPrograms, input: string, dir: string, mediaType: string,
     seconds: number | null, signal?: AbortSignal): Promise<Understood> {

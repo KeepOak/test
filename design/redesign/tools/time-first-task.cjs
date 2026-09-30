@@ -6,12 +6,12 @@
    one Ollama serves.
      USERPROFILE=<fixture home> HOME=<fixture home> BRANCH_DATA_DIR=<fresh dir> BRANCH_WORKSPACE=<fresh dir> \
        BRANCH_PORT=<port> node dist/cli.js start
-     PORT=<port> TOKEN=<hex> MODEL=qwen2.5:3b FIXTURE=<fixture home>\Downloads node design/redesign/tools/time-first-task.cjs
+     PORT=<port> TOKEN=<hex> MODEL=qwen2.5:7b FIXTURE=<fixture home>\Downloads node design/redesign/tools/time-first-task.cjs
    The download: Ollama's own pull of MODEL is not in these seconds; PULL=1 pulls it first through the picker's own
    route and prints that time on its own line. */
 const { chromium } = require("../../../node_modules/playwright");
 
-const { PORT, TOKEN, MODEL = "qwen2.5:3b", FIXTURE = "", PULL } = process.env;
+const { PORT, TOKEN, MODEL = "qwen2.5:7b", FIXTURE = "", PULL } = process.env;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
 const BASE = `http://127.0.0.1:${PORT}`;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,9 +70,14 @@ const secs = (a, b) => ((b - a) / 1000).toFixed(1);
       said.push(q.fingerprint);
       asked++;
       const text = JSON.stringify(q);
-      const yes = FIXTURE && text.includes(JSON.stringify(FIXTURE).slice(1, -1));
+      // The engine asks once to work in the Downloads folder, naming its real path (src/owner-folders.ts); that question,
+      // or one naming the fixture folder, is answered yes for the conversation. Anything else is refused.
+      const slashes = (path) => String(path ?? "").toLowerCase().replace(/\\/g, "/").replace(/\/+$/, "");
+      const downloadsQuestion = q.tool === "files.ownerFolder" && /\/downloads$/.test(slashes(q.target))
+        && (!FIXTURE || slashes(q.target) === slashes(FIXTURE));
+      const yes = downloadsQuestion || (FIXTURE && text.includes(JSON.stringify(FIXTURE).slice(1, -1)));
       console.log(`approval ${asked}: ${yes ? "yes" : "no"} · ${String(q.summary ?? q.tool ?? "").slice(0, 160)}`);
-      await api("policy/approve", { sessionId: q.sessionId, decision: yes ? "approve" : "deny", remember: "never", fingerprint: q.fingerprint, carryOn: true });
+      await api("policy/approve", { sessionId: q.sessionId, decision: yes ? "allow" : "deny", remember: yes ? "session" : "never", fingerprint: q.fingerprint, carryOn: true });
     }
     if (Date.now() - t3 > 300_000) break;
     await sleep(500);

@@ -129,7 +129,8 @@ export class LearningLoop {
       try { this.learn({ sessionId: run.sessionId, notes: run.prompt.trim().slice(asked[0].length), runId: run.id }); }
       catch (error) { this.jobs.start("Make a conversation into a skill", () => Promise.reject(error)); }
     }
-    if (settings.newSkills === "on" && !asked && this.looksLikeProcedure(run)) this.draftFromTask(run);
+    // Seasons: no skill is drafted after a task just because it used several tools. A skill has to earn its place
+    // through one of the owner's four triggers, and the Gardener drafts and proves it overnight (src/seasons/).
     if (settings.reflection === "off" || this.looking.has(run.sessionId)) return;
     const compacted = this.store.events(run.id).some((event) => event.kind === "context.compacted");
     const trigger: LookTrigger | null = compacted ? "compaction"
@@ -138,20 +139,6 @@ export class LearningLoop {
     this.jobs.start("Look back over a conversation", async () => {
       const batch = await this.look(run.sessionId, run.id, trigger, ask);
       return batch ? `${batch.proposalIds.length} suggestion(s) to review.` : "Nothing new to read.";
-    });
-  }
-  /** A finished task that used three or more different tools without a skill, not drafted from before. */
-  private looksLikeProcedure(run: Run): boolean {
-    if (run.status !== "completed" || this.store.get("settings", this.owner, `skill-draft-offered:${run.sessionId}`)) return false;
-    const tools = new Set(this.store.events(run.id).filter((event) => event.kind === "tool.completed").map((event) => String(event.data.name)));
-    return tools.size >= 3 && !this.store.governanceFor(this.owner).skillsUsed(run.id).length;
-  }
-  private draftFromTask(run: Run): void {
-    this.store.save("settings", this.owner, `skill-draft-offered:${run.sessionId}`, { runId: run.id, at: new Date().toISOString() });
-    const evidence = asLines(turnsOf(this.store, run.sessionId), 10000);
-    this.jobs.start("Draft a skill from a finished task", async () => {
-      const draft = await this.drafts.draft({ evidence, fromRunId: run.id, sessionId: run.sessionId, sourcePrompt: run.prompt, origin: "task" });
-      return draft ? `Drafted ${draft.name}.` : "Nothing in that task was worth a skill.";
     });
   }
 }

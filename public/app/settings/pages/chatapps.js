@@ -2,23 +2,34 @@
    and how each is doing are the engine's: the connected ones and their health from GET /api/channels, every app's name
    and the count from GET /api/channel-setup. Telegram now says when it refuses its bot token (src/channels/telegram.ts);
    that one state shows the same way here, in Customize › Channels, on the app's own page (flows/chatapps17d.js) and in
-   Inbox › Needs you, where "Paste the new token" opens its setup at Paste, whose Save brings it back. Seeing edited
-   messages, albums as one message, joining split messages, the stall watchdog, online status in the app and per-app
-   formatting are not in the engine yet, so those rows stay greyed with nothing pressed; turning Telegram off has no route
-   that is not deleting its saved token, so it stays greyed too. Every word goes through t() (public/locales); a switch
+   Inbox › Needs you, where "Paste the new token" opens its setup at Paste, whose Save brings it back.
+   What the Trunk sees and Staying connected are the engine's (src/channels/intake-settings.ts: GET /api/channels
+   `intake`, saved one field at a time with POST /api/channels/intake): edited messages, albums as one message, the
+   wait for messages split in two, the watchdog, when it starts a stalled app again, the "stalled after" figure and
+   online status in the app (off until chosen: it changes the bot's profile). Each connected app the watchdog looks at
+   has its line: when it last answered and how often it was started again today. Per-app formatting saves native/plain
+   choices through channels/formatting; turning Telegram off has no route that is not deleting its saved token, so it
+   stays greyed too. Every word goes through t() (public/locales); a switch
    keeps its English title (its id is made from it) and shows through say(); the engine's reason is shown as it wrote it. */
 
 import { esc, render } from "../../core/dom.js";
 import { level, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
+import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
+import { stepsCard, initSteps } from "../chat-steps.js";
+import { phoneAccessCard, initPhoneAccess, loadPhoneAccess } from "../phone-access.js";
 import { logo } from "../../core/logos.js";
-import { sw15, sec15 } from "../rows15.js";
-import { ctlSeg } from "../parts.js";
+import { sw15, sec15, seg15 } from "../rows15.js";
+import { on } from "../../core/actions.js";
+import { markLive } from "../../core/features.js";
 import { nativeFormat, pill17d, stateOf } from "../../flows/chatapps17d.js";
+import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.js";
+import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0 };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null };
+const STEPS = "Show steps in chats";
 const kindOf = (c) => c.kind ?? c.id;
 
 async function loadApps() {
@@ -26,7 +37,14 @@ async function loadApps() {
   A.at = Date.now();
   const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   A.channels = live?.channels ?? [];
+  A.intake = live?.intake ?? null;
+  A.live = live?.live ?? null;
+  A.ownerCommands = live?.ownerCommands ?? null;
+  A.ownerNamed = live?.ownerNamed !== false; // owner-dm-signin: no chat account is marked as the owner's yet
+  A.approved = live?.approved ?? [];
+  A.steps = live?.steps ?? null;
   A.apps = setup?.channels ?? [];
+  await Promise.all([loadFormats(), loadReplyStyles(), loadPhoneAccess()]);
   render();
 }
 
@@ -40,21 +58,44 @@ export function draw() {
   let html = `<h1>${esc(t("dashboard.links.chats"))}</h1><p class="lede">${esc(t("window.p17d.chat-apps-lede"))}</p>
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
+  if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>` + stepsCard(A, lv);
+  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard();
+  // Replies in each connected app: quoting your message, and the reaction on it while Branch works.
+  const kinds = [...new Set(on.map(kindOf))];
+  const quotes = (id) => on.some((c) => kindOf(c) === id && c.replyQuotes === true); // an app whose replies can quote
+  if (kinds.length) html += `<div class="sec x15-sec"><h2>${esc(t("window.chat-reply.title"))}</h2>${kinds.map((id) => replyStyleRows(id, nameOf(id), quotes(id))).join("")}</div>`;
   if (lv >= 1) html += advanced(on);
-  if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
+  if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
   return html;
 }
 
+/* Each switch: the field it saves. */
+const SW = { "f15-edited-messages": "edited", "f15-photo-albums-as-one-message": "albums", "f15-watch-for-a-chat-app-that-stops-receivin": "watchdog", "f15-show-online-or-offline-in-the-app": "presence" };
+const onOf = (field) => A.intake?.[field] === true;
+/* The watchdog's line for one connected app: when it last answered, and how often it was started again today. */
+function watchLine(c) {
+  const w = c.watchdog;
+  if (!w) return "";
+  const ago = Math.max(0, Math.round((Date.now() - Date.parse(w.lastContactAt)) / 1000));
+  const [cls, word] = stateOf(c.health);
+  return `<div class="prow">${logo(kindOf(c), nameOf(kindOf(c)), 24)}<span class="grow"><b>${esc(nameOf(kindOf(c)))}</b><small>${esc(c.health?.state === "needs attention" ? c.health.reason ?? "" : t("window.p17d.watchdog-line", { ago, count: w.reconnectsToday }))}</small></span>${pill17d(cls, word)}</div>`;
+}
+async function saveIntake(change) {
+  try { A.intake = (await api("channels/intake", change)).intake; } catch (error) { toast(error.message); }
+  await loadApps();
+}
 function advanced(on) {
-  const seen = sec15(t("window.p17d.trunk-sees"), sw15("Edited messages", "When you edit a message, the Trunk sees the latest version and answers that one.")
-    + sw15("Photo albums as one message", "Ten photos sent together arrive as one message, not ten.")
-    + ctlSeg(t("window.p17d.split-wait"), t("window.p17d.split-wait-hint"), [t("accounts.switch.off"), t("window.p17d.one-second"), t("window.p17d.three-seconds")], null, "f15-wait-for-messages-split-in-two"));
-  const staying = sec15(t("window.p17d.staying-connected"), sw15("Watch for a chat app that stops receiving", "If no update arrives for a while, Branch reconnects it and tells you if that fails.")
-    + ctlSeg(t("window.p17d.reconnect-after"), t("window.p17d.reconnect-hint"), [t("window.p17d.one-minute"), t("window.p17d.three-minutes"), t("window.p17d.ten-minutes")], null, "f15-reconnect-after")
-    + sw15("Show online or offline in the app", "The bot’s description says “Online” or “Offline, back soon”, so people know."));
+  const seen = sec15(t("window.p17d.trunk-sees"), sw15("Edited messages", "When you edit a message, the Trunk sees the latest version and answers that one.", onOf("edited"))
+    + sw15("Photo albums as one message", "Ten photos sent together arrive as one message, not ten.", onOf("albums"))
+    + seg15(t("window.p17d.split-wait"), t("window.p17d.split-wait-hint"), [[0, t("accounts.switch.off")], [1000, t("window.p17d.one-second")], [3000, t("window.p17d.three-seconds")]], A.intake?.splitWaitMs ?? null, "ca-split"));
+  const watching = on.filter((c) => c.watchdog).map(watchLine).join("");
+  const staying = sec15(t("window.p17d.staying-connected"), sw15("Watch for a chat app that stops receiving", "If no update arrives for a while, Branch reconnects it and tells you if that fails.", onOf("watchdog"))
+    + seg15(t("window.p17d.reconnect-after"), t("window.p17d.reconnect-hint"), [[1, t("window.p17d.one-minute")], [3, t("window.p17d.three-minutes")], [10, t("window.p17d.ten-minutes")]], A.intake?.reconnectMinutes ?? null, "ca-reconnect")
+    + sw15("Show online or offline in the app", "The bot’s description says “Online” or “Offline, back soon”, so people know.", onOf("presence"))
+    + (watching ? `<div class="rows wd17d">${watching}</div>` : ""));
   const connected = new Set(on.map(kindOf));
   const fmt = [...new Set([...connected, "slack", "discord", "whatsapp"])].map((id) => { const name = esc(nameOf(id));
-    return `<div class="ctl"><b>${name}${connected.has(id) ? "" : ` <small>${esc(t("window.p17d.when-connected"))}</small>`}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.formatting-in", { name: nameOf(id) }))}">${[nativeFormat(id), t("window.p17d.plain-text")].map((o) => `<button type="button" data-act="chfmt17d" data-id="${esc(id)}" data-v="${esc(o)}" aria-pressed="false">${esc(o)}</button>`).join("")}</span></span><small>${esc(t("window.p17d.formatting-in-hint", { name: nameOf(id) }))}</small></div>`; }).join("");
+    return `<div class="ctl"><b>${name}${connected.has(id) ? "" : ` <small>${esc(t("window.p17d.when-connected"))}</small>`}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.formatting-in", { name: nameOf(id) }))}">${formatButtons(id, nativeFormat(id))}</span></span><small>${esc(t("window.p17d.formatting-in-hint", { name: nameOf(id) }))}</small></div>`; }).join("");
   return seen + staying + `<div class="sec x15-sec"><h2>${esc(t("window.p17d.formatting-each"))}</h2><p class="hint">${esc(t("window.p17d.formatting-each-hint"))}</p>${fmt}</div>`;
 }
 
@@ -67,5 +108,30 @@ export function revokedPrompts() {
 /** Customize › Channels: whether a connected app is offline because its token was refused. */
 export const offlineIn = (connected, id) => connected.some((c) => kindOf(c) === id && revoked(c));
 
-export function init() { loadApps(); }
+/** The steps switch saves the engine's own value, then the page is read again from the engine. */
+async function saveSteps(on) {
+  try { await api("channels/live", { steps: on ? "on" : "off" }); } catch (error) { toast(error.message); }
+  await loadApps();
+}
+
+export function init() {
+  initFormatting();
+  initReplyStyle();
+  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
+  on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "f15-show-steps-in-chats") saveSteps(e.target.checked);
+    else if (SW[e.target.id]) saveIntake({ [SW[e.target.id]]: e.target.checked });
+    else if (e.target.id === "ca-stall17d") {
+      const typed = e.target.value.trim();
+      if (/^\d+$/.test(typed)) saveIntake({ stalledAfterSeconds: Number(typed) });
+      else render(); // not a whole number: the box shows the engine's figure again
+    }
+  });
+  loadApps();
+  initOwnerCommands(A, loadApps);
+  initSteps(loadApps);
+  initPhoneAccess(loadApps);
+}
 export function load() { return loadApps(); }

@@ -78,7 +78,7 @@
    },
    "create": {
     "url": "https://discord.com/developers/applications?new_application=true",
-    "how": "Name the application, open Bot, press Reset Token and copy it. Switch on Message Content Intent on the same page.",
+    "how": "Name the application, open Bot, press Reset Token and copy it. Switch on Message Content Intent on the same page. To invite it, pick the bot and applications.commands scopes under OAuth2, URL Generator, so Branch's commands show in Discord's / picker.",
     "prefilled": false
    },
    "paste": [
@@ -142,7 +142,15 @@
      "bot_user": {
       "display_name": "Branch",
       "always_online": true
-     }
+     },
+     "slash_commands": [
+      {
+       "command": "/branch",
+       "description": "Send Branch a command: /branch status, /branch new, /branch help",
+       "usage_hint": "[command] [words]",
+       "should_escape": false
+      }
+     ]
     },
     "oauth_config": {
      "scopes": {
@@ -156,7 +164,8 @@
        "groups:history",
        "files:read",
        "files:write",
-       "reactions:write"
+       "reactions:write",
+       "commands"
       ]
      }
     },
@@ -168,6 +177,9 @@
        "message.channels",
        "message.groups"
       ]
+     },
+     "interactivity": {
+      "is_enabled": true
      },
      "socket_mode_enabled": true,
      "org_deploy_enabled": false,
@@ -278,7 +290,7 @@
    "steps": [
     "Turn on two-step sign-in with your mail service.",
     "Make an app password on its security page (Google: myaccount.google.com/apppasswords).",
-    "Paste the app password here. Add the IMAP and SMTP servers to the connections line."
+    "Type the address and your mail service's IMAP and SMTP server names here (Gmail: imap.gmail.com and smtp.gmail.com), then paste the app password."
    ],
    "paste": [
     {
@@ -286,26 +298,45 @@
      "what": "The app password (not your usual password)"
     }
    ],
-   "noCheck": "Mail is checked by signing in to the IMAP server when Branch starts, not by a web request.",
+   "noCheck": "Mail is checked by signing in to the IMAP server when it connects, not by a web request; a wrong password is said when it connects.",
    "entry": {
     "type": "email",
     "id": "email",
-    "address": "…",
+    "address": "{{address}}",
     "imap": {
-     "host": "…",
+     "host": "{{imapHost}}",
      "port": 993,
-     "user": "…"
+     "user": "{{address}}"
     },
     "smtp": {
-     "host": "…",
+     "host": "{{smtpHost}}",
      "port": 465,
-     "user": "…"
+     "user": "{{address}}"
     }
    },
    "sources": [
     "https://support.google.com/accounts/answer/185833"
    ],
-   "fields": []
+   "fields": [
+    {
+     "name": "address",
+     "what": "The email address Branch reads and answers from",
+     "kind": "text",
+     "pattern": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$"
+    },
+    {
+     "name": "imapHost",
+     "what": "The IMAP server name, for example imap.gmail.com",
+     "kind": "text",
+     "pattern": "^[A-Za-z0-9.-]{3,253}$"
+    },
+    {
+     "name": "smtpHost",
+     "what": "The SMTP server name, for example smtp.gmail.com",
+     "kind": "text",
+     "pattern": "^[A-Za-z0-9.-]{3,253}$"
+    }
+   ]
   },
   {
    "id": "messenger",
@@ -488,7 +519,7 @@
    "steps": [
     "Install signal-cli from its own releases page (github.com/AsamK/signal-cli).",
     "Link it to your phone's Signal as a new device, or register a second number with it.",
-    "Put the full path to signal-cli and the number in the connections line."
+    "Type the full path to signal-cli and the number here."
    ],
    "fields": [
     {
@@ -1158,6 +1189,43 @@
    ],
    "noCheck": "There is nothing Branch can ask a web service to check; the connection is tried when the switch goes on.",
    "noApp": "Messages comes with every Mac; there is nothing to install."
+  },
+  {
+   "id": "bluebubbles",
+   "name": "iMessage through BlueBubbles",
+   "family": "parity",
+   "turnOn": "switch",
+   "steps": [
+    "On a Mac that stays on and is signed in to Messages, install the BlueBubbles server app from bluebubbles.app and finish its own setup.",
+    "In the BlueBubbles server, copy its https address (its Cloudflare or dynamic DNS link) and the server password. The Mac's address on your own network works only once private addresses are allowed under Computer → Network reach.",
+    "Paste them here. Branch asks the server for new messages every few seconds and sends through it with AppleScript, so the Mac does not need BlueBubbles' Private API."
+   ],
+   "fields": [
+    {
+     "name": "server",
+     "what": "The BlueBubbles server's address",
+     "kind": "url"
+    }
+   ],
+   "paste": [
+    {
+     "secret": "BLUEBUBBLES_PASSWORD",
+     "what": "The BlueBubbles server password"
+    }
+   ],
+   "noCreate": "There is no account to create: BlueBubbles runs on your own Mac and answers as your Apple Account. It is a separate open-source app, not made by Apple; Branch never installs it.",
+   "noCheck": "The BlueBubbles server takes its password only in the address, so the setup page does not send it anywhere to test; it is tried when the switch goes on, and a wrong password is named on the card.",
+   "noApp": "Nothing to install on this computer: the BlueBubbles server runs on the Mac, and you keep using Messages on your phone.",
+   "entry": {
+    "type": "bluebubbles",
+    "id": "bluebubbles",
+    "server": "{{server}}"
+   },
+   "sources": [
+    "https://bluebubbles.app/",
+    "https://docs.bluebubbles.app/server",
+    "https://github.com/BlueBubblesApp/bluebubbles-server"
+   ]
   },
   {
    "id": "msteams-bot",
@@ -2141,7 +2209,7 @@
    "turnOn": "switch",
    "steps": [
     "Install Keybase and sign in with the assistant's account.",
-    "Put the full path to the keybase program in the connections line."
+    "Type the full path to the keybase program here."
    ],
    "fields": [
     {
@@ -2214,7 +2282,7 @@
    "turnOn": "switch",
    "steps": [
     "Install Delta Chat to talk to the assistant.",
-    "Install deltachat-rpc-server (Delta Chat's own releases) for the assistant and put its full path in the connections line; Branch does not install it."
+    "Install deltachat-rpc-server (Delta Chat's own releases) for the assistant and type its full path here; Branch does not install it."
    ],
    "fields": [
     {

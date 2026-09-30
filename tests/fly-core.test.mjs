@@ -42,7 +42,7 @@ async function fixture(t, provider, mode = "on") {
   const open = () => createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const app = await open();
   app.coding.setMode("read-first", "off"); // read-first ships on (Q250); these tests are about the learning core, not reading first
-  if (mode !== "off") app.learningCore.configure({ mode });
+  app.learningCore.configure({ mode }); // the core ships when needed (the ship-on rule), so off is set explicitly too
   const state = { app };
   t.after(async () => { await state.app.close(); await discardTemp(root); });
   return { state, open };
@@ -157,6 +157,8 @@ test("F6 steps that keep working are offered as a skill idea, once, and acceptin
   assert.match(draft.document, /1\. Use `files\.write`\.\n2\. Use `files\.read`\./);
   assert.equal(state.app.store.list("memory", "local").length, memories, "nothing is remembered by accepting it");
   assert.equal(state.app.store.skills.list("local").length, skills, "and nothing is installed");
+  // Writing new skills ships when needed, and accepting a skill idea is asking for one; with it off, a note only notes.
+  state.app.learningLoop.configure({ newSkills: "off" });
   const other = state.app.store.review.propose("local", { kind: "skill-note", skillId: null, text: "a model's note" });
   assert.deepEqual((await state.app.store.review.decide("local", other.id, true)).applied, { noted: true }, "other skill notes still only note");
 });
@@ -197,12 +199,12 @@ test("F9 memories whose use keeps going well or badly are named for keeping or f
   assert.deepEqual(core.memoryAdvice("local"), { strengthen: ["helpful-fact"], fade: ["stale-fact"] });
 });
 
-test("F10 the switch ships off; off runs and stores nothing, when-needed only learns and waits to be asked", async (t) => {
+test("F10 the switch ships when needed; off runs and stores nothing, when-needed only learns and waits to be asked", async (t) => {
   const { state } = await fixture(t, writeThenRead(), "off");
   const app = state.app;
   const tables = () => app.store.sqlite.prepare("SELECT name FROM sqlite_master WHERE name LIKE 'fly_%'").all().length;
   const hasTool = () => app.registry.descriptions(new Set(["memory.read"])).some((tool) => tool.name === suggestToolName);
-  assert.deepEqual(app.learningCore.settings(), { mode: "off" }, "a fresh install has it off");
+  assert.deepEqual(app.learningCore.settings(), { mode: "off" }, "the owner switched it off");
   const quiet = await app.runtime.run({ prompt: "save a note about the garden" });
   assert.equal(quiet.status, "completed");
   assert.ok(!app.store.events(quiet.id).some((event) => event.kind.startsWith("fly.")), "off: no hook ran");

@@ -16,7 +16,8 @@ export const WebConfigSchema = NetworkPolicySchema.extend({
   maxBytes: z.number().int().min(4096).max(4 * 1024 * 1024).default(1024 * 1024),
   timeoutMs: z.number().int().min(1000).max(60000).default(20000),
   /** What to do with page text that reads like instructions to the assistant. */
-  injection: InjectionPolicySchema.default("warn"),
+  // Lines that give the assistant orders are taken out of what it reads, whatever the model; "warn" only notes them.
+  injection: InjectionPolicySchema.default("redact"),
   /** Which search service "search the web" goes to. The default needs nothing set up. */
   search: SearchBackendSchema.default({ backend: "duckduckgo" }),
 }).strict();

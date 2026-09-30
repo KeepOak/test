@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { createBranch } from "../index.js";
-import { DemoProvider } from "../demo.js";
+import { DemoProvider, demoProviderName } from "../demo.js";
 import { defaultPreset } from "../providers.js";
 import { startServer } from "../server.js";
 import { gatewayContract } from "./contract.js";
@@ -25,9 +25,13 @@ async function check(checks: SelfTestCheck[], name: string, work: () => Promise<
 }
 
 type Branch = Awaited<ReturnType<typeof createBranch>>;
+/** The id `defaultPreset` gives the stand-in, which answers every task this check runs. */
+const selfTestPreset = "default";
 
 async function interruptedTask(app: Branch): Promise<string> {
   const run = app.store.createRun(app.runtime.owner, "self-test: carry on after a restart");
+  // Carried on by the stand-in too, never by the owner's own model (see checksOn).
+  app.runtime.models.configureSession(app.runtime.owner, run.sessionId, { preset: selfTestPreset });
   const call = { id: "self-test-look", name: "files.list", arguments: JSON.stringify({ path: "." }) };
   app.store.message(run.sessionId, { role: "assistant", content: "", toolCalls: [call] });
   app.neverBreak.journal.begin({ runId: run.id, sessionId: run.sessionId, callId: call.id, tool: call.name,
@@ -54,9 +58,17 @@ export function quietCopy(app: Pick<Branch, "store" | "runtime">): void {
 async function checksOn(app: Branch, dataDir: string, checks: SelfTestCheck[]): Promise<void> {
   quietCopy(app);
   await check(checks, "runs a task on a copy of your data", async () => {
-    const run = await app.runtime.run({ prompt: "Self-test: say hello.", onTextDelta: () => undefined });
+    // On the copy only: the stand-in is the model for anything that starts here, and no owner model is a fallback.
+    app.runtime.models.configure(app.runtime.owner, { activePreset: selfTestPreset, fallbackOrder: [] });
+    // The copy keeps the owner's model choice and saved connections (their keys too). The task is pinned to the
+    // stand-in so none of them is asked, and the owner's own guards (loop guard, progress check) still watch it.
+    const standIn = app.runtime.models.presets.get(selfTestPreset);
+    if (standIn?.provider.name !== demoProviderName) throw new Error("the test stand-in was not the model this check would use");
+    const run = await app.runtime.run({ prompt: "Self-test: say hello.", model: selfTestPreset, onTextDelta: () => undefined });
     if (run.status !== "completed") throw new Error(`the task ended ${run.status}: ${run.output.slice(0, 200)}`);
-    return "a task finished";
+    // The stand-in writes, reads and verifies a file; a task that finished without that did not really work.
+    if (!run.output.includes("verified branch-demo.txt")) throw new Error(`the task finished without its file work: ${run.output.slice(0, 200)}`);
+    return "a task wrote, read and verified a file";
   });
   await check(checks, "loads every chat adapter", async () => {
     for (const name of channelModules) {

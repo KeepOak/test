@@ -43,7 +43,7 @@ export interface WorktreeDeps {
   /** The active project's folder inside the workspace ("" for the whole workspace). */
   projectFolder: () => string;
   git: WorktreeGit; run: GitRun;
-  branchSession: (owner: string, input: { sessionId: string; messageId: number }) => { sessionId: string };
+  branchSession: (owner: string, input: { sessionId: string; messageId: number }) => Promise<{ sessionId: string }>;
   note: (runId: string, kind: string, data: Record<string, unknown>) => void;
 }
 
@@ -68,7 +68,7 @@ export class WorktreePlaces {
     const { store, owner } = this.deps;
     requireCoding(store, owner, "worktrees");
     if (worktreeScope()) throw new Error("This conversation already works in a copy of the project.");
-    const branched = this.deps.branchSession(owner, input);
+    const branched = await this.deps.branchSession(owner, input);
     const name = `fork-${short(branched.sessionId)}`, branch = `branch/fork-${short(branched.sessionId)}`;
     await this.deps.git.worktree({ folder: ".", action: "add", name, branch }, signal);
     const fork = { sessionId: branched.sessionId, name, branch, folder: this.deps.projectFolder(), createdAt: new Date().toISOString() };
@@ -95,7 +95,11 @@ export class WorktreePlaces {
   /** Where this task works: its conversation's copy, a new copy for a helper, or null for the usual place. */
   async placeTask(run: { id: string; sessionId: string }, context: ToolContext, parent: ToolContext | undefined): Promise<TaskPlace | null> {
     const { store, owner } = this.deps;
-    if (!codingOn(store, owner, "worktrees") || worktreeScope()) return null;
+    if (worktreeScope()) return null;
+    // workbench (SELF-302): a helper its lead asked to give a copy of its own gets one, whatever the switches say: the
+    // switches decide what happens by default (it ships off, a whole copy on disk each time), the lead decides per helper.
+    if (parent && context.ownCopy) return this.helperPlace(run, context);
+    if (!codingOn(store, owner, "worktrees")) return null;
     if (!parent) return this.forkPlace(run);
     if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).perHelper) return null;
     return this.helperPlace(run, context);
@@ -116,7 +120,11 @@ export class WorktreePlaces {
   private async helperPlace(run: { id: string }, context: ToolContext): Promise<TaskPlace | null> {
     const folder = this.deps.projectFolder(), cwd = join(this.deps.root, folder);
     const head = await this.deps.run(cwd, ["rev-parse", "HEAD"], context.signal).catch(() => null);
-    if (!head || head.status !== "completed" || head.exitCode !== 0) return null;
+    if (!head || head.status !== "completed" || head.exitCode !== 0) {
+      // A copy asked for by name is never skipped without a word: the helper then works in the usual place.
+      if (context.ownCopy) this.deps.note(run.id, "worktree.skipped", { reason: "The project is not a git repository with a commit, so there is nothing to copy." });
+      return null;
+    }
     const name = `helper-${short(run.id)}`, branch = `branch/helper-${short(run.id)}`;
     try { await this.deps.git.worktree({ folder: ".", action: "add", name, branch }, context.signal); }
     catch (error) { this.deps.note(run.id, "worktree.skipped", { reason: String((error as Error).message).slice(0, 200) }); return null; }

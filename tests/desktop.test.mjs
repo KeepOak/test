@@ -7,7 +7,11 @@ import { once } from "node:events";
 import { spawnSync } from "node:child_process";
 import { _electron } from "playwright";
 
-import { backToConversation, connected, desktopOptions, offScreen, onboarded, openSettingsPage, send, taskDone, tokenNotExposed } from "./fixtures/desktop-options.mjs";
+import { backToConversation, connected, desktopOptions, offScreen, onboarded, openSettingsPage, send, taskDone, tokenNotExposed, STARTUP_MS } from "./fixtures/desktop-options.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
+/* The window opens once the engine's own process has started (src/desktop/main.ts startEngine), which on a busy build
+   machine takes longer than Playwright's 30 s default, so the first window is waited for as long as a start may take. */
+const firstWindow = (electron) => electron.firstWindow({ timeout: STARTUP_MS });
 
 /* Redesign: the old Appearance page had Daylight or Forest and a "Save appearance" button. The new one (Settings ›
    Appearance, as the prototype's) has a Light and a Dark mirror that apply and save at once: the page wears
@@ -17,7 +21,7 @@ async function appearance(page, mode) {
   await openSettingsPage(page, "appearance");
   await page.locator(`button.mirror[data-act="themeset"][data-v="${mode}"]`).click();
   await page.waitForFunction((mode) => document.documentElement.dataset.theme === mode, mode);
-  await page.waitForFunction(async (kept) => (await (await fetch("/api/state")).json()).preferences?.appearance === kept, KEPT[mode]);
+  await waitInPage(page, async (kept) => (await (await fetch("/api/state")).json()).preferences?.appearance === kept, KEPT[mode]);
 }
 
 async function verifyWindow(electron, page, home) {
@@ -150,7 +154,7 @@ test(
     t.signal.addEventListener("abort", () => endTree(child), { once: true });
     let url;
     try {
-      const page = await electron.firstWindow();
+      const page = await firstWindow(electron);
       await verifyWindow(electron, page, home);
       url = page.url();
       await verifyNetworkBoundary(electron, page);
@@ -201,7 +205,7 @@ test(
     t.signal.addEventListener("abort", () => endTree(restartedChild), { once: true });
     try {
       // Each step says so, so a run that stops here shows where.
-      const page = await restarted.firstWindow();
+      const page = await firstWindow(restarted);
       console.log("Desktop restart: window open");
       await connected(page);
       if (hidden) await offScreen(restarted, "restarted");
@@ -219,7 +223,7 @@ test(
       console.log("Desktop restart: home again");
       await settled(page, "restart");
     } catch (error) {
-      console.log(`Desktop restart: window state: ${await windowState(restarted, await restarted.firstWindow())}`);
+      console.log(`Desktop restart: window state: ${await windowState(restarted, await firstWindow(restarted))}`);
       said("restart")(error);
     } finally {
       await closeWithin(restarted, restartedChild, "restart");
@@ -235,7 +239,7 @@ test("the desktop window opens a task's socket, and the microphone only for a ca
   const { options } = await desktopOptions({ hidden: true });
   const electron = await _electron.launch({ ...options, args: [...options.args, "--use-fake-device-for-media-stream"] });
   try {
-    const page = await electron.firstWindow();
+    const page = await firstWindow(electron);
     await onboarded(page);
     await offScreen(electron, "opened");
     const ask = (constraints, started) => page.evaluate(async ({ constraints, started }) => {

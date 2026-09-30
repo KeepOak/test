@@ -8,14 +8,29 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ROUTES } from "./short-lived-key-routes.mjs";
 import { STATES, goldenText, matrix, probedRoutes, world, writtenRoutes } from "./caller-policy-world.mjs";
 import { asCaller, currentCaller, httpCallerKinds, resolveCaller } from "../dist/caller.js";
 import { callerRefusal, lockdownRoutes } from "../dist/caller-policy.js";
 
-const golden = () => readFile(join(import.meta.dirname, "caller-policy.golden.txt"), "utf8");
+const golden = (file = join(import.meta.dirname, "caller-policy.golden.txt")) =>
+  readFile(file, "utf8").then((text) => text.replace(/\r\n/g, "\n"));
+
+test("the golden reader accepts Windows line endings without changing any policy text", async (t) => {
+  const scratch = join(tmpdir(), "Codex-session-files");
+  await mkdir(scratch, { recursive: true });
+  const root = await mkdtemp(join(scratch, "caller-golden-lines-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const expected = "# sample refusal\nowner POST /api/decisions/urgency | here=ok read=401/55661c\n";
+  const file = join(root, "golden.txt");
+  await writeFile(file, expected.replace(/\n/g, "\r\n"));
+  assert.equal(await golden(file), expected);
+  await writeFile(file, expected.replace("read=401/55661c", "read=ok").replace(/\n/g, "\r\n"));
+  assert.notEqual(await golden(file), expected, "line ending handling must retain an authorization change");
+});
 
 test("guard: every route written in src/ is in the table, and every route the table asks about is in the golden file", async () => {
   const written = await writtenRoutes();

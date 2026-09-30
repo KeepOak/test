@@ -12,6 +12,10 @@ import { oidcPresets, savePeopleSettings, signInMethods } from "./settings.js";
 import type { Where } from "./sign-in.js";
 import { verifyRegistration } from "./webauthn.js";
 import { lentOwner } from "./lending.js";
+import { lockdownActive } from "../lockdown.js";
+
+/** Why no one-time code is made while Lockdown is on: it would let somebody in from another device. */
+export const codeLockdownRefusal = "Lockdown is on, so no sign-in code is made for another device. Turn Lockdown off first.";
 
 /**
  * Bucket 19: the web routes for people signing in from their own device, their own page, and the
@@ -353,6 +357,7 @@ function personAction(app: Branch, profileId: string, action: "reset-code" | "si
   const people = app.people;
   if (action === "sign-out") return { signedOut: people.keys.revokeAll(profileId) };
   if (action === "forget") { people.forgetProfile(profileId); return { forgotten: true }; }
+  if (lockdownActive(app.store, app.runtime.owner)) throw new PeopleHttpError(409, codeLockdownRefusal);
   const issued = people.resetCodes.issue(profileId);
   audit(app.store, app.runtime.owner, { action: "token.issued", actor: app.runtime.owner, subject: "a one-time sign-in code",
     reason: "The owner made a code for somebody to set a new PIN or a passkey", outcome: "issued" });

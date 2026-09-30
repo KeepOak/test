@@ -23,6 +23,7 @@ import { readFile } from "node:fs/promises";
 import { offLimitsToHousehold } from "../dist/server.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
 import { openSettingsPage, setLevel, settingsWindow } from "./settings-window.mjs";
+import { watchSettled } from "./page-settled.mjs";
 
 test("every Settings page introduction has English and French words", async () => {
   const en = JSON.parse(await readFile(new URL("../public/locales/en.json", import.meta.url), "utf8"));
@@ -88,19 +89,22 @@ test("S6 Regular shows the essentials; each level shows more; the choice is kept
   // Redesign: the prototype's level is this window's own choice (kept by public/app/core/state.js), not the engine's
   // Show everything; each level adds the prototype's sections to a page.
   const f = await fixture(t);
+  /* A level's sections are drawn as the engine's reads arrive (Decision models once GET /api/decisions answers,
+     settings/decisions17d.js), so each level is read once the page has settled. Waits of 10 s that gave up silently
+     read the page part-drawn on busy runners: "Decision models" missing after the reload, or nothing yet at all. */
+  const settled = watchSettled(f.page);
+  const at = async (level) => { await setLevel(f.page, level); await settled(); return headings(f.page); };
   await openSettingsPage(f.page, "models");
-  await setLevel(f.page, "regular");
-  const regular = await headings(f.page);
-  await setLevel(f.page, "advanced");
-  const advanced = await headings(f.page);
-  await setLevel(f.page, "technical");
-  const technical = await headings(f.page);
+  const regular = await at("regular");
+  const advanced = await at("advanced");
+  const technical = await at("technical");
   assert.ok(advanced.length > regular.length && technical.length > advanced.length, `each level shows more (${regular.length}, ${advanced.length}, ${technical.length})`);
   assert.ok(regular.every((one) => advanced.includes(one)) && advanced.every((one) => technical.includes(one)), "and keeps what the level below shows");
   await f.page.reload();
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await openSettingsPage(f.page, "models");
   await f.page.locator('[data-act="setlevel"][data-v="technical"][aria-pressed="true"]').waitFor();
+  await settled();
   assert.deepEqual(await headings(f.page), technical, "the choice is kept");
   assert.deepEqual(f.errors, []);
 });
@@ -119,9 +123,12 @@ test("S8 somebody else's profile is not drawn the owner's controls, search never
   await f.page.locator(".set-col h1").first().waitFor();
   assert.equal(await f.page.locator('.set-col [data-act="p-invite"], .set-col [data-act="p-role"], .set-col [data-act="p-remove"]').count(), 0,
     "no owner-only control is drawn for somebody else");
-  /* Search names pages only, never a setting of the owner's. */
+  /* Search never names a setting of the owner's: for anybody else it finds pages by name only (settings/find.js rows
+     are the owner's), so neither a row's title nor its data is listed. */
   await f.page.locator("#set-q").fill("Key name in Secrets");
   assert.equal(await f.page.locator(".set-col").getByText("Key name in Secrets").count(), 0);
+  await f.page.locator("#set-q").fill("Vim keys");
+  assert.equal(await f.page.locator(".set-found, .set-hit").count(), 0, "no settings row is listed for somebody else");
   /* The server keeps the look and the level the owner's. */
   assert.notEqual(offLimitsToHousehold("POST", "/api/preferences"), null);
   const refused = await fetch(new URL("/api/preferences", f.url), { method: "POST", headers: f.headers, body: JSON.stringify({ settingsLevel: "technical", showEverything: true }) });
@@ -255,8 +262,12 @@ test("S13 Appearance: light and dark pictures of the window, each wearing its lo
     await f.page.locator(`.set-col .mirrors [data-act="themeset"][data-v="${mode}"]`).click();
     await f.page.waitForFunction((value) => document.documentElement.dataset.theme === value, mode);
     await f.page.locator(`.set-col .mirrors [data-act="themeset"][data-v="${mode}"][aria-pressed="true"]`).waitFor();
-    // The engine names the two looks by their themes: Daylight, and Forest for the dark one.
-    assert.equal((await f.call("/api/state")).preferences.appearance, mode === "light" ? "daylight" : "forest", "the engine keeps the choice");
+    // The engine names the two looks by their themes: Daylight, and Forest for the dark one. The window wears the look at
+    // once and saves it after, so the engine is asked until the save has landed (seen read before it on Linux CI).
+    const want = mode === "light" ? "daylight" : "forest";
+    let kept = null;
+    for (let i = 0; i < 100 && kept !== want; i++) { kept = (await f.call("/api/state")).preferences.appearance; if (kept !== want) await f.page.waitForTimeout(50); }
+    assert.equal(kept, want, "the engine keeps the choice");
   }
   assert.equal(await f.page.locator(".set-col .mirrors #prompt, .set-col .mirrors iframe").count(), 0, "the pictures are drawings, not copies of the window");
   assert.deepEqual(f.errors, []);
@@ -326,7 +337,7 @@ for (const [width, height] of [[1440, 950], [1024, 700], [390, 844]]) {
 }
 
 test("S19 in French, search finds a Settings page by its French name", async (t) => {
-  // Redesign: search finds pages by name; in French, the French name finds the page.
+  // Redesign: search finds pages by name and every row by its words (UI-091); in French, the French name finds the page.
   const f = await fixture(t);
   const fr = JSON.parse(await readFile(new URL("../public/locales/fr.json", import.meta.url), "utf8"));
   await f.page.evaluate(async () => (await import("/i18n.js")).setLanguage("fr"));
@@ -336,7 +347,11 @@ test("S19 in French, search finds a Settings page by its French name", async (t)
   assert.notEqual(words, "Saved sign-ins", "the page's name was not translated");
   await f.page.locator("#set-q").fill(words);
   await navButton(f.page, "secrets").waitFor();
-  assert.deepEqual(await allPages(f.page), ["secrets"], "the French name finds its page, and only it");
+  // Its page stays listed, and its rows are found by the page's French name (a page whose own rows share the words, as
+  // Permissions may, is listed beside it: settings/find.js).
+  assert.ok((await allPages(f.page)).includes("secrets"), "the French name finds its page");
+  const where = await f.page.locator(".set-found .set-hit small").allTextContents();
+  assert.ok(where.some((line) => line.startsWith(words)), `the page's rows are found by its French name (${where.join(" | ")})`);
   assert.ok(Object.values(fr).includes(words), "in the French words");
   assert.deepEqual(f.errors, []);
 });

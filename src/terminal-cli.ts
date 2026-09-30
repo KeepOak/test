@@ -9,7 +9,7 @@ import { policyPresets } from "./policy.js";
 import { pricingSettings } from "./pricing.js";
 import { limitLines } from "./usage-limits.js"; // mac7/usage-bar
 import { usageLimits } from "./usage-limits-api.js"; // mac7/usage-bar
-import { choosePreset, historyLines, presetLines } from "./terminal-commands.js";
+import { choosePreset, historyLines, presetLines, presetWords } from "./terminal-commands.js";
 import { PLACE_ROWS, connectionRows, skillRows, type Row } from "./terminal-place-data.js";
 import { TERMINAL_ALIASES, TERMINAL_CLI_COMMANDS } from "./terminal-parity.js";
 import { MODEL_TABS, SETTINGS_PAGES, allHomes, homeOf, parseRoute, placeById, type Route } from "./terminal-places.js";
@@ -269,7 +269,8 @@ export async function statusCommand(app: Branch, io: Pick<Io, "json" | "write"> 
   if (io.json) return io.write(JSON.stringify({ ...snapshot, health }, null, 2));
   const words = wordsFor(app, io.env ?? {});
   // B5 (CL-05b): the preset by the name Settings shows, never its id.
-  const label = policyPresets().find((preset) => preset.id === snapshot.approvalPreset)?.label ?? snapshot.approvalPreset;
+  const found = policyPresets().find((preset) => preset.id === snapshot.approvalPreset);
+  const { label } = presetWords(found ?? { id: snapshot.approvalPreset }, words);
   io.write(`${words.t("settings-kit.name.policy", "When to check with me")}: ${label}`);
   const lockdown = lockdownState(app.store, app.runtime.owner);
   if (lockdown.on) io.write(lockdownLines({ on: true, since: lockdown.since }, words)[0]!);
@@ -304,7 +305,7 @@ export async function runTerminalCommand(app: Branch, command: string, args: str
   if (command === "tools") return toolsCommand(app, io);
   if (command === "projects") return printRows(io, app.store.projects.list(owner).map((project) => ({ title: `${project.id === app.store.projects.chosen(owner).id ? "* " : "  "}${project.name}`, detail: project.id })), words);
   if (command === "lockdown") return lockdownCommand(app, args, io);
-  if (command === "permissions") return args[0] ? io.write(choosePreset(app.runtime, args.join(" "), (name) => confirmWords(words, name))) : presetLines(app.runtime).forEach((line) => io.write(line));
+  if (command === "permissions") return args[0] ? io.write(choosePreset(app.runtime, args.join(" "), (name) => confirmWords(words, name), words)) : presetLines(app.runtime, words).forEach((line) => io.write(line));
   if (command === "usage") return usageCommand(app, io);
   if (command === "snapshots") return printRows(io, app.store.workspaceHistory.snapshots().map((snap) => ({ title: snap.label, detail: `${snap.id} · ${snap.files} files · ${snap.createdAt.slice(0, 16).replace("T", " ")}` })), words);
   throw new Error(`I do not know the command "${command}".`);

@@ -20,6 +20,8 @@ import { MixtureProvider } from "../dist/model-savings/mixture.js";
 import { afterRound } from "../dist/model-savings/hook.js";
 import { flowSearchParts } from "../dist/interop/flow-search.js";
 import { neverTouched } from "../dist/settings-kit/catalogue.js";
+import { accountsServiceFor } from "../dist/accounts/service.js";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 
 async function fixture(t, provider) {
   const root = await mkdtemp(join(tmpdir(), "branch-lockdown-integrator-"));
@@ -68,7 +70,9 @@ test("Lockdown closes a device's open socket at once and nothing more is sent to
 /** An installed program signed in to the owner's own account, and a key connection behind it. */
 function signInFirst(app, owner) {
   const started = [];
-  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, async () => { started.push("program"); return { code: 0, stdout: JSON.stringify({ result: "from the sign-in" }), stderr: "" }; });
+  const program = async () => { started.push("program"); return { code: 0, stdout: JSON.stringify({ result: "from the sign-in" }), stderr: "" }; };
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, program);
+  accountsServiceFor(app.runtime.models).deps.spawnAgent = program; // Claude Code answers through its native transport (see fakeClaudeAccounts)
   const script = [];
   const keyed = { name: "openai-chat", async complete() { return script.shift() ?? { content: "from the key", toolCalls: [] }; } };
   app.runtime.models.register({ id: "key-conn", name: "Key", model: "gpt-4o-mini", catalogId: "openai", provider: keyed });
@@ -81,13 +85,14 @@ test("a side job a Trunk's tool starts is the Trunk's: the owner's sign-in only 
   savePolicy(app.store, owner, { preset: "custom", rules: [{ tool: "*", decision: "allow", remember: "always" }] });
   app.trunks.setMode("trunks", { mode: "on" });
   const { started, script } = signInFirst(app, owner);
+  await fakeClaudeAccounts(t, accountsServiceFor(app.runtime.models));
   let sideJob = null;
   app.registry.register({ name: "files.summarise_side", permission: "files.read", description: "stand-in side job",
     parameters: z.object({}).passthrough(),
     execute: async () => {
       // As the document, knowledge and answer tools do: the owner's first connection, asked directly.
       const provider = app.runtime.models.plan(owner, "").candidates[0].provider;
-      try { sideJob = (await provider.complete({ messages: [{ role: "user", content: "sum up" }], tools: [], maxTokens: 50 })).content; }
+      try { sideJob = (await provider.complete({ messages: [{ role: "user", content: "sum up" }], tools: [], maxTokens: 50, signal: AbortSignal.timeout(30000) })).content; }
       catch (error) { sideJob = `refused: ${error.message}`; }
       return { ok: true };
     } });
@@ -180,6 +185,9 @@ test("a flow drafted and tried for a task keeps to that task's tools", async (t)
 test("a finished flow run's limit is cleaned up, a failed one keeps it, and neither can be written from a settings file", async (t) => {
   const fx = await limitFixture(t);
   const { app, owner } = fx;
+  // Going back to a step ships when needed (the ship-on rule), and a run whose steps are kept keeps its limit for the
+  // copy going back makes; this test is about a run with no steps kept, so the owner switches it off.
+  app.store.save("settings", owner, "flowboards-time-travel", { mode: "off" });
   const graph = (name, tool) => app.flows.saveGraph({
     name, input: {}, state: { out: "text" }, entry: "a",
     nodes: [{ id: "a", name: "Box", kind: "tool", tool, args: {}, input: {}, output: { out: "text" } }], edges: [],

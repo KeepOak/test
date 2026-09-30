@@ -20,12 +20,10 @@ import type { AccountKind } from "./settings.js";
  *   login may not be shared by multiple people"
  *   (https://docs.github.com/en/site-policy/github-terms/github-terms-of-service).
  *
- * So: keys the owner holds move on to the next key automatically, always waiting out the service's
- * Retry-After, and the card says a key made only to multiply a limit is not allowed. Sign-in
- * accounts never switch by themselves unless the owner turns that on beside this line, and even then
- * never between the owner's own plans of one service — only to an account marked kept separate
- * (someone else's, or work's; mac7/account-pooling, owner decision 2026-09-19). They are never
- * shared with other people on this computer.
+ * So (owner decision 2026-09-27, Hermes Agent's credential pools): keys and sign-ins alike move on to the owner's
+ * next account by themselves when one runs out, and the card says plainly that switching doesn't merge plans, that each
+ * account's own terms apply, that the prompt cache starts again after a switch, and that a key made only to multiply a
+ * limit is not allowed. Sign-ins are never shared with other people on this computer.
  */
 /** `name` (integration review, phase2/accounts): whose page it is, for the window's own words; `guide` when it is not terms. */
 export interface AccountTerms { text: string; links: { label: string; url: string; name: string; guide?: true }[] }
@@ -46,7 +44,7 @@ export const termsKeys = {
 export function accountTerms(kind: AccountKind, pool: string): AccountTerms & { key: string } {
   if (kind === "api-key") return {
     key: termsKeys[kind],
-    text: "Add only keys you are entitled to use. When a key is refused or rate limited, Branch waits as long as the service asks before using that key again and tries your next key. Opening extra accounts only to get past a service's limits is against OpenAI's, Google's and other providers' terms.",
+    text: "Add only keys you are entitled to use. When a key is rate limited twice in a row, runs out of credit or is refused, Branch moves the work to your next key by itself; each key's own terms apply. Opening extra accounts only to get past a service's limits is against OpenAI's, Google's and other providers' terms.",
     links: [openai, google, anthropic],
   };
   const links = kind === "chatgpt" ? [openai, { label: "ChatGPT sign-in", name: "ChatGPT", guide: true as const, url: "https://learn.chatgpt.com/docs/auth" }]
@@ -55,7 +53,7 @@ export function accountTerms(kind: AccountKind, pool: string): AccountTerms & { 
     : pool === "cli-copilot" ? [github] : [openai];
   return {
     key: termsKeys[kind],
-    text: "Each sign-in is one person's own account and is never shared with others on this computer. When an account reaches its plan limit Branch stops and asks you. Branch never switches between your own plans of one service by itself: providers treat that as abuse and may suspend the accounts. Only an account you mark kept separate (someone else's, or work's) may share work with yours.",
+    text: "Each sign-in is one person's own account and is never shared with others on this computer. When one reaches its plan limit, Branch moves the work to your next account by itself (switch this off in Settings › Accounts). Switching doesn't merge plans: each account's own terms apply, and the provider's prompt cache starts again, so the first reply after a switch can use more of the new account's limit.",
     links,
   };
 }

@@ -119,7 +119,12 @@ async function worn(page) {
     const bg = (sel) => { const el = document.querySelector(sel); return el ? getComputedStyle(el).backgroundColor : null; };
     const root = getComputedStyle(document.documentElement);
     return { bgVar: root.getPropertyValue("--bg").trim().toUpperCase(), raiseVar: root.getPropertyValue("--raise").trim().toUpperCase(),
-      body: bg("body"), main: bg("#main"), bar: bg("#main .recbar"), palette: document.documentElement.dataset.palette };
+      body: bg("body"), main: bg("#main"), bar: bg("#main .recbar"), palette: document.documentElement.dataset.palette,
+      mainFill: getComputedStyle(document.querySelector("#main")).backgroundImage,
+      cutoff: getComputedStyle(document.querySelector("#app")).getPropertyValue("--tb-h").trim(),
+      mainTop: document.querySelector("#main").getBoundingClientRect().top,
+      rowTop: document.querySelector(".titlebar").getBoundingClientRect().top,
+      rowHeight: document.querySelector(".titlebar").getBoundingClientRect().height };
   });
 }
 
@@ -142,14 +147,19 @@ test("a theme of your own made in Settings › Appearance is worn after Settings
   assert.equal(look.bgVar, MINE.bg);
   assert.equal(look.raiseVar, MINE.raise);
   assert.equal(look.body, rgb(MINE.bg), "the window's ground is the theme's background");
-  assert.equal(look.main, rgb(MINE.bg), "the conversation is on the theme's background");
+  assert.match(look.mainFill, /linear-gradient/, "the toolbar strip lets the wallpaper through");
+  assert.ok(look.mainFill.includes(`${rgb(MINE.bg)} ${look.cutoff}`), "solid content below the row retains the exact theme background");
+  assert.equal(parseFloat(look.cutoff), Math.ceil(look.rowHeight), "the transparent strip stops at the measured toolbar height");
+  assert.equal(look.mainTop, look.rowTop, "the view starts beneath the floating row without adding a content gap");
   assert.equal(look.bar, rgb(MINE.raise), "the bar is a card in the theme's colours");
   /* Light or dark flipped and flipped back: the theme stays on, the bar stays clear of the row. */
   await page.locator('[data-act="theme-flip"]').first().click();
   await page.locator('[data-act="theme-flip"]').first().click();
   await clearOfRow(page, "after flipping light and dark");
   const again = await worn(page);
-  assert.equal(again.main, rgb(MINE.bg));
+  assert.ok(again.mainFill.includes(`${rgb(MINE.bg)} ${again.cutoff}`), "the solid theme background survives flipping modes");
+  assert.equal(parseFloat(again.cutoff), Math.ceil(again.rowHeight));
+  assert.equal(again.mainTop, again.rowTop);
   assert.equal(again.bar, rgb(MINE.raise));
   assert.deepEqual(f.errors, []);
 });

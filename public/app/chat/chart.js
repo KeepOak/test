@@ -83,6 +83,12 @@ export function chartSvg(chart, w = 520) {
 /* The task whose answer holds this block: the file is kept beside it. */
 const runOf = (source) => (E.state?.runs ?? []).find((r) => typeof r.output === "string" && r.output.includes(source))?.id ?? "";
 
+const chartKey = (source) => {
+  let hash = 2166136261;
+  for (let i = 0; i < source.length; i++) hash = Math.imul(hash ^ source.charCodeAt(i), 16777619);
+  return `chart-${hash >>> 0}-${source.length}`;
+};
+
 /* The card for a chart block, or "" when the block has nothing to draw. */
 export function chartCard(source) {
   const chart = readChart(source);
@@ -95,7 +101,7 @@ export function chartCard(source) {
     <p class="note">${t("window.chat.art.sealed")}</p>
     ${chartSvg(chart)}
     <div class="acts"><button class="btn sm" type="button" data-act="artbig">${t("window.chat.art.larger")}</button><button class="btn sm" type="button" data-act="art-copy">${t("action.copy-code")}</button>${saveBtn}</div>
-    <details><summary>${ic("chev", "s chev")}${t("window.chat.art.code")}</summary><pre>${esc(source)}</pre></details></div>`;
+    <details data-persist="${chartKey(source)}"><summary>${ic("chev", "s chev")}${t("window.chat.art.code")}</summary><pre>${esc(source)}</pre></details></div>`;
 }
 
 /* The chart behind a button: read back from its own card's code, so nothing is kept beside the page. */

@@ -12,7 +12,8 @@ import type { Store } from "../store.js";
  * and the same thing is never offered again (the idea of a dedup key that dismissals keep blocked is
  * from Hermes Agent's `cron/suggestions.py`, MIT; this is an independent implementation).
  */
-export const entryKinds = ["schedule", "order", "procedure", "instruction", "start", "step", "escalation"] as const;
+// "unattended": the owner's own yes to what a procedure's Repeat, Split and gather and Run a flow steps may do (procedures.ts).
+export const entryKinds = ["schedule", "order", "procedure", "instruction", "start", "step", "escalation", "unattended"] as const;
 export type EntryKind = (typeof entryKinds)[number];
 export type EntryStatus = "pending" | "accepted" | "dismissed";
 

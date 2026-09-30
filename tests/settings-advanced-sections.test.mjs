@@ -26,7 +26,10 @@ test("Advanced has the prototype's sections at 1440, 860 and 400 px, at Advanced
     for (const one of ["advanced", "technical"]) {
       await setLevel(page, one);
       await openSettingsPage(page, "advanced");
-      const heads = await page.locator(".set-col").locator("h1, h2, h3").evaluateAll((all) => all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
+      // An incoming read may redraw between resolving locator nodes and evaluating them. Read the current page's
+      // headings and their visibility in one turn, so detached nodes cannot turn a drawn page into an empty list.
+      const heads = await page.evaluate(() => [...document.querySelectorAll(".set-col h1, .set-col h2, .set-col h3")]
+        .filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
       // Pass 17 adds "Health" at Technical (whereB17("advanced", 2, ...)).
       assert.deepEqual(heads, [...NEW_SECTIONS, ...(one === "technical" ? ["Health"] : [])], `${one} at ${width} px`);
       assert.equal(await page.locator(".set-col h1").count(), 1, "only the page title is level one");

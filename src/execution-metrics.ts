@@ -6,7 +6,8 @@
  * measurements — tasks started, finished and failed, tokens, estimated money, tool calls and
  * failures — sent to the address they typed under Settings → Advanced → Traces, which is theirs.
  *
- * The switch has three positions and ships off:
+ * The switch has three positions and ships "when needed" (the owner's rule, 2026-09-27: nothing leaves without the
+ * owner's press, and only to the address the owner typed, so it is none of (a)–(f)):
  *   off          nothing is ever sent
  *   when-needed  sent only when the owner presses "Send the counters now"
  *   on           sent after a task finishes, at most once every `minutesBetween` minutes
@@ -17,6 +18,7 @@ import { z } from "zod";
 import type { MetricPoint } from "./tracing-shapes.js";
 import { FeatureModeSchema, modeOf, optionalFields, settleSwitch, type FeatureMode } from "./feature-switches.js";
 import type { Store } from "./store.js";
+import { markChosen, shippedUnlessChosen, unsetRecord } from "./ship-on.js";
 import { collectMetrics } from "./metrics.js";
 import { pricingSettings } from "./pricing.js";
 
@@ -32,9 +34,15 @@ export type ExecutionMetricsSettings = z.infer<typeof ExecutionMetricsSchema>;
 
 const settingsKey = "execution-metrics";
 
+export const executionMetricsShipsAs: FeatureMode = "when-needed";
+
 export function executionMetricsSettings(store: Pick<Store, "get">, owner: string): ExecutionMetricsSettings {
-  const saved = ExecutionMetricsSchema.safeParse(store.get("settings", owner, settingsKey)?.data);
-  const value = saved.success ? saved.data : ExecutionMetricsSchema.parse({});
+  const data = store.get("settings", owner, settingsKey)?.data;
+  if (unsetRecord(data)) return { ...ExecutionMetricsSchema.parse({}), mode: executionMetricsShipsAs, enabled: true };
+  const saved = ExecutionMetricsSchema.safeParse(data);
+  if (!saved.success) return ExecutionMetricsSchema.parse({});
+  // The record also holds the gap between sends, so an "off" beside it may be the old default (src/ship-on.ts).
+  const value = shippedUnlessChosen(store, owner, settingsKey, { ...saved.data, mode: modeOf(saved.data) }, { mode: executionMetricsShipsAs });
   const mode: FeatureMode = modeOf(value);
   return { ...value, mode, enabled: mode !== "off" };
 }
@@ -44,8 +52,12 @@ export function saveExecutionMetricsSettings(store: Pick<Store, "get" | "save">,
   const wanted = optionalFields(ExecutionMetricsSchema.omit({ lastSentAt: true })).parse(input ?? {});
   const next = ExecutionMetricsSchema.parse({ ...current, ...wanted, ...settleSwitch(current, wanted) });
   store.save("settings", owner, settingsKey, next);
+  markChosen(store, owner, settingsKey, switchSent(wanted));
   return next;
 }
+
+/** A change that names the switch or its older yes/no chose the switch. */
+const switchSent = (wanted: { mode?: unknown; enabled?: unknown }): string[] => (wanted.mode !== undefined || wanted.enabled !== undefined ? ["mode"] : []);
 
 /** What sending needs, handed in so a test can give fakes. */
 export interface ExecutionMetricsDeps {

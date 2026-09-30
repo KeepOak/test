@@ -237,7 +237,7 @@ test("duplicated sessions have fresh message identities, preserve the source and
   assert.deepEqual(app.store.sessionView("local", id), before);
   const imported = app.store.importSession("local", app.store.exportSession("local", id));
   const importedView = app.store.sessionView("local", imported.sessionId);
-  const branch = app.store.branchSession("local", { sessionId: imported.sessionId, messageId: importedView.messages[0].messageId });
+  const branch = (await app.store.branchSession("local", { sessionId: imported.sessionId, messageId: importedView.messages[0].messageId }));
   assert.equal(app.store.sessionView("local", branch.sessionId).imported, true);
   assert.equal(app.store.sessionView("local", (await app.store.duplicateSession("local", branch.sessionId)).sessionId).imported, true);
 });

@@ -1,6 +1,8 @@
 import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import { z } from "zod";
+import type { ToolContext } from "./contracts.js";
+import { ownerOnly } from "./self-development.js";
 import type { createBranch } from "./index.js";
 import type { Store } from "./store.js";
 import type { TokenScope } from "./session-tokens.js";
@@ -9,6 +11,7 @@ import { readRunning } from "./install/running.js";
 import { assistantIdentity } from "./identity.js";
 import { preferences } from "./preferences.js";
 import { lockdownActive } from "./lockdown.js";
+import { busyTasks } from "./comfort/auto-update.js";
 import { lockdownSettingsRefusal } from "./policy-change-guard.js";
 import { hereOnly, throughADoor } from "./remote/window-key.js";
 import {
@@ -136,6 +139,8 @@ export interface DashboardDeps extends SummaryDeps {
   /** Sends a signal to this process; tests hand in a fake so nothing is really stopped. */
   signal?: (pid: number, name: NodeJS.Signals) => void;
   setExitCode?: (code: number) => void;
+  /** How often a restart that waits for no task to be working looks again; tests make it short. */
+  idleCheckMs?: number;
 }
 
 /**
@@ -148,13 +153,61 @@ async function restartEngine(dataDir: string, deps: DashboardDeps): Promise<unkn
   const pid = deps.pid ?? process.pid;
   const plan = restartPlan({
     platform: deps.platform ?? process.platform, env: deps.env ?? process.env, pid,
-    running: await (deps.running ?? readRunning)(dataDir),
+    running: await (deps.running ?? readRunning)(dataDir), hosted: deps.hosted,
   });
   if (!plan.possible) throw new DashboardApiError(409, restartWords[plan.reason]);
   const setExitCode = deps.setExitCode ?? ((code: number) => { process.exitCode = code; });
   const signal = deps.signal ?? ((target: number, name: NodeJS.Signals) => { process.kill(target, name); });
   setTimeout(() => { setExitCode(75); signal(pid, "SIGTERM"); }, 300);
   return { restarting: true };
+}
+
+/** selfdev: Branch restarting its own engine, as the Restart the engine button does. */
+export const restartToolName = "branch.restart_engine";
+/**
+ * selfdev: the tool the lead uses to restart its own engine (stuck, or to take up a new build). Only the owner's own
+ * task (their designated default Trunk counts as theirs) may; never a household person's, a key's, a chat's or another
+ * Trunk's. Whether it asks first is the owner's rule for it (Settings › Branch itself › Restarting its own engine).
+ * Work is saved and, with Carry on interrupted work by itself on, safe steps carry on after the restart.
+ */
+export function registerRestartTool(app: Branch, dataDir: string, deps: DashboardDeps = {}): void {
+  if (app.registry.names().includes(restartToolName)) return;
+  app.registry.register({
+    name: restartToolName, permission: "process.manage", reach: "local",
+    description: "Restart Branch's own engine, when it is stuck or to take up a new build. Work in progress is saved and safe steps carry on by themselves after the restart. Say why.",
+    parameters: z.object({ why: z.string().trim().min(1).max(300) }).strict(),
+    target: (input: { why: string }) => `restart Branch's engine: ${input.why}`,
+    execute: async (_input: { why: string }, context: ToolContext) => {
+      ownerOnly(context, app.store, (turn) => app.runtime.ownersDefaultTurn(turn), "restart Branch's engine");
+      return restartEngine(dataDir, deps);
+    },
+    // Last: a settings-key scan (tests/backup-classified.test.mjs) must not read this group and the next fields as a key.
+    group: "settings" });
+}
+
+const RestartSchema = z.object({ whenIdle: z.boolean().optional() }).strict();
+let waitingToRestart: NodeJS.Timeout | null = null;
+/**
+ * selfdev: Reload without dropping work (Settings › Branch itself). Nothing is cut off: the restart waits until no task
+ * is working, looking every five seconds, and then restarts as the button does (work saved, the address let go, the
+ * computer's own service starting it again). Asked twice, it waits once. Refused where nothing would start it again.
+ */
+async function restartWhenIdle(app: Branch, dataDir: string, deps: DashboardDeps): Promise<unknown> {
+  const pid = deps.pid ?? process.pid;
+  const plan = restartPlan({ platform: deps.platform ?? process.platform, env: deps.env ?? process.env, pid,
+    running: await (deps.running ?? readRunning)(dataDir), hosted: deps.hosted });
+  if (!plan.possible) throw new DashboardApiError(409, restartWords[plan.reason]);
+  const working = () => busyTasks(app.store).working;
+  if (!working()) return restartEngine(dataDir, deps);
+  if (!waitingToRestart) {
+    waitingToRestart = setInterval(() => {
+      if (working()) return;
+      clearInterval(waitingToRestart!); waitingToRestart = null;
+      void restartEngine(dataDir, deps).catch(() => undefined);
+    }, deps.idleCheckMs ?? 5000);
+    waitingToRestart.unref();
+  }
+  return { restarting: false, waiting: true, working: working() };
 }
 
 async function summary(app: Branch, dataDir: string, access: DashboardAccess, deps: DashboardDeps): Promise<unknown> {
@@ -200,15 +253,21 @@ export async function dashboardApi(
   if (path === "/api/dashboard/restart" && method === "POST") {
     masterOnly(context.access, "Restarting Branch");
     if (dashboardSettings(app.store, owner).mode === "off" && throughADoor(request)) throw new DashboardApiError(403, hereOnly);
-    return restartEngine(context.dataDir, deps);
+    const { whenIdle } = RestartSchema.parse(await context.readBody().catch(() => ({})) ?? {});
+    return whenIdle ? restartWhenIdle(app, context.dataDir, deps) : restartEngine(context.dataDir, deps);
+  }
+  // Pausing every automation is also Automations › Scheduled's own row, so, like restarting, it does not wait on the
+  // dashboard's switch: the key of this computer only, and, while the dashboard is off, never through a door.
+  if (path === "/api/dashboard/automations") {
+    masterOnly(context.access, "Pausing every automation");
+    if (dashboardSettings(app.store, owner).mode === "off" && throughADoor(request)) throw new DashboardApiError(403, hereOnly);
+    if (method === "GET") return { paused: pausedRecord(app.store, owner) };
+    if (method !== "POST") throw new DashboardApiError(405, "Use GET or POST");
+    const { paused } = PauseSchema.parse(await context.readBody());
+    return paused ? { paused: pauseAutomations(app) } : { resumed: resumeAutomations(app) };
   }
   if (dashboardSettings(app.store, owner).mode === "off")
     throw new DashboardApiError(404, "The dashboard is switched off. Turn it on under Customize › Everywhere › Dashboard in the browser.");
   if (path === "/api/dashboard" && method === "GET") return summary(app, context.dataDir, context.access, deps);
-  if (path === "/api/dashboard/automations" && method === "POST") {
-    masterOnly(context.access, "Pausing every automation");
-    const { paused } = PauseSchema.parse(await context.readBody());
-    return paused ? { paused: pauseAutomations(app) } : { resumed: resumeAutomations(app) };
-  }
   throw new DashboardApiError(404, "Not found");
 }

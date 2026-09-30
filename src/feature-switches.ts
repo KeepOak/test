@@ -1,9 +1,11 @@
 import { z } from "zod";
 import type { Store } from "./store.js";
+import { shippedUnlessChosen, unsetRecord } from "./ship-on.js";
 import { addOnLabels, addOnMode, addOnTools, type AddOnPart } from "./add-ons/settings.js"; // bucket-15
 import { askToolFeatures } from "./asks/settings.js"; // mac6/bucket-23
 import { interopShipsOn, type InteropPart } from "./interop/settings.js"; // ships-on sweep
 import { lockdownOverrides } from "./lockdown.js"; // mac7/lockdown-fix
+import { gitlabConnected, gitlabSwitchKey, gitlabToolNames } from "./gitlab-switch.js"; // RES-719
 import { deviceTools } from "./devices/capabilities.js"; // mac7/nodes
 import { autonomyToolFeatures } from "./autonomy/settings.js"; // r17-b
 import { trunkToolFeatures } from "./trunks/settings.js"; // R17-A
@@ -13,7 +15,7 @@ import { reachToolFeatures } from "./reach/settings.js"; // r17-i
 import { safetyToolFeatures } from "./safety-extras/settings.js"; // mac7/r17-g
 import { boardToolFeatures } from "./flows-boards/settings.js"; // r17-h
 import { learningToolFeatures } from "./learning-more/settings.js"; // R17-F
-import { learnToolFeatures } from "./learn/settings.js"; // mac7/learn
+import { learnMode, learnToolFeatures } from "./learn/settings.js"; // mac7/learn
 
 /**
  * The owner's three-way switch for a feature: off, when needed, or on. Each ships as its own
@@ -80,6 +82,13 @@ export const screenTools = ["desktop.screenshot", "desktop.windows", "desktop.re
 export const sharedDesktopTools = ["desktop.shared.start", "desktop.shared.open", "desktop.shared.type", "desktop.shared.key", "desktop.shared.stop"] as const;
 /** Reading aloud with the computer's own voice (src/voice-service.ts). */
 export const systemVoiceTools = ["voice.say"] as const;
+/** The owner's rule (ships on, 2026-09-26): reading aloud with the computer's own voice is sound out only, no microphone; none of (a)–(f). */
+export const systemVoiceShipsAs: FeatureMode = "when-needed";
+/**
+ * The owner's rule (2026-09-27): ffmpeg and yt-dlp are heavy only while a task uses them, and "when needed" runs
+ * nothing by itself, so watching and saving videos ships on (src/media-programs.ts reads this too).
+ */
+export const mediaProgramsShipsAs: FeatureMode = "when-needed";
 /** mac7/vault-autofill (R17-068): typing a saved sign-in into a page (src/vault-autofill.ts). */
 export const signInFillTools = ["signin.fill"] as const;
 /** Bucket 21: the app-builder tools (src/sdk-kit.ts registers them). */
@@ -100,12 +109,18 @@ export const interopToolFeatures: readonly (readonly [string, string, readonly s
   ["interop-flow-search", "finding a better flow is switched on", ["flow.search"], shipped("flow-search")],
   ["interop-agent-market", "sharing assistants is switched on", ["assistant.market"], shipped("agent-market")],
 ];
-/** `ships` is what a feature is while nothing was ever saved for it; a saved record it cannot read is off. */
-const savedMode = (store: Reader, owner: string, key: string, field: "mode" | "systemVoice" = "mode", ships: FeatureMode = "off"): FeatureMode => {
+/**
+ * `ships` is what a feature is while nothing was ever saved for it; a saved record it cannot read is off. A record
+ * that also holds other fields (`shared`) may carry an "off" written as the old default when one of those was saved,
+ * so there the switch reads as it ships unless the owner chose it (src/ship-on.ts).
+ */
+const savedMode = (store: Reader, owner: string, key: string, field: "mode" | "systemVoice" = "mode", ships: FeatureMode = "off", shared = false): FeatureMode => {
   if (lockdownOverrides(store, owner, key)) return "off"; // mac7/lockdown-fix: Lockdown wins over a saved mode
   const found = store.get("settings", owner, key);
   if (!found) return ships;
-  const data = (found.data ?? {}) as Record<string, unknown>;
+  const saved = (found.data ?? {}) as Record<string, unknown>;
+  const data = shared ? shippedUnlessChosen(store, owner, key, saved, { [field]: ships }) : saved;
+  if (!shared && unsetRecord(found.data)) return ships;
   const mode = FeatureModeSchema.safeParse(data[field]);
   if (mode.success) return mode.data;
   return field === "mode" && data.enabled === true ? "when-needed" : "off";
@@ -119,15 +134,15 @@ const savedMode = (store: Reader, owner: string, key: string, field: "mode" | "s
 const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boolean; mode: (store: Reader, owner: string) => FeatureMode }[] = [
   { reason: "your screen and keyboard are switched on", tools: screenTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "desktop-control") },
   { reason: "a shared Linux desktop is switched on", tools: sharedDesktopTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "linux-desktop") },
-  { reason: "your computer's own voice is switched on", tools: systemVoiceTools, hideWhenOff: false, mode: (s, o) => savedMode(s, o, "voice", "systemVoice") },
+  { reason: "your computer's own voice is switched on", tools: systemVoiceTools, hideWhenOff: false, mode: (s, o) => savedMode(s, o, "voice", "systemVoice", systemVoiceShipsAs, true) },
   // Bucket 17 hook.
-  { reason: "watching and saving videos is switched on", tools: videoProgramTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "media-programs") },
+  { reason: "watching and saving videos is switched on", tools: videoProgramTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "media-programs", "mode", mediaProgramsShipsAs, true) },
   // w911 (A0374) hook: fixing a failed command (src/troubleshoot.ts; the name is written here to avoid an import loop).
-  { reason: "fixing failed commands is switched on", tools: ["troubleshoot.run"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "troubleshoot") },
+  { reason: "fixing failed commands is switched on", tools: ["troubleshoot.run"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "troubleshoot", "mode", "when-needed", true) }, // ships on: src/troubleshoot.ts troubleshootShipsAs
   // Optional JEV judgments send the bounded state to the provider the owner configured in JEV.
   { reason: "JEV decision support is switched on", tools: ["decisions.judge"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "jev-decisions") },
   // w911 (A2144) hook: page notes.
-  { reason: "page notes are switched on", tools: pageNotesTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "page-notes") },
+  { reason: "page notes are switched on", tools: pageNotesTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "page-notes", "mode", "when-needed") },
   // ── mac4/bucket-20: talking to other agents and tools (src/interop/settings.ts keeps these lists). ──
   ...interopToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── mac6/bucket-23: the smaller asks (src/asks/settings.ts keeps these lists). ──
@@ -145,23 +160,27 @@ const toolFeatures: { reason: string; tools: readonly string[]; hideWhenOff: boo
   // ── r17-i: reach and platform (src/reach/settings.ts keeps these lists). ──
   ...reachToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── mac7/r17-g: the safety extras (src/safety-extras/settings.ts keeps these lists). ──
-  ...safetyToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...safetyToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── r17-h: flows and boards (src/flows-boards/settings.ts keeps these lists). ──
   ...boardToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── R17-F: learning, deeper (src/learning-more/settings.ts keeps these lists). ──
-  ...learningToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  ...learningToolFeatures.map(([key, reason, tools, ships]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key, "mode", ships) })),
   // ── mac7/learn: understanding something -- the map and the tour (src/learn/settings.ts). ──
-  ...learnToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true, mode: (s: Reader, o: string) => savedMode(s, o, key) })),
+  // Its record also holds the tour's length, so an "off" saved beside it is read the way learn/settings.ts reads it (src/ship-on.ts).
+  ...learnToolFeatures.map(([key, reason, tools]) => ({ reason, tools, hideWhenOff: true,
+    mode: (s: Reader, o: string): FeatureMode => (lockdownOverrides(s, o, key) ? "off" : learnMode(s, o)) })),
   // mac7/vault-autofill (R17-068): filling a saved sign-in (src/vault-autofill.ts). Written out here
   // rather than imported, because that module reads this one for the three-way switch.
   { reason: "filling a saved sign-in is switched on", tools: signInFillTools, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "vault-autofill") },
+  // RES-719: GitLab, only once it is connected (src/gitlab-connection.ts); ships on: src/gitlab-switch.ts gitlabShipsAs.
+  { reason: "GitLab is connected and switched on", tools: gitlabToolNames, hideWhenOff: true, mode: (s, o) => (gitlabConnected(s, o) ? savedMode(s, o, gitlabSwitchKey, "mode", "when-needed") : "off") },
   // Bucket 21 hook: tools for people building on Branch (src/sdk-kit.ts).
-  { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit") },
+  { reason: "tools for people building on Branch are switched on", tools: sdkKitToolNames, hideWhenOff: true, mode: (s, o) => savedMode(s, o, "sdk-kit", "mode", "when-needed") }, // ships on: src/sdk-kit-switch.ts sdkKitShipsAs
   // ── bucket-15: add-ons other people wrote (src/add-ons/settings.ts keeps these lists). ──
   ...(Object.entries(addOnTools) as [AddOnPart, readonly string[]][]).map(([part, tools]) => ({
     reason: `${addOnLabels[part]} is switched on`, tools, hideWhenOff: true, mode: (s: Reader, o: string) => addOnMode(s, o, part) })),
   // w911 (A0743, A1452) hook: reading whole web pages and following their links (src/web-pages.ts).
-  { reason: "reading and crawling web pages is switched on", tools: ["web.page", "web.crawl"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "web-pages") },
+  { reason: "reading and crawling web pages is switched on", tools: ["web.page", "web.crawl"], hideWhenOff: true, mode: (s, o) => savedMode(s, o, "web-pages", "mode", "when-needed", true) },
 ];
 
 /**

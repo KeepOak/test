@@ -7,7 +7,8 @@
    %TEMP%/claude-session-files/your-profile). Nothing launches a desktop window. */
 const { mkdirSync } = require("node:fs");
 const { join } = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
@@ -25,7 +26,7 @@ async function api(p, body) {
   return data;
 }
 const shot = (page, name) => page.screenshot({ path: join(SHOTS, `${name}.png`) });
-const greyedIn = (page, root) => page.locator(`${root} [data-act], ${root} input, ${root} select`).evaluateAll((nodes) =>
+const greyedIn = (page, root) => page.locator(`${root} [data-act], ${root} input, ${root} .gsel`).evaluateAll((nodes) =>
   nodes.filter((n) => n.getAttribute("aria-disabled") === "true" || n.classList.contains("soon") || n.disabled).map((n) => n.dataset.act || n.id || n.outerHTML.slice(0, 60)));
 
 async function signIn(browser) {
@@ -87,15 +88,15 @@ async function saves(page) {
   await shot(page, "04-emoji");
   await page.locator('#yp [data-act="yp-face"][data-v="photo"]').click();
   check("photo again: saved (GET /api/profiles)", await until(async () => (await api("profiles")).owner.avatar.face === "photo"));
-  await page.locator("#yp-tz").selectOption("Asia/Tokyo");
+  await pickGsel(page.locator("#yp-tz"), "Asia/Tokyo");
   check("time zone: saved (GET /api/profiles/owner/about)", await until(async () => (await api("profiles/owner/about")).timezone === "Asia/Tokyo"));
   const proposed = await api("schedules/propose", { edit: { prompt: "Water the plants", dailyAt: "08:00" } });
   check("time zone: schedules are proposed in it (POST /api/schedules/propose)", proposed.proposal.schedule.timezone === "Asia/Tokyo");
-  await page.locator("#yp-lang").selectOption("fr");
+  await pickGsel(page.locator("#yp-lang"), "fr");
   check("language: saved (GET /api/look language = fr)", await until(async () => (await api("look")).language === "fr"));
   check("language: Your profile is in French at once", await until(async () => (await page.locator(".dlg .dlg-h h2").innerText()) === "Votre profil"));
   await shot(page, "05-french");
-  await page.locator("#yp-lang").selectOption("en");
+  await pickGsel(page.locator("#yp-lang"), "en");
   check("language: back to English (GET /api/look)", await until(async () => (await api("look")).language === "en"));
 }
 
@@ -133,17 +134,7 @@ async function everywhere(page) {
   check("Team › People: Robin, with the photo", await until(async () => (await page.locator("#main .t9-item .photo-yp img").count()) >= 1 && /Robin/.test(await page.locator("#main .t9-list").innerText())));
   await page.waitForTimeout(700); // the place eases in
   await shot(page, "06-team-people");
-  await page.locator('[data-act="guide"]').first().click();
-  await page.locator('.pop [data-act="onboard"]').click();
-  await page.locator(".ob-agree").click();
-  await page.locator('[data-act="ob-go"][data-v="8"]').click();
-  check("setup's People step: asks the name, and has Robin", await until(async () => (await page.locator("#ob-name").inputValue()) === "Robin"));
-  await page.locator("#ob-name").fill("Robin Hood");
-  await page.locator("#ob-name").press("Enter");
-  check("setup's People step: a new name is saved (GET /api/profiles)", await until(async () => (await api("profiles")).owner.name === "Robin Hood"));
-  check("setup's People step: nothing greyed on the name field", !(await page.locator("#ob-name").isDisabled()));
-  await shot(page, "07-setup-people");
-  await page.locator('[data-act="ob-close"]').first().click();
+  // Pass 18c: setup no longer has a People step (it waits on Overview's Finish setting up, which opens Settings › People).
 }
 
 /* 5: a household person edits only their own profile. */
@@ -159,7 +150,7 @@ async function household(page, amara) {
   await until(async () => (await page.locator('#side [data-act="owner"] .who14 b').innerText()) === "Amara");
   await page.locator('#side [data-act="owner"]').click();
   check("as Amara: the owner's tile switches back, Amara's opens her profile",
-    /Robin Hood/.test(await page.locator('.pop [data-act="switchto"]').innerText()) && /Amara/.test(await page.locator('.pop [data-act="yp-open"]').innerText()));
+    /Robin/.test(await page.locator('.pop [data-act="switchto"]').innerText()) && /Amara/.test(await page.locator('.pop [data-act="yp-open"]').innerText()));
   await page.locator('.pop [data-act="yp-open"]').click();
   await page.locator("#yp").waitFor();
   check("as Amara: only her own name and picture (no language, time zone, App lock or accounts)",
@@ -173,7 +164,7 @@ async function household(page, amara) {
   await page.locator('#yp [data-act="yp-emoji"][data-v="🌻"]').click();
   const list = await until(async () => { const l = await api("profiles"); const me = l.profiles.find((p) => p.id === amara.id); return me.name === "Amara K" && me.avatar.emoji === "🌻" ? l : null; });
   check("as Amara: her name and emoji are saved (GET /api/profiles)", !!list);
-  check("as Amara: the owner's profile is untouched (GET /api/profiles owner)", list?.owner.name === "Robin Hood" && list?.owner.avatar.face === "photo");
+  check("as Amara: the owner's profile is untouched (GET /api/profiles owner)", list?.owner.name === "Robin" && list?.owner.avatar.face === "photo");
   const refused = await api("profiles/owner/about", { name: "Mallory" }).then(() => "", (e) => e.message);
   check("as Amara: the engine refuses her the owner's profile", /belongs to the owner/.test(refused), refused);
   await page.locator('.dlg [data-act="dlg-close"]').first().click();

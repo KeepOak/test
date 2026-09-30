@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { z } from "zod";
 import type { Provider } from "./contracts.js";
 import type { Store } from "./store.js";
@@ -9,6 +10,7 @@ import { effortFor } from "./knobs/apply.js"; // R17-S12
 import { thinkingLevels } from "./thinking-levels.js"; // phase2/accounts
 import { noModelPreset } from "./no-model.js";
 import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
+import { claudeSubscriptionModels } from "./providers/claude-models.js";
 import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // stress test B008, trunks-use-subscriptions
 import { startedWithShortLivedKey } from "./key-context.js";
 import { currentPerson } from "./people/context.js";
@@ -26,6 +28,8 @@ export interface ModelPreset {
   catalogId?: string;
   /** dogfood D22: how much context the model was loaded with, in tokens, when its connection reports it (src/model-context.ts). */
   contextWindow?: number;
+  /** Dogfood follow-up: the address the connection answers at, when it was built from one (src/model-context.ts `windowKey`). */
+  endpoint?: string;
 }
 export interface ModelChoice {
   presetId: string;
@@ -67,7 +71,22 @@ export const SessionModelSchema = z.object({
 }).strict();
 export type ModelSettings = z.infer<typeof ModelSettingsSchema>;
 /** A one-run choice, for example from the terminal's /model and /think commands. */
-export interface RunModelOverride { preset?: string | null; reasoning?: ReasoningEffort | null }
+export interface RunModelOverride {
+  preset?: string | null; reasoning?: ReasoningEffort | null;
+  /** The task must stay on this computer (src/local-routing.ts): only connections here are planned, never a fallback elsewhere. */
+  localOnly?: boolean;
+}
+const keptHere = new AsyncLocalStorage<true>();
+/**
+ * Marks the rest of the current task (and everything it starts from here on, tools included) as one that must stay on
+ * this computer, so every `plan` asked inside it, by the runtime or by a tool that picks its own model, plans only
+ * connections here.
+ */
+export function keepOnThisComputer(): void { keptHere.enterWith(true); }
+/** Whether the work in progress must stay on this computer. */
+export function keptOnThisComputer(): boolean { return keptHere.getStore() === true; }
+/** What a task that must stay here is told when no connection here can take it. */
+export const nothingHere = "This task has to stay on this computer, and no model on this computer can take it, so it was not sent anywhere else.";
 export type SessionModel = z.infer<typeof SessionModelSchema>;
 
 /** Which connection answers, and which others are tried after it if it fails. */
@@ -82,13 +101,14 @@ export interface CapabilityPlan extends ModelPlan {
 }
 
 /** mac5/providers: true for a saved connection whose service has ended the route it used. */
-function isRetiredConnection(preset: ModelPreset | undefined): boolean {
+export function isRetiredConnection(preset: ModelPreset | undefined): boolean {
   return (preset?.provider as { retired?: unknown } | undefined)?.retired === true;
 }
 
 /** A model's own display name where Branch has a catalogue of them (the ChatGPT route's list), or null for its id. */
 export function modelDisplayName(provider: string, model: string): string | null {
   if (provider === "chatgpt") return chatgptModels.find((one) => one.id === model)?.label ?? null;
+  if (provider === "claude-subscription") return claudeSubscriptionModels.find((one) => one.id === model)?.label ?? null;
   // QA Q071: a model on this computer is named as itself, not as the copy Branch sized for it.
   if (provider === "ollama" && unsizedModelName(model) !== model) return unsizedModelName(model);
   return null;
@@ -135,11 +155,17 @@ export class ModelRouter {
    * one that has several accounts answers through its pool; with that switch off it changes nothing.
    */
   presetHook: ((preset: ModelPreset) => ModelPreset) | null = null;
+  /** QA retest 2026-09-28 (T1): called each time a first model is set up where there was none. */
+  private readonly firstModelListeners: (() => void)[] = [];
+  onFirstModel(listener: () => void): void { this.firstModelListeners.push(listener); }
   /** Adds a preset at runtime, for example after a ChatGPT sign-in. Existing ids are replaced in place. */
   register(preset: ModelPreset): void {
     presetId.parse(preset.id);
     if (this.registry.size >= 32 && !this.registry.has(preset.id)) throw new Error("At most 32 model presets");
+    const first = this.registry.size === 0;
     this.registry.set(preset.id, this.presetHook ? this.presetHook(preset) : preset);
+    // Told after the registration returns, so a listener that starts work never runs inside whoever is setting up the model.
+    if (first) for (const listener of this.firstModelListeners) queueMicrotask(() => { try { listener(); } catch { /* never fails a registration */ } });
   }
   /** Removes exactly one preset by name. Removing the last one leaves no model set up, which is said plainly. */
   remove(id: string): boolean {
@@ -186,8 +212,21 @@ export class ModelRouter {
     this.store.save("settings", owner, `session-model:${sessionId}`, value);
     return value;
   }
-  /** Ordered candidates: the chosen preset first, then configured fallbacks that are not cooling down. */
+  /**
+   * Ordered candidates: the chosen preset first, then configured fallbacks that are not cooling down. A task that must
+   * stay on this computer (`localOnly`, or inside `keepOnThisComputer`) is planned on connections here only.
+   */
   plan(owner: string, sessionId: string, override: RunModelOverride = {}): ModelPlan {
+    const plan = this.planAll(owner, sessionId, override);
+    if (!override.localOnly && !keptOnThisComputer()) return plan;
+    const here = plan.candidates.filter(presetRunsLocally);
+    const first = here[0] ?? [...this.presets.values()].find(presetRunsLocally);
+    if (!first) throw new Error(nothingHere);
+    const candidates = here.length ? here : [first];
+    return candidates[0]!.id === plan.choice.presetId ? { ...plan, candidates }
+      : { choice: { ...this.describe(first, plan.choice.reasoning, plan.choice.source), fallbackReason: "This task stays on this computer" }, candidates };
+  }
+  private planAll(owner: string, sessionId: string, override: RunModelOverride): ModelPlan {
     if (override.preset && !this.presets.has(override.preset)) throw new Error(`Unknown model preset ${override.preset}`);
     const owned = this.settings(owner), scoped = this.session(owner, sessionId);
     const chosen = override.preset ?? scoped.preset;
@@ -275,6 +314,7 @@ export class ModelRouter {
   summary(owner: string) {
     const settings = this.settings(owner);
     // trunks-use-subscriptions: whoever is asking may put a Trunk on a sign-in only when it is the owner (Runtime.trunkSignIns).
+    // Only the window and its keys ask this; a chat's task is judged in Runtime.trunkSignIns (owner-dm-signin), never here.
     const ownerAsking = this.store.profiles.isOwner() && !currentPerson() && !startedWithShortLivedKey();
     return {
       ...settings,

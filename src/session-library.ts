@@ -6,7 +6,7 @@ import {
   ToolCallSchema, type AttachmentRef, type Message,
 } from "./contracts.js";
 import { attachmentLimits, kindOf } from "./attachments.js";
-import type { ConversationFiles } from "./sessions.js";
+import { bindFiles, copiedFiles, type ConversationFiles } from "./sessions.js";
 import { participation } from "./history.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { ensureMarks, inBinWords, notInBin, notPutAway } from "./conversation-actions.js";
@@ -181,28 +181,6 @@ const notEngineOnly = `AND NOT (EXISTS(SELECT 1 FROM tasks t WHERE t.session_id=
  */
 export const projectOf = "COALESCE((SELECT t.project FROM tasks t WHERE t.session_id=s.id ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1),'default')";
 
-/**
- * The files a conversation's messages name, one per file however many messages name it (copying per message wrote the
- * bytes again for every mention, and left all but the last pointing at a file nothing named). One id described two
- * different ways is refused: this cannot tell which description is true.
- */
-function filesNamed(messages: Message[]): AttachmentRef[] {
-  const once = new Map<string, AttachmentRef>();
-  for (const message of messages)
-    for (const ref of message.attachments ?? []) {
-      const first = once.get(ref.id);
-      if (first && (first.name !== ref.name || first.mediaType !== ref.mediaType || first.kind !== ref.kind || first.bytes !== ref.bytes))
-        throw new Error("This conversation describes one of its files in two different ways");
-      if (!first) once.set(ref.id, ref);
-    }
-  if (once.size > maximumArchiveFiles) throw new Error(`A conversation carries up to ${maximumArchiveFiles} files`);
-  return [...once.values()];
-}
-/** Each message naming the copy made for it, never an id the source chose. */
-const bindFiles = (messages: Message[], bound: Map<string, AttachmentRef>): Message[] => messages.map((message) => message.attachments?.length
-  ? { ...message, attachments: message.attachments.map((ref) => bound.get(ref.id)!) }
-  : message);
-
 export class SessionLibrary {
   constructor(private readonly db: DatabaseSync, private readonly files: () => ConversationFiles | null = () => null) {
     ensureMarks(db);
@@ -236,7 +214,10 @@ export class SessionLibrary {
         ORDER BY m.id DESC LIMIT 1) AS latest,
       (SELECT json_extract(m.body,'$.role') FROM messages m
         WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant')
-        ORDER BY m.id DESC LIMIT 1) AS latest_role
+        ORDER BY m.id DESC LIMIT 1) AS latest_role,
+      (SELECT m.created_at FROM messages m
+        WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant')
+        ORDER BY m.id DESC LIMIT 1) AS latest_at
       FROM sessions s LEFT JOIN conversation_marks c ON c.session_id=s.id
       WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notEngineOnly} ${notPutAway} ${project === undefined ? "" : `AND ${projectOf}=?`}
       ORDER BY c.pin_order IS NULL, c.pin_order, s.created_at DESC, s.id DESC LIMIT ?`).all(owner, ...hidden, ...(project === undefined ? [] : [project]), Math.min(Math.max(limit, 1), 100));
@@ -246,6 +227,8 @@ export class SessionLibrary {
         // Dogfood D23: a steer reads as the owner's own words here too, never the marker the model was given it in.
         opening: steerShown(String(row.opening ?? "")), lastMessage: steerShown(String(row.latest ?? "")),
         lastSpeaker: row.latest_role === null ? "" : String(row.latest_role),
+        // trunk-one-row: when its last message was written, so the window lists a Trunk by its newest message
+        ...(row.latest_at == null ? {} : { updatedAt: String(row.latest_at) }),
         ...(row.pin_order == null ? {} : { pinned: true }), ...(row.title ? { title: String(row.title) } : {}),
       })),
     };
@@ -293,7 +276,9 @@ export class SessionLibrary {
   }
   export(owner: string, input: string): Archive {
     const sessionId = z.string().uuid().parse(input);
-    const messages = this.wordsOf(owner, sessionId);
+    // Room setup is local routing context, not a conversation message or an imported instruction.
+    const messages = (this.wordsOf(owner, sessionId) as Message[]).filter((message) => message.role !== "system");
+    if (!messages.length) throw new Error("This conversation has no messages to export yet.");
     return parseConversationArchive({ format: "branch-agent-conversation", version: 1,
       exportedAt: new Date().toISOString(), messages, ...this.carried(sessionId, messages as Message[]) });
   }
@@ -423,15 +408,9 @@ export class SessionLibrary {
     // carries no times, so its messages are stamped when they land.
     const times = this.db.prepare("SELECT created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId)
       .map((row) => (row.created_at == null ? null : String(row.created_at)));
-    const wanted = filesNamed(archive.messages as Message[]), target = randomUUID(), imported = this.imported(sessionId);
-    const files = this.files();
-    if (wanted.length && !files) throw new Error("This conversation has files attached, and this copy cannot be given its own copy of them");
-    let made: AttachmentRef[] = [];
-    try { made = wanted.length ? await files!.prepareCopies(sessionId, target, wanted) : []; }
-    catch (error) { files?.discard(target); throw error; }
-    const bound = new Map(wanted.map((ref, at) => [ref.id, made[at]!] as const));
-    return this.copy(owner, archive, imported, sessionId, times,
-      { sessionId: target, bound, commit: () => { if (made.length) files!.commitPrepared(target, made); } });
+    const target = randomUUID(), imported = this.imported(sessionId);
+    const copied = await copiedFiles(archive.messages as Message[], sessionId, target, this.files(), maximumArchiveFiles);
+    return this.copy(owner, archive, imported, sessionId, times, { sessionId: target, messages: copied.messages, commit: copied.commit });
   }
   private requireIdleOwner(owner: string, sessionId: string) {
     const session = this.db.prepare("SELECT temporary FROM sessions WHERE id=? AND owner=?").get(sessionId, owner);
@@ -454,7 +433,7 @@ export class SessionLibrary {
     return bindFiles(messages, bound);
   }
   private copy(owner: string, archive: Archive, imported: boolean, source?: string, times: (string | null)[] = [],
-    prepared?: { sessionId: string; bound: Map<string, AttachmentRef>; commit: () => void }) {
+    prepared?: { sessionId: string; messages: Message[]; commit: () => void }) {
     const sessionId = prepared?.sessionId ?? randomUUID(), now = new Date().toISOString();
     // The bytes go on disk before the rows that point at them, because a row pointing at a file that
     // is not there is worse than a file nothing points at yet. That ordering is only safe if the
@@ -467,7 +446,7 @@ export class SessionLibrary {
       // itself. A duplicate takes them from the conversation it came from; an archive brings its
       // own, checked first. Either way the references are bound again here, so an id written by
       // somebody else never becomes a path.
-      (prepared ? bindFiles(archive.messages as Message[], prepared.bound) : this.withFiles(archive, sessionId))
+      (prepared ? prepared.messages : this.withFiles(archive, sessionId))
         .forEach((message, i) => insert.run(sessionId, JSON.stringify(message), times[i] ?? null));
       prepared?.commit();
       this.db.prepare("INSERT INTO session_origins VALUES(?,?,?,?)")

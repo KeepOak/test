@@ -12,6 +12,7 @@ import {
 } from "../dist/dashboard-api.js";
 import { forecast, restartPlan, scheduleStanding } from "../dist/dashboard-summary.js";
 import { launchdLabel } from "../dist/install/launchd.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 /* Wave mac3: the owner's control dashboard (src/dashboard-api.ts, public/dashboard/). */
 const PUBLIC = join(import.meta.dirname, "..", "public");
@@ -427,11 +428,12 @@ test("the dashboard's links open the right place in the new window", async (t) =
 });
 
 /* Parity B6: the switch lives where the engine's refusal says, Customize › Everywhere › Dashboard in the browser
-   (public/app/places/dashsw.js), so the window's own Pause all and Restart, which go through the dashboard, can be
-   reached; flipping it is read back through GET /api/dashboard/settings. */
+   (public/app/places/dashsw.js); flipping it is read back through GET /api/dashboard/settings. The window's own Pause
+   all and Restart no longer wait on it (batch E). */
 test("the switch lives in Customize › Everywhere, where the engine's refusal sends the owner", async (t) => {
   const f = await fixture(t);
-  const refused = await f.call("/api/dashboard/automations", f.server.token, { paused: true });
+  assert.equal((await f.call("/api/dashboard/settings", f.server.token, { mode: "off" })).status, 200);
+  const refused = await f.call("/api/dashboard");
   assert.equal(refused.status, 404);
   const words = (await refused.json()).error;
   assert.match(words, /Customize › Everywhere › Dashboard in the browser/);
@@ -449,12 +451,12 @@ test("the switch lives in Customize › Everywhere, where the engine's refusal s
   assert.equal(await box.isChecked(), false);
   assert.equal(await box.getAttribute("aria-disabled"), null, "the switch is live");
   await box.click();
-  await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "on", f.server.token, { timeout: 10000 });
+  await waitInPage(page, async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "on", f.server.token, { timeout: 10000 });
   assert.equal(dashboardSettings(f.app.store, f.owner).mode, "on");
   assert.equal((await f.call("/api/dashboard/automations", f.server.token, { paused: false })).status, 200, "Pause all goes through once it is on");
   await tile.getByRole("link", { name: "Open the dashboard" }).waitFor();
   await page.locator("#dash-b6").click();
-  await page.waitForFunction(async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "off", f.server.token, { timeout: 10000 });
+  await waitInPage(page, async (key) => (await (await fetch("/api/dashboard/settings", { headers: { authorization: `Bearer ${key}` } })).json()).mode === "off", f.server.token, { timeout: 10000 });
   assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
 });
 
@@ -473,4 +475,43 @@ test("under Lockdown the dashboard may be switched off and never on", async (t) 
   assert.equal(dashboardSettings(f.app.store, f.owner).mode, "off");
   assert.equal((await f.call("/api/lockdown", f.server.token, { on: false })).status, 200);
   assert.equal((await f.call("/api/dashboard/settings", f.server.token, { mode: "on" })).status, 200, "on again once Lockdown is off");
+});
+
+test("Automations › Pause all works with the dashboard off: the window's own key on this computer, never through a door", async (t) => {
+  const f = await fixture(t);
+  // Off on purpose (not left to how the dashboard ships), since this is about Pause all while it is off.
+  assert.equal((await f.call("/api/dashboard/settings", f.server.token, { mode: "off" })).status, 200);
+  schedule(f.app, "44444444-4444-4444-8444-444444444444", { status: "pending" });
+  assert.deepEqual(await (await f.call("/api/dashboard/automations")).json(), { paused: null });
+  const paused = await f.call("/api/dashboard/automations", f.server.token, { paused: true });
+  assert.equal(paused.status, 200);
+  assert.deepEqual((await paused.json()).paused.schedules, ["44444444-4444-4444-8444-444444444444"]);
+  assert.equal((await (await f.call("/api/dashboard/automations")).json()).paused.schedules.length, 1);
+  assert.equal((await f.call("/api/dashboard")).status, 404, "the dashboard's own summary stays off");
+  /* A door (a paired phone's address) is refused while the dashboard is off, even with the full key, both ways. */
+  const { markDoorRequest } = await import("../dist/remote/window-key.js");
+  const context = { dataDir: join(f.root, "data"), access: "full", readBody: async () => ({ paused: false }) };
+  for (const method of ["GET", "POST"]) {
+    const door = { method, headers: {} };
+    markDoorRequest(door);
+    await assert.rejects(dashboardApi(f.app, door, "/api/dashboard/automations", context), /app on this computer/, `a door's ${method} is refused while the dashboard is off`);
+  }
+  await assert.rejects(dashboardApi(f.app, { method: "POST", headers: {} }, "/api/dashboard/automations", { ...context, access: "run" }), /key of the computer/,
+    "only the key of this computer, even in the app here");
+  assert.equal(f.app.store.get("schedules", f.owner, "44444444-4444-4444-8444-444444444444").data.status, "paused");
+  const resumed = await f.call("/api/dashboard/automations", f.server.token, { paused: false });
+  assert.deepEqual((await resumed.json()).resumed, { schedules: 1, triggers: 0 });
+});
+
+test("Automations › Pause all works the same with the dashboard on", async (t) => {
+  const f = await fixture(t);
+  assert.equal((await f.call("/api/dashboard/settings", f.server.token, { mode: "on" })).status, 200);
+  schedule(f.app, "55555555-5555-4555-8555-555555555555", { status: "pending" });
+  const paused = await f.call("/api/dashboard/automations", f.server.token, { paused: true });
+  assert.equal(paused.status, 200);
+  assert.deepEqual((await (await f.call("/api/dashboard/automations")).json()).paused.schedules, ["55555555-5555-4555-8555-555555555555"]);
+  assert.equal((await (await f.call("/api/dashboard")).json()).paused.schedules.length, 1, "the dashboard's summary shows the same record");
+  assert.equal((await f.call("/api/dashboard/automations", f.server.token, { paused: "yes" })).status, 400);
+  const put = await fetch(f.server.url + "/api/dashboard/automations", { method: "PUT", headers: { authorization: `Bearer ${f.server.token}` } });
+  assert.equal(put.status, 405);
 });

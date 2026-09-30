@@ -4,7 +4,7 @@
 /* A phone paired in its browser adds its own secret to every request to this address (public/device-headers.js). */
 import { installDeviceHeaders } from "../device-headers.js";
 installDeviceHeaders();
-import { $, onRender, render, renderNow, paint, applyCss, pressIn } from "./core/dom.js";
+import { $, onRender, render, renderNow, paint, applyCss, pressIn, keepDetails } from "./core/dom.js";
 import { S, E, loadSaved, refresh, activeId } from "./core/state.js";
 import { api, stream, link } from "./core/api.js";
 import { listen, on } from "./core/actions.js";
@@ -18,8 +18,11 @@ import { openConversation, rereadOpen } from "./chat/chat.js";
 import { forgetChips } from "./chat/chips.js";
 import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
+import { leaveSettings } from "./settings/settings.js";
 import { splash, splashDone } from "./shell/inperson.js";
+import { initNotices } from "./shell/notices.js";
 import { initLanguage, t } from "../i18n.js";
+import { initLive, restoreOpen } from "./shell/liveupdate.js"; // hot-update: live window updates keep what is open
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -66,6 +69,7 @@ function drawParts(main, html) {
   }
   const nodes = old.map((node, i) => {
     if (parts[i] === drawn.parts[i] && !drawn.touched.has(node)) return node;
+    if (node.nodeType === 1 && fresh[i].nodeType === 1) keepDetails(node, fresh[i]);
     node.replaceWith(fresh[i]);
     if (fresh[i].nodeType === 1) applyCss(fresh[i]);
     return fresh[i];
@@ -168,22 +172,26 @@ async function boot() {
   listen();
   listenTips();
   initShell();
+  initNotices(); // UI-202: what the window saw that earns an achievement (shell/notices.js)
   initLock();
   onRender(drawShell);
   onRender(drawMain);
   onRender(drawWidth);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") escape(); });
+  initLive();
   splash();
   await connect();
   splashDone();
 }
 
-/* Escape, as the prototype's: the popover, else the dialog, else Focus mode; and the phone's list closes. */
+/* Escape, as the prototype's: the popover, else the dialog, else Focus mode, else Settings back to where the person was;
+   and the phone's list closes. */
 function escape() {
   const app = $("#app");
   if (document.querySelector(".pop")) closePop({ refocus: true });
   else if (dialog()) closeDlg();
   else if (app?.classList.contains("focus")) { app.classList.remove("focus"); renderNow(); }
+  else if (S.view === "settings") leaveSettings();
   app?.classList.remove("side-open");
 }
 
@@ -220,6 +228,7 @@ async function connect(refusal = "") {
   }, (end) => { if (end?.reason === "profile") askNow(); });
   followLink();
   addEventListener("hashchange", () => followLink());
+  await restoreOpen(openConversation);
 }
 
 /* The engine's state read again, and the open conversation with it when something happened there (or always, `all`).
@@ -267,11 +276,24 @@ function caughtUp() {
    key is asked again ever more slowly, since every refused request counts against signing in (five in fifteen minutes
    shut this computer out for five): a 401 up to once every sixteen minutes, a 429 up to once every five, so a stale tab
    never keeps the door shut for the computer's other keys. The asking never stops. Answers the way to ask at once. */
+let leaving = false; // this page is on its way to another address (see watchPerson's restart)
+addEventListener("beforeunload", () => { leaving = true; });
+
 function watchPerson() {
   let known = E.profiles ? activeId() : undefined, stopped = false, timer = null, refused = 0, cap = 0;
   const wait = () => (refused ? Math.min(cap, 2000 * 2 ** refused) : document.hidden ? 10000 : 2000);
   const again = () => { clearTimeout(timer); if (!stopped) timer = setTimeout(ask, wait()); };
-  const restart = () => { stopped = true; clearTimeout(timer); location.reload(); };
+  /* A page already on its way to another address (following a link to a conversation, say) is not restarted over it: the
+     reload would cancel that navigation and land back on this page's own address, the link already taken off it, so the
+     person would stand on a new conversation instead of the one they followed. The page that loads next reads the person
+     itself. A navigation that never replaces this page (a download) lets the restart happen a few seconds later, so a
+     window is never left showing the person from before the switch. */
+  const restart = () => {
+    stopped = true;
+    clearTimeout(timer);
+    if (leaving) setTimeout(() => location.reload(), 5000);
+    else location.reload();
+  };
   async function ask() {
     clearTimeout(timer);
     if (stopped) return;

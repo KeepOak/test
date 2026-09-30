@@ -7,23 +7,27 @@ import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
-import { A, allAccounts, loadAccounts, ownerOnly, poolById } from "../../flows/account.js";
+import { A, allAccounts, loadAccounts, ownerOnly, accountDetail } from "../../flows/account.js";
 import { accounts17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
+import { moreSections, loadMore, initMore } from "../more18.js"; // Finish setting up's "Two more things": email and calendar, a backup
 
 /* Which accounts are ticked while "Select several" is on (window state), by pool and id; null when it is off. */
 let picked = null;
 const key = (a) => `${a.pool}/${a.id}`;
 
-export function load() { return loadAccounts(); }
+export function load() { loadMore(); return loadAccounts(); }
 
+/* QA retest 2026-09-28 (m8): "used next" is said of the account the next answer comes from: the first of the list of
+   the model that answers now (GET /api/accounts pools[].answering), or that model itself when it is on this computer. A
+   list whose model is not the one answering keeps its order without the pill. */
 function row(a, i, list) {
   const ids = `data-pool="${esc(a.pool)}" data-id="${esc(a.id)}"`;
   const tick = picked ? `<input type="checkbox" class="chk15" data-sw="acc15" data-acc15="${esc(key(a))}" ${picked.includes(key(a)) ? "checked" : ""} aria-label="${t("window.settings.accounts.select-label", { label: esc(a.label) })}">` : "";
   const top = i === 0 || list[i - 1].pool !== a.pool;
   /* A paused account (Pause below: { disabled: true }) says so and has Resume, the same route with { disabled: false }. */
   const paused = a.disabled ? `<span class="pill idle">${t("dashboard.standing.paused")}</span><button class="btn ghost sm" type="button" data-act="acct-resume" ${ids} ${ownerOnly()}>${t("autonomy.resume")}</button>` : "";
-  return `<div class="prow">${tick}${logo(a.pool, a.poolName, 32)}<span class="grow"><b>${esc(a.label)}</b><small>${esc(a.poolName)}</small></span>${a.first && !a.disabled ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}${paused}`
+  return `<div class="prow">${tick}${logo(a.pool, a.poolName, 32)}<span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, a.poolName))}</small></span>${a.first && a.answering && !a.disabled ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}${paused}`
     + `<button class="icon-btn" type="button" aria-label="${t("accounts.action.up")}" data-act="acct-up" ${ids} ${top ? "disabled" : ownerOnly()} data-css="width:28px;height:28px">${ic("up", "s")}</button>`
     + `<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" ${ids} data-css="width:28px;height:28px">${ic("more", "s")}</button></div>`;
 }
@@ -31,10 +35,10 @@ function row(a, i, list) {
 /* A model on this computer answers like an account and needs no sign-in (GET /api/state models.presets, local): listed
    after the accounts with "On this computer", without Move up or the account menu, which are an account's. */
 const localPresets = () => (E.state?.models?.presets ?? []).filter((p) => p.local);
-const localRow = (p) => `<div class="prow">${logo(p.provider, p.name, 32)}<span class="grow"><b>${esc(p.name)}</b><small>${t("glance.local")}</small></span></div>`;
+const localRow = (p) => `<div class="prow">${logo(p.provider, p.name, 32)}<span class="grow"><b>${esc(p.name)}</b><small>${t("glance.local")}</small></span>${E.state?.activeModel?.presetId === p.id ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>`;
 /* Whether an account can answer now: a sign-in only while it is signed in (GET /api/accounts pools[].signedIn); a key or a
    program's account is counted as the engine lists it. */
-const answers = (a) => poolById(a.pool)?.signedIn?.[a.id] !== false;
+const answers = (a) => a.ready === true;
 
 function bulkBar() {
   if (!picked) return "";
@@ -62,14 +66,18 @@ export function draw() {
   html += `<div class="sec"><h2>keepoak.com</h2><div class="ko-card"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>${t("window.settings.accounts.your-keepoak-com-account")}</b><small>${t("window.settings.accounts.have-a-keepoak-computer-or-a")}</small></span><span class="pill idle" title="${t("window.settings.accounts.branch-does-not-link-to-keepoak")}">${t("window.settings.accounts.proposal")}</span></div>`
     + `<ul class="may6"><li>${ic("check", "s")}${t("window.settings.accounts.your-keepoak-computer-joins-the-computer")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-theme-saved-colours-and-season")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-team-workspace-members-shared-trunks")}</li><li>${ic("check", "s")}${t("window.settings.accounts.conversations-memory-and-keys-stay-on")}</li></ul>`
     + `<div class="acts"><button class="btn pri" type="button" data-act="ko-start">${t("window.settings.accounts.connect-your-keepoak-com-account")}</button></div></div>`;
-  return html + accounts17(lev);
+  return html + accounts17(lev) + moreSections();
 }
 
 /* When one runs out, both the engine's own settings. The design's line under "Move to the next account" ("only between
    accounts you own…") is left out: the engine does the opposite for sign-ins (it never moves work between the owner's
-   own plans, only to an account kept separate; src/accounts/pool.ts rotationSet).
-   Move to the next account stays greyed with the engine's reason (window.why.ac-next, #460): API keys already move on by
-   themselves, and a sign-in never moves work between the owner's own plans.
+   own plans; that rule was replaced on 2026-09-27 by the account pools below).
+   Move to the next account (owner decision 2026-09-27, Hermes Agent's credential pools): each list's own switch
+   (GET /api/accounts pools[].autoSwitch; POST /api/accounts/pool { pool, autoSwitch } for every list), on while every
+   list is; with no connection holding two accounts it has nothing to move between, so it is greyed with that reason
+   (window.why.ac-next). How the next one is picked is each list's strategy, set for all of them (POST /api/accounts/pool
+   { pool, strategy }): fill first ("priority"), round robin, least used. The note under them is the owner's plain words
+   on what switching means.
    Fall back to this computer: the models on this computer in the fallback order (GET /api/state models.fallbackOrder;
    POST /api/models { fallbackOrder }); an account out of credit or at its plan limit then carries on there (src/runtime.ts
    fallBack). With no model on this computer: greyed with that reason (window.why.ac-fall). It ships off: a local model
@@ -78,11 +86,20 @@ const localIds = () => (E.state?.models?.presets ?? []).filter((p) => p.local).m
 const fallOn = () => (E.state?.models?.fallbackOrder ?? []).some((id) => localIds().includes(id));
 function whenOneRunsOut() {
   const box = (id, label, on, why) => `<input class="sw" type="checkbox" ${why ? `data-why="${why}"` : `id="${id}" data-sw="set"`} ${ownerOnly()} ${on ? "checked" : ""} aria-label="${label}">`;
+  const several = (A.view?.pools ?? []).filter((p) => p.accounts.length > 1);
   const next = t("window.settings.accounts.move-to-the-next-account-in"), fall = t("window.settings.accounts.fall-back-to-this-computer");
   return `<div class="sec"><h2>${t("window.settings.accounts.when-one-runs-out")}</h2>`
-    + `<div class="ctl"><b>${next}</b><input class="sw" type="checkbox" id="ac-next" aria-label="${next}" data-sw="set"><small></small></div>`
+    + `<div class="ctl"><b>${next}</b>${box("ac-next", next, several.length > 0 && several.every((p) => p.autoSwitch), several.length ? "" : "ac-next")}<small></small></div>`
+    + (several.length ? `<div class="ctl"><b>${t("window.settings.accounts.strategy")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.accounts.strategy")}">${STRATEGIES.map(([v, k]) => `<button type="button" data-act="ac-strategy" data-v="${v}" aria-pressed="${several.every((p) => p.strategy === v)}" ${ownerOnly()}>${t(k)}</button>`).join("")}</span></span><small>${t("window.settings.accounts.strategy-hint")}</small></div>` : "")
+    + `<p class="hint">${t("window.settings.accounts.switch-note")}</p>`
     + `<div class="ctl"><b>${fall}</b>${box("ac-fall", fall, fallOn(), localIds().length ? "" : "ac-fall")}<small>${t("window.settings.accounts.keeps-working-on-the-local-model")}</small></div></div>`;
 }
+const STRATEGIES = [["priority", "window.settings.accounts.fill-first"], ["round-robin", "window.settings.accounts.round-robin"], ["least-used", "window.settings.accounts.least-used"]];
+async function setPools(values) {
+  try { for (const p of A.view?.pools ?? []) await api("accounts/pool", { pool: p.pool, ...values }); } catch (error) { toast(error.message); }
+  await loadAccounts();
+}
+
 async function setFall(on) {
   const kept = (E.state?.models?.fallbackOrder ?? []).filter((id) => !localIds().includes(id));
   try { await api("models", { fallbackOrder: on ? [...kept, ...localIds()] : kept }); await refresh(); } catch (error) { toast(error.message); }
@@ -132,18 +149,21 @@ async function toTop(chosen) {
 
 export function init() {
   load();
+  initMore();
   on("acct-up", (el) => moveUp(el));
   on("acct-resume", (el) => resume(el));
+  on("ac-strategy", (el) => setPools({ strategy: el.dataset.v }));
   on("acsel15", () => { picked = picked ? null : []; renderNow(); });
   on("acbulk15", (el) => bulk(el.dataset.v));
   document.addEventListener("change", (e) => {
     if (e.target.id === "ac-fall") return void setFall(e.target.checked);
+    if (e.target.id === "ac-next") return void setPools({ autoSwitch: e.target.checked });
     const k = e.target.dataset?.acc15;
     if (k == null || !picked) return;
     picked = e.target.checked ? [...new Set([...picked, k])] : picked.filter((x) => x !== k);
     renderNow();
   });
-  markLive(["acct-up", "acct-resume", "acsel15", "acbulk15", "sw:acc15", "sw:ac-fall"]);
+  markLive(["acct-up", "acct-resume", "acsel15", "acbulk15", "sw:acc15", "sw:ac-fall", "sw:ac-next", "ac-strategy"]);
 }
 
-export const live = { "acct-up": true, "acct-resume": true, "acsel15": true, "acbulk15": true, "sw:ac-fall": true };
+export const live = { "acct-up": true, "acct-resume": true, "acsel15": true, "acbulk15": true, "sw:ac-fall": true, "sw:ac-next": true, "ac-strategy": true };

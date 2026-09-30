@@ -642,7 +642,7 @@ test("Q109: a push from Branch's source sends exactly the commit the guard walke
   git(source, "init", "-q", "-b", "main");
   git(source, "commit", "-q", "--allow-empty", "-m", "source");
   const base = git(source, "rev-parse", "HEAD");
-  git(source, "worktree", "add", "-q", "-b", "self-x", join(workspace, folder));
+  git(source, "worktree", "add", "-q", "-b", "branch/self-x", join(workspace, folder));
   const worktree = join(workspace, folder);
   git(worktree, "commit", "-q", "--allow-empty", "-m", "the work");
   const walked = git(worktree, "rev-parse", "HEAD");
@@ -650,7 +650,8 @@ test("Q109: a push from Branch's source sends exactly the commit the guard walke
   git(source, "config", "--local", "http.proxy", "http://127.0.0.1:9"); // nothing leaves this computer
   git(source, "remote", "add", "origin", "https://github.com/o/r.git");
   new ContractBook(app.store.sqlite).create(app.runtime.owner, { taskRunId: "run-1", sourceSha: base, worktreePath: folder, terms: {
-    allowedPaths: ["**"], permissions: ["git.push", "github.publish_repo"], expectedTests: ["t"], definitionOfDone: "d", sideEffects: [], rollbackPlan: "r" } });
+    allowedPaths: ["**"], permissions: ["git.push", "github.publish_repo"], expectedTests: ["t"], definitionOfDone: "d", sideEffects: [], rollbackPlan: "r" },
+    sendRepositories: ["o/r"] });
   const { registerGitRemote, registerGitHubProject } = await import("../dist/integrations/git-tools.js");
   registerGitRemote(app.registry, app.git);
   // Publishing is a push too: the repository it makes is a double, and the dead proxy refuses its send as well.
@@ -667,16 +668,16 @@ test("Q109: a push from Branch's source sends exactly the commit the guard walke
   const context = app.runtime.context({ runId: run.id, source: "owner" });
   const moves = [() => git(worktree, "reset", "-q", "--hard", orphan), () => git(worktree, "switch", "-q", "-C", "moved", orphan)];
   // No branch, the branch by name, and HEAD (resolved by the guard, never re-read by the tool), for both ways of sending.
+  // selfdev: publishing Branch's own source is refused outright, and a push sends only a branch/… line.
   const calls = [
-    ["git.push", { folder, remote: "origin" }], ["git.push", { folder, remote: "origin", branch: "self-x" }], ["git.push", { folder, remote: "origin", branch: "HEAD" }],
-    ["github.publish_repo", { folder, name: "demo" }], ["github.publish_repo", { folder, name: "demo", branch: "HEAD" }],
+    ["git.push", { folder, remote: "origin" }], ["git.push", { folder, remote: "origin", branch: "branch/self-x" }], ["git.push", { folder, remote: "origin", branch: "HEAD" }],
   ];
   for (const [tool, args] of calls)
     for (const next of moves) {
-      git(worktree, "switch", "-q", "self-x");
+      git(worktree, "switch", "-q", "branch/self-x");
       git(worktree, "reset", "-q", "--hard", walked);
       move = next;
       await app.registry.execute(tool, args, context).catch(() => undefined); // the dead proxy refuses the send
     }
-  assert.deepEqual(pushed, Array(10).fill(`${walked}:refs/heads/self-x`), "the walked commit, to the walked branch");
+  assert.deepEqual(pushed, Array(6).fill(`${walked}:refs/heads/branch/self-x`), "the walked commit, to the walked branch");
 });

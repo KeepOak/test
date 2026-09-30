@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 import type { Store } from "../store.js";
 import { isSecretEntry } from "../files.js";
 
@@ -25,9 +26,10 @@ export const shortcutDefaults = {
   sidePane: "Ctrl+Shift+K",
   sideList: "Ctrl+B",
   newTrunk: "",
-  focusPrompt: "",
+  /** UI-106: the message box, and the list's own search (Telegram-style), each one key away. */
+  focusPrompt: "Ctrl+L",
   stopTask: "Ctrl+Shift+S",
-  searchHistory: "",
+  searchHistory: "Ctrl+Shift+F",
   lookInside: "",
   /** Pass 17: the small ask box from any app. The desktop app registers it system-wide; ⌥ Space on a Mac. */
   quickAsk: "Ctrl+Shift+Space",
@@ -36,6 +38,9 @@ export const shortcutDefaults = {
   talkLive: "Ctrl+Shift+V",
   openInbox: "Ctrl+I",
   nextConversation: "Ctrl+Tab",
+  /** UI-106: the conversation before the one open, and "Who is using Branch" (the person menu). */
+  previousConversation: "Ctrl+Shift+Tab",
+  switchPerson: "",
 } as const;
 export type ShortcutAction = keyof typeof shortcutDefaults;
 export const shortcutActions = Object.keys(shortcutDefaults) as ShortcutAction[];
@@ -72,6 +77,8 @@ export const ComfortKeysSchema = z.preprocess(defaultsGiveWay, z.object({
   talkLive: keyCombo.default(shortcutDefaults.talkLive),
   openInbox: keyCombo.default(shortcutDefaults.openInbox),
   nextConversation: keyCombo.default(shortcutDefaults.nextConversation),
+  previousConversation: keyCombo.default(shortcutDefaults.previousConversation),
+  switchPerson: keyCombo.default(shortcutDefaults.switchPerson),
   /** Esc leaves typing for moving (h j k l, w b, 0 $, x, dd, i a o), as in vim. */
   vim: z.boolean().default(false),
 }).strict().superRefine((value, context) => {
@@ -87,6 +94,8 @@ export const ComfortDisplaySchema = z.object({
   statusLine: z.array(z.enum(statusItems)).max(statusItems.length).nullable().default(null),
   /** Show when each message was written. */
   timestamps: z.boolean().default(false),
+  /** wire-greyed: message times Never: no time on a message, not even on hover. Only counts while timestamps is off. */
+  hideTimes: z.boolean().default(false),
 }).strict();
 
 /** R17-S17: how Branch gets your attention, and whether it updates itself. */
@@ -95,7 +104,14 @@ export const ComfortNotifySchema = z.object({
   method: z.enum(["system", "window"]).default("system"),
   /** A short sound when Branch needs you. */
   sound: z.enum(["off", "chime", "knock"]).default("off"),
-  /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. */
+  /**
+   * wire-greyed: tell the owner when a Trunk waits for their yes, and when a task that ran two minutes or longer finishes.
+   * Both are told in the window (and by the computer when `method` is "system"); nothing is sent anywhere else. On by
+   * default under the ship-on rule: none of (a)–(f).
+   */
+  needsYes: z.boolean().default(true),
+  taskDone: z.boolean().default(true),
+  /** off: manual only; check: daily for Stable, every minute for Beta; install: also install when idle. Read through `readComfort`, which ships "install". */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
   /**
    * Stable (the default) installs published releases; Beta builds every merged change on this computer. Dev was
@@ -174,17 +190,36 @@ const keyOf = (card: ComfortCard): string => `comfort-${card}`;
 type Reader = Pick<Store, "get">;
 
 /** One card's settings, with today's behaviour for anything never saved or saved wrongly. */
+/**
+ * The owner's rule (ships on, 2026-09-26): a short chime when Branch needs you is sound out only; none of (a)–(f).
+ * Updating by itself installs when nothing is working (the owner's standing rule: updates work with zero clicks, for
+ * everyone). It only fetches Branch's own releases, sends nothing of the owner's and publishes nothing, so it is not (b).
+ */
+export const comfortShipsOn: Partial<Record<ComfortCard, Record<string, unknown>>> = { notify: { sound: "chime", autoUpdate: "install" } };
+
+/**
+ * What a saved card ships as. Installing by itself ships on for Beta too (the owner's standing rule: they never press
+ * Update, and Beta is how each merged fix reaches them). An "off" the owner chose is kept (ship-on.ts chosenFields).
+ */
+function shipsFor(card: ComfortCard): Record<string, unknown> | undefined {
+  return comfortShipsOn[card];
+}
+
 export function readComfort<K extends ComfortCard>(store: Reader, owner: string, card: K): ComfortValues[K] {
   const schema = comfortCards[card] as unknown as z.ZodType<ComfortValues[K]>;
   const saved = schema.safeParse(store.get("settings", owner, keyOf(card))?.data ?? {});
-  return saved.success ? saved.data : schema.parse({});
+  if (!saved.success) return schema.parse({});
+  const ships = shipsFor(card);
+  return ships ? shippedUnlessChosen(store, owner, keyOf(card), saved.data as Record<string, unknown>, ships) as ComfortValues[K] : saved.data;
 }
 
 /** Saves one card; fields left out keep what was there. Returns what is now in force. */
 export function saveComfort<K extends ComfortCard>(store: Store, owner: string, card: K, input: unknown): ComfortValues[K] {
   const schema = comfortCards[card] as unknown as z.ZodType<ComfortValues[K]>;
+  const before = store.get("settings", owner, keyOf(card))?.data;
   const next = schema.parse({ ...readComfort(store, owner, card), ...(input && typeof input === "object" ? input : {}) });
   store.save("settings", owner, keyOf(card), next as Record<string, unknown>);
+  markChosen(store, owner, keyOf(card), savedFields(before, schema.safeParse(before ?? {}).success, input, comfortShipsOn[card] ?? {}));
   return next;
 }
 
@@ -196,4 +231,5 @@ export function allComfort(store: Reader, owner: string): ComfortValues {
 /** Puts one card back to how Branch ships. */
 export function resetComfort(store: Store, owner: string, card: ComfortCard): void {
   store.save("settings", owner, keyOf(card), {});
+  forgetChosen(store, owner, keyOf(card));
 }

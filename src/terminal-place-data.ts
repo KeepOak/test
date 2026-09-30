@@ -1,5 +1,6 @@
 import type { createBranch } from "./index.js";
 import { readPolicy, policyPresets } from "./policy.js";
+import { presetWords } from "./terminal-commands.js";
 import { lockdownState } from "./lockdown.js";
 import { assistantIdentity } from "./identity.js";
 import { trunksFor } from "./trunks/index.js";
@@ -293,10 +294,12 @@ export function needsCount(app: PlaceApp): number {
 export const lockdownOn = (app: PlaceApp): boolean => lockdownState(app.store, app.runtime.owner).on;
 export const assistantName = (app: PlaceApp): string =>
   clip(assistantIdentity(app.store, app.runtime.owner).name || "Branch", 24);
-export function permissionRows(app: PlaceApp): Row[] {
+/** CL-05d/f: each preset by its name and what it does in the language in force, as Settings › Permissions says them. */
+export function permissionRows(app: PlaceApp, words?: Words): Row[] {
   const current = readPolicy(app.store, app.runtime.owner).preset;
-  return policyPresets().map((preset) => ({
-    title: `${preset.id === current ? "● " : ""}${preset.label}`, detail: clip(preset.description, 120),
-    tone: preset.id === current ? "ok" as const : undefined, command: `/preset ${preset.id}`,
-  }));
+  return policyPresets().map((preset) => {
+    const said = presetWords(preset, words);
+    return { title: `${preset.id === current ? "● " : ""}${said.label}`, detail: clip(said.description, 120),
+      tone: preset.id === current ? "ok" as const : undefined, command: `/preset ${preset.id}` };
+  });
 }

@@ -18,7 +18,7 @@ const { mkdtempSync, writeFileSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join, resolve } = require("node:path");
 const { pathToFileURL } = require("node:url");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = Number(process.env.PORT ?? 3391), STUB_PORT = Number(process.env.STUB_PORT ?? 33910);
 if (PORT === 3210 || PORT === 3299) { console.error("Never the owner's port."); process.exit(2); }

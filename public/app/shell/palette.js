@@ -1,5 +1,5 @@
 /* Ctrl K, 1:1 with the prototype's palette: one box that finds an action, a conversation (the engine's list), a place
-   or a settings page, moved through with the arrows and opened with Enter. Only actions this window answers to are
+   a settings page or any row on one (settings/find.js), moved through with the arrows and opened with Enter. Only actions this window answers to are
    offered. Dogfood D13: it also finds words inside conversations (a reply's too) and Library documents by name or words,
    from the engine's own search (GET /api/search, asked once typing pauses): a message opens its conversation with the
    words found, a document opens to read (places/docread.js). */
@@ -10,12 +10,12 @@ import { setLockdown } from "../chat/approvals.js";
 import { on, run, has } from "../core/actions.js";
 import { markLive, isLive } from "../core/features.js";
 import { app, ic, closePop, closeDlg, toast } from "../core/ui.js";
-import { openConversation, startConversation } from "../chat/chat.js";
+import { openConversation, startFresh } from "../chat/chat.js";
 import { api } from "../core/api.js";
 import { FIND } from "../chat/find.js";
 import { plain } from "../chat/markdown.js";
 import { openDocument } from "../places/docread.js";
-import { NAV } from "../settings/settings.js";
+import { NAV, findSettings, openSetting } from "../settings/settings.js";
 import { pressed, binding, spoken } from "./keys.js";
 import { PLACES } from "./shell.js"; // every place the sidebar lists, Team included
 import { t } from "../../i18n.js";
@@ -74,7 +74,7 @@ function askEngine(value) {
 
 function all(searching, q = "") {
   const [messages, docs] = engineHits(q);
-  const actions = [go(t("comfort.field.newConversation"), spoken(binding("newConversation")), "chat", () => startConversation()),
+  const actions = [go(t("comfort.field.newConversation"), spoken(binding("newConversation")), "chat", () => startFresh()),
     ...(has("new-trunk") && isLive("new-trunk") ? [go(t("studio.newName"), "", "plus", () => run("new-trunk"))] : []), ...lockdownOn(),
     ...ACTIONS.filter(([, , , a]) => has(a) && isLive(a)).map(([l, sub, i, a]) => go(say(l), sub, i, () => run(a)))];
   return [
@@ -83,7 +83,9 @@ function all(searching, q = "") {
     [t("window.shell.search.messages"), messages],
     [t("nav.documents"), docs],
     [t("ew.places"), PLACES.map(([v, i, l]) => go(say(l), t("window.shell.palette.place"), i, () => { S.view = v; renderNow(); }))],
-    [t("memory.movein.kind.setting"), NAV.flatMap((g) => g[1]).map(([id, l]) => go(say(l), t("memory.movein.kind.setting"), "gear", () => openPage(id)))],
+    [t("memory.movein.kind.setting"), [...NAV.flatMap((g) => g[1]).map(([id, l]) => go(say(l), t("memory.movein.kind.setting"), "gear", () => openPage(id))),
+      /* Every settings row too (settings/find.js), the owner's only: a row opens its page and is marked there. */
+      ...findSettings(q, 8).map((row) => ({ ...go(row.title, [row.pageName, row.card].filter(Boolean).join(" › "), "gear", () => openSetting(row)), found: true }))]],
   ];
 }
 
@@ -112,7 +114,7 @@ export function openPalette() {
   closePalette();
   P.sel = 0;
   P.el = Object.assign(document.createElement("div"), { className: "scrim top" });
-  P.el.innerHTML = `<div class="palette" role="dialog" aria-label="${t("comfort.field.palette")}"><div class="pin-in">${ic("search")}<input id="pal-in" placeholder="${t("window.shell.palette.find-a-trunk-a-conversation-a")}" aria-label="${t("comfort.field.palette")}" autocomplete="off"></div><div class="pal-list" id="pal-list" role="listbox"></div><div class="pal-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> ${t("window.shell.palette.move")}</span><span><kbd>Enter</kbd> ${t("window.shell.palette.open")}</span><span><kbd>Esc</kbd> ${t("window.shell.palette.close")}</span></div></div>`;
+  P.el.innerHTML = `<div class="palette" role="dialog" aria-label="${t("comfort.field.palette")}"><div class="pin-in">${ic("search")}<input id="pal-in" placeholder="${t("window.shell.palette.find-a-trunk-a-conversation-a")}" aria-label="${t("comfort.field.palette")}" autocomplete="off"></div><div class="pal-list" id="pal-list" role="listbox" aria-label="${t("comfort.field.palette")}"></div><div class="pal-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> ${t("window.shell.palette.move")}</span><span><kbd>Enter</kbd> ${t("window.shell.palette.open")}</span><span><kbd>Esc</kbd> ${t("window.shell.palette.close")}</span></div></div>`;
   app().appendChild(P.el);
   paint("");
   $("#pal-in").focus();

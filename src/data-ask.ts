@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { queryTables, type Cell, type DataColumn } from "./data-table.js";
+import { queryTables, tableFrom, type Cell, type DataColumn } from "./data-table.js";
 import { nameFor, type DataTables } from "./data-tools.js";
 import type { DocumentMetadata } from "./documents.js";
 
@@ -26,14 +26,17 @@ export interface DataAnswer {
 }
 
 export async function askSpreadsheet(
-  deps: { documents: DocumentMetadata[]; tables: Pick<DataTables, "fromWorkspace"> }, input: unknown,
+  deps: { documents: DocumentMetadata[]; tables: Pick<DataTables, "fromWorkspace">;
+    uploadedBytes?: (id: string) => Buffer | null }, input: unknown,
 ): Promise<DataAnswer> {
   const wanted = DataAskSchema.parse(input);
   const doc = deps.documents.find((one) => one.id === wanted.document);
   if (!doc) throw new Error("There is no document with that id in your library.");
-  if (!doc.filePath) throw new Error(`"${doc.name}" was pasted or uploaded, so there is no file to open. Add it from a file in your workspace to ask it questions.`);
-  if (!askableFile.test(doc.filePath)) throw new Error(`"${doc.name}" is not a spreadsheet. CSV, TSV, JSON and Excel files can be asked questions.`);
-  const table = await deps.tables.fromWorkspace(doc.filePath, nameFor(doc.filePath));
+  const bytes = !doc.filePath ? deps.uploadedBytes?.(doc.id) : null;
+  if (!doc.filePath && !bytes) throw new Error(`"${doc.name}" has no original file to open. Import the spreadsheet to ask it questions.`);
+  const source = doc.filePath ?? doc.name;
+  if (!askableFile.test(source)) throw new Error(`"${doc.name}" is not a spreadsheet. CSV, TSV, JSON and Excel files can be asked questions.`);
+  const table = bytes ? tableFrom(nameFor(source), source, bytes) : await deps.tables.fromWorkspace(source, nameFor(source));
   const answer = queryTables([table], wanted.sql, wanted.limit);
   return { document: doc.id, table: table.name, types: table.columns, ...answer };
 }

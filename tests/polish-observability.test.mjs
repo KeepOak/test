@@ -15,6 +15,7 @@ import { chromium } from "playwright";
 import { createBranch, modelsUrl, probeProvider, googleRefusedSignIn } from "../dist/index.js";
 import { GeminiProvider } from "../dist/providers/gemini.js";
 import { startServer } from "../dist/server.js";
+import { saveRecordingSettings } from "../dist/run-recording.js";
 
 /** A workspace and a server, cleaned up when the test ends. */
 export async function served(t, provider) {
@@ -213,7 +214,9 @@ test("G2 a paused task asks in Telegram with buttons, and a pressed button answe
   await until(() => app.runtime.waitingApprovals(sessionId).length === 0, "the press answered the question");
   await until(() => state.calls.includes("answerCallbackQuery"), "Telegram is told the press landed");
   assert.equal(app.runtime.allowedNow(sessionId)[0].tool, "files.write", "the yes is remembered for this conversation");
-  await until(() => state.sent.some((sent) => /I will carry on/.test(sent.text ?? "")), "the chat is told the answer landed");
+  // QA R1 follow-up: the task that asked carries on, the engine writes the file, and its reply reaches the chat.
+  await until(() => state.sent.some((sent) => /^done/.test(sent.text ?? "")), "the carried task's reply reached the chat");
+  assert.equal(app.store.events(waiting.runId).filter((event) => event.kind === "run.approved_call").length, 1, "the engine ran the approved call");
 
   /* The record of what the assistant was allowed to do says which chat app answered. */
   const decided = app.store.audit.list(app.runtime.owner, { action: "approval.decided" });
@@ -426,18 +429,41 @@ test("D1 comparing two tasks shows both sets of figures and the difference betwe
     const variation = callCount === 1 ? "first" : "second";
     return { content: `The ${variation} answer for ${asked}.\nSame line in both.`, toolCalls: [] };
   } };
-  const { page, errors } = await onPage(t, { provider: varyingAnswers });
+  const { app, page, errors } = await onPage(t, { provider: varyingAnswers });
+  /* The first send's read of the questions it left (GET /api/policy) is held back, as a busy engine does: the answer is
+     on screen and Send is ready meanwhile, so the second message is sent then. It used to go to the ended task's waiting
+     line and stay unsent in the new conversation's box. Mutation: in chat.js sendPlain, end "sending" only in its
+     finally again, and this goes red. */
+  let ran = false, held = false;
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/run") ran = true; });
+  await page.route("**/api/policy", async (route) => {
+    if (ran && !held) { held = true; await new Promise((done) => setTimeout(done, 3000)); }
+    await route.continue();
+  });
+  /* The compare button sits in History's recordings tile, beside "Watch a task again"; recordings ship off, and while
+     they are off that tile is the switch instead (public/app/places/inbox.js replayTile). */
+  saveRecordingSettings(app.store, app.runtime.owner, { mode: "when-needed" });
   /* Redesign: the compare button sits beside "Watch a task again" and compares with an earlier run of
      the SAME words. Send the same words twice with a scripted model answering differently each time.
      Then expect exactly one [data-act="compare"], and clicking it opens the "Two tasks side by side" dialog. */
   const prompt = "apples";
   // Send the prompt twice, model answers differently each time
   for (let i = 0; i < 2; i++) {
-    await page.locator("#prompt").fill(prompt);
-    await page.locator("#composer").evaluate((form) => form.requestSubmit());
+    /* The words go in and are sent in one step on the page. The new conversation's box and form are drawn again while
+       its settings load, so a form found first and sent a moment later could be the replaced one: Chromium drops that
+       submit ("the form is not connected") and "apples" stayed unsent in the box (D1 on CI). */
+    const sent = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === "/api/run", { timeout: 10000 });
+    await page.evaluate((words) => {
+      const box = document.getElementById("prompt");
+      box.value = words;
+      box.dispatchEvent(new Event("input", { bubbles: true }));
+      document.getElementById("composer").requestSubmit();
+    }, prompt);
+    await sent;
     // Wait for the answer to appear
     const expectedAnswer = i === 0 ? "The first answer" : "The second answer";
-    await page.waitForFunction((answer) => document.getElementById("conversation").textContent.includes(answer), expectedAnswer, { timeout: 20000 });
+    // A new conversation shows its greeting, not #conversation, until the first message is drawn.
+    await page.waitForFunction((answer) => document.getElementById("conversation")?.textContent.includes(answer), expectedAnswer, { timeout: 20000 });
     await page.waitForFunction(() => !document.getElementById("send")?.disabled, undefined, { timeout: 120000 });
     // After the first run, create a new conversation for the second run
     if (i === 0) {
@@ -621,6 +647,23 @@ test("D5 the metering export writes the month's spreadsheet on the scheduled bea
   assert.equal(await meteringTick(deps, now), null);
   /* A day later it is due again. */
   assert.equal(meteringDue(meteringSettings(app.store, app.runtime.owner), new Date(now.getTime() + 25 * 3600 * 1000)), true);
+});
+
+test("defaults audit: usage is counted without the schedule, and a report sheet is written only when asked", async (t) => {
+  const { app, api, root } = await served(t, answersTheQuestion);
+  await api("POST", "/api/run", { prompt: "apples" });
+  const { meteringSettings } = await import("../dist/metering.js");
+  assert.equal(meteringSettings(app.store, app.runtime.owner).enabled, false, "no file is written by itself");
+  const counted = await api("GET", "/api/usage?range=7d&by=day");
+  assert.ok(counted.body.data.some((day) => day.runs >= 1), "the task is counted in Branch's own data");
+  const saved = await api("POST", "/api/usage/metering/now", { range: "7d" });
+  assert.equal(saved.status, 200);
+  assert.match(saved.body.path.replaceAll("\\", "/"), /usage\/usage-report-7d-\d{4}-\d{2}-\d{2}\.csv$/);
+  assert.ok(saved.body.path.startsWith(join(root, "workspace")), "inside the workspace");
+  const [header, ...rows] = (await readFile(saved.body.path, "utf8")).trim().split("\n");
+  assert.match(header, /estimatedCostUsd/);
+  assert.ok(rows.length >= 1);
+  assert.equal((await api("POST", "/api/usage/metering/now", { range: "1y" })).status, 400);
 });
 
 test("D5 the folder has to be inside the workspace", async (t) => {
@@ -831,16 +874,21 @@ test("G6 typing /model with the models module blocked still lists the choices", 
     if (request.url().endsWith("/api/run")) runs.push(request.postData());
     if (request.url().endsWith("/api/commands/run")) commands.push(request.postData());
   });
+  await page.evaluate(() => document.addEventListener("submit", (e) => { (globalThis.__g6 ??= []).push(`${e.target.id}:${e.target.isConnected}:${e.defaultPrevented}`); }, true));
   await page.locator("#prompt").fill("/model");
-  await page.locator("#composer").evaluate((form) => form.requestSubmit());
-  await page.waitForFunction(() => document.getElementById("prompt").value === "", null, { timeout: 10000 });
+  // Resolve and submit in one browser turn. A locator's element handle can be detached by a redraw before evaluate
+  // runs; requestSubmit on that old form emits no document event and never reaches the command handler.
+  await page.evaluate(() => document.getElementById("composer").requestSubmit());
+  const cleared = await page.waitForFunction(() => document.getElementById("prompt").value === "", null, { timeout: 20000 }).then(() => true, () => false);
+  // Seen once in CI and not reproduced here: the failure names what the window said and asked.
+  if (!cleared) assert.fail(`the command is not left in the box (box: "${await page.locator("#prompt").inputValue()}"; toast: "${await page.evaluate(() => document.querySelector(".toast")?.textContent ?? "")}"; commands asked: ${commands.length}; runs: ${runs.length}; page errors: ${errors.join(" | ") || "none"}; submits seen: ${await page.evaluate(() => (globalThis.__g6 ?? []).join(",") || "none")}; view: ${await page.evaluate(() => document.querySelector("#main")?.innerText.slice(0, 200).replace(/\s+/g, " "))})`);
   await page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 20000 });
   assert.equal(await page.locator("#prompt").inputValue(), "", "the command is not left in the box");
   assert.deepEqual(runs, [], "nothing was sent to the model");
   assert.equal(await page.locator("#conversation .u").count(), 0, "nothing was sent to the model");
 
   await page.locator("#prompt").fill("/help");
-  await page.locator("#composer").evaluate((form) => form.requestSubmit());
+  await page.evaluate(() => document.getElementById("composer").requestSubmit());
   await page.waitForFunction(() => !document.getElementById("send").disabled, null, { timeout: 20000 });
   assert.deepEqual(runs, [], "/help is not sent to the model either");
   assert.ok(commands.length >= 1, "the commands went to the engine's command route");

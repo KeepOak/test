@@ -9,7 +9,7 @@ import { E, ownName, ownerHere, chatFace } from "../core/state.js";
 import { app, av, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { media17, calm17 } from "../core/art17.js";
-import { petMood } from "./scene.js";
+import { petMood, petNow } from "./scene.js";
 import { popupsOn } from "../flows/guides.js";
 import { t } from "../../i18n.js";
 
@@ -18,6 +18,7 @@ function leafBurst(x, y) {
   if (calm17()) return;
   const root = app(), cv = document.createElement("canvas"), r = root.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
   cv.className = "burst11";
+  cv.setAttribute("aria-hidden", "true"); // leaves only: nothing to read
   cv.width = r.width * dpr;
   cv.height = r.height * dpr;
   root.appendChild(cv);
@@ -63,14 +64,14 @@ export function cheer(run) {
   el.dataset.run = run.id;
   /* A Trunk's task is cheered with that Trunk's face; Branch's celebration is for Branch's own conversation. */
   const face = chatFace(run.sessionId);
-  const art = face.kind === "main" ? media17("/art/branch-yay.webp", "/art/anim-yay.webm", "pose11 vid11 cheer-art11") : av(face, 58, run.sessionId);
+  const art = av(face, 58, run.sessionId);
   el.innerHTML = `${art}<span><b>${esc(t("window.shell.cheer.name-is-done", { name: nameOf(run.sessionId) }))}</b><small>${esc(lastWords(run))}</small></span>`;
   app().appendChild(el);
   const b = el.getBoundingClientRect();
   leafBurst(b.left + 33, b.top + b.height / 2);
   setTimeout(() => el.classList.add("out11"), 3800);
   setTimeout(() => el.remove(), 4300);
-  petMood("yay", 4000, 900);
+  if (petNow() !== "none") petMood("yay", 4000, 900); // a pet switched off has no mood to change
 }
 
 /* Whether a run's conversation is a room's. A room's turns run in each Trunk's own side of it (src/trunks/rooms.ts
@@ -83,8 +84,12 @@ async function inRoom(sessionId) {
 }
 /* The newest finished run that is not a room's turn. */
 async function cheerLatest(done) {
-  for (const run of done.reverse()) if (!(await inRoom(run.sessionId))) return cheer(run);
+  for (const run of done.reverse()) if (!hidden(run) && !(await inRoom(run.sessionId))) return cheer(run);
 }
+/* QA retest 2026-09-28 (m4): the engine's own work that no list shows (reading a schedule's words is set aside and kept out
+   of Recent) is not cheered as "New conversation is done". A Trunk introducing itself is set aside too, but its
+   conversation is listed, so it still is. */
+const hidden = (run) => run.aside === true && !E.sessions.some((s) => (s.sessionId ?? s.id) === run.sessionId);
 
 /* What each run was at the last look; nothing is cheered on the first one, so opening the window never cheers. */
 let before = null;

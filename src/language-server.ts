@@ -4,6 +4,7 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { z } from "zod";
 import type { Store } from "./store.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 import type { WorkspaceFiles } from "./files.js";
 import { mapLanguageOf } from "./code-scanners.js";
 import { RequestTable, StdioChannel, checkedProgram } from "./stdio-rpc.js";
@@ -23,7 +24,7 @@ const languageIds: Record<string, string> = {
   Go: "go", Rust: "rust", Java: "java", "C#": "csharp", Markdown: "markdown",
 };
 export const LanguageServerSettingsSchema = z.object({
-  /** Nothing is started until the owner turns this on. */
+  /** Read through `languageServerSettings`, which ships it on; a server starts only once the owner has added it and a task needs it. */
   enabled: z.boolean().default(false),
   servers: z.record(alias, z.object({
     /** The full address of the program; a .cmd or .bat wrapper is refused. */
@@ -48,7 +49,9 @@ export type LanguageServerSettings = z.infer<typeof LanguageServerSettingsSchema
 
 export function languageServerSettings(store: Store, owner: string): LanguageServerSettings {
   const parsed = LanguageServerSettingsSchema.safeParse(store.get("settings", owner, "language-servers")?.data ?? {});
-  return parsed.success ? parsed.data : LanguageServerSettingsSchema.parse({});
+  // The owner's rule (2026-09-27): only the servers the owner adds are ever started, each only while a task uses it, and
+  // none is kept running between tasks unless the owner says so; nothing is heavy until used, so this ships on.
+  return parsed.success ? shippedUnlessChosen(store, owner, "language-servers", parsed.data, { enabled: true }) : LanguageServerSettingsSchema.parse({});
 }
 /** Saves the list, refusing a program that is not there or is a wrapper script. */
 export async function saveLanguageServerSettings(store: Store, owner: string, input: unknown): Promise<LanguageServerSettings> {
@@ -56,6 +59,7 @@ export async function saveLanguageServerSettings(store: Store, owner: string, in
   for (const [name, server] of Object.entries(value.servers))
     await checkedProgram(server.path).catch((error: Error) => { throw new Error(`${name}: ${error.message}`); });
   store.save("settings", owner, "language-servers", { ...value });
+  markChosen(store, owner, "language-servers", sentKeys(input));
   return value;
 }
 

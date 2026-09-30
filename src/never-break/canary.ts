@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
+import { constants, setPriority } from "node:os";
 import { copyFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import { isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { gatewayFile, loadGatewayConfig, writeAtomic } from "./gateway-config.js";
 import { repairRollback } from "./rollback.js";
+import { storeMigrations } from "./migrations.js";
 
 /** What `branch start` writes in self-test mode (see self-test.ts). */
 export interface SelfTestCheck { name: string; ok: boolean; detail: string }
@@ -97,12 +99,36 @@ export async function runCanary(input: CanaryInput): Promise<CanaryResult> {
   }
 }
 
+/**
+ * The go-between that starts the new version (this program again, as plain Node). Windows checks a program it has
+ * never run before starting it, and holds the thread that asked for the whole check: about 4 s for a freshly built
+ * Branch, measured on 2026-09-27. Asked from the app's main process, that froze the window; asked from here, only this
+ * go-between waits. It says how the new version ended, and ends it if the caller goes away.
+ */
+export const canaryRelay = `const { spawn } = require("node:child_process");
+const [executable, script] = process.argv.slice(1);
+const child = spawn(executable, [script, "start"], { env: process.env, stdio: "ignore", windowsHide: true });
+const tell = (message) => { if (process.connected) process.send(message, () => process.exit(0)); else process.exit(0); };
+child.once("error", (error) => tell({ error: error.message }));
+child.once("exit", (code, signal) => tell({ code, signal }));
+process.once("disconnect", () => { child.kill("SIGKILL"); process.exit(0); });`;
+
 function started(engine: { executable: string; script: string }, env: NodeJS.ProcessEnv, timeoutMs: number): Promise<string> {
   return new Promise((resolve) => {
-    const child = spawn(engine.executable, [engine.script, "start"], { env, stdio: "ignore", windowsHide: true });
-    const timer = setTimeout(() => { child.kill("SIGKILL"); resolve("it took too long and was stopped"); }, timeoutMs);
-    child.once("error", (error) => { clearTimeout(timer); resolve(`it could not be started: ${error.message}`); });
-    child.once("exit", (code, signal) => { clearTimeout(timer); resolve(signal ? `it was ended by ${signal}` : `it exited with code ${code}`); });
+    const relay = spawn(process.execPath, ["-e", canaryRelay, engine.executable, engine.script],
+      { env: { ...env, ELECTRON_RUN_AS_NODE: "1" }, stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true });
+    // The new version's check runs below normal priority, as the build does (src/desktop/quiet-build.ts), so the
+    // owner's own programs come first (what the go-between starts inherits it); when it cannot be lowered it still runs.
+    if (relay.pid !== undefined) try { setPriority(relay.pid, constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* it has already ended */ }
+    let settled = false;
+    const finish = (why: string) => { if (settled) return; settled = true; clearTimeout(timer); if (relay.connected) relay.disconnect(); resolve(why); };
+    const timer = setTimeout(() => finish("it took too long and was stopped"), timeoutMs);
+    relay.on("message", (message: { code?: number | null; signal?: string | null; error?: string }) => {
+      if (message.error !== undefined) finish(`it could not be started: ${message.error}`);
+      else finish(message.signal ? `it was ended by ${message.signal}` : `it exited with code ${message.code}`);
+    });
+    relay.once("error", (error) => finish(`it could not be started: ${error.message}`));
+    relay.once("exit", (code) => finish(`it could not be started (the program that starts it ended with code ${code})`));
   });
 }
 
@@ -119,20 +145,26 @@ export interface UpdateCanaryInput {
 }
 
 /**
- * The updater's canary step. With the switch off it does nothing, as before. Otherwise the new
+ * The updater's canary step. With the switch off it does nothing, as before, except for a Beta install. Otherwise the new
  * version must pass its check on a copy, and the gateway is told to watch it after the swap.
  */
-export function updateCanary(input: UpdateCanaryInput): (stagedDir: string, version: string) => Promise<void> {
-  return async (stagedDir, version) => {
-    if ((await loadGatewayConfig(input.dataDir)).config.mode === "off") return;
+/**
+ * `required` (a Beta build, which no release has published): the check runs even with the never-break switch off, so
+ * a build whose engine will not start never replaces the running one. The watch after the swap is written only when
+ * the switch is on, since only then is a gateway there to read it.
+ */
+export function updateCanary(input: UpdateCanaryInput): (stagedDir: string, version: string, how?: { required: boolean }) => Promise<void> {
+  return async (stagedDir, version, how) => {
+    const off = (await loadGatewayConfig(input.dataDir)).config.mode === "off";
+    if (off && !how?.required) return;
     const dataCopy = await input.snapshot();
     if (!isCanaryCopy(input.dataDir, dataCopy)) throw new Error("The copy of your work was not where Branch keeps update copies, so it was not used.");
     const result = await runCanary({ engine: stagedEngine(stagedDir, input.platform, input.executableName),
       dataCopy, expectedVersion: version, ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}) });
     if (!result.ok) throw new Error(result.detail);
     const platform = input.platform === "win32" || input.platform === "darwin" ? input.platform : "linux";
-    if (input.target) await writeWatch(input.dataDir, { from: input.fromVersion, to: version, target: input.target, platform,
-      executableName: input.executableName, startedAt: new Date().toISOString() });
+    if (input.target && !off) await writeWatch(input.dataDir, { from: input.fromVersion, to: version, target: input.target, platform,
+      executableName: input.executableName, startedAt: new Date().toISOString(), understood: storeMigrations.at(-1)?.version ?? 0 });
   };
 }
 
@@ -146,6 +178,8 @@ export const UpdateWatchSchema = z.object({
   platform: z.enum(["win32", "darwin", "linux"]),
   executableName: z.string().min(1).max(200),
   startedAt: z.iso.datetime(),
+  /** The newest data format the version updated from understands: going back is refused past it (worker-link.ts). */
+  understood: z.number().int().nonnegative().optional(),
 }).strict();
 export type UpdateWatch = z.infer<typeof UpdateWatchSchema>;
 

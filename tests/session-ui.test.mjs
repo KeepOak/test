@@ -7,6 +7,7 @@ import { discardTemp } from './temp-dir.mjs';
 import { chromium } from 'playwright';
 import { createBranch } from '../dist/index.js';
 import { startServer } from '../dist/server.js';
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 /* Redesign: the new window (public/app/**). A conversation is opened from its row in the sidebar list
    ([data-act="chat"][data-id]); the row of the open one carries aria-current="true". "Branch from here" is one of a
@@ -45,11 +46,10 @@ async function fixture(t, complete) {
   await page.locator('#app #side').waitFor({ state: 'visible', timeout: 120000 });
   return { app, page, source, original, errors };
 }
-const row = (page, id) => page.locator(`#side [data-act="chat"][data-id="${id}"]`);
 const currentId = (page) => page.evaluate(() => document.querySelector('#side [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
 const message = (page, text) => page.locator('#conversation .b, #conversation .u').filter({ hasText: text }).first();
 async function openConversation(page, id, text) {
-  await row(page, id).click();
+  await openChat(page, id);
   await page.locator('#conversation').getByText(text, { exact: true }).first().waitFor();
 }
 async function branchButton(page, text) {
@@ -59,11 +59,11 @@ async function branchButton(page, text) {
 async function branchFrom(page, text) {
   await (await branchButton(page, text)).click({ timeout: 10000 });
   /* Redesign: "Branch from here" opens pass 17's dialog; "Start the new path" (data-act="brmake17c") makes it. The dialog
-     closes once the engine made the path; when the engine refuses, its reason is a toast and the dialog stays open. */
+     closes once the engine made the path; when the engine refuses, its reason stays inside the dialog. */
   const dlg = page.locator(".dlg");
   await dlg.waitFor({ timeout: 10000 });
   await dlg.locator('[data-act="brmake17c"]').click();
-  await page.waitForFunction(() => !document.querySelector(".dlg") || document.querySelector(".toast"), null, { timeout: 15000 });
+  await page.waitForFunction(() => !document.querySelector(".dlg") || document.querySelector("#br-error17c")?.textContent, null, { timeout: 15000 });
 }
 async function readyConversation(page) {
   await page.waitForFunction(() => !document.getElementById('send').disabled);
@@ -91,6 +91,8 @@ test('browser branches a historical prefix and follows up without changing the o
   assert.notEqual(id, f.source.sessionId);
   // Redesign: replaced by the new window (the old "Branched conversation" label and its "shares workspace files and
   // saved memory" line are not in the design; that files and memory stay shared is still checked below).
+  // The branch's messages are read after it becomes the open conversation, so they are waited for.
+  await f.page.locator('#conversation').getByText('Original choice').first().waitFor({ timeout: 15000 });
   assert.match(await f.page.locator('#conversation').innerText(), /Original choice/);
   assert.doesNotMatch(await f.page.locator('#conversation').innerText(), /Later instruction|Later outcome/);
   assert.equal(await f.page.locator('#conversation').getByRole('button', { name: 'Branch from here' }).count(), 2);
@@ -148,7 +150,7 @@ test('pending chat disables branching and conversation switching until its respo
   assert.equal(requests, 1, 'a message typed while it works is queued, not sent to the model at once');
   /* Read now, while the answer is pending; asserted last so the other checks still report. */
   const branchHeld = await branchButton(f.page, 'Juniper checkpoint').then(b => b.isDisabled({ timeout: 10000 })).catch(error => error.message);
-  await row(f.page, other.sessionId).click();
+  await openChat(f.page, other.sessionId);
   release.resolve(); await readyConversation(f.page);
   await f.page.waitForFunction(() => !document.querySelector('#conversation .typing, #conversation .think'));
   const shown = await currentId(f.page);
@@ -158,7 +160,11 @@ test('pending chat disables branching and conversation switching until its respo
     assert.equal(shown, other.sessionId);
     assert.doesNotMatch(thread, /Pending task finished|Wait for fixture/, 'no answer lands under another row');
   }
-  assert.deepEqual(f.app.store.messages(f.source.sessionId).slice(-2).map(m => m.content), ['Wait for fixture', 'Pending task finished']);
+  // The waiting line ships when needed (the ship-on rule), so the message typed while it worked runs next, after the answer.
+  const said = f.app.store.messages(f.source.sessionId).map(m => m.content);
+  const at = said.indexOf('Wait for fixture');
+  assert.deepEqual(said.slice(at, at + 2), ['Wait for fixture', 'Pending task finished']);
+  assert.ok(said.indexOf('Then this too') === -1 || said.indexOf('Then this too') > at + 1, 'the queued message comes after the answer');
   assert.equal(JSON.stringify(f.app.store.sessionView('local', other.sessionId)), otherView, 'the other conversation is untouched');
   assert.deepEqual(f.errors, []);
   assert.equal(branchHeld, true, 'Branch from here waits for the pending answer');
@@ -173,7 +179,7 @@ test('a rejected historical tool-request branch leaves the current conversation 
   await reloadSignedIn(f.page);
   await openConversation(f.page, run.sessionId, 'Unsafe checkpoint');
   await branchFrom(f.page, 'Unsafe checkpoint');
-  await f.page.locator('.toast').filter({ hasText: 'without tool requests' }).waitFor();
+  await f.page.locator('.dlg').getByRole('alert').filter({ hasText: 'without tool requests' }).waitFor();
   assert.equal(await f.page.locator('.dlg').isVisible(), true, 'the refused dialog stays open with its reason');
   await f.page.locator('.dlg [data-act="dlg-close"]').first().click();
   await readyConversation(f.page);

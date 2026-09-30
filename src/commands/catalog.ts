@@ -70,6 +70,8 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("preset", ["permissions", "approvals"], "[name]", "when Branch checks with you before doing something", [...W, "terminal"], "owner", { ...was("terminal"), bareLooks: true, route: { method: "POST", path: "/api/policy" }, newAliases: added(["approvals"], "terminal") }),
   entry("memory", [], "[words]", "facts it has saved", [...W, "terminal"], "look", was("terminal")),
   entry("skills", [], "", "skills installed here", [...W, "terminal"], "look", was("terminal")),
+  // CHAT-205: pin one skill to this conversation (src/commands/steer-skill.ts); /skill off unpins it.
+  entry("skill", [], "[name|off]", "pin a skill to this conversation so it applies to every turn; on its own, which one is pinned", ["window", "phone", "terminal", "chat"], "run", { bareLooks: true }),
   entry("plan", [], "[on|off]", "turn a short plan first on or off", [...W, "terminal"], "look", was("terminal")),
   entry("verify", [], "[on|off]", "turn a reviewer's check of the answer on or off", ["terminal"], "look", was("terminal")),
   entry("dry-run", [], "[on|off]", "a dry run: it shows what it would do without doing it", ["terminal"], "look", was("terminal")),
@@ -87,16 +89,19 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("settings", ["config"], "[page]", "the Settings pages, by name", [...W, "terminal", "dashboard"], "look", was("terminal")),
   entry("theme", ["skin"], "[name|light|dark|follow|list]", "the theme, shared with the window", [...W, "terminal"], "look", was("terminal")),
   entry("default", [], "<id>", "the model every new conversation starts with", [...W, "terminal"], "owner", { ...was("terminal"), route: { method: "POST", path: "/api/models" } }),
-  entry("switch", [], "<mouse|sidePane|oak> [on|off|when-needed]", "the terminal's own switches, which all start off", ["terminal"], "owner", was("terminal")),
+  entry("switch", [], "<mouse|sidePane|oak> [on|off|when-needed]", "the terminal's own switches", ["terminal"], "owner", was("terminal")),
   entry("pane", ["details"], "[activity|plan|files|memory]", "show or hide the side pane", [...W, "terminal"], "look", was("terminal")),
   entry("lockdown", ["pause"], "[on|off]", "the one switch that refuses commands and makes everything else wait for your yes", [...W, "terminal", "dashboard"], "owner", { ...was("terminal"), bareLooks: true, route: { method: "POST", path: "/api/lockdown" } }),
   entry("keys", ["shortcuts"], "", "every key the view answers to", ["terminal"], "look", { ...was("terminal"), newAliases: added(["shortcuts"], "terminal") }),
   entry("exit", ["quit"], "", "leave", ["terminal"], "look", was("terminal")),
   // ---- the redesign's terminal (design/redesign/prototype.html termRun): Team, finding and the chat apps ----
-  entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", ["terminal"], "look"),
-  entry("find", ["search"], "<words>", "search every conversation and message", ["terminal"], "owner"),
-  entry("channels", [], "", "the chat apps and which ones reach Branch", ["terminal"], "owner"),
+  // CHAT-187: also in the window's "/" menu (the window opens Team, the sidebar's search, and Customize › Channels).
+  entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", [...W, "terminal"], "look"),
+  entry("find", ["search"], "<words>", "search every conversation and message", [...W, "terminal"], "owner"),
+  entry("channels", [], "", "the chat apps and which ones reach Branch", [...W, "terminal"], "owner"),
   // ---- added with this table ----
+  // CHAT-192: a note for the working task, as the Steer box and "type while it works" do (src/commands/steer-skill.ts).
+  entry("steer", [], "<note>", "a note for the task working now; it reads it before its next step", ["window", "phone", "terminal", "chat"], "run", { whileWorking: true }),
   entry("stop", ["cancel"], "[task]", "stop what is working now", ["window", "phone", "terminal", "chat", "dashboard"], "run", { ...was("chat"), whileWorking: true }),
   entry("status", [], "", "what is working right now, and with which model", ALL, "look", { ...was("chat"), whileWorking: true }),
   entry("compact", ["compress", "fold"], "", "fold the earlier part of this conversation into a summary", ["window", "phone", "terminal", "chat"], "run", { ...was("chat"), newAliases: added(["compress", "fold"], "chat") }),
@@ -112,7 +117,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // R17-A: the owner's Trunks; talking to one starts a task, so a bare /trunk only looks
   entry("trunk", ["trunks"], "[name] [message]", "your Trunks; with a name and a message, talk to one", [...W, "terminal"], "run", { bareLooks: true }),
   // mac6/accounts: which account the model answers through; switching is the owner's, so not in chat apps
-  entry("account", ["accounts"], "[name|default name|separate name|not-separate name]", "which account the model uses; with a name, switch this conversation to it", [...W, "terminal", "dashboard"], "owner", { bareLooks: true, route: { method: "POST", path: "/api/accounts/switch" } }),
+  entry("account", ["accounts"], "[name|default name]", "which account the model uses; with a name, switch this conversation to it", [...W, "terminal", "dashboard"], "owner", { bareLooks: true, route: { method: "POST", path: "/api/accounts/switch" } }),
   // ---- r17-b: repeating in a conversation, sub-goals, background tasks, handing on, suggested automations (src/autonomy/commands.ts) ----
   entry("loop", ["proactive"], "[every] <10m> <what to do> [--times n] [--until when]", "ask the same thing again in this conversation every so often; status, pause, resume or stop", [...W, "terminal"], "owner", { bareLooks: true }),
   entry("heartbeat", ["hb"], "every <30m> <what to watch>", "a quiet check on this conversation that speaks up only with news; status, pause, resume or stop", [...W, "terminal"], "owner", { bareLooks: true }),

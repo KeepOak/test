@@ -127,6 +127,32 @@ test("helpers: the tasks a task started, named, with the question each waits on;
   assert.deepEqual(later.waiting, [], "nothing waits any more");
 });
 
+test("a helper is never named by its raw id: its specialist's name, the name kept when it started, else \"A helper\"", async (t) => {
+  const { app, call } = await fixture(t);
+  const owner = app.runtime.owner;
+  const parent = app.store.createRun(owner, "compare the invoice");
+  app.store.save("specialists", owner, "scout-7f3a", { version: 1, definition: { name: "Scout", instructions: "You scout." } });
+  const context = app.runtime.context({ runId: parent.id });
+  const child = await app.runtime.delegate("say hello", context, [], "", { agent: "scout-7f3a" });
+  const named = async () => (await call(`runs/${parent.id}/steps`)).body.helpers.map((h) => h.name);
+  assert.deepEqual(await named(), ["Scout"], "control: the saved specialist's name");
+  // The specialist is deleted: the name kept when the helper started still names it. Mutation: drop agentName → the id.
+  app.store.delete("specialists", owner, "scout-7f3a");
+  assert.deepEqual(await named(), ["Scout"], "the name kept when it started");
+  // A helper that started before names were kept, whose specialist is gone: "A helper", never "gone-9c1d".
+  const older = app.store.createRun(owner, "an older helper");
+  app.store.event(older.id, "run.started", { parentRunId: parent.id, agent: "gone-9c1d" });
+  const names = await named();
+  assert.ok(names.includes("A helper") && names.includes("Scout"), JSON.stringify(names));
+  assert.ok(!names.some((name) => /scout-7f3a|gone-9c1d/.test(name)), "never an id");
+  // Live steps name helpers the same way (GET /api/runs/:id/live reads the same names).
+  const { liveSteps } = await import("../dist/live-steps.js");
+  const deps = { thoughtsOf: () => [], waiting: [], helperName: (agent, recorded) => recorded || "A helper" };
+  const labels = liveSteps(app.store, parent.id, deps).steps.filter((step) => step.kind === "helper").map((step) => step.label);
+  assert.ok(labels.includes("Scout"), `the kept name reaches the live steps: ${JSON.stringify(labels)}`);
+  assert.equal(child.status, "completed");
+});
+
 test("a helper's question names the task that started it, in /api/policy and /api/state; the owner's own does not", async (t) => {
   const { app, call } = await fixture(t);
   savePolicy(app.store, app.runtime.owner, { preset: "ask-before-changes" });

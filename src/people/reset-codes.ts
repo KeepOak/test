@@ -22,6 +22,13 @@ export class ResetCodes {
     return { code, expiresAt: new Date(expiresAt).toISOString() };
   }
 
+  /** Every code not used yet stops working (Lockdown). Answers how many there were. */
+  voidAll(): number {
+    const count = this.pending.size;
+    this.pending.clear();
+    return count;
+  }
+
   /** Uses the code up if it is right; throws otherwise. */
   redeem(profileId: string | null, code: string): void {
     const found = profileId ? this.pending.get(profileId) : undefined;

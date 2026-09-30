@@ -69,7 +69,8 @@ async function fixture(t, script = echo, parts, options) {
   return { app, model, chat, root };
 }
 const showProgressSoon = (app) => { app.channels.liveTiming = fast; };
-const allOn = { liveStatus: "on", commands: "on", steering: "on", splitting: "on" };
+// "Show steps in chats" is tried in tests/chat-steps.test.mjs; these are about the short progress message.
+const allOn = { liveStatus: "on", commands: "on", steering: "on", splitting: "on", steps: "off" };
 let nextId = 1;
 const message = (text, extra = {}) => ({ channel: "chat", chatId: "c1", chatKind: "direct", senderId: "owner",
   senderName: "Sam", text, addressed: true, messageId: `m${nextId++}`, ...extra });
@@ -190,6 +191,7 @@ test("live status: held-back text is not streamed, a failing part is left alone,
   const blind = new LiveStatus({ adapter: quiet.adapter, chatId: "c1", messageId: "q1" }, async (text) => ({ text, blocked: false }), fast);
   blind.start();
   blind.thinking();
+  blind.event("tool.started", { name: "files.read", id: "a", label: "Reading" }); // a task with no step gets no progress message
   await until(() => quiet.calls.some((c) => c.op === "send"), "progress message without an id");
   blind.text("streaming");
   assert.equal(await blind.finish("done", "streaming"), null, "without an id the reply goes the ordinary way");
@@ -203,7 +205,7 @@ test("a chat that has none of the extras still gets exactly one reply", async (t
   assert.equal(chat.sent()[0], "Echo: hello");
 });
 
-test("a slow task shows its steps and its reply lands in the progress message, written down once", async (t) => {
+test("a slow task keeps its progress message and sends the final reply separately, written down once", async (t) => {
   const { app, chat, model } = await fixture(t, async (request, n, self) => {
     if (n === 1) return { content: "", toolCalls: [{ id: "c1", name: "files.list", arguments: "{\"path\":\".\"}" }] };
     await self.hold(request.signal);
@@ -220,11 +222,12 @@ test("a slow task shows its steps and its reply lands in the progress message, w
   await until(() => model.gates.length === 1, "the model is writing the answer");
   model.open();
   assert.equal(await outcome, "replied");
-  assert.equal(chat.sent().length, 1, "the reply did not arrive twice");
-  assert.equal(chat.calls.filter((c) => c.op === "edit").at(-1).text, "All tidy.");
+  assert.equal(chat.sent().length, 2, "one progress message and one reply");
+  assert.equal(chat.sent().at(-1), "All tidy.");
+  assert.equal(chat.calls.filter((c) => c.op === "edit").at(-1).text, "Done (1 step).");
   const [row] = app.channels.deliveries.list().filter((d) => d.key.startsWith("reply:"));
   assert.equal(row.status, "sent");
-  assert.equal(row.messageId, "100");
+  assert.equal(row.messageId, "101");
   assert.equal(row.text, "All tidy.");
   assert.ok(chat.calls.some((c) => c.op === "typing"));
   assert.equal(chat.calls.filter((c) => c.op === "react").at(-1).emoji, statusEmoji.done);
@@ -620,7 +623,7 @@ test("Telegram end to end: a note sent while a task works reaches it, and the ch
 
 // ---- the owner's switches: on / off / when needed, all off on a fresh install ------------------
 
-test("a fresh install has every chat extra switched off and answers exactly as before", async (t) => {
+test("a fresh install ships the chat extras when needed, commands off; switched off, a chat answers exactly as before", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-chat-live-"));
   const model = scriptedModel(async (request, n, self) => {
     if (n === 1) await self.hold(request.signal);
@@ -629,7 +632,10 @@ test("a fresh install has every chat extra switched off and answers exactly as b
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: model });
   t.after(async () => { await app.close(); await discardTemp(root); });
   app.channels.liveTiming = fast;
-  assert.deepEqual(app.channels.summary().live, { liveStatus: "off", commands: "off", steering: "off", splitting: "off" });
+  // The ship-on rule (src/channels/chat-live-settings.ts): all but commands ship on or "when needed"; the owner switches them off.
+  assert.deepEqual(app.channels.summary().live, { liveStatus: "when-needed", commands: "off", steering: "when-needed", splitting: "when-needed", steps: "on" });
+  app.channels.setSwitches({ liveStatus: "off", steering: "off", splitting: "off" });
+  assert.deepEqual(app.channels.summary().live, { liveStatus: "off", commands: "off", steering: "off", splitting: "off", steps: "on" });
   const chat = fakeChat();
   await app.channels.attach(chat.adapter, { activation: "always", pairing: false, allowlist: ["owner"] });
   const first = app.channels.handle(message("write the plan"));
@@ -651,7 +657,7 @@ test("a fresh install has every chat extra switched off and answers exactly as b
 test("switches are saved one at a time and refuse anything but on, off and when needed", async (t) => {
   const { app } = await fixture(t);
   assert.deepEqual(app.channels.setSwitches({ commands: "when-needed" }),
-    { liveStatus: "on", commands: "when-needed", steering: "on", splitting: "on" });
+    { liveStatus: "on", commands: "when-needed", steering: "on", splitting: "on", steps: "off" });
   assert.throws(() => app.channels.setSwitches({ commands: "sometimes" }));
   assert.throws(() => app.channels.setSwitches({ typing: "on" }));
   assert.equal(app.channels.switches().commands, "when-needed");
@@ -679,10 +685,13 @@ test("when needed: commands only while a task works, steering without the wait, 
   await app.channels.handle(message("/status"));
   assert.match(chat.sent().at(-1), /^Working for/);
   await app.channels.handle(message("/new"));
-  assert.equal(model.requests.length, 2, "while busy, /new is a note to the task, not a new task");
+  assert.match(chat.sent().at(-1), /still working.*\/stop first.*\/new/i, "fresh-thread commands do not quietly steer or abandon busy work");
+  assert.equal(model.requests.length, 2, "a busy fresh-thread command starts no new task");
+  await app.channels.handle(message("keep the invoices sorted"));
   model.open();
   assert.equal(await slow, "replied");
-  assert.ok(steered.some((note) => note === "/new"), "the message was steered into the running task");
+  assert.ok(steered.some((note) => note === "keep the invoices sorted"), "an ordinary note is steered into the running task without the gathering wait");
+  assert.equal(steered.includes("/new"), false, "a thread reset command is never passed off as task instructions");
 });
 
 test("when needed: careful splitting only for a reply with code in it", () => {
@@ -702,11 +711,10 @@ test("the switches are read and changed over the app's own address, and bad valu
     method: body ? "POST" : "GET", body: body && JSON.stringify(body),
     headers: { authorization: "Bearer " + server.token, origin: server.url, ...(body ? { "content-type": "application/json" } : {}) },
   });
-  assert.deepEqual((await (await call("channels")).json()).live, { liveStatus: "off", commands: "off", steering: "off", splitting: "off" });
-  const saved = await (await call("channels/live", { steering: "when-needed" })).json();
-  assert.equal(saved.live.steering, "when-needed");
+  assert.deepEqual((await (await call("channels")).json()).live, { liveStatus: "when-needed", commands: "off", steering: "when-needed", splitting: "when-needed", steps: "on" });
+  const saved = await (await call("channels/live", { steering: "on" })).json();
+  assert.equal(saved.live.steering, "on");
   assert.equal(saved.live.commands, "off");
   assert.equal((await call("channels/live", { steering: "always" })).ok, false);
-  assert.equal((await (await call("channels")).json()).live.steering, "when-needed");
+  assert.equal((await (await call("channels")).json()).live.steering, "on");
 });
-

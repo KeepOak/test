@@ -9,7 +9,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
-const SECRET = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c";
+const SECRET = "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c"; // not-a-real-secret
 const BAD = { zzSecretKey: SECRET, name: 12345, enabled: SECRET };
 
 /* Routes never called, even with a body they should refuse: a schema with only optional fields would let the malformed

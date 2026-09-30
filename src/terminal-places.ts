@@ -50,25 +50,27 @@ export const ALL_PLACES = [...PLACES, ...STRIP_PLACES];
 const OLD_PLACES: Record<string, { place: PlaceId; tab: string }> = { household: { place: "team", tab: "people" } };
 
 const page = (id: string, key: string, english: string, intro: [string, string]): SettingsPage => ({ id, key, english, intro });
+/** In the window's order (public/app/settings/settings.js NAV), which tests/terminal-view.test.mjs holds it to. */
 export const SETTINGS_PAGES: SettingsPage[] = [
   page("general", "settings.page.general", "General", ["window.settings.general.how-branch-starts-and-behaves-on", "How Branch starts and behaves on this computer."]),
   page("people", "people.admin.people", "People", ["window.settings.people.everyone-who-uses-branch-on-this", "Everyone who uses Branch: on this computer, on their own devices, and your keepoak.com team. The same list as Team › People."]),
   page("appearance", "settings.page.appearance", "Appearance", ["window.settings.appearance.how-branch-looks-on-this-computer", "How Branch looks on this computer. Changes show as you pick."]),
   page("notifications", "settings.page.notifications", "Notifications", ["window.settings.notifications.when-branch-may-interrupt-you", "When Branch may interrupt you."]),
+  page("achievements", "delight.ach.title", "Achievements", ["window.settings.achievements.private-to-you-never-nagging", "Private to you, never nagging."]),
   page("instructions", "settings.page.instructions", "Instructions & personality", ["window.settings.instructions.plain-files-every-trunk-reads-before", "Plain files every Trunk reads before it works. They work the same as in other agents, so a file written for one of them works here."]),
   page("models", "settings.page.models", "Models", ["window.settings.models.which-models-answer-and-where-they", "Which models answer, and where they run."]),
   page("accounts", "settings.page.accounts", "Accounts", ["window.settings.accounts.your-model-accounts-the-order-branch", "Your model accounts, the order Branch uses them in, which Trunks use each, and your keepoak.com account."]),
   page("local", "settings.models.local", "On this computer", ["window.settings.local.models-that-run-here-free-and", "Models that run here, free and private. Branch looks at this computer first and only offers what fits."]),
   page("voice", "settings.page.voice", "Voice", ["window.settings.voice.talking-to-branch-voice-stays-on", "Talking to Branch. Voice stays on this computer."]),
   page("chatapps", "dashboard.links.chats", "Chat apps", ["window.p17d.chat-apps-lede", "Where you can message your Trunks, and how each chat app behaves."]),
+  page("gateway", "window.settings.gateway.gateway", "Gateway", ["window.settings.gateway.a-small-helper-that-keeps-branch", "A small helper that keeps Branch running in the background, starts it again if it stops, and carries interrupted work on."]),
   page("permissions", "settings.page.permissions", "Permissions", ["window.settings.permissions.what-trunks-may-do-without-asking", "What Trunks may do without asking you first."]),
   page("computer", "settings.page.computer", "Computer & browser", ["window.settings.computer.the-computers-your-trunks-may-use", "The computers your Trunks may use, and the browser they work in. Which Branch you talk to is the switcher at the top of the list."]),
   page("secrets", "window.settings.secrets.saved-sign-ins", "Saved sign-ins", ["window.settings.secrets.sign-ins-branch-may-fill-for", "Sign-ins Branch may fill for you. It never sees or stores the passwords."]),
   page("usage", "settings.page.data", "Data & usage", ["window.settings.usage.what-each-connection-has-left-what", "What each connection has left, what Branch spent, what it keeps."]),
-  page("gateway", "window.settings.gateway.gateway", "Gateway", ["window.settings.gateway.a-small-helper-that-keeps-branch", "A small helper that keeps Branch running in the background, starts it again if it stops, and carries interrupted work on."]),
+  page("data", "window.settings.data.title", "Your data", ["window.settings.data.lede", "What Branch keeps for you, what leaves this computer, and how to take it all with you or delete it."]),
   page("self", "dashboard.computer.engine", "Branch itself", ["window.settings.self.what-branch-may-change-about-itself-2", "What Branch may change about itself, how it stays running, and every change it made, each one reversible."]),
   page("updates", "settings.page.about", "Updates & about", ["terminal.settings.about.intro", "Your version, and updates."]),
-  page("achievements", "delight.ach.title", "Achievements", ["window.settings.achievements.private-to-you-never-nagging", "Private to you, never nagging."]),
 ];
 export const MODEL_TABS: Named[] = [
   tab("connections", "settings.page.connections", "Connections"), tab("defaults", "settings.models.defaults", "Defaults"),

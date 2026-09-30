@@ -176,6 +176,9 @@ test("the model is told exactly what each kind of file gave, and what it could n
     ["clip.mp4", "video/mp4", Buffer.alloc(4096, 2)],
     ["blob.bin", "application/octet-stream", Buffer.from([0, 1, 2, 3, 0, 255, 254])],
   ];
+  // Watching and saving videos ships when needed (the ship-on rule) and would run ffmpeg where it is installed; this test
+  // is about what the model is told when nothing could hear or watch, so the owner switches it off.
+  assert.equal((await post("/api/media/programs", { mode: "off" })).status, 200);
   const ids = [];
   for (const [name, type, bytes] of files) {
     const sent = await upload(name, type, bytes);

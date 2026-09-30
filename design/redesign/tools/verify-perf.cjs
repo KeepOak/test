@@ -203,13 +203,8 @@ async function clicks(page, ids) {
   await page.waitForSelector('[data-act="ob-go"], [data-act="ob-next"]', { timeout: 15000 });
   await page.locator("#ob-trust").check({ force: true });
   await wait(300);
-  await page.evaluate(() => document.querySelector('[data-act="ob-go"][data-v="1"]')?.click());
-  await wait(600);
-  for (let i = 0; i < 3; i++) {
-    await click(page, "setup: choose where (this)", `[data-act="ob-set"][data-k="where"][data-v="this"]`, `document.querySelector('[data-act="ob-set"][data-v="this"][aria-pressed="true"]')`, rows);
-    await click(page, "setup: choose where (later)", `[data-act="ob-set"][data-k="where"][data-v="later"]`, `document.querySelector('[data-act="ob-set"][data-v="later"][aria-pressed="true"]')`, rows);
-  }
-  await page.evaluate(() => document.querySelector('[data-act="ob-go"][data-v="4"]')?.click());
+  // Pass 18c: setup is Welcome, Models, Your first Trunk; "Where Branch runs" waits on Overview's Finish setting up.
+  await page.evaluate(() => document.querySelector('.ob-rail [data-act="ob-go"][data-v="2"]')?.click());
   await wait(600);
   for (let i = 0; i < 3; i++) await click(page, "setup: pick a Trunk template", `[data-act="ob-tpl"][data-i="${i}"]`, `document.querySelector('[data-act="ob-tpl"][data-i="${i}"][aria-pressed="true"]')`, rows);
   await page.evaluate(() => document.querySelector('[data-act="ob-close"]')?.click());

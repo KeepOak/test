@@ -12,6 +12,7 @@ import { audit } from "./audit.js";
 import { migrateRecords, describeMove } from "./provider-migrations.js";
 import { type ConnectionCheck, connectionCheck } from "./local-connection-policy.js";
 import { pinnedFetch } from "./pinned-fetch.js";
+import { claudeSubscriptionModels, claudeSubscriptionPreset } from "./providers/claude-models.js";
 
 /**
  * Adding a model connection in plain language: pick a service, paste the key, answer whatever else
@@ -124,8 +125,10 @@ export async function forgetConnection(deps: FromPresetDeps, id: string): Promis
     throw new Error(`There is no connection called "${id}"`);
   store.save("settings", deps.owner, connectionsSetting, { connections: kept });
   deps.locker.remove(deps.owner, connectionProject, secretNameFor(id));
-  // Exactly this one, never everything whose name begins the same way.
-  deps.models.remove(id);
+  // Known Claude model choices share one saved connection; unrelated ids are still removed exactly.
+  if (!known && claudeSubscriptionPreset(id)) {
+    for (const entry of claudeSubscriptionModels) deps.models.remove(entry.presetId);
+  } else deps.models.remove(id);
   audit(store, deps.owner, { action: "connection.changed", actor: deps.owner, subject: id,
     reason: "A connection to a model service was removed, and its key taken out of the locker", outcome: "removed" });
   return { id, removed: true };
@@ -151,7 +154,7 @@ export async function restoreConnections(deps: FromPresetDeps): Promise<string[]
         policy: deps.policy, fetchImpl: deps.models.health.watch(record.id, deps.fetchImpl ?? pinnedFetch),
       });
       deps.models.register({
-        id: record.id, name: record.name, provider: built.provider, model: built.model, catalogId: record.catalogId,
+        id: record.id, name: record.name, provider: built.provider, model: built.model, catalogId: record.catalogId, endpoint: built.baseUrl,
       });
       back.push(record.id);
     } catch { /* one connection that cannot be rebuilt never stops the others, or the program */ }
@@ -223,7 +226,7 @@ export async function connectFromPreset(deps: FromPresetDeps, input: unknown): P
   if (!list) await probeChat(built.provider);
   const name = asked.name || entry.name;
   if (asked.key) await deps.locker.set(deps.owner, connectionProject, secretNameFor(id), asked.key);
-  deps.models.register({ id, name, provider: built.provider, model: built.model, catalogId: entry.id });
+  deps.models.register({ id, name, provider: built.provider, model: built.model, catalogId: entry.id, endpoint: built.baseUrl });
   // The connection itself (never the key) is written down, so it is still here after a restart.
   rememberConnection(deps, { id, name, catalogId: entry.id, model: built.model, extras: withChosenDefaults(entry, asked.extras) });
   return {

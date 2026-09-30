@@ -2,6 +2,7 @@ import { chatgptPresetPrefix } from "../chatgpt-presets.js";
 import { ChatGPTProvider } from "../chatgpt-provider.js";
 import type { ModelPreset } from "../models.js";
 import { CliAgentProvider } from "../providers/cli-agent.js";
+import { ClaudeSubscriptionProvider } from "../providers/claude-subscription.js";
 import { trunkSignInRefusal, unwrapProvider } from "./pool-provider.js";
 
 export { trunkKeyRefusal, trunkSignInRefusal } from "./pool-provider.js";
@@ -17,7 +18,7 @@ export { trunkKeyRefusal, trunkSignInRefusal } from "./pool-provider.js";
 /** True for a connection that answers through somebody's sign-in rather than an API key. */
 export function isSignInConnection(preset: Pick<ModelPreset, "id" | "provider">): boolean {
   const provider = unwrapProvider(preset.provider);
-  return provider instanceof ChatGPTProvider || provider instanceof CliAgentProvider
+  return provider instanceof ChatGPTProvider || provider instanceof CliAgentProvider || provider instanceof ClaudeSubscriptionProvider
     || preset.id.startsWith(chatgptPresetPrefix) || preset.id === "google-gemini";
 }
 

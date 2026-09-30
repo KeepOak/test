@@ -85,7 +85,7 @@ export const RedeemSchema = z.object({
 export const offerLifetimeMs = 5 * 60_000;
 export const requestLifetimeMs = 30 * 60_000;
 export const offerAttempts = 5;
-export const offLine = "Using other devices is switched off. Switch it on in Customize, Channels, Devices.";
+export const offLine = "Using other devices is switched off. Switch it on in Settings, Computer & browser, Add a computer.";
 
 interface Offer { id: string; code: string; expiresAt: number; attempts: number; phone: boolean }
 /** B6: the platforms a phone session is ever handed to. */

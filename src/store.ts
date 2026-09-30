@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import type { Event, Message, Run, RunStatus } from "./contracts.js";
 import { reconcileTranscript } from "./transcript.js";
+import { notRunMark, notRunResult } from "./approved-call.js"; // QA R1
 import { SessionHistory } from "./history.js";
 import { SessionBranches, type ConversationFiles } from "./sessions.js";
 import { SessionLibrary } from "./session-library.js";
@@ -22,6 +23,8 @@ import { MemoryReview } from "./memory-review.js";
 import { SkillGovernance } from "./skill-governance.js";
 import { exportBackup, importBackup, type RestoreOptions } from "./backup.js";
 import { RestoreHeld } from "./restore-held.js";
+import { RestoredTrunks } from "./trunks/restored.js"; // #484: Trunks a restore brought back cut down
+import { ensureThreadTable } from "./trunks/threads.js"; // defaulttrunk
 import { WorkspaceHistory } from "./workspace-history.js";
 import type { WorkspaceFiles } from "./files.js";
 import { UsageStore } from "./usage.js";
@@ -69,6 +72,7 @@ export class Store {
   readonly review: MemoryReview;
   private governanceStore: SkillGovernance | undefined;
   private restoreHeldStore: RestoreHeld | undefined;
+  private restoredTrunksStore: RestoredTrunks | undefined;
   private historyStore: WorkspaceHistory | undefined;
   readonly skills: InstalledSkills;
   readonly projects: Projects;
@@ -155,6 +159,7 @@ export class Store {
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
     this.conversations = new ConversationMarks(this.db, () => this.clock());
+    ensureThreadTable(this.db); // defaulttrunk: which Trunk each conversation is with (src/trunks/threads.ts), read by history
     ensureForgotten(this.db);
     this.labels = new Labels(this.db);
     this.mediaComments = new MediaComments(this.db);
@@ -189,7 +194,8 @@ export class Store {
       .prepare("PRAGMA table_info(usage)")
       .all()
       .map((row) => row.name);
-    for (const column of ["attempts", "unreported_calls", "incomplete_calls"])
+    // Prompt-cache reads and writes, as parts of reported_input, so each can be priced at its own rate (src/pricing.ts).
+    for (const column of ["attempts", "unreported_calls", "incomplete_calls", "reported_cached_input", "reported_cache_write", "reported_cache_write_hour"])
       if (!usageColumns.includes(column))
         this.db.exec(
           `ALTER TABLE usage ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`,
@@ -208,7 +214,7 @@ export class Store {
       this.closed = true;
     }
   }
-  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false) {
+  branchSession(owner: string, input: Parameters<SessionBranches["branch"]>[1], agent?: string, before = false): ReturnType<SessionBranches["branch"]> {
     return this.branches.branch(owner, input, agent, before);
   }
   sessionView(owner: string, sessionId: string) {
@@ -436,12 +442,22 @@ export class Store {
    * waiting, so the window and `branch restore` can both say so.
    */
   restore(input: unknown, options: RestoreOptions = {}) {
-    const { held, ...result } = importBackup(this.db, input, options);
-    return { ...result, held: this.restoreHeld.merge(held) };
+    const { held, replaced, ...result } = importBackup(this.db, input, options);
+    // #484: setup's untouched Trunks gave way to the backup's; written down, one entry per owner, with their names.
+    for (const owner of new Set(replaced.map((trunk) => trunk.owner))) {
+      const names = replaced.filter((trunk) => trunk.owner === owner).map((trunk) => trunk.name);
+      audit(this, owner, { action: "data.imported", actor: owner, subject: "a backup, over setup's first Trunks",
+        reason: `Setup's Trunks nobody had written to (${names.join(", ")}) and their introductions were replaced by the backup`, outcome: "saved" });
+    }
+    return { ...result, held: this.restoreHeld.merge(held), replaced: replaced.map((trunk) => trunk.name) };
   }
   /** Rows from a restore waiting for the owner's yes (src/restore-held.ts). */
   get restoreHeld(): RestoreHeld {
     return (this.restoreHeldStore ??= new RestoreHeld(this));
+  }
+  /** #484: the Trunks a restore brought back cut down, each waiting for the owner to give back what it had. */
+  get restoredTrunks(): RestoredTrunks {
+    return (this.restoredTrunksStore ??= new RestoredTrunks(this));
   }
   /** Skill failure patterns, exclusions, demotion, benchmarks and drafts for this owner. */
   get governance(): SkillGovernance {
@@ -493,12 +509,13 @@ export class Store {
   }
   /**
    * DESIGN-DIRECTION PR 2: each task's plain title for lists: the one the engine gave it (`run.titled`, a room turn's),
-   * else its prompt's first line. One query for the whole list.
+   * else its prompt's whole first line (a list shows a task's words whole and wraps them; each list cuts for itself).
+   * One query for the whole list.
    */
   runTitles(runs: readonly Run[]): Map<string, string> {
     const given = new Map(this.db.prepare("SELECT run_id AS id, json_extract(data,'$.title') AS title FROM events WHERE kind='run.titled' AND run_id IN (SELECT value FROM json_each(?))")
       .all(JSON.stringify(runs.map((run) => run.id))).map((row) => [String(row.id), String(row.title ?? "")]));
-    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!.slice(0, 200)]));
+    return new Map(runs.map((run) => [run.id, given.get(run.id) || run.prompt.split(/\r?\n/)[0]!]));
   }
   /** fix399: whether the engine marked this task's conversation to stay out of Recent and search (markAside recent: false). */
   keptFromRecent(runId: string): boolean {
@@ -561,7 +578,7 @@ export class Store {
    */
   private forgetConversationRows(sessionId: string, runIds: string): void {
     const has = (table: string) => !!this.db.prepare("SELECT 1 AS found FROM sqlite_schema WHERE type='table' AND name=?").get(table);
-    for (const table of ["session_origins", "conversation_shares", "memory_suppressions", "session_tokens", "rewinds", "workspace_undo", "conversation_marks"])
+    for (const table of ["session_origins", "conversation_shares", "memory_suppressions", "session_tokens", "rewinds", "workspace_undo", "conversation_marks", "trunk_threads"])
       if (has(table)) this.db.prepare(`DELETE FROM ${table} WHERE session_id=?`).run(sessionId);
     if (has("labels")) this.db.prepare("DELETE FROM labels WHERE target='conversation' AND target_id=?").run(sessionId);
     if (has("run_queue")) this.db.prepare("DELETE FROM run_queue WHERE session_id=? OR run_id IN (SELECT value FROM json_each(?))").run(sessionId, runIds);
@@ -601,6 +618,15 @@ export class Store {
       )
       .all(owner)
       .map((row) => this.toRun(row));
+  }
+  /** models-ui: this person's task ids started since then, newest first, at most `limit` (Settings › Data & usage, by Trunk). */
+  taskIdsSince(owner: string, since: string, limit: number): string[] {
+    return this.db.prepare("SELECT id FROM tasks WHERE owner=? AND created_at >= ? ORDER BY created_at DESC LIMIT ?")
+      .all(owner, since, limit).map((row) => String(row.id));
+  }
+  /** Settings › Permissions › Messages per conversation per hour: how many tasks a conversation started since then. */
+  sessionTasksSince(sessionId: string, since: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);
   }
   /** Every task in one of this person's conversations, id and status only, without the recent-task window's limit (DG-101). */
   sessionRuns(owner: string, sessionId: string): { id: string; status: string }[] {
@@ -655,7 +681,11 @@ export class Store {
     const run = this.run(id);
     if (!run) throw new Error("Run not found");
     // unhold-control: a run that wrote nothing into its conversation (a command pressed by hand) leaves the transcript alone.
-    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status);
+    const known = status === "needs_input" ? this.askedCall(id) : undefined;
+    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status, known);
+    // QA R1: an approved call the engine ran that then asked the person in words itself: its earlier "not run" result
+    // gives way to the question's, so the model reads what is true now.
+    if (options.mend !== false) for (const [callId, content] of known ?? []) if (content !== notRunResult) this.replaceNotRun(run.sessionId, callId, content);
     if (added) this.event(id, "session.reconciled", { added, reason: status });
     // NAS 3fd7700: where the conversation stood when this task stopped to ask, so a yes carries it on only while
     // nothing else (a heartbeat's note, a Trunk routine's report) has been written there since.
@@ -729,14 +759,74 @@ export class Store {
       .all(sessionId)
       .map((row) => JSON.parse(String(row.body)) as Message);
   }
-  reconcileMessages(sessionId: string, reason: string): number {
+  /**
+   * QA (first task): a call stopped before execution to ask the person never ran. Its result says so, and what to do after
+   * the answer, instead of "side effects may have occurred", which told qwen3:14b the opposite of the note that carries
+   * the task on after a yes (Runtime.continueNote), so it asked the person again whether to start. Approvals raised after
+   * execution started preserve the unknown result, because the outer tool may already have had side effects.
+   */
+  private askedCall(runId: string): ReadonlyMap<string, string> {
+    const events = this.events(runId);
+    const callId = events.filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
+    if (typeof callId !== "string") return new Map();
+    if (events.some((event) => event.kind === "policy.execution_unknown" && event.data.id === callId)) return new Map();
+    // QA R1: the engine runs an approved call again under its own id, so only a policy question after the call last
+    // started is the one it stopped on; one before it was answered, and the call then asked in words itself.
+    const lastStart = events.filter((event) => event.kind === "tool.started" && event.data.id === callId).at(-1)?.id ?? 0;
+    const approval = events.some((event) => event.kind === "policy.ask" && event.data.id === callId && event.id > lastStart);
+    return new Map([[callId, approval ? notRunResult
+      : JSON.stringify({ ok: false, status: "waiting", outcome: "asked", error: "The question was put to the person. Their answer is their next message." })]]);
+  }
+  /**
+   * After the person answers, the asking call's "not run" result says what they answered, so the model reads the same
+   * thing in its transcript as in the note that carries the task on. Only that recorded result is ever rewritten.
+   */
+  answerAskedCall(sessionId: string, callId: string, allowed: boolean): boolean {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
+      if (!String(body.content ?? "").includes('"outcome":"not_run"')) return false;
+      const content = JSON.stringify(allowed
+        ? { ok: false, status: "allowed", outcome: "not_run", error: "The person said yes to this call. It has not run yet: make this same call again now, exactly as before." }
+        : { ok: false, status: "refused", outcome: "not_run", error: "The person said no to this call. It did not run and will not; do not make it again." });
+      this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return true;
+    }
+    return false;
+  }
+  /**
+   * QA R1: the stored result of one call, replaced with what the engine now knows (the approved call it ran itself after the
+   * owner's yes). Only the newest result for that call is written; false when the conversation holds none.
+   */
+  setToolResult(sessionId: string, callId: string, content: string): boolean {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
+      this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return true;
+    }
+    return false;
+  }
+  /** QA R1: the newest result of `callId`, replaced with `content` only while it is still the "not run" placeholder. */
+  private replaceNotRun(sessionId: string, callId: string, content: string): void {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
+      if (String(body.content ?? "").includes(notRunMark)) this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return;
+    }
+  }
+  reconcileMessages(sessionId: string, reason: string, known?: ReadonlyMap<string, string>): number {
     const rows = this.db.prepare("SELECT id,body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
     const sources = new Map(rows.map((row) => [JSON.parse(String(row.body)) as Message, Number(row.source_id)]));
     // attach-anything: what was read out of a message's files follows the message to its new row.
     const oldIds = new Map([...sources.keys()].map((message, i) => [message, Number(rows[i]!.id)]));
     // A repaired transcript keeps when each message was first written.
     const times = new Map([...sources.keys()].map((message, i) => [message, rows[i]!.created_at == null ? null : String(rows[i]!.created_at)]));
-    const repaired = reconcileTranscript([...sources.keys()], reason);
+    const repaired = reconcileTranscript([...sources.keys()], reason, known);
     if (!repaired.added) return 0;
     this.db.exec("BEGIN");
     try {
@@ -845,18 +935,21 @@ export class Store {
     runId: string,
     estimatedInput: number,
     estimatedOutput: number,
-    reported?: { input: number; output: number },
+    reported?: { input: number; output: number; cachedInput?: number | undefined; cacheWrite?: number | undefined; cacheWrite1h?: number | undefined },
     completed = true,
   ): void {
     this.db
       .prepare(
-        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
+        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reported_cached_input=reported_cached_input+?,reported_cache_write=reported_cache_write+?,reported_cache_write_hour=reported_cache_write_hour+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
       )
       .run(
         estimatedInput,
         estimatedOutput,
         reported?.input ?? 0,
         reported?.output ?? 0,
+        reported?.cachedInput ?? 0,
+        reported?.cacheWrite ?? 0,
+        reported?.cacheWrite1h ?? 0,
         reported ? 1 : 0,
         reported ? 1 : 0,
         completed ? 1 : 0,
@@ -870,6 +963,9 @@ export class Store {
       estimatedOutput: Number(r?.estimated_output ?? 0),
       reportedInput: Number(r?.reported_input ?? 0),
       reportedOutput: Number(r?.reported_output ?? 0),
+      reportedCachedInput: Number(r?.reported_cached_input ?? 0),
+      reportedCacheWrite: Number(r?.reported_cache_write ?? 0),
+      reportedCacheWrite1h: Number(r?.reported_cache_write_hour ?? 0),
       reports: Number(r?.reports ?? 0),
       attempts: Number(r?.attempts ?? 0),
       unreportedCalls: Number(r?.unreported_calls ?? 0),
@@ -1001,7 +1097,9 @@ export class Store {
   memorySuppressed(owner: string, sessionId: string) { return this.memories.suppressed(owner, sessionId); }
   memoryHygiene(owner: string, input: unknown, now?: number) { return this.memories.hygiene(owner, input, now); }
   archivedMemory(owner: string) { return this.memories.archived(owner); }
-  restoreMemory(owner: string, id: string) { return this.memories.restore(owner, id); }
+  restoreMemory(owner: string, id: string, preserveExpiry = false) { return this.memories.restore(owner, id, preserveExpiry); }
+  /** Seasons: moves one fact into the archive with a note; nothing is destroyed and the Memory view can bring it back. */
+  setAsideMemory(owner: string, id: string, note: string) { return this.memories.setAside(owner, id, note); }
   archivedMemoryCount(owner: string) { return this.memories.archivedCount(owner); }
   purgeArchivedMemory(owner: string, seen: number) { return this.memories.purgeArchive(owner, seen); }
   /** Keeps a note made while doing one job, so finishing that job no longer clears it. */
@@ -1018,6 +1116,23 @@ export class Store {
         "UPDATE schedules SET data=json_set(data,'$.status','running'),updated_at=? WHERE owner=? AND id=? AND json_extract(data,'$.status')='pending' AND json_extract(data,'$.dueAt')<=? RETURNING *",
       )
       .get(now, owner, id, now);
+    return result ? this.toRecord(result) : undefined;
+  }
+  /**
+   * A turn asked for by hand or by a webhook takes the schedule in one conditional write, as `claimSchedule` does for
+   * a due turn, so two callers (or a caller and the clock) can never both start it. The status it had is kept in
+   * `statusBeforeTrigger` so the turn can put it back. A `slot` that already started a turn of this schedule is never
+   * claimed again: the same webhook delivery sent twice starts one turn.
+   */
+  claimScheduleTrigger(owner: string, id: string, now: string, slot: string | null): SavedRecord | undefined {
+    const result = this.db
+      .prepare(
+        `UPDATE schedules SET data=json_set(data,'$.statusBeforeTrigger',json_extract(data,'$.status'),'$.status','running'),updated_at=?
+         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed')
+         AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(data,'$.triggerSlots') WHERE json_extract(value,'$.slot')=?))
+         RETURNING *`,
+      )
+      .get(now, owner, id, slot, slot);
     return result ? this.toRecord(result) : undefined;
   }
   dueSchedules(owner: string, now: string): SavedRecord[] {
@@ -1117,4 +1232,3 @@ export class Store {
     };
   }
 }
-

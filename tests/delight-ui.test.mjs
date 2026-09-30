@@ -14,6 +14,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { closeSettings, openSettingFor } from "./places.mjs"; // the old window's helpers, for the skipped bodies only
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 /** A model that answers at once, or waits for `release()` when asked to sort the Downloads folder. */
 function slowModel() {
@@ -85,6 +86,29 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR
 const stored = (page) => page.evaluate(async () => (await indexedDB.databases()).some((db) => db.name === "branch-delight"));
 const status = (page, words) => page.getByRole("status").filter({ hasText: words }).first().waitFor();
 
+test("a saved mascot pet displays a regular pet without changing its saved preferences", async (t) => {
+  const f = await fixture(t, { reducedMotion: "reduce" });
+  await f.call("/api/delight/settings", {
+    pets: { on: true, kind: "sprout", name: "Maple", talks: false, tips: false },
+    achievements: { on: false, quiet: true }, background: { on: false, scrim: 72 },
+  });
+  const before = (await f.call("/api/delight")).settings;
+  assert.equal(before.pets.kind, "sprout", "the fixture must contain the legacy choice");
+  await f.page.reload();
+  await f.page.locator('#side .petbox[data-kind="fennec"]').waitFor();
+  assert.match(await f.page.locator('#side .petbox img').getAttribute("src"), /\/pets\/fennec\.webp$/);
+  assert.match(await f.page.locator('#side .petbox [data-act="pat"]').getAttribute("aria-label"), /Maple/);
+  await openSettingsPage(f.page, "appearance");
+  assert.equal(await f.page.locator('[data-act="petset"][data-v="sprout"]').count(), 0);
+  await f.page.locator('[data-act="petset"][data-v="fennec"][aria-pressed="true"]').first().waitFor();
+  assert.deepEqual((await f.call("/api/delight")).settings, before);
+  await f.page.locator('[data-act="petset"][data-v="none"]').first().click();
+  await f.page.locator('[data-act="petset"][data-v="none"][aria-pressed="true"]').first().waitFor();
+  const after = (await f.call("/api/delight")).settings;
+  assert.deepEqual(after, { ...before, pets: { ...before.pets, on: false } });
+  assert.deepEqual(f.errors, []);
+});
+
 /** The window looks for what the engine earned when it redraws (shell/celebrate.js check, on each draw, at most every
     10 s). A person using the window redraws it all the time; here the Places fold is pressed twice now and
     then, which redraws it and changes nothing, until the celebration shows. (That nothing is looked for without a redraw
@@ -98,6 +122,17 @@ async function celebrated(page, selector, text) {
     await target.first().waitFor({ timeout: 1000 }).catch(() => undefined);
   }
   await target.first().waitFor({ timeout: 1000 });
+}
+
+/** Writes what the engine has earned while no window is open, then opens the window again. Written under an open
+    window, its own look (a redraw, or its timer) could show it and tell the engine before the reload, and the reloaded
+    window would then have nothing fresh to show. */
+async function earnedWhileAway(f, progress) {
+  const url = f.page.url();
+  await f.page.goto("about:blank");
+  f.app.store.save("settings", f.app.runtime.owner, "delight-achievements", progress);
+  await f.page.goto(url);
+  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
 }
 
 /**
@@ -214,9 +249,7 @@ test("achievements: what a real task earns arrives as a seven-second note, once;
   /* A Diamond the engine has earned gets the card with the bigger party; it never covers the message box. */
   const progress = f.app.store.get("settings", f.app.runtime.owner, "delight-achievements");
   const diamond = (await f.call("/api/delight/achievements")).list.find((a) => a.tier === "Diamond");
-  f.app.store.save("settings", f.app.runtime.owner, "delight-achievements", { ...progress, got: { ...progress.got, [diamond.id]: "2026-09-25" }, fresh: [diamond.id] });
-  await f.page.reload();
-  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await earnedWhileAway(f, { ...progress, got: { ...progress.got, [diamond.id]: "2026-09-25" }, fresh: [diamond.id] });
   await celebrated(f.page, ".ach-big .card");
   const card = await f.page.locator(".ach-big .card").boundingBox(), box = await f.page.locator("#prompt").boundingBox();
   assert.ok(card.y + card.height <= box.y || card.y >= box.y + box.height, "the card never covers the message box");
@@ -231,9 +264,7 @@ test("Keep things still shows the card without falling leaves", async (t) => {
   const f = await fixture(t, { reducedMotion: "reduce" });
   await f.call("/api/delight/settings", { achievements: { on: true } });
   const high = (await f.call("/api/delight/achievements")).list.find((a) => a.tier === "Godly").id;
-  f.app.store.save("settings", f.app.runtime.owner, "delight-achievements", { got: { [high]: "2026-09-25" }, fresh: [high] });
-  await f.page.reload();
-  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await earnedWhileAway(f, { got: { [high]: "2026-09-25" }, fresh: [high] });
   await celebrated(f.page, ".ach-big .card");
   const ink = await f.page.locator(".ach-big canvas").evaluate((canvas) => canvas.width > 0 && canvas.getContext("2d").getImageData(0, 0, canvas.width, canvas.height).data.some((value, i) => i % 4 === 3 && value > 0));
   assert.equal(ink, false, "no confetti falls");
@@ -415,7 +446,7 @@ test("your own background: a full disk keeps nothing half-kept; choosing None ke
   await f.page.getByRole("button", { name: "Remove", exact: true }).click();
   await ask.getByRole("button", { name: "Remove", exact: true }).click();
   await f.page.locator("#bgLayer .bg-media").waitFor({ state: "detached" });
-  await f.page.waitForFunction(async () => !(await indexedDB.databases()).some((db) => db.name === "branch-delight"));
+  await waitInPage(f.page, async () => !(await indexedDB.databases()).some((db) => db.name === "branch-delight"));
   await status(f.page, "Removed. Nothing is kept.");
   assert.deepEqual(f.errors, []);
 });

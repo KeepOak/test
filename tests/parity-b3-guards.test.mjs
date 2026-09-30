@@ -19,6 +19,7 @@ test("Sync now asks the engine once for a double click", async (t) => {
   page.on("request", (request) => { if (request.method() === "POST" && request.url().endsWith("/api/asks/sources/sync")) syncs++; });
   await openSettings(page);
   await setLevel(page, "advanced");
+  await page.locator(".set-back").click(); // Settings holds the side column (pass 18); its Back returns to the places
   await openPlace(page, "library", "documents");
   await page.locator('#main [data-act="demob17"][data-k="sources"]').click();
   const go = page.locator(".dlg [data-act='demodob17'][data-k='sources']");
@@ -35,6 +36,7 @@ test("Export as CSV writes formula-looking cells as text", async (t) => {
   } });
   await openSettings(page);
   await setLevel(page, "advanced");
+  await page.locator(".set-back").click(); // Settings holds the side column (pass 18); its Back returns to the places
   await openPlace(page, "automations", "scheduled");
   await page.locator('#main [data-act="demob17"][data-k="leads"]').click();
   const download = page.waitForEvent("download", { timeout: 20000 });

@@ -11,6 +11,7 @@ import { on } from "../core/actions.js";
 import { ic, mi, openDlg, closeDlg, closePop, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { chatOwner, pinChat, renameDlg } from "../flows/trunk.js";
+import { pinLine } from "./trunkline.js";
 import { t, tc } from "../../i18n.js";
 
 const sid = (s) => s.sessionId ?? s.id;
@@ -27,6 +28,12 @@ export function convItems(id) {
     + mi("conv-delete", "trash", t("window.chat.putaway.delete"), "", `data-id="${esc(id)}"`);
 }
 
+/* chat-029 (batch A): the conversation menu's Pin to top / Unpin for an ordinary conversation, through the engine's own
+   marks as the row's menu does (POST /api/sessions/<id>/pin). */
+export function pinItem(id) {
+  return mi("pin-id", "pin", find(id)?.pinned ? t("accounts.action.unpin") : t("window.shell.extras.pin-to-top"), "", `data-id="${esc(id)}"`);
+}
+
 /* The two entries at the end of the list, each only while the engine counts something in it (GET /api/sessions). */
 export function putAwayEntries() {
   const n = E.putAway ?? {};
@@ -41,14 +48,16 @@ async function pin(id) {
   try { await api(`sessions/${id}/pin`, { pinned: !find(id)?.pinned }); await refresh(); } catch (error) { toast(error.message); }
 }
 
-function rename(id) {
+/* `own`: the conversation itself, even a Trunk's own chat (a timeline's line menu, chat/trunkline.js). */
+function rename(id, own = false) {
   closePop();
-  if (chatOwner(id)) return renameDlg(id);
+  if (!own && chatOwner(id)) return renameDlg(id);
   const s = find(id);
   openDlg({ title: t("window.chat.putaway.rename-title"), body: `<div class="field"><label for="cv-name">${t("accounts.field.name")}</label><input class="inp" id="cv-name" maxlength="120" value="${esc(s?.title || s?.opening || "")}"></div>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="conv-rename-save" data-id="${esc(id)}">${t("action.save")}</button>` });
   setTimeout(() => $("#cv-name")?.select(), 0);
 }
+export const renameConversation = (id) => rename(id, true);
 /* In the name box Enter saves and Esc leaves it as it was. */
 function renameKeys(e) {
   if (e.target.id !== "cv-name") return;
@@ -84,6 +93,7 @@ function leaveRecent(id, where) {
   if (S.chat === id) S.chat = null;
   E.sessions = E.sessions.filter((s) => sid(s) !== id);
   E.putAway = { ...E.putAway, [where]: (E.putAway?.[where] ?? 0) + 1 };
+  document.dispatchEvent(new CustomEvent("conv-put-away", { detail: id })); // trunk-one-row: its timeline moves on (chat/chat.js)
   renderNow();
 }
 
@@ -185,6 +195,8 @@ function swipeEnd() {
   row.style.removeProperty("--swipe");
   if (Math.abs(dx) < 72) return;
   SW.swiped = Date.now();
+  // trunk-one-row: a Trunk's row is the Trunk, not one conversation: right pins it, left deletes nothing.
+  if (row.dataset.line) { if (dx > 0) pinLine(row.dataset.line); return; }
   if (dx < 0) remove(row.dataset.id); else pin(row.dataset.id);
 }
 function noClickAfterSwipe(e) {

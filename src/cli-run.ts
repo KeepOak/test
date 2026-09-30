@@ -149,15 +149,15 @@ export interface RunWriter {
  * on the transcript of a task that stopped, in its own conversation. `--session` simply joins one.
  * Anything that is not the owner's own is refused by the store, in its own words.
  */
-export function conversationFor(
+export async function conversationFor(
   store: Store, owner: string, flags: RunFlags,
-): { sessionId?: string; resumeFrom?: string; prompt?: string } {
+): Promise<{ sessionId?: string; resumeFrom?: string; prompt?: string }> {
   if (flags.forkFrom) {
     const view = store.sessionView(owner, flags.forkFrom);
     const point = [...view.messages].reverse()
       .find((message) => ["user", "assistant"].includes(message.role) && !message.toolCalls?.length);
     if (!point) throw new Error("There is nothing in that conversation to work from yet");
-    return { sessionId: store.branchSession(owner, { sessionId: flags.forkFrom, messageId: point.messageId }).sessionId };
+    return { sessionId: (await store.branchSession(owner, { sessionId: flags.forkFrom, messageId: point.messageId })).sessionId };
   }
   if (flags.resumeRunId) {
     const previous = store.run(flags.resumeRunId);
@@ -183,7 +183,7 @@ export async function runForScripts(
   const timer = flags.timeoutMs ? setTimeout(() => controller.abort(new Error("Timed out")), flags.timeoutMs) : undefined;
   let seen = 0, runId = "";
   const pump = setInterval(() => { seen = drain(runtime, runId, seen, writer); }, 100);
-  const { prompt: carried, ...conversation } = conversationFor(runtime.store, runtime.owner, flags);
+  const { prompt: carried, ...conversation } = await conversationFor(runtime.store, runtime.owner, flags);
   try {
     const run = await runtime.run({
       prompt: (flags.prompt || carried || "") + attachedText(attachments),

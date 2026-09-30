@@ -18,8 +18,30 @@ import { ModelRouter } from "../dist/models.js";
 import { unofferedMark, wireName } from "../dist/providers.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
+import { providerEmbeddings } from "../dist/providers.js";
+import { EmbeddingClient } from "../dist/document-embeddings.js";
+import { embeddingConnection, embeddingsFor } from "../dist/embeddings.js";
 import { tablePrice, estimateCost } from "../dist/pricing.js";
 import { allPresets } from "../dist/providers/presets.js";
+
+test("LAN Ollama embeddings retain their connection's exact origin and network stop", async () => {
+  const policy = new NetworkPolicy({}), sent = [];
+  const { provider } = buildConnection({ provider: "ollama", key: "", model: "qwen3:14b",
+    extras: { baseUrl: "http://192.168.1.20:11434" }, policy,
+    fetchImpl: async (url) => { sent.push(String(url)); return Response.json({ data: [{ index: 0, embedding: [1, 2] }] }); } });
+  const route = providerEmbeddings(provider);
+  assert.equal(typeof route.fetchImpl, "function");
+  const client = new EmbeddingClient(route.endpoint, route.apiKey, "reader", route.fetchImpl);
+  assert.deepEqual(Array.from((await client.embed(["passage"], AbortSignal.timeout(1000)))[0]), [1, 2]);
+  const connection = embeddingConnection({ plan: () => ({ candidates: [{ provider }] }) }, "local", "reader");
+  const reader = embeddingsFor(connection, async () => { throw new Error("ordinary network policy refuses LAN"); });
+  assert.deepEqual(Array.from((await reader.embed(["passage"], AbortSignal.timeout(1000)))[0]), [1, 2]);
+  assert.equal(sent.length, 2);
+  await assert.rejects(() => route.fetchImpl("http://192.168.1.21:11434/v1/embeddings"), /not the address/);
+  const blocked = buildConnection({ provider: "ollama", key: "", extras: { baseUrl: "http://192.168.1.20:11434" },
+    policy: new NetworkPolicy({ blockedHosts: ["192.168.1.20"] }), fetchImpl: async () => { throw new Error("must not reach server"); } });
+  await assert.rejects(() => providerEmbeddings(blocked.provider).fetchImpl("http://192.168.1.20:11434/v1/embeddings"), /blocked/);
+});
 import { Store } from "../dist/store.js";
 
 const request = {
@@ -188,8 +210,10 @@ for (const entry of catalogEntries()) {
     const { provider } = buildConnectionAgainst(local, extrasFor(entry, origin));
     const completion = await provider.complete(request);
     assert.equal(completion.content, "hi");
-    assert.ok(seen[0].url.includes(shape.path.replace(":generateContent", "")), `${entry.id} asked for ${seen[0].url}`);
-    if (entry.shape === "perplexity-agent") assert.equal(seen[0].body.preset, entry.defaultModel);
+    // Ollama first asks /api/show how much room the model has; the chat is the request after it.
+    const chat = seen.at(-1);
+    assert.ok(chat.url.includes(shape.path.replace(":generateContent", "")), `${entry.id} asked for ${chat.url}`);
+    if (entry.shape === "perplexity-agent") assert.equal(chat.body.preset, entry.defaultModel);
     assert.equal(completion.usage.input, 3);
     assert.equal(completion.usage.output, 1);
   });
@@ -487,6 +511,7 @@ test("from-preset probes the service before storing anything, and never logs the
   assert.equal(result.modelsFound, 2);
   assert.ok(models.presets.has("groq"), "the connection is registered");
   assert.equal(models.presets.get("groq").catalogId, "groq");
+  assert.equal(models.presets.get("groq").endpoint, `${origin}/v1`, "its address is kept, so a figure learned for it stays with it");
   assert.deepEqual(store.locker.names("local", connectionProject).map((row) => row.name), ["GROQ_KEY"]);
   assert.ok(!JSON.stringify(result).includes("sk-secret-value"), "the key is never handed back");
   assert.ok(JSON.stringify(seen).includes("sk-secret-value"), "the key does reach the service itself");

@@ -18,7 +18,8 @@ const dir = import.meta.dirname;
 /**
  * Line numbers of `startServer(...)` calls in `source` whose options do not say `port: 0` in so many
  * words. A fixed port (`port: 3210`, `port: 8080`) collides just the same, and a value held in a
- * variable (`{ port }`) cannot be read from here, so both count.
+ * variable (`{ port }`) cannot be read from here, so both count. The one exception is a real restart, which must come
+ * back on the port the same test's first server was given by `port: 0`: its line says "same-port-restart".
  */
 function portless(source, name = "test.mjs") {
   const file = ts.createSourceFile(name, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
@@ -33,7 +34,8 @@ function portless(source, name = "test.mjs") {
     return last >= 0 && isZero(options.properties[last]);
   };
   const visit = (node) => {
-    if (ts.isCallExpression(node) && node.expression.getText(file) === "startServer") {
+    if (ts.isCallExpression(node) && node.expression.getText(file) === "startServer"
+      && !/same-port-restart/.test(source.split("\n")[file.getLineAndCharacterOfPosition(node.getStart(file)).line] ?? "")) {
       const options = node.arguments[1];
       // Options built elsewhere cannot be read from here, so they count as not saying `port: 0`.
       if (!options || !ts.isObjectLiteralExpression(options) || !names(options))
@@ -69,6 +71,7 @@ test("the guard finds a portless call whatever its options hold, and accepts one
     "const s = await startServer(app, { dataDir, \"port\": 0 });",
     "const s = await startServer(app, { ...options, port: 0 });",
     "// startServer(app, { dataDir });\nconst text = 'startServer(app)';",
+    "const s = await startServer(app, { dataDir, port }); // same-port-restart",
   ];
   for (const source of allowed) assert.deepEqual(portless(source), [], `wrongly caught: ${source}`);
 });

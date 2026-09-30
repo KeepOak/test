@@ -524,7 +524,9 @@ test("the goal and rewind routes answer only for the owner's conversations", noG
     return { status: response.status, body: await response.json() };
   };
   assert.deepEqual((await call(`/api/sessions/${sessionId}/goal`)).body, { goal: null });
-  assert.deepEqual((await call("/api/goal-undo/settings")).body, { goal: "off", snapshots: "on" });
+  // The ship-on rule: goal mode ships on (src/goal-mode.ts); the owner switches it off to see the refusal.
+  assert.deepEqual((await call("/api/goal-undo/settings")).body, { goal: "on", snapshots: "on" });
+  assert.deepEqual((await call("/api/goal-undo/settings", { goal: "off" })).body, { goal: "off", snapshots: "on" });
   const refused = await call("/api/goals", { objective: "Say hello" });
   assert.equal(refused.status, 400);
   assert.match(refused.body.error, /Goal mode is off/);
@@ -550,11 +552,12 @@ test("the goal and rewind routes answer only for the owner's conversations", noG
 
 /* ---------- the three-way switches ---------- */
 
-test("switches: everything ships off; off takes no snapshot and refuses a goal", async (t) => {
+test("switches: goals ship on and snapshots off (heavy disk); off takes no snapshot and refuses a goal", async (t) => {
   const { app, root, workspace, sessionId, users } = await twoTurns(t, "off", { snapshots: "off" });
+  saveGoalUndoSettings(app.store, "local", { goal: "off" }); // goal mode ships on; this part is about off
   const fresh = await createBranch({ workspace: join(root, "fresh-w"), dataDir: join(root, "fresh-p"), snapshotGit: null });
   later(t, () => fresh.close());
-  assert.deepEqual(goalUndoSettings(fresh.store, "local"), { goal: "off", snapshots: "off" }, "a fresh install is off");
+  assert.deepEqual(goalUndoSettings(fresh.store, "local"), { goal: "on", snapshots: "off" }, "a fresh install: goals on, snapshots off");
   saveGoalUndoSettings(fresh.store, "local", { goal: "on" });
   assert.deepEqual(saveGoalUndoSettings(fresh.store, "local", { snapshots: "when-needed" }), { goal: "on", snapshots: "when-needed" },
     "saving one switch leaves the other as it was");

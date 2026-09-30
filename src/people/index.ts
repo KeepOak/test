@@ -15,6 +15,7 @@ import { ResetCodes } from "./reset-codes.js";
 import { peopleEnabled, peopleSettings, savePeopleSettings } from "./settings.js";
 import { returnLentSessions } from "./lending.js";
 import { SignIns } from "./sign-in.js";
+import { onLockdownChange } from "../lockdown.js";
 
 /**
  * Bucket 19: more than one person, safely. Everything a person signing in from their own device
@@ -56,7 +57,14 @@ export class People {
     // A key handed to another device for one conversation is held to it (src/session-tokens.ts).
     parts.tokens.boundCheck = (sessionId, method, path) =>
       boundDoorRefusal(sessionId, method, path, (runId) => parts.store.run(runId)?.sessionId ?? null);
+    // Lockdown voids every one-time code not used yet, so none outlives it.
+    this.stopListening = onLockdownChange((store, owner, on) => {
+      if (on && store === parts.store && owner === parts.owner) this.resetCodes.voidAll();
+    });
   }
+  private readonly stopListening: () => void;
+  /** Stops listening for Lockdown; the app is closing. */
+  close(): void { this.stopListening(); }
   get profiles(): Profiles { return this.parts.store.profiles; }
   settings() { return peopleSettings(this.parts.store, this.parts.owner); }
   enabled(): boolean { return peopleEnabled(this.parts.store, this.parts.owner); }

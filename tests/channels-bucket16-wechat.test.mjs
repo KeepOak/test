@@ -222,6 +222,6 @@ test("WeChat and WeCom take strict settings with secret names, check their hosts
     assert.equal(built.health().state, "needs attention", `${config.type} starts off`);
   }
   assert.deepEqual(asked, ["WECHAT_MP_APP_SECRET", "WECHAT_MP_TOKEN", "WECHAT_MP_AES_KEY", "WECOM_APP_SECRET", "WECOM_APP_TOKEN", "WECOM_APP_AES_KEY"]);
-  const cards = paritySummary(context.app.store, context.app.runtime.owner).filter((s) => /^we(chat|com)-/.test(s.kind));
+  const cards = (await paritySummary(context.app.store, context.app.runtime.owner)).filter((s) => /^we(chat|com)-/.test(s.kind));
   assert.deepEqual(cards.map((c) => [c.kind, c.switch, c.receives]), [["wechat-mp", "off", "posted"], ["wecom-app", "off", "posted"]]);
 });

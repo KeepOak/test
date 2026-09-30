@@ -4,9 +4,10 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, runFile, runPool, shareFiles, shards, testGroups,
-  testProcessStatus } from "../scripts/run-tests.mjs";
+import { laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, RETRY_AT_MOST, retryFailed, runFile, runPool,
+  shareFiles, shards, testGroups, testProcessStatus } from "../scripts/run-tests.mjs";
 import { mergeWeights, readTimings } from "../scripts/test-weights.mjs";
+import { FULL_MATRIX, planMatrix } from "../scripts/select-affected-tests.mjs";
 
 test("npm test isolates browser and desktop files while keeping ordinary tests together", () => {
   const listing = {
@@ -18,10 +19,19 @@ test("npm test isolates browser and desktop files while keeping ordinary tests t
   assert.deepEqual(groups.desktop, [join("tests", "desktop-export.test.mjs"), join("tests", "desktop.test.mjs")]);
   assert.deepEqual(groups.browser, [join("tests", "mac2-desktop-ui.test.mjs"), join("tests", "memory-ui.test.mjs")]);
   assert.deepEqual(groups.shared, [join("packages", "sdk", "test", "client.test.mjs")]);
-  // The real folders: the four desktop files, and none of them among the rest.
+  // The real folders: the desktop app's files, and none of them among the rest.
   const real = testGroups();
   assert.deepEqual(real.desktop.map((file) => file.replace(/\\/g, "/")),
-    ["tests/desktop-export.test.mjs", "tests/desktop-identity.test.mjs", "tests/desktop-settings.test.mjs", "tests/desktop-window.test.mjs", "tests/desktop.test.mjs"]);
+    ["tests/desktop-beta-smoke.test.mjs", "tests/desktop-close.test.mjs", "tests/desktop-detached-gateway.test.mjs",
+     "tests/desktop-engine-power.test.mjs", "tests/desktop-export.test.mjs",
+     "tests/desktop-gateway-control.test.mjs", "tests/desktop-gateway-hot.test.mjs",
+     "tests/desktop-gateway-launch.test.mjs", "tests/desktop-gateway-live.test.mjs",
+     "tests/desktop-gateway-mode.test.mjs", "tests/desktop-gateway-power.test.mjs",
+     "tests/desktop-gateway-presence.test.mjs", "tests/desktop-gateway-preview.test.mjs",
+     "tests/desktop-gateway-runtime.test.mjs", "tests/desktop-gateway-worker.test.mjs",
+     "tests/desktop-hot-update.test.mjs", "tests/desktop-identity.test.mjs", "tests/desktop-joined-engine.test.mjs",
+     "tests/desktop-old-engine.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs", "tests/desktop-update-chaos.test.mjs",
+     "tests/desktop-window.test.mjs", "tests/desktop.test.mjs"]);
   assert.equal(real.shared.some((file) => /^tests[\\/]desktop/.test(file)), false);
   assert.ok(real.browser.includes(join("tests", "glass-select.test.mjs")));
   assert.ok(real.browser.includes(join("tests", "settings-grown-1.test.mjs")));
@@ -74,7 +84,9 @@ test("--shard names one share of the whole, and anything else is refused", () =>
 test("--files-from selects an explicit discovered subset and rejects stale or duplicate entries", () => {
   const groups = { shared: [join("tests", "a.test.mjs")], browser: [join("tests", "b.test.mjs")], desktop: [] };
   const read = () => JSON.stringify(["tests/b.test.mjs"]);
-  assert.deepEqual(parseFilesFrom(["--files-from=selected.json"], groups, read), [join("tests", "b.test.mjs")]);
+  assert.deepEqual(parseFilesFrom(["--files-from=selected.json"], groups, read),
+    { shared: [], browser: [join("tests", "b.test.mjs")], desktop: [] });
+  assert.throws(() => parseFilesFrom(["--files-from=selected.json"], groups, () => "[]"), /empty run/);
   assert.throws(() => parseFilesFrom(["--files-from=selected.json"], groups,
     () => JSON.stringify(["tests/missing.test.mjs"])), /not discovered/);
   assert.throws(() => parseFilesFrom(["--files-from=selected.json"], groups,
@@ -139,12 +151,20 @@ test("the three lanes run every file between them, and Linux runs everything but
     assert.ok(macos.includes(file), `${file} runs on macOS`);
   assert.ok(windows.length < all.length / 5 && macos.length < all.length / 5, "the other systems run their own tests, not the suite again");
   assert.throws(() => laneGroups(["--lane=freebsd"], groups), /expected --lane=linux, windows or macos/);
-  assert.throws(() => parseFilesFrom(["--files-from=x.json", "--lane=linux"], groups, () => "[]"), /cannot be combined/);
+  // A selected subset is split by lane and share like the whole suite: the Linux lane of it, then one share of that.
+  const picked = parseFilesFrom(["--files-from=x.json", "--lane=linux"], byLane.linux,
+    () => JSON.stringify(["tests/desktop.test.mjs", "tests/leak-guard.test.mjs"]), groups);
+  assert.deepEqual(flat(picked).map((file) => file.replace(/\\/g, "/")), ["tests/leak-guard.test.mjs"], "the desktop file is Windows'");
 });
 
-test("the workflow runs every share of every lane, and each lane's shares cover it exactly once", () => {
+test("the whole suite runs every share of every lane, and each lane's shares cover it exactly once", () => {
   const workflow = parse(readFileSync(new URL("../.github/workflows/checks.yml", import.meta.url), "utf8"));
-  const rows = workflow.jobs.test.strategy.matrix.include;
+  // Without a plan (every push) the workflow's own rows run; they are the planner's whole suite.
+  const expression = workflow.jobs.test.strategy.matrix;
+  assert.match(expression, /needs\.plan\.result == 'success' && needs\.plan\.outputs\.matrix/);
+  const rows = JSON.parse(/'(\{"include".*\})'/s.exec(expression)[1]).include;
+  assert.deepEqual(rows, FULL_MATRIX);
+  assert.deepEqual(planMatrix("full", {}), FULL_MATRIX);
   const byLane = lanes(testGroups());
   assert.deepEqual([...new Set(rows.map((row) => row.lane))].sort(), ["linux", "macos", "windows"]);
   for (const lane of ["linux", "windows", "macos"]) {
@@ -218,4 +238,29 @@ test("the weights are refreshed per system from a run's timings, and a file that
     win32: { "tests/a.test.mjs": 30 },
     darwin: { "tests/c.test.mjs": 5 },
   });
+});
+
+test("a merge-queue share runs a failed file once more alone: a pass there is named flaky, a second failure still fails", async () => {
+  const runs = [];
+  const second = { "tests/flaky.test.mjs": 0, "tests/broken.test.mjs": 1 };
+  const runOne = async (file) => { runs.push(file); return { file, status: second[file], timedOut: 0 }; };
+  const failed = [{ file: "tests/flaky.test.mjs", status: 1, timedOut: 0 }, { file: "tests/broken.test.mjs", status: 1, timedOut: 0 }];
+  const { stillFailed, flaky } = await retryFailed(failed, { runOne });
+  assert.deepEqual(runs, ["tests/flaky.test.mjs", "tests/broken.test.mjs"], "each failed file runs once more, one at a time");
+  assert.deepEqual(flaky.map((r) => r.file), ["tests/flaky.test.mjs"]);
+  assert.deepEqual(stillFailed.map((r) => r.file), ["tests/broken.test.mjs"], "a file that fails twice still fails the share");
+});
+
+test("no second run when more files failed than a flake explains, or one ran past its limit", async () => {
+  const runOne = async () => assert.fail("nothing runs again");
+  const many = Array.from({ length: RETRY_AT_MOST + 1 }, (_, n) => ({ file: `tests/f${n}.test.mjs`, status: 1, timedOut: 0 }));
+  assert.equal((await retryFailed(many, { runOne })).stillFailed.length, many.length);
+  const stuck = [{ file: "tests/stuck.test.mjs", status: null, timedOut: 360 }];
+  assert.deepEqual((await retryFailed(stuck, { runOne })).stillFailed, stuck);
+});
+
+test("only merge-queue groups and pushes rerun failed files; a pull request's own run does not", () => {
+  const workflow = parse(readFileSync(new URL("../.github/workflows/checks.yml", import.meta.url), "utf8"));
+  const step = workflow.jobs.test.steps.find((one) => String(one.run ?? "").includes("scripts/run-tests.mjs"));
+  assert.match(step.run, /github\.event_name != 'pull_request' && ' --retry-failed'/);
 });

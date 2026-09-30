@@ -99,13 +99,13 @@ test("default Auto: a workspace write goes ahead and a command asks", async (t) 
   assert.equal(decision(f, run, "shell.execute", git), "ask", "a command asks, even with commands let through");
 });
 
-test("default No approvals: commands no rule covers still ask", async (t) => {
+test("default Full Access: an uncovered local command follows the owner's choice", async (t) => {
   const f = await realBranch(t);
   await setDefault(f, "full");
   const { mode, run } = await startInWindow(f, "write full.txt");
   assert.equal(mode, "full");
   assert.equal(written(f, "full.txt"), true, "the owner's own write goes ahead");
-  assert.equal(decision(f, run, "shell.execute", git), "ask");
+  assert.equal(decision(f, run, "shell.execute", git), "allow");
 });
 
 test("default Auto or No approvals: work started from outside is still held to Ask first", async (t) => {

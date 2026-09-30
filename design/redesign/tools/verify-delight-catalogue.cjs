@@ -30,7 +30,7 @@
 //   STUB_PORT=33533 PORT=3533 TOKEN=<hex> node design/redesign/tools/verify-delight-catalogue.cjs
 // It takes about six minutes; three of them are the naps.
 const http = require("node:http");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { mkdirSync } = require("node:fs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, STUB_PORT = process.env.STUB_PORT;
@@ -167,32 +167,14 @@ async function setupAndEmpty(page, still) {
   else check("setup's welcome plays Branch's idle loop", d?.tag === "video" && d.src === "/art/anim-idle.webm" && d.playing, JSON.stringify(d));
   await shot(page, still ? "setup-welcome-still" : "setup-welcome");
   if (still) return;
-  await setupNew(page);
   await closeSetup(page);
   const e = await drawn(page.locator(".empty-chat .hero11 video, .empty-chat .hero11 img"), 800);
   check("the empty conversation plays Branch's idle loop", e?.tag === "video" && e.src === "/art/anim-idle.webm" && e.playing, JSON.stringify(e));
   await shot(page, "empty-conversation");
 }
 
-/* Setup's "Make it yours" (the rail's fourth step): "New" only on pass 17's six scenes and six pets, as markNew17 marks
-   every scene and pet card in the page. */
-async function setupNew(page) {
-  if ((await page.locator("#ob-trust").count()) && !(await page.locator("#ob-trust").isChecked())) await page.locator(".ob-agree").click();
-  await page.locator('.ob-rail [data-act="ob-go"][data-v="3"]').click();
-  await page.locator(".ob-scenes15").waitFor({ timeout: 15000 });
-  await page.locator(".ob-pets15").waitFor({ timeout: 15000 });
-  const news = (sel) => page.locator(`${sel} .new17e`).evaluateAll((els) => els.map((b) => b.dataset.v));
-  const scenes = await news(".ob-scenes15"), pets = await news(".ob-pets15");
-  check("setup's Make it yours: \"New\" only on pass 17's six scenes and six pets", JSON.stringify(scenes) === JSON.stringify(NEW_SCENES) && JSON.stringify(pets) === JSON.stringify(NEW17), `${JSON.stringify(scenes)} ${JSON.stringify(pets)}`);
-  const cards = page.locator(".ob-pets15 .pet-c12");
-  for (let i = 0; i < await cards.count(); i++) await cards.nth(i).scrollIntoViewIfNeeded();
-  await wait(1500);
-  const pics = await page.locator(".ob-pets15 .pet-c12 img").evaluateAll((els) => els.map((img) => [img.closest("button").dataset.v, img.complete && img.naturalWidth > 0]));
-  const blank = pics.filter(([, ok]) => !ok).map(([v]) => v);
-  const px = await Promise.all(PIXEL.map((k) => pixels(page.locator(`.ob-pets15 .pet-c12[data-v="${k}"] canvas`), 2)));
-  check("setup's Make it yours: every pet card is drawn (41 pictures loaded, the three pixel pets painted)", pics.length === 41 && blank.length === 0 && px.every((d) => d?.opaque > 20), `${pics.length} pictures; blank: ${JSON.stringify(blank)}; pixel ${JSON.stringify(px)}`);
-  await shot(page, "setup-make-it-yours");
-}
+/* (Pass 18c: "Make it yours" is no longer a setup step; it waits on Overview's Finish setting up, which opens
+   Settings › Appearance.) */
 
 async function gallery(page) {
   await appearance(page);

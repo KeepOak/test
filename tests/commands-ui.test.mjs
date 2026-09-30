@@ -59,11 +59,12 @@ test("typing / lists the window's commands, and Tab fills one in", async (t) => 
 /* Redesign: a command's answer is drawn in the conversation, not in a toast. */
 test("a command runs without reaching the model, and a place command opens the place", async (t) => {
   const { app, page, errors, provider } = await fixture(t);
+  const before = app.store.runs(app.runtime.owner).map((run) => run.id).sort();
   await page.locator("#prompt").fill("/status");
   await submit(page);
   await answered(page, "When to check with you");
   assert.equal(provider.calls, 0, "nothing was sent to the model");
-  assert.equal(app.store.runs(app.runtime.owner).length, 0, "no task was started");
+  assert.deepEqual(app.store.runs(app.runtime.owner).map((run) => run.id).sort(), before, "no command started a task");
   await page.locator("#prompt").fill("/lockdown on");
   await submit(page);
   await answered(page, "Lockdown is on");
@@ -79,12 +80,14 @@ test("a command runs without reaching the model, and a place command opens the p
 /* Redesign: with the switch off the prototype's list still opens, and offers only what the engine lists for the window
    when off: the commands the window always had (GET /api/commands?surface=window, listed). */
 test("with the switch off the list offers only the commands the window always had, and /help lists them", async (t) => {
-  const { page, errors } = await fixture(t, undefined, null);
+  // Batch A: this computer's window ships the switch on (src/commands/settings.ts windowShipsAs), so off is saved here.
+  const { page, errors } = await fixture(t, undefined, "off");
   await page.locator("#prompt").fill("/");
   await page.locator("#prompt").dispatchEvent("input");
   const menu = page.locator(".slash6");
   await menu.waitFor({ state: "visible" });
-  assert.deepEqual(await menu.locator("[role=option] b").allTextContents(), ["/help", "/model", "/goal"]);
+  // /prompts is the prompt library's own command, and that library ships on (src/prompt-library.ts).
+  assert.deepEqual(await menu.locator("[role=option] b").allTextContents(), ["/help", "/model", "/goal", "/prompts"]);
   await page.locator("#prompt").fill("/to");
   await page.locator("#prompt").dispatchEvent("input");
   await page.waitForTimeout(500);
@@ -127,4 +130,3 @@ test("the dashboard's command line answers, and a key that may only look can sti
   assert.equal(sideways, false);
   assert.deepEqual(errors, []);
 });
-

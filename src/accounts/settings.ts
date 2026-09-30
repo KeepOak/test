@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import type { Store } from "../store.js";
 import { FeatureModeSchema, type FeatureMode } from "../feature-switches.js";
+import { shippedUnlessChosen, unsetRecord } from "../ship-on.js";
 
 /**
  * Several accounts per connection (GAPS row 40, the owner's request of 2026-09-17).
@@ -35,13 +36,6 @@ export const AccountSchema = z.object({
   monthlyCapUsd: z.number().min(0).max(100_000).nullable().default(null),
   /** Whether people sharing this computer may use it. Only an API key can be shared. */
   shared: z.boolean().default(false),
-  /**
-   * mac7/account-pooling: sign-in accounts only. The owner marks an account "kept separate" when it
-   * belongs to someone else or to work (a household person's own plan, a work plan), not to the
-   * owner's own personal use. Only such accounts may share work with the owner's own account; the
-   * owner's own identical personal plans never rotate (providers treat that as abuse).
-   */
-  keptSeparate: z.boolean().default(false),
   /** Extra API keys only: the address (scheme, host, port) the key was added for; it is sent nowhere else. */
   address: z.string().max(300).optional(),
   createdAt: z.string().max(40),
@@ -53,24 +47,29 @@ export const PoolSchema = z.object({
   kind: z.enum(accountKinds),
   strategy: z.enum(strategies).default("priority"),
   /**
-   * Sign-in accounts only: let Branch share work between accounts and move on when one reaches its
-   * plan limit. long-work: ships on (it spends nothing: the work moves to a plan the owner already has), and
-   * `rotationSet` still keeps it to accounts marked "kept separate", never between the owner's own plans.
+   * "Move to the next account" (owner decision 2026-09-27, Hermes Agent's credential pools): with two or more accounts
+   * switched on, the work moves on by itself when one runs out, keys and sign-ins alike (src/accounts/pool-provider.ts).
+   * Ships on: it spends nothing the owner did not already add, and each account's own terms still apply.
    */
   autoSwitch: z.boolean().default(true),
   /** The account new work uses, when no conversation picked one. Null means the first in the list. */
   defaultAccount: accountId.nullable().default(null),
+  /**
+   * MODEL-050: how many helpers may work through one account of this list at once before the next helper takes
+   * another account (src/accounts/leases.ts; Hermes Agent's DEFAULT_MAX_CONCURRENT_PER_CREDENTIAL is 1).
+   */
+  jobsPerAccount: z.number().int().min(1).max(16).default(1),
   accounts: z.array(AccountSchema).max(maxAccounts).default([]),
 }).strict();
 export type Pool = z.infer<typeof PoolSchema>;
 
 /** The version of the sharing rule the saved list was last brought up to (see `applyPoolingRule`). */
-export const poolingRuleVersion = 1;
+export const poolingRuleVersion = 2;
 export const AccountsSettingsSchema = z.object({
   /**
    * Ships on (owner decision 2026-09-27, the ship-on rule): several accounts per connection spends nothing by itself,
-   * sends nothing and deletes nothing. It uses only accounts the owner added, and moving work between sign-ins stays
-   * limited by `rotationSet` (kept-separate accounts, never the owner's own plans). "when-needed" is the ship-on
+   * sends nothing and deletes nothing. It uses only accounts the owner added, and each account's own terms apply.
+   * "when-needed" is the ship-on
    * position of a three-way switch; the engine reads anything but "off" as on (`AccountsService.on`).
    */
   mode: FeatureModeSchema.default("when-needed"),
@@ -84,44 +83,73 @@ export type AccountsSettings = z.infer<typeof AccountsSettingsSchema>;
 const settingKey = "accounts";
 
 /**
- * mac7/account-pooling (owner decision 2026-09-19): a list that shared work between the owner's own
- * sign-ins of one service stops sharing. The owner's first choice (their default, else the first in
- * the list) is kept as the account new work uses, and a one-time notice says why. Idempotent: once
- * the saved list carries this rule's version it is left alone.
+ * The owner's decision of 2026-09-27 (Hermes Agent's credential pools): every list moves on to its next account by
+ * itself when one runs out, the owner's own sign-ins of one service included. Rule version 1 (2026-09-19) had switched
+ * that off for lists holding two of the owner's own sign-ins; version 2 switches every list's `autoSwitch` back on once
+ * and clears the notices that rule left. Idempotent: once the saved list carries this version it is left alone, so an
+ * owner who switches it off afterwards keeps it off.
  */
 export function applyPoolingRule(settings: AccountsSettings): { settings: AccountsSettings; stopped: string[] } {
   if (settings.poolingRule >= poolingRuleVersion) return { settings, stopped: [] };
-  const stopped: string[] = [];
+  const changed: string[] = [];
   const pools = settings.pools.map((pool) => {
-    const own = pool.accounts.filter((account) => !account.keptSeparate);
-    if (pool.kind === "api-key" || !pool.autoSwitch || own.length < 2) return pool;
-    stopped.push(pool.pool);
-    return { ...pool, autoSwitch: false, defaultAccount: pool.defaultAccount ?? pool.accounts[0]!.id };
+    if (pool.autoSwitch) return pool;
+    changed.push(pool.pool);
+    return { ...pool, autoSwitch: true };
   });
-  const notices = [...new Set([...settings.poolingNotices, ...stopped])];
-  return { settings: { ...settings, pools, poolingRule: poolingRuleVersion, poolingNotices: notices }, stopped };
+  return { settings: { ...settings, pools, poolingRule: poolingRuleVersion, poolingNotices: [] }, stopped: changed };
 }
 /**
  * The one-time notice, naming the service ("ChatGPT", "Claude Code"). The window shows the locale
  * key `accounts.notice.own-plans` with the same words; this text is for `/account`.
  */
 export const poolingNotice = (service: string): string =>
-  `Branch no longer switches between your own ${service} plans when one runs out: providers treat that as abuse, so sharing work is now off for this list. If an account really belongs to someone else or to work, mark it kept separate and turn sharing back on.`;
+  `Branch moves the work to your next ${service} account by itself when one runs out. Switching doesn't merge plans: each account's own terms apply. Switch it off in Settings › Accounts.`;
 type Reader = Pick<Store, "get">;
+
+/**
+ * A list saved before 2026-09-27 may still carry each account's old "kept separate" mark, which no longer exists (the
+ * account pools move work between all of a list's accounts, so the mark had no effect). It is dropped on reading, so
+ * such a list is never taken for a damaged one.
+ */
+function withoutOldMarks(data: unknown): unknown {
+  if (!data || typeof data !== "object" || !Array.isArray((data as { pools?: unknown }).pools)) return data;
+  const pools = (data as { pools: unknown[] }).pools.map((pool) => {
+    if (!pool || typeof pool !== "object" || !Array.isArray((pool as { accounts?: unknown }).accounts)) return pool;
+    const accounts = (pool as { accounts: unknown[] }).accounts.map((account) => {
+      if (!account || typeof account !== "object" || !("keptSeparate" in account)) return account;
+      const { keptSeparate: _dropped, ...rest } = account as Record<string, unknown>;
+      return rest;
+    });
+    return { ...pool, accounts };
+  });
+  return { ...data, pools };
+}
 
 /** The list as saved, or null when nothing is saved or what is saved is damaged. */
 export function savedAccountsSettings(store: Reader, owner: string): AccountsSettings | null {
   const found = store.get("settings", owner, settingKey);
   if (!found) return null;
-  const saved = AccountsSettingsSchema.safeParse(found.data ?? {});
+  const saved = AccountsSettingsSchema.safeParse(withoutOldMarks(found.data ?? {}));
   return saved.success ? saved.data : null;
 }
 /**
  * A list never saved starts under the current sharing rule, so one made from now on is never
  * mistaken for an old one that shared work between the owner's own plans (mac7/account-pooling).
  */
+/**
+ * The owner's decision (2026-09-27): several accounts per connection ships on. It only lists the owner's own sign-ins
+ * and keys, and sharing work between the owner's own plans stays off (`applyPoolingRule`); none of (a)–(f). The record
+ * also holds the lists, so an "off" beside them may be the old default (src/ship-on.ts); a damaged record reads off.
+ */
+export const accountsShipsAs: FeatureMode = "when-needed";
 export function accountsSettings(store: Reader, owner: string): AccountsSettings {
-  return savedAccountsSettings(store, owner) ?? AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion });
+  if (unsetRecord(store.get("settings", owner, settingKey)?.data))
+    return AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion, mode: accountsShipsAs });
+  const saved = savedAccountsSettings(store, owner);
+  // A damaged record reads off (fail closed), whatever the schema's default.
+  return saved ? shippedUnlessChosen(store, owner, settingKey, saved, { mode: accountsShipsAs })
+    : AccountsSettingsSchema.parse({ poolingRule: poolingRuleVersion, mode: "off" });
 }
 export function saveAccountsSettings(store: Store, owner: string, value: AccountsSettings): AccountsSettings {
   const parsed = AccountsSettingsSchema.parse(value);

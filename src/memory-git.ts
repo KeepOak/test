@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
-import { FeatureModeSchema } from "./feature-switches.js";
+import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { factKinds, type FactKind } from "./memory-layers.js";
 import { noteFor, type MemoryMirror } from "./memory-mirror.js";
 import { redactLeaks } from "./leak-guard.js";
@@ -9,6 +9,7 @@ import type { GitOutcome, GitRunOptions } from "./integrations/git-run.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 import { accessAgent } from "./trunks/memory-scope.js";
 
 /**
@@ -46,13 +47,18 @@ const SETTINGS = "memory-history", STATUS = "memory-history-status";
 const author = ["-c", "user.name=Branch Agent", "-c", "user.email=branch-agent@localhost", "-c", "commit.gpgsign=false"];
 type GitCall = (options: GitRunOptions, signal: AbortSignal) => Promise<GitOutcome>;
 
+// The owner's rule (ships on, 2026-09-26): a private Git history of what the assistant remembers, kept on this computer; a copy goes elsewhere only to a remote the owner names; none of (a)–(f).
+export const memoryHistoryShipsAs: FeatureMode = "when-needed";
+
 export function memoryHistorySettings(store: Pick<Store, "get">, owner: string): MemoryHistorySettings {
   const saved = MemoryHistorySettingsSchema.safeParse(store.get("settings", owner, SETTINGS)?.data ?? {});
-  return saved.success ? saved.data : MemoryHistorySettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, SETTINGS, saved.data, { mode: memoryHistoryShipsAs }) : MemoryHistorySettingsSchema.parse({});
 }
 
 export class MemoryHistory {
   private queue: Promise<unknown> = Promise.resolve();
+  /** The notes on disk are the last version recorded: set only by a commit or an empty staged diff, so a failed one is tried again. */
+  private clean = false;
   readonly folder: string;
   constructor(dataDir: string, private readonly store: Store, private readonly mirror: MemoryMirror,
     private readonly git: GitCall, private readonly policy?: NetworkPolicy) {
@@ -65,6 +71,7 @@ export class MemoryHistory {
     if (merged.remote == null) delete merged.remote;
     const value = MemoryHistorySettingsSchema.parse(merged);
     this.store.save("settings", owner, SETTINGS, value);
+    markChosen(this.store, owner, SETTINGS, sentKeys(change));
     return value;
   }
   status(owner: string): MemoryHistoryStatus {
@@ -84,12 +91,16 @@ export class MemoryHistory {
     const settings = this.settings(owner);
     if (settings.mode === "off") return null;
     await this.ensureRepository(signal);
-    const counts = await this.writeNotes(owner);
+    const { counts, changed } = await this.writeNotes(owner);
+    // Every finished task records; most change nothing remembered, and then no Git runs (each call costs a process).
+    if (!changed && this.clean) return null;
+    this.clean = false;
     await this.run(["add", "-A", "."], signal);
     const staged = await this.run(["diff", "--cached", "--numstat"], signal);
-    if (!staged.trim()) return null;
+    if (!staged.trim()) { this.clean = true; return null; }
     const message = describeMemoryChange(staged, counts);
     await this.run([...author, "commit", "--quiet", "--message", message], signal);
+    this.clean = true;
     const [version] = await this.versions(1, signal);
     this.note(owner, { lastRecorded: version?.at ?? new Date().toISOString() });
     if (settings.remote) await this.send(settings.remote, signal);
@@ -107,12 +118,14 @@ export class MemoryHistory {
   rewrite(owner: string, push: boolean, signal: AbortSignal = AbortSignal.timeout(120000)): Promise<{ pushed: boolean }> {
     const next = this.queue.then(async () => {
       const settings = this.settings(owner);
+      this.clean = false;
       await rm(this.folder, { recursive: true, force: true, maxRetries: 3 });
       if (settings.mode === "off") return { pushed: false };
       await this.ensureRepository(signal);
       await this.writeNotes(owner);
       await this.run(["add", "-A", "."], signal);
       await this.run([...author, "commit", "--quiet", "--allow-empty", "--message", "Started again: everything remembered before was deleted"], signal);
+      this.clean = true;
       if (!settings.remote || !push) return { pushed: false };
       const host = settings.remote.startsWith("git@") ? settings.remote.slice(4, settings.remote.indexOf(":")) : new URL(settings.remote).hostname;
       await this.policy?.assertAllowed(new URL(`https://${host}/`), "memory history copy");
@@ -137,21 +150,26 @@ export class MemoryHistory {
   private async ensureRepository(signal: AbortSignal): Promise<void> {
     await mkdir(this.folder, { recursive: true, mode: 0o700 });
     const known = await readdir(join(this.folder, ".git")).then(() => true, () => false);
-    if (!known) await this.run(["init", "--quiet", "--initial-branch=memory"], signal);
+    if (!known) { this.clean = false; await this.run(["init", "--quiet", "--initial-branch=memory"], signal); }
   }
-  /** One note per kind of fact, exactly as the mirror writes them; kinds with nothing left are removed. */
-  private async writeNotes(owner: string): Promise<Map<FactKind, number>> {
+  /** One note per kind of fact, exactly as the mirror writes them; kinds with nothing left are removed. `changed`: a note differed. */
+  private async writeNotes(owner: string): Promise<{ counts: Map<FactKind, number>; changed: boolean }> {
     const grouped = this.mirror.grouped(owner);
     const counts = new Map<FactKind, number>();
+    let changed = false;
     for (const kind of factKinds) {
       const path = join(this.folder, `${kind}.md`);
       const records = grouped.get(kind) ?? [];
       counts.set(kind, records.length);
+      const before = await readFile(path, "utf8").catch(() => null);
       // Integration review: a key or password someone asked to be remembered is never committed or sent.
-      if (records.length) await writeFile(path, redactLeaks(noteFor(kind, records)).text, { mode: 0o600 });
+      const text = records.length ? redactLeaks(noteFor(kind, records)).text : null;
+      if (text === before) continue;
+      changed = true;
+      if (text !== null) await writeFile(path, text, { mode: 0o600 });
       else await rm(path, { force: true });
     }
-    return counts;
+    return { counts, changed };
   }
   private async send(remote: string, signal: AbortSignal): Promise<void> {
     const host = remote.startsWith("git@") ? remote.slice(4, remote.indexOf(":")) : new URL(remote).hostname;

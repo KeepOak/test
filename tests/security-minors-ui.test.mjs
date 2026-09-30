@@ -18,8 +18,10 @@ import { readPolicy, savePolicy } from "../dist/policy.js";
 
 const scripted = { name: "scripted", async complete(request) {
   const users = request.messages.filter((m) => m.role === "user").map((m) => String(m.content));
-  if (request.messages.at(-1)?.role === "tool") return { content: "Written.", toolCalls: [] };
   const wanted = users.map((text) => /write (\w+)/.exec(text)?.[1]).find(Boolean);
+  const last = request.messages.at(-1);
+  // A yes carries the same task on, and the engine makes the approved call itself (QA R1): the model only reports it.
+  if (last?.role === "tool") return { content: "Written.", toolCalls: [] };
   if (wanted && request.messages.at(-1)?.role === "user")
     return { content: "", toolCalls: [{ id: "c1", name: "files.write", arguments: JSON.stringify({ path: `${wanted}.txt`, content: wanted }) }] };
   return { content: "ok", toolCalls: [] };

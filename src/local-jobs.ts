@@ -2,27 +2,36 @@ import { z } from "zod";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { runtimeIds, type RuntimeId } from "./local-launch.js";
 import type { Store } from "./store.js";
+import { markChosen, shippedUnlessChosen, unsetRecord } from "./ship-on.js";
 
 /**
  * Wave mac5 (local models): the switch, and the written-down record of each one-click setup, so a
  * download that was running when Branch closed carries on when it opens again.
  *
- *   off          (the default) nothing here does anything; the screen shows the switch only
- *   when-needed  one click works, and an interrupted setup resumes when Branch starts
+ *   off          nothing here does anything; the screen shows the switch only
+ *   when-needed  (how it ships) one click works, and an interrupted setup resumes when Branch starts
  *   on           the same, and Branch also starts the runtime of your local connections when it starts
+ *
+ * The owner's rule (2026-09-27): a local model is heavy only while it is used, and "when needed" starts nothing by
+ * itself, so it ships on. "On" keeps a runtime going from start-up (heavy, (e)) and is the owner's to pick.
  */
+export const localModelsShipsAs: FeatureMode = "when-needed";
 export const localModelsSetting = "local-models";
 const SwitchRow = z.object({ mode: FeatureModeSchema.optional(), enabled: z.boolean().optional() }).loose();
 
 export function localModelsMode(store: Pick<Store, "get">, owner: string): FeatureMode {
-  const row = SwitchRow.safeParse(store.get("settings", owner, localModelsSetting)?.data ?? {});
+  const data = store.get("settings", owner, localModelsSetting)?.data;
+  if (unsetRecord(data)) return localModelsShipsAs;
+  const row = SwitchRow.safeParse(data);
   if (!row.success) return "off";
-  return row.data.mode ?? (row.data.enabled ? "when-needed" : "off");
+  const mode: FeatureMode = row.data.mode ?? (row.data.enabled ? "when-needed" : "off");
+  return shippedUnlessChosen(store, owner, localModelsSetting, { mode }, { mode: localModelsShipsAs }).mode;
 }
 export function saveLocalModelsMode(store: Store, owner: string, input: unknown): { mode: FeatureMode } {
   const mode = z.object({ mode: FeatureModeSchema }).strict().parse(input).mode;
   const current = (store.get("settings", owner, localModelsSetting)?.data ?? {}) as Record<string, unknown>;
   store.save("settings", owner, localModelsSetting, { ...current, mode, enabled: mode !== "off" });
+  markChosen(store, owner, localModelsSetting, ["mode"]);
   return { mode };
 }
 export const switchedOffNote = "Models on this computer are switched off. Turn them on at the top of this card first.";

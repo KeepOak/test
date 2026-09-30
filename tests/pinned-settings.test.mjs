@@ -117,7 +117,8 @@ test("P5 a settings file and a whole-app preset step over a pinned setting and m
   const file = exportSettings(store, owner, "test");
   file.settings["wake-word"].mode = "on";
   file.settings.voice.autoReadAloud = true;
-  file.settings["local-models"].mode = "when-needed";
+  // Local models ship "when needed" (the ship-on rule), so the file moves them off to be a real change.
+  file.settings["local-models"].mode = "off";
   const preview = await ask("POST", "/api/settings-kit/preview", { source: "import", file: JSON.stringify(file) });
   const pinnedChange = preview.changes.find((change) => change.id === "wake-word.mode");
   assert.equal(pinnedChange.pinned, true, "the preview did not mark the pinned setting");
@@ -290,6 +291,10 @@ test("P14 no setting the owner can pin is written straight to the database behin
     // `DELETE FROM ${table}` always did; only what stays on this computer (staysOnThisComputer: the sign-ins and
     // Q168 A's list) stays. The owner chose that restore.
     ["backup.ts:DELETE FROM settings WHERE id NOT IN (", "every setting but what stays on this computer, on a replacing restore"],
+    // src/backup.ts (#542): setup's untouched Trunks give way to a backup; the notes kept under that Trunk's conversation
+    // id or its "trunk:<uuid>" go with it (conversation-mode:<session>, session-carry:<session>,
+    // memory-snapshot:<session>:trunk:<uuid>). Both needles are uuids, which no setting the owner can pin holds.
+    ["backup.ts:DELETE FROM settings WHERE instr(id, ?) > 0 OR instr(id, ?) > 0", "notes named by a setup Trunk's conversation or its uuid"],
   ]);
   // readdir names a nested file the way the system does, so on Windows it arrives as
   // never-break\resume.ts and matched none of the entries above, which are written with slashes.

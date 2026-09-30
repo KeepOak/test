@@ -11,6 +11,11 @@ import { cwdOf } from "./never-break/protected.js";
 import { isReadOnlyPermission } from "./policy.js";
 import { isCommandTool } from "./policy-resources.js";
 import { wallReport } from "./sandbox-backends.js";
+import { wslProbe, wslReadiness } from "./integrations/wsl-held.js";
+import { lockdownActive } from "./lockdown.js";
+import { betaLine } from "./desktop/dev-build.js";
+import { githubRepositoryOf } from "./github-address.js";
+import { canonicalRepo } from "./desktop/repo-pair.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
 
@@ -29,8 +34,23 @@ export const sourceFolder = "branch-agent-source";
 export const prepareToolName = "branch.prepare_source_change";
 export const widenToolName = "branch.widen_source_contract";
 export const widenReason = "Branch asks you every time before it widens what it may change in its own source";
+/** The one line a change to Branch itself starts from and is proposed back to: the line Beta builds after a merge. */
+export const selfDevelopmentLine = betaLine;
+/**
+ * selfdev: a scratch line for proving the loop end to end (`selfdev-proof/...`). Beta never builds it, so a change
+ * proposed to it and merged there never reaches the running app. It must already exist; Branch only proposes to it.
+ */
+export const selfDevelopmentProofLine = /^selfdev-proof\/[A-Za-z0-9._-]{1,60}$/;
+/** Where a change to Branch itself may start from and be proposed back to: the Beta line, or a scratch proof line. */
+export const selfDevelopmentBase = (base: unknown): boolean => base === selfDevelopmentLine || (typeof base === "string" && selfDevelopmentProofLine.test(base));
+export const selfDevelopmentBaseWords = `${selfDevelopmentLine}, the line Beta builds (or a selfdev-proof/ scratch line that Beta never builds)`;
+export const selfDevelopmentLockdownRefusal = "Lockdown is on, so Branch does not work on its own source: nothing is prepared, changed, widened or sent. Turn Lockdown off in Settings to allow this again.";
+/** The only line of work a change to Branch itself is sent on: a fresh `branch/…` line, never a shared one. */
+const sentLine = /^refs\/heads\/branch\/[A-Za-z0-9._-]{1,60}$/;
 const worktreePattern = /^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/;
 const shaPattern = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+/** A GitHub repository as `owner/name`, the form GitHub's own tools take. */
+const repositoryPattern = /^[A-Za-z0-9._-]{1,100}\/[A-Za-z0-9._-]{1,100}$/;
 
 const relativeGlob = z.string().trim().min(1).max(200).refine(
   (value) => !value.startsWith("/") && !/[\\:\0]/.test(value) && !value.split("/").includes(".."),
@@ -50,6 +70,13 @@ export interface SelfDevelopmentContract extends ContractTerms {
   taskRunId: string;
   sourceSha: string;
   worktreePath: string;
+  /**
+   * The repositories a pull request from this worktree may be opened in, resolved once when the
+   * worktree was made and written with the contract: the one its `origin` pushes to, and, for a
+   * fork, the upstream it was made from. Absent on a contract written before this was kept, and
+   * then no pull request is opened from it.
+   */
+  sendRepositories?: string[];
   revision: number;
   createdAt: string;
   /** Empty for the first revision; the owner who allowed a widening afterwards. */
@@ -84,13 +111,17 @@ export class ContractBook {
     ensureContractTable(this.db);
   }
   /** Writes the first revision. Refused when the worktree already has a contract. */
-  create(owner: string, input: { taskRunId: string; sourceSha: string; worktreePath: string; terms: ContractTerms }): SelfDevelopmentContract {
+  create(owner: string, input: { taskRunId: string; sourceSha: string; worktreePath: string; terms: ContractTerms; sendRepositories?: readonly string[] }): SelfDevelopmentContract {
     if (!worktreePattern.test(input.worktreePath)) throw new Error("A contract is only for a Branch Agent self-development worktree.");
     if (!shaPattern.test(input.sourceSha)) throw new Error("A contract needs the exact source commit.");
+    const repositories = [...new Set((input.sendRepositories ?? []).map((repo) => repo.toLowerCase()))];
+    if (repositories.length > 2 || repositories.some((repo) => !repositoryPattern.test(repo)))
+      throw new Error("A contract names at most two repositories to propose to, each as owner/name.");
     if (this.history(owner, input.worktreePath).length)
       throw new Error(`${input.worktreePath} already has a contract. Widening it needs ${widenToolName} and the owner's yes.`);
     return this.insert(owner, { ...ContractTermsSchema.parse(input.terms), taskRunId: input.taskRunId.slice(0, 64),
-      sourceSha: input.sourceSha, worktreePath: input.worktreePath, revision: 1, createdAt: new Date().toISOString(), approvedBy: "", reason: "" });
+      sourceSha: input.sourceSha, worktreePath: input.worktreePath, ...(repositories.length ? { sendRepositories: repositories } : {}),
+      revision: 1, createdAt: new Date().toISOString(), approvedBy: "", reason: "" });
   }
   /**
    * Writes the next revision with the changed terms. Only `branch.widen_source_contract` calls this,
@@ -104,9 +135,27 @@ export class ContractBook {
       definitionOfDone: current.definitionOfDone, sideEffects: current.sideEffects, rollbackPlan: current.rollbackPlan };
     const changed = Object.fromEntries(Object.entries(input.terms).filter(([, value]) => value !== undefined));
     const next = ContractTermsSchema.parse({ ...terms, ...changed });
+    // Widening changes what may be done, never where it may be proposed: the repositories stay as written.
     return this.insert(owner, { ...next, taskRunId: input.taskRunId.slice(0, 64), sourceSha: current.sourceSha, worktreePath,
-      revision: current.revision + 1,
+      ...(current.sendRepositories ? { sendRepositories: current.sendRepositories } : {}), revision: current.revision + 1,
       createdAt: new Date().toISOString(), approvedBy: input.approvedBy.slice(0, 120), reason: input.reason.slice(0, 500) });
+  }
+  /**
+   * Writes where a contract written before they were kept may send its changes, as a new revision with
+   * the same terms. Only the prepare step calls this, when the owner prepares the same change again and
+   * the repositories are read from origin then; a contract that already names them is never changed.
+   */
+  pin(owner: string, worktreePath: string, input: { taskRunId: string; sendRepositories: readonly string[]; approvedBy: string }): SelfDevelopmentContract {
+    const current = this.current(owner, worktreePath);
+    if (!current) throw new Error(`${worktreePath} has no contract to pin.`);
+    if (current.sendRepositories?.length) throw new Error(`${worktreePath} already names where its changes may go; that is never changed.`);
+    if (!input.approvedBy.trim()) throw new Error("Pinning a contract needs the owner's own prepare step.");
+    const repositories = [...new Set(input.sendRepositories.map((repo) => repo.toLowerCase()))];
+    if (!repositories.length || repositories.length > 2 || repositories.some((repo) => !repositoryPattern.test(repo)))
+      throw new Error("A contract names one or two repositories to propose to, each as owner/name.");
+    const { taskRunId: _run, revision, createdAt: _at, approvedBy: _by, reason: _why, ...kept } = current;
+    return this.insert(owner, { ...kept, taskRunId: input.taskRunId.slice(0, 64), sendRepositories: repositories, revision: revision + 1,
+      createdAt: new Date().toISOString(), approvedBy: input.approvedBy.slice(0, 120), reason: "Where its changes may go, read from origin when it was prepared again" });
   }
   /** The newest revision, or null. Throws when any revision no longer matches its hash. */
   current(owner: string, worktreePath: string): SelfDevelopmentContract | null {
@@ -226,6 +275,25 @@ export function workspacePath(workspace: string, scope: string, path: string, pl
 }
 const insideSource = (path: string): boolean => path === sourceFolder || path.startsWith(`${sourceFolder}/`);
 /** The self-development worktree a workspace path is in, or "" for the protected checkout itself. */
+/**
+ * selfdev: the worktree this very task (or the task that started it) prepared or widened, or "". A task keeps working
+ * in its conversation's project after branch.prepare_source_change (src/project-scope.ts), so its commands, and the
+ * finish of its own change, may name that worktree by cwd: only the worktree whose contract this task chain wrote.
+ */
+export function preparedByTask(store: Pick<Store, "events">, book: ContractBook, owner: string, worktree: string, runId: string): boolean {
+  const contract = worktree ? book.current(owner, worktree) : null;
+  if (!contract || !runId) return false;
+  const writers = new Set(book.history(owner, worktree).map((one) => one.taskRunId).filter(Boolean));
+  const seen = new Set<string>();
+  for (let id: string | undefined = runId; id && !seen.has(id) && seen.size < 20;) {
+    if (writers.has(id)) return true;
+    seen.add(id);
+    const parent: unknown = store.events(id).find((event) => event.kind === "run.started")?.data.parentRunId;
+    id = typeof parent === "string" ? parent : undefined;
+  }
+  return false;
+}
+
 export function worktreeOf(path: string): string {
   const match = /^branch-agent-source\/\.branch-worktrees\/[^/]+/.exec(path);
   return match && worktreePattern.test(match[0]) ? match[0] : "";
@@ -341,7 +409,7 @@ export async function worktreesOwnRepository(deps: Pick<ContractGuardDeps, "work
   return found.status === "completed" && !!top && onDisk(resolve(top)) === onDisk(cwd) && onDisk(resolve(cwd, common)) === onDisk(resolve(deps.workspace, sourceFolder, ".git"));
 }
 
-async function remoteBroken(deps: Pick<ContractGuardDeps, "workspace" | "git">, contract: SelfDevelopmentContract, signal: AbortSignal, commit: string, ref = commit): Promise<string | null> {
+export async function remoteBroken(deps: Pick<ContractGuardDeps, "workspace" | "git">, contract: SelfDevelopmentContract, signal: AbortSignal, commit: string, ref = commit): Promise<string | null> {
   const cwd = resolve(deps.workspace, contract.worktreePath);
   const git = (args: string[]) => deps.git({ cwd, args, timeoutMs: 60_000, maxOutputBytes: 4_194_304 }, signal);
   if (!(await worktreesOwnRepository(deps, contract, signal)))
@@ -410,6 +478,7 @@ function heldTerms(deps: ContractGuardDeps, name: string, args: unknown, context
   }
   if (!insideSource(scope) && !paths.some((one) => insideSource(one.path))) return null;
   const worktree = worktreeOf(insideSource(scope) ? scope : paths.find((one) => insideSource(one.path))!.path);
+  if (lockdownActive(deps.store, deps.owner)) refuse(deps, context, name, worktree, selfDevelopmentLockdownRefusal);
   if (!worktree) refuse(deps, context, name, "", "The protected Branch Agent source checkout is never changed directly; work in a self-development worktree.");
   let contract: SelfDevelopmentContract | null;
   try { contract = deps.book.current(deps.owner, worktree); } catch (error) { refuse(deps, context, name, worktree, (error as Error).message); }
@@ -421,8 +490,11 @@ function heldTerms(deps: ContractGuardDeps, name: string, args: unknown, context
 
 /** Permissions whose tools start a program on this computer. */
 const commandPermissions = new Set(["shell.execute", "code.execute", "process.manage"]);
-/** The one command tool the shell can hold behind the OS sandbox with its writes kept to one folder. */
-const confinableCommand = "shell.execute";
+/**
+ * The command tools the shell can hold behind the OS sandbox with their writes kept to one folder: a one-off command,
+ * and (SELF-304) a program left running, which the shell walls the same way before it starts (BranchShell.launchHeld).
+ */
+const confinableCommands: ReadonlySet<string> = new Set(["shell.execute", "process.start"]);
 const whileCheckedOut = "While Branch's own source is checked out in this workspace, ";
 
 /** Whether a tool starts a program here: by its permission, its name, or a command line it reports. */
@@ -436,7 +508,13 @@ export function sourceCheckedOut(workspace: string): boolean {
   try { return readdirSync(workspace).some((entry) => sourceSpelling(entry) === sourceFolder); } catch { return false; }
 }
 
-const canConfineWrites = async (): Promise<boolean> => (await wallReport()).available;
+/**
+ * Whether this computer can hold a command's writes to one folder. On Windows a held command runs inside WSL behind
+ * bubblewrap (src/integrations/shell.ts, wsl-held.ts), so it can when WSL has Node.js and bubblewrap; the native wall
+ * is macOS's and Linux's alone.
+ */
+const canConfineWrites = async (): Promise<boolean> =>
+  process.platform === "win32" ? (await wslReadiness(wslProbe)) === null : (await wallReport()).available;
 
 /**
  * A command's text is never read: globs and variables can always name Branch's source some other
@@ -447,9 +525,12 @@ const canConfineWrites = async (): Promise<boolean> => (await wallReport()).avai
  */
 async function confineCommand(deps: ContractGuardDeps, name: string, args: unknown, context: ToolContext): Promise<Pick<ToolContext, "writesConfinedTo">> {
   const scope = workspacePath(deps.workspace, "", deps.registry.pathScope() || ".") ?? "";
-  const worktree = worktreeOf(scope);
-  if (name !== confinableCommand)
-    refuse(deps, context, name, worktree, `${whileCheckedOut}${name} is refused: Branch cannot hold the program it starts to one folder. Only shell.execute runs then, from the active self-development worktree, behind the OS sandbox.`);
+  const cwdFolder = workspacePath(deps.workspace, "", commandFolder(context.workspace || deps.workspace, cwdOf(args).cwd));
+  // The active project's worktree, or the one this task prepared itself (it stays in its conversation's project).
+  const own = cwdFolder !== null ? worktreeOf(cwdFolder) : "";
+  const worktree = worktreeOf(scope) || (own && preparedByTask(deps.store, deps.book, deps.owner, own, context.runId) ? own : "");
+  if (!confinableCommands.has(name))
+    refuse(deps, context, name, worktree, `${whileCheckedOut}${name} is refused: Branch cannot hold the program it starts to one folder. Only shell.execute and process.start run then, from the active self-development worktree, behind the OS sandbox.`);
   const folder = workspacePath(deps.workspace, "", commandFolder(context.workspace || deps.workspace, cwdOf(args).cwd));
   if (!worktree || folder === null || worktreeOf(folder) !== worktree)
     refuse(deps, context, name, worktree, `${whileCheckedOut}a command runs only inside the active self-development worktree: make its project active and set cwd to a folder in ${worktree || "branch-agent-source/.branch-worktrees/self-<name>"}. Commands run anywhere else again once the self-development work is finished and branch-agent-source is removed from the workspace.`);
@@ -471,8 +552,16 @@ export function contractGuard(deps: ContractGuardDeps): (name: string, args: unk
     if (startsProgram(deps, name, args) && sourceCheckedOut(deps.workspace)) return confineCommand(deps, name, args, context);
     const held = heldTerms(deps, name, args, context);
     if (!held || !remotePermissions.has(held.permission)) return;
+    const pinned = sendPinned(name, args, held.contract.sendRepositories);
+    if (pinned) refuse(deps, context, name, held.contract.worktreePath, pinned);
     // git.push and publishing send the branch they name (or the one checked out); that ref is the one walked.
     const pushes = name === "git.push" || name === "github.publish_repo";
+    // A push goes only to the repository origin pushed to when the worktree was made, whatever its remotes say now.
+    if (name === "git.push") {
+      const remote = (args as { remote?: unknown } | null)?.remote;
+      const off = await pushPinned(deps, held.contract, typeof remote === "string" && remote ? remote : "origin", context.signal);
+      if (off) refuse(deps, context, name, held.contract.worktreePath, off);
+    }
     const named = (args as { branch?: unknown } | null)?.branch;
     const sends = pushes && typeof named === "string" && named && named !== "HEAD" ? named : "";
     // Walked as the branch itself (refs/heads/<name>), which is what the push sends: a bare name would let Git pick
@@ -480,12 +569,81 @@ export function contractGuard(deps: ContractGuardDeps): (name: string, args: unk
     // Q109: resolved once, to the branch HEAD points at when none is named and then to one commit, which is what is
     // walked and exactly what the push sends, so nothing that moves the branch meanwhile changes what goes out.
     const ref = sends ? branchRef(sends) : pushes ? await checkedOut(deps, held.contract, context.signal) : "HEAD";
+    if (pushes && !sentLine.test(ref))
+      refuse(deps, context, name, held.contract.worktreePath, `${ref.replace(/^refs\/heads\//, "")} is not a branch/… line of work, so nothing is sent: a change to Branch itself never goes to a shared line.`);
     const commit = await commitOf(deps, held.contract, context.signal, ref);
     if (!commit) refuse(deps, context, name, held.contract.worktreePath, `${ref === "HEAD" ? "This worktree" : ref} is not a commit here, so nothing is sent.`);
     const broken = await remoteBroken(deps, held.contract, context.signal, commit, ref);
     if (broken) refuse(deps, context, name, held.contract.worktreePath, broken);
     if (pushes) return { sendsCommit: commit, ...(ref.startsWith("refs/") ? { sendsRef: ref } : {}) };
   };
+}
+
+/**
+ * What a sending step from Branch's own source may never do, whatever its contract lists: make a
+ * repository of it, or open anything but a draft pull request from a `branch/…` line into the line
+ * Beta builds. Nothing here merges; the owner reviews and merges. A sentence refuses; null lets it go.
+ */
+function sendPinned(name: string, args: unknown, repositories: readonly string[] | undefined): string | null {
+  if (name === "github.publish_repo") return "Branch's own source is never published as a repository of its own.";
+  if (name !== "github.open_pull_request") return null;
+  const input = (args ?? {}) as { repo?: unknown; base?: unknown; head?: unknown; draft?: unknown };
+  // Only into a repository written with the contract when the worktree was made, never one named later.
+  if (!repositories?.length)
+    return notPinned;
+  // stabrea/Branch-Agent and KeepOak/Branch-Agent are one repository (GitHub redirects the old name).
+  const repo = canonicalRepo(String(input.repo ?? ""));
+  if (!repositories.some((allowed) => canonicalRepo(allowed) === repo))
+    return `A change to Branch itself is proposed only to ${repositories.join(" or ")}, where this worktree was made from, so no pull request is opened in ${String(input.repo ?? "") || "that repository"}.`;
+  if (!selfDevelopmentBase(input.base)) return `A change to Branch itself is proposed only to ${selfDevelopmentBaseWords}.`;
+  if (input.draft !== true) return "A change to Branch itself is opened only as a draft pull request, for the owner to review.";
+  const head = String(input.head ?? "").replace(/^[A-Za-z0-9-]{1,39}:/, "");
+  return sentLine.test(`refs/heads/${head}`) ? null : `${head || "That line"} is not a branch/… line of work, so no pull request is opened from it.`;
+}
+
+const notPinned = "This worktree was prepared before Branch kept where its changes may go, so nothing is sent from it. Prepare the change again under the same name, and Branch reads where it came from then.";
+
+/**
+ * Where a push from Branch's own source may go: the repository origin pushed to when the worktree was
+ * made (the first one written with the contract), and only there. `repos` are what the remote's push
+ * addresses name now. A sentence refuses; null lets it go.
+ */
+export function pushRepositoryRefusal(repositories: readonly string[] | undefined, remote: string, repos: readonly string[]): string | null {
+  const origin = repositories?.[0];
+  if (!origin) return notPinned;
+  if (repos.length && repos.every((repo) => canonicalRepo(repo) === canonicalRepo(origin))) return null;
+  return `A change to Branch itself is sent only to ${origin}, where this worktree was made from, and ${remote} sends to ${[...new Set(repos)].join(", ") || "no GitHub repository"}, so nothing is sent.`;
+}
+
+/** The push addresses of `remote` in the worktree now, each read as a GitHub repository, then pushRepositoryRefusal. */
+async function pushPinned(deps: ContractGuardDeps, contract: SelfDevelopmentContract, remote: string, signal: AbortSignal): Promise<string | null> {
+  const out = await deps.git({ cwd: resolve(deps.workspace, contract.worktreePath), args: ["remote", "get-url", "--push", "--all", remote], timeoutMs: 10_000 }, signal);
+  if (out.status !== "completed") return `${remote} is not a remote of this worktree, so nothing is sent.`;
+  let repos: string[];
+  try { repos = out.stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map((address) => githubRepositoryOf(address).repo.toLowerCase()); }
+  catch (error) { return `${remote}: ${(error as Error).message} So nothing is sent.`; }
+  return pushRepositoryRefusal(contract.sendRepositories, remote, repos);
+}
+
+/** selfdev: the same pins for a pull request opened with the computer's own GitHub sign-in (src/pr-hook.ts). */
+export const pullRequestPinned = (args: unknown, repositories: readonly string[] | undefined): string | null =>
+  sendPinned("github.open_pull_request", args, repositories);
+
+/**
+ * Asked before a push or a pull request from Branch's own source, every time and whatever the rules
+ * say, so nothing of Branch's own leaves this computer without the owner's yes to that very step.
+ */
+export const sourceSendReason = "Branch asks you every time before it sends a change to its own source to GitHub";
+// Every direct way to send Branch's own source out. The composite helper's own inner open_pull_request runs in "owner"
+// mode (its preflight and runTool both use it when a runId is set), which passes a once-only hold through without a
+// second question; only a direct call, or the unattended finish-of-task hook, meets the hold here.
+const heldSends = new Set(["git.push", "github.pull_request_from_changes", "github.open_pull_request"]);
+export function sourceSendHold(input: { workspace: string; scope: string; tool: string; args: unknown }): { reason: string; onceOnly: true } | null {
+  if (!heldSends.has(input.tool)) return null;
+  const named = (input.args as { folder?: unknown } | null)?.folder;
+  const scope = workspacePath(input.workspace, "", input.scope || ".") ?? "";
+  const folder = typeof named === "string" && named ? workspacePath(input.workspace, scope, named) : scope;
+  return (folder !== null && insideSource(folder)) || insideSource(scope) ? { reason: sourceSendReason, onceOnly: true } : null;
 }
 
 /**
@@ -515,11 +673,12 @@ const pullRequestTool = "github.pull_request_from_changes";
  */
 export async function pushRefusal(input: {
   store: Store; owner: string; workspace: string; git: ContractGuardDeps["git"]; folder: string; runId?: string | undefined; signal: AbortSignal;
-}): Promise<{ refusal: string | null; walked: string | null }> {
+}): Promise<{ refusal: string | null; walked: string | null; repositories?: readonly string[] | undefined }> {
   const where = workspacePath(input.workspace, "", input.folder);
   if (where === null || !insideSource(where)) return { refusal: null, walked: null };
   const worktree = worktreeOf(where), context = { runId: input.runId ?? "" };
   try {
+    if (lockdownActive(input.store, input.owner)) refuse(input, context, pullRequestTool, worktree, selfDevelopmentLockdownRefusal);
     if (!worktree) refuse(input, context, pullRequestTool, "", "The protected Branch Agent source checkout is never sent directly; work in a self-development worktree.");
     if (where !== worktree)
       refuse(input, context, pullRequestTool, worktree, `Git runs in Branch's own source only at a self-development worktree's root, never in ${where}, so nothing is sent from it.`);
@@ -533,7 +692,7 @@ export async function pushRefusal(input: {
     if (!walked) refuse(input, context, pullRequestTool, worktree, "This worktree has no commit checked out, so nothing is sent.");
     const broken = await remoteBroken(input, contract, input.signal, walked, "HEAD");
     if (broken) refuse(input, context, pullRequestTool, worktree, broken);
-    return { refusal: null, walked };
+    return { refusal: null, walked, repositories: contract.sendRepositories };
   } catch (error) {
     return { refusal: error instanceof Error ? error.message : "Branch could not check this push against its contract.", walked: null };
   }

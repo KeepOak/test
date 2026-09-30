@@ -20,6 +20,8 @@ export interface FirewallInput {
   policy: NetworkPolicyConfig;
   /** The origins the browser is allowed to open, from the browser settings. */
   browserOrigins?: readonly string[];
+  /** The browser may open any website the rules above allow, rather than a list. */
+  browserAnyWebsite?: boolean;
   /** Whether running small scripts may reach the internet at all. */
   scriptsMayReachInternet?: boolean;
   /** Whether host commands are pointed at a dead address. */
@@ -49,9 +51,11 @@ export function firewallView(input: FirewallInput): FirewallView {
     sentences.push("Branch trusts a fake-IP proxy: a site whose name looks up to an address in 198.18.0.0/15 is let through, " +
       "and the proxy then does the resolving, so Branch cannot see where that site really is.");
   const origins = [...(input.browserOrigins ?? [])];
-  sentences.push(origins.length
-    ? `The browser may visit ${list(origins)}. Any other address is refused before the page opens.`
-    : "The browser has no websites set up, so it cannot open any.");
+  sentences.push(input.browserAnyWebsite
+    ? "The browser may open any website the rules above let Branch reach, and every picture, script and request a page makes is held to the same rules."
+    : origins.length
+      ? `The browser may visit ${list(origins)}. Any other address is refused before the page opens.`
+      : "The browser has no websites set up, so it cannot open any.");
   sentences.push(input.scriptsMayReachInternet
     ? "Scripts can reach the internet."
     : "Scripts cannot reach the internet: they are pointed at an address that goes nowhere.");
@@ -79,12 +83,12 @@ export interface FirewallTest {
  * refused, and the owner should see that here rather than discover it later.
  */
 export async function testFirewall(
-  check: (target: URL) => Promise<void>, address: string, browserOrigins: readonly string[] = [],
+  check: (target: URL) => Promise<void>, address: string, browserOrigins: readonly string[] = [], browserAnyWebsite = false,
 ): Promise<FirewallTest> {
   let url: URL;
   try { url = new URL(address); }
   catch { return { address, allowed: false, reason: "That is not a web address. They start with https://", browserWouldOpen: false }; }
-  const browserWouldOpen = browserOrigins.includes(url.origin);
+  const browserWouldOpen = browserAnyWebsite || browserOrigins.includes(url.origin);
   try {
     await check(url);
     return { address: url.href, allowed: true,

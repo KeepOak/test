@@ -62,7 +62,7 @@ async function sourceWorktree(t) {
   new ContractBook(app.store.sqlite).create(owner, { taskRunId: "run-1", sourceSha: base, worktreePath: folder, terms: {
     allowedPaths: ["src/ui/**"], permissions: ["github.pull_request_from_changes", "github.open_pull_request"],
     expectedTests: ["tests/ui.test.mjs"], definitionOfDone: "The new control is there", sideEffects: ["a draft pull request"],
-    rollbackPlan: "Close the pull request" } });
+    rollbackPlan: "Close the pull request" }, sendRepositories: ["acme/widgets"] });
   savePullRequestHookSettings(app.store, owner, { mode: "when-needed" });
   app.registry.register({ name: "github.open_pull_request", permission: "github.manage", description: "stand-in for GitHub",
     parameters: z.object({}).passthrough(), execute: async (args) => args });
@@ -112,7 +112,7 @@ function hookDeps(app, owner, hooks = {}) {
 }
 const committed = (args) => args[0] === "--literal-pathspecs" && args[1] === "commit";
 const ask = (name) => ({ name, title: "Add the new control", summary: "Why merge this: the new control is needed.",
-  paths: ["src/ui/new.ts"], signal: AbortSignal.timeout(60_000) });
+  paths: ["src/ui/new.ts"], base: "redesign/window", signal: AbortSignal.timeout(60_000) });
 
 test("from Branch's own source, the pull request sends the checked commit plus one new commit, and the new branch tracks what was sent",
   { skip: posixOnly }, async (t) => {
@@ -129,7 +129,7 @@ test("from Branch's own source, the pull request sends the checked commit plus o
     assert.equal(others.some((commit) => d.pushed[0].history.includes(commit)), false);
     assert.deepEqual([plain(worktree, "config", "branch.branch/pinned.remote"), plain(worktree, "config", "branch.branch/pinned.merge")],
       ["origin", "refs/heads/branch/pinned"], "the new branch tracks the branch it was sent to, as before");
-    assert.deepEqual(d.opened.map((each) => [each.name, each.args.head, each.args.base]), [["github.open_pull_request", "branch/pinned", "main"]]);
+    assert.deepEqual(d.opened.map((each) => [each.name, each.args.head, each.args.base]), [["github.open_pull_request", "branch/pinned", "redesign/window"]]);
   });
 
 test("from Branch's own source, the new branch starts at the commit the contract checked, wherever HEAD has been moved since",
@@ -184,6 +184,27 @@ test("from Branch's own source, a new branch that is not one new commit on the c
     });
     await assert.rejects(pullRequestFromChanges(d.value, ask("pinned")),
       /"branch\/pinned" is not just one new commit on the checked work .*so nothing was sent/);
+    assert.deepEqual(d.pushed, [], "nothing was sent");
+    assert.deepEqual(d.opened, [], "no pull request was opened");
+  });
+
+test("from Branch's own source, a pull request naming a repository the contract was not made from is refused, and nothing is sent",
+  { skip: posixOnly }, async (t) => {
+    const { app, owner } = await sourceWorktree(t);
+    const d = hookDeps(app, owner);
+    await assert.rejects(pullRequestFromChanges(d.value, { ...ask("pinned"), targetRepository: "mallory/widgets" }),
+      /proposed only to acme\/widgets, where this worktree was made from, so no pull request is opened in mallory\/widgets/);
+    assert.deepEqual(d.pushed, [], "nothing was sent");
+    assert.deepEqual(d.opened, [], "no pull request was opened");
+  });
+
+test("from Branch's own source, the push goes only to where origin pushed when the worktree was made; repointed, nothing is sent",
+  { skip: posixOnly }, async (t) => {
+    const { app, owner, worktree } = await sourceWorktree(t);
+    plain(worktree, "remote", "set-url", "--push", "origin", "git@github.com:mallory/widgets.git");
+    const d = hookDeps(app, owner);
+    await assert.rejects(pullRequestFromChanges(d.value, { ...ask("pinned"), targetRepository: "acme/widgets" }),
+      /sent only to acme\/widgets, where this worktree was made from, and origin sends to mallory\/widgets, so nothing is sent/);
     assert.deepEqual(d.pushed, [], "nothing was sent");
     assert.deepEqual(d.opened, [], "no pull request was opened");
   });

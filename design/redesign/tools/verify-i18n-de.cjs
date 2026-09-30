@@ -19,9 +19,10 @@
      overflow is a failure, and any English one is listed so the two can be told apart.
    Page errors must be zero. The engine's language is left at "auto" at the end. */
 const http = require("node:http");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 let playwright;
 try { playwright = require("playwright"); }
-catch { playwright = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright"); }
+catch { playwright = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright")); }
 const { chromium } = playwright;
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
@@ -133,7 +134,8 @@ const whereIs = (page, lines) => page.evaluate((want) => {
 const overflowing = (page, labels) => page.evaluate((fixed) => {
   const own = new Set(fixed);
   const path = (el) => { const parts = []; for (let n = el; n && n !== document.body; n = n.parentElement) parts.unshift(`${n.tagName.toLowerCase()}${n.id ? "#" + n.id : ""}:${[...(n.parentElement?.children ?? [])].indexOf(n)}`); return parts.join(">"); };
-  const spills = (e) => e.clientWidth > 0 && e.scrollWidth > e.clientWidth + 1 && e.innerText.trim()
+  // A label kept for screen readers only (1px, clipped: the status bar at phone width) is hidden by design, not cut.
+  const spills = (e) => e.clientWidth > 1 && e.scrollWidth > e.clientWidth + 1 && e.innerText.trim()
     && (getComputedStyle(e).textOverflow !== "ellipsis" || own.has(e.innerText.trim()));
   const out = [];
   for (const b of document.querySelectorAll('button, [role="button"], [role="tab"], a.btn')) {
@@ -160,7 +162,7 @@ async function measure(page, name, fits, labels = Object.values(D)) {
 async function closeSetup(page) {
   const setup = page.locator(".ob9[role=dialog]");
   await setup.waitFor({ timeout: 15000 }).catch(() => null);
-  if (await setup.isVisible().catch(() => false)) await page.locator('[data-act="ob-close"]').first().click();
+  if (await setup.isVisible().catch(() => false)) await page.keyboard.press("Escape"); // Skip shows only after Welcome
   await page.locator("#prompt").waitFor({ timeout: 30000 });
 }
 async function dismissWelcome(page) {
@@ -176,7 +178,7 @@ async function openSettings(page) {
 async function leaveSettings(page) {
   for (let i = 0; i < 3 && await page.locator(".settings").isVisible().catch(() => false); i++) { await page.keyboard.press("Escape"); await page.waitForTimeout(300); }
 }
-const langShown = (page) => page.locator("#lang").evaluate((s) => ({ value: s.value, text: s.selectedOptions[0]?.textContent ?? "" }));
+const langShown = (page) => gselShown(page.locator("#lang"));
 
 /* Every surface the tour opens, in the same order in either language: the conversation, each place and each of its tabs,
    and each Settings page. `each(name)` is called with the surface on screen. */
@@ -216,9 +218,9 @@ async function setup(browser, fits) {
   const dialog = page.locator(".ob9[role=dialog]");
   await dialog.waitFor({ timeout: 30000 });
   check("1 the engine says onboarding is not done", (await api("state")).onboarding?.done !== true);
-  const options = await page.locator("#ob-lang option").evaluateAll((os) => os.map((o) => ({ v: o.value, t: o.textContent, off: o.disabled })));
+  const options = (await gselChoices(page.locator("#ob-lang"))).map((c) => ({ v: c.value, t: c.words, off: c.off }));
   check("1 setup's Language lists Deutsch, named in its own words", options.some((o) => o.v === "de" && o.t === "Deutsch" && !o.off), options.map((o) => o.t).join("|"));
-  await page.locator("#ob-lang").selectOption("de");
+  await pickGsel(page.locator("#ob-lang"), "de");
   await page.waitForFunction(() => document.documentElement.lang === "de", null, { timeout: 15000 });
   await page.locator(".ob9 h2").filter({ hasText: D["window.flows.first.hi"] }).waitFor({ timeout: 10000 });
   check(`1 Welcome says "${D["window.flows.first.hi"]}"`, (await page.locator(".ob9 h2").first().textContent())?.trim() === D["window.flows.first.hi"]);
@@ -232,7 +234,7 @@ async function setup(browser, fits) {
   await page.waitForFunction(() => document.documentElement.lang === "de", null, { timeout: 30000 });
   await dialog.waitFor({ timeout: 30000 });
   await page.locator(".ob9 h2").filter({ hasText: D["window.flows.first.hi"] }).waitFor({ timeout: 10000 });
-  const again = await page.locator("#ob-lang").evaluate((s) => ({ value: s.value, text: s.selectedOptions[0]?.textContent ?? "" }));
+  const again = await gselShown(page.locator("#ob-lang"));
   check("1 after a reload setup is still German, and its Language shows Deutsch", again.value === "de" && again.text === "Deutsch", JSON.stringify(again));
   check("1 setup: zero page errors", errors.length === 0, errors.join(" | "));
   await context.close();

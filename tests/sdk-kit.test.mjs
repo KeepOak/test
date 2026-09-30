@@ -54,10 +54,14 @@ const graphFlow = {
 
 /* ---------- the switch ---------- */
 
-test("building on Branch ships off: the tools are hidden and refuse, and YAML routes say so", async (t) => {
+test("building on Branch ships when needed; switched off, the tools are hidden and refuse, and YAML routes say so", async (t) => {
   const { app, call } = await served(t);
   const owner = app.runtime.owner;
-  assert.equal(sdkKitMode(app.store, owner), "off");
+  // Defaults audit (2026-09-28): the tools only read Branch's route list and write example code, none of (a)–(f).
+  assert.equal(sdkKitMode(app.store, owner), "when-needed");
+  assert.equal((await call("/api/sdk-kit")).body.settings.mode, "when-needed");
+  assert.equal((await call("/api/sdk-kit", { mode: "off" })).body.settings.mode, "off");
+  assert.equal(sdkKitMode(app.store, owner), "off", "the owner's off is kept");
   for (const name of sdkKitTools) assert.ok(app.registry.names().includes(name), `${name} is registered`);
   const tiers = () => switchedToolTiers(app.store, owner, [...sdkKitTools]);
   assert.deepEqual(tiers().hidden.sort(), [...sdkKitTools].sort(), "off: not advertised");
@@ -144,6 +148,7 @@ test("shared with another AI tool, the sdk tools make Branch's MCP server an app
   const listed = await mcp(server, sessionId, "tools/list", {}, 2);
   for (const name of sdkKitTools) assert.ok(listed.result.tools.some((tool) => tool.name === name), `${name} is offered`);
 
+  await call("/api/sdk-kit", { mode: "off" });
   const off = await mcp(server, sessionId, "tools/call", { name: "sdk.starter", arguments: { language: "go" } }, 3);
   assert.equal(off.result.isError, true);
   assert.match(off.result.content[0].text, /switched off/);

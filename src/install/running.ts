@@ -1,4 +1,5 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 
@@ -24,6 +25,12 @@ export interface AttachDeps {
   /** Answers whether a process with that id still exists. */
   alive?: (pid: number) => boolean;
   fetch?: typeof fetch;
+  /**
+   * Asked before anything is sent to the note's address (src/engine-proof.ts): the key to send there once the program
+   * at it has proved it is the engine holding `token`, or null when it has not, and then the engine is not joined.
+   * The desktop app passes it; without it the saved key itself is sent.
+   */
+  prove?: (url: string, token: string) => Promise<string | null>;
 }
 export interface Attachment {
   url: string;
@@ -37,11 +44,34 @@ export interface Attachment {
   version: string;
 }
 
+/**
+ * The note is written whole or not at all: a copy beside it, renamed over it. Written in place, a window starting at that
+ * moment read an empty file, took it for no engine and started a second one beside it (or a joined window relaunched).
+ */
 export async function writeRunning(
   dataDir: string, instance: Omit<RunningInstance, "startedAt"> & { startedAt?: string },
 ): Promise<void> {
   const value = RunningSchema.parse({ ...instance, startedAt: instance.startedAt ?? new Date().toISOString() });
-  await writeFile(join(dataDir, runningFileName), JSON.stringify(value), { mode: 0o600 });
+  const path = join(dataDir, runningFileName);
+  const next = `${path}.${randomBytes(6).toString("hex")}.next`;
+  await writeFile(next, JSON.stringify(value), { mode: 0o600, flag: "wx" });
+  try {
+    await renameSoon(next, path);
+  } catch (error) {
+    await rm(next, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** Windows refuses a rename over a file another program has open for a moment; it is tried again briefly. */
+async function renameSoon(from: string, to: string): Promise<void> {
+  for (let tries = 0; ; tries++) {
+    try { return await rename(from, to); } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (tries >= 20 || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw error;
+      await new Promise((done) => setTimeout(done, 25));
+    }
+  }
 }
 export async function clearRunning(dataDir: string): Promise<void> {
   await rm(join(dataDir, runningFileName), { force: true });
@@ -74,8 +104,10 @@ export async function attachToRunning(dataDir: string, deps: AttachDeps = {}): P
   if (!token) return null;
   const call = deps.fetch ?? globalThis.fetch;
   try {
+    const send = deps.prove ? await deps.prove(instance.url, token) : token;
+    if (!send) return null;
     const response = await call(`${instance.url}/api/state`, {
-      headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(4000),
+      headers: { authorization: `Bearer ${send}` }, signal: AbortSignal.timeout(4000),
     });
     if (!response.ok) return null;
     const body = await response.json() as { version?: unknown };

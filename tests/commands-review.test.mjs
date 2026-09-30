@@ -151,9 +151,11 @@ test("switch off: a chat answers to exactly the names it had", () => {
 
 test("switch off: the window and the phone list exactly what they had, with no other names", async (t) => {
   const f = await fixture(t);
+  on(f.app, "off"); // Batch A: this computer's window ships it on, so off is saved here
   for (const surface of ["window", "phone"]) {
     const list = await (await f.call(`/api/commands?surface=${surface}`)).json();
-    assert.deepEqual(Object.fromEntries(list.commands.map((c) => [c.name, c.aliases])), OLD_WINDOW, surface);
+    // /prompts is the prompt library's own command, and that library ships on (src/prompt-library.ts).
+    assert.deepEqual(Object.fromEntries(list.commands.map((c) => [c.name, c.aliases])), { ...OLD_WINDOW, prompts: ["procedures", "workflows"] }, surface);
   }
   const models = await (await f.call("/api/commands/run", f.server.token, { surface: "window", line: "/models" })).json();
   assert.deepEqual(models, { handled: false }, "/models was a message in the window before");

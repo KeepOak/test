@@ -37,8 +37,18 @@ export const askShipsOn: Partial<Record<AskPart, AskMode>> = {
   "intent-pipeline": "when-needed",
   // The owner's rule (ships on, 2026-09-26): a page refreshes only once the owner pins it, and only through calls the rules allow outright; none of (a)–(f).
   "live-surfaces": "when-needed",
-  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): answer-engine and analytics send data out (a search provider, usage counts); article-writer and runtimes spend;
-  // nodes and app-server let the outside in (an outside client can answer approvals).
+// The owner's rule (ships on, 2026-09-26): source sync only brings the owner's own items in from a source they name, with their secret; none of (a)–(f).
+  "source-sync": "when-needed",
+  // The owner's rule (ships on, 2026-09-26): another agent answers only once the owner picks it with /model; none of (a)–(f).
+  runtimes: "when-needed",
+  // The owner's rule (ships on, 2026-09-26): forecasts and their scores are kept on this computer; none of (a)–(f).
+  forecasts: "when-needed",
+  // The owner's rule (2026-09-27): a quick answer searches and reads the web through the same route every web search
+  // takes and is written by the owner's own connection, only when asked; nothing is sent to anyone; none of (a)–(f).
+  "answer-engine": "when-needed",
+  // Kept off, by the owner's rule: analytics, hindsight and app-blocks send data to outside services (b); article-writer
+  // spends on many model and search calls from one ask (a); nodes hands tasks to other computers (b); app-server lets an
+  // outside client answer approvals (f); leads can clear the whole list (c).
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */

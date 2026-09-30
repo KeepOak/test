@@ -14,7 +14,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { signIn } from "./new-window-places.mjs";
+import { openPlace, signIn } from "./new-window-places.mjs";
 
 const SKIP_LINE = /Anyone at this computer can switch back to you/;
 
@@ -106,19 +106,14 @@ test("the owner's PIN may be skipped but not be the child's own; with a PIN alre
   assert.deepEqual(f.errors, []);
 });
 
-test("setup's People step adds somebody on this computer through the same dialog, and stays in setup", async (t) => {
-  const f = await fixture(t, { onboarded: false });
-  const setup = f.page.locator(".ob9");
-  await setup.waitFor({ state: "visible", timeout: 15000 });
-  await f.page.locator("#ob-trust").check();
-  await f.page.locator('[data-act="ob-go"][data-v="8"]').click();
-  const local = f.page.locator('[data-act="ob-people-local"]');
-  await local.waitFor();
-  assert.equal(await local.getAttribute("aria-disabled"), null, "Someone on this computer is live");
-  await local.click();
+test("Overview, where setup's People step now waits, adds somebody on this computer through the same dialog", async (t) => {
+  const f = await fixture(t);
+  const invite = (await openPlace(f.page, "overview")).locator('[data-act="invite"]').first();
+  await invite.waitFor();
+  assert.equal(await invite.getAttribute("aria-disabled"), null, "adding somebody on this computer is live");
+  await invite.click();
   await fillInvite(f.page, { name: "Sam", pin: "4821", own: "9753" });
-  await until(() => f.app.store.profiles.ownerPinOn() && f.app.store.profiles.list().length === 1, "added from setup, with the owner's PIN");
-  assert.ok(await setup.isVisible(), "setup is still open");
+  await until(() => f.app.store.profiles.ownerPinOn() && f.app.store.profiles.list().length === 1, "added from Overview, with the owner's PIN");
   assert.deepEqual(f.errors, []);
 });
 

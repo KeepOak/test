@@ -1,12 +1,14 @@
 import { isIP } from "node:net";
 import { z } from "zod";
+import { isDeepStrictEqual } from "node:util";
 import { redactLeaksIn } from "./leak-guard.js";
 import { SecretName } from "./learning-more/providers.js";
-import type { MemoryBackend } from "./memory-backend.js";
+import { MemoryDestinationSchema, type MemoryBackend, type MemoryDestination, type MemoryWriteReceipt } from "./memory-backend.js";
 import { MemoryDataSchema, visibleTo, type MemoryRecord } from "./memory.js";
 import { layerOf } from "./memory-layers.js";
 import { isPrivateAddress } from "./network-policy.js";
 import type { Store } from "./store.js";
+import { archiveBuiltIn, restoreBuiltIn } from "./memory-journal.js";
 
 // FQ-memory.providers: an outside memory service the owner can switch on to replace the built-in
 // SQLite memory, not only sit beside it. src/memory-backend.ts says what any backend must do;
@@ -279,7 +281,9 @@ export class MemoryProvider implements MemoryBackend {
   ) {
     // A fact forgotten here stays forgotten even when the outside service failed to delete it too.
     store.sqlite.exec(`CREATE TABLE IF NOT EXISTS memory_outside_forgotten(owner TEXT NOT NULL, id TEXT NOT NULL,
-      forgotten_at TEXT NOT NULL, PRIMARY KEY(owner,id))`);
+      forgotten_at TEXT NOT NULL, PRIMARY KEY(owner,id));
+      CREATE TABLE IF NOT EXISTS memory_outside_archive(owner TEXT NOT NULL,id TEXT NOT NULL,destination TEXT NOT NULL,
+      record TEXT NOT NULL,note TEXT NOT NULL,status TEXT NOT NULL,PRIMARY KEY(owner,id));`);
   }
   /** What is switched on right now ("built-in" or "outside"), and the setting behind it, for the Memory screen. */
   view(owner: string): { settings: MemoryProviderSettings; active: MemoryProviderSettings["mode"] } {
@@ -362,6 +366,72 @@ export class MemoryProvider implements MemoryBackend {
   /** The outside service facts go to now, or undefined while they are kept on this computer. */
   serviceFor(owner: string): MemoryBackend | undefined {
     return this.isOutside(owner) ? this.current(owner) : undefined;
+  }
+  destinationFor(owner: string): MemoryDestination {
+    const settings = memoryProviderSettings(this.store, owner);
+    return this.isOutside(owner) ? { kind: "outside", url: settings.url, header: settings.header, secret: settings.secret } : { kind: "built-in" };
+  }
+  private assertDestination(owner: string, destination: MemoryDestination): void {
+    if (!isDeepStrictEqual(this.destinationFor(owner), destination))
+      throw new Error("This fact belongs to the memory service it was accepted into. Select that same service and credential before undoing or restoring it; nothing was sent to another service.");
+  }
+  private receiptService(owner: string, destination: MemoryDestination): MemoryBackend {
+    this.assertDestination(owner, destination);
+    if (destination.kind !== "outside") throw new Error("This receipt is not for an outside memory service");
+    const guarded = this.guardedFetch();
+    return new RemoteMemoryBackend({ url: destination.url, timeoutMs: memoryProviderSettings(this.store, owner).timeoutMs,
+      allowPrivate: this.guard.settings().allowPrivateAddresses,
+      fetch: ((input, init) => { this.assertDestination(owner, destination); return guarded(input, init); }) as typeof fetch,
+      ...(destination.secret ? { auth: { header: destination.header, key: async () => {
+        this.assertDestination(owner, destination); return this.secret(destination.secret);
+      } } } : {}) });
+  }
+  /** Keeps a restorable copy, then verifies the original service no longer holds the exact fact. */
+  async setAsideAt(owner: string, id: string, receipt: MemoryWriteReceipt, note: string): Promise<void> {
+    const destination = MemoryDestinationSchema.parse(receipt.destination);
+    mine(owner, parseOne(receipt.record), id);
+    if (destination.kind === "built-in") {
+      archiveBuiltIn(this.store, owner, id, receipt, note);
+      return;
+    }
+    await this.withFactLock(owner, id, () => this.inOrder(owner, id, async () => {
+      const service = this.receiptService(owner, destination);
+      const current = await service.read(owner, id);
+      if (current && !isDeepStrictEqual(current.data, receipt.record.data)) throw new Error("This fact changed outside Branch, so Undo did not remove it");
+      const saved = this.store.sqlite.prepare("SELECT record,destination FROM memory_outside_archive WHERE owner=? AND id=?").get(owner, id);
+      if (saved && !isDeepStrictEqual(JSON.parse(String(saved.destination)), destination)) throw new Error("That archive belongs to a different memory service");
+      const record = mine(owner, parseOne(current ?? (saved ? JSON.parse(String(saved.record)) : receipt.record)), id);
+      this.store.sqlite.prepare("INSERT INTO memory_outside_archive VALUES(?,?,?,?,?,'pending') ON CONFLICT(owner,id) DO UPDATE SET record=excluded.record,note=excluded.note,status='pending'")
+        .run(owner, id, JSON.stringify(destination), JSON.stringify(record), note.slice(0, 500));
+      if (current) await service.forget(owner, id);
+      if (await service.read(owner, id)) throw new Error("The outside memory service still holds this fact, so its night was not undone. Try again.");
+      this.assertDestination(owner, destination);
+      this.markForgotten(owner, id);
+      this.store.sqlite.prepare("UPDATE memory_outside_archive SET status='archived' WHERE owner=? AND id=?").run(owner, id);
+    }));
+  }
+  /** Restores only to the original, still-authorized service, and verifies the saved fact before settling. */
+  async restoreAt(owner: string, id: string, receipt: MemoryWriteReceipt): Promise<void> {
+    const destination = MemoryDestinationSchema.parse(receipt.destination);
+    mine(owner, parseOne(receipt.record), id);
+    if (destination.kind === "built-in") {
+      restoreBuiltIn(this.store, owner, id, receipt);
+      return;
+    }
+    await this.withFactLock(owner, id, () => this.inOrder(owner, id, async () => {
+      const service = this.receiptService(owner, destination);
+      const archived = this.store.sqlite.prepare("SELECT record,destination FROM memory_outside_archive WHERE owner=? AND id=? AND status IN ('archived','restored')").get(owner, id);
+      if (!archived || !isDeepStrictEqual(JSON.parse(String(archived.destination)), destination)) throw new Error("The original outside archive cannot be found");
+      const record = mine(owner, parseOne(JSON.parse(String(archived.record))), id);
+      const current = await service.read(owner, id);
+      if (current && !isDeepStrictEqual(current.data, record.data)) throw new Error("This fact changed outside Branch, so it was not overwritten by Restore");
+      if (!current) await service.write(owner, id, record.data);
+      const restored = await service.read(owner, id);
+      if (!restored || !isDeepStrictEqual(restored.data, record.data)) throw new Error("The outside memory service did not confirm the restored fact. Try again.");
+      this.assertDestination(owner, destination);
+      this.store.sqlite.prepare("DELETE FROM memory_outside_forgotten WHERE owner=? AND id=?").run(owner, id);
+      this.store.sqlite.prepare("UPDATE memory_outside_archive SET status='restored' WHERE owner=? AND id=?").run(owner, id);
+    }));
   }
   /**
    * Takes back a fact just written to `service`: it is never read back here, and it is deleted from the

@@ -60,11 +60,14 @@ function backdate(app, runId, days) {
 
 // ------------------------------------------------------------ U1-U3: the usage report
 
-test("U1: the usage report ships off and refuses in one sentence until switched on", async (t) => {
+test("U1: the usage report ships when needed; switched off it refuses in one sentence until switched on", async (t) => {
   const { app, api } = await served(t);
-  assert.equal(usageReportSettings(app.store, app.runtime.owner).mode, "off");
+  // The ship-on rule: the report ships "when needed" (src/usage-report.ts).
+  assert.equal(usageReportSettings(app.store, app.runtime.owner).mode, "when-needed");
   const settings = await api("GET", "/api/usage/report/settings");
-  assert.equal(settings.body.usageReport.mode, "off");
+  assert.equal(settings.body.usageReport.mode, "when-needed");
+  // The owner switches it off through its own route, so the off is theirs.
+  assert.equal((await api("POST", "/api/usage/report/settings", { mode: "off" })).body.usageReport.mode, "off");
   const refused = await api("POST", "/api/usage/report", { range: "7d" });
   assert.equal(refused.status, 400);
   assert.match(refused.body.error, /switched off/);
@@ -154,7 +157,7 @@ function memoryStore() {
   };
 }
 
-test("U4: the counters switch ships off, sends on a press when needed, and after tasks only when on", async () => {
+test("U4: the counters switch ships when needed; off sends nothing, when needed sends on a press, and after tasks only when on", async () => {
   const store = memoryStore();
   const sent = [];
   let clock = new Date("2026-09-17T10:00:00Z");
@@ -165,6 +168,9 @@ test("U4: the counters switch ships off, sends on a press when needed, and after
     counters: () => [{ name: "branch_runs_total", description: "Tasks", unit: "1", value: 4 }],
     send: async (points, reason) => { sent.push({ points, reason }); return { ok: true, error: null }; },
   };
+  // The ship-on rule: the counters ship "when needed" (src/execution-metrics.ts); the owner switches them off through their own save.
+  assert.equal(executionMetricsSettings(store, "local").mode, "when-needed");
+  saveExecutionMetricsSettings(store, "local", { mode: "off" });
   assert.equal(executionMetricsSettings(store, "local").mode, "off");
   assert.match((await sendExecutionMetrics(deps)).reason, /switched off/);
   assert.equal((await afterTaskMetrics(deps)).sent, false);
@@ -196,7 +202,9 @@ test("U4: after a task the counters reach the owner's own collector, carrying nu
   await new Promise((resolve) => collector.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => collector.close(resolve)));
   const { app, api } = await served(t, [say(`finished ${plantedKey}`)]);
-  const off = await api("GET", "/api/usage/counters");
+  // The ship-on rule: the counters ship "when needed"; the owner switches them off through their own route.
+  assert.equal((await api("GET", "/api/usage/counters")).body.counters.mode, "when-needed");
+  const off = await api("POST", "/api/usage/counters", { mode: "off" });
   assert.equal(off.body.counters.mode, "off");
 
   saveTraceExportSettings(app.store, app.runtime.owner, { enabled: true, destination: "otlp", endpoint: `http://127.0.0.1:${collector.address().port}` });
@@ -291,13 +299,16 @@ test.skip("U7: every word the two cards show is on file in English and in real F
 });
 
 /* The new window: Settings › Data & usage's report is the prototype's. Since parity B5 it adds up the engine's own usage
-   (GET /api/usage, public/app/settings/pages/usage.js), not the usage report, which still ships off: "Open the report"
-   shows the task that ran, at 400 pixels, with no page errors. */
+   (GET /api/usage, public/app/settings/pages/usage.js), not the usage report, which ships when needed: "Open the report"
+   shows the task that ran, at 400 pixels, with no page errors. The engine's answer is held back a little, as a busy
+   machine does: pressed before it lands, the report used to add up nothing ("0" tasks) and now waits for it.
+   Mutation: in usage.js make repopen15 call openReport() without awaiting the read, and this goes red. */
 test("U8: the report lives in Data & usage and adds up the engine's own usage, at 400 pixels", async (t) => {
   const { settingsWindow, openSettingsPage } = await import("./settings-window.mjs");
-  const { app, page, errors } = await settingsWindow(t, { name: "ui14", width: 400, height: 800, provider: scripted([say("done")]),
+  const slowUsage = (page) => page.route(/\/api\/usage\?range=/, async (route) => { await new Promise((done) => setTimeout(done, 800)); await route.continue(); });
+  const { app, page, errors } = await settingsWindow(t, { name: "ui14", width: 400, height: 800, provider: scripted([say("done")]), route: slowUsage,
     before: (one) => one.runtime.run({ prompt: "one task" }) });
-  assert.equal(usageReportSettings(app.store, app.runtime.owner).mode, "off", "ships off");
+  assert.equal(usageReportSettings(app.store, app.runtime.owner).mode, "when-needed", "ships when needed (the ship-on rule)");
   await openSettingsPage(page, "usage");
   const open = page.locator(".set-col").getByRole("button", { name: "Open the report", exact: true });
   await open.waitFor();
@@ -316,6 +327,8 @@ test("U9: a short-lived key cannot make the usage report, flip its switches, or 
   // Eight refusals in a row would otherwise trip the lock on wrong keys, which is not what is tested here.
   const { app, api, url } = await served(t, undefined, { authLimits: { attempts: 100 } });
   await api("POST", "/api/usage/report/settings", { mode: "on" });
+  // The counters ship "when needed" (the ship-on rule); the owner puts them off, so a refused "on" is seen to change nothing.
+  assert.equal((await api("POST", "/api/usage/counters", { mode: "off" })).body.counters.mode, "off");
   const doors = [
     ["/api/usage/report", { range: "7d" }], ["/api/usage/report/settings", { mode: "off" }],
     ["/api/usage/counters", { mode: "on" }], ["/api/usage/counters/send", {}],

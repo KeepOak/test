@@ -16,6 +16,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { brain } from "./trunks-helpers.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { pickGsel } from "./gsel.mjs";
 
 const PROTOTYPE = new URL("../design/redesign/prototype.html", import.meta.url);
 
@@ -95,7 +96,7 @@ test("every word on the Trunks screens is the prototype's, in English and then i
      with it (BRANCH-DESIGN-INTENT.md, stand-in notes: "translate every screen"). */
   await (await sidebar(f.page, '#side [data-act="view"][data-v="settings"]')).click();
   await f.page.locator('.set-nav [data-act="setpage"][data-v="appearance"]').click();
-  await f.page.locator("#lang").selectOption("fr");
+  await pickGsel(f.page.locator("#lang"), "fr");
   await f.page.waitForFunction(() => document.documentElement.lang === "fr");
   assert.equal((await f.call("/api/look")).language, "fr", "the engine keeps the choice");
   await f.page.locator(".set-back").click();
@@ -171,6 +172,10 @@ const rules = [({ last, system }) => {
 test("the card, the three-field create, Edit Trunk, a room, the roster and @ in the message box, with nothing scrolling sideways", async (t) => {
   const f = await fixture(t, rules);
   const { page, app } = f;
+  // Choosing a Trunk for a conversation ships when needed (the ship-on rule, covered in tests/p2-rooms-ui.test.mjs); the
+  // owner switches it off here, so "@Ada …" below goes to Ada's own conversation.
+  await f.call("/api/trunks/switch", { part: "conversations", mode: "off" });
+  for (const trunk of app.trunks.records.list()) app.trunks.remove(trunk.id); // explicitly exercise the owner-cleared empty roster
   await f.open();
   const until = async (check) => { for (let i = 0; i < 200 && !(await check()); i++) await page.waitForTimeout(50); };
 
@@ -273,10 +278,17 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   assert.equal(await page.locator(".pop .ph").first().textContent(), "Call a Trunk", "the list is headed as the prototype's");
   await page.locator("#prompt").press("Enter");
   assert.equal(await page.locator("#prompt").inputValue(), "@Ada ", "the prototype's mention-pick puts in the name");
+  /* One read of the Trunks refused on the way (a busy engine): the window keeps the Trunks it had, so "@Ada" still finds
+     Ada. It used to empty them, and the words went out as an ordinary message in a new conversation (seen on CI).
+     Mutation: in core/state.js refresh(), set E.trunks and E.trunkModes from a failed read again, and this goes red. */
+  await page.route("**/api/trunks", (route) => route.request().method() === "GET" ? route.fulfill({ status: 503, json: { error: "busy" } }) : route.continue(), { times: 1 });
+  await page.evaluate(async () => (await import("/app/core/state.js")).refresh());
   await page.locator("#prompt").pressSequentially("hello there");
   await page.locator("#prompt").press("Enter");
   await until(async () => app.store.messages(ada.chatSessionId).some((m) => m.content === "hello there"));
   assert.ok(app.store.messages(ada.chatSessionId).some((m) => m.content === "hello there"), "the message went to Ada's own conversation");
+  // The window opens Ada's conversation again once her answer is in, which closes the phone's list: wait for that first.
+  await page.locator("#main").getByText("hello there").first().waitFor();
   assert.equal(await wide(page), false, "no sideways scrolling in the conversation");
   assert.deepEqual(f.errors, []);
 
@@ -284,6 +296,6 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   assert.equal(app.trunks.rooms.list()[0].needsYou, true, "the engine says the room needs you");
   const roomRow = await sidebar(page, `#side .row[data-id="${room.sessionId}"]`);
   const seen = { roomMarked: await roomRow.locator("p.attn").count(), editorTabs };
-  assert.deepEqual(seen, { roomMarked: 1, editorTabs: ["Look", "What it may do", "Its computers"] },
-    "window bug: a room that needs you (GET /api/trunks rooms[].needsYou) is not marked in its row; the Trunk editor has no Its computers tab (prototype itsComputers, pass 17)");
+  assert.deepEqual(seen, { roomMarked: 1, editorTabs: ["Look", "What it may do", "Its computers", "Files", "Accounts"] },
+    "a waiting room stays marked; the editor has Its computers, the persistent personality Files and Accounts (its own account per connection)");
 });

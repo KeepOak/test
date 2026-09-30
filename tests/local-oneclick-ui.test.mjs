@@ -1,6 +1,6 @@
 /**
  * Wave mac5: the one-click block inside Settings → Models → On this computer, opened the way a
- * person opens it. It ships off, its switch saves as it moves, it fits 400 px, and every word has a
+ * person opens it. It ships when needed, its switch saves as it moves, it fits 400 px, and every word has a
  * key and real French. A headless browser only; the graphics card and free memory are stand-ins,
  * and nothing is set up, so nothing is started or downloaded.
  */
@@ -17,7 +17,7 @@ import { readGraphicsCard, useGraphicsReader } from "../dist/local-hardware.js";
 import { useMemoryReaders } from "../dist/local-fit.js";
 import { localModelsMode } from "../dist/local-jobs.js";
 import { localKitFor } from "../dist/local-kit.js";
-import { openPlace, openSettingFor } from "./places.mjs";
+import { openPlace, openSettingFor, pressUntil } from "./places.mjs";
 
 async function fixture(t, width = 1440) {
   useGraphicsReader(async () => ({ name: "Stand-in", memoryBytes: null, sharedMemory: true }));
@@ -53,14 +53,21 @@ async function fixture(t, width = 1440) {
 test("Settings › On this computer lists each model's sizes, looking changes nothing, and it fits 400 px", async (t) => {
   for (const width of [1440, 400]) {
     const { page, errors, app } = await fixture(t, width);
-    await page.locator('[data-act="side"]').first().evaluate((button) => { if (innerWidth <= 760) button.click(); });
+    /* A narrow window slides the list in with its menu button, pressed as a thumb presses it. The button was found in one
+       step and clicked in another, and a redraw in between left the click on a button already off the page, which reached
+       nothing (6x CPU: 3 in 36, the gear then "outside of the viewport"). Then it waits for the list to be open. */
+    if (width <= 760) {
+      await pressUntil(page.locator('[data-act="side"]:visible').first(), () => page.waitForFunction(() => document.getElementById("app").classList.contains("side-open"),
+        undefined, { timeout: 10000 }).then(() => true, () => false), "the list to slide in");
+    }
     await page.locator('#side [data-act="view"][data-v="settings"]').click();
     await page.locator('[data-act="setpage"][data-v="local"]').click();
     await page.locator('#main [data-act="lm-get"]').first().waitFor({ state: "visible", timeout: 15000 });
     assert.ok(await page.locator('#main [data-act="lm-v"]').count() > 0, `${width}: each size is offered`);
     assert.match(await page.locator('#main [data-act="lm-get"]').first().innerText(), /^Install \d/, `${width}: Install says how much`);
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth + 1), false, `${width}: nothing sideways`);
-    assert.equal(localModelsMode(app.store, app.runtime.owner), "off", "looking switches nothing on");
+    assert.equal(localModelsMode(app.store, app.runtime.owner), "when-needed", "looking leaves the switch as it ships (ship-on rule), not on");
+    assert.equal(app.store.get("settings", app.runtime.owner, "local-models"), undefined, "looking saves no switch");
     assert.equal(app.store.get("settings", app.runtime.owner, "local-runner-install"), undefined, "nothing was saved by looking");
     assert.deepEqual(errors, []);
   }

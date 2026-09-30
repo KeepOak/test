@@ -13,13 +13,16 @@ import { render, esc } from "../../core/dom.js";
 import { toast, ic } from "../../core/ui.js";
 import { id15, sw15, code15, sec15 } from "../rows15.js";
 import { gateway17, initMore17 } from "../p17-more.js";
-import { t } from "../../../i18n.js";
+import { t, language } from "../../../i18n.js";
+import { noteGateway } from "../../shell/extras.js";
 
 let gwData = null;
-const D = { reach: null, personal: null };
+const D = { reach: null, personal: null, health: null };
 const onMode = (mode) => (mode ? mode !== "off" : false);
 /* The gateway is on or off: "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so a file saved as
-   "when-needed" reads as on and the switch saves "on" or "off". */
+   "when-needed" reads as on. The Gateway switch saves "when-needed" or "off", so switching it on leaves "Carry on
+   interrupted work" as it was (QA retest 2026-09-28, G1: switching the gateway on also ticked that one); only the Carry
+   switch saves "on". */
 const gwOn = onMode;
 const mode = (on) => (on ? "when-needed" : "off");
 
@@ -36,7 +39,11 @@ const sw = (title, sub) => sw15(title, sub, (WIRES[id15(title)]?.[0] ?? SHOWN[id
 async function loadGateway() {
   const [gw, reach, personal] = await Promise.all(["never-break", "reach", "personal"]
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
-  gwData = gw; Object.assign(D, { reach, personal });
+  /* QA retest 2026-09-28 (m14): the gateway's own account of itself (GET /gateway/health on the address the window is
+     served from: the gateway answers it without the engine), read only while this engine runs under it. */
+  const health = gw?.underGateway ? await fetch("/gateway/health", { cache: "no-store" }).then((r) => (r.ok ? r.json() : null)).catch(() => null) : null;
+  gwData = gw; Object.assign(D, { reach, personal, health });
+  if (gw) noteGateway(gw); // the status bar says the same as this page
   render();
 }
 
@@ -56,10 +63,15 @@ export function init() {
   initMore17();
   const reading = loadGateway();
   on("gw-prop", (el) => answerProposal(el.dataset.v === "use"));
-  markLive(["sw:gw-mode", "sw:gw-carry", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
+  markLive(["sw:gw-mode", "sw:gw-carry", "sw:gw-keep-awake", "gw-prop", "sw:f15-pause-a-chat-app-from-the-chat", "sw:f15-send-files-into-chats"]);
   document.addEventListener("change", async (e) => {
+    if (e.target.id === "gw-keep-awake") {
+      try { await api("never-break", { keepAwake: e.target.checked }); } catch (error) { toast(error.message); }
+      await loadGateway();
+      return;
+    }
     if (e.target.id === "gw-mode") {
-      try { await api("never-break", { mode: e.target.checked ? "on" : "off" }); } catch (error) { toast(error.message); }
+      try { await api("never-break", { mode: e.target.checked ? "when-needed" : "off" }); } catch (error) { toast(error.message); }
       await loadGateway();
       return;
     }
@@ -76,7 +88,7 @@ export function init() {
   return reading;
 }
 
-/* The Gateway switch is drawn from the engine's saved mode, so Settings waits for this page's read. */
+/* The Gateway switch is the saved preference; the status above it comes from the running engine. */
 export const waitFirst = true;
 
 export async function load() {
@@ -85,26 +97,50 @@ export async function load() {
 
 const BASE = () => `<h1>${t("window.settings.gateway.gateway")}</h1><p class="lede">${t("window.settings.gateway.a-small-helper-that-keeps-branch")}</p>`;
 
+/* QA retest 2026-09-28 (G1): the switch is what the owner chose; whether the gateway runs is the engine's own word
+   (`underGateway`: this engine was started by it). It takes over only at the next start (src/cli.ts,
+   runGatewayIfSwitchedOn), so just after the switch goes on the page says so rather than that it is running. */
 function statusSection(gw) {
   if (!gw) return "";
-  const on = gwOn(gw.mode);
-  const title = on ? t("window.settings.gateway.the-gateway-is-on") : t("window.settings.gateway.the-gateway-is-off");
-  const desc = on ? t("window.settings.gateway.on-telegram-your-phone-and-automations") : t("window.settings.gateway.off-when-you-close-branch-your");
-
-  return `<div class="status"><span class="sdot ${on ? "ok" : "bad"}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
+  const saved = gwOn(gw.mode), running = gw.underGateway === true;
+  // What runs now, not only what is saved: running (or still stopping after OFF), switched on for the next start, or off.
+  const [title, desc, dot] = running && saved
+    ? [t("window.settings.gateway.the-gateway-is-on"), t("window.settings.gateway.on-telegram-your-phone-and-automations"), "ok"]
+    : running
+      ? [t("window.settings.gateway.the-gateway-is-on"), t(gw.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater"), "ok"]
+      : saved
+        ? [t("window.settings.gateway.the-gateway-is-switched-on"), t("window.settings.gateway.switched-on-takes-over-next-start"), "warn"]
+        : [t("window.settings.gateway.the-gateway-is-off"), t("window.settings.gateway.off-when-you-close-branch-your"), "bad"];
+  return `<div class="status"><span class="sdot ${dot}"></span><div><b>${title}</b><p>${desc}</p></div></div>`;
 }
 
 function modeSection(gw) {
   const mode = gw?.mode ?? null;
   return `<div class="sec"><h2>${t("field.never-break-mode")}</h2><div class="ctl"><b>${t("window.settings.gateway.gateway")}</b><input class="sw" type="checkbox" id="gw-mode" data-sw="gw-mode" ${gwOn(mode) ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.gateway")}"><small>${t("window.settings.gateway.recommended-on-telegram-your-phone-and")}</small></div>`
     + `<div class="ctl"><b>${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}</b><input class="sw" type="checkbox" id="gw-carry" data-sw="gw-carry" ${mode === "on" ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.carry-on-interrupted-work-by-itself")}"><small>${t("window.settings.gateway.after-a-restart-safe-steps-carry")}</small></div>`
+    + keepAwakeRow(gw)
     + `<div class="ctl"><b>${t("window.settings.gateway.show-the-gateway-in-the-tray")}</b><input class="sw" type="checkbox" id="gw-tray" aria-label="${t("window.settings.gateway.show-the-gateway-in-the-tray")}" data-sw="set"><small>${t("window.settings.gateway.a-small-branch-icon-by-the")}</small></div></div>`;
 }
 
-/* What it has been doing: while the gateway is off the prototype's one line is simply true; the engine keeps no list
-   of the gateway's own events here, so none is written in while it is on. */
+function keepAwakeRow(gw) {
+  const runtime = gw?.keepAwakeRuntime;
+  const state = runtime?.error ? `${t("gatewayPower.failed")} ${runtime.error}` : runtime?.suspended ? t("gatewayPower.suspended")
+    : runtime?.active ? t("gatewayPower.active") : gw?.config?.keepAwake ? t("gatewayPower.waiting") : t("gatewayPower.off");
+  return `<div class="ctl"><b>${t("gatewayPower.title")}</b><input class="sw" type="checkbox" id="gw-keep-awake" data-sw="gw-keep-awake" ${gw?.config?.keepAwake ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("gatewayPower.title")}"><small>${t("gatewayPower.description")} ${esc(state)}</small></div>`;
+}
+
+/* What it has been doing: while the gateway is off the prototype's one line is simply true. While it runs, its own notes,
+   newest first, in its own words: an engine it started again, an update it kept or put back (src/never-break/gateway.ts
+   note). QA retest 2026-09-28 (m14): a restarted engine used to leave this empty. */
+const at = (iso) => new Date(iso).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+function gatewayNotes() {
+  const notes = D.health?.notes ?? [];
+  if (!D.health) return "";
+  if (!notes.length) return `<li class="ok">${ic("check", "s")}<span>${t("window.settings.gateway.nothing-to-report")}</span><time></time></li>`;
+  return [...notes].reverse().map((n) => `<li>${ic("info", "s")}<span>${esc(n.text)}</span><time datetime="${esc(n.at)}">${esc(at(n.at))}</time></li>`).join("");
+}
 function doing(gw) {
-  const rows = gw?.mode === "off" ? `<li class="">${ic("info", "s")}<span>${t("window.settings.gateway.nothing-is-watching-branch")}<small>${t("window.settings.gateway.the-gateway-is-off-so-a")}</small></span><time></time></li>` : "";
+  const rows = gw && gw.underGateway !== true ? `<li class="">${ic("info", "s")}<span>${t("window.settings.gateway.nothing-is-watching-branch")}<small>${t("window.settings.gateway.the-gateway-is-off-so-a")}</small></span><time></time></li>` : gatewayNotes();
   return `<div class="sec"><h2>${t("window.settings.gateway.what-it-has-been-doing")}</h2><ol class="tl">${rows}</ol></div>`;
 }
 

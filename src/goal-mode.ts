@@ -4,6 +4,7 @@ import { declareShape, type AnswerShape, type ShapedAnswer } from "./answer-shap
 import { CompletionCheckSchema, evaluateChecks, type CompletionCheck } from "./reliability.js";
 import type { RunOptions } from "./runtime.js";
 import type { Store } from "./store.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
 import { goalWithSubgoals } from "./autonomy/subgoals.js"; // r17-b: /subgoal
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 
@@ -37,16 +38,23 @@ export const GoalUndoSettingsSchema = z.object({
 }).strict();
 export type GoalUndoSettings = z.infer<typeof GoalUndoSettingsSchema>;
 const settingsKey = "goal-undo";
+/**
+ * The owner's rule (ships on, 2026-09-26): a goal starts only when the owner sets one, and its rounds are bounded; none of (a)–(f).
+ * Snapshots stay off: each records the whole workspace, up to 2 GB (e).
+ */
+export const goalUndoShipsOn: Partial<GoalUndoSettings> = { goal: "on" };
 
 export function goalUndoSettings(store: Store, owner: string): GoalUndoSettings {
   const saved = GoalUndoSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : GoalUndoSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, goalUndoShipsOn) : GoalUndoSettingsSchema.parse({});
 }
 export function saveGoalUndoSettings(store: Store, owner: string, input: unknown): GoalUndoSettings {
   // Only the switches that were sent change; the others keep their saved value (no defaults here).
   const sent = z.object({ goal: z.enum(featureModes).optional(), snapshots: z.enum(featureModes).optional() }).strict().parse(input);
+  const before = store.get("settings", owner, settingsKey)?.data;
   const next = GoalUndoSettingsSchema.parse({ ...goalUndoSettings(store, owner), ...sent });
   store.save("settings", owner, settingsKey, { ...next });
+  markChosen(store, owner, settingsKey, savedFields(before, GoalUndoSettingsSchema.safeParse(before ?? {}).success, sent, goalUndoShipsOn));
   return next;
 }
 const offNote = "Goal mode is off. Switch it on in Settings, under \"Working until done, and going back\".";
@@ -94,6 +102,8 @@ export interface GoalState {
   elapsedMs: number;
   activeSince: number | null;
   lastRunId: string | null;
+  /** CHAT-185: a goal set from a chat runs every round as that chat's task. Never taken from a request body. */
+  origin?: { source: "channel"; permissions: string[] };
 }
 export interface Verdict { score: number; missing: string[]; done: boolean; blocked: string | null }
 
@@ -131,7 +141,7 @@ export class GoalMode {
     return recordedWrite(this.store, this.runtime.owner, byCard("goal-undo"), ["goal-undo"], () => saveGoalUndoSettings(this.store, this.runtime.owner, input));
   }
 
-  async start(input: GoalStart): Promise<GoalState> {
+  async start(input: GoalStart, origin?: { source: "channel"; permissions: string[] }): Promise<GoalState> {
     const wanted = GoalStartSchema.parse(input);
     if (this.settings().goal === "off") throw new Error(offNote);
     if (wanted.sessionId && this.live.has(wanted.sessionId)) throw new Error("This conversation is already working on a goal.");
@@ -139,6 +149,7 @@ export class GoalMode {
       sessionId: wanted.sessionId ?? "", objective: wanted.objective, status: "working", round: 0, maxRounds: wanted.maxRounds,
       score: null, best: 0, flatRounds: 0, missing: [], reason: "", checks: wanted.checks ?? null,
       startedAt: new Date(this.now()).toISOString(), elapsedMs: 0, activeSince: this.now(), lastRunId: null,
+      ...(origin ? { origin: { source: "channel", permissions: [...origin.permissions] } } : {}),
     };
     const started = new Promise<void>((resolve, reject) => {
       void this.drive(state, resolve).then(() => resolve(), (error: unknown) => reject(error));
@@ -226,6 +237,7 @@ export class GoalMode {
         return await this.runtime.run({
           prompt, signal: controller.signal, onTextDelta: () => undefined,
           ...(state.sessionId ? { sessionId: state.sessionId } : {}),
+          ...(state.origin ? { source: state.origin.source, permissions: state.origin.permissions } : {}),
           onStarted: (run) => {
             if (!state.sessionId) { state.sessionId = run.sessionId; this.live.set(run.sessionId, { controller, runId: null }); }
             this.live.get(state.sessionId)!.runId = run.id;

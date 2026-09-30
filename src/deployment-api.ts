@@ -8,6 +8,7 @@ import { daemonCommand, daemonLauncherName, daemonTaskName, type DaemonAction, t
 import { launchdLabel } from "./install/launchd.js";
 import { systemdUnitName } from "./install/systemd.js";
 import { readRunning, sessionTokenFileName } from "./install/running.js";
+import { loadGatewayConfig } from "./never-break/gateway-config.js";
 import { listUpdateBackups, readFirstStart, readUpdateBackup, writeUpdateBackup } from "./install/update-backup.js";
 import { takeDataCopy } from "./install/data-copy.js";
 import { uninstallCommands, type UninstallCommandDeps } from "./install/uninstall-commands.js";
@@ -16,6 +17,8 @@ import type { RemoteAccess } from "./remote/remote-access.js";
 import type { QrMatrix } from "./remote/qr.js";
 import type { createBranch } from "./index.js";
 import { readComfort } from "./comfort/settings.js";
+import { markChosen } from "./ship-on.js";
+import { autostartChoiceKey } from "./keep-running.js"; // the owner's own start-at-sign-in choice
 import { currentPerson } from "./people/context.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { neverSuggest, nextSuggestion, suggestionsSettings } from "./suggestions.js";
@@ -128,6 +131,17 @@ async function saveAutostart(context: DeploymentContext, platform: NodeJS.Platfo
   return autostartView(context, platform, deps);
 }
 
+/**
+ * The ship-on rule (src/keep-running.ts): a new install starts at sign-in without being asked. Registers it the way
+ * POST /api/deployment/autostart does, when this computer can; answers whether it is on now.
+ */
+export async function shipAutostart(context: DeploymentContext, platform: NodeJS.Platform = process.platform, deps: DeploymentDeps = {}): Promise<boolean> {
+  const view = await autostartView(context, platform, deps);
+  if (!view.available) return false;
+  if (view.enabled) return true;
+  return (await saveAutostart(context, platform, deps, { enabled: true })).enabled;
+}
+
 function notInstalledDaemon(platform: NodeJS.Platform): { action: "status"; taskName: string; installed: false; message: string } {
   if (platform === "darwin")
     return { action: "status", taskName: launchdLabel, installed: false, message: "Move Branch into your Applications folder and open it from there to keep it working with the window closed. It then starts by itself when you sign in to your Mac." };
@@ -227,7 +241,11 @@ async function suggestion(app: Branch, context: DeploymentContext, platform: Nod
   const installed = Boolean(context.executable && context.installRoot);
   const note = await readRunning(context.dataDir).catch(() => null);
   const inBackground = note?.mode === "daemon" && note.pid === process.pid;
-  const background = inBackground || (installed && (await daemonCommand("status", daemonOptions(context, platform)).catch(() => null))?.installed === true);
+  // The saved gateway choice (Settings › General and › Gateway) is how Branch keeps working with the window closed; with it
+  // on, the system's own service list is not asked at all.
+  const gatewayChosen = await loadGatewayConfig(context.dataDir).then(({ config }) => config.mode !== "off", () => false);
+  const background = inBackground || gatewayChosen
+    || (installed && (await daemonCommand("status", daemonOptions(context, platform)).catch(() => null))?.installed === true);
   const onboarded = (app.store.get("settings", owner, "onboarding")?.data as { done?: unknown } | undefined)?.done === true;
   return { bar: nextSuggestion({ owner: here, onboarded, settings: suggestionsSettings(app.store, owner), installed,
     background, autoUpdate: readComfort(app.store, owner, "notify").autoUpdate }) };
@@ -248,7 +266,12 @@ export async function deploymentApi(
     app.store.profiles.requireOwner("Suggestions");
     return { settings: neverSuggest(app.store, app.runtime.owner, await readBody(request)) };
   }
-  if (request.method === "POST" && path === "/api/deployment/autostart") return saveAutostart(context, platform, deps, await readBody(request));
+  if (request.method === "POST" && path === "/api/deployment/autostart") {
+    const view = await saveAutostart(context, platform, deps, await readBody(request));
+    // The owner's own choice: a new install's first start never registers it again (src/keep-running.ts).
+    markChosen(app.store, app.runtime.owner, autostartChoiceKey, ["enabled"]);
+    return view;
+  }
   if (request.method === "POST" && path === "/api/deployment/daemon") {
     const { action } = DaemonSchema.parse(await readBody(request));
     return daemonCommand(action as DaemonAction, daemonOptions(context, platform));

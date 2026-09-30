@@ -506,8 +506,8 @@ const sqliteError = (message, errcode) => Object.assign(new Error(message), { co
 test("a refusal names the file, says nothing was changed, and says what to do next", () => {
   const path = "/home/someone/Branch/state/branch.sqlite";
   for (const [why, must] of [
-    [sqliteError("database disk image is malformed", 11), /damaged[\s\S]*nothing was changed[\s\S]*safety copies/i],
-    [sqliteError("file is not a database", 26), /damaged[\s\S]*safety copies/i],
+    [sqliteError("database disk image is malformed", 11), /damaged[\s\S]*nothing was changed[\s\S]*safety cop(y|ies)/i],
+    [sqliteError("file is not a database", 26), /damaged[\s\S]*safety cop(y|ies)/i],
     [sqliteError("attempt to write a readonly database", 1544), /cannot write[\s\S]*allowed to write/i],
     [sqliteError("database or disk is full", 13), /no room left[\s\S]*Free some space/i],
     // A folder that has gone and a disk with no room both say this; it must not blame permissions alone.
@@ -662,6 +662,8 @@ test(`\`branch update --yes\` on data from a newer Branch refuses without touchi
       installRoot: join(root, "app"), dataDir, version: "1.0.0", platform: "linux", arch: "x64", yes: true,
       print: (line) => lines.push(line),
       deps: {
+        // This is a test of the data check, not of provenance, so this release names itself the last without a record.
+        lastReleaseWithoutProvenance: "2.0.0",
         fetch: releaseFor(Buffer.from(`release-${seed}`)),
         scratchDir: join(root, "scratch"),
         running: async () => null,

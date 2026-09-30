@@ -16,6 +16,7 @@
    English), with Spanish kinds and tiers and no English name or sentence on the page.
    Page errors must be zero. The engine's language is put back to "auto" at the end. Nothing else is changed. */
 const { chromium } = require("playwright");
+const { gselChoices, gselShown, pickGsel } = require("./gsel.cjs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("Set PORT and TOKEN."); process.exit(2); }
@@ -90,7 +91,7 @@ async function signIn(page) {
 async function closeSetup(page) {
   const setup = page.locator(".ob9[role=dialog]");
   await setup.waitFor({ timeout: 30000 }).catch(() => null);
-  if (await setup.isVisible()) await page.locator('[data-act="ob-close"]').first().click();
+  if (await setup.isVisible()) await page.keyboard.press("Escape"); // Skip shows only after Welcome
   await page.locator("#prompt").waitFor({ timeout: 30000 });
 }
 /* Closing setup brings the "New to Branch?" card a moment later (flows/first.js); dismiss it so it covers nothing. */
@@ -115,7 +116,7 @@ async function settingsPage(page, v, name, S, E, leaks) {
   await page.waitForTimeout(700);
   await surface(page, name, S, E, leaks);
 }
-const shown = (page) => page.locator("#lang").evaluate((s) => ({ value: s.value, text: s.selectedOptions[0]?.textContent ?? "" }));
+const shown = (page) => gselShown(page.locator("#lang"));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, ms = 15000) { const end = Date.now() + ms; for (;;) { const v = await fn().catch(() => null); if (v) return v; if (Date.now() > end) return v; await wait(250); } }
 /* The Spanish for an English line the engine gives, as the window finds it (public/i18n.js fromEnglish: the first key
@@ -128,6 +129,10 @@ const lines = async (page) => (await onPage(page)).split("\n").map((s) => s.trim
 async function overviewWords(page, S, E) {
   const health = (await api("health")).items ?? [], es = spanishOf(E, S);
   await page.locator('#side [data-act="view"][data-v="overview"]').first().click();
+  // Overview sums health in one line; each check is under its Details (places/overview.js), opened as a person does.
+  const details = page.locator("#main .ovs-health details");
+  await details.waitFor({ timeout: 15000 });
+  if (!(await details.evaluate((d) => d.open))) await details.locator("summary").click();
   const got = await until(async () => { const l = await lines(page); return health.every((i) => l.includes(es(i.name))) ? l : null; });
   const seen = got ?? await lines(page);
   for (const item of health) {
@@ -199,13 +204,13 @@ async function achievementsPage(page, S, E, leaks) {
     const setup = page.locator(".ob9[role=dialog]");
     await setup.waitFor({ timeout: 30000 });
     check("setup opens on a fresh engine (onboarding not done)", (await api("state")).onboarding?.done !== true);
-    const offered = await page.locator("#ob-lang option").evaluateAll((os) => os.map((o) => ({ v: o.value, t: o.textContent, off: o.disabled })));
+    const offered = (await gselChoices(page.locator("#ob-lang"))).map((c) => ({ v: c.value, t: c.words, off: c.off }));
     const listed = await page.evaluate(async () => (await import("/i18n.js")).LANGUAGES.map((l) => l.id));
     check("setup: Language lists exactly i18n.js LANGUAGES, Spanish among them", JSON.stringify(offered.map((o) => o.v)) === JSON.stringify(listed) && listed.includes("es"), JSON.stringify(offered));
     check('setup: Spanish is named "Español" and can be picked', offered.some((o) => o.v === "es" && o.t === "Español" && !o.off), JSON.stringify(offered.find((o) => o.v === "es")));
     check("setup: English is in force before anything is picked", (await page.evaluate(() => document.documentElement.lang)) === "en");
 
-    await page.locator("#ob-lang").selectOption("es");
+    await pickGsel(page.locator("#ob-lang"), "es");
     await page.waitForFunction(() => document.documentElement.lang === "es", null, { timeout: 15000 });
     await page.locator(".ob9 h2").filter({ hasText: S["window.flows.first.hi"] }).waitFor({ timeout: 10000 });
     check(`setup: Welcome says "${S["window.flows.first.hi"]}"`, (await page.locator(".ob9 h2").first().textContent())?.trim() === S["window.flows.first.hi"]);

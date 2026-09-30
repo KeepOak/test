@@ -7,9 +7,13 @@ import type { NetworkPolicy } from "./network-policy.js";
  * A skill registry is a plain JSON index the owner points at (their own, a team's, or a public one).
  * Installing from it fetches one SKILL.md, checks its published fingerprint, runs the usual skill
  * scan, and installs it disabled: nothing a registry ships can act until the owner activates it.
- * A version 2 registry also publishes a signing key; entries signed with it are shown as checked,
- * entries without a signature are shown plainly as unsigned, and a signature that does not match
- * stops the install. Installed skills remember where they came from, so later versions can be
+ * A version 2 registry also publishes a signing key. That key is trusted only once it is pinned on this
+ * computer, either shipped with Branch (`shippedRegistryKeys`) or approved by the owner for that registry
+ * (`trustKey`); a key the registry supplies about itself proves nothing on its own, since whoever can change
+ * the index can change the key beside it. Entries signed with a pinned key are shown as checked; a published
+ * key that is not pinned leaves them "untrusted" (installable, never shown as checked); entries without a
+ * signature are shown plainly as unsigned. Once a registry's key is pinned, a changed or missing key, an
+ * unsigned entry or a signature that does not match stops the install, until the owner approves the new key. Installed skills remember where they came from, so later versions can be
  * offered, installed in one step, and put back if the new version is worse.
  */
 const registryEntry = z.object({
@@ -44,13 +48,46 @@ export function signingPayload(registryName: string, entry: Pick<RegistryEntry, 
 export function signRegistryEntry(privateKey: KeyObject, registryName: string, entry: Pick<RegistryEntry, "id" | "version" | "sha256">): string {
   return signBytes(null, signingPayload(registryName, entry), privateKey).toString("base64");
 }
-/** "checked" when the signature matches the published key, "unsigned" when there is none, "invalid" otherwise. */
-export function verifyRegistryEntry(index: RegistryIndex, entry: RegistryEntry): "checked" | "unsigned" | "invalid" {
+export type EntrySigned = "checked" | "untrusted" | "unsigned" | "invalid";
+/**
+ * Keys that ship with Branch, by the SHA-256 of their SPKI bytes. None do yet: an official registry adds its key here,
+ * in code, so it cannot be swapped by editing a data file.
+ */
+export const shippedRegistryKeys: readonly { name: string; fingerprint: string }[] = [];
+/** The SHA-256 (hex) of a base64 SPKI key, as the owner is shown it and as it is pinned. */
+export function registryKeyFingerprint(publicKey: string): string {
+  return createHash("sha256").update(Buffer.from(publicKey, "base64")).digest("hex");
+}
+/**
+ * "checked" only when the signature matches a key pinned on this computer (`trusted`, fingerprints). With no pinned
+ * key, a good signature is "untrusted", no signature is "unsigned", and a bad one is "invalid". With a pinned key, the
+ * registry may not drop to less: a different or missing key, or an unsigned entry, is "invalid".
+ */
+export function verifyRegistryEntry(index: RegistryIndex, entry: RegistryEntry, trusted: readonly string[] = []): EntrySigned {
+  const published = index.publicKey ? registryKeyFingerprint(index.publicKey) : null;
+  if (trusted.length && (!published || !trusted.includes(published) || !entry.signature)) return "invalid";
   if (!index.publicKey || !entry.signature) return "unsigned";
   try {
     const key = createPublicKey({ key: Buffer.from(index.publicKey, "base64"), format: "der", type: "spki" });
-    return verifyBytes(null, signingPayload(index.name, entry), key, Buffer.from(entry.signature, "base64")) ? "checked" : "invalid";
+    const good = verifyBytes(null, signingPayload(index.name, entry), key, Buffer.from(entry.signature, "base64"));
+    return !good ? "invalid" : trusted.length ? "checked" : "untrusted";
   } catch { return "invalid"; }
+}
+/** Where a registry's key stands on this computer, for the owner to read before approving it. */
+export interface RegistryKeyState {
+  /** The fingerprint the registry publishes now, or null when it publishes none. */
+  published: string | null;
+  /** The fingerprint pinned for it here (shipped or approved), or null. */
+  pinned: string | null;
+  status: "pinned" | "not-pinned" | "changed" | "none";
+}
+const pinKey = (url: string): string => `registry-key:${createHash("sha256").update(url).digest("hex").slice(0, 16)}`;
+/** Why an entry cannot be installed, in plain words: a key that changed or went, or a signature that fails. */
+function invalidWords(key: RegistryKeyState, outcome: string): string {
+  if (key.status === "changed") return `This registry's signing key is not the one you trusted, so ${outcome}. Approve the new key only if you trust the change.`;
+  if (key.status === "none" && key.pinned) return `This registry no longer publishes the signing key you trusted, so ${outcome}.`;
+  if (key.pinned) return `This skill is not signed with the key you trusted for this registry, so ${outcome}.`;
+  return `The registry's signature for this skill does not match the key it published, so ${outcome}.`;
 }
 
 export class SkillRegistry {
@@ -64,20 +101,45 @@ export class SkillRegistry {
     if (Buffer.byteLength(text) > limit) throw new Error("The registry response is larger than allowed");
     return text;
   }
-  /** The catalog a registry advertises, with each entry labelled checked or unsigned; nothing is installed by looking. */
+  /** Fingerprints trusted for this registry: the shipped ones and the one the owner approved for its address. */
+  private trusted(url: string): string[] {
+    const approved = (this.store.get("settings", this.owner, pinKey(url))?.data as { fingerprint?: string } | undefined)?.fingerprint;
+    return [...shippedRegistryKeys.map((key) => key.fingerprint), ...(approved ? [approved] : [])];
+  }
+  private keyState(url: string, index: RegistryIndex): RegistryKeyState {
+    const published = index.publicKey ? registryKeyFingerprint(index.publicKey) : null;
+    const trusted = this.trusted(url);
+    const pinned = published && trusted.includes(published) ? published : trusted.at(-1) ?? null;
+    const status = !pinned ? (published ? "not-pinned" : "none") : published === pinned ? "pinned" : published ? "changed" : "none";
+    return { published, pinned, status };
+  }
+  /**
+   * The owner's yes to a registry's key, by the fingerprint they were shown. It is pinned only if the registry
+   * publishes exactly that key right now; approving a different fingerprint later is how a key change is accepted.
+   */
+  async trustKey(url: string, fingerprint: string): Promise<RegistryKeyState> {
+    const index = RegistryIndexSchema.parse(JSON.parse(await this.read(url, maxIndexBytes)));
+    const published = index.publicKey ? registryKeyFingerprint(index.publicKey) : null;
+    if (!published) throw new Error("This registry publishes no signing key, so there is nothing to trust.");
+    if (published !== fingerprint.toLowerCase()) throw new Error("The registry's key is not the one you approved, so it was not trusted. Look at the registry again.");
+    this.store.save("settings", this.owner, pinKey(url), { url, name: index.name, fingerprint: published, approvedAt: new Date().toISOString() });
+    return this.keyState(url, index);
+  }
+  /** The catalog a registry advertises, each entry labelled as `verifyRegistryEntry` says; nothing is installed by looking. */
   async browse(url: string) {
     const index = RegistryIndexSchema.parse(JSON.parse(await this.read(url, maxIndexBytes)));
-    const skills = index.skills.map((entry) => ({ ...entry, signed: verifyRegistryEntry(index, entry) }));
+    const trusted = this.trusted(url);
+    const skills = index.skills.map((entry) => ({ ...entry, signed: verifyRegistryEntry(index, entry, trusted) }));
     this.store.save("settings", this.owner, `registry-index:${createHash("sha256").update(url).digest("hex").slice(0, 16)}`,
       { url, name: index.name, skills: skills.map((s) => ({ id: s.id, name: s.name, description: s.description, version: s.version ?? null })) });
-    return { ...index, skills };
+    return { ...index, skills, key: this.keyState(url, index) };
   }
   /** Fetches one listed skill, checks its fingerprint and signature, scans it and installs it disabled. */
   async install(url: string, skillId: string) {
     const index = await this.browse(url);
     const entry = index.skills.find((s) => s.id === skillId);
     if (!entry) throw new Error(`The registry "${index.name}" has no skill called ${skillId}`);
-    if (entry.signed === "invalid") throw new Error("The registry's signature for this skill does not match the key it published, so it was not installed");
+    if (entry.signed === "invalid") throw new Error(invalidWords(index.key, "it was not installed"));
     const document = await this.fetchDocument(entry);
     const installed = this.store.skills.install(this.owner, { document });
     if (installed.activeVersion !== null) this.store.skills.disable(this.owner, installed.id, { expectedRevision: installed.revision });
@@ -119,7 +181,7 @@ export class SkillRegistry {
     const index = await this.browse(origin.registry);
     const entry = index.skills.find((s) => s.id === origin.skillId);
     if (!entry) throw new Error(`The registry "${index.name}" no longer lists this skill`);
-    if (entry.signed === "invalid") throw new Error("The registry's signature for this skill does not match the key it published, so nothing was changed");
+    if (entry.signed === "invalid") throw new Error(invalidWords(index.key, "nothing was changed"));
     const document = await this.fetchDocument(entry);
     const before = this.store.skills.view(this.owner, skillId);
     const previousSkillVersion = before.activeVersion ?? before.headVersion;

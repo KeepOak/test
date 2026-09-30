@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "./store.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 
 /**
@@ -277,7 +278,8 @@ export function lookLanguage(look: Look, env: NodeJS.ProcessEnv): LookLanguage {
 }
 
 /*
- * The terminal's own switches. Each is on, off or "when needed", and each starts off.
+ * The terminal's own switches. Each is on, off or "when needed", and each ships "when needed" (the owner's ship-on
+ * rule, src/ship-on.ts: they only change how the terminal looks and answers the mouse; none of (a)–(f)).
  * - mouse: on catches clicks and the wheel everywhere; when needed only while the palette or
  *   Settings is open (where a click picks something and nobody is selecting text); off never, so
  *   the terminal's own text selection always works.
@@ -295,15 +297,18 @@ export const TerminalSwitchesSchema = z.object({
 }).strict();
 export type TerminalSwitches = z.infer<typeof TerminalSwitchesSchema>;
 const SWITCHES_KEY = "terminal-switches";
+export const terminalSwitchesShipOn: TerminalSwitches = { mouse: "when-needed", sidePane: "when-needed", oak: "when-needed" };
 
 export function terminalSwitches(store: Store, owner: string): TerminalSwitches {
   const saved = TerminalSwitchesSchema.safeParse(store.get("settings", owner, SWITCHES_KEY)?.data ?? {});
-  return saved.success ? saved.data : TerminalSwitchesSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, SWITCHES_KEY, saved.data, terminalSwitchesShipOn) : TerminalSwitchesSchema.parse({});
 }
 export function saveTerminalSwitch(store: Store, owner: string, name: string, value: string): TerminalSwitches {
   const key = z.enum(["mouse", "sidePane", "oak"]).parse(name);
+  const before = store.get("settings", owner, SWITCHES_KEY)?.data;
   const next = { ...terminalSwitches(store, owner), [key]: TerminalSwitchSchema.parse(value) };
   store.save("settings", owner, SWITCHES_KEY, next);
+  markChosen(store, owner, SWITCHES_KEY, savedFields(before, TerminalSwitchesSchema.safeParse(before ?? {}).success, { [key]: value }, terminalSwitchesShipOn));
   return next;
 }
 

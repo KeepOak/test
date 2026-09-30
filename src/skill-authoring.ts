@@ -76,7 +76,7 @@ export async function testSkill(store: Store, owner: string, runtime: Runtime, s
   const results: { example: number; prompt: string; runId: string; status: string; passed: boolean; output: string; ms: number }[] = [];
   for (const [index, example] of examples.entries()) {
     const started = Date.now();
-    const run = await runtime.delegate(example, context, [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage"].includes(p)),
+    const run = await runtime.delegate(example, context, [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage", "gitlab.manage"].includes(p)),
       `Skill under test (v${version}):\n${document}`, { timeoutMs: 120000 });
     results.push({ example: index, prompt: example, runId: run.id, status: run.status, passed: run.status === "completed", output: run.output.slice(0, 600), ms: Date.now() - started });
   }
@@ -137,13 +137,15 @@ const reviseInstructions = "You revise one skill file so that it carries a note 
  * change: the draft is recorded where `SkillRevisions` lists drafts, so it is tried and shown as a
  * diff before anything switches over.
  */
-export async function draftFromNote(store: Store, owner: string, runtime: Runtime, input: unknown) {
+/** Seasons: which connection writes the draft; the overnight work passes the free one it chose. */
+export interface DraftOptions { model?: string }
+export async function draftFromNote(store: Store, owner: string, runtime: Runtime, input: unknown, options: DraftOptions = {}) {
   const spec = DraftFromNoteSchema.parse(input);
   const skill = store.skills.view(owner, spec.skillId);
   const { parent, context } = learningTask(store, owner, `Work a note into skill "${skill.name}"`, runtime);
   try {
     const child = await runtime.delegate(`The skill file now:\n${skill.document}\n\nThe note to work in:\n${spec.note}`,
-      context, [], reviseInstructions, { timeoutMs: 120000 });
+      context, [], reviseInstructions, { timeoutMs: 120000, ...options });
     if (child.status !== "completed") throw new Error(`The draft could not be written (${child.status})`);
     const document = unfence(child.output);
     refuseInjected(document);
@@ -180,14 +182,14 @@ const newSkillInstructions = [
  * Drafts a brand-new skill and installs it switched off, so it can be tried before anyone uses it.
  * Answers `null` when the model judged there was nothing worth a skill.
  */
-export async function draftNewSkill(store: Store, owner: string, runtime: Runtime, input: unknown) {
+export async function draftNewSkill(store: Store, owner: string, runtime: Runtime, input: unknown, options: DraftOptions = {}) {
   const spec = DraftNewSkillSchema.parse(input);
   const existing = store.skills.list(owner).map((skill) => `- ${skill.name}: ${skill.description}`).join("\n") || "(none)";
   const { parent, context } = learningTask(store, owner, "Draft a new skill from what happened", runtime);
   try {
     const child = await runtime.delegate(
       `Skills already installed:\n${existing}\n\nWhat happened:\n${spec.evidence}${spec.notes ? `\n\nThe owner adds: ${spec.notes}` : ""}`,
-      context, [], newSkillInstructions, { timeoutMs: 120000 });
+      context, [], newSkillInstructions, { timeoutMs: 120000, ...options });
     if (child.status !== "completed") throw new Error(`The draft could not be written (${child.status})`);
     const document = unfence(child.output);
     if (/^none\.?$/i.test(document)) { store.finish(parent.id, "completed", "Nothing worth a skill"); return null; }
@@ -254,7 +256,7 @@ export async function trialNewSkill(store: Store, owner: string, runtime: Runtim
     const started = Date.now();
     // A model wrote this skill from conversation turns, so it is tried without the tools that reach
     // outside, as testSkill does, even though a practice run only says what a change would do.
-    const permissions = [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage"].includes(p));
+    const permissions = [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage", "gitlab.manage"].includes(p));
     const run = await runtime.delegate(task.prompt, context, permissions, instructions[side], { timeoutMs: 120000 }).catch(() => null);
     const usage = run ? store.usage(run.id) as { estimatedInput?: number; estimatedOutput?: number } : {};
     // mac7/eval-honesty: a try that produced no result at all is counted apart from one that

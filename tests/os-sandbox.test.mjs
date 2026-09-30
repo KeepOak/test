@@ -217,8 +217,15 @@ test("W7 the system-call filter refuses tracing, non-local sockets with no netwo
   const door = seccompFilter({ network: "per-site", arch: "arm64" });
   assert.equal(runFilter(door, { arch: arm64, nr: 117 }), EPERM, "ptrace on arm64");
   assert.equal(runFilter(door, { arch: arm64, nr: 198, arg0: 2 }), ALLOW, "the door needs a local internet socket");
+  assert.equal(runFilter(door, { arch: arm64, nr: 198, arg0: 40 }), EPERM, "a link to the host of a virtual machine (WSL), even with the door open");
+  assert.equal(runFilter(seccompFilter({ network: "open", arch: "x64" }), { arch: x64, nr: 41, arg0: 40 }), EPERM, "and with the network open");
   assert.equal(runFilter(seccompFilter({ network: "none", arch: "arm64" }), { arch: arm64, nr: 198, arg0: 10 }), EPERM);
   assert.throws(() => seccompFilter({ network: "none", arch: "mips" }), /cannot filter/);
+  // selfdev: a held command has an empty network of its own, where a test may start and reach its own local server.
+  const held = seccompFilter({ network: "none", arch: "x64", ownNetwork: true });
+  assert.equal(runFilter(held, { arch: x64, nr: 41, arg0: 2 }), ALLOW, "an internet socket in its own empty network");
+  assert.equal(runFilter(held, { arch: x64, nr: 41, arg0: 40 }), EPERM, "never the link to a virtual machine's host");
+  assert.equal(runFilter(held, { arch: x64, nr: 101 }), EPERM, "ptrace");
 });
 
 test("W8 a missing bwrap or switched-off namespaces is a plain refusal", async () => {

@@ -19,7 +19,7 @@ import type { Event, Run } from "./contracts.js";
 import { calls, rounds, type PriceRound } from "./inspect.js";
 import type { ChainEntry } from "./safety-extras/activity-chain.js";
 import type { Store } from "./store.js";
-import { STEP_ICONS, stepIcon } from "./live-steps.js";
+import { STEP_ICONS, accountMoved, stepIcon, type Said } from "./live-steps.js";
 
 export type StepKind = "model" | "tool" | "ask" | "helper" | "you";
 export type AskState = "waiting" | "allowed" | "refused" | null;
@@ -66,7 +66,7 @@ export interface StepsDeps {
   /** This task's entries in the activity chain, oldest first, and whether the chain is on. */
   chain: { mode: string; entries: ChainEntry[] };
   thinkingOf: (runId: string) => string | undefined;
-  helperName: (agent: string) => string | null;
+  helperName: (agent: string, recorded?: string) => string | null;
   cost: (runId: string) => { amount: number | null; display: string };
 }
 
@@ -122,7 +122,7 @@ const steerSteps = (events: Event[]): Step[] => events.filter((e) => e.kind === 
 }));
 
 /** One move of the work to another account after a plan limit, in the engine's words (src/accounts/pool-provider.ts). */
-export interface SwitchedLine { at: string; icon: string; sentence: string }
+export interface SwitchedLine { at: string; icon: string; sentence: string; say: Said }
 /**
  * Where the work moved to another account because one reached its plan limit, kept with the task after it ends (the live
  * steps say it while it happens, src/live-steps.ts stateLines). "model.account_moved" is noted the moment it moves; a
@@ -130,13 +130,15 @@ export interface SwitchedLine { at: string; icon: string; sentence: string }
  */
 export function switchedLines(events: Event[]): SwitchedLine[] {
   const lines: SwitchedLine[] = [];
-  const say = (at: string, to: string, from: string) =>
-    lines.push({ at, icon: STEP_ICONS.switch, sentence: `Switched to “${to}” — “${from}” reached its plan limit` });
+  const say = (at: string, to: string, from: string, d: Record<string, unknown> = {}) => {
+    const words = accountMoved(to, from, str(d.reason) || "limit", str(d.until), d.known === true, str(d.model));
+    lines.push({ at, icon: STEP_ICONS.switch, sentence: words.english, say: words.said });
+  };
   let limited = "", moved = false;
   for (const event of events) {
     const d = event.data;
     if (event.kind === "model.account_limit") { limited = str(d.label) || str(d.account); moved = false; }
-    else if (event.kind === "model.account_moved") { say(event.createdAt, str(d.label) || str(d.account), str(d.from) || limited); limited = ""; moved = true; }
+    else if (event.kind === "model.account_moved") { say(event.createdAt, str(d.label) || str(d.account), str(d.from) || limited, d); limited = ""; moved = true; }
     else if (event.kind === "model.account") {
       const label = str(d.label) || str(d.account);
       if (limited && !moved && label !== limited) say(event.createdAt, label, limited);
@@ -177,7 +179,7 @@ export function helpersOf(store: Store, run: Run, deps: StepsDeps): Helper[] {
       sessionId: q.sessionId, fingerprint: q.fingerprint ?? "", tool: q.tool, target: q.target, label: q.label, question: q.question, bytes: q.bytes ?? "",
     }));
     return {
-      runId: child.id, sessionId: child.sessionId, name: started.data.agent ? deps.helperName(str(started.data.agent)) : null,
+      runId: child.id, sessionId: child.sessionId, name: started.data.agent ? deps.helperName(str(started.data.agent), str(started.data.agentName)) : null,
       job: child.prompt.slice(0, 600), status: child.status, ...modelOf(events),
       thinking: deps.thinkingOf(child.id) ?? (scratch ? str(scratch.data.text) : null),
       steps: events.filter((e) => e.kind === "tool.completed" || e.kind === "tool.failed").length, cost: deps.cost(child.id), waiting,
@@ -207,7 +209,7 @@ export function runSteps(store: Store, runId: string, deps: StepsDeps) {
     .map(({ step }) => ({ ...step, icon: stepIcon(step.kind, step.kind === "tool" ? step.detail : "") }));
   const tip = deps.chain.entries.at(-1)?.hash ?? null;
   return {
-    runId: run.id, sessionId: run.sessionId, title: store.runTitles([run]).get(run.id) ?? firstLine(run.prompt), status: run.status,
+    runId: run.id, sessionId: run.sessionId, title: firstLine(store.runTitles([run]).get(run.id) ?? run.prompt), status: run.status,
     seconds: Math.max(0, Math.round((Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 100) / 10),
     cost: deps.cost(run.id), steps, helpers, switched: switchedLines(events),
     chain: { mode: deps.chain.mode, entries: deps.chain.entries.length, tip },

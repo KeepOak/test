@@ -7,13 +7,14 @@ import { activeModel, sessionTotals } from "../terminal-commands.js";
 import { currentPerson } from "../people/context.js";
 import { startedWithShortLivedKey } from "../key-context.js";
 import {
-  allComfort, comfortCardNames, ComfortNetworkSchema, ownerOnlyComfortCards, readComfort, resetComfort, saveComfort,
+  allComfort, comfortCardNames, comfortShipsOn, ComfortNetworkSchema, ownerOnlyComfortCards, readComfort, resetComfort, saveComfort,
   shortcutDefaults, statusItems, type ComfortCard,
 } from "./settings.js";
 import { checkCertificate, validateNetwork, type OutboundNetwork } from "./network.js";
-import { busyTaskCount, busyTasks as countBusy, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, updatePlan, updateProblem } from "./auto-update.js";
+import { busyTasks, updateHold, staleTaskMs, noteUpdateLook, stalledWords, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, noteUpdateWait, updatePlan, updateProblem } from "./auto-update.js";
 import { sensitiveBrowserTools } from "./browser-safety.js";
 import { diagnose } from "../diagnostic-log.js";
+import { staleAfterMs } from "../activity.js";
 import { byCard, inCatalogue, recordedWrite } from "../settings-kit/recorded-write.js"; // Q48
 
 /**
@@ -70,7 +71,8 @@ const updateWords = "Whether Branch updates itself";
 function changesUpdates(store: Store, owner: string, input: z.infer<typeof SaveSchema>): boolean {
   if (input.card !== "notify") return false;
   const now = readComfort(store, owner, "notify");
-  if (input.reset) return now.autoUpdate !== "off" || now.releaseChannel !== "stable";
+  // Putting the card back sets updating by itself to how it ships, so it changes updates unless it is that already.
+  if (input.reset) return now.autoUpdate !== (comfortShipsOn.notify?.autoUpdate ?? "off") || now.releaseChannel !== "stable";
   return !!input.values && ("autoUpdate" in input.values || "releaseChannel" in input.values);
 }
 
@@ -153,11 +155,24 @@ function forgetYesesWhenConfirming(app: ComfortApp, before: boolean): void {
   if (!before && readComfort(app.store, app.runtime.owner, "browser").confirmSensitive) app.runtime.approvals.forgetAll();
 }
 
+/** How long a task marked working may record nothing before it is stale: the engine's own figure, never under 15 min. */
+function staleMsOf(app: ComfortApp): number {
+  const reliability = (app.runtime as { reliability?: Parameters<typeof staleAfterMs>[2] }).reliability;
+  return Math.max(staleTaskMs, reliability ? staleAfterMs(app.store, app.runtime.owner, reliability) : 0);
+}
+/** The tasks holding an update now, stale ones left out and the hold limited (auto-update.ts updateHold). */
+function countBusy(app: ComfortApp) {
+  return updateHold(app.store, app.runtime.owner, busyTasks(app.store, Date.now(), staleMsOf(app)));
+}
+
 function plan(app: ComfortApp, body: unknown) {
   const input = PlanSchema.parse(body ?? {});
   const { store, runtime: { owner } } = app;
   // Integration review: only the owner's window may be told to install; everyone's tasks count as work.
   requireOwnerHere(store, updateWords);
+  noteUpdateLook(store, owner);
+  // A loop that had stopped is looking again: what said so is no longer true.
+  if (updateProblem(store, owner)?.message.startsWith(stalledWords)) clearUpdateProblem(store, owner);
   if (input.checked) noteUpdateCheck(store, owner);
   // Never swallowed: a failure is kept (and written to the activity log) until a look goes through cleanly, and the
   // window is told to say it only when it is new, so the same failure every 30 s is not a toast every 30 s.
@@ -167,11 +182,18 @@ function plan(app: ComfortApp, body: unknown) {
   // A failed install is remembered, and said once, so the automatic path does not try that release again by itself.
   const tell = input.failedTag ? noteFailedInstall(store, owner, input.failedTag) : false;
   // Dogfood F4: the window words working tasks and waiting questions apart.
-  const { working: workingTasks, asking: askingTasks } = countBusy(store);
+  const held = countBusy(app);
+  const { working: workingTasks, asking: askingTasks } = held;
   const busyTasks = workingTasks + askingTasks;
   // The Update button asks this too: tasks working now are offered a wait before anything closes.
-  return { ...updatePlan(store, owner, { busyTasks, workingTasks, askingTasks, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag }),
-    busyTasks, workingTasks, askingTasks, holding: holdingTasks(store, owner), problem: updateProblem(store, owner), ...(problemIsNew ? { tellProblem: true } : {}),
+  const decided = updatePlan(store, owner, { busyTasks, workingTasks, askingTasks, overdueTasks: held.overdue, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag });
+  const holding = held.overdue ? [] : holdingTasks(store, owner, Date.now(), staleMsOf(app));
+  // A ready update held back leaves its reason in the activity log, once per reason: otherwise nothing says why it waits.
+  noteUpdateWait(owner, decided, { channel: readComfort(store, owner, "notify").releaseChannel, version: input.updaterTag ?? null,
+    busyTasks, workingTasks, askingTasks, holding, heldSince: held.heldSince, overdueTasks: held.overdue });
+  return { ...decided,
+    busyTasks, workingTasks, askingTasks, staleTasks: held.stale.length, overdueTasks: held.overdue,
+    holding, problem: updateProblem(store, owner), ...(problemIsNew ? { tellProblem: true } : {}),
     ...(tell ? { failed: "The newest version did not install here, so Branch will not try it again by itself. It tries the next one as soon as it lands; Update in Settings tries this one again now." } : {}) };
 }
 
@@ -187,7 +209,8 @@ export async function comfortApi(app: ComfortApp, request: IncomingMessage, path
       requireOwnerHere(app.store, updateWords);
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");
       const notify = readComfort(app.store, app.runtime.owner, "notify");
-      return { channel: notify.releaseChannel, busyTasks: busyTaskCount(app.store), autoUpdate: notify.autoUpdate };
+      const busy = countBusy(app);
+      return { channel: notify.releaseChannel, busyTasks: busy.working + busy.asking, workingTasks: busy.working, autoUpdate: notify.autoUpdate };
     }
     if (path === "/api/comfort/status") {
       if (method !== "GET") throw new ComfortApiError(405, "Use GET");

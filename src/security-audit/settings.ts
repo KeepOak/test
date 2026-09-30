@@ -1,8 +1,9 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
 
 /**
- * The two switches of the security self-check. Both ship off.
+ * The two switches of the security self-check. Both ship "when needed" (`securityCheckShipsOn`).
  *
  * `audit` — off: the check runs only when you ask for it (the button, or `branch security audit`).
  * When needed: the assistant also has one read-only tool, `settings.security_check`, and uses it when
@@ -21,15 +22,23 @@ export const SecurityCheckSettingsSchema = z.object({
 export type SecurityCheckSettings = z.infer<typeof SecurityCheckSettingsSchema>;
 
 const settingsKey = "security-check";
+/**
+ * The owner's rule (ships on, 2026-09-26): the self-check only reads this computer's own settings; none of (a)–(f). The malware lookup
+ * too (2026-09-27): it only tightens, and it sends nothing but the public name of a package the owner's own tool server is
+ * already fetching from its registry, to the public malware list; nothing of the owner's goes to anyone.
+ */
+export const securityCheckShipsOn: Partial<SecurityCheckSettings> = { audit: "when-needed", malware: "when-needed" };
 
 export function securityCheckSettings(store: Store, owner: string): SecurityCheckSettings {
   const saved = SecurityCheckSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : SecurityCheckSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, securityCheckShipsOn) : SecurityCheckSettingsSchema.parse({});
 }
 
 /** Saves either switch; the one left out keeps its value. */
 export function saveSecurityCheckSettings(store: Store, owner: string, input: unknown): SecurityCheckSettings {
+  const before = store.get("settings", owner, settingsKey)?.data;
   const next = SecurityCheckSettingsSchema.parse({ ...securityCheckSettings(store, owner), ...(input as object ?? {}) });
   store.save("settings", owner, settingsKey, { ...next });
+  markChosen(store, owner, settingsKey, savedFields(before, SecurityCheckSettingsSchema.safeParse(before ?? {}).success, input, securityCheckShipsOn));
   return next;
 }

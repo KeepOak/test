@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { shippedUnlessChosen } from "./ship-on.js";
 import type { createBranch } from "./index.js";
 import { FeatureModeSchema } from "./feature-switches.js";
 import { PackageInstallSchema } from "./skill-packages.js";
@@ -42,9 +43,12 @@ export interface InstallRecord {
   ok: boolean; steps: string[]; error?: string;
 }
 
+// The owner's rule (ships on, 2026-09-26): a skill is installed only from a file or place the owner names, and it arrives switched off; none of (a)–(f).
+export const skillInstallsShipAs = "when-needed" as const;
+
 export function skillInstallMode(app: Pick<Branch, "store" | "runtime">) {
   const saved = SkillInstallSettingsSchema.safeParse(app.store.get("settings", app.runtime.owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data.mode : "off";
+  return saved.success ? shippedUnlessChosen(app.store, app.runtime.owner, settingsKey, saved.data, { mode: skillInstallsShipAs }).mode : "off";
 }
 export function installRecords(app: Pick<Branch, "store" | "runtime">): InstallRecord[] {
   const data = app.store.get("settings", app.runtime.owner, logKey)?.data as { records?: InstallRecord[] } | undefined;

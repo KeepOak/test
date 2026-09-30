@@ -3,7 +3,7 @@
 // window-only control, from the window's DOM or storage). Page errors are recorded and must be zero.
 // Run: PORT=<port> TOKEN=<session token> node design/redesign/tools/verify-shell.cjs
 // Use a throwaway engine (BRANCH_DATA_DIR=<fresh temp dir>): it makes Trunks and conversations and changes settings.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT || "3328", TOKEN = process.env.TOKEN;
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -224,20 +224,8 @@ async function firstRun(page) {
   check("fr-skip", !(await page.isVisible(".first")), "Skip for now leaves the first run");
 }
 
-async function setupLook(page) {
-  await page.click('[data-act="guide"]');
-  await page.click('.pop [data-act="onboard"]');
-  await page.check("#ob-trust");
-  await page.click('[data-act="ob-go"][data-v="3"]');
-  await page.click('[data-act="ob15"][data-k="asks"][data-v="plan"]');
-  const plan = await until(async () => (await api("conversation-mode/settings")).settings.newConversation === "plan");
-  await page.click('[data-act="ob15"][data-k="look"][data-v="light"]');
-  const light = await until(async () => (await api("state")).preferences.appearance === "daylight");
-  check("ob15-auto (live)", (await page.getAttribute('[data-act="ob15-auto"]', "aria-disabled")) !== "true", "Auto is live behind the engine's loosening confirm (verify-setup-make-it-yours.cjs)");
-  check("ob15", !!plan && !!light,"GET /api/conversation-mode/settings newConversation=plan; GET /api/state preferences.appearance=daylight");
-  await page.click('[data-act="ob-close"]');
-}
-
+/* Pass 18c: setup no longer has Make it yours (it waits on Overview's Finish setting up, which opens Settings ›
+   Appearance), so its look and how-much-it-asks choices are not walked here. */
 async function shellBits(page, fx, stamp) {
   await page.click('[data-act="focus"] >> nth=0');
   const focused = await page.evaluate(() => document.getElementById("app").classList.contains("focus"));
@@ -302,7 +290,6 @@ async function welcomeCard(page) {
     await page.click(".set-back");
     await person(page, version);
     await firstRun(page);
-    await setupLook(page);
     await shellBits(page, fx, stamp);
     await welcomeCard(page);
   } catch (error) {

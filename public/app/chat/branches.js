@@ -17,6 +17,7 @@ import { text } from "./markdown.js";
 import { extraTabs } from "./pane.js";
 import { addMoreItem } from "./more.js";
 import { t, language, plural } from "../../i18n.js";
+import { gsel } from "../core/gsel.js";
 
 const B = { sid: null, paths: [], at: 0, pick: null, model: null, from: null };
 let X = { state: () => ({ sessionId: null, messages: [] }), sendText: async () => {}, reopen: async () => {} };
@@ -107,7 +108,7 @@ function openBranch(el) {
   /* The label and its hint sit above the choices, one choice per row, so a long model list never squeezes the label. */
   const seg = `<div class="brm17d"><b>${t("window.chat.branches.model-for")}</b><small>${t("window.chat.branches.model-hint")}</small><div class="brml17d" role="group" aria-label="${t("window.chat.branches.model-for")}">${models.map(([v, l]) => `<button type="button" aria-pressed="${v === B.model}" data-act="brmodel17c" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</div></div>`;
   openDlg({ title: t("window.chat.branches.from-here"),
-    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(clip(plain(m.content), 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}`,
+    body: `<p class="lede" data-css="margin:0 0 10px">${t("window.chat.branches.lede", { words: esc(clip(plain(m.content), 60)) })}</p><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="br-name17c" value="${esc(t("window.chat.branches.try", { n: Math.max(B.paths.length, 1) + 1 }))}" autocomplete="off"></label>${seg}<p class="hint" id="br-error17c" role="alert"></p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="brmake17c">${t("window.chat.branches.start")}</button>` });
 }
 
@@ -121,7 +122,12 @@ async function makePath() {
   if (!from || !name) return;
   let made;
   try { made = await api(`sessions/${encodeURIComponent(from.sid)}/branch`, { messageId: from.mid, name, preset: B.model === "same" ? null : B.model }); }
-  catch (error) { toast(error.message); return; }
+  catch (error) {
+    const notice = $("#br-error17c");
+    if (notice) notice.textContent = error.message;
+    else toast(error.message);
+    return;
+  }
   closeDlg();
   B.from = null;
   await refresh().catch((error) => toast(error.message));
@@ -153,7 +159,7 @@ function compare() {
   if (B.paths.length < 2) { toast(t("window.chat.branches.only-one")); return; }
   const cur = here() ?? B.paths[0], other = pathOf(cur.parentSessionId) ?? B.paths.find((p) => p !== cur);
   const picked = (B.pick ?? []).map(pathOf).filter(Boolean), two = picked.length === 2 ? picked : [other, cur];
-  const sel = (k) => `<select class="inp" id="br-sel${k}17c" aria-label="${t("window.chat.branches.path-n", { n: k + 1 })}">${B.paths.map((p) => `<option value="${esc(p.sessionId)}"${p === two[k] ? " selected" : ""}>${esc(nameOf(p))}</option>`).join("")}</select>`;
+  const sel = (k) => gsel({ id: `br-sel${k}17c`, label: t("window.chat.branches.path-n", { n: k + 1 }), options: B.paths.map((p) => [p.sessionId, nameOf(p)]), value: two[k]?.sessionId });
   openDlg({ title: t("window.chat.branches.compare-paths"), wide: true, body: `${B.paths.length > 2 ? `<div class="cmpsel17c">${sel(0)}${sel(1)}</div>` : ""}<div class="cmp17c">${two.map(column).join("")}</div>` });
 }
 

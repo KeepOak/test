@@ -15,6 +15,7 @@ import { Heartbeat, automationHealth, quietSwitches, quietWord, saveQuietSwitche
 import { nextCronOccurrence, nextWallOccurrence, validCron } from "./recurrence.js";
 import { underProject } from "./project-scope.js"; // dogfood-ux-3
 import { defaultProjectId } from "./projects.js"; // dogfood-ux-3
+import { conversationRateRefusal } from "./knobs/apply.js";
 
 const timezone = z.string().min(1).max(64).refine((zone) => {
   try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); return true; } catch { return false; }
@@ -73,6 +74,9 @@ export const ScheduleSchema = z
 export type DeliveryHandler = (channel: string, chatId: string, text: string, key: string) => Promise<{ messageId?: string | undefined; queued?: number }>;
 export interface HistoryEntry { runId: string | null; status: string; startedAt: string; finishedAt?: string; trigger: string }
 const historyLimit = 50;
+/** How many trigger slots (webhook deliveries, keyed requests) a schedule remembers, so a repeat starts nothing. */
+const triggerSlotLimit = 50;
+interface TriggerSlot { slot: string; runId: string | null; at: string }
 /** How many turns in a row a repeating job may miss before it is paused and the owner told why. */
 export const failuresBeforePausing = 3;
 /** Whether a schedule comes round again, rather than happening once. */
@@ -261,7 +265,6 @@ export class Scheduler {
   }
   async tick(now = new Date()): Promise<Run[]> {
     const results: Run[] = [];
-    if (this.store.review.dreamDue(this.runtime.owner, now)) await this.store.review.consolidate(this.runtime, this.runtime.owner).catch(() => undefined);
     for (const candidate of this.store.dueSchedules(this.runtime.owner, now.toISOString())) {
       if (this.deferredForDayOff(candidate, now)) continue;
       if (this.heldForScripts(candidate)) continue;
@@ -338,14 +341,36 @@ export class Scheduler {
     return true;
   }
   /** Runs a saved schedule now (webhook or local script) without moving its next due time. */
-  async trigger(owner: string, id: string, payload: unknown, trigger: "webhook" | "local"): Promise<Run> {
-    const record = this.store.get("schedules", owner, id);
-    if (!record) throw new Error("Schedule not found");
-    if (!["pending", "paused", "completed", "failed"].includes(String(record.data.status)))
-      throw new Error("This schedule is running right now");
+  async trigger(owner: string, id: string, payload: unknown, trigger: "webhook" | "local", slot: string | null = null): Promise<Run> {
+    if (!this.store.get("schedules", owner, id)) throw new Error("Schedule not found");
+    // One conditional write takes the schedule, so a second trigger (or the clock) arriving meanwhile is refused.
+    const claimed = this.store.claimScheduleTrigger(owner, id, new Date().toISOString(), slot);
+    if (!claimed) return this.refusedTrigger(owner, id, slot);
+    const { statusBeforeTrigger, ...data } = claimed.data;
+    const slots = (Array.isArray(data.triggerSlots) ? data.triggerSlots as TriggerSlot[] : []).slice(-(triggerSlotLimit - 1));
+    const record = { ...claimed, data: { ...data, status: String(statusBeforeTrigger),
+      ...(slot ? { triggerSlots: [...slots, { slot, runId: null, at: new Date().toISOString() }] } : {}) } };
     const run = await this.execute(record, new Date(), trigger, payload, false);
+    if (slot && run) this.noteSlotRun(owner, id, slot, run.id);
     if (!run) throw new Error("The schedule did not produce a run");
     return run;
+  }
+  /** Why a trigger did not start a turn: the same slot already did (its run is handed back), or one is running now. */
+  private refusedTrigger(owner: string, id: string, slot: string | null): Run {
+    const record = this.store.get("schedules", owner, id);
+    if (!record) throw new Error("Schedule not found");
+    const earlier = slot && Array.isArray(record.data.triggerSlots)
+      ? (record.data.triggerSlots as TriggerSlot[]).find((entry) => entry.slot === slot) : undefined;
+    const run = earlier?.runId ? this.store.run(earlier.runId) : undefined;
+    if (run) return run;
+    if (earlier) throw new Error("This delivery already started this schedule");
+    throw new Error("This schedule is running right now");
+  }
+  private noteSlotRun(owner: string, id: string, slot: string, runId: string): void {
+    const record = this.store.get("schedules", owner, id);
+    if (!record || !Array.isArray(record.data.triggerSlots)) return;
+    const triggerSlots = (record.data.triggerSlots as TriggerSlot[]).map((entry) => entry.slot === slot ? { ...entry, runId } : entry);
+    this.store.save("schedules", owner, id, { ...record.data, triggerSlots });
   }
   /**
    * dogfood-ux-3: one turn, inside the project the schedule was made in. A schedule saved before projects were kept with
@@ -355,6 +380,16 @@ export class Scheduler {
   private execute(record: SavedRecord, now: Date, trigger: string, payload: unknown, advance: boolean, found: unknown = null): Promise<Run | undefined> {
     const project = typeof record.data.project === "string" ? record.data.project : defaultProjectId;
     return underProject(project, () => this.turn(record, now, trigger, payload, advance, found));
+  }
+  /**
+   * The conversation a plain schedule's turns go on in: the one its last turn used, while it is still there, out of
+   * Recently Deleted, not busy with another task, and under this conversation's hourly limit (a schedule every minute
+   * would reach it). Otherwise this turn starts a new one, which becomes the schedule's conversation from then on.
+   */
+  private threadFor(data: Record<string, unknown>): string | undefined {
+    const id = typeof data.threadId === "string" ? data.threadId : null, owner = this.runtime.owner;
+    if (!id || !this.store.ownsSession(owner, id) || this.store.conversations.inBin(id) || this.store.conversations.busy([id])) return undefined;
+    return conversationRateRefusal(this.store, owner, id) ? undefined : id;
   }
   private async turn(record: SavedRecord, now: Date, trigger: string, payload: unknown, advance: boolean, found: unknown): Promise<Run | undefined> {
     const startedAt = now.toISOString(), data = record.data;
@@ -373,8 +408,10 @@ export class Scheduler {
       // A Trunk's own schedule, like its routines, does not run while Trunks are switched off: it says why instead.
       const held = madeBy ? this.trunkHeld(madeBy) : null;
       if (held) throw new Error(held);
+      // QA retest 2026-09-28 (m5): a plain schedule's turns go on in one conversation of its own, not a new one each time.
+      const thread = !route && !madeBy ? this.threadFor(data) : undefined;
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
-        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[],
+        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[], ...(thread ? { sessionId: thread } : {}),
         source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
@@ -392,6 +429,7 @@ export class Scheduler {
       const kept = run.status === "completed" && !saidNothingNew(run.output);
       this.store.save("schedules", record.owner, record.id, {
         ...data, runId: run.id, runCount: Number(data.runCount ?? 0) + 1, history: [...history, entry],
+        ...(!route && !madeBy && data.kind !== "reminder" && data.kind !== "evaluation" ? { threadId: run.sessionId } : {}),
         lastRunAt: startedAt, lastResult: kept ? run.output.slice(0, 4000) : data.lastResult ?? null,
         ...(delivery ? { delivery } : {}), ...this.afterTurn(data, now, run.status, advance),
       });

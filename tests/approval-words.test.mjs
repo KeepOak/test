@@ -28,7 +28,8 @@ async function paused(t, call) {
 
 test("a settings change is asked about in words, each setting once, with no setting ids", async (t) => {
   const ask = await paused(t, { name: "settings.change", arguments: JSON.stringify({ changes: [{ setting: "fly-core.mode", value: "on" }] }) });
-  assert.match(ask.question, /^Before I go ahead: Changing Branch's own settings: .*Switch: off → on/);
+  // The learning core ships "when needed" (the ship-on rule), so the change is from there.
+  assert.match(ask.question, /^Before I go ahead: Changing Branch's own settings: .*Switch: when-needed → on/);
   assert.doesNotMatch(ask.question, /fly-core\.mode|settings\.change/, ask.question);
   assert.match(ask.target, /fly-core\.mode/, "the ids stay where rules and the record need them");
 });

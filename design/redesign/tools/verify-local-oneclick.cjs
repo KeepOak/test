@@ -13,7 +13,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 const { pathToFileURL } = require("node:url");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const GiB = 1024 ** 3;
 const SHOTS = process.env.SHOTS || "C:/Users/bishi/AppData/Local/Temp/claude-session-files/local-oneclick";
@@ -243,8 +243,7 @@ async function cancelRun(page, call, scope, model, label, shot) {
 
 async function setupRun(page, call, fresh, shot) {
   await page.locator(".ob-agree").click();
-  await page.locator('.ob9 [data-act="ob-next"]').click();
-  await page.locator('.ob9 [data-act="ob-next"]').click();
+  await page.locator('.ob9 [data-act="ob-next"]').click(); // pass 18c: Start goes straight to Models
   await page.locator(".ob9 .lp .lp-hero").waitFor({ timeout: 15000 });
   const none = await page.locator(".ob9 .lp-none").textContent().catch(() => "");
   const heading = await page.locator('.ob9 .ob-body p:text-is("Found on this computer:")').count();

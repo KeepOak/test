@@ -38,10 +38,15 @@ export interface CommandApiDeps {
   readBody: () => Promise<unknown>;
   /** Said when this request may not switch Lockdown off: it came through a door, not this computer's window. */
   lockdownOffRefusal?: string;
+  /** The request came through a door (src/remote/window-key.ts `throughADoor`), not this computer's own window. */
+  throughADoor?: boolean;
 }
 
-function listFor(app: Branch, surface: z.infer<typeof WebSurface>) {
-  const mode = commandSettings(app.store, app.runtime.owner).mode;
+/** This computer's own window: its own key, not through a door. Only there does the window's switch ship on (settings.ts). */
+const ownWindow = (deps: CommandApiDeps, surface: string): boolean => surface === "window" && deps.access === "full" && deps.throughADoor !== true;
+
+function listFor(app: Branch, surface: z.infer<typeof WebSurface>, deps: CommandApiDeps) {
+  const mode = commandSettings(app.store, app.runtime.owner, surface, ownWindow(deps, surface)).mode;
   const commands = COMMANDS.filter((command) => available(command, surface, mode)).map((command) => ({
     name: command.name, aliases: aliasesOn(command, surface, mode === "off"), args: command.args, key: command.key, english: command.english,
     level: command.level, bareLooks: command.bareLooks === true, listed: listed(command, surface, mode),
@@ -60,7 +65,7 @@ async function run(app: Branch, deps: CommandApiDeps, input: z.infer<typeof RunB
   const host = { ...commandHost(app.runtime, app), ...(deps.lockdownOffRefusal ? { lockdownOffRefusal: deps.lockdownOffRefusal } : {}) };
   // What the key may do is checked here, command by command (execute.ts `refusalFor`).
   const outcome = await executeCommand(host, {
-    surface: input.surface, line: input.line, sessionId: input.sessionId, access: deps.access,
+    surface: input.surface, line: input.line, sessionId: input.sessionId, access: deps.access, ownWindow: ownWindow(deps, input.surface),
   });
   return outcome ? { handled: true, ...outcome } : { handled: false };
 }
@@ -76,7 +81,7 @@ export async function commandsApi(app: Branch, path: string, deps: CommandApiDep
   if (method === "GET" && path === "/api/commands") {
     const surface = WebSurface.parse(url.searchParams.get("surface") ?? "window");
     dashboardOpen(app, surface);
-    return listFor(app, surface);
+    return listFor(app, surface, deps);
   }
   if (method === "GET" && path === "/api/commands/table")
     return { surfaces, commands: COMMANDS, parity: PARITY, mode: commandSettings(app.store, app.runtime.owner).mode };
@@ -91,7 +96,9 @@ export async function commandsApi(app: Branch, path: string, deps: CommandApiDep
     if (deps.access !== "full") throw new CommandApiError(403, "Only the key of this computer can change which commands are offered.");
     app.store.profiles.requireOwner("Which commands are offered");
     const input = await deps.readBody();
-    return recordedWrite(app.store, app.runtime.owner, byCard("command-catalog"), ["command-catalog"], () => saveCommandSettings(app.store, app.runtime.owner, input));
+    const saved = recordedWrite(app.store, app.runtime.owner, byCard("command-catalog"), ["command-catalog"], () => saveCommandSettings(app.store, app.runtime.owner, input));
+    void app.channels.refreshCommandMenus(); // CHAT-161: the apps' own pickers follow the switch
+    return saved;
   }
   throw new CommandApiError(404, "Not found");
 }

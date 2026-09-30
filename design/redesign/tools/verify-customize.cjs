@@ -2,7 +2,7 @@
 // Run against a fresh engine: PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-customize.cjs
 // Setup through the API (not window controls): Trunks, rooms and the prompt library are switched on (all start off),
 // two Trunks are made, and one saved recipe is proposed so Automations › Procedures has a row to open.
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 if (!PORT || !TOKEN) { console.error("PORT and TOKEN are required"); process.exit(2); }

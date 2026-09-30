@@ -6,7 +6,7 @@ import { connect as tcpConnect } from "node:net";
 import {
   fixture, until, delay, setSwitch, assertNoSecret, httpService, lineServer, socketService, pairingWalk, refusalWalk,
 } from "./channels-parity-kit.mjs";
-import { parityServices } from "../dist/channels/connectors.js";
+import { parityServices } from "../dist/channels/parity-services.js";
 import { buildParityChannel, paritySummary, ParityChannelSchema } from "../dist/channels/parity-config.js";
 import { SwitchedChannel, paritySwitch, isPostedChannel } from "../dist/channels/parity-switch.js";
 import { lineChunks } from "../dist/channels/parity-common.js";
@@ -39,7 +39,7 @@ test("every service ships switched off, and the list names each one once", async
   const context = await fixture(t);
   const kinds = parityServices.map((service) => service.kind);
   assert.equal(new Set(kinds).size, kinds.length, "no service is listed twice");
-  for (const service of paritySummary(context.app.store, context.app.runtime.owner)) {
+  for (const service of await paritySummary(context.app.store, context.app.runtime.owner)) {
     assert.equal(service.switch, "off", `${service.kind} starts off`);
     assert.ok(service.needs.length > 0 && /^https:\/\//.test(service.docs), `${service.kind} says what it needs and where the docs are`);
   }

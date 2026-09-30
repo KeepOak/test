@@ -16,7 +16,7 @@ const zlib = require("node:zlib");
 const { createHash } = require("node:crypto");
 const { readFileSync, mkdirSync, existsSync } = require("node:fs");
 const { join } = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT, TOKEN, CERT, KEY } = process.env;
 const SHOTS = process.env.SHOTS || "C:/Users/bishi/AppData/Local/Temp/claude-session-files/parity-b1";
@@ -410,16 +410,8 @@ async function roomLeft(page) {
   await shot(page, "07-room-left");
 }
 
-/* ---------- 8. moving around: Open that setting, Connect another agent, the header's stage buttons, Use a saved prompt ---------- */
+/* ---------- 8. moving around: Connect another agent, the header's stage buttons, Use a saved prompt ---------- */
 async function moving(page) {
-  await newConversation(page);
-  await say(page, "b1 retry");
-  await settled("b1 retry");
-  const row = page.locator("#conversation .b[data-i15]").last();
-  await hoverClick(page, row, "flag");
-  await page.locator('.dlg [data-act="flgo17c"]').click();
-  await until("Settings › Data & usage", async () => /Data & usage/.test(await page.locator("#main").textContent()), 10000);
-  check(true, "Flag › Open that setting opens Settings › Data & usage");
   await newConversation(page);
   await say(page, "b1 retry");
   await settled("b1 retry");

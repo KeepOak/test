@@ -29,7 +29,7 @@ const permissionCategories: Record<string, ToolCategory> = {
   "workbooks.write": "files", // P17-D §3: a learning task saving the workbook it wrote
   "shell.execute": "commands", "terminal.write": "commands", "remote.execute": "commands",
   "browser.write": "browse", "browser.act": "browse",
-  "channels.send": "message", "email.send": "message", "github.manage": "message",
+  "channels.send": "message", "email.send": "message", "github.manage": "message", "gitlab.manage": "message",
   "issues.write": "message",
   "payments.spend": "spend", "billing.write": "spend",
   "schedules.write": "settings", "secrets.write": "settings", "settings.write": "settings",
@@ -38,6 +38,7 @@ const permissionCategories: Record<string, ToolCategory> = {
 /** The few tools whose permission does not say enough on its own. */
 const toolOverrides: Record<string, ToolCategory> = {
   "browser.navigate": "browse", "browser.click": "browse", "browser.fill": "browse", "browser.upload": "browse",
+  "browser.keys": "browse", "browser.select": "browse", "browser.hover": "browse", "browser.history": "browse",
   "github.open_pull_request": "message", "github.create_issue": "message", "issues.comment": "message",
   "channels.notify": "message", "user.ask": "read",
 };

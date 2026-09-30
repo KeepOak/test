@@ -12,28 +12,34 @@ import { markLive, isLive } from "../core/features.js";
 import { chatKeys } from "../chat/chat.js";
 import { chatMenuTop } from "../chat/beside.js";
 import { pinnedCount } from "../chat/messages.js";
+import { pinItem } from "../chat/putaway.js"; // batch A: pin an ordinary conversation from its menu
 import { trunkMenu, trunkMenuEnd } from "../flows/trunk.js";
 import { binding, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./keys.js";
+import { toggleSide, hiddenNow } from "./resize.js";
 import { initMachines } from "./machines.js";
 import { initFileView } from "./fileview.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 
-/* The gateway is on or off: "when-needed" and "on" both run it (src/never-break/gateway-config.ts), so a file saved as
-   "when-needed" reads as on, and the switch saves "on" or "off". */
-const SAID = { off: "Off. When you close Branch, your Trunks stop, and Telegram and automations go quiet until you open it again.", on: "On. Telegram, your phone and automations keep working when the window is closed." };
+/* The saved choice and the worker actually running behind a gateway are separate facts. */
 let gw = null;
 
 function gatewayPop() {
-  const on = (gw?.mode ?? "off") !== "off";
-  const line = gw?.problem ? String(gw.problem) : say(SAID[on ? "on" : "off"]) ?? "";
+  const saved = (gw?.mode ?? "off") !== "off", running = gw?.underGateway === true;
+  const line = gw?.problem ? String(gw.problem) : running && !saved ? t(gw.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater") : running ? t("gatewayChoice.running")
+    : saved ? t("gatewayChoice.saved") : t("gatewayChoice.off");
   const note = gw?.note ? `<p class="pp">${esc(gw.note)}</p>` : "";
-  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("field.never-break-mode")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${on ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
+  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("gatewayChoice.preference")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${saved ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
 }
 
-/* The status bar's "Gateway on" / "Gateway off" (the prototype's gwWord), lit when on: the engine's mode, read again after
-   each change of the engine's state (GET /api/never-break), drawn again only when on/off changed. null until read. */
-export const gatewayOn = () => (gw ? gw.mode !== "off" : null);
+/* The status bar reports the actual worker, not the next-start preference. */
+export const gatewayOn = () => (gw ? gw.underGateway === true : null);
+/** Settings › Gateway hands over what it just read, so the status bar says the same at once. */
+export function noteGateway(read) {
+  const was = gatewayOn();
+  gw = read;
+  if (gatewayOn() !== was) renderNow();
+}
 let gwFor = null, gwReading = false;
 export async function readGateway() {
   if (!E.state || E.state === gwFor || gwReading || !ownerHere()) return;
@@ -54,13 +60,16 @@ async function setGateway(v) {
   renderNow();
   const anchor = document.querySelector('[data-act="gwpop"]');
   if (anchor) openPop(anchor, gatewayPop(), { right: true, force: true });
+  setTimeout(() => { gwFor = null; void readGateway(); }, 1200);
 }
 
 /* ---------- keyboard shortcuts ---------- */
 /* The engine's changeable shortcuts this window answers to, by the engine's names, with the prototype's words. */
 /* The prototype's KEYS15, less Lockdown (its keys would also turn it off, which loosens: that stays with its banner). */
-const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sidePane", "Show or hide the side panel"], ["focusMode", "Focus mode"], ["talkLive", "Talk live"], ["stopTask", "Stop the current task"], ["openInbox", "Open the Inbox"], ["nextConversation", "Next conversation"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"]];
-const FIXED = [["New line in a message", "Shift+Enter"], ["Call a Trunk in a message", "@"], ["Use a skill", "/"], ["This list", "?"], ["Close anything", "Esc"]];
+const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sidePane", "Show or hide the side panel"], ["focusMode", "Focus mode"], ["talkLive", "Talk live"], ["stopTask", "Stop the current task"], ["openInbox", "Open the Inbox"], ["nextConversation", "Next conversation"], ["previousConversation", "Previous conversation"],
+  ["searchHistory", "Search the history"], ["focusPrompt", "Focus the message box"], ["lookInside", "Look inside the latest task"], ["newTrunk", "Start a new Trunk"],
+  ["switchPerson", "Who is using Branch"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"]];
+const FIXED = [["Open conversation 1 to 9 in the list", "Ctrl+1…9"], ["New line in a message", "Shift+Enter"], ["Call a Trunk in a message", "@"], ["Use a skill", "/"], ["This list", "?"], ["Close anything", "Esc"]];
 let listening = null;
 const nameOf = (action) => KEYS.find(([a]) => a === action)?.[1] ?? "";
 
@@ -99,7 +108,8 @@ async function putBack(action) {
   showShortcuts();
 }
 
-/* A Trunk's or a room's own conversation gets its items from flows/trunk.js; pinning any other conversation stays greyed.
+/* A Trunk's or a room's own conversation gets its items from flows/trunk.js; any other is pinned through the engine's
+   own marks (chat/putaway.js pinItem, batch A).
    Before a new conversation's first message the menu opens too: what needs a conversation (its last reply, its export)
    is drawn greyed with the reason as its tip. */
 const later = (icon, text) => `<button class="mi soon" type="button" role="menuitem" aria-disabled="true" tabindex="-1" data-tip="${t("window.shell.extras.after-first-message")}"><span class="ico">${ic(icon, "s")}</span><span class="mi-t">${text}</span></button>`;
@@ -112,7 +122,7 @@ function chatMenu() {
   /* The prototype's "Pinned messages N", while the conversation has pins (chat/messages.js, GET /api/sessions/<id>/pins). */
   const pins = S.chat ? pinnedCount(S.chat) : 0;
   const pinned = pins ? mi("pinlist15", "pin", t("window.chat.msg.pinned-messages"), esc(String(pins))) : "";
-  return pinned + chatMenuTop() + (trunkMenu() || mi("pin-conv", "pin", t("window.shell.extras.pin-to-top"))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + own + trunkMenuEnd();
+  return pinned + chatMenuTop() + (trunkMenu() || (S.chat ? pinItem(S.chat) : later("pin", t("window.shell.extras.pin-to-top")))) + mi("call", "wave", t("window.shell.extras.talk-out-loud")) + own + trunkMenuEnd();
 }
 
 /* The prototype's export: the engine's Markdown copy of the conversation (GET /api/sessions/<id>/export?format=markdown)
@@ -141,21 +151,52 @@ async function exportConversation() {
 }
 
 const typing = (e) => e.target.closest?.("input, textarea, select, [contenteditable]");
-/* The conversation after the one open, in the list's own order (Pinned, then Recent), round to the first. */
-function nextConversation() {
-  const ids = [...document.querySelectorAll("#side .row[data-id]")].map((row) => row.dataset.id);
-  if (!ids.length) return;
-  const at = ids.indexOf(S.chat), el = document.createElement("button");
-  el.dataset.id = ids[(at + 1) % ids.length];
+/* The conversations in the list's own order (Pinned, then Recent). */
+const listed = () => [...document.querySelectorAll("#side .row[data-id]")].map((row) => row.dataset.id).filter((id) => id !== "new");
+function openRow(id) {
+  if (!id) return;
+  const el = document.createElement("button");
+  el.dataset.id = id;
   run("chat", el);
 }
+/* The conversation after (or before) the one open, round to the first (or the last). */
+function nextConversation(step = 1) {
+  const ids = listed();
+  if (!ids.length) return;
+  const at = ids.indexOf(S.chat);
+  openRow(ids[((at < 0 ? (step > 0 ? -1 : 0) : at) + step + ids.length) % ids.length]);
+}
+/* Ctrl+1…9: the Nth conversation in the list, as tabs in a browser. */
+function nthConversation(e) {
+  if (!/^Ctrl\+[1-9]$/.test(comboOf(e))) return false;
+  const id = listed()[Number(comboOf(e).slice(-1)) - 1];
+  if (!id) return false;
+  e.preventDefault();
+  openRow(id);
+  return true;
+}
+/* The list's own search (Telegram-style: names, words in replies, documents), brought into view first. */
+function searchList() {
+  closePop();
+  if (S.view === "settings") { S.view = "chat"; renderNow(); } // Settings stands in for the list
+  if (hiddenNow()) toggleSide();
+  else if (!document.getElementById("app")?.classList.contains("side-open") && document.querySelector('[data-act="side"]')?.checkVisibility?.()) toggleSide();
+  const box = document.getElementById("side-q");
+  box?.focus();
+  box?.select();
+}
+function focusPrompt() {
+  if (S.view !== "chat") { S.view = "chat"; closePop(); renderNow(); }
+  document.getElementById("prompt")?.focus();
+}
+const live = (act) => has(act) && isLive(act);
 
 export function initExtras() {
   markLive(["gwpop", "sw:gwpop-sw", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
   initMachines();
   initFileView();
   on("gwpop", (el) => openGateway(el));
-  document.addEventListener("change", (e) => { if (e.target.id === "gwpop-sw") setGateway(e.target.checked ? "on" : "off"); });
+  document.addEventListener("change", (e) => { if (e.target.id === "gwpop-sw") setGateway(e.target.checked ? "when-needed" : "off"); });
   on("shortcuts", () => showShortcuts());
   on("key15", (el) => { listening = el.dataset.v; showShortcuts(); });
   on("keyreset15", (el) => putBack(el.dataset.v));
@@ -169,7 +210,14 @@ export function initExtras() {
     else if (pressed(e, "talkLive") && !typing(e) && has("call") && isLive("call")) { e.preventDefault(); run("call"); }
     else if (pressed(e, "stopTask") && S.view === "chat") { e.preventDefault(); chatKeys.stop(); }
     else if (pressed(e, "openInbox") && !typing(e)) { e.preventDefault(); S.view = "inbox"; closePop(); renderNow(); }
-    else if (pressed(e, "nextConversation")) { e.preventDefault(); nextConversation(); }
+    else if (pressed(e, "nextConversation")) { e.preventDefault(); nextConversation(1); }
+    else if (pressed(e, "previousConversation")) { e.preventDefault(); nextConversation(-1); }
+    else if (pressed(e, "searchHistory")) { e.preventDefault(); searchList(); }
+    else if (pressed(e, "focusPrompt")) { e.preventDefault(); focusPrompt(); }
+    else if (pressed(e, "lookInside") && S.view === "chat" && S.chat && live("inspect")) { e.preventDefault(); run("inspect"); }
+    else if (pressed(e, "newTrunk") && live("new-trunk")) { e.preventDefault(); run("new-trunk"); }
+    else if (pressed(e, "switchPerson")) { const who = document.querySelector('#side [data-act="owner"]'); if (who && live("owner")) { e.preventDefault(); run("owner", who); } }
+    else if (!e.defaultPrevented && nthConversation(e)) { /* opened */ }
     else if (e.key === "?" && !typing(e) && !e.ctrlKey && !e.metaKey) { e.preventDefault(); showShortcuts(); }
   });
 }

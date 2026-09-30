@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { shippedUnlessChosen } from "./ship-on.js";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { credentialInUrl } from "./leak-guard.js";
 import type { Store } from "./store.js";
@@ -47,10 +48,13 @@ export type PageNote = z.infer<typeof PageNoteInputSchema> & { id: string; creat
 const settingsKey = "page-notes";
 const listKey = "page-notes:list";
 
+// The owner's rule (ships on, 2026-09-26): a note is made only when the owner points at a page, and is kept on this computer; none of (a)–(f).
+export const pageNotesShipAs: FeatureMode = "when-needed";
+
 /** The switch is the owner's; it is read and saved under the owner's own name. */
 export function pageNotesSettings(store: Pick<Store, "get">, owner: string): PageNotesSettings {
   const saved = PageNotesSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : { mode: "off" };
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, { mode: pageNotesShipAs }) : { mode: "off" };
 }
 export function savePageNotesSettings(store: Store, owner: string, input: unknown): PageNotesSettings {
   const value = PageNotesSettingsSchema.parse(input ?? {});

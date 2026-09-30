@@ -29,15 +29,17 @@ export const interopKey = (part: InteropPart): string => `interop-${part}`;
 /**
  * What each part is while nothing has been saved for it. A saved record that is damaged still reads as off.
  * Kept off: the Agent Protocol (an HTTP door for outside programs to hand Branch work) and tools lent by a
- * program (a socket other programs connect to), because each lets something from outside in, rule (a).
+ * program (a socket other programs connect to), because each lets something from outside in, rule (f).
  */
 export const interopShipsOn: Partial<Record<InteropPart, InteropMode>> = {
   // The owner's rule (ships on, 2026-09-26): a mode only narrows what a task could already do; none of (a)–(f).
   modes: "when-needed",
   // The owner's rule (ships on, 2026-09-26): scores the owner's projects on words, and only the owner switches; none of (a)–(f).
   "project-routing": "when-needed",
-  // Kept off, by the owner's rule (off for spending, sending, outside access, heavy disk): fleet and handoff reach assistants and devices outside this task; flow-search spends on repeated model
-  // tries; agent-market brings in outside content.
+// The owner's rule (ships on, 2026-09-26): browsing a market the owner names uploads nothing, and what it brings in arrives switched off; none of (a)–(f).
+  "agent-market": "when-needed",
+  // Kept off, by the owner's rule: fleet and handoff send work to assistants and devices outside this task (b, f);
+  // flow-search spends on repeated model tries (a).
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */

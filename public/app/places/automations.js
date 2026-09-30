@@ -7,6 +7,7 @@ import { S, E, refresh } from "../core/state.js";
 import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { initRecipeRun, recipeRunLive } from "./recipe-run.js";
 import { api } from "../core/api.js";
 import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
 import { trigCard, initTriggerCard } from "./trigger-card.js";
@@ -114,7 +115,8 @@ function scheduleRow(s, i) {
   const due = repeatWords(s.data) ?? (s.data?.dueAt ? new Date(s.data.dueAt).toLocaleString(language(), { weekday: "short", hour: "numeric", minute: "2-digit" }) : "");
   const who = trunk?.name ?? E.state?.identity?.name ?? "";
   const on = s.data?.status !== "paused";
-  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(what)}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(what) })}"></div>`;
+  /* QA retest 2026-09-28 (m5): Open goes to the schedule's own conversation, where every turn is. */
+  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(what)}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}${s.data?.threadId ? `<button class="btn sm ghost" type="button" data-act="chat" data-id="${esc(s.data.threadId)}">${t("ov.open")}</button>` : ""}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(what) })}"></div>`;
 }
 
 /* A saved prompt (GET /api/prompts), every one of them: its name and command, then its group and the first 80 characters of
@@ -124,10 +126,9 @@ function promptRow(p) {
   return `<div class="prow"><span class="ico-tile">${ic("star", "s")}</span><span class="grow"><b>${esc(p.title ?? "")}${p.command ? ` <code>/${esc(p.command)}</code>` : ""}</b><small>${esc([p.group, clip80(p.body)].filter(Boolean).join(" · "))}</small></span><button class="btn sm" type="button" data-act="prompt-use" data-v="${esc(p.id ?? "")}">${t("prompts.action.use")}</button></div>`;
 }
 
-/* A saved recipe: its name, how many steps and the engine's status. Open shows its steps (flow-editor.js). Running a recipe
-   (POST /api/flows-boards/recipes/<id>/run) calls its saved tools directly as the owner, outside a task's approval
-   questions: running a command from the window is for the security review, so its Run (recipe-run) stays greyed with
-   its reason (window.why.recipe-run). */
+/* A saved recipe: its name, how many steps and the engine's status. Open shows its steps (flow-editor.js). Run shows
+   every call it will make, its checks, its clean-up and its tries first, and runs it as the owner only from that dialog
+   (./recipe-run.js). */
 function procedureRow(p) {
   const steps = Array.isArray(p.data?.definition?.steps) ? p.data.definition.steps.length : 0;
   return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.data?.definition?.name ?? '')}</b><small>${esc([t(steps === 1 ? "window.chat.steps.one" : "window.places.automations.steps-steps", { steps }), p.data?.status].filter(Boolean).join(' · '))}</small></span><button class="btn sm" type="button" data-act="recipe-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}">${t("ov.open")}</button></div>`;
@@ -145,8 +146,14 @@ function autoRow(p) {
   return `<div class="prow">${av({}, 34)}<span class="grow"><b>${esc(p.procedure.name)}${pill}</b><small>${esc(small)}</small></span><button class="btn sm" type="button" data-act="proc-run" data-id="${esc(p.id)}">${t("autonomy.orders.run")}</button><button class="btn sm" type="button" data-act="flow" data-id="${esc(p.id)}" data-v="auto">${t("ov.open")}</button></div>`;
 }
 
+/* QA retest 2026-09-28 (S2): the box's words are kept for each tab and drawn back into it. The page is drawn anew whenever
+   the engine's state moves (it does while a model reads the words), and a box drawn without them came back empty, so words
+   the engine could not read were gone before the person could fix them. */
+const NL = { scheduled: "", triggers: "" };
+const nlTab = () => (S.tabs.automations === "triggers" ? "triggers" : "scheduled");
+const nlValue = () => ` value="${esc(NL[nlTab()])}"`;
 /* B002: Add is drawn pressable only while the box has words (a redraw keeps what was typed). */
-const boxEmpty = () => (document.getElementById("nl-in")?.value.trim() ? "" : " disabled");
+const boxEmpty = () => (NL[nlTab()].trim() ? "" : " disabled");
 const promptsOff = () => prompts?.settings?.mode === "off";
 async function modeOfProcedures() {
   const a = await api("autonomy");
@@ -167,7 +174,7 @@ export function draw() {
 
   if (tab === "scheduled") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in"${nlValue()} placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
     ${schedules.length ? `<div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>` : empty18("automations:scheduled")}
   <div class="sec ideas15"><div class="sec-h15"><h2>${t("window.places.automations.ideas")}</h2><button type="button" class="link15" data-act="ideas15">${t("window.places.automations.see-all-count", { count: IDEAS.length })}</button></div><div class="idea-row15">${IDEAS.slice(0, 3).map(ideaCard).join('')}</div></div>${ordersSection()}${onItsOwnSection()}`;
 
@@ -180,7 +187,7 @@ export function draw() {
 
   } else if (tab === "triggers") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-that-starts-when-something-happens")}</p>${proceduresMode === "off" ? offTile("procedures", t("window.switch-on.off", { label: autonomyLabel }), t("window.switch-on.triggers-why")) : ""}
-    <form class="nl" data-form="nl"><input class="inp" id="nl-in" placeholder="${esc(t("window.places.automations.describe-it-when-a-task-finishes"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${trigCard()}
+    <form class="nl" data-form="nl"><input class="inp" id="nl-in"${nlValue()} placeholder="${esc(t("window.places.automations.describe-it-when-a-task-finishes"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="trig-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${trigCard()}
     ${triggers.length ? "" : empty18("automations:triggers")}<div class="rows" data-css="margin-top:8px">${triggers.length ? triggers.map((tr, i) => `<div class="prow">${tr.sessionId ? faceOf(tr.sessionId, 34) : `<span class="ico-tile">${ic("bolt", "s")}</span>`}<span class="grow"><b>${esc(tr.name ?? '')}</b><small>${esc([String(tr.prompt ?? '').split('\n')[0], tr.sessionId ? nameOf(tr.sessionId) : E.state?.identity?.name].filter(Boolean).join(' · '))}</small></span><input class="sw" type="checkbox" id="auto-triggers-${i}" data-sw="trigger" data-id="${esc(tr.id || '')}" ${tr.enabled ? 'checked=""' : ''} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(tr.name ?? '') })}"></div>`).join('') : ''}</div>${hooksSection()}`;
 
     markLive(triggers.map((_, i) => `sw:auto-triggers-${i}`));
@@ -243,22 +250,23 @@ export async function after() {
 
 /* Check in on its own, from GET /api/heartbeat: whether it is on (the checkIn switch), how often, which hours, whether
    weekends are quiet (quietWeekends), what it checks (the checklist, one line each) and the last check-ins. Settings are
-   saved whole (POST /api/heartbeat). "Work hours" stays greyed with its reason (window.why.hb-work-hours): the engine
-   keeps one span of hours for check-ins (src/heartbeat.ts activeHours) and working days (the calendar), but no working
-   hours, so there is no span for it to mean. */
+   saved whole (POST /api/heartbeat). "Work hours" is the span 9 AM to 5 PM (activeHours 09:00–17:00), pressed when
+   that is the span kept; any other span shows as itself. */
 const hhmm = (t) => { const [h, m] = String(t).split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(language(), { hour: "numeric", minute: m ? "2-digit" : undefined }); };
 const settingsOf = (hb) => hb?.heartbeat?.settings ?? null;
 const linesOf = (hb) => String(settingsOf(hb)?.checklist ?? "").split("\n").map((l) => l.trim()).filter(Boolean);
 
+const WORK_HOURS = { from: "09:00", to: "17:00" };
 function checkinsTile(hb) {
   const set = settingsOf(hb), mode = hb?.switches?.checkIn ?? "off", on = mode !== "off";
   const every = on ? String(set?.everyMinutes ?? "") : "off";
   const hours = set?.activeHours ?? null;
+  const work = !!hours && hours.from === WORK_HOURS.from && hours.to === WORK_HOURS.to;
   const seg = (act, v, label, pressed) => `<button type="button" aria-pressed="${pressed}" data-act="${act}" data-v="${v}">${label}</button>`;
   const history = (hb?.heartbeat?.state?.history ?? []).slice(-5).reverse();
   return `<div class="tile"><div class="th"><b>${t("window.places.automations.check-in-on-its-own")}</b><span class="pill ${on ? "ok" : "idle"} ml"><i></i>${on ? t("accounts.switch.on") : t("accounts.switch.off")}</span></div><p>${t("window.places.automations.branch-looks-at-the-list-below")}</p>
     <div class="ctl"><b>${t("settingsIndex.metering-every.2")}</b><span class="right"><span class="seg" role="group" aria-label="${t("settingsIndex.metering-every.2")}">${seg("hb-every", 15, t("window.places.automations.every-15-min"), every === "15")}${seg("hb-every", 30, t("window.places.automations.every-30-min"), every === "30")}${seg("hb-every", 60, t("window.places.automations.every-hour"), every === "60")}${seg("hb-every", "off", t("accounts.switch.off"), every === "off")}</span></span><small>${t("window.places.automations.quiet-background-work-no-news-no")}</small></div>
-    <div class="ctl"><b>${t("window.places.automations.which-hours")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.automations.which-hours")}">${hours ? seg("hb-hours", "kept", `${esc(hhmm(hours.from))} – ${esc(hhmm(hours.to))}`, true) : ""}${seg("hb-hours", "always", t("window.places.automations.always"), !hours)}<button type="button" aria-pressed="false" data-act="seg" data-why="hb-work-hours">${t("window.places.automations.work-hours")}</button></span></span><small>${t("window.places.automations.outside-these-hours-it-waits")}</small></div>
+    <div class="ctl"><b>${t("window.places.automations.which-hours")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.places.automations.which-hours")}">${hours && !work ? seg("hb-hours", "kept", `${esc(hhmm(hours.from))} – ${esc(hhmm(hours.to))}`, true) : ""}${seg("hb-hours", "always", t("window.places.automations.always"), !hours)}${seg("hb-hours", "work", t("window.places.automations.work-hours"), work)}</span></span><small>${t("window.places.automations.outside-these-hours-it-waits")}${work ? ` ${esc(hhmm(WORK_HOURS.from))} – ${esc(hhmm(WORK_HOURS.to))}` : ""}</small></div>
     <div class="ctl"><b>${t("window.places.automations.quiet-on-weekends")}</b><input class="sw" type="checkbox" id="hb-wk" aria-label="${t("window.places.automations.quiet-on-weekends")}" data-sw="hb-wk" ${set?.quietWeekends ? 'checked=""' : ""} ${set ? "" : "disabled"}><small>${t("window.places.automations.it-still-tells-you-if-a")}</small></div>
     <div class="sec"><h2>${t("window.places.automations.what-it-checks")}</h2><div class="rows">${linesOf(hb).map((c) => `<div class="prow"><span class="ico-tile"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"></path></svg></span><span class="grow"><b data-css="font-weight:500">${esc(c)}</b></span><button class="icon-btn" type="button" aria-label="${t("accounts.action.remove")}" data-act="hb-rm" data-v="${esc(c)}" data-css="width:28px;height:28px"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg></button></div>`).join("")}</div><form class="nl" data-form="hb" data-css="margin-top:8px"><input class="inp" id="hb-in" placeholder="${esc(t("window.places.automations.add-something-to-check-a-reply"))}" aria-label="${t("window.places.automations.add-something-to-check")}"><button class="btn" type="submit">${t("asks.runtimes.add")}</button></form></div>
     <div class="sec"><h2>${t("window.places.automations.last-check-ins")}</h2><ol class="tl">${history.map((h) => `<li class="${h.outcome === "failed" ? "" : "ok"}"><span>${esc(h.outcome)}<small>${esc(h.reason ?? "")}</small></span><time>${esc(new Date(h.startedAt).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("")}</ol></div></div>${gateTiles(hb)}`;
@@ -301,10 +309,12 @@ export function init() {
   /* B002: Add waits for words: it is pressable once the box has some (typed, or put there from an idea). */
   document.addEventListener("input", (e) => {
     if (e.target.id !== "nl-in") return;
+    NL[nlTab()] = e.target.value;
     const add = e.target.closest("form.nl")?.querySelector('button[type="submit"]');
     if (add) add.disabled = !e.target.value.trim();
   });
-  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run"]);
+  markLive(["sw:hb-in", "sw:hb-wk", "ptab", "hb-every", "hb-hours", "hb-rm", "sched-run", "bmove15", "bto15", "ideas15", "idea15", "prompt-use", "proc-run", ...recipeRunLive]);
+  initRecipeRun();
   on("bmove15", (el) => {
     const card = cardOf(el.dataset.id);
     if (!card) return;
@@ -341,7 +351,7 @@ export function init() {
   });
   on("sched-run", async (el) => { try { await api(`schedules/${encodeURIComponent(el.dataset.id)}/trigger`, {}); await refresh(); renderNow(); } catch (error) { toast(error.message); } });
   on("hb-every", (el) => (el.dataset.v === "off" ? saveHeartbeat(null, "off") : saveHeartbeat({ everyMinutes: +el.dataset.v }, "on")));
-  on("hb-hours", (el) => (el.dataset.v === "always" ? saveHeartbeat({ activeHours: null }) : null));
+  on("hb-hours", (el) => (el.dataset.v === "always" ? saveHeartbeat({ activeHours: null }) : el.dataset.v === "work" ? saveHeartbeat({ activeHours: WORK_HOURS }) : null));
   on("hb-rm", (el) => removeLine(el.dataset.v));
   // Scheduled: "Add" (and Enter, which presses it) asks the engine to read the words into a proposal card
   // (schedule-card.js). Triggers: the same, read into a trigger (trigger-card.js). The page itself is never submitted.

@@ -29,6 +29,22 @@ test("each mode says what it means, even when the owner's setting is No approval
   assert.equal(decide(auto, "shell.execute"), "ask", "Auto asks before a command");
   assert.equal(decide(auto, "web.fetch"), "ask", "and before the web");
   assert.equal(decide(full, "files.write"), "allow");
+  assert.equal(decide(full, "shell.execute"), "allow", "Full Access does not ask again about an uncovered command");
+});
+
+test("Full Access lets uncovered commands through while named command rules and Lockdown still apply", () => {
+  const policy = PolicySchema.parse({ preset: "custom", unmatchedCommands: "ask", rules: [
+    { tool: "shell.execute", match: "git push*", decision: "ask" },
+    { tool: "shell.execute", match: "rm *", decision: "deny" },
+  ] });
+  const command = (held, target) => evaluatePolicy(held, { tool: "shell.execute", target, readOnly: false }).decision;
+  const full = policyForMode(policy, "full");
+  assert.equal(command(full, "node scripts/review.mjs"), "allow");
+  assert.equal(command(full, "git push origin branch/change"), "ask");
+  assert.equal(command(full, "rm important.txt"), "deny");
+  assert.equal(policyForMode(policy, "full", true).unmatchedCommands, "ask", "Lockdown keeps the command fallback unchanged");
+  assert.equal(policy.unmatchedCommands, "ask", "the saved policy and other conversations stay scoped");
+  for (const mode of ["ask", "plan", "auto"]) assert.notEqual(command(policyForMode(policy, mode), "node scripts/review.mjs"), "allow");
 });
 
 test("a mode never lifts a refusal the owner wrote, and Ask first and Plan drop every yes", () => {
@@ -108,8 +124,12 @@ test("a task from a chat app is held to Ask first in a Full access conversation"
   const app = await fixture(t, writes("c.txt"));
   const first = await app.runtime.run({ prompt: "write it", conversationMode: "full" });
   assert.equal(first.status, "completed", "the owner's own task in Full access goes ahead");
+  assert.equal(app.runtime.checkPolicy("shell.execute", { executable: "git", args: ["status"] }, app.runtime.context({ runId: first.id })).decision,
+    "allow", "the actual owner task does not ask again about an uncovered local command");
   const outside = await app.runtime.run({ prompt: "write it again", sessionId: first.sessionId, source: "channel" });
   assert.equal(outside.status, "needs_input", "the 0.18.1 hold on outside tasks still stands");
+  assert.equal(app.runtime.checkPolicy("shell.execute", { executable: "git", args: ["status"] }, app.runtime.context({ runId: outside.id })).decision,
+    "ask", "the outside task cannot inherit the owner's uncovered-command authorization");
 });
 
 async function served(t, script = writes("d.txt")) {

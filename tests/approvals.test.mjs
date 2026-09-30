@@ -22,6 +22,7 @@ import {
   jsonWriteProblem,
 } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { maximumPolicyRules } from "../dist/policy.js";
 /** Q257: the fingerprint of the question the window shows for a conversation; a bare answer is refused. */
 const shownFingerprint = (app, sessionId) => app.runtime.approvals.questionFor(sessionId)?.fingerprint;
 
@@ -168,17 +169,17 @@ test("with the approval rules full, a standing yes is kept for the conversation 
   const { app, api, workspace, provider } = await served(t, [calls(write("c1", "notes.txt", "one")), say("done")]);
   await api("POST", "/api/policy", { preset: "ask-before-changes" });
   const lines = presetRules("ask-before-changes");
-  const own = Array.from({ length: 300 - lines.length }, (_, i) =>
+  const own = Array.from({ length: maximumPolicyRules - lines.length }, (_, i) =>
     ({ tool: `helper.t${i}`, match: "*", applies: "any", decision: i % 2 ? "ask" : "deny", remember: "always" }));
   app.store.save("settings", app.runtime.owner, "policy", { ...readPolicy(app.store, app.runtime.owner), rules: [...own, ...lines] });
   const full = readPolicy(app.store, app.runtime.owner).rules;
-  assert.equal(full.length, 300);
+  assert.equal(full.length, maximumPolicyRules);
   const paused = (await api("POST", "/api/run", { prompt: "write notes" })).body;
   assert.equal(paused.status, "needs_input");
   const answered = await api("POST", "/api/policy/approve", { sessionId: paused.sessionId, fingerprint: shownFingerprint(app, paused.sessionId), decision: "allow", remember: "always" });
   assert.equal(answered.status, 200);
   assert.equal(answered.body.remembered, "session", "held for this conversation");
-  assert.match(answered.body.standingNote, /rules are full \(300\).*not kept as a standing rule/);
+  assert.match(answered.body.standingNote, new RegExp(`rules are full \\(${maximumPolicyRules}\\).*not kept as a standing rule`));
   assert.deepEqual(readPolicy(app.store, app.runtime.owner).rules, full, "no rule was saved, and none of the owner's was dropped");
   provider.reset();
   const again = (await api("POST", "/api/run", { prompt: "write notes", sessionId: paused.sessionId })).body;

@@ -137,17 +137,20 @@ test("a message may be only files; with neither words nor files it is still refu
 test("Duplicate copies a file over 64 MB, and the engine keeps answering while it copies", async (t) => {
   let release;
   const held = new Promise((done) => { release = done; });
-  let copies = 0;
+  let copies = 0, started;
+  const copyStarted = new Promise((done) => { started = done; });
   const f = await branch(t);
   const copy = f.app.attachments.copier;
-  f.app.attachments.copier = async (from, to) => { copies++; await held; return copy(from, to); };
+  f.app.attachments.copier = async (from, to) => { copies++; started(); await held; return copy(from, to); };
   const big = Buffer.alloc(65 * 1024 * 1024 + 7, 3);
   const staged = await f.upload("film.bin", "application/octet-stream", big);
   assert.equal(staged.status, 200, JSON.stringify(staged.body));
   const run = await f.post("/api/run", { prompt: "keep this", uploads: [staged.body.upload] });
   assert.equal(run.status, 200, JSON.stringify(run.body));
   const duplicating = f.post(`/api/sessions/${run.body.sessionId}/duplicate`, {});
-  for (let i = 0; i < 200 && !copies; i++) await new Promise((done) => setImmediate(done));
+  // The copy starts once the request has been read and the file looked at, however long that takes; a duplicate that
+  // answers without copying fails here at once, with what it said.
+  await Promise.race([copyStarted, duplicating.then((answer) => { throw new Error(`answered before any copy: ${answer.status} ${JSON.stringify(answer.body)}`); })]);
   assert.equal(copies, 1, "the copy started");
   assert.equal((await f.get("/api/state")).status, 200, "the engine answers while the copy is held");
   release();

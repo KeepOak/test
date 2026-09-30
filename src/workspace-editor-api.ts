@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { errorText } from "./request-errors.js";
 import type { IncomingMessage } from "node:http";
 import { z } from "zod";
+import { shippedUnlessChosen } from "./ship-on.js";
 import { FeatureModeSchema } from "./feature-switches.js";
 import type { WorkspaceFiles } from "./files.js";
 import type { Store } from "./store.js";
@@ -25,6 +26,8 @@ export class WorkspaceEditorApiError extends Error {
 export const WorkspaceEditorSettingsSchema = z.object({ mode: FeatureModeSchema.default("off") }).strict();
 export type WorkspaceEditorSettings = z.infer<typeof WorkspaceEditorSettingsSchema>;
 const KEY = "workspace-editor";
+// The owner's rule (ships on, 2026-09-26): a save goes through the ordinary file tool and can be undone; none of (a)–(f).
+export const workspaceEditorShipsAs = "when-needed" as const;
 
 export interface EditorHost {
   files: WorkspaceFiles;
@@ -42,7 +45,7 @@ export const checksum = (text: string): string => createHash("sha256").update(te
 
 export function workspaceEditorSettings(store: Pick<Store, "get">, owner: string): WorkspaceEditorSettings {
   const saved = WorkspaceEditorSettingsSchema.safeParse(store.get("settings", owner, KEY)?.data ?? {});
-  return saved.success ? saved.data : WorkspaceEditorSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, KEY, saved.data, { mode: workspaceEditorShipsAs }) : WorkspaceEditorSettingsSchema.parse({});
 }
 
 const pathParam = z.string().trim().min(1).max(500);

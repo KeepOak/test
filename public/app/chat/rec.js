@@ -3,8 +3,9 @@
    while the engine suggests it: GET /api/deployment/suggestion answers "background", "updates" or nothing, one at a time
    and only in the owner's window after the first run. Don't ask again is kept by the engine (POST
    /api/deployment/suggestion {id, answer: "never"}); Not now is this window's until it next opens. Yes for updates turns
-   on installing updates when idle (POST /api/comfort, card notify). Yes for background installs a system service, so it
-   stays greyed (its act has no handler) until that can be proved safe. */
+   on installing updates when idle (POST /api/comfort, card notify). Yes for background saves the same gateway choice as
+   Settings › General and › Gateway (POST /api/never-break { mode: "on" }); it never sets up a system service, and it says
+   what is really so: running now, or saved to start with the next launch. */
 
 import { render, esc } from "../core/dom.js";
 import { E, ownerHere } from "../core/state.js";
@@ -59,10 +60,21 @@ async function answer(el) {
   await readBar();
 }
 
+/* Keep Branch running: the saved gateway choice, then the actual state the engine reports (never "on" by assumption). */
+async function keepRunning() {
+  let view;
+  try { view = await api("never-break", { mode: "on" }); } catch (error) { toast(error.message); return; }
+  toast(t(view?.mode === "off" ? "gatewayChoice.off" : view?.underGateway === true ? "gatewayChoice.running" : "gatewayChoice.saved"));
+  await readBar();
+}
+
 export function initRec() {
-  markLive(["rec"]);
+  markLive(["rec", "rec-install"]);
   on("rec", (el) => answer(el));
+  on("rec-install", () => keepRunning());
   if (window.branchDesktop?.installUpdate) markLive(["install"]);
+  // Remind me tomorrow puts the card below away for a day; only the desktop app draws that card (a browser has none).
+  if (window.branchDesktop?.updateStatus) markLive(["upd-snooze"]);
   on("install", () => installNow());
 }
 
@@ -73,6 +85,19 @@ export function initRec() {
    does), nothing is drawn in a browser or while nothing newer was found, and no version is written in. The updater is
    asked at most once a minute, and a change redraws. */
 const U = { next: null, at: 0, asking: false, failed: "" };
+/* Remind me tomorrow (the version menu, shell/usage.js): the card stays away for a day for the version it offered; a newer
+   one comes back at once. Update by itself still installs as set; this only puts the reminder off. Kept in this window's
+   own storage, a convenience for this viewer. */
+const SNOOZE = "branch-update-remind";
+function snoozed(version) {
+  try { const s = JSON.parse(localStorage.getItem(SNOOZE) ?? "null"); return !!s && s.version === version && Date.now() < s.until; } catch { return false; }
+}
+export function snoozeUpdate(version = U.next?.version) {
+  if (!version) return;
+  try { localStorage.setItem(SNOOZE, JSON.stringify({ version, until: Date.now() + 24 * 3600 * 1000 })); } catch { /* no storage: the card stays */ }
+  toast(t("window.chat.rec.remind-tomorrow"));
+  render();
+}
 async function readNext() {
   U.asking = true;
   const before = U.next?.version ?? null;
@@ -88,7 +113,7 @@ async function readNext() {
 export function updateCard() {
   if (!window.branchDesktop?.updateStatus || !ownerHere()) return "";
   if (!U.asking && Date.now() - U.at > 60_000) readNext();
-  if (!U.next) return "";
+  if (!U.next || snoozed(U.next.version)) return "";
   return `<div class="upd18c" role="status">${ic("spark", "s")}<span class="grow"><b>${esc(t("window.flows.whatsnew.is-ready", { version: U.next.version }))}</b><small>${t("window.chat.rec.update-ready-hint")}</small></span><button class="btn ghost sm" type="button" data-act="relnotes17d" data-v="ready">${t("window.flows.whatsnew.read")}</button><button class="btn pri sm" type="button" data-act="install">${t("window.settings.updates.install-when-nothing-is-running")}</button></div>`;
 }
 

@@ -12,6 +12,7 @@ import { switchedToolTiers } from "../dist/feature-switches.js";
 import { faceFor, pictureAddress, settleAvatar } from "../dist/trunks/avatar.js";
 import { keyPlan } from "../dist/trunks/accounts.js";
 import { saveAccountsSettings, sessionChoice } from "../dist/accounts/settings.js";
+import { markChosen } from "../dist/ship-on.js";
 import { saveRetentionSettings } from "../dist/retention.js";
 import { saveOrchestrationSettings } from "../dist/orchestration.js";
 import { slug } from "../dist/trunks/record.js";
@@ -20,12 +21,12 @@ import { HANDLERS } from "../dist/commands/handlers.js";
 import { lookup } from "../dist/commands/catalog.js";
 import { call, fixture, on } from "./trunks-helpers.mjs";
 
-test("every part ships off, says so in one sentence, and advertises nothing", async (t) => {
+test("every part ships when needed; switched off, it says so in one sentence and advertises nothing", async (t) => {
   const { app } = await fixture(t);
   // The owner's rule (ships on, 2026-09-26): every part but choosing a Trunk in any conversation ships "when needed";
   // what "off" does is tested by switching each part off.
-  assert.deepEqual(app.trunks.modes(), { trunks: "when-needed", rooms: "when-needed", messages: "when-needed", routines: "when-needed", teach: "when-needed", conversations: "off" });
-  for (const part of ["trunks", "rooms", "messages", "routines", "teach"]) app.trunks.setMode(part, { mode: "off" });
+  assert.deepEqual(app.trunks.modes(), { trunks: "when-needed", rooms: "when-needed", messages: "when-needed", routines: "when-needed", teach: "when-needed", conversations: "when-needed" });
+  for (const part of ["trunks", "rooms", "messages", "routines", "teach", "conversations"]) app.trunks.setMode(part, { mode: "off" });
   assert.deepEqual(app.trunks.modes(), { trunks: "off", rooms: "off", messages: "off", routines: "off", teach: "off", conversations: "off" }); // phase2/rooms
   assert.throws(() => app.trunks.create({ name: "Ada" }), /Trunks, your named assistants is switched off/);
   assert.equal(app.registry.names().includes("trunk.message"), false);
@@ -47,7 +48,7 @@ test("three fields make a Trunk; it introduces itself in its own pinned conversa
   on(app);
   const ada = app.trunks.create({ name: "Ada Lovelace", title: "Researcher", description: "Reads papers and sums them up" });
   assert.equal(ada.handle, "ada-lovelace");
-  assert.deepEqual(ada.reach, { channels: [], commands: false }, "every reach starts off");
+  assert.deepEqual(ada.reach, { channels: [], commands: false, sandboxed: false }, "every reach starts off");
   assert.deepEqual(ada.avatar, { kind: "face", seed: "Ada Lovelace", locked: false });
   await app.trunks.introduced();
   const said = app.store.messages(ada.chatSessionId).filter((m) => m.role === "assistant");
@@ -75,6 +76,7 @@ test("a Trunk's turn carries its instructions, its tools and its memory scope, h
     ? call("memory.put", { text: "Bo's own note", source: "trunk" }) : null)];
   const { app, provider } = await fixture(t, rules);
   on(app);
+  app.trunks.ensureDefault(true); // Bo is an additional Trunk, distinct from the person's default.
   const bo = app.trunks.create({ name: "Bo", title: "Helper" });
   await app.trunks.introduced();
   const owner = app.runtime.context();
@@ -190,6 +192,9 @@ test("keys: copied from the owner by default, a sign-in picked like a key, and a
   assert.match(picked.notes.join(" "), /OpenAI: your accounts are not copied.*does not answer/);
   const { app } = await fixture(t);
   on(app);
+  // Several accounts per connection ships on (the owner's decision, 2026-09-27); the owner switches it off here.
+  saveAccountsSettings(app.store, app.runtime.owner, { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] });
+  markChosen(app.store, app.runtime.owner, "accounts", ["mode"]);
   const ed = app.trunks.create({ name: "Ed" });
   saveAccountsSettings(app.store, app.runtime.owner, { mode: "off" }); // it ships on; the owner switched it off
   const keys = app.trunks.keys(ed.id);
@@ -266,7 +271,7 @@ test("a Trunk as one file: nothing it holds and no reach travels with it", async
   const copy = app.trunks.importFile(JSON.parse(text));
   assert.notEqual(copy.id, ha.id);
   assert.equal(copy.instructions, "Plan first.");
-  assert.deepEqual(copy.reach, { channels: [], commands: false });
+  assert.deepEqual(copy.reach, { channels: [], commands: false, sandboxed: false });
   assert.deepEqual(copy.keys, { copyFromOwner: true, accounts: {} });
   assert.throws(() => app.trunks.importFile({ ...file, trunk: { ...file.trunk, reach: { channels: ["x"], commands: true } } }));
   await app.trunks.introduced();
@@ -275,6 +280,7 @@ test("a Trunk as one file: nothing it holds and no reach travels with it", async
 test("a chat app reaches a Trunk only where its switch allows it", async (t) => {
   const { app } = await fixture(t);
   on(app);
+  app.trunks.ensureDefault(true);
   const io = app.trunks.create({ name: "Io" });
   await app.trunks.introduced();
   assert.match(app.channels.trunkReach("telegram", io.chatSessionId), /Io does not answer on telegram/);

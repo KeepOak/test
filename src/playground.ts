@@ -150,7 +150,7 @@ export function handRun(store: HandStore, owner: string, tool: string, target: s
  */
 export async function tryToolByHand(
   app: Awaited<ReturnType<typeof createBranch>>, input: z.infer<typeof TryToolSchema>,
-  /** parity-b2: the owner's browser address field (src/owner-browse.ts) keeps its window open under its own signal. */
+  /** The owner's browser controls (src/browser-control-api.ts) run a tool under that request's own run and signal. */
   context: ToolContext = app.runtime.context({ signal: AbortSignal.timeout(120000) }),
   // Kept under whoever is at the window: the owner's own runs, or a household person's (their role already allowed it).
   ownRun: (tool: string, target: string, sessionId?: string) => HandRun | null = (tool, target, sessionId) => handRun(app.store, app.store.profiles.scope(), tool, target, sessionId),

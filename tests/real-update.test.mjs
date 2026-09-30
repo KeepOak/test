@@ -26,12 +26,14 @@ const read = (path) => readFile(path, "utf8").catch(() => null);
 
 /** A Linux install and its new version, as the hand-over sees them. */
 const me = typeof process.getuid === "function" ? process.getuid() : 0;
-async function install(root, { newStarts = true, portable = false, helper = null } = {}) {
+async function install(root, { newStarts = true, portable = false, helper = null, started = null, says = false } = {}) {
   const target = join(root, "Apps", "Branch-Agent-linux-x64");
   const staged = join(root, "scratch", "unpacked", "Branch-Agent-linux-x64");
   for (const [dir, marker, starts] of [[target, "old", true], [staged, "new", newStarts]]) {
     await mkdir(join(dir, "resources"), { recursive: true });
-    await writeFile(join(dir, "branch-agent"), starts ? "#!/bin/sh\nsleep 5\n" : "#!/bin/sh\nexit 3\n");
+    // selfdev: a new version that `says` it is up writes the started file, as the app does once its engine is up.
+    await writeFile(join(dir, "branch-agent"), !starts ? "#!/bin/sh\nexit 3\n"
+      : marker === "new" && says && started ? `#!/bin/sh\ndate > '${started}'\nsleep 5\n` : "#!/bin/sh\nsleep 5\n");
     await chmod(join(dir, "branch-agent"), 0o755);
     await writeFile(join(dir, "resources", "version.txt"), marker);
     await writeFile(join(dir, "chrome-sandbox"), helper ?? "helper");
@@ -46,7 +48,8 @@ async function install(root, { newStarts = true, portable = false, helper = null
   await writeFile(archive, "archive");
   const log = join(root, "scratch", "apply-update.log");
   const script = join(root, "scratch", "apply-update.sh");
-  await writeFile(script, posixHandOverScript({ platform: "linux", target, staged, log, executableName: "branch-agent", daemonPid: null, settleSeconds: 1, archive, sandboxOwner: me }));
+  await writeFile(script, posixHandOverScript({ platform: "linux", target, staged, log, executableName: "branch-agent", daemonPid: null, settleSeconds: 1, archive, sandboxOwner: me,
+    ...(started ? { started, startedSeconds: 3 } : {}) }));
   return { target, staged, script, log, archive };
 }
 
@@ -64,6 +67,20 @@ test("a portable copy keeps its data through an update, and through putting the 
   assert.equal(await read(join(back.target, "resources", "version.txt")), "old", "the old version is back");
   assert.equal(await read(join(back.target, "Branch Data", "state", "branch.sqlite")), "the person's work", "with the work");
   assert.ok(existsSync(join(back.target, "portable.txt")));
+});
+
+test("selfdev, Beta: a new version that runs but never says its engine is up is put back by itself; one that says so stays", { skip: !posix && "POSIX shell" }, async (t) => {
+  const root = await scratch(t);
+  const started = join(root, "started-2.0.0");
+  const silent = await install(join(root, "silent"), { started });
+  await writeFile(started, "left from the check before the swap");
+  assert.equal(await runScript(silent.script, ["999999"]), 1);
+  assert.equal(await read(join(silent.target, "resources", "version.txt")), "old", "the previous version is back, with no switch asked");
+  assert.equal(await read(join(`${silent.target}.failed`, "resources", "version.txt")), "new", "the new one is kept aside");
+  assert.match(await read(silent.log), /new version did not say it was up/);
+  const up = await install(join(root, "up"), { started, says: true });
+  assert.equal(await runScript(up.script, ["999999"]), 0);
+  assert.equal(await read(join(up.target, "resources", "version.txt")), "new");
 });
 
 test("putting the old version back moves it whole, keeps the new one aside and tidies the download once it works", { skip: !posix && "POSIX shell" }, async (t) => {

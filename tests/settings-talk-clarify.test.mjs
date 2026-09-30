@@ -16,6 +16,8 @@ import { settingsCatalogue } from "../dist/settings-kit/catalogue.js";
 async function fixture(t, provider) {
   const root = await mkdtemp(join(tmpdir(), "branch-settings-clarify-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), ...(provider ? { provider } : {}) });
+  // The learning core ships when needed (the ship-on rule); these tests move it from off, so the owner switches it off first.
+  app.learningCore.configure({ mode: "off" });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const context = () => app.runtime.context({ source: "owner" });
   const find = (input) => app.registry.execute("settings.find", input, context());
@@ -185,7 +187,8 @@ test("every setting that would loosen when asked plainly still asks when the wor
       `attends, turn on ${words}`, `pas maintenant, turn on ${words}`])
       assertAsksOnly(await find({ request }), request);
   }
-  assert.ok(loosening >= 42, `found ${loosening} loosening settings: a cue word must not stop plain "turn on X"`);
+  // 41 since the ship-on rule: goal mode ships on, so "turn on" it is no change (every other loosening one still is).
+  assert.ok(loosening >= 41, `found ${loosening} loosening settings: a cue word must not stop plain "turn on X"`);
   assert.deepEqual(await values(), before);
 });
 

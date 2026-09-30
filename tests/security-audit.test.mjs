@@ -339,11 +339,13 @@ async function fixture(t, extra = {}) {
   return { app, root, dataDir, workspace };
 }
 
-test("a fresh install has both switches off and no tool for the assistant", async (t) => {
+test("a fresh install has both checks when needed and runs neither by itself; switched off, no tool for the assistant", async (t) => {
   const { app } = await fixture(t);
-  assert.deepEqual(securityCheckSettings(app.store, "local"), { audit: "off", malware: "off" });
-  assert.equal(app.registry.names().includes(securityToolName), false);
+  // The ship-on rule (src/security-audit/settings.ts): both ship "when needed".
+  assert.deepEqual(securityCheckSettings(app.store, "local"), { audit: "when-needed", malware: "when-needed" });
   assert.deepEqual(app.security.state().report, null, "nothing ran by itself");
+  app.security.configure({ audit: "off", malware: "off" });
+  assert.equal(app.registry.names().includes(securityToolName), false);
   app.security.configure({ audit: "when-needed" });
   assert.equal(app.registry.names().includes(securityToolName), true, "when needed, the assistant can ask");
   assert.deepEqual(app.security.settings(), { audit: "when-needed", malware: "off" }, "the other switch kept its value");
@@ -433,6 +435,7 @@ test("the launch settings file is read for what is in it", async (t) => {
   }));
   const { SecurityService } = await import("../dist/security-audit/index.js");
   const service = new SecurityService(app, { dataDir: join(root, "data"), integrationsPath: () => file, home: root });
+  app.security.configure({ malware: "off" }); // the lookup ships when needed; with it off the check says so
   const ids = (await service.check()).findings.map((finding) => finding.id);
   for (const id of ["add-ons.unpinned-package", "add-ons.malware-check-off", "secrets.key-in-server-arguments", "channels.open-to-anyone"])
     assert.ok(ids.includes(id), `${id} missing from ${ids.join(", ")}`);

@@ -284,7 +284,10 @@ test("the voice service is told which computer it is on, and never starts the re
   const voice = new VoiceService(app.store, app.runtime.models, new NetworkPolicy({}), fetch,
     { platform: "darwin", runProgram, locate: (name) => (name === "say" ? "/pretend/say" : null) });
   assert.equal(voice.platform, "darwin");
-  // Switched off out of the box: nothing is listed, nothing is asked, and reading aloud says why.
+  // The computer's own voice ships when needed (the ship-on rule); the owner switches it off here.
+  assert.equal(voiceSettings(app.store, "local").systemVoice, "when-needed");
+  saveVoiceSettings(app.store, "local", { systemVoice: "off" });
+  // Switched off: nothing is listed, nothing is asked, and reading aloud says why.
   const quiet = await systemVoices(voice, "local");
   assert.deepEqual([quiet.system, quiet.mode], [[], "off"]);
   await assert.rejects(voice.speak("local", { text: "hello", voice: "", speed: 1 }), /own voice is switched off.*or choose your provider's voice/);
@@ -347,7 +350,7 @@ test("every switch is off / when needed / on, ships off, and older yes-no saves 
   const { app } = await fixture(t);
   const owner = app.runtime.owner;
   assert.deepEqual([readDesktopSettings(app.store, owner).mode, readKeychainSettings(app.store, owner).mode, voiceSettings(app.store, owner).systemVoice],
-    ["off", "off", "off"], "all three ship off");
+    ["off", "off", "when-needed"], "the screen and the Keychain ship off; the computer's own voice ships when needed (the ship-on rule)");
   app.store.save("settings", owner, "desktop-control", { enabled: true, maxActionsPerRun: 40 });
   assert.equal(readDesktopSettings(app.store, owner).mode, "when-needed");
   assert.equal(saveDesktopSettings(app.store, owner, { mode: "on" }).enabled, true);
@@ -605,10 +608,13 @@ async function olderInstall(t, save) {
 test("a new install starts with every switch off, and the one-time step is written down", async (t) => {
   const { app } = await fixture(t);
   const owner = app.runtime.owner;
-  assert.equal(voiceSettings(app.store, owner).systemVoice, "off");
+  // The computer's own voice ships when needed (the ship-on rule); the screen and the Keychain ship off.
+  assert.equal(voiceSettings(app.store, owner).systemVoice, "when-needed");
   assert.equal(readDesktopSettings(app.store, owner).mode, "off");
   assert.equal(readKeychainSettings(app.store, owner).mode, "off");
   assert.equal(app.store.get("settings", owner, migrationKey).data.existingInstall, false);
+  // Switched off, asking for the computer's voices starts nothing.
+  saveVoiceSettings(app.store, owner, { systemVoice: "off" });
   assert.equal((await new VoiceService(app.store, app.runtime.models, new NetworkPolicy({}), fetch,
     { platform: "win32", runProgram: async () => { throw new Error("nothing may start"); } }).systemVoiceNames(owner)).length, 0);
 });

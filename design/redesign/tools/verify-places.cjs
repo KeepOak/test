@@ -106,10 +106,10 @@ async function seedLive() {
     { id: "fact-city-b", data: { text: "Home city: Lyon", validFrom: "2025-01-01T00:00:00.000Z" } },
   ].map((l) => JSON.stringify(l)).join("\n");
   await post("memory/import", { jsonl });
-  await post("memory/settings", { review: false, requireApproval: true, consolidateDaily: false });
+  await post("memory/settings", { review: false, requireApproval: true });
   const keep = await post("action", { tool: "memory.put", args: { text: "Prefers tea in the afternoon", source: "verify" } });
   const drop = await post("action", { tool: "memory.put", args: { text: "Likes loud music", source: "verify" } });
-  await post("memory/settings", { review: false, requireApproval: false, consolidateDaily: false });
+  await post("memory/settings", { review: false, requireApproval: false });
   await post("delight/settings", { achievements: { on: true } });
   await post("action", { tool: "procedures.propose", args: { name: "Find last month's invoices", preconditions: [], steps: [{ tool: "memory.search", args: { query: "invoice" }, expected: {} }, { tool: "files.list", args: { path: "." }, expected: {} }] } });
   await post("prompts/settings", { mode: "on" });
@@ -356,7 +356,7 @@ async function team(page) {
 }
 
 async function run() {
-  const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+  const { chromium } = require("playwright");
   const note = JSON.parse(fs.readFileSync(NOTE, "utf8"));
   const live = await seedLive();
   const browser = await chromium.launch();

@@ -299,7 +299,7 @@ test("8 /account's one-time notice and the window name the connection alike, nev
   const { viewAll } = await import("../dist/accounts/manage.js");
   // A second list, for the Codex program, saved while Codex is not set up on this computer right now.
   const codex = { pool: "cli-codex", kind: "cli", autoSwitch: false, accounts: [
-    { id: "primary", label: "Mine", pinned: false, disabled: false, monthlyCapUsd: null, shared: false, keptSeparate: false, createdAt: "2026-09-19T10:00:00.000Z" }] };
+    { id: "primary", label: "Mine", pinned: false, disabled: false, monthlyCapUsd: null, shared: false, createdAt: "2026-09-19T10:00:00.000Z" }] };
   const settings = service.settings();
   saveAccountsSettings(app.store, app.runtime.owner, { ...settings, pools: [...settings.pools, codex], poolingNotices: ["cli-claude-code", "cli-codex"] });
   const pools = (await viewAll(service)).pools;

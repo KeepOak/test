@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { mcpHttp, mcpStdio } from './mcp-sdk.js';
 import { boundedFetch } from './bounded-fetch.js';
 import { runAsNode } from '../child-env.js';
 
@@ -35,9 +34,10 @@ function credential(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
-export function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv, policy?: { guard(base: typeof fetch): typeof fetch }) {
+export async function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv, policy?: { guard(base: typeof fetch): typeof fetch }) {
   if (config.transport === 'stdio') {
     const selected = Object.fromEntries(config.envKeys.map(key => [key, credential(env, key)]));
+    const { getDefaultEnvironment, StdioClientTransport } = await mcpStdio();
     const transport = new StdioClientTransport({ command: config.command, args: config.args,
       // A server started with this app's own program (the example notes server) must run as Node.
       env: { ...getDefaultEnvironment(), ...selected, ...runAsNode(config.command) }, stderr: 'pipe', maxBufferSize: 1048576,
@@ -52,6 +52,7 @@ export function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv
   if (url.username || url.password || url.search || url.hash)
     throw new Error('MCP URL must not contain credentials, query, or fragment');
   const secret = config.bearerEnv ? credential(env, config.bearerEnv) : undefined;
+  const StreamableHTTPClientTransport = await mcpHttp();
   const transport = new StreamableHTTPClientTransport(url, {
     fetch: policy ? policy.guard(boundedFetch) : boundedFetch,
     requestInit: { redirect: 'error', ...(secret ? { headers: { authorization: `Bearer ${secret}` } } : {}) },

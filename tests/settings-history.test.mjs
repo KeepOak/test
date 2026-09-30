@@ -112,7 +112,7 @@ test("why is this on: a default, a talked change, an import, and a change nothin
   assert.equal(talked.record.source, "talk");
   assert.equal(talked.record.runId, run.id);
   assert.equal(talked.record.sessionId, run.sessionId);
-  assert.deepEqual([talked.record.before, talked.record.after], ["off", "on"]);
+  assert.deepEqual([talked.record.before, talked.record.after], ["when-needed", "on"]);
   assert.match(talked.words, /a conversation/);
 
   const file = exportSettings(app.store, owner, "test");
@@ -158,7 +158,7 @@ test("undoing a change is refused when a later recorded change touched the same 
   assert.equal((await values())["fly-core.mode"], "on", "a refused undo changed something");
   // Newest first still works, one step at a time, because each undone change cancels with its undo.
   for (const id of [r3, r2, r1]) await ask("POST", "/api/settings-kit/undo", { record: id, confirmLoosening: true });
-  assert.equal((await values())["fly-core.mode"], "off");
+  assert.equal((await values())["fly-core.mode"], "when-needed");
 });
 
 test("undoing a change to a setting Branch no longer has says so, not that it changed again", async (t) => {
@@ -287,7 +287,7 @@ test("in a conversation, settings.why says who set a setting and settings.undo p
   assert.equal(answer.record.runId, talked.runId);
   await assert.rejects(run("settings.why", { setting: "secrets.value" }), /not a setting/);
   await assert.rejects(run("settings.undo", { record: answer.record.id }, as({ source: "channel" })), /chat app/);
-  assert.deepEqual(await run("settings.undo", { record: answer.record.id }, { ...as(), dryRun: true }), { wouldPutBack: ["What Branch learns from experience, Switch: on → off"] });
+  assert.deepEqual(await run("settings.undo", { record: answer.record.id }, { ...as(), dryRun: true }), { wouldPutBack: ["What Branch learns from experience, Switch: on → when-needed"] });
   assert.equal((await values())["fly-core.mode"], "on", "a dry run wrote something");
 
   setLockdown(app.store, owner, { on: true });
@@ -296,8 +296,8 @@ test("in a conversation, settings.why says who set a setting and settings.undo p
 
   const undoing = as();
   const done = await run("settings.undo", { record: answer.record.id }, undoing);
-  assert.deepEqual(done.putBack, ["What Branch learns from experience, Switch: on → off"]);
-  assert.equal((await values())["fly-core.mode"], "off");
+  assert.deepEqual(done.putBack, ["What Branch learns from experience, Switch: on → when-needed"]);
+  assert.equal((await values())["fly-core.mode"], "when-needed");
   const undo = (await ask("GET", "/api/settings-kit/history")).records[0];
   assert.deepEqual([undo.id, undo.writer, undo.source, undo.undoes, undo.runId], [done.record, "conversation", "undo", answer.record.id, undoing.runId]);
 
@@ -337,13 +337,13 @@ test("every card that saves a Settings setting around the kit writes a change re
     ["/api/local-models/switch", { mode: "on" }, "local-models.mode"],
     ["/api/local-models/install/switch", { mode: "on" }, "local-runner-install.mode"],
     ["/api/adapt/switch", { mode: "on" }, "adapt.mode"],
-    ["/api/prompts/settings", { mode: "on" }, "prompt-library.mode"],
-    ["/api/commands/settings", { mode: "on" }, "command-catalog.mode"],
+    ["/api/prompts/settings", { mode: "off" }, "prompt-library.mode"],
+    ["/api/commands/settings", { mode: "off" }, "command-catalog.mode"], // this computer's window ships them on, so off is the move (batch A)
     ["/api/reflection/settings", { reflection: "on" }, "reflection.reflection"],
     ["/api/skill-installs/settings", { mode: "on" }, "skill-installs.mode"],
     ["/api/workspace-editor/settings", { mode: "on" }, "workspace-editor.mode"],
     ["/api/security-check/settings", { audit: "on" }, "security-check.audit"],
-    ["/api/goal-undo/settings", { goal: "on" }, "goal-undo.goal"],
+    ["/api/goal-undo/settings", { goal: "off" }, "goal-undo.goal"],
     ["/api/voice/engines", { mode: "on" }, "speech-engines.mode"],
     ["/api/rules/add", { tool: "file.read", match: "*", decision: "allow" }, "policy.preset"],
     ["/api/comfort", { card: "keys", values: { vim: true } }, "comfort-keys.vim"],
@@ -377,6 +377,8 @@ test("a switch /adapt turns on after the owner's yes is recorded as that yes", a
     assert.equal(answer.status, 200, `${path}: ${await answer.clone().text()}`);
     return answer.json();
   };
+  // Models on this computer ship "when needed" (the owner's rule), so the owner has switched them off here first.
+  app.store.save("settings", app.runtime.owner, "local-models", { mode: "off", enabled: false });
   await post("/api/adapt/switch", { mode: "on" });
   await post("/api/adapt/stopped", { what: "Write out the call", nextStep: "write out the call",
     said: "Models on this computer are switched off. Turn them on in Settings." });
@@ -420,7 +422,7 @@ test("an undo asked for while Lockdown is on is refused on the route and writes 
   assert.equal(settingsHistory(app.store, owner).length, history, "a refused undo left a record");
   setLockdown(app.store, owner, { on: false });
   await ask("POST", "/api/settings-kit/undo", { record, confirmLoosening: true });
-  assert.equal((await values())["fly-core.mode"], "off", "once Lockdown is off the same undo goes through");
+  assert.equal((await values())["fly-core.mode"], "when-needed", "once Lockdown is off the same undo goes through");
 });
 
 test("a card or kit write of one field keeps the others, and its record compares what was in force", async (t) => {

@@ -162,8 +162,8 @@ test("an id that points outside the store is not a file of this conversation, wh
 
   for (const wrong of ["../secret", "0123456789abcdeZ", "0123456789abcde", "", "0123456789abcdef0"]) {
     assert.throws(() => store.bytesOf("a-conversation", wrong), /not attached to this conversation/, `bytesOf(${wrong})`);
-    assert.throws(() => store.copyInto("a-conversation", "elsewhere", [{ ...kept, id: wrong }]),
-      /not attached to this conversation/, `copyInto(${wrong})`);
+    await assert.rejects(store.prepareCopies("a-conversation", "elsewhere", [{ ...kept, id: wrong }]),
+      /not attached to this conversation/, `prepareCopies(${wrong})`);
   }
   // The real one still works, so this is a gate and not a wall.
   assert.ok(store.bytesOf("a-conversation", kept.id).equals(png));

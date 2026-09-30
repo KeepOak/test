@@ -15,6 +15,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { pickGsel } from "./gsel.mjs";
 
 const scripted = { name: "scripted", async complete() { return { content: "Here it is.", toolCalls: [] }; } };
 const PROTOTYPE = new URL("../design/redesign/prototype.html", import.meta.url);
@@ -92,7 +93,7 @@ async function notInPrototype(words) {
 async function chooseFrench(f) {
   await f.page.keyboard.press("Escape");
   await settingsPage(f.page, "appearance");
-  await f.page.locator("#lang").selectOption("fr");
+  await pickGsel(f.page.locator("#lang"), "fr");
   await f.page.waitForFunction(() => document.documentElement.lang === "fr");
   assert.equal((await f.call("/api/look")).language, "fr", "the engine keeps the choice");
   await f.page.locator(".set-back").click();
@@ -222,10 +223,11 @@ test("Add a Trunk: switched off it says so and offers the switch; the tab strip 
   assert.equal((await f.page.locator(".toast").innerText()).trim(), refusal, "the engine's refusal is said in its own words");
   assert.equal((await f.call("/api/trunks")).trunks.length, 0, "nothing was made");
   await f.call("/api/trunks/switch", { part: "trunks", mode: "on" });
+  const beforeIds = new Set((await f.call("/api/trunks")).trunks.map(trunk => trunk.id));
   await f.page.locator('#side [data-act="newmenu"]').click();
   await f.page.locator(".pop").getByRole("menuitem", { name: "New Trunk" }).click();
   let made;
-  for (let i = 0; i < 100 && !made; i++) { made = (await f.call("/api/trunks")).trunks[0]; if (!made) await f.page.waitForTimeout(50); }
+  for (let i = 0; i < 100 && !made; i++) { made = (await f.call("/api/trunks")).trunks.find(trunk => !beforeIds.has(trunk.id)); if (!made) await f.page.waitForTimeout(50); }
   assert.equal(made?.name, "Trunk 1", "the prototype's Trunk N");
   await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`)?.getAttribute("aria-current") === "true", made.chatSessionId);
   // Pairing: the prototype's "Add a computer or phone" keeps one dialog and one tab strip.
@@ -294,7 +296,13 @@ test("a household person sees this computer and the people, and nothing of the o
   assert.ok(await f.page.locator('#side [data-act="machines"]').isVisible(), "this computer");
   assert.equal(await row(f.page, scout).count(), 0, "none of the owner's conversations");
   await place(f.page, "customize", "trunks");
-  assert.equal(await f.page.locator('#main .prow [data-act="edit"]').count(), 0, "none of the owner's Trunks");
+  const mine = (await f.call("/api/trunks")).trunks;
+  assert.equal(mine.length, 1, "the person's own persistent default");
+  const ownerTrunks = f.app.trunks.records.list();
+  assert.ok(mine.every(one => ownerTrunks.every(ownerTrunk => ownerTrunk.id !== one.id)), "the personal roster contains no owner Trunk, including the owner's default");
+  for (const ownerTrunk of ownerTrunks)
+    assert.equal(await f.page.locator(`#main .prow [data-act="edit"][data-id="${ownerTrunk.id}"]`).count(), 0, "none of the owner's Trunks");
+  assert.equal(await f.page.locator(`#main .prow [data-act="edit"][data-id="${mine[0].id}"]`).count(), 1, "their own default is visible");
   await place(f.page, "team", "people");
   const people = f.page.locator('#main .t9-item[data-act="p-sel"]');
   await people.nth(1).waitFor();
@@ -344,14 +352,18 @@ test("replies show the assistant's own face, and a Trunk set to 3D is a 3D stand
   await f.page.locator("#prompt").press("Enter");
   const plain = f.page.locator("#main .b").filter({ hasText: "Here it is." }).first();
   await plain.waitFor({ timeout: 15000 });
-  // The owner (2026-09-26): Branch's face is its own animated character, its loop or, with motion reduced, its still.
-  assert.equal(await plain.locator('.gut .av.fig17r :is(video[src^="/art/anim-"], img[src^="/art/branch-"])').count(), 1, "Branch's own face");
+  // The owner (2026-09-27): Branch's mascot is its logo only. Here a conversation with no Trunk of its own belongs to the
+  // owner's default Trunk, so that Trunk's character signs the reply; never the mascot or a Branch character loop.
+  const home = f.app.trunks.ownerDefault();
+  assert.equal(await plain.locator(`.gut .av[data-rk="t:${home.id}"]`).count(), 1, "the default assistant's own character signs its reply");
+  assert.equal(await plain.locator('.gut :is(.av.brand, .mark-face, img[src^="/art/branch-"])').count(), 0, "never the mascot");
+  assert.equal(await plain.locator('.gut video[src^="/art/anim-"]').count(), 0, "no Branch character loop in a reply");
   // A Trunk's reply carries the Trunk's own face, not Branch's.
   await row(f.page, trunk).click();
   await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`)?.getAttribute("aria-current") === "true", trunk.chatSessionId);
   const reply = f.page.locator("#main .b").filter({ has: f.page.locator(".gut .av") }).first();
   await reply.waitFor({ timeout: 15000 });
-  assert.equal(await reply.locator('.gut :is(.av.brand, .av.fig17r)').count(), 0, "not Branch's face");
+  assert.equal(await reply.locator('.gut :is(.av.none18c, .av.fig17r, .mark-face)').count(), 0, "not the neutral face, nor Branch's");
   // Redesign: the prototype has no 3D faces (its av() draws the pebble, an emoji or a photo), so a Trunk set to 3D is
   // drawn as its ordinary face.
   assert.equal(await f.page.locator("#app .is3d").count(), 0);
@@ -469,7 +481,7 @@ test("integration review: Pin to top moves a Trunk above Recent, the engine keep
   await row(f.page, delta).click({ button: "right" });
   await f.page.locator(".pop").getByRole("menuitem", { name: "Pin to top" }).click();
   await f.page.waitForFunction(() => [...document.querySelectorAll("#side .list > .lh")].some((node) => node.firstChild.textContent.trim() === "Pinned"));
-  assert.deepEqual((await order()).slice(0, 3), ["Pinned", delta.chatSessionId, "Recent"], "it moved to the top");
+  assert.deepEqual((await order()).slice(0, 2), ["Pinned", delta.chatSessionId], "it moved above every unpinned Trunk thread");
   assert.equal((await f.call("/api/trunks")).trunks.find((trunk) => trunk.id === delta.id).pinned, true, "the engine keeps it there");
   await row(f.page, delta).click({ button: "right" });
   await f.page.locator(".pop").getByRole("menuitem", { name: "Unpin" }).click();

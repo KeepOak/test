@@ -19,6 +19,7 @@ import { LockerTokenVault, remainingFrom } from "../dist/accounts/chatgpt-accoun
 import { executeCommand } from "../dist/commands/execute.js";
 import { saveCommandSettings } from "../dist/commands/settings.js";
 import { lookup } from "../dist/commands/catalog.js";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import { offLimitsToShortLivedKeys } from "../dist/server.js";
 
 const POOL = "openai-test";
@@ -29,10 +30,16 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.statusRun = async () => ({ code: 0, missing: false });
+  await fakeClaudeAccounts(t, service);
   let clock = Date.parse("2026-09-17T10:00:00Z");
   service.deps.now = () => clock;
   Object.defineProperty(service, "now", { value: () => clock });
   delete service.deps.policy; // the stand-in fetch below is the whole network
+  // Several accounts per connection ships on (the owner's decision, 2026-09-27); these tests start from off and turn it
+  // on where they need it, so the owner switches it off first.
+  const { setMode } = await import("../dist/accounts/manage.js");
+  setMode(service, { mode: "off" });
   return { app, service, owner: app.runtime.owner, root, tick: (ms) => { clock += ms; } };
 }
 
@@ -78,7 +85,7 @@ test("A1 with the switch off nothing changes: the connection is registered exact
   assert.equal(fx.app.runtime.models.presets.get(POOL).provider, provider, "off again: the connection itself");
 });
 
-test("A2 a 429 with Retry-After rests the key for that long and the next key answers in the same request", async (t) => {
+test("A2 a 429 whose Retry-After is longer than a few seconds rests the key for that long and the next key answers in the same request", async (t) => {
   const fx = await fixture(t);
   const { calls } = apiConnection(fx, rateLimited);
   await turnOn(fx.service);
@@ -86,7 +93,7 @@ test("A2 a 429 with Retry-After rests the key for that long and the next key ans
   const run = await fx.app.runtime.run({ prompt: "hello" });
   assert.equal(run.status, "completed", run.output);
   assert.equal(run.output, "from the second key");
-  assert.deepEqual(calls, { first: 1, second: 1 });
+  assert.deepEqual(calls, { first: 1, second: 1 }, "a 30-second Retry-After is not waited out on the same key: the next one answers");
   assert.equal(events(fx.app, run, "model.account_resting")[0].data.reason, "rate");
   assert.equal(events(fx.app, run, "model.account")[0].data.account, second);
   assert.equal(events(fx.app, run, "model.fallback").length, 0, "no other connection was needed");
@@ -224,7 +231,7 @@ function programFixture(fx, outcomes) {
 const limited = { code: 1, stdout: "", stderr: "Claude usage limit reached. Your limit resets at 3pm." };
 const answer = (text) => ({ code: 0, stdout: JSON.stringify({ result: text }), stderr: "" });
 
-test("A7 a sign-in account at its plan limit stops; it moves on only when allowed, and only to an account kept separate", async (t) => {
+test("A7 a sign-in account at its plan limit moves the work to the owner's next account; with moving on off it stops", async (t) => {
   const fx = await fixture(t);
   const { app, service } = fx;
   const seen = programFixture(fx, { primary: limited, default: answer("from the work account") });
@@ -233,27 +240,21 @@ test("A7 a sign-in account at its plan limit stops; it moves on only when allowe
   const view = await addAccount(service, { pool: "cli-claude-code", label: "Work" });
   const work = view.accounts.find((account) => account.label === "Work");
   assert.ok(work.home.startsWith(join(fx.root, "data", "accounts")), "each account has its own folder under Branch's data");
+  // Account pools (owner decision 2026-09-27): on by itself with two accounts, the owner's own plans included.
+  const moved = await app.runtime.run({ prompt: "hello" });
+  assert.equal(moved.output, "from the work account");
+  assert.deepEqual(seen.map((s) => s.who), ["primary", work.id]);
+  assert.deepEqual(seen.at(-1), { who: work.id, variable: "CLAUDE_CONFIG_DIR" });
+  const again = await app.runtime.run({ prompt: "hello" });
+  assert.equal(again.output, "from the work account");
+  assert.equal(seen.filter((s) => s.who === "primary").length, 1, "a limited account is not asked again until it resets");
+  await assert.rejects(updateAccount(service, { pool: "cli-claude-code", account: work.id, shared: true }), /cannot be shared/);
+  updatePool(service, { pool: "cli-claude-code", autoSwitch: false });
+  service.statesOf("cli-claude-code").clear();
   const stopped = await app.runtime.run({ prompt: "hello" });
   assert.equal(stopped.status, "failed");
   assert.match(stopped.output, /"Your usual sign-in" has reached its plan limit/);
-  // mac7/account-pooling: an unmarked account is one of the owner's own plans, so it is not offered.
-  assert.match(stopped.output, /does not move your work between your own plans/);
-  assert.ok(!stopped.output.includes("Work"), "another of the owner's own plans is never suggested");
-  assert.deepEqual(seen.map((s) => s.who), ["primary"], "the other account was not used");
-  const again = await app.runtime.run({ prompt: "hello" });
-  assert.equal(again.status, "failed");
-  assert.equal(seen.length, 1, "a limited account is not asked again until it resets");
-  await assert.rejects(updateAccount(service, { pool: "cli-claude-code", account: work.id, shared: true }), /cannot be shared/);
-  updatePool(service, { pool: "cli-claude-code", autoSwitch: true });
-  const still = await app.runtime.run({ prompt: "hello" });
-  assert.equal(still.status, "failed", "sharing on never moves between the owner's own plans");
-  assert.equal(seen.length, 1);
-  await updateAccount(service, { pool: "cli-claude-code", account: work.id, keptSeparate: true });
-  const moved = await app.runtime.run({ prompt: "hello" });
-  assert.equal(moved.output, "from the work account");
-  assert.deepEqual(seen.at(-1), { who: work.id, variable: "CLAUDE_CONFIG_DIR" });
-  const { sessionChoice } = await import("../dist/accounts/settings.js");
-  assert.equal(sessionChoice(app.store, fx.owner, moved.sessionId)["cli-claude-code"], work.id, "the conversation keeps the account it started with");
+  assert.match(stopped.output, /Moving to the next account is off/);
 });
 
 test("A8 ChatGPT tokens live in the locker per account and never reach the list; the plan window is read", async (t) => {
@@ -299,7 +300,7 @@ test("A9 the routes: reads for any key, changes for the owner only, and no key i
   assert.ok(!JSON.stringify(listed.body).includes(SECOND_KEY), "the key never comes back");
   const pool = listed.body.pools.find((entry) => entry.pool === POOL);
   assert.deepEqual(pool.accounts.map((account) => account.label), ["First key", "Second"]);
-  assert.match(pool.terms.text, /Retry-After|waits as long as the service asks/);
+  assert.match(pool.terms.text, /rate limited twice in a row|next key/);
   assert.equal((await call("GET", "/api/accounts/session?sessionId=", run)).body.pool, POOL);
   const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
   app.store.profiles.switch({ profileId: person.id, pin: "1234" });
@@ -346,14 +347,15 @@ test("A10 people sharing the computer use only keys the owner shared, and never 
   assert.equal(calls.first, 0, "the owner's unshared first key is never used for them");
 });
 
-test("A11 a damaged or missing list reads as it ships (on), and a saved off stays off", async (t) => {
+test("A11 a damaged list reads as switched off; a missing one reads as it ships; the owner's off stays off", async (t) => {
   const fx = await fixture(t);
-  assert.equal(fx.service.settings().mode, "when-needed", "nothing saved: several accounts per connection ships on");
   fx.app.store.save("settings", fx.owner, "accounts", { mode: "sideways" });
-  assert.equal(fx.service.settings().mode, "when-needed");
-  assert.equal(fx.service.on(), true);
-  saveAccountsSettings(fx.app.store, fx.owner, AccountsSettingsSchema.parse({ mode: "off" }));
-  assert.equal(fx.service.on(), false);
+  assert.equal(fx.service.settings().mode, "off");
+  fx.app.store.delete("settings", fx.owner, "accounts");
+  assert.equal(fx.service.settings().mode, "when-needed", "nothing saved: on, as it ships (the owner's decision, 2026-09-27)");
+  await turnOn(fx.service, "off");
+  saveAccountsSettings(fx.app.store, fx.owner, { ...fx.service.settings(), pools: [] });
+  assert.equal(fx.service.on(), false, "the owner's own off survives a later save of the list");
 });
 
 /* ---------- integrator (adversarial) checks ---------- */

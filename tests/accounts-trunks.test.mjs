@@ -5,15 +5,16 @@
  * the owner's default when it does not copy them. Every service is a stand-in: keys are answered by a fake fetch, programs by a fake runner.
  */
 import test from "node:test";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
-import { addAccount, setMode, updateAccount, updatePool } from "../dist/accounts/manage.js";
+import { addAccount, setMode, updatePool } from "../dist/accounts/manage.js";
 import { asPerson } from "../dist/people/context.js";
 
 const POOL = "openai-test";
@@ -24,6 +25,8 @@ async function fixture(t) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
+  service.deps.statusRun = async () => ({ code: 0, missing: false, stdout: '{"loggedIn":true,"authMethod":"claude.ai"}' });
+  await fakeClaudeAccounts(t, service);
   delete service.deps.policy; // the stand-in fetch below is the whole network
   for (const part of ["trunks", "rooms", "routines"]) app.trunks.setMode(part, { mode: "on" });
   return { app, service, owner: app.runtime.owner };
@@ -129,9 +132,13 @@ test("trunks-use-subscriptions: work somebody else is behind never reaches the o
   const remote = await app.runtime.run({ prompt: "A message from the Trunk ann-laptop:\n\nhello", sessionId: ed.chatSessionId, source: "a2a" });
   assert.equal(remote.status, "failed");
   assert.match(remote.output, /A Trunk answers through your sign-in accounts only for your own work/);
+  assert.equal(seen.length, before, "the program was never started for the other computer's Trunk");
   // A household person's message in a room the Trunk sits in.
   const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
   const flo = app.trunks.create({ name: "Flo" });
+  // Flo introducing itself to the owner is the owner's own work (Trunk conversations ship on), so it is counted first.
+  await app.trunks.introduced();
+  const beforeRoom = seen.length;
   const room = app.trunks.rooms.create({ name: "Pair", members: [ed.id, flo.id], people: [sam.id] });
   app.trunks.rooms.send(room.id, { text: "@ed say something" }, { id: sam.id, name: "Sam" });
   await app.trunks.rooms.settled(room.id);
@@ -139,7 +146,7 @@ test("trunks-use-subscriptions: work somebody else is behind never reaches the o
   assert.ok(seat, "Ed was asked in the room");
   assert.equal(seat.status, "failed", seat.output);
   assert.match(seat.output, /only for your own work/);
-  assert.equal(seen.length, before, "the program was never started for somebody else");
+  assert.equal(seen.length, beforeRoom, "the program was never started for somebody else");
   // The window's list says the same for whoever asks: the owner may, a household person may not.
   const use = () => app.runtime.models.summary(owner).presets.find((p) => p.id === "cli-claude-code").trunkUse;
   assert.deepEqual(use(), { ok: true });
@@ -163,7 +170,7 @@ test("trunks-use-subscriptions: work somebody else is behind skips a sign-in fir
   assert.ok(calls.first >= 1);
 });
 
-test("trunks-use-subscriptions: a Trunk's plan limit stops it, and sharing moves it only to an account kept separate", async (t) => {
+test("trunks-use-subscriptions: a Trunk's plan limit stops it with moving on off, and moves it to the owner's next account with it on", async (t) => {
   const fx = await fixture(t);
   const { app, service, owner } = fx;
   const seen = [];
@@ -179,7 +186,6 @@ test("trunks-use-subscriptions: a Trunk's plan limit stops it, and sharing moves
   setMode(service, { mode: "on" });
   const second = (await addAccount(service, { pool: "cli-claude-code", label: "Second" })).accounts.at(-1).id;
   const work = (await addAccount(service, { pool: "cli-claude-code", label: "Work" })).accounts.at(-1).id;
-  await updateAccount(service, { pool: "cli-claude-code", account: work, keptSeparate: true });
   // long-work: sharing ships on, so it is switched off here first, before the Trunk's first words pick an account.
   updatePool(service, { pool: "cli-claude-code", autoSwitch: false });
   const ed = app.trunks.create({ name: "Ed" });
@@ -189,12 +195,12 @@ test("trunks-use-subscriptions: a Trunk's plan limit stops it, and sharing moves
   assert.equal(stopped.status, "failed");
   assert.match(stopped.output, /has reached its plan limit/);
   assert.deepEqual(accountOf(app, stopped.id), []);
-  // Sharing on: the work moves to the account kept separate, never to the owner's second plan.
+  // Moving on (account pools, 2026-09-27): the next account in the list's order takes it, the owner's own plans included.
   updatePool(service, { pool: "cli-claude-code", autoSwitch: true });
   const moved = await app.runtime.run({ prompt: "hello again", sessionId: ed.chatSessionId });
   assert.equal(moved.status, "completed", moved.output);
-  assert.deepEqual(accountOf(app, moved.id), [work]);
-  assert.ok(!seen.some((who) => who.includes(second)), "the owner's second plan was never used");
+  assert.deepEqual(accountOf(app, moved.id), [second]);
+  assert.ok(!seen.some((who) => who.includes(work)), "fill first: the next in order, not the last");
 });
 
 test("trunks-use-subscriptions: a Trunk that does not copy the owner's accounts uses only the sign-in picked for it", async (t) => {
@@ -210,7 +216,7 @@ test("trunks-use-subscriptions: a Trunk that does not copy the owner's accounts 
   const before = seen.length;
   const refused = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
   assert.equal(refused.status, "failed");
-  assert.match(refused.output, /does not copy your keys and has no key picked for cli-claude-code/);
+  assert.match(refused.output, /does not copy your accounts and has no account picked for Claude Code \(installed on this computer\)\. Pick one for it in Edit Trunk › Accounts/);
   assert.equal(seen.length, before, "the owner's default sign-in was not used");
   app.trunks.edit(ed.id, { keys: { copyFromOwner: false, accounts: { "cli-claude-code": second } } });
   const picked = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
@@ -229,7 +235,7 @@ test("a Trunk that does not copy the owner's keys and has no pick is refused rat
   const before = calls.first;
   const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
   assert.equal(chat.status, "failed");
-  assert.match(chat.output, /does not copy your keys and has no key picked for openai-test/);
+  assert.match(chat.output, /does not copy your accounts and has no account picked for OpenAI test/);
   assert.equal(calls.first, before, "the owner's default key was not used");
 });
 
@@ -256,10 +262,10 @@ test("trunks-use-subscriptions: Claude Code answering a Trunk gets no tools of i
   args.length = 0;
   const own = await app.runtime.run({ prompt: "hello" });
   assert.equal(own.output, "from the sign-in");
-  assert.ok(!args[0].includes("--tools"), "the owner's own call keeps its arguments");
+  assert.equal(args[0][args[0].indexOf("--tools") + 1], "", "the owner's transport delegates every tool to Branch");
   const chat = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
   assert.equal(chat.output, "from the sign-in", chat.output);
-  assert.deepEqual(args[1].slice(-2), ["--tools", ""], "Claude Code runs with no tools of its own for a Trunk");
+  assert.equal(args[1][args[1].indexOf("--tools") + 1], "", "Claude Code runs with no tools of its own for a Trunk");
 });
 
 test("trunks-use-subscriptions: a Trunk messaged by a Trunk a household person drove is not the owner's work", async (t) => {
@@ -313,4 +319,88 @@ test("trunks-use-subscriptions: a schedule a Trunk made during a household perso
   assert.equal(sams.status, "failed", sams.output);
   assert.match(sams.output, /only for your own work/);
   assert.equal(seen.length, before, "the sign-in never answered the schedule made during Sam's work");
+});
+
+test("owner priority 2026-09-27: one Trunk answers with the owner's second Codex account, another with a second Claude account, the owner keeps the first", async (t) => {
+  const fx = await fixture(t);
+  const { app, service, owner } = fx;
+  const seen = [];
+  const spawn = async (row, _prompt, _signal, _limits, home) => {
+    seen.push({ program: row.id, home: home?.path ?? "primary" });
+    return row.id === "codex"
+      ? { code: 0, stdout: JSON.stringify({ type: "item.completed", item: { id: "1", type: "agent_message", text: "from codex" } }), stderr: "" }
+      : { code: 0, stdout: JSON.stringify({ result: "from claude" }), stderr: "" };
+  };
+  registerCliAgent(app.runtime.models, { id: "codex" }, {}, spawn);
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  service.deps.spawnAgent = spawn;
+  // Codex counts as installed only when it is on PATH (checkProgram), which a build machine's is not: the Claude
+  // transport reads every sign-in before it answers, and a Codex that is not there reads as signed out.
+  const bin = await mkdtemp(join(tmpdir(), "codex-fixture-bin-")), before = process.env.PATH;
+  for (const name of ["codex", "codex.cmd"]) await writeFile(join(bin, name), "", { mode: 0o755 });
+  process.env.PATH = bin + (process.platform === "win32" ? ";" : ":") + before;
+  t.after(async () => { process.env.PATH = before; await discardTemp(bin); });
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  setMode(service, { mode: "on" });
+  const codexSecond = (await addAccount(service, { pool: "cli-codex", label: "Work Codex" })).accounts.at(-1).id;
+  const claudeSecond = (await addAccount(service, { pool: "cli-claude-code", label: "Work Claude" })).accounts.at(-1).id;
+  const coder = app.trunks.create({ name: "Coder" });
+  const writer = app.trunks.create({ name: "Writer" });
+  app.trunks.edit(coder.id, { model: "cli-codex", keys: { copyFromOwner: true, accounts: { "cli-codex": codexSecond } } });
+  app.trunks.edit(writer.id, { model: "cli-claude-code", keys: { copyFromOwner: true, accounts: { "cli-claude-code": claudeSecond } } });
+  await app.trunks.introduced();
+
+  const coded = await app.runtime.run({ prompt: "hello", sessionId: coder.chatSessionId });
+  assert.equal(coded.status, "completed", coded.output);
+  assert.equal(coded.output, "from codex");
+  assert.deepEqual(seen.at(-1), { program: "codex", home: service.homeOf("cli-codex", codexSecond) }, "Codex, in the picked account's own folder");
+  assert.deepEqual(accountOf(app, coded.id), [codexSecond]);
+
+  const written = await app.runtime.run({ prompt: "hello", sessionId: writer.chatSessionId });
+  assert.equal(written.status, "completed", written.output);
+  assert.equal(written.output, "from claude");
+  assert.deepEqual(seen.at(-1), { program: "claude-code", home: service.homeOf("cli-claude-code", claudeSecond) }, "Claude Code, in the picked account's own folder");
+  assert.deepEqual(accountOf(app, written.id), [claudeSecond]);
+
+  const own = await app.runtime.run({ prompt: "hello" });
+  assert.equal(own.output, "from claude");
+  assert.deepEqual(seen.at(-1), { program: "claude-code", home: "primary" }, "the owner's own work keeps the owner's first account");
+});
+
+test("models-ui: a Trunk at its account's limit goes on to its own next account, never the owner's when it does not copy them, and the owner is told", async (t) => {
+  const fx = await fixture(t);
+  const { app, service, owner } = fx;
+  const seen = [];
+  let limited = new Set();
+  const spawn = async (_row, _prompt, _signal, _limits, home) => {
+    const who = home ? home.path.split(/[\\/]/).pop() : "primary";
+    seen.push(who);
+    if (limited.has(who)) return { code: 1, stdout: "", stderr: "Claude usage limit reached. Your limit resets at 3pm." };
+    return { code: 0, stdout: JSON.stringify({ result: `from ${who}` }), stderr: "" };
+  };
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  service.deps.spawnAgent = spawn;
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  setMode(service, { mode: "on" });
+  const work = (await addAccount(service, { pool: "cli-claude-code", label: "Work" })).accounts.at(-1).id;
+  const spare = (await addAccount(service, { pool: "cli-claude-code", label: "Spare" })).accounts.at(-1).id;
+  const ed = app.trunks.create({ name: "Ed" });
+  app.trunks.edit(ed.id, { keys: { copyFromOwner: false, accounts: { "cli-claude-code": work }, next: { "cli-claude-code": [spare] } } });
+  await app.trunks.introduced();
+
+  limited = new Set([work]);
+  const moved = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
+  assert.equal(moved.status, "completed", moved.output);
+  assert.equal(moved.output, `from ${spare}`, "its own next account took it");
+  assert.ok(!seen.includes("primary"), "the owner's own account is never spent for a Trunk that does not copy it");
+  const told = service.trunkMoves[0];
+  assert.deepEqual({ from: told.from, to: told.to, session: told.sessionId }, { from: "Work", to: "Spare", session: ed.chatSessionId });
+  assert.match(told.why, /plan limit|limit/i);
+
+  // Both of its own at their limit: it stops and says so, still without touching the owner's.
+  limited = new Set([work, spare]);
+  const before = seen.length;
+  const stopped = await app.runtime.run({ prompt: "hello again", sessionId: ed.chatSessionId });
+  assert.equal(stopped.status, "failed");
+  assert.ok(!seen.slice(before).includes("primary"));
 });

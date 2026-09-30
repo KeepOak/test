@@ -15,7 +15,7 @@ import { WakeWordSettingsSchema, wakeWordKey } from "../voice-wake.js";
 import { DictationSettingsSchema, dictationKey } from "../voice-dictation.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "../event-loop-watch.js";
 import { audit } from "../audit.js";
-import { safetyMode, saveSafetySwitch, type SafetyPart } from "../safety-extras/settings.js";
+import { safetyMode, safetyShipsOn, saveSafetySwitch, type SafetyPart } from "../safety-extras/settings.js";
 import { boardMode, boardShipsOn, writeBoardSwitch, type BoardPart } from "../flows-boards/settings.js"; // r17-h integration review
 import { readComfort, saveComfort, type ComfortCard } from "../comfort/settings.js";
 import { readChatPermissionSettings, saveChatPermissionSettings } from "../channels/chat-permissions.js"; // mac7/chat-allowlist
@@ -36,13 +36,16 @@ import { localModelsMode, saveLocalModelsMode } from "../local-jobs.js";
 import { saveUsageReportSettings, usageReportSettings } from "../usage-report.js";
 import { RecordingSettingsSchema } from "../run-recording.js";
 import { PromptLibrarySettingsSchema } from "../prompt-library.js";
-import { commandSettings, commandsShipAs, saveCommandSettings } from "../commands/settings.js";
+import { saveWindowCommands, windowCommands, windowShipsAs } from "../commands/settings.js";
 import { flyCoreSettings } from "../fly-core/settings.js";
 import { GoalUndoSettingsSchema } from "../goal-mode.js";
 import { reflectionSettings } from "../reflection/settings.js";
 import { contextFileSettings, saveContextFileSettings } from "../context-files.js";
 import { saveVoiceSettings, voiceSettings, VoiceSettingsSchema } from "../voice.js";
-import { codingModelRounds, readKnobs, saveKnobs } from "../knobs/settings.js";
+import { codingModelRounds, noLimit, readKnobs, saveKnobs } from "../knobs/settings.js";
+import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
+import { sdkKitMode, sdkKitShipsAs } from "../sdk-kit-switch.js"; // defaults audit
+import { gitlabMode, gitlabShipsAs } from "../gitlab-switch.js"; // RES-719
 
 /**
  * R17-S-A (understandable settings): the settings that can be put back to how they started, set
@@ -92,10 +95,21 @@ type Hooks = Pick<SettingSpec, "read" | "write">;
  * The schema is handed in as a function, so it is only reached once every module has loaded.
  */
 function parsedBy(key: string, schema: () => Parser): Hooks {
-  const read = (store: Store, owner: string): Record<string, unknown> => inForce(schema(), store.get("settings", owner, key)?.data);
+  // The ship-on rule (src/ship-on.ts): a flipped field the owner never set reads as it ships, as the module reads it;
+  // a record the app cannot read is its starting values, as before.
+  const read = (store: Store, owner: string): Record<string, unknown> => {
+    const saved = store.get("settings", owner, key)?.data;
+    const values = inForce(schema(), saved);
+    return schema().safeParse(saved ?? {}).success ? shippedUnlessChosen(store, owner, key, values, shipOnInitials[key] ?? {}) : values;
+  };
   return {
     read,
-    write: (store, owner, patch) => { store.save("settings", owner, key, schema().parse({ ...read(store, owner), ...patch }) as Record<string, unknown>); },
+    write: (store, owner, patch) => {
+      const before = store.get("settings", owner, key)?.data;
+      store.save("settings", owner, key, schema().parse({ ...read(store, owner), ...patch }) as Record<string, unknown>);
+      // Over a record the app could not read, every shipped field was shown off and is now written off: it stays off.
+      markChosen(store, owner, key, savedFields(before, schema().safeParse(before ?? {}).success, patch, shipOnInitials[key] ?? {}));
+    },
   };
 }
 
@@ -158,7 +172,7 @@ const voiceHooks: Pick<SettingSpec, "read" | "write" | "refuses" | "putBack" | "
     saveVoiceSettings(store, owner, patch);
   },
   // The whole record is replaced, not merged: the voice card's own save cannot read what is there either.
-  putBack: (store, owner) => { store.save("settings", owner, "voice", VoiceSettingsSchema.parse({})); },
+  putBack: (store, owner) => { store.save("settings", owner, "voice", VoiceSettingsSchema.parse({})); forgetChosen(store, owner, "voice"); },
   shipped: () => VoiceSettingsSchema.parse({}),
 };
 
@@ -175,8 +189,9 @@ export type FieldKind =
   /**
    * `fractions`: the app itself keeps values between whole steps (the dictation wait does, at 1.5 seconds).
    * `unset`: a word the field also takes, meaning the owner has set no figure of their own, so Branch uses its own.
+   * `unlimited`: a word the field also takes, meaning no limit at all (a task limit's "no limit").
    */
-  | { type: "number"; min: number; max: number; fractions?: true; unset?: string };
+  | { type: "number"; min: number; max: number; fractions?: true; unset?: string; unlimited?: string };
 
 export interface FieldSpec {
   /** The field inside the saved record; a dot reaches one level in ("files.soul"). */
@@ -242,7 +257,8 @@ const one = (key: string, name: string, t: string, home: string, guard: Guard, e
 /** r17-h integration review: a flows-and-boards switch, written through the running copy so its tools follow. */
 const board = (part: BoardPart, name: string, home: string, guard: Guard): SettingSpec =>
   shipsAs(one(`flowboards-${part}`, name, `settings-kit.name.flowboards-${part}`, home, guard,
-    { write: (store, owner, patch) => { writeBoardSwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => boardMode(store, owner, part)) }), boardShipsOn[part] ?? "off");
+    { write: (store, owner, patch) => { writeBoardSwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => boardMode(store, owner, part)) }),
+  boardShipsOn[part] ?? "off");
 const saveWall = (store: Store, owner: string, patch: Record<string, unknown>): void => {
   const next = saveWallSettings(store, owner, { ...wallSettings(store, owner), ...patch });
   audit(store, owner, { action: "policy.changed", actor: owner, subject: `The wall around programs: ${next.mode}, reach ${next.network}`,
@@ -251,8 +267,9 @@ const saveWall = (store: Store, owner: string, patch: Record<string, unknown>): 
 
 /** mac7/r17-g: a safety extra's switch, saved through the app so its tools come and go with it. */
 const safetyPart = (part: SafetyPart, name: string, guard: Guard): SettingSpec =>
-  one(`safety-${part}`, name, `settings-kit.name.safety-${part}`, "settings:permissions", guard,
-    { write: (store, owner, patch) => { saveSafetySwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => safetyMode(store, owner, part)) });
+  shipsAs(one(`safety-${part}`, name, `settings-kit.name.safety-${part}`, "settings:permissions", guard,
+    { write: (store, owner, patch) => { saveSafetySwitch(store, owner, part, patch); }, ...modeFrom((store, owner) => safetyMode(store, owner, part)) }),
+  safetyShipsOn[part] ?? "off");
 
 const safety: SettingSpec[] = [
   {
@@ -313,6 +330,7 @@ const reach: SettingSpec[] = [
     key: "voice", name: "Voice", t: "settings-kit.name.voice", home: "settings:voice",
     fields: [sw("systemVoice", "Your computer's own voice", "settings-kit.field.system-voice", "reach"),
       yesNo("autoReadAloud", "Read replies aloud automatically", "settings-kit.field.read-aloud", "plain"),
+      { field: "readAloudWhen", label: "Which replies are read aloud", t: "settings-kit.field.read-aloud-when", guard: "plain", initial: "always", kind: { type: "choice", options: ["always", "spoken"] } },
       yesNo("keepAudioOnThisComputer", "Keep audio on this computer", "settings-kit.field.keep-audio", "guard"),
       yesNo("replyWithVoiceOnChannels", "Answer a voice note with a voice note", "settings-kit.field.voice-reply", "reach")],
     ...voiceHooks,
@@ -325,8 +343,8 @@ const reach: SettingSpec[] = [
     read: (store, owner) => ({ ...executionMetricsSettings(store, owner) }), write: (store, owner, patch) => { saveExecutionMetricsSettings(store, owner, patch); } }),
   // mac7/usage-bar: reading an allowance out of the headers on Branch's own answers is always on and
   // costs nothing. This switch is only for the one service Branch may ask outright — OpenRouter's
-  // documented key endpoint — because that is a request made on a timer without being told to, so
-  // turning it up reaches further. It ships off. No plan account is ever asked, switch or no switch.
+  // documented key endpoint. It ships "when needed" (the owner's rule): asking the owner's own
+  // connection what is left sends nothing of theirs anywhere. No plan account is ever asked, switch or no switch.
   one("usage-limits", "Asking a service what is left", "settings-kit.name.usage-limits", "settings:data", "reach",
     { keepsEnabled: true, write: (store, owner, patch) => { saveUsageLimitsSettings(store, owner, patch); }, read: (store, owner) => ({ ...usageLimitsSettings(store, owner) }) }),
   shipsAs(one("asks-analytics", "Counting how Branch is used", "settings-kit.name.analytics", "settings:data", "reach", askHooks("analytics")), askShips("analytics")),
@@ -395,7 +413,10 @@ const reach: SettingSpec[] = [
       { field: "silenceSeconds", label: "How long a quiet room ends it", t: "settings-kit.field.dictation-silence",
         guard: "reach", initial: 4, kind: { type: "number", min: 1, max: 30, fractions: true } }],
   },
-  one("sdk-kit", "Tools for building on Branch", "settings-kit.name.sdk-kit", "settings:advanced", "reach"),
+  // Defaults audit (2026-09-28): ships "when needed" (src/sdk-kit-switch.ts sdkKitShipsAs), read as the module reads it.
+  shipsAs(one("sdk-kit", "Tools for building on Branch", "settings-kit.name.sdk-kit", "settings:advanced", "reach", modeFrom(sdkKitMode)), sdkKitShipsAs),
+  // RES-719: GitLab ships "when needed" (src/gitlab-switch.ts); it does nothing until a token is saved, and each change on GitLab asks first.
+  shipsAs(one("gitlab-connection", "GitLab", "settings-kit.name.gitlab-connection", "settings:advanced", "reach", modeFrom(gitlabMode)), gitlabShipsAs),
   // r17-i integration review: every reach and platform switch reaches further when raised (src/reach/settings.ts).
   // src/server.ts saves them through Reach, so the tools and the relay follow the switch at once.
   // Q65: shown as saved, not as Lockdown reads it (`reachMode`), so a change is weighed against the owner's own switch.
@@ -411,6 +432,13 @@ const reach: SettingSpec[] = [
 
 /** The round limit's word for "no figure of the owner's own": Branch then gives each task its own. */
 const roundsUnset = "auto";
+/** A task limit's word for no limit at all; the knob keeps it as `noLimit`. */
+const unlimitedWord = "no limit";
+/** What a task limit's "auto" is, said once for all three (src/knobs/apply.ts taskBudget). */
+const autoSplit = "no limit while a sign-in (a ChatGPT or Claude plan) or a model on this computer answers, since those cost nothing more per token";
+/** A task limit as the settings tools show it, and back: a figure, "auto" or "no limit". */
+const limitShown = (saved: number | typeof noLimit | null): number | string => saved === noLimit ? unlimitedWord : saved ?? roundsUnset;
+const limitSaved = (value: unknown): number | typeof noLimit | null => value === roundsUnset ? null : value === unlimitedWord ? noLimit : value as number;
 
 const comfort: SettingSpec[] = [
   one("local-models", "Models on this computer", "settings-kit.name.local-models", "settings:models:local", "plain", { keepsEnabled: true,
@@ -440,11 +468,13 @@ const comfort: SettingSpec[] = [
     parsedBy("run-recording", () => RecordingSettingsSchema)),
   one("prompt-library", "Saved prompts", "settings-kit.name.prompts", "automations:procedures", "plain",
     parsedBy("prompt-library", () => PromptLibrarySettingsSchema)),
-  // Read as src/commands/settings.ts reads it, so a switch never saved shows how it ships.
+  // Settings › General's switch is this computer's own window's (src/commands/settings.ts windowCommands): read as the
+  // window reads it, so a switch never saved shows on, and saved (or put back) for the window alone, never the phone's
+  // or the chat apps'.
   shipsAs(one("command-catalog", "The shared commands", "settings-kit.name.commands", "settings:general", "plain", {
-    read: (store, owner) => ({ ...commandSettings(store, owner) }),
-    write: (store, owner, patch) => { saveCommandSettings(store, owner, { ...commandSettings(store, owner), ...patch }); } }),
-  commandsShipAs),
+    read: (store, owner) => ({ ...windowCommands(store, owner) }),
+    write: (store, owner, patch) => { saveWindowCommands(store, owner, { ...windowCommands(store, owner), ...patch }); } }),
+  windowShipsAs),
   shipsAs(one("asks-project-board", "Project boards", "settings-kit.name.project-board", "settings:general", "plain", askHooks("project-board")), askShips("project-board")),
   // Saved through the learning core's own switch (src/settings-kit/writers.ts), which also adds or takes away its tool.
   one("fly-core", "What Branch learns from experience", "settings-kit.name.fly-core", "library:memory", "plain",
@@ -491,16 +521,41 @@ const comfort: SettingSpec[] = [
   },
   // The round limit is the owner's own knob (src/knobs/settings.ts, limits.maxModelRounds), so Branch's settings tools
   // can find it and change it on the owner's yes. The knob records stay on the never-touched list: this reads and
-  // writes that one field and nothing else. More rounds spend only on the connected model, so it is plain.
+  // writes that one field and nothing else. More rounds spend only on the connected model, so it is plain; so is
+  // "no limit", which the loop guard and the spending caps still watch.
   {
     key: "round-limit", name: "Round limit", t: "settings-kit.name.round-limit", home: "settings:advanced",
     fields: [{ field: "maxModelRounds", label: "Model rounds (steps) per task", t: "settings-kit.field.round-limit", guard: "plain",
-      initial: roundsUnset, kind: { type: "number", min: 2, max: 60, unset: roundsUnset },
-      note: `${roundsUnset}: 12 rounds, or ${codingModelRounds} when the task works on the project's files. A task working to a plan gets more on top.` }],
+      initial: roundsUnset, kind: { type: "number", min: 2, max: 500, unset: roundsUnset, unlimited: unlimitedWord },
+      note: `${roundsUnset}: ${autoSplit}; on an API key 12 rounds, or ${codingModelRounds} when the task works on the project's files. "${unlimitedWord}" never stops a task for its rounds.` }],
     // The knob's empty value (null) is "auto", so putting it back, or undoing a change, leaves no figure at all.
-    read: (store, owner) => ({ maxModelRounds: readKnobs(store, owner, "limits").maxModelRounds ?? roundsUnset }),
+    read: (store, owner) => ({ maxModelRounds: limitShown(readKnobs(store, owner, "limits").maxModelRounds) }),
     write: (store, owner, patch) => {
-      saveKnobs(store, owner, "limits", { maxModelRounds: patch.maxModelRounds === roundsUnset ? null : patch.maxModelRounds });
+      saveKnobs(store, owner, "limits", { maxModelRounds: limitSaved(patch.maxModelRounds) });
+    },
+  },
+  // The step limit of one task (limits.maxSteps): model rounds and tool steps together.
+  {
+    key: "step-limit", name: "Step limit", t: "settings-kit.name.step-limit", home: "settings:advanced",
+    fields: [{ field: "maxSteps", label: "Most steps in one task", t: "knobs.field.maxSteps", guard: "plain",
+      initial: roundsUnset, kind: { type: "number", min: 1, max: 500, unset: roundsUnset, unlimited: unlimitedWord },
+      note: `${roundsUnset}: ${autoSplit}; 60 on an API key. "${unlimitedWord}" never stops a task for its steps.` }],
+    read: (store, owner) => ({ maxSteps: limitShown(readKnobs(store, owner, "limits").maxSteps) }),
+    write: (store, owner, patch) => {
+      saveKnobs(store, owner, "limits", { maxSteps: limitSaved(patch.maxSteps) });
+    },
+  },
+  // selfdev: the token allowance of one task, the owner's own knob (limits.maxTaskTokens). More tokens spend only on
+  // the connected model, so it is plain, like the round limit; "auto" splits by the kind of connection.
+  {
+    key: "task-tokens", name: "Tokens per task", t: "settings-kit.name.task-tokens", home: "settings:advanced",
+    // The kit's own name for the field: a name with "token" in it reads as a secret (secretShaped) and is never changed here.
+    fields: [{ field: "taskAllowance", label: "Tokens one task may use", t: "settings-kit.field.task-tokens", guard: "plain",
+      initial: roundsUnset, kind: { type: "number", min: 20_000, max: 20_000_000, unset: roundsUnset, unlimited: unlimitedWord },
+      note: `${roundsUnset}: ${autoSplit}; 200,000 on an API key. "${unlimitedWord}" never stops a task for its tokens. Otherwise 20,000 to 20,000,000, counting every request the task sends to the model.` }],
+    read: (store, owner) => ({ taskAllowance: limitShown(readKnobs(store, owner, "limits").maxTaskTokens) }),
+    write: (store, owner, patch) => {
+      saveKnobs(store, owner, "limits", { maxTaskTokens: limitSaved(patch.taskAllowance) });
     },
   },
 ];
@@ -518,11 +573,14 @@ const comfortCards: SettingSpec[] = [
   { key: "comfort-keys", name: "Shortcuts", t: "comfort.keys.title", home: "settings:general", ...viaComfort("keys"),
     fields: [yesNo("vim", "Vim keys in the message box", "comfort.field.vim", "plain")] },
   { key: "comfort-display", name: "Status line and times", t: "comfort.display.title", home: "settings:appearance", ...viaComfort("display"),
-    fields: [yesNo("timestamps", "A time on every message", "comfort.field.timestamps", "plain")] },
+    fields: [yesNo("timestamps", "A time on every message", "comfort.field.timestamps", "plain"),
+      yesNo("hideTimes", "No time on messages, even on hover", "comfort.field.hideTimes", "plain")] },
   { key: "comfort-notify", name: "Notifications and sound", t: "comfort.notify.title", home: "settings:notifications", ...viaComfort("notify"),
     fields: [
       { field: "method", label: "Where you are told", t: "comfort.field.method", guard: "plain", initial: "system", kind: { type: "choice", options: ["system", "window"] } },
       { field: "sound", label: "Sound", t: "comfort.field.sound", guard: "plain", initial: "off", kind: { type: "choice", options: ["off", "chime", "knock"] } },
+      yesNo("needsYes", "A Trunk needs a yes", "comfort.field.needsYes", "plain", true),
+      yesNo("taskDone", "A long task finishes", "comfort.field.taskDone", "plain", true),
     ] },
   { key: "comfort-files", name: "Ignore files", t: "comfort.files.title", home: "settings:general", ...viaComfort("files"),
     // Turning .gitignore off lets searches see more of the workspace (never a secret file).
@@ -532,7 +590,25 @@ const comfortCards: SettingSpec[] = [
       guard: "plain", initial: 10, kind: { type: "number", min: 1, max: 300 } }] },
 ];
 
-export const settingsCatalogue: readonly SettingSpec[] = [...safety, ...reach, ...comfort, ...comfortCards];
+/**
+ * The owner's rule (ships on, 2026-09-26, src/ship-on.ts): what each flipped field starts at, so putting a setting back,
+ * undoing to its starting value and weighing a change all measure from how Branch really ships. Each value is the one
+ * its own module ships (named there); a test holds the two together.
+ */
+export const shipOnInitials: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  "prompt-library": { mode: "on" }, "run-recording": { mode: "when-needed" }, "event-loop-watch": { mode: "when-needed" },
+  "usage-report": { mode: "when-needed" }, "usage-limits": { mode: "when-needed" }, "execution-metrics": { mode: "when-needed" },
+  "local-models": { mode: "when-needed" }, "media-programs": { mode: "when-needed" }, "memory-history": { mode: "when-needed" }, "skill-installs": { mode: "when-needed" },
+  "workspace-editor": { mode: "when-needed" }, "speech-engines": { mode: "when-needed" }, "fly-core": { mode: "when-needed" },
+  "security-check": { audit: "when-needed", malware: "when-needed" }, reflection: { newSkills: "when-needed" },
+  "goal-undo": { goal: "on" }, voice: { systemVoice: "when-needed" }, "comfort-notify": { sound: "chime" },
+  "context-files": Object.fromEntries(["soul", "identity", "user", "agents", "tools", "sop", "memory", "heartbeat"].map((slot) => [`files.${slot}`, "when-needed"])),
+};
+const shipped = (spec: SettingSpec): SettingSpec => {
+  const initials = shipOnInitials[spec.key];
+  return initials ? { ...spec, fields: spec.fields.map((field) => (field.field in initials ? { ...field, initial: initials[field.field]! } : field)) } : spec;
+};
+export const settingsCatalogue: readonly SettingSpec[] = [...safety, ...reach, ...comfort, ...comfortCards].map(shipped);
 
 /**
  * Records that are never touched from here, whatever a file or a preset names. The catalogue above

@@ -9,7 +9,7 @@
        switching back (a link to Team › Signing in) and connected accounts (a link to Settings › Accounts).
    A household person sees only their own name and picture: the language, the time zone, App lock and accounts are the
    owner's, and there is no window route for changing their own PIN, so none of it is drawn for them.
-   Setup's People step asks the owner's name once (nameField, #ob-name). */
+   Overview's "Finish setting up" asks the owner's name in its People row (nameField, #ob-name). */
 import { $, esc, applyCss, renderNow } from "../core/dom.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
@@ -18,9 +18,10 @@ import { openDlg, closeDlg, closePop, toast, COLOURS, hex } from "../core/ui.js"
 import { E, activeId, ownerHere } from "../core/state.js";
 import { face, profilePath, knowPicture } from "../core/faces.js";
 import { pickButton, picked } from "./photo-pick.js";
-import { chooseLanguage, canSpeak, languageOptions } from "../shell/language.js";
+import { chooseLanguage, canSpeak, languageChoices } from "../shell/language.js";
 import { applockRow, initApplock, load as loadLock } from "../settings/applock17.js";
-import { t } from "../../i18n.js";
+import { t, language } from "../../i18n.js";
+import { gsel } from "../core/gsel.js";
 
 const EMOJI = ["🙂", "😎", "🦊", "🐻", "🐼", "🦉", "🐙", "🌻", "🌳", "🍀", "⭐", "🔥", "🎧", "🎨", "🚀", "☕"];
 const P = { who: null, about: null };
@@ -44,14 +45,14 @@ function pictureRows(a) {
 
 function zoneRow(a) {
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const zones = (Intl.supportedValuesOf?.("timeZone") ?? []).map((z) => `<option value="${esc(z)}"${a.timezone === z ? " selected" : ""}>${esc(z.replaceAll("_", " "))}</option>`).join("");
-  const select = `<select class="inp" id="yp-tz" aria-label="${t("window.profile.timezone")}"><option value=""${a.timezone ? "" : " selected"}>${esc(t("window.profile.timezone-computer", { zone: here }))}</option>${zones}</select>`;
+  const zones = (Intl.supportedValuesOf?.("timeZone") ?? []).map((z) => [z, z.replaceAll("_", " ")]);
+  const select = gsel({ id: "yp-tz", label: t("window.profile.timezone"), options: [["", t("window.profile.timezone-computer", { zone: here })], ...zones], value: a.timezone ?? "" });
   return `<div class="ctl"><b>${t("window.profile.timezone")}</b><span class="right">${select}</span><small>${t("window.profile.timezone-hint")}</small></div>`;
 }
 
 /* The owner's own: language, time zone, App lock, the PIN for switching back, and connected accounts. */
 function ownerRows(a) {
-  const lang = `<div class="ctl"><b>${t("appearance.language")}</b><span class="right"><select class="inp" id="yp-lang" aria-label="${t("appearance.language")}">${languageOptions()}</select></span></div>`;
+  const lang = `<div class="ctl"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "yp-lang", label: t("appearance.language"), options: languageChoices(), value: language() })}</span></div>`;
   const back = `<div class="ctl"><b>${t("window.places.team.ask-for-my-pin-when-switching")}</b><span class="right"><button class="btn sm" type="button" data-act="yp-go" data-to="p-open-team" data-v="signin">${t("ov.open")}</button></span><small>${E.profiles?.ownerPin ? t("household.pin.isSet") : t("window.places.team.off-by-default")}</small></div>`;
   const accounts = `<div class="ctl"><b>${t("window.profile.accounts")}</b><span class="right"><button class="btn sm" type="button" data-act="yp-go" data-to="setgo" data-v="accounts">${t("ov.open")}</button></span><small>${t("window.profile.accounts-hint")}</small></div>`;
   return `<div class="sec"><h2>${t("window.profile.region")}</h2>${lang}${zoneRow(a)}</div><div class="sec"><h2>${t("window.profile.security")}</h2>${applockRow()}${back}</div><div class="sec">${accounts}</div>`;
@@ -139,7 +140,7 @@ function changed(e) {
   else if (id === "ob-name") saveSetupName(e.target);
 }
 
-/* ---------- setup asks the owner's name once ---------- */
+/* ---------- Finish setting up asks the owner's name (places/overview.js) ---------- */
 
 export const nameField = () => (ownerHere() ? `<label class="fld ob-name-yp"><span>${t("window.profile.name-hint")}</span><input class="inp" id="ob-name" maxlength="40" autocomplete="off" value="${esc(E.profiles?.owner?.name ?? "")}"></label>` : "");
 

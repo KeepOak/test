@@ -19,7 +19,7 @@
 const http = require("node:http");
 const { generateKeyPairSync } = require("node:crypto");
 let playwright;
-try { playwright = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright"); }
+try { playwright = require("playwright"); }
 catch { playwright = require("playwright"); }
 const { chromium } = playwright;
 
@@ -103,19 +103,12 @@ async function signIn(context) {
 }
 const next = async (page) => { await page.locator('.ob9 [data-act="ob-next"]').click(); await page.waitForTimeout(700); };
 
-/* Welcome to Yours: the hello, the ask mode and the look, each a real change or a real call. */
+/* Welcome to Models: the hello is a real call. (Pass 18c: Where and Make it yours wait on Overview's Finish setting up.) */
 async function earlySteps(page) {
   await page.locator(".ob-agree").click();
-  await next(page); // Where
   await next(page); // Models
   await page.locator('.ob9 [data-act="ob-test"]').click();
   await page.locator("#ob-test-out .sdot.bad").waitFor({ timeout: 15000 }); // no model yet: the engine's refusal
-  await next(page); // Yours
-  await page.locator('.ob9 [data-act="ob15"][data-k="asks"][data-v="plan"]').click();
-  await until(async () => (await api("conversation-mode/settings", undefined, true)).settings.newConversation === "plan");
-  await page.locator('.ob9 [data-act="ob15"][data-k="look"][data-v="dark"]').click();
-  await page.waitForTimeout(500);
-  check("setup: Plan and Dark were saved by the engine", (await api("conversation-mode/settings", undefined, true)).settings.newConversation === "plan");
   await next(page); // Trunks
 }
 
@@ -158,10 +151,10 @@ async function proposeWithModel(page) {
   await shot(page, "sp2-4-proposed");
 }
 
-/* Leaving Trunks makes the picked template (with its face) and the picked proposal (with exactly its fields). */
+/* Finishing on Your first Trunk makes the picked template (with its face) and the picked proposal (with exactly its fields). */
 async function madeTrunks(page) {
   await page.locator('.ob9 [data-act="ob-tpl"][data-i="1"]').click();
-  await next(page);
+  await page.locator('.ob9 [data-act="ob-done"]').click(); // pass 18c: the last step
   const list = await until(async () => { const l = (await api("trunks", undefined, true)).trunks; return l.length >= 2 ? l : null; }, 20000);
   const expense = list?.find((tr) => tr.name === "Expense Manager"), quill = list?.find((tr) => tr.name === PROPOSAL.name);
   check("3 the Trunk made from a template wears its colour and shape", expense?.chosenColour === TEMPLATE_FACES[1][0] && expense?.look?.shape === SHAPE_NAMES[TEMPLATE_FACES[1][1]], `${expense?.chosenColour} ${expense?.look?.shape}`);
@@ -172,7 +165,7 @@ async function madeTrunks(page) {
 
 /* 2: the phone dialog's rows, Copy (and its fallback), and pairing as #351 built it. */
 async function pairDialog(page) {
-  await page.locator('.ob9 [data-act="pair"]').click();
+  await page.evaluate(() => import("/app/core/actions.js").then((m) => m.run("pair"))); // pass 18c: Reach it anywhere is no longer in setup
   await page.locator('.dlg [data-act="pair-on"]').click({ timeout: 10000 });
   const field = page.locator(".dlg #pair-link");
   await field.waitFor({ timeout: 10000 });
@@ -220,11 +213,8 @@ async function pairsAsBefore(page, link, code) {
   check("2 the owner's yes lets it in", !!paired);
 }
 
-/* Through to the end, Done, and the tour put away: setup is over. */
+/* Setup was finished on its last step (madeTrunks): it is gone, and the tour is put away. */
 async function finishSetup(page) {
-  while (await page.locator('.ob9 [data-act="ob-next"]').count()) await next(page);
-  await page.locator('.ob9 [data-act="ob-done"]:not([disabled])').waitFor({ timeout: 60000 });
-  await page.locator('.ob9 [data-act="ob-done"]').click();
   await page.locator(".ob9").waitFor({ state: "detached" });
   await page.waitForTimeout(1500);
   if (await page.locator(".tour-layer").count()) await page.keyboard.press("Escape");

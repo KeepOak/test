@@ -84,7 +84,9 @@ const file = (bytes) => bytes.toString("base64");
 test("A2374: installing and removing while Branch runs writes down every step, and why it stopped", async (t) => {
   const { app, json } = await fixture(t);
   const owner = app.runtime.owner;
-  assert.equal((await json("/api/skill-installs")).body.mode, "off");
+  // The ship-on rule: installing skills ships "when needed" (src/skill-installs.ts); each install still needs approve.
+  assert.equal((await json("/api/skill-installs")).body.mode, "when-needed");
+  assert.equal((await json("/api/skill-installs/settings", { mode: "off" })).status, 200);
   assert.match((await json("/api/skill-installs/install", { kind: "agent-skill", file: file(folder()), approve: true })).body.error, /switched off/);
   assert.equal((await json("/api/skill-installs/settings", { mode: "on" })).status, 200);
 

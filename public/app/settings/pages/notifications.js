@@ -1,28 +1,46 @@
 /* Settings › Notifications, 1:1 with the prototype's page, from the engine: how Branch gets your attention and whether
    it updates itself (the comfort card "notify", POST /api/comfort { card, values }, merged), and quiet hours
-   (GET /api/calendar), named in the status line only while they are on. "A Trunk needs a yes", "A long task finishes"
-   and "Days off" have no engine setting of their own (the engine's working days are a set, not one day), so they are
-   drawn greyed. */
+   (GET /api/calendar), named in the status line only while they are on. "A Trunk needs a yes" and "A long task finishes"
+   are the notify card's needsYes and taskDone (shell/notify.js follows them). "Days off" are whole days of the week
+   with no notifications (quietHours.days, saved with POST /api/calendar, the whole calendar record as read). */
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { esc, render } from "../../core/dom.js";
 import { toast } from "../../core/ui.js";
-import { ctl, ctlSeg } from "../parts.js";
+import { ctl } from "../parts.js";
 import { t, language } from "../../../i18n.js";
+import { readQuiet } from "../../chat/comfort.js";
 import { popupsSetting } from "../../flows/guides.js"; // setup-resume: the Guide menu's "Show tips and pop-ups", here too
 
 let notify = null;
 let quiet = null;
+let calendar = null;
 
 async function loadNotify() {
   try {
-    const [comfort, calendar] = await Promise.all([api("comfort"), api("calendar")]);
+    const [comfort, cal] = await Promise.all([api("comfort"), api("calendar")]);
     notify = comfort.values?.notify ?? null;
-    quiet = calendar.settings?.quietHours ?? null;
+    calendar = cal.settings ?? null;
+    quiet = calendar?.quietHours ?? null;
   } catch (error) { toast(error.message); }
   render();
 }
+
+/* A whole day off from notifications, pressed on or off; "None" clears them. The record is sent whole, as read. */
+async function toggleDay(v) {
+  if (!calendar) return;
+  const days = new Set(quiet?.days ?? []);
+  if (v === "none") days.clear(); else if (days.has(+v)) days.delete(+v); else days.add(+v);
+  try {
+    calendar = await api("calendar", { ...calendar, quietHours: { ...calendar.quietHours, days: [...days].sort() } });
+    quiet = calendar.quietHours;
+    readQuiet();
+  } catch (error) { toast(error.message); }
+  render();
+}
+const dayPressed = (v) => (v === "none" ? !(quiet?.days ?? []).length : (quiet?.days ?? []).includes(+v));
+const daysRow = () => `<div class="ctl"><b>${esc(t("window.settings.notifications.days-off"))}</b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.settings.notifications.days-off"))}">${[["6", t("window.settings.notifications.sat")], ["7", t("window.settings.notifications.sun")], ["none", t("comfort.placeholder.none")]].map(([v, l]) => `<button type="button" aria-pressed="${dayPressed(v)}" data-act="n-day" data-v="${v}">${esc(l)}</button>`).join("")}</span></span><small>${esc(t("window.settings.notifications.no-notifications-at-all-on-these"))}</small></div>`;
 
 async function saveNotify(part) {
   try { notify = (await api("comfort", { card: "notify", values: part })).values?.notify ?? notify; } catch (error) { toast(error.message); }
@@ -38,10 +56,10 @@ const status = () => (quiet?.enabled ? `<div class="status"><span class="sdot ">
 export function draw() {
   const n = notify ?? {};
   return `<h1>${t("settings.page.notifications")}</h1><p class="lede">${t("window.settings.notifications.when-branch-may-interrupt-you")}</p>${status()}
-    <div class="sec"><h2>${t("window.settings.notifications.tell-me-when")}</h2>${ctl("n-need", t("window.settings.notifications.a-trunk-needs-a-yes"), t("window.settings.notifications.shows-on-this-computer-and-your"), false)}${ctl("n-done", t("window.settings.notifications.a-long-task-finishes"), t("window.settings.notifications.only-tasks-over-two-minutes"), false)}
+    <div class="sec"><h2>${t("window.settings.notifications.tell-me-when")}</h2>${ctl("n-need", t("window.settings.notifications.a-trunk-needs-a-yes"), t("window.settings.notifications.shows-in-the-window-and-computer"), n.needsYes !== false)}${ctl("n-done", t("window.settings.notifications.a-long-task-finishes"), t("window.settings.notifications.only-tasks-over-two-minutes"), n.taskDone !== false)}
       ${seg(t("settings.page.notifications"), t("window.settings.notifications.in-the-app-only-or-also"), "n-method", [["window", t("window.settings.notifications.in-the-app")], ["system", t("window.settings.notifications.and-on-the-computer")]], n.method)}
       ${seg(t("window.settings.notifications.play-a-sound"), t("window.settings.notifications.when-branch-needs-your-attention"), "n-sound", [["off", t("autonomy.needs.no")], ["chime", t("window.settings.notifications.a-chime")], ["knock", t("window.settings.notifications.a-knock")]], n.sound)}${popupsSetting()}</div>
-    <div class="sec"><h2>${t("window.settings.notifications.quiet")}</h2>${ctlSeg(t("window.settings.notifications.days-off"), t("window.settings.notifications.no-notifications-at-all-on-these"), [t("window.settings.notifications.sat"), t("window.settings.notifications.sun"), t("comfort.placeholder.none")], "", "f15-days-off")}</div>
+    <div class="sec"><h2>${t("window.settings.notifications.quiet")}</h2>${daysRow()}</div>
     <div class="sec"><h2>${t("comfort.field.autoUpdate")}</h2>${seg(t("action.check-for-updates"), t("window.settings.notifications.stable-releases-keep-things-working-beta"), "n-update", [["off", t("window.settings.advanced.never")], ["check", t("window.settings.notifications.daily")], ["install", t("window.settings.notifications.install-when-idle")]], n.autoUpdate)}
       ${seg(t("window.settings.notifications.release-channel"), "", "n-channel", [["stable", t("updates.channel.stable")], ["beta", t("updates.channel.beta")]], n.releaseChannel)}</div>`;
 }
@@ -52,9 +70,14 @@ export function init() {
   on("n-sound", (el) => saveNotify({ sound: el.dataset.v }));
   on("n-update", (el) => saveNotify({ autoUpdate: el.dataset.v }));
   on("n-channel", (el) => saveNotify({ releaseChannel: el.dataset.v }));
-  markLive(["n-method", "n-sound", "n-update", "n-channel"]);
+  on("n-day", (el) => toggleDay(el.dataset.v));
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "n-need") saveNotify({ needsYes: e.target.checked });
+    else if (e.target.id === "n-done") saveNotify({ taskDone: e.target.checked });
+  });
+  markLive(["n-method", "n-sound", "n-update", "n-channel", "n-day", "sw:n-need", "sw:n-done"]);
 }
 
 export function load() { return loadNotify(); }
 
-export const live = { "n-method": true, "n-sound": true, "n-update": true, "n-channel": true };
+export const live = { "n-method": true, "n-sound": true, "n-update": true, "n-channel": true, "n-day": true, "sw:n-need": true, "sw:n-done": true };

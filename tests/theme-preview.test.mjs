@@ -12,6 +12,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { openSettings } from "./places.mjs"; // the old window's helper, for the skipped bodies only
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 async function appearance(t, width) {
   const root = await mkdtemp(join(tmpdir(), "branch-theme-preview-"));
@@ -65,6 +66,9 @@ test("DG-039 the Light and Dark mirrors show this window's own conversation, at 
     await page.getByLabel("Session token", { exact: true }).fill(server.token);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+    if (width <= 760) await page.locator('[data-act="side"]').filter({ visible: true }).first().click();
+    await openChat(page, run.sessionId);
+    await page.locator("#conversation").getByText("Beans by the fence, squash in the sun.", { exact: true }).waitFor();
     if (width <= 760) await page.locator('[data-act="side"]').filter({ visible: true }).first().click();
     await page.locator('#side [data-act="view"][data-v="settings"]').click();
     await page.locator('[data-act="setpage"][data-v="appearance"]').click();

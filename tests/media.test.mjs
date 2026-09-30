@@ -77,7 +77,7 @@ function toolsFor(app, provider) {
 }
 
 
-test("a picture is one of the six files a message may carry, and its bytes are part of the budget", async (t) => {
+test("a picture and a film count among the files a message may carry, and what is over is left out", async (t) => {
   // The message box refuses a file the server would refuse anyway, so nothing long happens for
   // nothing. A picture went round both of those rules: it never reached the count, and it was
   // pushed with no `bytes` at all, so four 5 MB pictures added up to nothing. The page would take
@@ -96,40 +96,22 @@ test("a picture is one of the six files a message may carry, and its bytes are p
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await signIn(page, server);
-  // Redesign: files go through the message box's + menu, "Attach files", and wait as chips in #attached; the new window
-  // keeps six files and 32 MB for one message (public/app/chat/plus.js) and says so in a toast.
-  const chips = () => page.locator("#attached .file").allInnerTexts();
+  // attach-anything: each file is sent ahead as it is added, and the window takes as many as the engine does for one
+  // message (src/contracts.ts maximumUploadsPerTurn, public/app/chat/attach.js MAX_FILES); a picture and a film count
+  // the same as any file, and what is over is left out with the window's own words.
+  const chips = () => page.locator("#attached .att").allInnerTexts();
   const note = (name) => ({ name, mimeType: "text/plain", buffer: Buffer.from("a note") });
-
-  // Redesign: replaced by the new window (a film is sent as the file itself; the window takes no stills out of it through
-  // /api/media/understand), so the film counts as one file of the six.
-  await attachFiles(page, [{ name: "film.mp4", mimeType: "video/mp4", buffer: Buffer.from("not really a film") }]);
-  await page.locator("#attached .file").first().waitFor({ timeout: 30000 });
-  assert.equal((await chips()).length, 1, "the film is one file");
-
-  // So five more files fit, and a seventh is refused.
-  await attachFiles(page, [note("1.txt"), note("2.txt"), note("3.txt"), note("4.txt"), note("5.txt")]);
-  await page.waitForFunction(() => document.querySelectorAll("#attached .file").length === 6, null, { timeout: 30000 })
+  await attachFiles(page, [{ name: "film.mp4", mimeType: "video/mp4", buffer: Buffer.from("not really a film") },
+    { name: "dot.png", mimeType: "image/png", buffer: Buffer.from("not really a picture") }]);
+  await page.waitForFunction(() => document.querySelectorAll("#attached .att").length === 2, null, { timeout: 30000 });
+  await attachFiles(page, Array.from({ length: 18 }, (_, i) => note(`${i + 1}.txt`)));
+  await page.waitForFunction(() => document.querySelectorAll("#attached .att").length === 20, null, { timeout: 30000 })
     .catch(() => { throw new Error("a file was refused for room that was there"); });
-  await attachFiles(page, [note("6.txt")]);
-  await page.locator(".toast").filter({ hasText: "At most 6 files" }).waitFor({ timeout: 30000 })
-    .catch(() => { throw new Error("the seventh file was not refused"); });
-  assert.equal((await chips()).length, 6);
-
-  // And what they weigh. One 20 MB document leaves 12 MB; three 5 MB pictures do not fit in it.
-  while (await page.locator("#attached .file").count()) await page.locator("#attached .file").first().click();
-  await attachFiles(page, [
-    { name: "big.txt", mimeType: "text/plain", buffer: Buffer.alloc(20 * 1024 * 1024, 97) },
-    { name: "a.png", mimeType: "image/png", buffer: Buffer.alloc(5 * 1024 * 1024, 1) },
-    { name: "b.png", mimeType: "image/png", buffer: Buffer.alloc(5 * 1024 * 1024, 2) },
-    { name: "c.png", mimeType: "image/png", buffer: Buffer.alloc(5 * 1024 * 1024, 3) },
-  ]);
-  // The toast from the seventh file says the same words, so the refusal is read from the chips once they are drawn.
-  await page.waitForFunction(() => document.querySelectorAll("#attached .file").length > 0, null, { timeout: 60000 });
-  await page.locator(".toast").filter({ hasText: "32 MB" }).waitFor({ timeout: 60000 })
-    .catch(() => { throw new Error("35 MB of files was not refused"); });
-  const kept = (await chips()).map((one) => one.match(/(big\.txt|[abc]\.png)/)?.[1]);
-  assert.deepEqual(kept, ["big.txt", "a.png", "b.png"], "the two that fit stayed; the one that did not was left off");
+  await attachFiles(page, [note("21.txt")]);
+  await page.locator(".toast").filter({ hasText: "Up to 20 files can go with one message" }).waitFor({ timeout: 30000 })
+    .catch(() => { throw new Error("the file over the limit was not left out"); });
+  assert.equal((await chips()).length, 20);
+  assert.equal((await chips()).some((one) => one.includes("21.txt")), false);
   assert.deepEqual(errors, []);
 });
 
@@ -405,12 +387,12 @@ test("the picture button on the message box makes a chip the next message will c
 
   // Redesign: the new window's "Attach files" in the + menu; a picture waits as a chip in #attached.
   await attachFiles(page, [{ name: "dot.png", mimeType: "image/png", buffer: onePixelPng }]);
-  await page.locator("#attached .file").first().waitFor();
-  assert.equal(await page.locator("#attached .file").count(), 1);
-  assert.match(await page.locator("#attached .file").innerText(), /dot\.png/);
+  await page.locator("#attached .att").first().waitFor();
+  assert.equal(await page.locator("#attached .att").count(), 1);
+  assert.match(await page.locator("#attached .att").innerText(), /dot\.png/);
   // That it travels once, as a file the message carries, is checked on what POST /api/run is sent in attachments-ui.test.mjs.
-  await page.locator("#attached .file").first().click();
-  assert.equal(await page.locator("#attached .file").count(), 0, "the chip can be taken off again");
+  await page.locator("#attached .att-x").first().click(); // its own x (public/app/chat/attach.js, data-act="unattach")
+  await page.locator("#attached .att").first().waitFor({ state: "detached" });
   assert.deepEqual(errors, []);
 });
 

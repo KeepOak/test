@@ -79,7 +79,7 @@ test("the verify command says it plainly and answers with an exit code", () => {
   assert.ok(cliCommands.some((command) => command.name === "activity"));
 });
 
-test("inside the app: off writes nothing; when needed follows the record and refusals; on adds tools", async (t) => {
+test("inside the app: ships when needed; switched off writes nothing; when needed follows the record and refusals; on adds tools", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-safety-chain-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
     provider: { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } } });
@@ -90,9 +90,12 @@ test("inside the app: off writes nothing; when needed follows the record and ref
     ...(body ? { body: JSON.stringify(body) } : {}) })).json();
   const owner = app.runtime.owner, chain = app.safetyExtras.chain;
   const runId = app.store.createRun(owner, "a task").id;
+  assert.equal((await api("GET", "/api/safety-extras")).modes["activity-chain"], "when-needed", "ships when needed");
+  await api("POST", "/api/safety-extras/switch", { part: "activity-chain", mode: "off" });
+  const offBase = chain.summary(owner).entries;
   app.store.audit.record(owner, { action: "policy.changed", subject: "before", outcome: "saved" });
   app.store.event(runId, "policy.denied", { name: "shell.execute" });
-  assert.equal(chain.summary(owner).entries, 0, "off: nothing is written");
+  assert.equal(chain.summary(owner).entries, offBase, "off: nothing is written");
   await api("POST", "/api/safety-extras/switch", { part: "activity-chain", mode: "when-needed" });
   const before = chain.summary(owner).entries;
   app.store.event(runId, "tool.started", { name: "files.read" });

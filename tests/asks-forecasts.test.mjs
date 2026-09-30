@@ -37,8 +37,11 @@ test("the Brier score and calibration are worked out from answered forecasts onl
   assert.equal(scoreForecasts([]).brier, null, "no answers, no score");
 });
 
-test("off by default: no forecast tools, and the part refuses in a sentence", async (t) => {
+test("ships when needed; switched off, no forecast tools, and the part refuses in a sentence", async (t) => {
   const { app } = await fixture(t);
+  // The ship-on rule (src/asks/settings.ts): forecasts ship "when needed"; the owner switches them off.
+  assert.equal(app.asks.modes().forecasts, "when-needed");
+  app.asks.setMode("forecasts", { mode: "off" });
   assert.equal(app.asks.modes().forecasts, "off");
   for (const name of ["forecast.add", "forecast.resolve", "forecast.score"])
     assert.ok(!app.registry.names().includes(name), `${name} is offered while the switch is off`);

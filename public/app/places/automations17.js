@@ -4,8 +4,9 @@
      are switched off), and each conversation's /loop or /heartbeat (GET /api/autonomy/loops), stopped with POST
      /api/autonomy/loops/stop. A stopped loop only starts again from /loop in its conversation, so Start stays greyed, and
      so does "Add it": a standing order needs a start the engine can read, and nothing turns words into one yet.
-   - Scheduled › Running on its own, more (Advanced): Pause all (POST /api/dashboard/automations, whose paused record is in
-     GET /api/dashboard; the engine refuses both while the dashboard is off, and says so), then what an automation needs
+   - Scheduled › Running on its own, more (Advanced): Pause all (POST /api/dashboard/automations, whose paused record is
+     GET /api/dashboard/automations; neither waits on the browser dashboard's switch, and a refusal is said in the
+     engine's words), then what an automation needs
      before it runs alone (GET /api/autonomy/readiness) and the ledger of what it decided (GET /api/autonomy/ledger), the
      days off schedules skip (GET /api/calendar), watches (GET /api/monitors), leads (GET /api/asks/leads) and forecasts
      (GET /api/asks/forecasts). "Export as CSV" saves the leads the engine listed as a CSV file (in a browser; the desktop
@@ -27,7 +28,7 @@ import { pill17, btn17 } from "./parts17.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
 
-const A = { orders: [], loops: [], paused: null, pauseKnown: false };
+const A = { orders: [], loops: [], paused: null, pauseKnown: false, pauseError: "" };
 
 /* ---------- standing orders and loops ---------- */
 const gap = (ms) => { const m = Math.round(Number(ms) / 60000); return m % 60 ? `${m}m` : `${m / 60}h`; };
@@ -75,7 +76,7 @@ async function stopLoop(el) {
 /* ---------- running on its own, more ---------- */
 function pauseRow() {
   const p = Boolean(A.paused);
-  return `<div class="prow"><span class="ico-tile">${ic("pause", "s")}</span><span class="grow"><b>${p ? t("window.places.automations17.every-automation-is-paused") : t("window.places.automations17.pause-every-automation")}</b><small>${p ? t("window.places.automations17.schedules-triggers-check-ins-and-standing") : t("window.places.automations17.one-switch-for-schedules-triggers-check")}</small></span>${btn17("pauseallb17", p ? t("window.places.automations17.resume-all") : t("window.places.automations17.pause-all"), `data-v="${p ? "resume" : "pause"}"`)}</div>`;
+  return `<div class="prow"><span class="ico-tile">${ic("pause", "s")}</span><span class="grow"><b>${p ? t("window.places.automations17.every-automation-is-paused") : t("window.places.automations17.pause-every-automation")}</b><small>${A.pauseError ? esc(A.pauseError) : p ? t("window.places.automations17.schedules-triggers-check-ins-and-standing") : t("window.places.automations17.one-switch-for-schedules-triggers-check")}</small></span>${btn17("pauseallb17", p ? t("window.places.automations17.resume-all") : t("window.places.automations17.pause-all"), `data-v="${p ? "resume" : "pause"}"`)}</div>`;
 }
 const DEMOS = [
   ["readiness", "check", ["Ready to run alone?", "Checks what an automation needs before it runs unattended, and keeps a ledger of what it decided alone.", "Check"]],
@@ -131,10 +132,7 @@ function registerDemos() {
     const { entries } = await api("autonomy/ledger?status=all");
     demoDlg17("ledger", { title: t("window.places.automations17.ready-to-run-alone"), lead: t("window.places.automations17.the-ledger-lists-every-choice-an"), rows: entries.map((e) => [e.title, e.detail, ["idle", e.status]]) });
   } });
-  onDemo17("holidays", { open: async () => {
-    const { settings } = await api("calendar");
-    demoDlg17("holidays", { title: t("window.places.automations17.days-off-and-holidays"), lead: t("window.places.automations17.coming-up"), go: t("window.places.automations17.add-a-day-off"), rows: (settings?.daysOff ?? []).map((d) => [dayWords(d), "", ["idle", t("window.places.automations17.skips")]]) });
-  } });
+  onDemo17("holidays", { open: () => openHolidays(), go: () => addDayOff() });
   onDemo17("watches", { open: async () => {
     const { monitors } = await api("monitors");
     demoDlg17("watches", { title: t("window.places.automations17.watches"), lead: t("window.places.automations17.what-your-trunks-are-watching"), go: t("window.places.automations17.add-a-watch"), rows: monitors.map((m) => [m.label || m.target, m.target, ["ok", t("window.places.automations17.watching")]]) });
@@ -151,9 +149,11 @@ function registerDemos() {
   }, go: () => keepForecasts() });
   onDemo17("outhook", { open: async () => {
     const { webhooks } = await api("webhooks");
-    demoDlg17("outhook", { title: t("window.places.automations17.tell-another-app-when-something-happens"), lead: t("window.places.automations17.branch-sends-a-short-message-to"), go: t("window.places.automations17.send-a-test"),
-      rows: webhooks.map((w) => [w.name, [w.url, (w.events ?? []).join(", ")].filter(Boolean).join(" · "), onOff(w.enabled !== false)]) });
-  } });
+    shown.webhooks = webhooks;
+    demoDlg17("outhook", { title: t("window.places.automations17.tell-another-app-when-something-happens"), lead: t("window.places.automations17.branch-sends-a-short-message-to"), go: webhooks.length ? t("window.places.automations17.send-a-test") : "",
+      rows: webhooks.map((w) => [w.name, [w.url, (w.events ?? []).join(", ")].filter(Boolean).join(" · "), onOff(w.enabled !== false)]),
+      field: webhooks.length ? pickField("d17-hook", t("window.places.automations17.which-address"), webhooks.map((w) => [w.id, w.name || w.url])) : "" });
+  }, go: () => sendTest() });
   onDemo17("hooks", { open: async () => {
     const { hooks } = await api("hooks");
     demoDlg17("hooks", { title: t("window.places.automations17.before-and-after-each-step"), lead: t("window.places.automations17.hooks-on-this-computer"), go: t("window.places.automations17.run-the-checks"), rows: hooks.map((h) => [h.event, h.executable, onOff(h.enabled)]) });
@@ -164,16 +164,43 @@ function registerDemos() {
   } });
 }
 
+/* ---------- the two dialogs that need one thing typed or picked ---------- */
+/* Days off: the owner's own list (GET /api/calendar daysOff), and Add a day off puts the date in the box on it. The
+   calendar record is saved whole, as read (POST /api/calendar). */
+const fieldRow = (id, label, input) => `<div class="ctl" data-css="margin-top:12px"><b>${esc(label)}</b><span class="right">${input}</span><small></small></div>`;
+const pickField = (id, label, options) => fieldRow(id, label, `<select class="inp" id="${id}" aria-label="${esc(label)}">${options.map(([v, words]) => `<option value="${esc(v)}">${esc(words)}</option>`).join("")}</select>`);
+async function openHolidays() {
+  const { settings } = await api("calendar");
+  shown.calendar = settings;
+  demoDlg17("holidays", { title: t("window.places.automations17.days-off-and-holidays"), lead: t("window.places.automations17.coming-up"), go: t("window.places.automations17.add-a-day-off"),
+    rows: (settings?.daysOff ?? []).map((d) => [dayWords(d), "", ["idle", t("window.places.automations17.skips")]]),
+    field: fieldRow("d17-day", t("window.places.automations17.which-day"), `<input class="inp" type="date" id="d17-day" aria-label="${esc(t("window.places.automations17.which-day"))}">`) });
+}
+async function addDayOff() {
+  const day = document.getElementById("d17-day")?.value ?? "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) { toast(t("window.places.automations17.pick-a-day-first")); return; }
+  const settings = shown.calendar ?? (await api("calendar")).settings;
+  if (!settings.daysOff.includes(day)) await api("calendar", { ...settings, daysOff: [...settings.daysOff, day].sort() });
+  await openHolidays();
+}
+/* Send a test: one test message to the address picked (POST /api/webhooks/<id>/test), and what it answered. */
+async function sendTest() {
+  const id = document.getElementById("d17-hook")?.value;
+  if (!id) return;
+  const answer = await api(`webhooks/${id}/test`, {});
+  toast(answer.ok ? t("window.places.automations17.test-arrived") : t("window.places.automations17.test-failed", { why: answer.message ?? "" }));
+}
+
 /* ---------- reading ---------- */
 async function readKept() {
   const [orders, loops] = await Promise.all([api("autonomy/orders"), api("autonomy/loops")]);
   A.orders = orders.orders ?? [];
   A.loops = loops.loops ?? [];
 }
-/* The paused record lives in the dashboard's summary; with the dashboard off the engine refuses it, and Pause all says
-   the engine's words when pressed. */
+/* The paused record (GET /api/dashboard/automations), which the engine answers whether or not the browser dashboard is
+   switched on. A refusal is said under the row in the engine's words, and the row keeps what it last knew. */
 async function readPaused() {
-  try { A.paused = (await api("dashboard")).paused ?? null; } catch { A.paused = null; }
+  try { A.paused = (await api("dashboard/automations")).paused ?? null; A.pauseError = ""; } catch (error) { A.pauseError = error.message; }
   A.pauseKnown = true;
 }
 
@@ -188,7 +215,7 @@ export async function readAutomations17(tab) {
 }
 
 export function initAutomations17() {
-  markLive(["ordersb17", "orderb17", "loopb17", "pauseallb17", "orderaddb17", "sw:order-in-b17"]);
+  markLive(["ordersb17", "orderb17", "loopb17", "pauseallb17", "orderaddb17", "sw:order-in-b17", "sw:d17-day", "sw:d17-hook"]);
   on("orderaddb17", () => orderInWords());
   on("ordersb17", () => ordersDlg());
   on("orderb17", (el) => changeOrder(el));

@@ -13,6 +13,41 @@ const terms = { allowedPaths: ["src/ui/**"], permissions: ["files.write"], expec
 
 const completed = (stdout = "") => ({ status: "completed", stdout, stderr: "", exitCode: 0, command: "git" });
 
+test("a worktree whose contract predates pinned destinations is pinned when prepared again under the same name", async () => {
+  const folder = "branch-agent-source/.branch-worktrees/self-remove-button";
+  const contracts = new ContractBook(new DatabaseSync(":memory:"));
+  const old = contracts.create("local", { taskRunId: "run-0", sourceSha: sha, worktreePath: folder, terms });
+  assert.equal(old.sendRepositories, undefined, "written before Branch kept where changes may go");
+  const records = [], calls = [];
+  const deps = {
+    workspace: "C:/owner/workspace", owner: "local", contracts,
+    projects: { save: (_owner, project) => project, setActive: (_owner, input) => input },
+    registry: {}, policy: { assertAllowed: async () => undefined },
+    store: { audit: { record: (_owner, entry) => { records.push(entry); } } },
+    exists: async () => true, // the source checkout and this change's worktree are both already there
+    git: async ({ args }) => {
+      calls.push(args.join(" "));
+      if (args.join(" ").startsWith("remote get-url")) return completed("https://github.com/stabrea/Branch-Agent.git\n");
+      return completed(args[0] === "rev-parse" ? `${sha}\n` : "");
+    },
+  };
+  const input = { name: "remove-button", repository: "https://github.com/stabrea/Branch-Agent.git", base: "redesign/window", contract: terms };
+  const again = await prepareBranchSourceChange(deps, input, AbortSignal.timeout(1000));
+  assert.equal(again.contract.revision, 2, "pinned as the next revision; the first stays as written");
+  assert.deepEqual(again.contract.sendRepositories, ["keepoak/branch-agent"], "read from origin now, by the same rules as a new worktree (stabrea is read as KeepOak)");
+  assert.ok(calls.includes("remote set-url origin https://github.com/KeepOak/Branch-Agent.git"), "a checkout cloned before the move is pointed at KeepOak");
+  assert.deepEqual(again.contract.allowedPaths, terms.allowedPaths, "and nothing else changes");
+  assert.equal(again.contract.sourceSha, sha);
+  assert.deepEqual(contracts.history("local", folder).map((each) => each.revision), [1, 2]);
+  assert.ok(calls.includes("remote get-url --push --all origin"));
+  assert.ok(!calls.some((call) => call.startsWith("worktree add")), "the existing worktree is kept, under its own name");
+  assert.ok(records.some((entry) => entry.outcome === "pinned" && /self-remove-button revision 2/.test(entry.subject)));
+  const third = await prepareBranchSourceChange(deps, input, AbortSignal.timeout(1000));
+  assert.equal(third.contract.revision, 2, "a contract that already names them is never changed");
+  assert.throws(() => contracts.pin("local", folder, { taskRunId: "r", sendRepositories: ["mallory/branch-agent"], approvedBy: "local" }),
+    /already names where its changes may go/);
+});
+
 test("an owner's fork becomes an isolated Branch Agent project without touching the installed app", async () => {
   let source = false, copy = false, upstream = false, pendingAtClone = false;
   const records = [];
@@ -26,7 +61,7 @@ test("an owner's fork becomes an isolated Branch Agent project without touching 
     git: async ({ cwd, args }) => {
       calls.push([cwd, ...args]);
       if (args[0] === "clone") { source = true; pendingAtClone = records.some((entry) => entry.outcome === "pending"); return completed(); }
-      if (args.join(" ") === "remote get-url origin") return completed("https://github.com/alice/Branch-Agent.git\n");
+      if (["remote get-url origin", "remote get-url --push --all origin"].includes(args.join(" "))) return completed("https://github.com/alice/Branch-Agent.git\n");
       if (args.join(" ") === "remote get-url upstream") return upstream ? completed("https://github.com/stabrea/Branch-Agent.git\n") : { ...completed(), status: "failed", stderr: "missing" };
       if (args.join(" ").startsWith("remote add upstream")) { upstream = true; return completed(); }
       if (args[0] === "worktree") { copy = true; return completed(); }
@@ -34,21 +69,24 @@ test("an owner's fork becomes an isolated Branch Agent project without touching 
       return completed();
     },
   };
-  const input = { name: "remove-button", repository: "https://github.com/alice/Branch-Agent.git", base: "mac/cross-platform", contract: terms };
+  const input = { name: "remove-button", repository: "https://github.com/alice/Branch-Agent.git", base: "redesign/window", contract: terms };
   const result = await prepareBranchSourceChange(deps, input, AbortSignal.timeout(1000));
 
   assert.equal(result.ready, true);
-  assert.equal(result.pullRequestTarget, "stabrea/Branch-Agent");
-  assert.match(result.instructions, /Run the relevant focused tests and npm run build/);
+  assert.equal(result.pullRequestTarget, "KeepOak/Branch-Agent");
+  assert.match(result.instructions, /Run node scripts\/review\.mjs with the focused test files/);
+  assert.match(result.instructions, /never send to a shared line or change a repository.s settings or branch protection/);
+  assert.match(result.instructions, /pending is never passed; when one fails, read why with github\.check_logs[^)]*\), then call branch\.finish_source_change/);
   assert.ok(calls.some((call) => call.includes("clone")), "the owner's fork is cloned into the workspace, not the installation");
-  assert.ok(calls.some((call) => call.join(" ").includes("remote add upstream https://github.com/stabrea/Branch-Agent.git")));
-  assert.ok(calls.some((call) => call.join(" ").includes("fetch upstream mac/cross-platform")));
+  assert.ok(calls.some((call) => call.join(" ").includes("remote add upstream https://github.com/KeepOak/Branch-Agent.git")));
+  assert.ok(calls.some((call) => call.join(" ").includes("fetch upstream redesign/window")));
   assert.ok(calls.some((call) => call.join(" ").includes(`worktree add -b branch/self-remove-button .branch-worktrees/self-remove-button ${sha}`)),
     "the worktree is made at the exact commit the contract names");
-  assert.ok(calls.some((call) => call.join(" ").includes("rev-parse --verify upstream/mac/cross-platform^{commit}")));
+  assert.ok(calls.some((call) => call.join(" ").includes("rev-parse --verify upstream/redesign/window^{commit}")));
   assert.equal(result.contract.sourceSha, sha);
+  assert.deepEqual(result.contract.sendRepositories, ["alice/branch-agent", "keepoak/branch-agent"], "a fork proposes to itself or to the upstream it was made from, nothing else");
   assert.equal(pendingAtClone, true, "the proposed contract was written down as pending before anything was cloned");
-  assert.match(records.find((entry) => entry.outcome === "pending").reason, /From alice\/Branch-Agent at mac\/cross-platform\. Paths src\/ui\/\*\*/);
+  assert.match(records.find((entry) => entry.outcome === "pending").reason, /From alice\/Branch-Agent at redesign\/window\. Paths src\/ui\/\*\*/);
   assert.equal(result.contract.worktreePath, "branch-agent-source/.branch-worktrees/self-remove-button");
   const contractAt = calls.findIndex((call) => call.includes("rev-parse")), worktreeAt = calls.findIndex((call) => call[1] === "worktree");
   assert.ok(contractAt >= 0 && contractAt < worktreeAt, "the contract is written before the worktree is made");
@@ -98,11 +136,11 @@ test("Q187: a helper whose own context says owner, but whose task came from a ch
     keyFlag: [{ kind: "run.started", data: { source: "owner", shortLivedKey: true } }],
     keyId: [{ kind: "run.started", data: { source: "owner", shortLivedKeyId: "k1" } }] };
   let owner = true;
-  const store = { events: (runId) => records[runId] ?? [], run: () => undefined, profiles: { isOwner: () => owner } };
+  const store = { events: (runId) => records[runId] ?? [], run: () => undefined, get: () => undefined, profiles: { isOwner: () => owner } };
   const stop = offerSelfDevelopment({ workspace: "C:/owner/workspace", owner: "local", projects: {}, registry,
     policy: {}, git: async () => completed(), store, contracts: { current: () => null } });
   registry.register({ name: "git.push", permission: "git.remote", description: "test", parameters: z.object({}), execute: async () => ({}) });
-  const input = { name: "x", repository: "https://github.com/alice/unrelated.git", base: "main", contract: terms };
+  const input = { name: "x", repository: "https://github.com/alice/unrelated.git", base: "redesign/window", contract: terms };
   const call = (runId) => registry.execute("branch.prepare_source_change", input,
     { source: "owner", runId, owner: "local", permissions: new Set(["git.remote"]), signal: AbortSignal.timeout(1000), budget: { step: () => undefined, charge: () => undefined } });
   await assert.rejects(call("chat"), /Only the owner in the Branch app/, "the record leads back to a chat");
@@ -126,4 +164,58 @@ test("Q187: a helper whose own context says owner, but whose task came from a ch
   owner = true;
   await assert.rejects(call("mine"), (error) => !/Only the owner in the Branch app/.test(error.message), "control: the owner's own task gets past the check");
   stop();
+});
+
+test("selfdev: a checkout a cut clone left (no commit behind HEAD, no worktree) is cloned again; any other stays", async () => {
+  const run = async (headAnswer) => {
+    const calls = [];
+    let cloned = false, removed = false; // removal is real (the folder is not there), so it is marked where it is decided
+    const deps = {
+      workspace: "C:/owner/workspace-that-is-not-there", owner: "local", contracts: new ContractBook(new DatabaseSync(":memory:")),
+      projects: { save: (_owner, project) => project, setActive: (_owner, input) => input },
+      registry: {}, policy: { assertAllowed: async () => undefined }, store: { audit: { record: () => undefined } },
+      exists: async (path) => path.endsWith("branch-agent-source") ? !removed || cloned : path.endsWith(".branch-worktrees") ? false : cloned,
+      git: async ({ args }) => {
+        calls.push(args.join(" "));
+        if (args[0] === "clone") { cloned = true; return completed(); }
+        if (args.join(" ") === "rev-parse --verify --quiet HEAD^{commit}") return headAnswer;
+        if (args.join(" ") === "rev-parse --is-inside-work-tree") { removed = true; return completed("true\n"); }
+        if (args.join(" ").startsWith("remote get-url")) return completed("https://github.com/stabrea/Branch-Agent.git\n");
+        return completed(args[0] === "rev-parse" ? `${sha}\n` : "");
+      },
+    };
+    await prepareBranchSourceChange(deps, { name: "fix", repository: "https://github.com/stabrea/Branch-Agent.git", base: "redesign/window", contract: terms },
+      AbortSignal.timeout(1000));
+    return calls;
+  };
+  const unborn = await run({ status: "failed", stdout: "", stderr: "", exitCode: 1, command: "git" });
+  assert.ok(unborn.some((call) => call.startsWith("clone ")), "cloned again");
+  const whole = await run(completed(`${sha}\n`));
+  assert.ok(!whole.some((call) => call.startsWith("clone ")), "a real checkout is kept");
+  const unknown = await run({ status: "timed_out", stdout: "", stderr: "", exitCode: null, command: "git" });
+  assert.ok(!unknown.some((call) => call.startsWith("clone ")), "an answer that is not 'no commit' keeps it too");
+});
+
+test("selfdev: only the task chain that wrote a worktree's contract counts as having prepared it", async () => {
+  const { preparedByTask } = await import("../dist/self-development-contract.js");
+  const book = new ContractBook(new DatabaseSync(":memory:"));
+  const folder = "branch-agent-source/.branch-worktrees/self-fix";
+  book.create("local", { taskRunId: "lead", sourceSha: sha, worktreePath: folder, terms, sendRepositories: ["stabrea/branch-agent"] });
+  const parents = { helper: "lead", grandchild: "helper", other: null };
+  const store = { events: (id) => [{ kind: "run.started", data: { parentRunId: parents[id] ?? null } }] };
+  assert.equal(preparedByTask(store, book, "local", folder, "lead"), true);
+  assert.equal(preparedByTask(store, book, "local", folder, "grandchild"), true, "a helper of that task works in it too");
+  assert.equal(preparedByTask(store, book, "local", folder, "other"), false, "another task does not");
+  assert.equal(preparedByTask(store, book, "someone-else", folder, "lead"), false, "another owner's book has no such contract");
+  assert.equal(preparedByTask(store, book, "local", "branch-agent-source/.branch-worktrees/self-other", "lead"), false);
+});
+
+test("the move to KeepOak: a contract written as stabrea/branch-agent still proposes and pushes to KeepOak/Branch-Agent, and nowhere else", async () => {
+  const { pullRequestPinned, pushRepositoryRefusal } = await import("../dist/self-development-contract.js");
+  const pr = { repo: "KeepOak/Branch-Agent", base: "redesign/window", head: "branch/self-fix", draft: true };
+  assert.equal(pullRequestPinned(pr, ["stabrea/branch-agent"]), null, "GitHub redirects the old name; it is the same repository");
+  assert.equal(pullRequestPinned({ ...pr, repo: "stabrea/Branch-Agent" }, ["keepoak/branch-agent"]), null);
+  assert.match(pullRequestPinned({ ...pr, repo: "mallory/Branch-Agent" }, ["stabrea/branch-agent"]) ?? "", /proposed only to stabrea\/branch-agent/);
+  assert.equal(pushRepositoryRefusal(["stabrea/branch-agent"], "origin", ["keepoak/branch-agent"]), null);
+  assert.match(pushRepositoryRefusal(["stabrea/branch-agent"], "origin", ["keepoak/branch-agent", "mallory/branch-agent"]) ?? "", /nothing is sent/);
 });

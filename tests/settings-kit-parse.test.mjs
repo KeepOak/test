@@ -41,7 +41,7 @@ import { usageReportSettings } from "../dist/usage-report.js";
 import { eventLoopSettings } from "../dist/event-loop-watch.js";
 import { recordingSettings } from "../dist/run-recording.js";
 import { promptLibrarySettings } from "../dist/prompt-library.js";
-import { commandSettings } from "../dist/commands/settings.js";
+import { windowCommands } from "../dist/commands/settings.js";
 import { flyCoreSettings } from "../dist/fly-core/settings.js";
 import { goalUndoSettings } from "../dist/goal-mode.js";
 import { reflectionSettings } from "../dist/reflection/settings.js";
@@ -52,6 +52,7 @@ import { voiceSettings } from "../dist/voice.js";
 import { saveReviewerSettings } from "../dist/approval-reviewer.js";
 import { saveReflectionSettings } from "../dist/reflection/settings.js";
 import { readKnobs } from "../dist/knobs/settings.js";
+import { systemVoiceShipsAs } from "../dist/feature-switches.js";
 
 /*
  * Q65: the settings kit reads and writes every setting through the app's own parse. A record the app would
@@ -91,13 +92,15 @@ const strictReaders = {
   "event-loop-watch": eventLoopSettings,
   "run-recording": recordingSettings,
   "prompt-library": promptLibrarySettings,
-  "command-catalog": commandSettings,
+  "command-catalog": windowCommands, // Settings › General's switch is this computer's window's (batch A)
   "fly-core": flyCoreSettings,
   "goal-undo": goalUndoSettings,
   reflection: reflectionSettings,
   "context-files": contextFileSettings,
   retention: retentionSettings,
   "round-limit": (store, owner) => readKnobs(store, owner, "limits"),
+  "task-tokens": (store, owner) => ({ taskAllowance: readKnobs(store, owner, "limits").maxTaskTokens }), // selfdev: the limits card
+  "step-limit": (store, owner) => ({ maxSteps: readKnobs(store, owner, "limits").maxSteps }), // the limits card too
   ...Object.fromEntries(["command-scan", "progress-judge", "activity-chain", "tool-scripts", "wasm-add-ons", "history-repair"]
     .map((name) => [`safety-${name}`, part(safetyMode, name)])),
   ...Object.fromEntries(["recipe-checks", "widgets", "install-requests", "time-travel", "kanban", "waiting-line", "focus"]
@@ -119,6 +122,7 @@ const refusingReaders = { voice: voiceSettings };
 /** The settings whose module does not throw a whole record away, so the kit's own field-by-field reading already matches it. */
 const notStrict = {
   "sdk-kit": "read field by field (src/sdk-kit.ts, sdkKitMode)",
+  "gitlab-connection": "read field by field (src/gitlab-switch.ts, gitlabMode)",
   "local-runner-install": "a loose record, read field by field (src/local-one-button.ts)",
   "local-runner-place": "a loose record, read field by field (src/local-one-button.ts)",
   adapt: "a loose record, read field by field (src/adapt/settings.ts)",
@@ -128,8 +132,12 @@ const notStrict = {
 const unreadableExtra = { "local-models": { enabled: "yes" } };
 
 /** Settings kept inside another record than their own key: the round limit is a field of the owner's limits knob. */
-const recordKeys = { "round-limit": "knobs-limits" };
+const recordKeys = { "round-limit": "knobs-limits", "step-limit": "knobs-limits", "task-tokens": "knobs-limits" };
 const recordOf = (spec) => recordKeys[spec.key] ?? spec.key;
+/** Fields kept under another name in their record: Settings › General's commands switch is the record's `window`
+    (this computer's window alone; `mode` is the switch for every surface, src/commands/settings.ts). */
+const savedAs = { "command-catalog": { mode: "window" }, "task-tokens": { taskAllowance: "maxTaskTokens" } };
+const savedPath = (spec, field) => savedAs[spec.key]?.[field.field] ?? field.field;
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-settings-kit-parse-"));
@@ -204,10 +212,14 @@ test("a kit write of one field cannot bring back another field or mode the app w
     applyChanges(store, owner, changes, { accept: changes.map((change) => change.id), confirmLoosening: true, why: "test", writers });
     const raw = store.get("settings", owner, recordOf(spec))?.data ?? {};
     assert.deepEqual(inForce(reader, store, owner, first), to, `${spec.key}.${first.field}: the change is in force`);
-    assert.deepEqual(readPath(raw, first.field), to, `${spec.key}.${first.field}: the change is what is saved`);
+    assert.deepEqual(readPath(raw, savedPath(spec, first)), to, `${spec.key}.${first.field}: the change is what is saved`);
     for (const field of others) {
+      const ignored = readPath(unreadable(spec), field.field);
+      assert.notDeepEqual(inForce(reader, store, owner, field), ignored, `${spec.key}.${field.field}: the ignored value does not come back`);
+      // The ship-on rule (src/ship-on.ts savedFields): a field shown off over an unreadable record is written down off and
+      // stays off, even one that ships on: the change list never showed it moving.
       assert.deepEqual(inForce(reader, store, owner, field), before[field.field], `${spec.key}.${field.field}: an ignored value stays ignored`);
-      assert.deepEqual(readPath(raw, field.field) ?? field.initial, before[field.field], `${spec.key}.${field.field}: the saved record agrees with the app`);
+      assert.deepEqual(readPath(raw, savedPath(spec, field)) ?? field.initial, before[field.field], `${spec.key}.${field.field}: the saved record agrees with the app`);
     }
   }
 });
@@ -346,7 +358,7 @@ test("put-back: a loosening change asks for confirmLoosening and is refused with
   // Put-back with confirmLoosening: should succeed
   const withConfirm = await call("/api/settings-kit/put-back", { key: "voice", confirmLoosening: true });
   assert.equal(withConfirm.status, 200, JSON.stringify(withConfirm.body));
-  assert.deepEqual(voiceSettings(store, owner), (await import("../dist/voice.js")).VoiceSettingsSchema.parse({}));
+  assert.deepEqual(voiceSettings(store, owner), { ...(await import("../dist/voice.js")).VoiceSettingsSchema.parse({}), systemVoice: systemVoiceShipsAs });
 });
 
 test("the way out: an unreadable voice record is put back as shipped, then voice reads and its own card saves again", async (t) => {
@@ -361,7 +373,7 @@ test("the way out: an unreadable voice record is put back as shipped, then voice
   const back = await call("/api/settings-kit/put-back", { key: "voice", confirmLoosening: true });
   assert.equal(back.status, 200, JSON.stringify(back.body));
   assert.equal(back.body.overview.settings.find((spec) => spec.key === "voice").refused, null);
-  assert.deepEqual(voiceSettings(store, owner), (await import("../dist/voice.js")).VoiceSettingsSchema.parse({}));
+  assert.deepEqual(voiceSettings(store, owner), { ...(await import("../dist/voice.js")).VoiceSettingsSchema.parse({}), systemVoice: systemVoiceShipsAs });
   assert.ok(store.audit.list(owner, { limit: 100 }).some((row) => row.subject === "Voice: put back as shipped"));
   const saved = await call("/api/voice/settings", { autoReadAloud: true });
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
@@ -430,10 +442,11 @@ test("put-back always asks for a record it cannot read, whatever it holds, and p
     store.save("settings", owner, "voice", saved);
     const asked = await call("/api/settings-kit/put-back", { key: "voice" });
     assert.equal(asked.status, 409, `${JSON.stringify(saved).slice(0, 80)}: ${JSON.stringify(asked.body)}`);
-    assert.match(asked.body.error, /less careful \(Keep audio on this computer[,)]/, "the ask names the guard put-back turns off");
+    // The ship-on rule: put-back moves the computer's own voice (a reach switch) from off to when needed, so it is named too.
+    assert.match(asked.body.error, /less careful \(Your computer's own voice, Keep audio on this computer[,)]/, "the ask names the guard put-back turns off");
     assert.deepEqual(store.get("settings", owner, "voice").data, saved, "nothing written without the yes");
     const back = await call("/api/settings-kit/put-back", { key: "voice", confirmLoosening: true });
-    if (back.status === 200) assert.deepEqual(voiceSettings(store, owner), VoiceSettingsSchema.parse({}));
+    if (back.status === 200) assert.deepEqual(voiceSettings(store, owner), { ...VoiceSettingsSchema.parse({}), systemVoice: systemVoiceShipsAs });
     else assert.match(JSON.stringify(back.body), /reads as it should/, `${JSON.stringify(saved).slice(0, 80)}: a record voice reads is not put back`);
   }
 });
@@ -449,7 +462,7 @@ test("Q99: put-back asks when a saved value the kit does not weigh differs from 
   assert.match(refused.body.error, /liveMaxDollars/);
   assert.deepEqual(store.get("settings", owner, "voice").data, record, "nothing written without the yes");
   assert.equal((await call("/api/settings-kit/put-back", { key: "voice", confirmLoosening: true })).status, 200);
-  assert.deepEqual(voiceSettings(store, owner), VoiceSettingsSchema.parse({}));
+  assert.deepEqual(voiceSettings(store, owner), { ...VoiceSettingsSchema.parse({}), systemVoice: systemVoiceShipsAs });
   // A key the voice record does not have is not one of the values weighed here (Q83 asks for it instead,
   // because a guard may have gone there): the refusal names the guard, not "other saved values".
   store.save("settings", owner, "voice", { systemVoice: "bogus", somethingElse: 5 });

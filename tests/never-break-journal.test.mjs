@@ -20,6 +20,7 @@ import { migrate, migrateDown, formatOf, DataTooNewError } from "../dist/never-b
 import { recoverAfterRestart, lateNote, releaseInterruptedSchedules } from "../dist/never-break/resume.js";
 import { channelPosition } from "../dist/never-break/channel-position.js";
 import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gateway-config.js";
+import { saveLongWorkSettings } from "../dist/long-work.js";
 
 const sha = (text) => createHash("sha256").update(text).digest("hex");
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("BRANCH_") && name !== "NODE_OPTIONS"));
@@ -49,6 +50,11 @@ test("each call is classed by what it can do, and keyed so a repeat is recognise
   assert.equal(effectsOf("git.status", "git.read"), "none");
   assert.equal(effectsOf("files.write", "files.write"), "idempotent");
   assert.equal(effectsOf("email.send", "email.send"), "external");
+  // selfdev (SELF-314): a GitHub look under a permission that can change things, and a push, are safe to do again.
+  assert.equal(effectsOf("github.wait_for_checks", "github.manage"), "none");
+  assert.equal(effectsOf("github.check_logs", "github.manage"), "none");
+  assert.equal(effectsOf("git.push", "git.remote"), "idempotent");
+  assert.equal(effectsOf("github.merge_pull_request", "github.manage"), "external");
   assert.equal(effectsOf("mcp.someone.tool", "mcp.call"), "external", "anything unknown is treated as reaching outside");
   const call = { id: "c1", name: "files.write", arguments: "{\"path\":\"a\"}" };
   assert.equal(idempotencyKey("r1", call), idempotencyKey("r1", { ...call }));
@@ -282,6 +288,19 @@ async function killedAtPoint(t, plan, killAt, { mode = "on" } = {}) {
     calls: await readFile(join(root, "calls.log"), "utf8") };
 }
 const finishedAll = (result) => result.runs.some((run) => run.status === "completed" && run.output === "all done");
+
+test("killed after a file is truncated: the resumed model reads it before retrying the write", async (t) => {
+  const { result, root, transcript } = await killedAtPoint(t, [
+    { id: "e", tool: "files.write", args: { path: "two.txt", content: "second" } },
+  ], "partial:e");
+  assert.deepEqual(result.report[0].steps, [{ tool: "files.write", decision: "not-done" }]);
+  assert.ok(finishedAll(result), JSON.stringify(result.runs));
+  assert.equal(await readFile(join(root, "workspace", "two.txt"), "utf8"), "second");
+  const refused = transcript.find((row) => row.role === "tool" && /read .* with files.read first/.test(row.content));
+  assert.ok(refused, "the guard still refuses to overwrite a file the resumed task has not read");
+  const calls = transcript.filter((row) => row.role === "assistant").flatMap((row) => row.toolCalls ?? []);
+  assert.deepEqual(calls.map((call) => call.name), ["files.write", "files.write", "files.read", "files.write"]);
+});
 
 test("killed just after the model asked for a write, before it started: the write is done and the task finishes", async (t) => {
   const { result, root } = await killedAtPoint(t, [
@@ -653,8 +672,10 @@ test("a chat task that may already have sent something is not done again when th
   assert.equal(app.store.get("settings", "local", "channel-replay:hand:7:old"), undefined, "a hold nobody used is forgotten after a week");
 });
 
-test("a task cut off by Branch closing is cancelled with the switch off, as before, and interrupted with it on", async (t) => {
-  for (const mode of ["off", "on"]) {
+/* #483: "carry on after a restart" (long work) ships on, so a task cut off by Branch closing is interrupted, to be carried
+   on, even with the gateway off. Only with both off is it cancelled, as before. */
+test("a task cut off by Branch closing is cancelled with the gateway and carrying on both off, and interrupted otherwise", async (t) => {
+  for (const [mode, resumeAfterRestart] of [["off", false], ["off", true], ["on", false]]) {
     const root = await temp(t);
     await mkdir(join(root, "d"), { recursive: true });
     await saveGatewayConfig(join(root, "d"), GatewayConfigSchema.parse({ mode }));
@@ -665,6 +686,7 @@ test("a task cut off by Branch closing is cancelled with the switch off, as befo
       request.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     }) };
     const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider });
+    saveLongWorkSettings(app.store, app.runtime.owner, { resumeAfterRestart });
     const task = app.runtime.run({ prompt: "think for a long time", onTextDelta: () => undefined }).catch((error) => error);
     await waiting;
     await app.close();
@@ -672,6 +694,6 @@ test("a task cut off by Branch closing is cancelled with the switch off, as befo
     const reopened = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider: scripted([say("x")]) });
     const [run] = reopened.store.runs("local");
     await reopened.close();
-    assert.equal(run.status, mode === "off" ? "cancelled" : "interrupted", mode);
+    assert.equal(run.status, mode === "off" && !resumeAfterRestart ? "cancelled" : "interrupted", `gateway ${mode}, carrying on ${resumeAfterRestart}`);
   }
 });

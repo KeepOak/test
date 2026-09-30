@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { redactLeaks } from "../leak-guard.js";
 import type { Store } from "../store.js";
+import { readKnobs } from "../knobs/settings.js"; // whether the note is shown, as the knobs card reads it (ship-on)
 
 /**
  * R17-052: memory blocks — a few short, named pieces of text that sit at the start of every
@@ -131,8 +132,9 @@ export class MemoryBlocks {
     const record = this.store.get("settings", owner, knobsKey);
     const note = AboutYouSchema.safeParse(record?.data ?? {});
     const data = note.success ? note.data : AboutYouSchema.parse({});
+    // Shown as the knobs card reads it (src/knobs/settings.ts), so the block and the conversation never disagree.
     return { label: aboutYouLabel, description: "Your own words about yourself, from Settings", value: data.aboutYou,
-      limit: data.aboutYouChars, readOnly: false, shown: data.aboutYouOn, updatedAt: record?.updatedAt ?? null };
+      limit: data.aboutYouChars, readOnly: false, shown: readKnobs(this.store, owner, "memory").aboutYouOn, updatedAt: record?.updatedAt ?? null };
   }
   private saveAboutYou(owner: string, text: string): void {
     const data = (this.store.get("settings", owner, knobsKey)?.data ?? {}) as Record<string, unknown>;

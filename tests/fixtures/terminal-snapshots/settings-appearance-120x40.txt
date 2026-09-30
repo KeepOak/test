@@ -6,21 +6,21 @@
   │   People                 How Branch looks on this computer. Changes show as you pick.                            │
   │ › Appearance                                                                                                     │
   │   Notifications            Theme: Forest                                                                         │
-  │   Instructions & perso…    All 44 themes, shared with the window.                                                │
-  │   Models                 › Light and dark: Dark                                                                  │
+  │   Achievements             All 44 themes, shared with the window.                                                │
+  │   Instructions & perso…  › Light and dark: Dark                                                                  │
+  │   Models                                                                                                         │
   │   Accounts                                                                                                       │
   │   On this computer                                                                                               │
   │   Voice                                                                                                          │
   │   Chat apps                                                                                                      │
+  │   Gateway                                                                                                        │
   │   Permissions                                                                                                    │
   │   Computer & browser                                                                                             │
   │   Saved sign-ins                                                                                                 │
   │   Data & usage                                                                                                   │
-  │   Gateway                                                                                                        │
+  │   Your data                                                                                                      │
   │   Branch itself                                                                                                  │
   │   Updates & about                                                                                                │
-  │   Achievements                                                                                                   │
-  │                                                                                                                  │
   │                                                                                                                  │
   │                                                                                                                  │
   │                                                                                                                  │

@@ -272,6 +272,8 @@ test("A2258 installed agents are listed, added as connections, remembered, and f
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: response.status, body: await response.json() };
   };
+  // Installed agents ship "when needed" (the ship-on rule); the owner switches them off to see the refusal.
+  await post("/api/asks/switch", { part: "runtimes", mode: "off" });
   assert.equal((await post("/api/asks/runtimes/add", { id: "codex-app-server" })).status, 409);
   await post("/api/asks/switch", { part: "runtimes", mode: "when-needed" });
   assert.equal((await post("/api/asks/runtimes/add", { id: "codex-app-server" })).body.connection, "runtime-codex-app-server");

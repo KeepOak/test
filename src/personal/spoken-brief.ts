@@ -88,6 +88,8 @@ export class SpokenBrief {
   async run(input: unknown): Promise<{ text: string; audio: { bytes: Uint8Array; mediaType: string }; sentTo: string | null }> {
     requirePersonal(this.deps.store, this.deps.owner, "spoken-brief");
     const target = SpokenBriefSchema.parse(input);
+    // Playing it here ships on; sending it into a chat is sending out (b), so it also needs the owner's own switch for that.
+    if (target.channel && target.chatId) requirePersonal(this.deps.store, this.deps.owner, "chat-files");
     const text = await this.script();
     const audio = await this.deps.speak(text);
     if (target.channel && target.chatId) await this.deps.sendVoice(target.channel, target.chatId, audio, text);

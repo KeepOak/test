@@ -6,7 +6,9 @@
      or o goes back to typing, and a second Esc leaves the box. Ported from the old window's public/comfort.js
      (git 21eca9ec^), which the redesign removed. The mode is on the box as data-vim ("normal" or "insert").
    - Message times, Always: each message shows when the engine wrote it (messages[].at) in the message itself; On hover
-     (the engine's off) keeps the time in the message's action row only (chat/messages.js). */
+     (the engine's off) keeps the time in the message's action row only (chat/messages.js).
+   - How Branch gets the owner's attention (values.notify: method, sound, needsYes, taskDone) and the quiet hours and
+     whole days off (GET /api/calendar quietHours), which shell/notify.js follows. */
 
 import { $, esc, render, afterDraw } from "../core/dom.js";
 import { E } from "../core/state.js";
@@ -14,12 +16,15 @@ import { api, comfortSaved } from "../core/api.js";
 import { toast } from "../core/ui.js";
 import { sentAt } from "./furniture.js";
 
-export const CF = { vim: false, times: false, asked: false };
+export const CF = { vim: false, times: false, hideTimes: false, asked: false, notify: null, quiet: null };
 const vim = { mode: "insert", pending: "" };
 
 function take(values) {
   const times = values?.display?.timestamps === true;
   CF.vim = values?.keys?.vim === true;
+  const hide = !times && values?.display?.hideTimes === true;
+  if (hide !== CF.hideTimes) { CF.hideTimes = hide; render(); }
+  if (values?.notify) CF.notify = values.notify;
   if (!CF.vim) { vim.mode = "insert"; vim.pending = ""; }
   if (times !== CF.times) { CF.times = times; render(); }
   mark();
@@ -31,6 +36,13 @@ function load() {
   CF.asked = true;
   if (E.profiles?.isOwner !== true) return;
   api("comfort").then((c) => take(c.values), (error) => toast(error.message));
+  readQuiet();
+}
+
+/* Quiet hours and whole days off, read again after Settings › Notifications saves them. */
+export function readQuiet() {
+  if (E.profiles?.isOwner !== true) return;
+  api("calendar").then((c) => { CF.quiet = c.settings?.quietHours ?? null; }, () => {});
 }
 
 /* A time on the message itself, when the owner chose Always. */

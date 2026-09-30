@@ -83,8 +83,10 @@ test("a household window is not offered Yes, always; the owner's window is", asy
   if (await page.locator("#first-run").isVisible()) await page.locator("#first-run-done").click().catch(() => undefined);
   // The redesigned window's card: the tool's verb (once), "Always allow" (the standing yes) and "Don't allow".
   const mine = await ask("owner.txt"); assert.ok(mine.includes("Always allow"), `control: the owner is offered a standing yes: ${mine}`);
+  // The window starts again by itself when the person changes (public/app/main.js watchPerson): that restart is waited for.
+  const restarted = page.waitForEvent("framenavigated", { predicate: (frame) => frame === page.mainFrame(), timeout: 30000 });
   app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
-  await page.reload();
+  await restarted;
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   // The redesigned window reads who is here (GET /api/profiles) with its first state, before it draws anything.
   const offered = await ask("sam.txt");

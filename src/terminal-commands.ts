@@ -8,6 +8,7 @@ import { nextPolicy, policyPresets, readPolicy, savePolicy, type PolicyPresetNam
 import { recordedWrite } from "./settings-kit/recorded-write.js";
 import { policyChangeRefusal } from "./policy-change-guard.js"; // Q257, Q258
 import type { Runtime } from "./runtime.js";
+import type { Words } from "./terminal-words.js";
 
 /**
  * The parts of the terminal view that are worth keeping away from the drawing code: the status
@@ -70,12 +71,25 @@ export function statusLine(runtime: Runtime, sessionId: string | undefined, pres
 }
 
 /** Every approval preset, one line each, with a mark against the one in force. */
-export function presetLines(runtime: Runtime): string[] {
-  return presetLinesFor(policyPresets(), readPolicy(runtime.store, runtime.owner).preset);
+export function presetLines(runtime: Runtime, words?: Words): string[] {
+  return presetLinesFor(policyPresets(), readPolicy(runtime.store, runtime.owner).preset, words);
+}
+/**
+ * CL-05d/f: an approval preset's name and what it does, in the language in force, by the keys the window's Settings
+ * uses; the engine's English (src/policy.ts) wherever no words are given. "custom" is the owner's own rules.
+ */
+export function presetWords(preset: { id: string; label?: string; description?: string }, words?: Words): { label: string; description: string } {
+  const label = preset.label ?? preset.id, description = preset.description ?? "";
+  if (!words) return { label, description };
+  return { label: words.t(`settings-kit.value.policy.preset.${preset.id}`, label),
+    description: description && words.t(`policy.preset.${preset.id}.description`, description) };
 }
 /** The same lines from a list the running Branch sent (GET /api/policy), so both places print alike. */
-export function presetLinesFor(presets: { id: string; label: string; description: string }[], current: string | null | undefined): string[] {
-  return presets.map((preset) => `${preset.id === current ? "*" : " "} ${preset.id} — ${preset.label}: ${preset.description}`);
+export function presetLinesFor(presets: { id: string; label: string; description: string }[], current: string | null | undefined, words?: Words): string[] {
+  return presets.map((preset) => {
+    const said = presetWords(preset, words);
+    return `${preset.id === current ? "*" : " "} ${preset.id} — ${said.label}: ${said.description}`;
+  });
 }
 
 /**
@@ -84,7 +98,7 @@ export function presetLinesFor(presets: { id: string; label: string; description
  */
 export function choosePreset(runtime: Runtime, argument: string,
   // Q259: how the yes is typed where the command was: `/preset <name> confirm`, or `branch permissions <name> confirm`.
-  howToConfirm = (name: string): string => `Send /preset ${name} confirm to go ahead.`): string {
+  howToConfirm = (name: string): string => `Send /preset ${name} confirm to go ahead.`, words?: Words): string {
   const known = policyPresets().map((preset) => preset.id);
   const [name = "", word, ...rest] = argument.trim().split(/\s+/);
   if (!known.includes(name as PolicyPresetName) || (word !== undefined && word !== "confirm") || rest.length)
@@ -98,8 +112,8 @@ export function choosePreset(runtime: Runtime, argument: string,
   if (refusal) throw new Error(refusal);
   const saved = recordedWrite(runtime.store, runtime.owner, { writer: "owner-by-command", source: "command", detail: `/preset ${name}` }, ["policy"],
     () => savePolicy(runtime.store, runtime.owner, { preset: name }));
-  const label = policyPresets().find((preset) => preset.id === saved.preset)?.label ?? saved.preset;
-  return `[when to check with me: ${label}]`;
+  const { label } = presetWords(policyPresets().find((preset) => preset.id === saved.preset) ?? { id: saved.preset }, words);
+  return `[${words?.t("settings-kit.name.policy", "When to check with me") ?? "when to check with me"}: ${label}]`;
 }
 
 export interface Attachment {

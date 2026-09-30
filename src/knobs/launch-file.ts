@@ -71,7 +71,9 @@ function patched(raw: Json, change: z.infer<typeof LaunchFileChangeSchema>): Jso
   }
   if (change.browserSites) {
     if (raw.browser === undefined) throw new Error("The launch settings file has no browser section, so there is nothing to change there.");
-    next.browser = { ...record(raw.browser), allowedOrigins: change.browserSites };
+    // A list of websites replaces "any website": the browser takes one or the other.
+    const { anyWebsite: _any, ...browser } = record(raw.browser);
+    next.browser = { ...browser, allowedOrigins: change.browserSites };
   }
   LaunchFileSchema.parse(next);
   return next;

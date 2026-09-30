@@ -57,18 +57,20 @@ test("this test needs a real browser, and says so", () => {
   assert.equal(chromium.name(), "chromium", "this test declares the browser engine it requires");
 });
 
-test("every comfort setting ships as Branch has always behaved", () => {
+test("every comfort setting ships as Branch has always behaved, but for a chime and updating by itself", () => {
   const values = allComfort(memoryStore(), "local");
   assert.deepEqual(values, {
-    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "Ctrl+Shift+S", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", vim: false },
-    display: { statusLine: null, timestamps: false },
-    notify: { method: "system", sound: "off", autoUpdate: "off", releaseChannel: "stable" },
+    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "Ctrl+L", stopTask: "Ctrl+Shift+S", searchHistory: "Ctrl+Shift+F", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", previousConversation: "Ctrl+Shift+Tab", switchPerson: "", vim: false },
+    display: { statusLine: null, timestamps: false, hideTimes: false },
+    notify: { method: "system", sound: "chime", needsYes: true, taskDone: true, autoUpdate: "install", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
     browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss" },
     network: { proxy: null, noProxy: [], caCertificates: [] },
     files: { respectGitignore: true, extraIgnoreFiles: [] },
     mcp: { startupTimeoutSeconds: 10 },
   });
+  // The ship-on rule: the chime is on unless the owner switched it off; a record holding only that switch is their choice.
+  assert.equal(readComfort(memoryStore({ "comfort-notify": { sound: "off" } }), "local", "notify").sound, "off");
   // A record written wrongly reads as the defaults rather than stopping anything.
   assert.equal(readComfort(memoryStore({ "comfort-keys": { vim: "yes" } }), "local", "keys").vim, false);
   assert.throws(() => ComfortKeysSchema.parse({ palette: "Ctrl+J", newConversation: "ctrl+j" }), /same keys/);
@@ -269,7 +271,7 @@ test("R17-S20: the settings route checks the proxy and certificates before keepi
   assert.equal(shown.status, 200);
   assert.equal(shown.body.values.mcp.startupTimeoutSeconds, 10);
   assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body,
-    { channel: "stable", busyTasks: 0, autoUpdate: "off" });
+    { channel: "stable", busyTasks: 0, workingTasks: 0, autoUpdate: "install" });
   const outsideTask = branch.store.createRun("person:sam", "a long task");
   assert.equal((await call("GET", "/api/comfort/update-readiness")).body.busyTasks, 1,
     "work from another profile blocks the update");
@@ -421,10 +423,14 @@ test("R17-S20: a tool server that does not answer is given up on after the owner
   assert.ok(Date.now() - started < 5000, `it waited ${Date.now() - started} ms, not the ten seconds it used to`);
 });
 
-test("R17-S17: automatic updates are off as shipped, look once a day, and only install when nothing is working", () => {
+test("R17-S17: automatic updates install by themselves as shipped, look once a day, and only install when nothing is working", () => {
   const records = {};
   const store = { get: (_k, _o, key) => (key in records ? { data: records[key] } : undefined), save: (_k, _o, key, data) => { records[key] = data; } };
   const now = new Date("2026-09-17T12:00:00Z");
+  assert.equal(updatePlan(store, "local", { busyTasks: 0, updaterPhase: "available", now }).step, "install", "as shipped: installed with no click");
+  // The owner's own off (src/ship-on.ts writes down which fields the owner set).
+  records["ship-on-chosen"] = { "comfort-notify": ["autoUpdate"] };
+  records["comfort-notify"] = { autoUpdate: "off" };
   assert.equal(updatePlan(store, "local", { busyTasks: 0, updaterPhase: "available", now }).step, "nothing", "off never checks or installs");
   records["comfort-notify"] = { autoUpdate: "check" };
   assert.equal(updatePlan(store, "local", { busyTasks: 0, now }).step, "check");
@@ -439,21 +445,21 @@ test("R17-S17: automatic updates are off as shipped, look once a day, and only i
   assert.equal(updatePlan(store, "local", { busyTasks: 0, updaterPhase: "available", now }).step, "install");
 });
 
-test("beta checks every five minutes without changing stable or interrupting busy work", () => {
-  const records = { "comfort-notify": { autoUpdate: "check", releaseChannel: "beta" } };
+test("beta checks every minute without changing stable or interrupting busy work", () => {
+  const records = { "comfort-notify": { autoUpdate: "check", releaseChannel: "beta" }, "ship-on-chosen": { "comfort-notify": ["autoUpdate"] } };
   const store = { get: (_k, _o, key) => ({ data: records[key] }), save: (_k, _o, key, data) => { records[key] = data; } };
   const start = new Date("2026-09-23T06:00:00Z");
   noteUpdateCheck(store, "local", start);
   const facts = (milliseconds, extra = {}) => ({ busyTasks: 0, now: new Date(+start + milliseconds), ...extra });
-  assert.equal(updatePlan(store, "local", facts(299_999)).step, "nothing");
-  assert.equal(updatePlan(store, "local", facts(300_000)).step, "check");
+  assert.equal(updatePlan(store, "local", facts(59_999)).step, "nothing");
+  assert.equal(updatePlan(store, "local", facts(60_000)).step, "check");
   records["comfort-notify"].releaseChannel = "stable";
-  assert.equal(updatePlan(store, "local", facts(300_000)).step, "nothing");
+  assert.equal(updatePlan(store, "local", facts(60_000)).step, "nothing");
   records["comfort-notify"] = { autoUpdate: "install", releaseChannel: "beta" };
-  assert.equal(updatePlan(store, "local", facts(300_000, { busyTasks: 1, updaterPhase: "available" })).step, "nothing");
-  assert.equal(updatePlan(store, "local", facts(300_000, { updaterPhase: "available" })).step, "install");
+  assert.equal(updatePlan(store, "local", facts(60_000, { busyTasks: 1, updaterPhase: "available" })).step, "nothing");
+  assert.equal(updatePlan(store, "local", facts(60_000, { updaterPhase: "available" })).step, "install");
   records["comfort-notify"].autoUpdate = "off";
-  assert.equal(updatePlan(store, "local", facts(300_000)).step, "nothing");
+  assert.equal(updatePlan(store, "local", facts(60_000)).step, "nothing");
 });
 
 test("R17-S16: the status line says the pieces picked, in order, or nothing when kept as always", () => {
@@ -467,7 +473,7 @@ test("R17-S21: the terminal's Settings pages carry real controls, /switch change
   const { app: branch, root } = await app(t);
   const rows = comfortRows(branch.store, "local", english, "notifications");
   assert.deepEqual(rows.map((row) => row.command), ["/switch notify", "/switch sound"]);
-  assert.match(rows[1].title, /Sound: off/);
+  assert.match(rows[1].title, /Sound: chime/, "the ship-on rule: a chime when Branch needs you");
   const state = { look: {}, mode: "dark", themeName: "Forest", switches: {} };
   for (const page of ["general", "notifications", "voice", "computer", "self", "updates"])
     assert.ok(settingsRows(branch, english, page, "", state).some((row) => row.command?.startsWith("/switch ")), `${page} has a control`);
@@ -477,7 +483,7 @@ test("R17-S21: the terminal's Settings pages carry real controls, /switch change
     assert.notEqual(parseRoute(`settings ${page}`)?.settings, page, `Settings has no ${page} page`);
     assert.ok(parseRoute(home), `${page} lives at ${home}`);
   }
-  assert.equal(switchComfort(branch.store, "local", "sound", "", english), "Sound: chime");
+  assert.equal(switchComfort(branch.store, "local", "sound", "", english), "Sound: knock");
   assert.equal(switchComfort(branch.store, "local", "mcpTimeout", "45", english), "Seconds a server may take to start: 45");
   assert.equal(switchComfort(branch.store, "local", "statusLine", "model,cost", english), "Status line: Model, Cost so far");
   assert.throws(() => switchComfort(branch.store, "local", "proxy", "http://a:b@proxy.example.com:1", english), /user name or password/);

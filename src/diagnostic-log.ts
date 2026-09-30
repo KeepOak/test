@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
@@ -262,9 +262,14 @@ export class DiagnosticLog {
     };
   }
 
+  /**
+   * One whole line, appended. Two processes write `branch.jsonl`: the engine, and the desktop app's main process
+   * (src/desktop/main-log.ts). Each line is one append to the file opened for appending and closed again, so it
+   * lands whole after the other writer's lines, never inside one, and a rotation that fails never loses the line.
+   */
   private append(file: string, text: string, perFile: number): void {
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-    const size = existsSync(file) ? statSync(file).size : 0;
+    const size = sizeOf(file);
     if (size > 0 && size + text.length + 1 > perFile) rotate(file);
     appendFileSync(file, text + "\n", { mode: 0o600 });
   }
@@ -285,12 +290,38 @@ export function withoutQuotedText(text: string): string {
   return text.replace(/"(?:[^"\\\n]|\\.){4,}"(?:\.\.\.)?/g, '"[text removed]"').replace(/'(?:[^'\\\n]|\\.){4,}'/g, "'[text removed]'");
 }
 const rotated = (base: string, index: number): string => base.replace(/\.jsonl$/, `.${index}.jsonl`);
+const sizeOf = (file: string): number => { try { return statSync(file).size; } catch { return 0; } };
+/**
+ * Moves the full file aside and drops the oldest copy. Adapted from OpenClaw's file transport (MIT,
+ * openclaw/openclaw src/logging/logger-file-transport.ts): rotation happens only between whole lines, each move
+ * is tried on its own, and a rotation that fails still lets the line be written (the next write tries again). With
+ * two writers a copy may already have been moved by the other one, or, on Windows, the file may be open for the
+ * other's append at that moment; either only skips that move.
+ */
 function rotate(base: string): void {
+  const step = (move: () => void): void => { try { move(); } catch { /* already moved by the other writer, or busy */ } };
   const oldest = rotated(base, fileCount - 1);
-  if (existsSync(oldest)) unlinkSync(oldest);
+  if (existsSync(oldest)) step(() => unlinkSync(oldest));
   for (let index = fileCount - 2; index >= 1; index--)
-    if (existsSync(rotated(base, index))) renameSync(rotated(base, index), rotated(base, index + 1));
-  renameSync(base, rotated(base, 1));
+    if (existsSync(rotated(base, index))) step(() => moveAside(rotated(base, index), rotated(base, index + 1)));
+  step(() => moveAside(base, rotated(base, 1)));
+}
+/**
+ * Moves a file to a name nothing has yet. A plain rename replaces what is there, and with two writers rotating at once
+ * that was a copy the other had just moved aside, full of lines, lost (the engine lost two lines in three on Linux).
+ * A hard link is never made over another file, so a move the other writer already made is skipped instead. A drive
+ * without hard links falls back to the plain move, only when nothing is at the new name.
+ */
+function moveAside(from: string, to: string): void {
+  try { linkSync(from, to); }
+  catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST" || code === "ENOENT" || existsSync(to)) throw error;
+    renameSync(from, to);
+    return;
+  }
+  // Both names hold the same lines until the old one goes; if it cannot go, the new one is taken back, never both kept.
+  try { unlinkSync(from); } catch (error) { try { unlinkSync(to); } catch { /* left as it is */ } throw error; }
 }
 function readLines(file: string): LogLine[] {
   try {
@@ -357,13 +388,33 @@ function crashCaptureMarkedIn(logDir: string): boolean {
     // No file yet (a fresh install whose engine has not started once) means the shipped setting, on.
   } catch (error) { return (error as NodeJS.ErrnoException)?.code === "ENOENT" && DiagnosticLogSettingsSchema.parse({}).crashCapture === "on"; }
 }
-export function writeCrashCaptureMark(dataDir: string, on: boolean): void {
+/**
+ * The owner's whole log settings go in the same file, so the desktop app's main process, which has no database,
+ * writes its lines under the owner's switch and the same size cap as the engine (src/desktop/main-log.ts).
+ */
+export function writeLogSettingsMark(dataDir: string, settings: DiagnosticLogSettings): void {
   try {
-    // Nothing to say while it is off and never was on: the folder is not made for nothing.
-    if (!on && !existsSync(markPath(dataDir))) return;
+    // Nothing to say while everything is as shipped and never was otherwise: the folder is not made for nothing.
+    const shipped = JSON.stringify(DiagnosticLogSettingsSchema.parse({}));
+    if (JSON.stringify(settings) === shipped && !existsSync(markPath(dataDir))) return;
     mkdirSync(join(dataDir, "logs"), { recursive: true, mode: 0o700 });
-    writeFileSync(markPath(dataDir), JSON.stringify({ crashCapture: on ? "on" : "off" }), { mode: 0o600 });
+    const { crashCapture, mode, keepDays, maxMegabytes } = settings;
+    writeFileSync(markPath(dataDir), JSON.stringify({ crashCapture, mode, keepDays, maxMegabytes }), { mode: 0o600 });
   } catch { /* the switch file must never stop a setting being saved */ }
+}
+/**
+ * The owner's log settings as last written beside the log: the shipped ones before the file was ever written, and
+ * when it cannot be read (then crash capture is off, as `crashCaptureMarked` says). A file from before it carried the
+ * mode holds only the crash switch; the rest are the shipped settings.
+ */
+export function markedLogSettings(dataDir: string): DiagnosticLogSettings {
+  const shipped = DiagnosticLogSettingsSchema.parse({});
+  try {
+    const saved = DiagnosticLogSettingsSchema.safeParse(JSON.parse(readFileSync(markPath(dataDir), "utf8")));
+    return saved.success ? saved.data : { ...shipped, crashCapture: "off" };
+  } catch (error) {
+    return (error as NodeJS.ErrnoException)?.code === "ENOENT" ? shipped : { ...shipped, crashCapture: "off" };
+  }
 }
 /** Whether the owner had crash capture on when the file was last written; the shipped setting before it was ever written, off when it cannot be read. */
 export function crashCaptureMarked(dataDir: string): boolean {

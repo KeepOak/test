@@ -269,7 +269,8 @@ test("public close aborts active work and drains cleanup before closing storage"
   release();
   const run = await pending;
   await closing;
-  assert.equal(run.status, "cancelled");
+  // Stopped by the close and kept to be carried on at the next start ("carry on after a restart" ships on, #483).
+  assert.equal(run.status, "interrupted");
   assert.equal(cleaned, true);
   await app.close();
 });

@@ -39,6 +39,10 @@ import { offTile } from "./switch-on.js";
 import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part D §8: a refused chat-app token
 import { workSection, readWork, pausedIds } from "./inboxwork.js"; // long-work: what is working or paused, with Pause, Resume, Stop
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { readSourceMerges, sourceMergeCards } from "./self-development-merge.js";
+import { readSourcePublications, sourcePublicationCards } from "./self-development-publication.js";
+import { readUrgency, byUrgency } from "./inbox-urgency.js"; // Sort the Inbox by urgency (decision models)
+import { autonomyRows, autonomyCount, readAutonomy, initAutonomyInbox } from "./inbox-autonomy.js";
 
 let asks = [];
 let asksRead = false; // pass 18: "Nothing needs you" only once the engine answered (after() below)
@@ -87,29 +91,34 @@ const waitingChanges = () => changeRequests.filter((r) => r.status === "waiting"
 /* Q050: the tab counts what the engine counts (GET /api/state needsYou, as the sidebar and Overview do), plus the install
    requests only this place lists; the rows drawn are what decides "Nothing is waiting". */
 const waitingCount = () => needsYou() + installs.length;
-const rowsWaiting = () => asks.length + E.state.trunkWaiting.length + installs.length;
+const rowsWaiting = () => asks.length + E.state.trunkWaiting.length + installs.length + autonomyCount();
 /* What Allow all may answer: the questions and the Trunk messages, never the install requests. On a household profile
    it is not offered: GET /api/policy lists the owner's questions there too, and one yes for all of them is the owner's.
    A question with no fingerprint is left to its own Allow: without one, a yes is not bound to the request shown. */
 const exact = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 const exactAsks = () => asks.filter(exact);
 const allowable = () => (E.profiles?.active?.id ? 0 : exactAsks().length + E.state.trunkWaiting.length);
+/* Each row of Needs you with its key (the one its unread dot uses) and its words, for Sort the Inbox by urgency. */
+const needRows = () => [
+  ...asks.map((q) => ({ key: `ask:${q.sessionId}:${q.fingerprint || ""}`, text: [q.question || q.label, q.target].filter(Boolean).join(" · "), row: () => askRow(q) })),
+  ...installs.map((r) => ({ key: `install:${r.id}`, text: [r.ask?.why, r.ask?.name].filter(Boolean).join(" · "), row: () => installRow(r) })),
+  ...E.state.trunkWaiting.map((m) => ({ key: `tmsg:${m.id}`, text: m.message, row: () => messageRow(m) })),
+];
 function needsTab() {
   const count = allowable();
   let html = `<div class="rows">`;
   if (count > 1) html += `<div class="acts" data-css="margin:4px 0 6px"><button class="btn" type="button" data-act="allowall">${t("window.places.inbox.allow-all-count", { count })}</button></div>`;
-  html += asks.map(askRow).join("");
-  html += installs.map(installRow).join("");
-  html += E.state.trunkWaiting.map(messageRow).join("");
+  html += byUrgency(needRows().map(({ key, row }) => [key, row()])).join("");
+  html += autonomyRows();
   html += `</div>`;
-  return html + waitingChanges().map(selfCard).join("");
+  return html + waitingChanges().map(selfCard).join("") + sourceMergeCards() + sourcePublicationCards();
 }
 
 /* Needs you, and the prototype's line when nothing at all waits (a p.empty: the Branch-in-person pose, setup-delight-033,
    is drawn above it by the shell). */
 function needsBody() {
   const lead = cutCards() + revokedPrompts() + adaptCards();
-  const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length;
+  const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length && !sourceMergeCards() && !sourcePublicationCards();
   return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
 
@@ -215,17 +224,21 @@ async function answerInstall(el) {
 export async function after() {
   const tab = S.tabs.inbox || "needs";
   let changed = false;
+  if (tab === "needs" && await readSourceMerges()) changed = true;
+  if (tab === "needs" && await readSourcePublications()) changed = true;
   // A helper's question (parentRunId) is answered in its task's Activity › Helpers, not here (FEATURES17C §4).
   const policy = await api("policy").catch((error) => { sayOnce(error); return null; });
   const fresh = (policy?.waiting ?? []).filter((q) => !q.parentRunId);
   const key = (list) => list.map((q) => q.sessionId + q.fingerprint).join();
   if (key(fresh) !== key(asks)) { asks = fresh; changed = true; }
   if (tab === "needs") {
+    try { if (await readAutonomy()) changed = true; } catch (error) { sayOnce(error); }
     const requests = (await api("self-development/requests").catch(sayOnce)).requests ?? [];
     if (JSON.stringify(requests) !== JSON.stringify(changeRequests)) { changeRequests = requests; changed = true; }
     const waiting = await readInstalls();
     if (JSON.stringify(waiting) !== JSON.stringify(installs)) { installs = waiting; changed = true; }
     if (policy && !asksRead) { asksRead = true; changed = true; }
+    if (await readUrgency(needRows().map(({ key, text }) => ({ key, text: String(text ?? "").slice(0, 600) })), sayOnce)) changed = true; // Sort the Inbox by urgency
   }
   if (await readWork().catch((error) => { sayOnce(error); return false; })) changed = true; // long-work
   const p17 = await readInbox17(tab);
@@ -378,6 +391,7 @@ async function allowAll() {
 }
 
 export function init() {
+  initAutonomyInbox();
   initDemo17();
   initInbox17();
   // Security tier: Allow on an install request (xdo) stays greyed for the security review; Don't (xdo-no) only declines.

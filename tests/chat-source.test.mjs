@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -150,17 +150,27 @@ test("approvals: the owner's standing yes does not reach a chat's task, and a ch
   const { app, say, chat, owner } = await fixture(t);
   savePolicy(app.store, owner, { preset: "custom", rules: [{ tool: "files.write", decision: "allow", remember: "always" }] });
   const run = await say('please files.write {"path":"note.txt","content":"hi"}');
-  const settled = app.store.run(run.id);
-  assert.equal(settled.status, "needs_input", "a change from a chat waits for a yes");
+  // #498: writing a file is not on the short list a chat's task holds, so the call is refused before any rule is weighed:
+  // the owner's standing yes never reaches it, and nobody is asked (a chat is never offered a yes to give).
+  assert.equal(app.store.run(run.id).status, "completed");
+  assert.match(toolAnswer(app, run), /Permission denied: files\.write/, "a change from a chat is refused, not let through");
+  assert.equal(chat.sent.some((m) => m.buttons), false, "no question went out to the chat");
+  assert.deepEqual(app.runtime.waitingApprovals(run.sessionId), [], "and nothing waits for a yes");
+  await assert.rejects(readFile(join(app.runtime.workspace, "note.txt"), "utf8"), "nothing was written");
+  // A line that grants this chat files.write lets the call be weighed, and still the owner's standing yes does not reach
+  // it: the change waits for a yes. mac7/chat-allowlist (integration review): the chat is offered no Yes at all, neither
+  // the standing one nor the once, only No and the sentence saying where the yes belongs. A chat sender must not approve
+  // their own task's change.
+  allowFromChat(app, ["files.write"]);
+  const granted = await say('please files.write {"path":"granted.txt","content":"hi"}');
+  assert.equal(app.store.run(granted.id).status, "needs_input", "a change from a chat waits for a yes");
   const question = chat.sent.find((m) => m.buttons);
   assert.ok(question, "the question went out with buttons");
-  // mac7/chat-allowlist (integration review): writing a file is not on the short list a chat holds, so
-  // the chat is offered no Yes at all — neither the standing one nor the once — only No and the
-  // sentence saying where the yes belongs. A chat sender must not approve their own task's change.
   assert.deepEqual(question.buttons.map((b) => b.label), ["No"], "a chat was offered a yes it may not give");
   assert.match(question.text, /Branch app window/, "the question does not say where the yes belongs");
-  const waiting = app.runtime.waitingApprovals(run.sessionId)[0];
-  assert.throws(() => app.runtime.approve(run.sessionId, "allow", "always", waiting.fingerprint, "chat"), /./);
+  const waiting = app.runtime.waitingApprovals(granted.sessionId)[0];
+  assert.throws(() => app.runtime.approve(granted.sessionId, "allow", "always", waiting.fingerprint, "chat"), /./);
+  await assert.rejects(readFile(join(app.runtime.workspace, "granted.txt"), "utf8"), "nothing was written without the owner's yes");
   assert.equal(app.store.audit.list(owner, { action: "approval.decided" }).length, 0);
   // The owner's own task keeps its standing yes.
   const own = await app.runtime.run({ prompt: 'please files.write {"path":"own.txt","content":"hi"}' });
@@ -193,6 +203,7 @@ test("Trunks: a chat's task is never a lesson a Trunk learns from", async (t) =>
   app.trunks.setMode("trunks", { mode: "on" });
   app.trunks.setMode("teach", { mode: "on" });
   const gu = app.trunks.create({ name: "Gu" });
+  app.trunks.setDefault(gu.id);
   await app.trunks.introduced();
   app.trunks.teaching.watch(gu.id);
   const run = await say('please files.write {"path":"report.md","content":"# Report"}');

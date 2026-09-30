@@ -1,12 +1,15 @@
+// real-screen-test
 // Using this computer's screen and keyboard. Every window these tests touch is one they opened
 // themselves — a Notepad window and a small window of their own standing in for a password
 // manager — and every one of them is closed again, whether the test passes or fails.
 import test from "node:test";
 import { openSettingFor } from "./places.mjs";
+import { realScreenAllowed } from "./real-screen.mjs";
 // These tests drive a real Notepad window and show the Stop banner on whoever's screen this runs
-// on. They only run when a person asks for them: set BRANCH_SCREEN_TESTS=1.
-if (process.env.BRANCH_SCREEN_TESTS !== "1") {
+// on. They only run when a person asks for them (BRANCH_SCREEN_TESTS=1) or on a Windows CI runner.
+if (!realScreenAllowed()) {
   test("screen-control tests are opt-in (set BRANCH_SCREEN_TESTS=1 to run them on this screen)", { skip: true }, () => {});
+  console.log("screen-control: not run; it drives the real screen (set BRANCH_SCREEN_TESTS=1 to run it on this screen)");
   process.exit(0);
 }
 import assert from "node:assert/strict";

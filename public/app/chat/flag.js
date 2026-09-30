@@ -8,7 +8,7 @@ import { $, esc, render } from "../core/dom.js";
 import { openDlg, closeDlg, toast, ic } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { E } from "../core/state.js";
-import { on, run } from "../core/actions.js";
+import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
 
@@ -37,7 +37,9 @@ export async function loadFlags() {
   if (changed) render();
 }
 
-const sendRow = () => `<div class="flsend17c off17c"><input type="checkbox" class="sw" id="fl-send17c" aria-label="${esc(t("window.chat.flag.send"))}"><span class="grow"><b>${esc(t("window.chat.flag.send"))}</b><small>${esc(t("window.chat.flag.send-off"))}</small></span><button class="link" type="button" data-act="flgo17c">${esc(t("window.chat.flag.open-setting"))}</button></div>`;
+/* Also send to the Branch team stays greyed with its real reason under it: flags stay on this computer, and the engine has
+   no route that sends one (src/reply-flags.ts), so no setting anywhere can allow it (the lead's ruling, batch A). */
+const sendRow = () => `<div class="flsend17c off17c"><input type="checkbox" class="sw" id="fl-send17c" aria-label="${esc(t("window.chat.flag.send"))}"><span class="grow"><b>${esc(t("window.chat.flag.send"))}</b><small>${esc(t("window.why.fl-send17c"))}</small></span></div>`;
 
 function openFlag(el) {
   F.reply = { sessionId: el.dataset.sid, messageId: Number(el.dataset.mid) };
@@ -71,10 +73,7 @@ async function remove(el) {
 }
 
 export function initFlag() {
-  markLive(["flag", "flr17c", "flsave17c", "flrm17c", "sw:fl-note17c", "flgo17c"]);
-  /* Open that setting: Settings › Data & usage, where sending flags would be allowed (hook for PARITY.md settings-b-007,
-     built by B5); the switch itself stays greyed, since nothing is sent anywhere. */
-  on("flgo17c", () => { closeDlg(); const go = document.createElement("button"); go.dataset.v = "usage"; run("setgo", go); });
+  markLive(["flag", "flr17c", "flsave17c", "flrm17c", "sw:fl-note17c"]);
   on("flag", (el) => openFlag(el));
   on("flr17c", (el) => pick(el));
   on("flsave17c", () => save());

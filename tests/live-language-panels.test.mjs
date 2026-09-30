@@ -110,7 +110,7 @@ test.skip("a branch's carry-back button follows a live language change, before a
   const owner = app.runtime.owner;
   const root = await app.runtime.run({ prompt: "the loft hatch" });
   const point = app.store.sessionView(owner, root.sessionId).messages.find((message) => message.role === "assistant");
-  const branch = app.store.branchSession(owner, { sessionId: root.sessionId, messageId: point.messageId });
+  const branch = (await app.store.branchSession(owner, { sessionId: root.sessionId, messageId: point.messageId }));
   /* The branch is opened in the window, as a person would, so the window's own redraws draw its tree too:
      a tree drawn for a conversation that is not on screen is hidden by the next redraw (#152 macOS shard 2). */
   await page.evaluate((id) => import("/app.js").then((shell) => shell.openConversation(id)), branch.sessionId);

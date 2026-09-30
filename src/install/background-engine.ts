@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { clearRunning, readRunning, sessionTokenFileName } from "./running.js";
 import { runTool, systemTool, type RunTool } from "./windows.js";
+import { quitPath } from "./quit.js";
 
 /**
  * Talking to the engine that is already working with the window closed. When the window joined a
@@ -90,21 +91,43 @@ export async function stopBackgroundEngine(dataDir: string, deps: StopDeps = {})
     await clearRunning(dataDir).catch(() => undefined);
     return { pid: null, stopped: false, forced: false, message: "Nothing was working in the background." };
   }
-  const asked = await run(taskkill, ["/PID", String(pid), "/T"]).then(() => true, () => false);
-  if (asked && (await waitForExit(pid, deps))) return finish(dataDir, pid, false);
-  if (deps.gracefulOnly) return waitingForEngine(pid);
+  // Asked first the way `branch quit` asks (src/install/quit.ts): Branch's background engine has no window, so taskkill
+  // without /F can never close it ("can only be terminated forcefully"), and an automatic update, which never forces,
+  // waited on that for ever while it built, tried and backed up the same version every minute (2026-09-29).
+  const quit = await askToQuit(dataDir, instance, deps);
+  if (quit === null && (await waitForExit(pid, { ...deps, waitMs: deps.waitMs ?? quitWaitMs }))) return finish(dataDir, pid, false);
+  const asked = await run(taskkill, ["/PID", String(pid), "/T"]).then(() => null, (error: unknown) => oneLine(error));
+  if (asked === null && (await waitForExit(pid, deps))) return finish(dataDir, pid, false);
+  if (deps.gracefulOnly) return waitingForEngine(pid, [quit ?? "it was asked to close but had not closed yet", asked ?? "taskkill asked it to close; it had not closed yet"]);
   await run(taskkill, ["/PID", String(pid), "/T", "/F"]).catch(() => undefined);
   if (await waitForExit(pid, deps)) return finish(dataDir, pid, true);
   return notInTime(pid);
+}
+
+/** How long a background engine that agreed to close is given to go: its work is saved first (as `branch quit` waits). */
+const quitWaitMs = 20000;
+const oneLine = (error: unknown): string => (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim().slice(0, 300);
+
+/**
+ * Asks the background engine to close over its own loopback address with the data folder's key (`branch quit`'s door).
+ * Behind the gateway the engine hands the close to the gateway, which saves the work and ends. Answers null when it
+ * agreed to close, or why it did not.
+ */
+async function askToQuit(dataDir: string, instance: { url: string }, deps: StopDeps): Promise<string | null> {
+  const answer = await engineCall(dataDir, instance.url, "POST", quitPath, deps);
+  if (!answer) return "it did not answer on its own address";
+  if (answer.ok) return null;
+  const body = (await answer.json().catch(() => null)) as { error?: unknown } | null;
+  return `it refused to close (HTTP ${answer.status}${typeof body?.error === "string" ? `: ${body.error.slice(0, 200)}` : ""})`;
 }
 
 const notInTime = (pid: number): StopReport => ({
   pid, stopped: false, forced: true,
   message: "The background engine did not close in time; the update will close it before swapping the files.",
 });
-const waitingForEngine = (pid: number): StopReport => ({
+const waitingForEngine = (pid: number, why: string[] = []): StopReport => ({
   pid, stopped: false, forced: false,
-  message: "The background engine is still working; the update will wait rather than stop it.",
+  message: `Branch could not close its background engine without forcing it${why.length ? ` (${why.join("; ")})` : ""}, so the update is waiting rather than ending it by force. Nothing was changed.`,
 });
 
 /** macOS and Linux wait a few seconds at each step rather than Windows' twelve. */
@@ -126,11 +149,15 @@ async function stopPosixEngine(
   };
   const closing = await engineCall(dataDir, instance.url, "POST", "/api/deployment/close", deps);
   if (closing?.ok && (await waitForExit(pid, bounded))) return finish(dataDir, pid, false);
+  // Behind the gateway, the close door is the engine's and the note names the gateway, so the engine refuses it; the
+  // gateway closes through `branch quit`'s door instead.
+  const quit = closing && !closing.ok ? await askToQuit(dataDir, instance, deps) : undefined;
+  if (quit === null && (await waitForExit(pid, { ...deps, waitMs: deps.waitMs ?? quitWaitMs }))) return finish(dataDir, pid, false);
   if (!closing?.ok && !(await stillTheEngine(dataDir, instance, deps))) {
     await clearRunning(dataDir).catch(() => undefined);
     return { pid: null, stopped: false, forced: false, message: "Nothing was working in the background." };
   }
-  if (deps.gracefulOnly) return waitingForEngine(pid);
+  if (deps.gracefulOnly) return waitingForEngine(pid, [quit ?? (closing ? "it was asked to close but had not closed yet" : "it did not answer on its own address")]);
   if (send("SIGTERM") && (await waitForExit(pid, bounded))) return finish(dataDir, pid, false);
   send("SIGKILL");
   if (await waitForExit(pid, bounded)) return finish(dataDir, pid, true);

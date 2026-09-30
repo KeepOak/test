@@ -4,7 +4,7 @@ import {
   checkedContrast, checkedLanguage, confirmWords, lockdownLines, lockdownSwitch, modeOf, modelAction, modelLines, modelUsedLine,
   themeLine, themeListLines,
 } from "./terminal-cli.js";
-import { presetLinesFor } from "./terminal-commands.js";
+import { presetLinesFor, presetWords } from "./terminal-commands.js";
 import { loadThemeCatalogue, lookLanguage, type Look } from "./terminal-theme.js";
 import { loadWords, type Words } from "./terminal-words.js";
 
@@ -51,7 +51,7 @@ export async function enginePermissions(client: Client, args: string[], io: Engi
   const view = await client.get<PolicyView>("/api/policy");
   if (!args.length) {
     if (io.json) return io.write(JSON.stringify({ policy: view.policy, presets: view.presets }, null, 2));
-    return say(io, presetLinesFor(view.presets, view.policy?.preset));
+    return say(io, presetLinesFor(view.presets, view.policy?.preset, await engineWords(client, io.env)));
   }
   const [name = "", word, ...rest] = args;
   if (!view.presets.some((preset) => preset.id === name) || (word !== undefined && word !== "confirm") || rest.length)
@@ -60,7 +60,8 @@ export async function enginePermissions(client: Client, args: string[], io: Engi
   const saved = await client.post<{ policy: { preset: string } }>("/api/policy", { preset: name, ...(word === "confirm" ? { confirmLoosening: true } : {}) })
     .catch((error: Error) => { throw new Error(error.message.replace(/Tick "[^"]*" to go ahead\./, confirmWords(words, name))); });
   if (io.json) return io.write(JSON.stringify(saved, null, 2));
-  io.write(`[when to check with me: ${view.presets.find((preset) => preset.id === saved.policy.preset)?.label ?? saved.policy.preset}]`);
+  const chosen = view.presets.find((preset) => preset.id === saved.policy.preset) ?? { id: saved.policy.preset };
+  io.write(`[${words.t("settings-kit.name.policy", "When to check with me")}: ${presetWords(chosen, words).label}]`);
 }
 
 /** `branch model [list | use <id>]`: which model new conversations start with, as Settings › Models sets it. */

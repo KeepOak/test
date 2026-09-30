@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { describesScreen } from "./screen-guard.js"; // dogfood follow-up
 import type {
   ToolContext,
   ToolDefinition,
@@ -12,7 +13,9 @@ import { resourceOf, type PolicyResource } from "./policy-resources.js";
 import { inferToolGroup, slimTool } from "./catalog.js";
 import { underTask } from "./task-scope.js"; // household-followups
 import { reachOf, type ToolReach } from "./tool-reach.js"; // Q59
+import { cardSchema } from "./tool-cards.js"; // PLAT-191: tools listed from their cards until their part loads
 import { sourceOfTool } from "./tool-context-modes.js";
+import { handOnRefusal } from "./helper-tree.js"; // helper-lifecycle
 
 /** Tools `policyTarget` reads a target for by name rather than from a `url` or `path`. */
 const targetedByName: ReadonlySet<string> = new Set(["shell.execute", "shell.session.run", "shell.session.open"]);
@@ -42,6 +45,13 @@ export const targetlessTools: Readonly<Record<string, string>> = {
   "notebook.read": "`from` and `to` are cell numbers. The notebook itself is `path`, which the rules read as they do for files.read.",
   "project.board": "`project` is a project's name. The project's folder is judged when something opens it.",
   "answer.page": "`sources[].url` are the addresses an answer cites, written into the page for a person to read; nothing is fetched.",
+  "board.cards": "`project` is a project's name. The project's folder is judged when something opens it.",
+  "board.card_add": "`project` is a project's name; a card is only written on the board, and is worked on when the owner starts it.",
+  "board.card_handoff": "`to` names who holds the card (the owner, the assistant or a specialist); nothing is sent to anyone.",
+  "addon.draft": "Drafting only saves a draft. `hosts` are the addresses the add-on would ask to reach, judged when it runs.",
+  "addon.search": "`source` is the label of an add-on's search source; each source's own tool is judged on its own when it runs.",
+  "install.request": "`server.url` is the address in a request put to the owner; asking fetches nothing and installs nothing.",
+  "sources.sync": "`source` is the name of one of the owner's own sources, set up by the owner; the permission itself is judged.",
 };
 /**
  * Q76: a target a kept rule would read as a pattern, so a standing yes on it would cover far more than
@@ -71,6 +81,12 @@ export const blankTarget = (target: string): boolean => !target.replace(/[\p{Cf}
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
+  /**
+   * PLAT-191: where each name was first registered. The catalog keeps that order, so a part whose tools were listed
+   * from cards and then loaded (its real tools registered again) shows them where they always were; a part switched
+   * off and on again no longer moves its tools to the end.
+   */
+  private readonly firstSeen = new Map<string, number>();
 
   private readonly runFinished = new Set<(context: ToolContext) => Promise<void>>();
   /**
@@ -116,6 +132,7 @@ export class ToolRegistry {
     )
       throw new Error("Invalid or duplicate tool name");
     this.tools.set(tool.name, tool as ToolDefinition);
+    if (!this.firstSeen.has(tool.name)) this.firstSeen.set(tool.name, this.firstSeen.size);
     this.revision++;
     this.announceChange();
   }
@@ -125,15 +142,28 @@ export class ToolRegistry {
    */
   descriptions(permissions: ReadonlySet<string>, options: { diet?: boolean } = {}): ToolDescription[] {
     return [...this.tools.values()]
+      .sort((a, b) => this.firstSeen.get(a.name)! - this.firstSeen.get(b.name)!)
       .filter((t) => permissions.has(t.permission))
       .map((t) => {
         const described: ToolDescription = {
           name: t.name,
           description: t.description,
-          parameters: wireSafePatterns(t.inputSchema ?? (z.toJSONSchema(t.parameters) as Record<string, unknown>)),
+          parameters: wireSafePatterns(t.inputSchema ?? (t as { [cardSchema]?: Record<string, unknown> })[cardSchema]
+            ?? (z.toJSONSchema(t.parameters) as Record<string, unknown>)),
         };
         return options.diet === false ? described : slimTool(described);
       });
+  }
+  /**
+   * Dogfood follow-up: whether a tool reaches the owner's own screen by what it declares or, for a tool from outside,
+   * by what it says about itself (src/screen-guard.ts `describesScreen`). The product's own screen tools are desktop.*.
+   */
+  declaresScreen(name: string): boolean {
+    const tool = this.tools.get(name);
+    if (!tool) return false;
+    if (tool.screen === true) return true;
+    if (!tool.external && !tool.source) return false;
+    return describesScreen({ name, description: tool.description, inputSchema: tool.inputSchema, category: tool.group });
   }
   /** Whether a tool came from outside, so its description is read as untrusted text. */
   isExternal(name: string): boolean {
@@ -188,6 +218,10 @@ export class ToolRegistry {
     // A lent tool's schema is only the lender's word: nothing checks a call against it (MCP's Ajv does).
     if (!shape && tool.group !== "client" && closedEmptySchema(tool.inputSchema)) return false;
     return !Object.hasOwn(targetlessTools, name);
+  }
+  /** PLAT-191: the tool registered under a name now (a card, or the real tool that took its place). */
+  registered(name: string): ToolDefinition | undefined {
+    return this.tools.get(name);
   }
   /** Every registered tool with its permission, for the capability inventory. */
   inventory(): { name: string; permission: string; description: string }[] {
@@ -304,6 +338,8 @@ export class ToolRegistry {
     if (!tool) throw new Error(`Unknown tool: ${name}`);
     if (!context.permissions.has(tool.permission))
       throw new Error(`Permission denied: ${tool.permission}`);
+    const withheld = handOnRefusal(name, context); // helper-lifecycle (src/helper-tree.ts)
+    if (withheld) throw new Error(withheld);
     context.budget.step(context.signal);
     const parsed = tool.parameters.parse(args);
     // Q12: a call that would change Branch's own source is held to its written contract first. It is

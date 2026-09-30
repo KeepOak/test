@@ -6,7 +6,7 @@
    It starts a stand-in model service on this computer (stub-model-b6.cjs, on LM Studio's own port 1234, which must be
    free) and connects it with a made-up key, so real tasks run, wait on the owner and write a file. Every switch it flips
    is put back. SHOTS=<folder> saves a screenshot at each step. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { mkdirSync } = require("node:fs");
 const { start: startStub } = require("./stub-model-b6.cjs");
 
@@ -297,7 +297,7 @@ async function shell(page) {
   await page.locator('[data-act="chatmenu"]').first().click();
   const pinned = page.locator('.pop [data-act="pinlist15"]');
   check("Conversation menu: 'Pinned messages 1' (GET /api/sessions/<id>/pins)", (await pinned.count()) === 1 && (await text(pinned.locator(".r"))) === String((await api(`sessions/${sid}/pins`)).pins.length));
-  check("Conversation menu: Pin to top stays greyed for a plain conversation (the engine keeps no pin for one)", (await page.locator('.pop [data-act="pin-conv"]').count()) === 1 && (await greyed(page.locator('.pop [data-act="pin-conv"]'))));
+  check("Conversation menu: Pin to top is live for a plain conversation (POST /api/sessions/<id>/pin, batch A)", (await page.locator('.pop [data-act="pin-id"]').count()) === 1 && !(await greyed(page.locator('.pop [data-act="pin-id"]'))));
   await pinned.click();
   check("Pinned messages opens the pinned list", await until(async () => (await page.locator(".pop .pinrow15").count()) === 1, 3000));
   await closeAll(page);

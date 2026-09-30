@@ -19,6 +19,7 @@ import { on } from "../core/actions.js";
 import { ic, av, toast } from "../core/ui.js";
 import { markLive } from "../core/features.js";
 import { stepsOf, loadSteps } from "./timeline.js";
+import { said } from "./livesteps.js";
 import { t, language } from "../../i18n.js";
 
 const F = { own: new Map(), summaries: new Map(), asked: new Set(), artifacts: null, artAsked: 0, stepsAsked: new Set(), later: new Map(), send: async () => {} };
@@ -33,11 +34,14 @@ export function stampBefore(m, prev) {
   if (Number.isNaN(d.getTime())) return "";
   const p = new Date(prev?.at ?? "");
   if (!Number.isNaN(p.getTime()) && day(p) === day(d) && d - p < 30 * 60000) return "";
+  return `<div class="stamp">${esc(stampWords(d))}</div>`;
+}
+/* A stamp's words: "Today 3:04 PM", "Yesterday 9:10 AM", else the date and the time (trunk-one-row's separators too). */
+export function stampWords(d) {
   const today = new Date(), yesterday = new Date(Date.now() - 86400000);
-  const words = day(d) === day(today) ? t("window.chat.stamp.today", { time: clock(d) })
+  return day(d) === day(today) ? t("window.chat.stamp.today", { time: clock(d) })
     : day(d) === day(yesterday) ? t("window.chat.stamp.yesterday", { time: clock(d) })
       : `${d.toLocaleDateString(language(), { month: "short", day: "numeric" })} ${clock(d)}`;
-  return `<div class="stamp">${esc(words)}</div>`;
 }
 
 /* ---------- the task behind a message ---------- */
@@ -117,8 +121,8 @@ function madeFiles(run) {
   return (F.artifacts ?? []).filter((a) => a.runId === run.id).map((a) => `<div class="b"><div class="gut"></div><div><button class="file" type="button" data-act="view" data-v="library" data-tab="made"><span class="fi">${esc(a.name.split(".").pop())}</span><span><b>${esc(a.name)}</b><small>${t("window.chat.plus.kb", { n: Math.max(1, Math.round((a.bytes ?? 0) / 1024)) })}</small></span></button></div></div>`).join("");
 }
 /* Where the work moved to another account after a plan limit, one quiet line each, in the engine's own words (GET
-   /api/runs/<id>/steps `switched`): the live steps said it while it happened; this keeps it once the task has ended. */
-const switched = (body) => (body?.switched ?? []).map((s) => `<div class="b"><div class="gut"></div><div><div class="switched18"><span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span><span>${esc(s.sentence)}</span></div></div></div>`).join("");
+   /api/runs/<id>/steps `switched`, said in the language chosen): the live steps said it while it happened; this keeps it once the task has ended. */
+const switched = (body) => (body?.switched ?? []).map((s) => `<div class="b"><div class="gut"></div><div><div class="switched18"><span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span><span>${esc(said(s.say, s.sentence))}</span></div></div></div>`).join("");
 /** A task's answered questions, as decided lines: those not already drawn where they were asked (`placed`, by call id);
     then any move to another account. */
 export const beforeEnd = (run, placed = new Set()) => (run ? decided(steps(run.id), (s) => !placed.has(s.askedCall)) + switched(steps(run.id)) : "");

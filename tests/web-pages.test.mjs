@@ -84,11 +84,13 @@ const manualRun = (app, tool) => app.store.runs(app.runtime.owner).find((run) =>
 
 /* ---------- the switch ---------- */
 
-test("A0743 A1452: the web-pages switch ships off; off refuses in one sentence and hides both tools; the owner route turns it on", async (t) => {
+test("A0743 A1452: the web-pages switch ships when needed; off refuses in one sentence and hides both tools; the owner route turns it on", async (t) => {
   const { app, call, tool } = await served(t);
   const owner = app.runtime.owner, names = ["web.page", "web.crawl"];
   const tiers = () => switchedToolTiers(app.store, owner, app.registry.names());
-  assert.equal((await call("/api/web-pages")).body.settings.mode, "off");
+  // The ship-on rule: reading whole pages ships "when needed" (src/web-pages-settings.ts); the owner switches it off.
+  assert.equal((await call("/api/web-pages")).body.settings.mode, "when-needed");
+  assert.equal((await call("/api/web-pages", { mode: "off" })).body.settings.mode, "off");
   assert.deepEqual(tiers().hidden.filter((name) => names.includes(name)).sort(), [...names].sort());
   for (const name of names)
     await assert.rejects(tool(name, { url: "http://127.0.0.1:9/" }), (error) => error.message === webPagesOff);

@@ -6,9 +6,11 @@ touched since the 169-row research checklist was written and no longer described
 
 Two rules for reading it:
 
-- **Nearly everything new ships off.** Every feature added since 0.16.0 has a three-way switch — off,
-  on, or loaded only when the work calls for it — and arrives off. A fresh install is the model talking
-  and nothing in the way. Where something is on by default it says so.
+- **Features ship on.** Every feature has a three-way switch — off, on, or loaded only when the work
+  calls for it — and arrives working ("when needed" or on), so nobody has to spend an afternoon in
+  Settings first. What stays off until you say so is only what would spend money, send something out
+  of this computer by itself, delete something, use the microphone or camera, use heavy CPU or disk, or
+  loosen approvals and safety. Where something is off by default it says why.
 - **Where a thing has only been proved against a stand-in**, it says so in the same sentence. A page
   that oversells is a support ticket later.
 

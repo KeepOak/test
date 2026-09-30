@@ -237,6 +237,7 @@ test("only the owner's own conversation is answered; the last frame outlives its
   assert.equal(now.runId, run.id);
   assert.equal(now.status, "running");
   assert.equal(now.browser.live, true);
+  assert.equal(now.browser.preview, "ready");
   assert.equal(now.browser.url, "https://example.org/a");
   assert.equal(now.browser.frame, `data:image/jpeg;base64,${frame.toString("base64")}`);
   assert.deepEqual(watched.at(-1), ["local", run.id], "the window is asked for under the runtime's owner and this run");
@@ -248,7 +249,13 @@ test("only the owner's own conversation is answered; the last frame outlives its
   const failing = { async watch() { return { url: "https://example.org/b", title: "B", tabs: [], frame: null, borrowed: false }; } };
   const between = await liveStage({ ...deps, browser: failing }, run.sessionId);
   assert.equal(between.browser.url, "https://example.org/b");
+  assert.equal(between.browser.preview, "unavailable", "a stale frame is not presented as a refreshed preview");
   assert.equal(between.browser.frame, now.browser.frame, "a frame that failed mid-page leaves the last real one of that window");
+  const borrowed = await liveStage({ ...deps, browser: { async watch() {
+    return { url: "https://example.org/private", title: "Owner browser", tabs: [], frame: null, borrowed: true };
+  } } }, run.sessionId);
+  assert.equal(borrowed.browser.preview, "borrowed");
+  assert.equal(borrowed.browser.frame, null, "a borrowed window never receives a previously kept preview");
 
   app.store.finish(run.id, "completed", "done");
   open = false;

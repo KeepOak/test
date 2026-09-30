@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { pathToFileURL } from "node:url";
 import type { Store } from "./store.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 import type { ToolContext } from "./contracts.js";
 import type { ToolRegistry } from "./registry.js";
 import type { WorkspaceFiles } from "./files.js";
@@ -11,8 +12,8 @@ import { defaultJobObjects, type JobObjects } from "./integrations/job-object.js
  * Running a program under a debugger the owner already has. A debug adapter is the small program an
  * editor talks to when it stops your code on a line and shows you what every name holds; Node's own
  * inspector and Python's debugpy are the usual ones. Branch never downloads one, only one adapter
- * runs at a time, starting one goes through the same question as running any other program, and
- * until the owner switches this on nothing starts at all.
+ * runs at a time, and starting one goes through the same question as running any other program. It ships on (the
+ * owner's rule): nothing starts until the owner has added an adapter and a task asks for it.
  */
 const alias = z.string().regex(/^[a-z][a-z0-9_-]{0,29}$/);
 export const DebugSettingsSchema = z.object({
@@ -37,13 +38,16 @@ export type DebugSettings = z.infer<typeof DebugSettingsSchema>;
 
 export function debugSettings(store: Store, owner: string): DebugSettings {
   const parsed = DebugSettingsSchema.safeParse(store.get("settings", owner, "debug-adapters")?.data ?? {});
-  return parsed.success ? parsed.data : DebugSettingsSchema.parse({});
+  // The owner's rule (2026-09-27): only the adapters the owner adds are ever started, each only while a task uses it, and
+  // none is kept running between tasks unless the owner says so; nothing is heavy until used, so this ships on.
+  return parsed.success ? shippedUnlessChosen(store, owner, "debug-adapters", parsed.data, { enabled: true }) : DebugSettingsSchema.parse({});
 }
 export async function saveDebugSettings(store: Store, owner: string, input: unknown): Promise<DebugSettings> {
   const value = DebugSettingsSchema.parse(input ?? {});
   for (const [name, adapter] of Object.entries(value.adapters))
     await checkedProgram(adapter.path).catch((error: Error) => { throw new Error(`${name}: ${error.message}`); });
   store.save("settings", owner, "debug-adapters", { ...value });
+  markChosen(store, owner, "debug-adapters", sentKeys(input));
   return value;
 }
 

@@ -63,11 +63,11 @@ async function fixture(t) {
 
 // ---- the switches ---------------------------------------------------------------------------------
 
-test("every part ships off: no tools, no instructions, and changes are refused in one sentence", async (t) => {
+test("every part but procedures ships when needed; switched off: no tools, no instructions, and changes are refused in one sentence", async (t) => {
   const { app, api, call, on, off } = await fixture(t);
-  // The owner's rule (ships on, 2026-09-26): every part but session commands (it sends the conversation out) and
-  // procedures (steps run without a yes) ships "when needed"; what "off" does is tested by switching each off.
-  const shipsOff = ["session-commands", "procedures"];
+  // The owner's rule (ships on, 2026-09-26): every part but procedures (steps run without a yes) ships "when needed";
+  // what "off" does is tested by switching each off.
+  const shipsOff = ["procedures"];
   assert.deepEqual(Object.values((await api("/api/autonomy")).modes), autonomyParts.map((part) => (shipsOff.includes(part) ? "off" : "when-needed")));
   await off(...autonomyParts);
   const { modes } = await api("/api/autonomy");
@@ -324,7 +324,8 @@ test("sub-goals are shown to every round and to the judge", async (t) => {
   const { app, on, off } = await fixture(t);
   const owner = app.runtime.owner, sessionId = randomUUID();
   addSubgoal(app.store, owner, sessionId, "the tests pass");
-  // Session commands ship off (the owner's rule: /handoff sends the conversation out), and never saved reads as off.
+  // Session commands ship "when needed" (the owner's rule); this test is about what off does, so it is switched off first.
+  await off("session-commands");
   assert.equal(goalWithSubgoals(app.store, owner, { sessionId, objective: "Ship it" }), "Ship it", "nothing while the part is off");
   await on("session-commands");
   assert.match(goalWithSubgoals(app.store, owner, { sessionId, objective: "Ship it" }), /Ship it\nIt is done only when every one of these is also true:\n1\. the tests pass/);
@@ -606,6 +607,7 @@ test("review: a restart finishes a procedure that was cut off, and keeps one tha
   const root = await mkdtemp(join(tmpdir(), "branch-autonomy-restart-"));
   const options = () => ({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: scripted() });
   const first = await createBranch(options());
+  first.autonomy.setMode('procedures', { mode: 'on' });
   const auto = first.autonomy.procedures;
   const cut = auto.create({ name: "Cut", level: "auto", start: { kind: "manual" }, steps: [{ title: "One", prompt: "Do one." }] });
   const asking = auto.create({ name: "Asking", level: "ask-each-step", start: { kind: "manual" }, steps: [{ title: "One", prompt: "Do one." }] });

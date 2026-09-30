@@ -33,17 +33,15 @@ import { loadGatewayConfig } from "../dist/never-break/gateway-config.js";
 import { householdRefusal } from "../dist/household-routes.js";
 
 /**
- * A model that writes the file it is asked to write, then says it is done. Told to go ahead after it
- * stopped to ask (the window's carry-on), it tries the same write again.
+ * A model that writes the file it is asked to write, then says it is done. After it stopped to ask, the window's
+ * carry-on has the engine make the approved write itself (QA R1).
  */
 const pending = { path: null };
 const writer = { name: "writer", async complete(request) {
   const last = request.messages.at(-1);
   const write = (path) => ({ content: "", toolCalls: [{ id: `w${randomUUID()}`, name: "files.write", arguments: JSON.stringify({ path, content: "hello" }) }] });
   if (last?.role === "user" && /^write /.test(String(last.content))) { pending.path = String(last.content).slice(6).trim(); return write(pending.path); }
-  // Q050: the task that asked carries on itself after the yes, told that the call it asked about did not run.
-  const allowed = last?.role === "tool" && !/"ok":true/.test(String(last.content)) && /The call you asked about did not run/.test(String(request.messages[0]?.content ?? ""));
-  if ((last?.role === "user" || allowed) && pending.path) { const path = pending.path; pending.path = null; return write(path); }
+  if (last?.role === "user" && pending.path) { const path = pending.path; pending.path = null; return write(path); }
   return { content: "Done.", toolCalls: [] };
 } };
 
@@ -96,14 +94,14 @@ test("B5 beside an open Branch, permissions, theme, model and the gateway change
   const opened = await openBranch(t);
   const { app, dataDir } = opened, owner = app.runtime.owner;
   assert.match((await branchCli(opened, ["permissions"])).stdout, /^\* ask-before-changes — Ask before changes: /m);
-  assert.match((await branchCli(opened, ["permissions", "read-only"])).stdout, /\[when to check with me: Read only\]/);
+  assert.match((await branchCli(opened, ["permissions", "read-only"])).stdout, /\[When to check with me: Read only\]/);
   assert.equal(readPolicy(app.store, owner).preset, "read-only");
   const looser = await branchCli(opened, ["permissions", "off"]);
   assert.equal(looser.code, 1, "a less careful preset needs the owner's separate yes");
   assert.match(looser.stderr, /Run branch permissions off confirm to go ahead\./);
   assert.doesNotMatch(looser.stderr, /Tick /, "the window's tick box is not what a terminal is told to press");
   assert.equal(readPolicy(app.store, owner).preset, "read-only");
-  assert.match((await branchCli(opened, ["permissions", "off", "confirm"])).stdout, /\[when to check with me: No approvals\]/);
+  assert.match((await branchCli(opened, ["permissions", "off", "confirm"])).stdout, /\[When to check with me: No approvals\]/);
   assert.equal(readPolicy(app.store, owner).preset, "off");
 
   assert.match((await branchCli(opened, ["theme", "nord"])).stdout, /^Theme: Nord · dark/m);

@@ -60,11 +60,11 @@ export class ConversationMarks {
   private requireNotInBin(sessionId: string): void {
     if (this.mark(sessionId)?.deleted_at) throw new Error(inBinWords);
   }
-  /** Whether any of these conversations has a task still going (running, or waiting on an answer). */
-  busy(sessionIds: readonly string[]): boolean {
-    if (!sessionIds.length) return false;
+  /** Whether any of these conversations has a task still going (running, or waiting on an answer); `statuses` narrows it. */
+  busy(sessionIds: readonly string[], statuses: readonly string[] = busyStatuses): boolean {
+    if (!sessionIds.length || !statuses.length) return false;
     return !!this.db.prepare(`SELECT 1 AS found FROM tasks WHERE session_id IN (${sessionIds.map(() => "?").join(",")})
-      AND status IN (${busyStatuses.map(() => "?").join(",")}) LIMIT 1`).get(...sessionIds, ...busyStatuses);
+      AND status IN (${statuses.map(() => "?").join(",")}) LIMIT 1`).get(...sessionIds, ...statuses);
   }
   pin(owner: string, sessionId: string, input: unknown) {
     const { pinned } = PinSchema.parse(input);

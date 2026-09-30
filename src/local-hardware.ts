@@ -234,12 +234,12 @@ export interface LocalRecommendation {
 /** The three sizes offered, smallest first, with what a person can expect from each. */
 const catalogue: Omit<LocalRecommendation, "fits" | "note">[] = [
   {
-    size: "small", model: "llama3.2:3b", downloadBytes: 2 * gigabyte, needsMemoryBytes: 6 * gigabyte,
+    size: "small", model: "qwen2.5:3b", downloadBytes: 2 * gigabyte, needsMemoryBytes: 6 * gigabyte,
     expectation: "Fast, and good for notes, tidying text and short answers. It will get long reasoning wrong.",
   },
   {
-    size: "medium", model: "llama3.1:8b", downloadBytes: 5 * gigabyte, needsMemoryBytes: 12 * gigabyte,
-    expectation: "A steady all-rounder: a few seconds a reply, sensible with everyday questions and short documents.",
+    size: "medium", model: "qwen2.5:7b", downloadBytes: 5 * gigabyte, needsMemoryBytes: 10 * gigabyte,
+    expectation: "A steady all-rounder: a few seconds a reply, sensible with everyday questions and short documents, and it uses tools reliably.",
   },
   {
     size: "large", model: "qwen2.5:14b", downloadBytes: 9 * gigabyte, needsMemoryBytes: 24 * gigabyte,
@@ -268,8 +268,12 @@ export function recommendModels(hardware: Omit<Hardware, "summary">): LocalRecom
   });
 }
 
-/** The one to suggest first: the largest that fits, or the smallest when nothing really does. */
+/**
+ * The one to suggest first, and so the one a first task runs on: the medium model (qwen2.5:7b) whenever it fits, since
+ * it finishes a real first task with tools and the small one does not; the small one only when nothing bigger fits.
+ * The large one is there to pick, never suggested: on most computers it answers too slowly for a first task.
+ */
 export function bestRecommendation(hardware: Omit<Hardware, "summary">): LocalRecommendation {
   const all = recommendModels(hardware);
-  return [...all].reverse().find((entry) => entry.fits) ?? all[0]!;
+  return all.find((entry) => entry.size === "medium" && entry.fits) ?? all[0]!;
 }

@@ -294,7 +294,7 @@ async function stage(page, trunk) {
   await page.locator('#pip7 [data-act="stage"]').first().click();
   await st.waitFor();
   check("pane-stage-008: the steps' replay stays greyed (the engine keeps no frames per step)", (await st.locator('[data-act="stage-step"]').count()) === 0 || await greyed(st.locator('[data-act="stage-step"]')));
-  check("pane-stage-006: Pause stays greyed (the engine cannot pause a task)", (await st.locator('[data-act="stage-pause"]').count()) === 0 || await greyed(st.locator('[data-act="stage-pause"]')));
+  check("pane-stage-006: Pause is the chat's own (POST /api/runs/<id>/pause, batch A), never a greyed stand-in", (await st.locator('[data-act="stage-pause"]').count()) === 0);
   await st.locator('.dk7-foot [data-act="setgo"]').click();
   check("pane-stage-006: Change what it may use opens Settings › Computer & browser", !!(await until(async () => (await text(page.locator(".settings h1"))) === "Computer & browser", 10000)));
   // Settings is a place, left by its own way back (as the prototype's is; Escape closes menus and dialogs only).

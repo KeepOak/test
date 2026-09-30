@@ -17,6 +17,9 @@ import { audit } from "./audit.js";
 import { readPolicy } from "./policy.js";
 import type { Store } from "./store.js";
 import { inWorkspace, locateProgram, programFolders } from "./integrations/default-shell.js";
+import type { BranchShell } from "./integrations/shell.js";
+
+type HeldShell = Pick<BranchShell, "launchHeld">;
 
 /** The tools looked for. Only these names are ever looked up; none of them is started to find it. */
 export const knownClis = ["git", "gh", "node", "npm", "npx", "python", "python3", "pip", "uv", "winget", "az", "aws", "gcloud",
@@ -44,15 +47,35 @@ export interface OwnClisDeps {
 export class OwnClis {
   /** The aliases the launch settings file (or the default programs) already gives commands; set when the shell starts. */
   private launch: string[] = [];
+  private launchPrograms: Record<string, { path: string; args: string[] }> = {};
+  private attached = false;
+  /** SELF-304: the shell itself, so a program held to one folder can be walled by it before it is left running. */
+  private shell: HeldShell | null = null;
   constructor(private readonly deps: OwnClisDeps) {}
   private get env(): NodeJS.ProcessEnv { return this.deps.env ?? process.env; }
   private get platform(): NodeJS.Platform { return this.deps.platform ?? process.platform; }
 
   /** The shell the launch made: its own aliases are noted, and the owner's programs are handed to it for each command. */
-  attach(shell: { extra: () => Record<string, { path: string; args: string[] }> }, launchNames: readonly string[]): void {
+  attach(shell: { extra: () => Record<string, { path: string; args: string[] }>; launchHeld?: HeldShell["launchHeld"] }, launchNames: readonly string[],
+    launchPrograms: Record<string, { path: string; args: string[] }> = {}): void {
+    if (shell.launchHeld) this.shell = { launchHeld: shell.launchHeld.bind(shell) };
     this.launch = [...launchNames];
+    this.launchPrograms = { ...launchPrograms };
+    this.attached = true;
     shell.extra = () => this.executables();
   }
+  /**
+   * workbench (SELF-304): every program `shell.execute` may run, the launch file's first, so a command the assistant may
+   * run once it may also leave running (process.start) and be woken when it ends. Nothing while there is no shell.
+   */
+  commandPrograms(): Record<string, { path: string; args: string[] }> {
+    return this.attached ? { ...this.executables(), ...this.launchPrograms } : {};
+  }
+  /** SELF-304: a program held to one folder, walled by the shell and handed back ready to be left running (process.start). */
+  launchHeld: HeldShell["launchHeld"] = (input, context, timeoutMs) => {
+    if (!this.shell) throw new Error("A program held to one folder cannot be left running here: there are no commands in this launch.");
+    return this.shell.launchHeld(input, context, timeoutMs);
+  };
 
   saved(): OwnCli[] {
     const kept = Saved.safeParse(this.deps.store.get("settings", this.deps.owner(), key)?.data ?? {});

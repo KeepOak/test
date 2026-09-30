@@ -1,408 +1,206 @@
 /**
- * mac7/account-pooling (owner decision 2026-09-19): Branch never moves one person's work between
- * their own identical sign-in plans to get past a limit. Work moves only between API keys, and
- * between sign-in accounts the owner marked "kept separate" (someone else's, or work's) plus at most
- * one of the owner's own. Every service is a stand-in; nothing reaches a provider.
+ * Account pools (owner decision 2026-09-27): a connection with two or more accounts moves the work on by itself when one
+ * runs out, the way Hermes Agent's credential pools do, API keys and sign-ins (the owner's own plans included) alike.
+ * The triggers: a 429 is tried once more and moves on at the second; 402, a quota code or a plan limit moves on at
+ * once; a 401 refreshes the sign-in first; a model the account is not entitled to benches it for that model only. With
+ * one account, or with the switch off, nothing moves. Every service is a stand-in; nothing reaches a provider.
  */
 import test from "node:test";
+import { fakeClaudeAccounts } from "./fixtures/claude-account-adapter.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
-import { startServer } from "../dist/server.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
-import {
-  AccountsSettingsSchema, applyPoolingRule, poolingRuleVersion, saveAccountsSettings, sessionChoice,
-} from "../dist/accounts/settings.js";
-import { firstChoice, rotationSet } from "../dist/accounts/pool.js";
-import {
-  addAccount, dismissNotice, setMode, switchAccount, updateAccount, updatePool, viewAll,
-} from "../dist/accounts/manage.js";
-import { executeCommand } from "../dist/commands/execute.js";
-import { Budget } from "../dist/contracts.js";
-import { saveCommandSettings } from "../dist/commands/settings.js";
+import { AccountsSettingsSchema, applyPoolingRule, poolingRuleVersion } from "../dist/accounts/settings.js";
+import { AccountPoolProvider, AccountLimitError } from "../dist/accounts/pool-provider.js";
+import { withAccountCall } from "../dist/accounts/context.js";
+import { addAccount, setMode, updatePool } from "../dist/accounts/manage.js";
+import { ProviderHttpError } from "../dist/provider-retry.js";
+import { stateLines } from "../dist/live-steps.js";
 
-const POOL = "cli-claude-code";
-const at = "2026-09-19T10:00:00.000Z";
+const at = "2026-09-27T10:00:00.000Z";
 const acct = (id, extra = {}) => ({
-  id, label: extra.label ?? id, pinned: false, disabled: false, monthlyCapUsd: null, shared: false, keptSeparate: false, createdAt: at, ...extra,
+  id, label: extra.label ?? id, pinned: false, disabled: false, monthlyCapUsd: null, shared: false, createdAt: at, ...extra,
 });
-const ids = (accounts) => accounts.map((account) => account.id);
+const http = (status, code, retryAfterMs) => new ProviderHttpError(status, retryAfterMs, code);
+const ok = (who) => ({ content: `from ${who}`, toolCalls: [] });
 
-async function fixture(t, options = {}) {
-  const root = await mkdtemp(join(tmpdir(), "branch-pooling-"));
-  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), ...options });
+/**
+ * One pool, answered by a script per account: each account's list of outcomes is used in turn (an Error is thrown,
+ * anything else answers), and an empty list answers. `calls` says which account was asked, in order.
+ */
+function pool({ kind = "chatgpt", accounts = ["a", "b", "c"], strategy = "priority", autoSwitch = true, script = {}, refresh, model = "m1", states = new Map(), defaultAccount = null } = {}) {
+  const calls = [], notes = [], refreshed = [], slept = [];
+  let clock = Date.parse(at);
+  const saved = { pool: "p", kind, strategy, autoSwitch, defaultAccount, accounts: accounts.map((id) => (typeof id === "string" ? acct(id) : id)) };
+  const provider = (id) => ({ name: "stand-in", async complete() {
+    calls.push(id);
+    const next = (script[id] ?? []).shift();
+    if (next instanceof Error) throw next;
+    return ok(id);
+  } });
+  const cursor = { value: 0 };
+  const make = (asModel) => new AccountPoolProvider(provider("original"), {
+    owner: "owner", pool: "p", model: asModel, settings: () => saved, states, cursor, now: () => clock,
+    sleep: async (ms) => { slept.push(ms); clock += ms; },
+    providerFor: async (id) => provider(id),
+    ...(refresh ? { refresh: async (id) => { refreshed.push(id); return refresh(id); } } : {}),
+    capReached: () => false, record: () => undefined, personIsNotOwner: () => false,
+    sessionChoice: () => null, rememberChoice: () => undefined,
+  });
+  const provided = make(model);
+  const ask = (as = provided) => withAccountCall({ sessionId: "s", note: (k, data) => notes.push({ kind: k, data }) },
+    () => as.complete({ messages: [{ role: "user", content: "hi" }], tools: [], signal: new AbortController().signal }));
+  return { saved, calls, notes, refreshed, slept, ask, other: (asModel) => make(asModel), tick: (ms) => { clock += ms; }, now: () => clock };
+}
+
+test("R1 rotation order: fill first keeps to the first healthy account; take turns and least used spread the work", async () => {
+  const fill = pool({ script: { a: [http(402)] } });
+  assert.equal((await fill.ask()).content, "from b");
+  assert.equal((await fill.ask()).content, "from b", "the first rests after being out of credit; fill first stays on the next");
+  assert.deepEqual(fill.calls, ["a", "b", "b"]);
+  const turns = pool({ strategy: "round-robin" });
+  for (let i = 0; i < 4; i++) await turns.ask();
+  assert.deepEqual(turns.calls, ["a", "b", "c", "a"]);
+  const least = pool({ kind: "api-key", strategy: "least-used" });
+  for (let i = 0; i < 3; i++) await least.ask();
+  assert.deepEqual(least.calls, ["a", "b", "c"], "each time the one used least");
+  const picked = pool({ defaultAccount: "c" });
+  await picked.ask();
+  assert.deepEqual(picked.calls, ["c"], "fill first starts from the list's own pick");
+});
+
+test("R2 a 429 is tried once more on the same account, and the second 429 in a row moves on", async () => {
+  const once = pool({ kind: "api-key", script: { a: [http(429, "rate_limit_exceeded", 1000)] } });
+  assert.equal((await once.ask()).content, "from a");
+  assert.deepEqual(once.calls, ["a", "a"], "one 429, then the same account answers");
+  const twice = pool({ kind: "api-key", script: { a: [http(429, "rate_limit_exceeded", 1000), http(429, "rate_limit_exceeded", 1000)] } });
+  assert.equal((await twice.ask()).content, "from b");
+  assert.deepEqual(twice.calls, ["a", "a", "b"]);
+  const moved = twice.notes.find((n) => n.kind === "model.account_moved");
+  assert.deepEqual([moved.data.from, moved.data.label, moved.data.reason], ["a", "b", "rate"]);
+  assert.match(moved.data.why, /^hit its limit, resets /);
+});
+
+test("R3 402, a quota code or a plan limit moves on at once, and the step says which account it left and why", async () => {
+  for (const refusal of [http(402), http(429, "insufficient_quota"), http(429, "usage_limit_reached", 60_000),
+    Object.assign(new Error("Claude usage limit reached."), { name: "ProgramLimitError" })]) {
+    const p = pool({ script: { a: [refusal] } });
+    assert.equal((await p.ask()).content, "from b");
+    assert.deepEqual(p.calls, ["a", "b"], `${refusal.message}: no second try on the same account`);
+  }
+  const limit = pool({ script: { a: [http(429, "usage_limit_reached", 30 * 60_000)] } });
+  await limit.ask();
+  const line = stateLines(null, { id: "r" }, limit.notes.map((n, i) => ({ id: String(i), kind: n.kind, data: n.data, createdAt: at })), 0)
+    .find((l) => l.icon && /Moved to/.test(l.label));
+  assert.match(line.label, /^Moved to “b” — “a” hit its limit, resets \d/);
+});
+
+test("R4 a 401 refreshes the sign-in first; it moves on only when the refresh fails", async () => {
+  const fixed = pool({ script: { a: [http(401)] }, refresh: () => true });
+  assert.equal((await fixed.ask()).content, "from a");
+  assert.deepEqual([fixed.calls, fixed.refreshed], [["a", "a"], ["a"]]);
+  const refused = pool({ script: { a: [http(401)] }, refresh: () => { throw new Error("refresh refused"); } });
+  assert.equal((await refused.ask()).content, "from b");
+  assert.deepEqual([refused.calls, refused.refreshed], [["a", "b"], ["a"]]);
+  const again = pool({ script: { a: [http(401), http(401)] }, refresh: () => true });
+  assert.equal((await again.ask()).content, "from b", "a new token that is refused as well moves on");
+  const key = pool({ kind: "api-key", script: { a: [http(401)] } });
+  assert.equal((await key.ask()).content, "from b", "a key has nothing to refresh");
+  assert.deepEqual(key.calls, ["a", "b"]);
+});
+
+test("R5 a model the account is not entitled to benches that account for that model only", async () => {
+  const states = new Map();
+  const p = pool({ states, script: { a: [http(404, "model_not_found")] } });
+  assert.equal((await p.ask()).content, "from b");
+  assert.equal((await p.ask()).content, "from b", "benched for m1");
+  assert.equal((await p.ask(p.other("m2"))).content, "from a", "still used for another model");
+  assert.deepEqual(p.calls, ["a", "b", "b", "a"]);
+  assert.equal(p.notes.find((n) => n.kind === "model.account_moved").data.why, "cannot use m1");
+});
+
+test("R6 nothing moves with one account, one switched on, or the switch off", async () => {
+  const single = pool({ accounts: ["a"], script: { original: [http(429, "usage_limit_reached")] } });
+  await assert.rejects(single.ask(), (error) => error.status === 429);
+  assert.deepEqual(single.calls, ["original"], "a list of one is the connection itself");
+  const oneOn = pool({ accounts: ["a", acct("b", { disabled: true })], script: { a: [http(429, "usage_limit_reached")] } });
+  await assert.rejects(oneOn.ask(), AccountLimitError);
+  assert.deepEqual(oneOn.calls, ["a"]);
+  const off = pool({ autoSwitch: false, script: { a: [http(429, "usage_limit_reached")] } });
+  await assert.rejects(off.ask(), (error) => /Moving to the next account is off/.test(error.message));
+  assert.deepEqual(off.calls, ["a"]);
+  const keys = pool({ kind: "api-key", accounts: ["a", acct("b", { disabled: true })], script: { a: [http(402)] } });
+  await assert.rejects(keys.ask(), (error) => error.status === 402);
+  assert.deepEqual(keys.calls, ["a"]);
+});
+
+test("R7 every account exhausted: a sign-in list waits for the soonest reset; a key list hands back the last refusal", async () => {
+  const signIns = pool({ accounts: ["a", "b"], script: { a: [http(429, "usage_limit_reached", 20 * 60_000)], b: [http(429, "usage_limit_reached", 10 * 60_000)] } });
+  const error = await signIns.ask().catch((e) => e);
+  assert.ok(error instanceof AccountLimitError);
+  assert.equal(error.account, "b", "the one back first");
+  assert.equal(error.until, Date.parse(at) + 10 * 60_000, "a known reset, so the task can wait for it");
+  const keys = pool({ kind: "api-key", accounts: ["a", "b"], script: { a: [http(402)], b: [http(402)] } });
+  await assert.rejects(keys.ask(), (e) => e.status === 402);
+});
+
+test("R8 an old list that rule 1 stopped moves on again once; the owner's off afterwards stays off", () => {
+  const old = AccountsSettingsSchema.parse({ mode: "on", poolingRule: 1, poolingNotices: ["chatgpt"],
+    pools: [{ pool: "chatgpt", kind: "chatgpt", autoSwitch: false, accounts: [acct("primary"), acct("aaaaaaaa")] }] });
+  const { settings, stopped } = applyPoolingRule(old);
+  assert.deepEqual([settings.pools[0].autoSwitch, settings.poolingRule, settings.poolingNotices, stopped], [true, poolingRuleVersion, [], ["chatgpt"]]);
+  const offAgain = { ...settings, pools: [{ ...settings.pools[0], autoSwitch: false }] };
+  assert.equal(applyPoolingRule(offAgain).settings, offAgain, "left alone once brought up to the rule");
+});
+
+test("R9 a real task on Claude Code: the owner's plan runs out, the next of their plans answers, and the plan meter says which is next", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-pools-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
   const service = accountsServiceFor(app.runtime.models);
-  let clock = Date.parse("2026-09-19T10:00:00Z");
-  service.deps.now = () => clock;
-  Object.defineProperty(service, "now", { value: () => clock });
-  return { app, service, owner: app.runtime.owner, root };
-}
-const limited = { code: 1, stdout: "", stderr: "Claude usage limit reached. Your limit resets at 3pm." };
-const answer = (text) => ({ code: 0, stdout: JSON.stringify({ result: text }), stderr: "" });
-/** The installed Claude Code program, answered by a stand-in per account folder. */
-function program(fx, outcomes) {
+  await fakeClaudeAccounts(t, service);
   const seen = [];
   const spawn = async (row, prompt, signal, limits, home) => {
     const who = home ? home.path.split(/[\\/]/).pop() : "primary";
     seen.push(who);
-    return outcomes[who] ?? answer(`from ${who}`);
+    return who === "primary" ? { code: 1, stdout: "", stderr: "Claude usage limit reached. Your limit resets at 3pm." } : { code: 0, stdout: JSON.stringify({ result: `from ${who}` }), stderr: "" };
   };
-  registerCliAgent(fx.app.runtime.models, { id: "claude-code" }, {}, spawn);
-  fx.app.runtime.models.configure(fx.owner, { activePreset: POOL });
-  fx.service.deps.spawnAgent = spawn;
-  return seen;
-}
-/** The owner's own two plans ("primary", "Second") and a work account ("Work"), with sharing on. */
-async function threeAccounts(fx) {
-  setMode(fx.service, { mode: "on" });
-  const second = (await addAccount(fx.service, { pool: POOL, label: "Second" })).accounts.at(-1).id;
-  const work = (await addAccount(fx.service, { pool: POOL, label: "Work" })).accounts.at(-1).id;
-  updatePool(fx.service, { pool: POOL, autoSwitch: true });
-  await updateAccount(fx.service, { pool: POOL, account: work, keptSeparate: true });
-  return { second, work };
-}
-
-test("P1 which accounts may share work: at most one of the owner's own sign-ins, plus those kept separate", () => {
-  const A = acct("aaaaaaaa"), B = acct("bbbbbbbb"), C = acct("cccccccc", { keptSeparate: true });
-  const D = acct("dddddddd", { keptSeparate: true, disabled: true }), P = acct("eeeeeeee", { pinned: true });
-  const off = acct("ffffffff", { disabled: true });
-  const cases = [
-    { name: "API keys all rotate", kind: "api-key", usable: [A, B, P], def: null, sticky: null, want: [A, B, P] },
-    { name: "two own plans: only the first", kind: "cli", usable: [A, B], def: null, sticky: null, want: [A] },
-    { name: "two own plans on ChatGPT: only the first", kind: "chatgpt", usable: [A, B], def: null, sticky: null, want: [A] },
-    { name: "the owner's default is their one", kind: "cli", usable: [A, B, C], def: B.id, sticky: null, want: [B, C] },
-    { name: "the conversation's own pick beats the default", kind: "cli", usable: [A, B, C], def: B.id, sticky: A.id, want: [A, C] },
-    { name: "a kept-separate pick leaves the default as the own one", kind: "cli", usable: [A, B, C], def: B.id, sticky: C.id, want: [B, C] },
-    { name: "pinned before first", kind: "cli", usable: [A, P, C], def: null, sticky: null, want: [P, C] },
-    { name: "a switched-off default falls to the pinned one", kind: "cli", usable: [off, A, P], def: off.id, sticky: null, want: [P] },
-    { name: "every account kept separate: all of them", kind: "chatgpt", usable: [C, D], def: null, sticky: null, want: [C, D] },
-    { name: "no own account switched on: only those kept separate", kind: "cli", usable: [off, C], def: null, sticky: null, want: [C] },
-  ];
-  for (const c of cases) assert.deepEqual(ids(rotationSet(c.kind, c.usable, c.def, c.sticky)), ids(c.want), c.name);
-  assert.equal(firstChoice([off, A], [off.id]).id, A.id, "a switched-off pick is passed over");
-});
-
-test("P1b for every mix of accounts, picks and limits, never two of the owner's own sign-ins", () => {
-  const pool = [acct("aaaaaaaa"), acct("bbbbbbbb", { pinned: true }), acct("cccccccc", { disabled: true }),
-    acct("dddddddd", { keptSeparate: true }), acct("eeeeeeee", { keptSeparate: true, pinned: true })];
-  let checked = 0;
-  for (let mask = 1; mask < 1 << pool.length; mask++) {
-    const usable = pool.filter((_, index) => mask & (1 << index));
-    for (const def of [null, ...ids(pool)]) for (const sticky of [null, ...ids(pool)]) for (const kind of ["cli", "chatgpt"]) {
-      const set = rotationSet(kind, usable, def, sticky);
-      assert.ok(set.filter((account) => !account.keptSeparate).length <= 1, JSON.stringify({ mask, def, sticky }));
-      assert.ok(usable.filter((a) => a.keptSeparate).every((a) => set.includes(a)), "every kept-separate account may share");
-      checked++;
-    }
-  }
-  assert.ok(checked > 1000);
-});
-
-test("P2 bringing a saved list up to the rule: only lists that shared between the owner's own plans stop", () => {
-  const base = (pools, extra = {}) => AccountsSettingsSchema.parse({ mode: "on", pools, poolingRule: 0, ...extra });
-  const pool = (name, kind, accounts, extra = {}) => ({ pool: name, kind, accounts, autoSwitch: kind !== "api-key", ...extra });
-  const two = [acct("primary"), acct("bbbbbbbb")];
-  const cases = [
-    { name: "API keys are left alone", pools: [pool("openai", "api-key", two)], stopped: [] },
-    { name: "sharing off is left alone", pools: [pool("chatgpt", "chatgpt", two, { autoSwitch: false })], stopped: [] },
-    { name: "one own plan and one kept separate is allowed", pools: [pool(POOL, "cli", [acct("primary"), acct("bbbbbbbb", { keptSeparate: true })])], stopped: [] },
-    { name: "two own plans stop", pools: [pool(POOL, "cli", two)], stopped: [POOL], def: "primary" },
-    { name: "the owner's own default is kept", pools: [pool("chatgpt", "chatgpt", two, { defaultAccount: "bbbbbbbb" })], stopped: ["chatgpt"], def: "bbbbbbbb" },
-  ];
-  for (const c of cases) {
-    const { settings, stopped } = applyPoolingRule(base(c.pools));
-    assert.deepEqual(stopped, c.stopped, c.name);
-    assert.equal(settings.poolingRule, poolingRuleVersion, c.name);
-    assert.deepEqual(settings.poolingNotices, c.stopped, c.name);
-    if (c.stopped.length) {
-      assert.equal(settings.pools[0].autoSwitch, false, c.name);
-      assert.equal(settings.pools[0].defaultAccount, c.def, c.name);
-      assert.equal(settings.pools[0].accounts.some((account) => account.keptSeparate), false, "nothing is marked kept separate for them");
-    } else assert.deepEqual(settings.pools, base(c.pools).pools, c.name);
-  }
-  const done = base([pool(POOL, "cli", two)], { poolingRule: poolingRuleVersion });
-  assert.equal(applyPoolingRule(done).settings, done, "a list already under the rule is left exactly as it is");
-  const again = applyPoolingRule(base([pool(POOL, "cli", two)], { poolingNotices: [POOL] }));
-  assert.deepEqual(again.settings.poolingNotices, [POOL], "one notice per list");
-});
-
-test("P3 at start: an old list stops once, with a notice and a record; new, missing and damaged lists are left alone", async (t) => {
-  const fx = await fixture(t);
-  const { app, owner, service } = fx;
-  program(fx, {});
-  assert.deepEqual(service.applyPoolingRule(), [], "nothing saved: nothing written");
-  assert.ok(!app.store.get("settings", owner, "accounts"));
-  assert.equal(service.settings().poolingRule, poolingRuleVersion, "a list never saved starts under the rule");
-  app.store.save("settings", owner, "accounts", { mode: "sideways" });
-  assert.deepEqual(service.applyPoolingRule(), []);
-  assert.deepEqual(app.store.get("settings", owner, "accounts").data, { mode: "sideways" }, "a damaged record is not overwritten");
-  // A list saved before the rule: no poolingRule field, sharing on between two own plans.
-  app.store.save("settings", owner, "accounts", { mode: "on", pools: [{ pool: POOL, kind: "cli", autoSwitch: true,
-    accounts: [acct("primary", { label: "Mine" }), acct("bbbbbbbb", { label: "Also mine" })] }] });
-  assert.deepEqual(service.applyPoolingRule(), [POOL]);
-  assert.deepEqual(service.applyPoolingRule(), [], "once only");
-  const saved = service.settings();
-  assert.equal(saved.pools[0].autoSwitch, false);
-  assert.equal(saved.pools[0].defaultAccount, "primary");
-  assert.ok(app.store.audit.list(owner).some((row) => row.action === "connection.changed" && row.subject === POOL && /own sign-ins/.test(row.reason)));
-  const view = (await viewAll(service)).pools.find((pool) => pool.pool === POOL);
-  assert.equal(view.notice.key, "accounts.notice.own-plans");
-  assert.match(view.notice.text, /no longer switches between your own .* plans/);
-  // A list made under the rule never gets the notice, even with sharing on between two own plans.
-  saveAccountsSettings(app.store, owner, AccountsSettingsSchema.parse({ mode: "on", poolingRule: poolingRuleVersion,
-    pools: [{ pool: POOL, kind: "cli", autoSwitch: true, accounts: [acct("primary"), acct("bbbbbbbb")] }] }));
-  assert.deepEqual(service.applyPoolingRule(), []);
-  assert.equal(service.settings().pools[0].autoSwitch, true, "the owner's own later choice stands");
-});
-
-test("P4 with sharing on, work moves from the owner's plan to the work account and never to their other plan", async (t) => {
-  const fx = await fixture(t);
-  const { app, owner, service } = fx;
-  const seen = program(fx, { primary: limited });
-  const { second, work } = await threeAccounts(fx);
-  const moved = await app.runtime.run({ prompt: "hello" });
-  assert.equal(moved.output, `from ${work}`);
-  assert.equal(sessionChoice(app.store, owner, moved.sessionId)[POOL], work, "only an allowed account is remembered");
-  for (let tries = 0; tries < 4; tries++) await app.runtime.run({ prompt: "again", ...(tries % 2 ? { sessionId: moved.sessionId } : {}) });
-  assert.ok(!seen.includes(second), "the owner's second plan is never used by itself");
-  // The work account runs out too: the task stops and suggests nothing of the owner's own.
-  service.deps.spawnAgent = async (row, prompt, signal, limits, home) => {
-    const who = home ? home.path.split(/[\\/]/).pop() : "primary";
-    seen.push(who);
-    return limited;
-  };
-  service.dropBuilt(POOL, work);
-  service.statesOf(POOL).delete(work);
-  const stopped = await app.runtime.run({ prompt: "more" });
-  assert.equal(stopped.status, "failed");
-  assert.match(stopped.output, /may share work between has reached its plan limit/);
-  assert.match(stopped.output, /does not move your work between your own plans/);
-  assert.ok(!stopped.output.includes("Second"));
-  assert.ok(!seen.includes(second), "still never the second plan");
-  // With the mark taken off, the work account is one of the owner's own too and nothing moves.
-  await updateAccount(service, { pool: POOL, account: work, keptSeparate: false });
-  service.statesOf(POOL).clear();
-  service.deps.spawnAgent = async () => limited;
-  const none = await app.runtime.run({ prompt: "last" });
-  assert.equal(none.status, "failed");
-});
-
-test("P5 with sharing off, the limit sentence names only an account kept separate", async (t) => {
-  const fx = await fixture(t);
-  const { app, service } = fx;
-  program(fx, { primary: limited });
-  const { work } = await threeAccounts(fx);
-  updatePool(service, { pool: POOL, autoSwitch: false });
-  const stopped = await app.runtime.run({ prompt: "hello" });
-  assert.equal(stopped.status, "failed");
-  assert.match(stopped.output, /does not switch sign-in accounts by itself.*\/account Work.*available: "Work"\)/);
-  assert.ok(!stopped.output.includes("Second"));
-  await assert.rejects(updateAccount(service, { pool: POOL, account: work, keptSeparate: "yes" }), { name: "ZodError" });
-});
-
-test("P6 the mark and the notice are the owner's: routes, /account, household and short-lived keys", async (t) => {
-  const fx = await fixture(t);
-  const { app, owner, service } = fx;
-  program(fx, {});
-  saveCommandSettings(app.store, owner, { mode: "on" });
-  setMode(service, { mode: "on" });
-  const second = (await addAccount(service, { pool: POOL, label: "Second" })).accounts.at(-1).id;
-  const settings = service.settings();
-  saveAccountsSettings(app.store, owner, { ...settings, poolingNotices: [POOL] });
-  const server = await startServer(app, { dataDir: join(fx.root, "data"), port: 0 });
-  t.after(() => server.close());
-  const run = app.sessionTokens.create(owner, { name: "script", scope: "run" }).token;
-  const call = async (path, key, body) => (await fetch(server.url + path, { method: "POST",
-    headers: { authorization: `Bearer ${key}`, "content-type": "application/json" }, body: JSON.stringify(body) })).status;
-  assert.equal(await call("/api/accounts/update", run, { pool: POOL, account: second, keptSeparate: true }), 401);
-  assert.equal(await call("/api/accounts/notice", run, { pool: POOL }), 401);
-  const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
-  app.store.profiles.switch({ profileId: person.id, pin: "1234" });
-  assert.ok(await call("/api/accounts/update", server.token, { pool: POOL, account: second, keptSeparate: true }) >= 400, "a household person cannot mark the owner's account");
-  assert.ok(await call("/api/accounts/notice", server.token, { pool: POOL }) >= 400);
-  // hardening-3: the whole list is the owner's; a household person is shown neither it nor its notice.
-  assert.equal((await viewAll(service)).pools.find((pool) => pool.pool === POOL), undefined, "the notice is the owner's to read");
-  app.store.profiles.switch({ profileId: null });
-  assert.equal(service.settings().pools[0].accounts.find((a) => a.id === second).keptSeparate, false);
-  // /account: the notice once, then the mark on and off; from a phone with a "run" key it is refused.
-  const host = { runtime: app.runtime, requireOwner: (what) => app.store.profiles.requireOwner(what) };
-  const looked = await executeCommand(host, { surface: "dashboard", line: "/account", access: "read" });
-  assert.match(looked.text, /no longer switches between your own/);
-  assert.deepEqual(service.settings().poolingNotices, [POOL], "a read-only look leaves the notice for the owner");
-  const listed = await executeCommand(host, { surface: "window", line: "/account", access: "full" });
-  assert.match(listed.text, /no longer switches between your own/);
-  assert.doesNotMatch((await executeCommand(host, { surface: "window", line: "/account", access: "full" })).text, /no longer switches/);
-  const refused = await executeCommand(host, { surface: "phone", line: "/account separate Second", access: "run" });
-  assert.ok(refused.refused);
-  const marked = await executeCommand(host, { surface: "window", line: "/account separate second", access: "full" });
-  assert.match(marked.text, /"Second" is now kept separate/);
-  assert.match((await executeCommand(host, { surface: "window", line: "/account", access: "full" })).text, /Second \(kept separate\)/);
-  const unmarked = await executeCommand(host, { surface: "window", line: "/account not-separate Second", access: "full" });
-  assert.match(unmarked.text, /no longer kept separate/);
-  assert.equal(service.settings().pools[0].accounts.find((a) => a.id === second).keptSeparate, false);
-  assert.equal(await call("/api/accounts/update", server.token, { pool: POOL, account: second, keptSeparate: true }), 200);
-  assert.equal(await call("/api/accounts/notice", server.token, { pool: POOL }), 200);
-  assert.deepEqual(dismissNotice(service, { pool: POOL }), { pool: POOL, dismissed: true });
-});
-
-test("P7 API keys take no mark: they already share work", async (t) => {
-  const fx = await fixture(t);
-  const { app, owner, service } = fx;
-  app.store.save("settings", owner, "model-connections", { connections: [{ id: "openai-pool", name: "OpenAI", catalogId: "openai", model: "gpt-4o-mini", extras: {} }] });
-  app.runtime.models.register({ id: "openai-pool", name: "OpenAI", model: "gpt-4o-mini", catalogId: "openai",
-    provider: { name: "openai-chat", complete: async () => ({ content: "first", toolCalls: [] }) } });
-  setMode(service, { mode: "on" });
-  updatePool(service, { pool: "openai-pool", strategy: "priority" });
-  await assert.rejects(updateAccount(service, { pool: "openai-pool", account: "primary", keptSeparate: true }), /API keys already share work/);
-});
-
-test("P8 a conversation switched by hand to the owner's second plan never reaches their first plan through the work account", async (t) => {
-  const fx = await fixture(t);
-  const { app, owner, service } = fx;
-  let workAnswers = 1;
-  const seen = [];
-  const spawn = async (row, prompt, signal, limits, home) => {
-    const who = home ? home.path.split(/[\\/]/).pop() : "primary";
-    seen.push(who);
-    if (who === ids.second) return limited;
-    if (who === ids.work) return workAnswers-- > 0 ? answer("from work") : limited;
-    return answer("from primary");
-  };
-  const ids = {};
   registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
-  app.runtime.models.configure(owner, { activePreset: POOL });
+  app.runtime.models.configure(app.runtime.owner, { activePreset: "cli-claude-code" });
   service.deps.spawnAgent = spawn;
-  Object.assign(ids, await threeAccounts(fx));
-  const opened = await app.runtime.run({ prompt: "hello" });
-  assert.equal(opened.output, "from primary");
-  switchAccount(service, { pool: POOL, account: ids.second, sessionId: opened.sessionId });
-  const moved = await app.runtime.run({ prompt: "more", sessionId: opened.sessionId });
-  assert.equal(moved.output, "from work", "the second plan ran out: work moves to the account kept separate");
-  assert.equal(sessionChoice(app.store, owner, opened.sessionId)[POOL], ids.second, "the conversation's own plan is kept");
+  setMode(service, { mode: "on" });
+  const second = (await addAccount(service, { pool: "cli-claude-code", label: "Second" })).accounts.at(-1).id;
+  assert.equal(service.usedNext("cli-claude-code"), "primary");
+  const run = await app.runtime.run({ prompt: "hello" });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, `from ${second}`, "the owner's second plan takes the work");
+  assert.deepEqual(seen, ["primary", second]);
+  assert.equal(service.usedNext("cli-claude-code"), second, "the plan meter marks the one used next");
+  const moved = app.store.events(run.id).find((event) => event.kind === "model.account_moved");
+  assert.deepEqual([moved.data.from, moved.data.label], ["Your usual sign-in", "Second"]);
+  updatePool(service, { pool: "cli-claude-code", autoSwitch: false });
+  service.statesOf("cli-claude-code").clear();
   seen.length = 0;
-  const stopped = await app.runtime.run({ prompt: "and more", sessionId: opened.sessionId });
-  assert.equal(stopped.status, "failed");
-  assert.ok(!seen.includes("primary"), "never the owner's first plan: that would be moving between their own plans");
+  const stopped = await app.runtime.run({ prompt: "again" });
+  assert.equal(stopped.status, "failed", "with the switch off it stops, as before");
+  assert.deepEqual(seen, ["primary"]);
 });
 
-/*
- * mac7/pooling-review: the conversation's plan is followed by everything done for that conversation,
- * and a conversation that was moved by hand onto an account kept separate is never moved on to a
- * second of the owner's own plans while another of them is at its limit.
- */
-
-/** The owner's plans answer by folder: "second" is at its limit, "work" (kept separate) answers. */
-function byFolder(fx, ids, work = () => answer("from work")) {
-  const seen = [];
-  const spawn = async (row, prompt, signal, limits, home) => {
-    const who = home ? home.path.split(/[\\/]/).pop() : "primary";
-    seen.push(who === ids.second ? "second" : who === ids.work ? "work" : who);
-    if (who === ids.second) return limited;
-    if (who === ids.work) return work();
-    return answer("from primary");
-  };
-  fx.service.deps.spawnAgent = spawn;
-  return { seen, spawn };
-}
-
-test("P9 a model call a tool makes on the side follows its conversation's plan, never the owner's other plan", async (t) => {
-  const side = { id: "s1", name: "pooling.side", arguments: "{}" };
-  let step = 0;
-  const provider = { name: "scripted", async complete() { return step++ % 2 === 0 ? { content: "", toolCalls: [side] } : { content: "done", toolCalls: [] }; } };
-  const fx = await fixture(t, { provider });
-  const { app, owner, service } = fx;
-  const ids = {};
-  const { seen, spawn } = byFolder(fx, ids);
-  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
-  const { z } = await import("zod");
-  const asked = [];
-  app.registry.register({ name: "pooling.side", permission: "files.read", description: "asks a model on the side",
-    parameters: z.object({}).strict(), execute: async () => {
-      const reply = await app.runtime.models.presets.get(POOL).provider.complete({ messages: [{ role: "user", content: "side" }], tools: [], signal: AbortSignal.timeout(5000) })
-        .then((done) => done.content, (error) => error.message);
-      asked.push(reply);
-      return { said: reply };
-    } });
-  Object.assign(ids, await threeAccounts(fx));
-  const opened = await app.runtime.run({ prompt: "hello" });
-  assert.equal(opened.output, "done");
-  assert.deepEqual(asked, ["from primary"]);
-  switchAccount(service, { pool: POOL, account: ids.second, sessionId: opened.sessionId });
-  // Sharing off: the side question stays on the conversation's plan, which has run out.
-  updatePool(service, { pool: POOL, autoSwitch: false });
-  seen.length = 0;
-  await app.runtime.run({ prompt: "more", sessionId: opened.sessionId });
-  assert.match(asked.at(-1), /"Second" has reached its plan limit/);
-  assert.deepEqual(seen, ["second"], "never the owner's first plan");
-  // Sharing on, with the owner's first plan the one with most left: still only the account kept separate.
-  updatePool(service, { pool: POOL, autoSwitch: true });
-  service.statesOf(POOL).set("primary", { ...service.stateOf(POOL, "primary"), remaining: 95 });
-  seen.length = 0;
-  await app.runtime.run({ prompt: "again", sessionId: opened.sessionId });
-  assert.equal(asked.at(-1), "from work", "the conversation's plan ran out: the side question goes to the account kept separate");
-  assert.ok(!seen.includes("primary"), "never the owner's first plan");
-  assert.equal(sessionChoice(app.store, owner, opened.sessionId)[POOL], ids.second);
-});
-
-test("P10 a helper a conversation starts answers through that conversation's plan", async (t) => {
-  const fx = await fixture(t);
-  const { app, owner } = fx;
-  const ids = {};
-  const { seen, spawn } = byFolder(fx, ids);
-  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
-  app.runtime.models.configure(owner, { activePreset: POOL });
-  Object.assign(ids, await threeAccounts(fx));
-  const opened = await app.runtime.run({ prompt: "hello" });
-  assert.equal(opened.output, "from primary");
-  switchAccount(fx.service, { pool: POOL, account: ids.second, sessionId: opened.sessionId });
-  const moved = await app.runtime.run({ prompt: "more", sessionId: opened.sessionId });
-  assert.equal(moved.output, "from work");
-  // The owner's first plan has the most left, so only the rule keeps the helper off it.
-  fx.service.statesOf(POOL).set("primary", { ...fx.service.stateOf(POOL, "primary"), remaining: 95 });
-  seen.length = 0;
-  const parent = { owner, workspace: app.runtime.workspace, runId: moved.id, permissions: new Set(), signal: new AbortController().signal, budget: new Budget(), depth: 0 };
-  const helper = await app.runtime.delegate("help with this", parent, [], "");
-  assert.notEqual(helper.sessionId, opened.sessionId, "the helper has a conversation of its own");
-  assert.equal(helper.output, "from work", "the helper follows its conversation: its own plan ran out, so the account kept separate");
-  assert.ok(!seen.includes("primary"), "never the owner's first plan");
-});
-
-test("P11 moved by hand onto the work account after one own plan ran out: never on to the owner's other plan", async (t) => {
-  const fx = await fixture(t);
-  const { app, owner, service } = fx;
-  const ids = {};
-  let workLeft = 1;
-  const { seen, spawn } = byFolder(fx, ids, () => (workLeft-- > 0 ? answer("from work") : limited));
-  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
-  app.runtime.models.configure(owner, { activePreset: POOL });
-  Object.assign(ids, await threeAccounts(fx));
-  updatePool(service, { pool: POOL, autoSwitch: false });
-  const opened = await app.runtime.run({ prompt: "hello" });
-  switchAccount(service, { pool: POOL, account: ids.second, sessionId: opened.sessionId });
-  const ranOut = await app.runtime.run({ prompt: "more", sessionId: opened.sessionId });
-  assert.equal(ranOut.status, "failed");
-  assert.match(ranOut.output, /\/account Work/);
-  // The owner takes the suggestion.
-  switchAccount(service, { pool: POOL, account: ids.work, sessionId: opened.sessionId });
-  assert.equal((await app.runtime.run({ prompt: "go on", sessionId: opened.sessionId })).output, "from work");
-  const workOut = await app.runtime.run({ prompt: "and on", sessionId: opened.sessionId });
-  assert.equal(workOut.status, "failed");
-  assert.ok(!workOut.output.includes("Your usual sign-in"), "the sentence does not point at the owner's other plan");
-  assert.match(workOut.output, /does not move your work between your own plans/);
-  // With sharing on, Branch does not move it there by itself either.
-  updatePool(service, { pool: POOL, autoSwitch: true });
-  seen.length = 0;
-  const shared = await app.runtime.run({ prompt: "once more", sessionId: opened.sessionId });
-  assert.equal(shared.status, "failed");
-  assert.ok(!seen.includes("primary"), "never the owner's first plan");
-  assert.ok(!shared.output.includes("Your usual sign-in"));
-  // A conversation that never used another own plan still has the owner's plan once nothing of theirs is at its limit.
-  service.statesOf(POOL).delete(ids.second);
-  const fresh = await app.runtime.run({ prompt: "new work" });
-  assert.equal(fresh.output, "from primary");
+test("R10 the kept-separate mark is gone: an older list that still carries it reads whole, and /api/accounts/update refuses it", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-pools-mark-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const service = accountsServiceFor(app.runtime.models);
+  app.store.save("settings", app.runtime.owner, "accounts", { mode: "on", poolingRule: 2, poolingNotices: [], pools: [{ pool: "cli-claude-code", kind: "cli",
+    strategy: "priority", autoSwitch: true, defaultAccount: null, accounts: [{ ...acct("primary"), keptSeparate: false }, { ...acct("aaaaaaaa", { label: "Work" }), keptSeparate: true }] }] });
+  const list = service.settings();
+  assert.equal(list.mode, "on", "not taken for a damaged record");
+  assert.deepEqual(list.pools[0].accounts.map((a) => [a.label, "keptSeparate" in a]), [["primary", false], ["Work", false]]);
+  const { updateAccount } = await import("../dist/accounts/manage.js");
+  await assert.rejects(updateAccount(service, { pool: "cli-claude-code", account: "aaaaaaaa", keptSeparate: true }), /keptSeparate|Unrecognized/i);
 });

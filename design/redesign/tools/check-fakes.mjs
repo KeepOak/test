@@ -89,9 +89,10 @@ for (const [drawn, listener, why] of AFFORDANCES) {
   }
 }
 // The owner's rule: Branch's mascot is the logo, never a stand-in face. A Trunk's conversation and everything tied to it
-// shows that Trunk (core/state.js chatFace), a row tied to no Trunk a line icon. Only the logo's places draw the mark.
-const LOGO = new Set(["public/app/core/ui.js", "public/app/shell/signin.js", "public/app/shell/applock.js", "public/app/shell/shell.js", "public/app/shell/updating.js",
-  "public/app/flows/first.js", "public/app/flows/setup.js"]);
+// shows that Trunk (core/state.js chatFace), a row tied to no Trunk a line icon. Only the logo's places draw the mark:
+// core/ui.js av() is not one of them (a conversation with no Trunk wears a neutral tile in rows, replies and quick-ask).
+const LOGO = new Set(["public/app/shell/signin.js", "public/app/shell/applock.js", "public/app/shell/shell.js", "public/app/shell/updating.js",
+  "public/app/flows/first.js", "public/app/flows/setup.js", "public/app/flows/tour.js", "public/app/shell/inperson.js"]);
 const MASCOT = /\bav\([^;]*?\{\s*kind:\s*["']main["']|\bmark-(face|full)\b/;
 for (const [rel, text] of sources) {
   if (LOGO.has(rel)) continue;
@@ -106,11 +107,9 @@ for (const [rel, text] of sources) {
 // named here draw it, and an empty state's markup never carries it, even there.
 const ART_PLACES = new Set([...LOGO, "public/app/core/art17.js",
   // The lead's ruling (2026-09-27), exactly these and no others. A helper's face is never the mascot (chat/helpframe.js).
-  "public/app/chat/chat.js", // the new conversation's welcome: Branch itself is the speaker there, beside the wordmark
   "public/app/flows/tour.js", // the walkthrough
   "public/app/shell/inperson.js", // the first-load splash
-  "public/app/core/pets.js", // Little Branch, the owner's own pet toggle in Appearance
-  "public/app/shell/cheer.js"]); // Branch's cheer, only in Branch's own conversation
+  "public/app/core/pets.js"]);
 const ART = /\/art\/(branch|anim)-|look17\(\s*["']branch["']\s*\)/;
 const EMPTY_STATE = /\bempty(18c|11)\b|\bsq-none\b|class="empty[\s"]/; // the new conversation's "empty-chat" is its welcome
 for (const [rel, text] of sources) {

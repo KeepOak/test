@@ -20,7 +20,8 @@ import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
  * server: share them under Customize → Connections and an editor such as Claude Code or Cursor can
  * ask which routes exist, what each one takes, and get working code for each client.
  */
-export const sdkKitSettingsKey = "sdk-kit";
+export const sdkKitSettingsKey = "sdk-kit"; // the same record src/sdk-kit-switch.ts reads
+import { sdkKitMode } from "./sdk-kit-switch.js";
 export const sdkKitTools = sdkKitToolNames;
 export const SdkKitSettingsSchema = z.object({ mode: FeatureModeSchema }).strict();
 export const sdkKitOffMessage =
@@ -28,10 +29,7 @@ export const sdkKitOffMessage =
 
 type Reader = Pick<Store, "get">;
 
-export function sdkKitMode(store: Reader, owner: string): FeatureMode {
-  const saved = FeatureModeSchema.safeParse((store.get("settings", owner, sdkKitSettingsKey)?.data as { mode?: unknown } | undefined)?.mode);
-  return saved.success ? saved.data : "off";
-}
+export { sdkKitMode, sdkKitShipsAs } from "./sdk-kit-switch.js"; // defaults audit: the switch on its own
 
 export function saveSdkKitSettings(store: Store, owner: string, input: unknown): { mode: FeatureMode } {
   const settings = SdkKitSettingsSchema.parse(input);

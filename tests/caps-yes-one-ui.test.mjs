@@ -60,6 +60,9 @@ test("spend caps: the yes to one raised cap never goes along with another connec
   assert.deepEqual(await caps(), { "alpha-test": 20, "beta-test": 10 }, "the yes raised the cap it named, and only that one");
   await page.locator('.scrim [data-act="capsloosenb17"]').click();
   await page.waitForFunction(() => !document.querySelector('.scrim [data-act="capsloosenb17"]'), undefined, { timeout: 15000 });
-  assert.deepEqual(await caps(), { "alpha-test": 20, "beta-test": 30 }, "its own yes raised the second");
+  // The dialog can close while its save is still on the way, so the engine is asked until the save has landed.
+  let now = await caps();
+  for (let tries = 0; tries < 150 && now["beta-test"] !== 30; tries++) { await page.waitForTimeout(100); now = await caps(); }
+  assert.deepEqual(now, { "alpha-test": 20, "beta-test": 30 }, "its own yes raised the second");
   assert.deepEqual(errors, []);
 });

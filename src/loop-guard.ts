@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Store } from "./store.js";
+import { shippedUnlessChosen } from "./ship-on.js";
 
 /**
  * Noticing when a task is going round in circles (audit A1769, A1713).
@@ -63,18 +64,16 @@ export const whenNeededAfterCalls = 8;
 export const FeatureSwitchSchema = z.enum(["off", "on", "when-needed"]);
 export type FeatureSwitch = z.infer<typeof FeatureSwitchSchema>;
 export const LoopGuardSettingsSchema = z.object({
-  /** off, on, or when-needed. */
+  /** off, on, or when-needed; read through `loopGuardMode`, which gives how it ships unless the owner chose. */
   mode: FeatureSwitchSchema.default("off"),
 }).strict();
 const loopGuardKey = "loop_guard";
-/** What the guard is while nothing has been saved for it. */
+// The owner's rule (ships on, 2026-09-27): a stricter guard that only refuses a call repeated past its bound; none of (a)–(f).
 export const loopGuardShipsAs: FeatureSwitch = "on";
 /** How the owner has set the loop guard. Read fresh each task. */
 export function loopGuardMode(store: Store, owner: string): FeatureSwitch {
-  const found = store.get("settings", owner, loopGuardKey);
-  if (!found) return loopGuardShipsAs;
-  const saved = LoopGuardSettingsSchema.safeParse(found.data ?? {});
-  return saved.success ? saved.data.mode : "off";
+  const saved = LoopGuardSettingsSchema.safeParse(store.get("settings", owner, loopGuardKey)?.data ?? {});
+  return saved.success ? shippedUnlessChosen(store, owner, loopGuardKey, saved.data, { mode: loopGuardShipsAs }).mode : "off";
 }
 export function saveLoopGuardSettings(store: Store, owner: string, input: unknown): FeatureSwitch {
   const { mode } = LoopGuardSettingsSchema.parse(input ?? {});
@@ -99,7 +98,7 @@ const historySize = 30;
  * Tools that are meant to be asked again while something finishes: a running program's output,
  * a status, a list. Judged from the tool's name only, never from its arguments.
  */
-const pollNames = /^process\.(read|list)$|\.(status|check|checks|wait|poll|progress|list)$/;
+const pollNames = /^process\.(read|list)$|\.(status|check|checks|wait|wait_for_checks|poll|progress|list)$/;
 
 export function isPollTool(name: string): boolean {
   return pollNames.test(name);

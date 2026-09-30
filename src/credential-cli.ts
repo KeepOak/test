@@ -15,15 +15,15 @@ import { mapStrings, type SecretScrubber } from "./vault.js";
  * It is off until the owner turns it on, and it can only read: nothing here ever writes to, unlocks
  * or signs in to a vault. A locked or missing vault is a plain refusal, never a guess.
  */
-export const credentialServices = ["bitwarden", "1password"] as const;
+export const credentialServices = ["bitwarden", "1password", "windows"] as const;
 export type CredentialService = (typeof credentialServices)[number];
-const serviceNames: Record<CredentialService, string> = { bitwarden: "Bitwarden", "1password": "1Password" };
+export const serviceNames: Record<CredentialService, string> = { bitwarden: "Bitwarden", "1password": "1Password", windows: "Windows Credential Manager" };
 
 export const CredentialSettingsSchema = z.object({
   /** "Let Branch look up passwords in my password manager". Off until the owner turns it on. */
   enabled: z.boolean().default(false),
   /** Which password managers may be asked. Empty means none, even when the switch is on. */
-  services: z.array(z.enum(credentialServices)).max(2).default([]),
+  services: z.array(z.enum(credentialServices)).max(3).default([]),
   /** The Bitwarden command, when it is not simply `bw` on this computer's path. */
   bitwardenCommand: z.string().trim().max(500).default("bw"),
   /** The 1Password command, when it is not simply `op` on this computer's path. */
@@ -67,7 +67,7 @@ export function saveCredentialSettings(store: Store, owner: string, input: unkno
  * An item in a vault: letters, digits, spaces and the few punctuation marks item names use. A
  * 1Password reference may carry the vault and field too, as `Private/GitHub/password`.
  */
-const referenceText = "secret://(bitwarden|1password)/([A-Za-z0-9][A-Za-z0-9 ._@/-]{0,79})";
+const referenceText = "secret://(bitwarden|1password|windows)/([A-Za-z0-9][A-Za-z0-9 ._@/-]{0,79})";
 const anyCredentialReference = new RegExp(referenceText, "g");
 const wholeCredentialReference = new RegExp(`^${referenceText}$`);
 export interface CredentialRef {
@@ -113,9 +113,74 @@ export function commandFor(reference: CredentialRef, settings: CredentialSetting
   // It is refused here rather than quietly read as a password: a caller that asked for a code and
   // was handed a password would type the wrong secret into the wrong box.
   if (field === "totp")
-    throw new Error("Branch reads a one-time code from Bitwarden only. 1Password holds it at an address only you know.");
+    throw new Error(reference.service === "windows" ? "Branch reads a one-time code from Bitwarden only. Windows Credential Manager holds none."
+      : "Branch reads a one-time code from Bitwarden only. 1Password holds it at an address only you know.");
+  if (reference.service === "windows") return windowsCredentialCommand(reference.item);
   const path = reference.item.startsWith("op://") ? reference.item : `op://${reference.item}`;
   return { executable: settings.onePasswordCommand || "op", args: ["read", "--no-newline", path] };
+}
+
+/**
+ * Windows Credential Manager: one generic credential, read by its exact target name (what `cmdkey /generic:<name>` and
+ * the Credential Manager's "Windows Credentials" list call it) through Windows' own CredRead, in Windows PowerShell by
+ * its full path. Only reading: nothing is listed, written or deleted. The call is declared in memory with
+ * Reflection.Emit (no C# is compiled and no file is written: an unsigned library would be stopped by Smart App
+ * Control). The target name reaches the script only as base64 inside a quoted literal, and the whole script is
+ * passed encoded, so no name can be read as a command. The password is written to the program's own output, which
+ * only this process reads; a name with no credential exits 44.
+ */
+export function windowsCredentialScript(target: string): string {
+  const name = Buffer.from(target, "utf8").toString("base64");
+  // No cmdlet is used (only .NET types), so PowerShell never loads a module: a fresh computer's first run would
+  // otherwise spend its whole time limit "preparing modules for first use".
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "[Console]::OutputEncoding = [Text.Encoding]::UTF8",
+    "$assembly = [AppDomain]::CurrentDomain.DefineDynamicAssembly([Reflection.AssemblyName]::new('BranchCredential'), [Reflection.Emit.AssemblyBuilderAccess]::Run)",
+    "$type = $assembly.DefineDynamicModule('BranchCredential').DefineType('BranchCredential', 'Public, Class')",
+    // Declared as PSReflect does: a PinvokeImpl method carrying DllImport (Unicode, SetLastError), so Windows' error is kept.
+    "$read = $type.DefineMethod('CredReadW', 'Public, Static, PinvokeImpl', [bool], [Type[]]@([string], [int], [int], [IntPtr].MakeByRefType()))",
+    "$import = [Runtime.InteropServices.DllImportAttribute]",
+    "$read.SetCustomAttribute([Reflection.Emit.CustomAttributeBuilder]::new($import.GetConstructor(@([string])), @('advapi32.dll'), [Reflection.FieldInfo[]]@($import.GetField('SetLastError'), $import.GetField('CharSet'), $import.GetField('CallingConvention')), [object[]]@($true, [Runtime.InteropServices.CharSet]::Unicode, [Runtime.InteropServices.CallingConvention]::Winapi)))",
+    "$free = $type.DefinePInvokeMethod('CredFree', 'advapi32.dll', 'Public, Static, PinvokeImpl', [Reflection.CallingConventions]::Standard, [void], [Type[]]@([IntPtr]), [Runtime.InteropServices.CallingConvention]::Winapi, [Runtime.InteropServices.CharSet]::Unicode)",
+    "$free.SetImplementationFlags('PreserveSig')",
+    // ReadCode calls CredReadW and takes Windows' error number in the same breath (0 when it read), before PowerShell's
+    // own work can overwrite it.
+    "$wrap = $type.DefineMethod('ReadCode', 'Public, Static', [int], [Type[]]@([string], [IntPtr].MakeByRefType()))",
+    "$il = $wrap.GetILGenerator(); $ok = $il.DefineLabel(); $op = [Reflection.Emit.OpCodes]",
+    "$il.Emit($op::Ldarg_0); $il.Emit($op::Ldc_I4_1); $il.Emit($op::Ldc_I4_0); $il.Emit($op::Ldarg_1); $il.Emit($op::Call, $read)",
+    "$il.Emit($op::Brtrue_S, $ok); $il.Emit($op::Call, [Runtime.InteropServices.Marshal].GetMethod('GetLastWin32Error')); $il.Emit($op::Ret)",
+    "$il.MarkLabel($ok); $il.Emit($op::Ldc_I4_0); $il.Emit($op::Ret)",
+    "$api = $type.CreateType()",
+    `$name = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${name}'))`,
+    "$found = [IntPtr]::Zero",
+    // 1168 is ERROR_NOT_FOUND: no credential by that name. Any other failure says its Windows error number (exit 45).
+    "$code = $api::ReadCode($name, [ref]$found)",
+    "if ($code -eq 1168) { [Console]::Error.WriteLine('not found'); exit 44 }",
+    "if ($code -ne 0) { [Console]::Error.WriteLine(\"windows error $code\"); exit 45 }",
+    "try {",
+    // CREDENTIALW: the blob's size and address sit after Flags, Type, TargetName, Comment and LastWritten.
+    "  $wide64 = [IntPtr]::Size -eq 8",
+    "  $size = [Runtime.InteropServices.Marshal]::ReadInt32($found, $(if ($wide64) { 32 } else { 24 }))",
+    "  $blob = [Runtime.InteropServices.Marshal]::ReadIntPtr($found, $(if ($wide64) { 40 } else { 28 }))",
+    "  $bytes = [byte[]]::new($size)",
+    "  if ($size -gt 0) { [Runtime.InteropServices.Marshal]::Copy($blob, $bytes, 0, $size) }",
+    // Windows keeps a password as UTF-16 (cmdkey, the Credential Manager, most programs); a few write UTF-8. UTF-16 when the
+    // bytes are an even count and either half the high bytes are zero (Latin text) or they are not clean UTF-8 text (Cyrillic,
+    // Greek, most CJK): a strict UTF-8 reading that fails, or holds control characters, is not a password written as UTF-8.
+    "  $zeros = 0; for ($i = 1; $i -lt $bytes.Length; $i += 2) { if ($bytes[$i] -eq 0) { $zeros++ } }",
+    "  $asUtf8 = $null; try { $asUtf8 = [Text.UTF8Encoding]::new($false, $true).GetString($bytes) } catch { $asUtf8 = $null }",
+    "  $cleanUtf8 = $null -ne $asUtf8 -and $asUtf8 -notmatch '[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]'",
+    "  $unicode = $bytes.Length -gt 0 -and $bytes.Length % 2 -eq 0 -and ($zeros * 2 -ge $bytes.Length / 2 -or -not $cleanUtf8)",
+    "  [Console]::Out.Write($(if ($unicode) { [Text.Encoding]::Unicode.GetString($bytes) } else { $asUtf8 }))",
+    "} finally { $api::CredFree($found) }",
+  ].join("\n");
+}
+export function windowsCredentialCommand(target: string, systemRoot: string = process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "C:\\Windows"): { executable: string; args: string[] } {
+  const encoded = Buffer.from(windowsCredentialScript(target), "utf16le").toString("base64");
+  return { executable: join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded] };
 }
 
 /** Only what a password manager needs to find its own vault; nothing else of the owner's is passed on. */
@@ -172,8 +237,10 @@ export function refusalFrom(reference: CredentialRef, outcome: CliOutcome, execu
   const said = `${outcome.stderr} ${outcome.stdout}`.trim();
   if (outcome.code !== 0 && locked.test(said))
     return `Your ${name} vault is locked, so Branch cannot read anything from it. Unlock it yourself, then ask again.`;
-  if (outcome.code !== 0 && absent.test(said))
-    return `There is nothing called "${reference.item}" in your ${name} vault.`;
+  if (reference.service === "windows" && outcome.code === 45)
+    return `Windows Credential Manager could not be read here (${/windows error (\d+)/.exec(said)?.[0] ?? "no reason given"}). Branch reads it only while running as you, signed in to Windows.`;
+  if (outcome.code !== 0 && (absent.test(said) || (reference.service === "windows" && outcome.code === 44)))
+    return `There is nothing called "${reference.item}" in your ${reference.service === "windows" ? name : `${name} vault`}.`;
   if (outcome.code !== 0) return `${name} would not hand that over, and gave no reason Branch can pass on.`;
   if (!outcome.stdout.trim())
     return `${name} found "${reference.item}" but it has no ${reference.field === "totp" ? "one-time code" : "password"} saved on it.`;
@@ -186,6 +253,7 @@ export class CredentialResolver {
   constructor(
     private readonly store: Store, private readonly owner: string,
     private readonly scrubber: SecretScrubber, private readonly run: CliRunner = spawnCli,
+    private readonly platform: string = process.platform,
   ) {}
   settings(): CredentialSettings { return readCredentialSettings(this.store, this.owner); }
 
@@ -212,6 +280,8 @@ export class CredentialResolver {
       throw new Error(`Branch is not set up to read passwords from a password manager. Turn that on in Settings first.`);
     if (!settings.services.includes(reference.service))
       throw new Error(`Branch is not allowed to read from ${name}. Tick ${name} in Settings if that is what you want.`);
+    if (reference.service === "windows" && this.platform !== "win32")
+      throw new Error("Windows Credential Manager is part of Windows, and this Branch runs on another system, so it cannot read from it here.");
     const { executable, args } = commandFor(reference, settings);
     const outcome = await this.run(executable, args, settings.timeoutMs);
     const refusal = refusalFrom(reference, outcome, executable);
@@ -229,7 +299,7 @@ export class CredentialResolver {
   /** The name of the item only; the password itself never reaches this record. */
   private record(reference: CredentialRef, use: { runId?: string | undefined; purpose: string }, outcome: string): void {
     audit(this.store, this.owner, {
-      action: "secret.used", actor: `your ${serviceNames[reference.service]} vault`,
+      action: "secret.used", actor: reference.service === "windows" ? "your Windows Credential Manager" : `your ${serviceNames[reference.service]} vault`,
       subject: `${credentialReference(reference.service, reference.item)}${reference.field === "totp" ? " (one-time code)" : ""}`,
       reason: use.purpose.slice(0, 120), runId: use.runId ?? null, outcome,
     });

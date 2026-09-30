@@ -131,7 +131,7 @@ test("theme, version, lockdown, permissions and model work from the command line
   assert.match((await branch(env, "--version")).out, /^Branch Agent \d+\.\d+\.\d+/);
   assert.match((await branch(env, "pause")).out, /^Lockdown is on/);
   assert.match((await branch(env, "lockdown", "off")).out, /^Lockdown is off\./);
-  assert.match((await branch(env, "permissions", "read-only")).out, /when to check with me: Read only/);
+  assert.match((await branch(env, "permissions", "read-only")).out, /When to check with me: Read only/);
   assert.match((await branch(env, "approvals")).out, /\* read-only/);
   assert.match((await branch(env, "models")).out, /^\* default\tTest fixture/m);
   const wrong = await branch(env, "model", "use", "nope");
@@ -204,8 +204,15 @@ test("B5 plain output has no internal ids or raw JSON, and --json keeps the mach
 test("B5 status, usage, lockdown and empty lists follow the language", async (t) => {
   const env = { ...(await workspace(t)), LANG: "de_DE.UTF-8", LC_ALL: "", LC_MESSAGES: "" };
   const status = await branch(env, "status");
-  assert.match(status.out, /^Wann bei mir nachfragen: /m);
+  assert.match(status.out, /^Wann bei mir nachfragen: (Ohne Freigaben|Vor Änderungen fragen|In meinem Arbeitsbereich einfach machen|Deine eigenen Regeln|Nur lesen)$/m,
+    "CL-05d: the preset by its German name");
   assert.match(status.out, /^(Alles ist in Ordnung\.|Einige Prüfungen brauchen Aufmerksamkeit:)$/m);
+  const presets = (await branch(env, "permissions")).out;
+  assert.match(presets, /^ {2}read-only — Nur lesen: Branch Agent darf sich Dinge ansehen/m, "CL-05d: each preset's name and what it does, in German");
+  assert.match(presets, /^ {2}careful — Vorsichtig: Alles, was eine Datei ändert/m);
+  assert.match((await branch(env, "settings", "permissions")).out, /^Nur lesen	Branch Agent darf sich Dinge ansehen/m, "Settings › Permissions too");
+  assert.match((await branch(env, "permissions", "read-only")).out, /^\[Wann bei mir nachfragen: Nur lesen\]$/m);
+  assert.match((await branch({ ...env, LANG: "es_ES.UTF-8" }, "status")).out, /^Cuándo consultarme: Solo lectura$/m);
   assert.match((await branch(env, "usage")).out, /Tokens verbraucht/);
   assert.match((await branch(env, "lockdown", "on")).out, /^Der Sperrmodus ist an, seit /);
   assert.match((await branch(env, "status")).out, /^Der Sperrmodus ist an, seit /m, "status says Lockdown is on");

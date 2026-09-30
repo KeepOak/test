@@ -36,7 +36,7 @@ async function fixture(t) {
   t.after(async () => { await app.close(); await discardTemp(root); });
   return { app, workspace };
 }
-/** The feature ships off, so every test that wants it working switches it on first. */
+/** The feature ships when needed; the tests that want it preloaded switch it on first. */
 const switchOn = (app) => app.learn.save({ mode: "on" }, "local");
 
 /** A small folder of code where one file plainly uses a name the other declares. */
@@ -263,9 +263,13 @@ test("with nothing named, the map follows the project that is open", async (t) =
 
 /* ── 6. the switch off hides the tools and refuses in one sentence ── */
 
-test("the feature ships off: its tools are not advertised and it refuses in one plain sentence", async (t) => {
+test("the feature ships when needed; switched off, its tools are not advertised and it refuses in one plain sentence", async (t) => {
   const { app } = await fixture(t);
-  assert.equal(app.learn.settings("local").mode, "off", "a fresh workspace has it off");
+  assert.equal(app.learn.settings("local").mode, "when-needed", "a fresh workspace has it when needed");
+  const fresh = switchedToolTiers(app.store, "local", [...learnTools]);
+  assert.deepEqual(fresh.hidden, [], "shipped when needed, the tools are offered");
+  app.learn.save({ mode: "off" }, "local");
+  assert.equal(app.learn.settings("local").mode, "off", "switched off, it stays off");
 
   const hiddenWhenOff = switchedToolTiers(app.store, "local", [...learnTools]);
   assert.deepEqual(hiddenWhenOff.hidden.sort(), [...learnTools].sort(), "off means the tools are not offered");

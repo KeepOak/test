@@ -5,9 +5,11 @@ import type { ModelRouter } from "../models.js";
 import { currentPerson } from "../people/context.js";
 import { startedWithShortLivedKey } from "../key-context.js";
 import { allSavings, MixtureSettingsSchema, readSavings, resetSavings, saveSavings, savingsCardNames, type SavingsCard } from "./settings.js";
-import { mixturePrefix, mixtureProblem, syncMixtures } from "./mixture.js";
+import { hardMixtureId, mixturePrefix, mixtureProblem, syncMixtures, wantedMixtures } from "./mixture.js";
 import { keptWarmProviders } from "./keep-alive.js";
 import { roundsOf } from "./rounds.js";
+import { openRouterAddress, openRouterCompanies } from "./openrouter.js";
+import { lockedDown } from "../lockdown.js";
 import { errorText, validationText } from "../request-errors.js";
 
 /**
@@ -27,8 +29,10 @@ export class SavingsApiError extends Error {
 export interface SavingsApp {
   store: Store;
   runtime: { owner: string; models: ModelRouter };
+  /** How OpenRouter's list of companies is fetched (tests hand one in). */
+  companiesFetch?: typeof fetch;
 }
-export const savingsRoutes: readonly string[] = ["/api/model-savings", "/api/model-savings/rounds"];
+export const savingsRoutes: readonly string[] = ["/api/model-savings", "/api/model-savings/rounds", "/api/model-savings/companies"];
 export const handlesSavingsPath = (path: string): boolean => savingsRoutes.includes(path);
 
 const SaveSchema = z.object({
@@ -46,12 +50,14 @@ function requireOwnerHere(store: Store): void {
 function view(app: SavingsApp) {
   const { store, runtime } = app;
   const presets = [...runtime.models.presets.values()];
-  const mixtureIds = new Set(readSavings(store, runtime.owner, "mixtures").mixtures.map((mixture) => `${mixturePrefix}${mixture.id}`));
+  const mixtureIds = new Set(wantedMixtures(store, runtime.owner, runtime.models).map((mixture) => `${mixturePrefix}${mixture.id}`));
   return {
     values: allSavings(store, runtime.owner),
     connections: presets.filter((preset) => !mixtureIds.has(preset.id)).map((preset) => ({ id: preset.id, name: preset.name, provider: preset.provider.name })),
     liveMixtures: presets.filter((preset) => mixtureIds.has(preset.id)).map((preset) => preset.id),
     keptWarmProviders,
+    /** True when an OpenRouter connection is set up, so its list of companies can be asked for. */
+    openRouter: openRouterAddress(presets) !== null,
   };
 }
 
@@ -66,6 +72,7 @@ function checkValues(app: SavingsApp, card: SavingsCard, values: Record<string, 
     const ids = new Set<string>();
     for (const mixture of parsed.mixtures) {
       if (ids.has(mixture.id)) throw new SavingsApiError(400, "Two mixtures have the same short name.");
+      if (mixture.id === hardMixtureId) throw new SavingsApiError(400, "That short name is Branch's own, for mixing models on hard questions. Pick another.");
       ids.add(mixture.id);
       const problem = mixtureProblem(mixture, app.runtime.models);
       if (problem) throw new SavingsApiError(400, problem);
@@ -82,7 +89,7 @@ function save(app: SavingsApp, body: unknown) {
     checkValues(app, input.card, input.values);
     saveSavings(store, owner, input.card, input.values);
   }
-  if (input.card === "mixtures") syncMixtures(store, owner, app.runtime.models);
+  if (input.card === "mixtures" || input.card === "difficulty") syncMixtures(store, owner, app.runtime.models); // difficulty: Mix models on hard questions
   return view(app);
 }
 
@@ -97,6 +104,15 @@ export async function savingsApi(app: SavingsApp, request: IncomingMessage, path
       const session = url.searchParams.get("session") ?? "";
       if (!session) throw new SavingsApiError(400, "Say which conversation.");
       return roundsOf(app.store, app.runtime.owner, session);
+    }
+    // OpenRouter picks › Only ones I list: the companies to choose from. POST: it asks OpenRouter, so it is the owner's.
+    if (path === "/api/model-savings/companies") {
+      if (method !== "POST") throw new SavingsApiError(405, "Use POST");
+      requireOwnerHere(app.store);
+      if (lockedDown(app.store, app.runtime.owner)) throw new SavingsApiError(409, "Lockdown is on, so Branch asks OpenRouter nothing. Turn Lockdown off first.");
+      const address = openRouterAddress(app.runtime.models.presets.values());
+      if (!address) throw new SavingsApiError(409, "No OpenRouter connection is set up, so there is no list of its companies.");
+      return { companies: await openRouterCompanies(address, app.companiesFetch) };
     }
     if (method === "GET") return view(app);
     if (method === "POST") return save(app, await readBody(request));

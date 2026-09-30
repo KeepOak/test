@@ -81,6 +81,7 @@ export const apiRoutes: readonly ApiRoute[] = [
   { method: "get", path: "/api/dashboard", summary: "The browser dashboard in one answer: what is happening now, health, spending and recent activity (the dashboard must be switched on).", tag: "dashboard" },
   { method: "get", path: "/api/dashboard/settings", summary: "The dashboard's switch, and what this key may do there.", tag: "dashboard" },
   { method: "post", path: "/api/dashboard/settings", summary: "Switch the dashboard (the key of this computer only).", tag: "dashboard", bodyNote: "{ mode: \"off\" | \"on\" | \"when-needed\" }" },
+  { method: "get", path: "/api/dashboard/automations", summary: "What Pause all paused, or null (the key of this computer only; answered whether or not the dashboard is switched on).", tag: "dashboard" },
   { method: "post", path: "/api/dashboard/automations", summary: "Pause every schedule and trigger, or resume the ones that were paused (the key of this computer only).", tag: "dashboard", bodyNote: "{ paused: true } or { paused: false }" },
   { method: "post", path: "/api/dashboard/restart", summary: "Restart Branch, where the computer's own service will start it again (the key of this computer only).", tag: "dashboard", bodyNote: "{}" },
   { method: "post", path: "/v1/chat/completions", summary: "The OpenAI-shaped way in, for tools that already speak it.", tag: "compatibility" },

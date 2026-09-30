@@ -38,8 +38,8 @@ export const personalKey = (part: PersonalPart): string => `personal-${part}`;
  * microphone and eases an approval, (d) and (e)), the public webhook address (it lets the outside in, (a)),
  * Home Assistant (the defaults audit keeps it off under (a): it opens and works the house's own doors and
  * devices), searching X (a paid xAI key beside the model provider, (b)), and sending a file or a spoken
- * briefing into a chat (`chat.send_file`, `brief.send_voice`: the owner's rule keeps sending off until the
- * owner turns it on).
+ * briefing into a chat (`chat.send_file`, and `brief.send_voice` naming a chat, which needs this switch too: a chat
+ * can hold other people, so sending there is (b) until the owner turns it on).
  */
 export const personalShipsOn: Partial<Record<PersonalPart, PersonalMode>> = {
   // The owner's rule (ships on, 2026-09-26): does nothing until the owner signs in with their own Spotify; none of (a)–(f).
@@ -50,6 +50,9 @@ export const personalShipsOn: Partial<Record<PersonalPart, PersonalMode>> = {
   microsoft: "when-needed",
   // The owner's rule (ships on, 2026-09-26): reads the email channel's own inbox once the owner names it; marks nothing read and sends nothing; none of (a)–(f).
   "mail-search": "when-needed",
+  // The owner's rule (2026-09-27): the briefing is made from the owner's own calendars, mail and morning brief and played
+  // to the owner in the window; none of (a)–(f). Sending it into a chat still needs "Sending files into your chats".
+  "spoken-brief": "when-needed",
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */

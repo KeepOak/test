@@ -7,6 +7,7 @@ import { discardTemp } from './temp-dir.mjs';
 import { chromium } from 'playwright';
 import { createBranch } from '../dist/index.js';
 import { startServer } from '../dist/server.js';
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 function deferred() {
   let resolve;
@@ -46,10 +47,9 @@ async function fixture(t, provider) {
    carries aria-current="true". Carrying a saved conversation on as a new one is the sidebar search's "Past sessions"
    result ([data-act="sr-sess"]) and its dialog's "Carry it on" ([data-act="sess-carry"], POST /api/sessions/{id}/duplicate),
    as in the prototype's showSession(). */
-const row = (page, id) => page.locator(`#side [data-act="chat"][data-id="${id}"]`);
 const currentId = (page) => page.evaluate(() => document.querySelector('#side [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
 async function openConversation(page, id) {
-  await row(page, id).click();
+  await openChat(page, id);
   await page.locator('#conversation').getByText('Saved response for', { exact: false }).first().waitFor();
 }
 async function pastSession(page, query, id) {

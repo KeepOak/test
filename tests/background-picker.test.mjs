@@ -82,6 +82,8 @@ test("background picker opens by mouse, Enter and Space; keeps filenames, errors
     await (await opened).setFiles(png);
     await savedName(page).waitFor();
     await page.locator("#bgLayer .bg-media").waitFor({ state: "attached" });
+    // The pick ends with its own note; a wrong file chosen before that note would have its refusal replaced by it.
+    await page.getByRole("status").filter({ hasText: "Kept on this computer." }).waitFor();
     await page.locator("#bg-file6").setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a picture") });
     await page.getByRole("status").filter({ hasText: /can’t go behind the glass/ }).waitFor();
     assert.equal(await savedName(page).count(), 1, "rejection retains the saved picture");

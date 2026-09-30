@@ -79,8 +79,14 @@ test("Settings › Gateway: ships off, a change that failed its try cannot be us
   await page.locator("#main #gw-mode").click();
   await page.waitForFunction(() => document.querySelector("#main #gw-mode")?.checked === true);
   // A native switch shows its new state at once; the engine's answer is what counts.
-  for (let i = 0; i < 50 && (await view()).mode !== "on"; i++) await page.waitForTimeout(100);
-  assert.equal((await view()).mode, "on", "the engine keeps the switch");
+  for (let i = 0; i < 50 && (await view()).mode === "off"; i++) await page.waitForTimeout(100);
+  // QA retest 2026-09-28 (G1): the Gateway switch runs the gateway without ticking "Carry on interrupted work", and until
+  // the next start (this engine was not started by a gateway) the page and the status bar say it is not running yet.
+  assert.equal((await view()).mode, "when-needed", "the engine keeps the switch");
+  assert.equal(await page.locator("#main #gw-carry").isChecked(), false, "the Carry switch is left as it was");
+  await page.locator("#main .status").filter({ hasText: "The gateway is switched on, not running yet" }).waitFor();
+  assert.match(await page.locator("#main .status").textContent(), /takes over the next time Branch starts/);
+  assert.equal(await page.locator('[data-act="gwpop"] .sbt18c').textContent(), "Gateway off", "the status bar says what runs");
   const tile = page.locator("#main .tile").filter({ hasText: "A change Branch suggested" });
   await tile.waitFor();
   assert.match(await tile.textContent(), /Shorter waits while the assistant restarts/);

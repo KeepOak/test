@@ -87,7 +87,7 @@ async function configuredApp(options: Parameters<typeof createBranch>[0]) {
     );
     app.browser = integrations.hosted.browser ?? null;
     app.studies.browser = integrations.hosted.browser; // w911 (A1726) hook: MiniWoB studies open their page in this browser
-    app.reach = { browserOrigins: integrations.hosted.browserOrigins ?? [],
+    app.reach = { browserOrigins: integrations.hosted.browserOrigins ?? [], browserAnyWebsite: integrations.hosted.browserAnyWebsite === true,
       commandsMayReachInternet: integrations.hosted.commandsNetless !== true };
     app.issues = integrations.hosted.issues ?? null;
     return {

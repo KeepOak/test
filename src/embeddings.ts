@@ -26,7 +26,7 @@ export interface Embeddings extends Embedder {
 /** The three shapes a connected provider speaks when asked to read passages. */
 export type EmbeddingShape = "openai" | "gemini" | "ollama";
 export interface EmbeddingConnection {
-  shape: EmbeddingShape; endpoint: string; apiKey: string; model: string; local: boolean;
+  shape: EmbeddingShape; endpoint: string; apiKey: string; model: string; local: boolean; fetchImpl?: typeof fetch;
 }
 /** Gemini's own default reader, used when the owner has not named one of their own. */
 export const defaultGeminiEmbeddingModel = "text-embedding-004";
@@ -55,7 +55,8 @@ export function embeddingConnection(
     const local = onThisComputer(route.endpoint);
     const ollama = local && new URL(route.endpoint).port === new URL(ollamaHome).port;
     const chosen = ollama && model === defaultEmbeddingModel ? defaultLocalEmbeddingModel : model;
-    return { shape: ollama ? "ollama" : "openai", endpoint: route.endpoint, apiKey: route.apiKey, model: chosen, local };
+    return { shape: ollama ? "ollama" : "openai", endpoint: route.endpoint, apiKey: route.apiKey, model: chosen, local,
+      ...(route.fetchImpl ? { fetchImpl: route.fetchImpl } : {}) };
   }
   const pictures = (provider as { images?: () => { kind: string; endpoint: string; apiKey: string } }).images?.();
   if (pictures?.kind !== "gemini") return null;
@@ -147,7 +148,7 @@ export const embeddingFetch = (endpoint: string, call: typeof fetch): typeof fet
  * owner's network rules first.
  */
 export function embeddingsFor(connection: EmbeddingConnection, call: typeof fetch = globalThis.fetch): Embeddings | null {
-  const reach = embeddingFetch(connection.endpoint, call);
+  const reach = connection.fetchImpl ?? embeddingFetch(connection.endpoint, call);
   try {
     if (connection.shape === "gemini") return new GeminiEmbeddings(connection, connection.local, reach);
     if (connection.shape === "ollama") return new OllamaEmbeddings(connection, connection.model, reach);

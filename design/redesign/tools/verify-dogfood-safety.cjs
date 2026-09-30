@@ -5,7 +5,7 @@
    its words need), and Confirm saves exactly that list, with no screen, sending or running (GET /api/schedules/<id>).
    The screen guard, the No that replies and the model's room are engine behaviour, proved with stand-ins in
    tests/screen-guard.test.mjs, tests/refusal-reply.test.mjs and tests/context-room.test.mjs. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT = "3404", TOKEN } = process.env;
 const BASE = `http://127.0.0.1:${PORT}`;

@@ -132,7 +132,9 @@ test("Ctrl K's palette finds a conversation by its title and opens it", async (t
   await page.keyboard.press("ControlOrMeta+K");
   await page.locator("#pal-in").waitFor({ state: "visible" });
   await page.locator("#pal-in").fill("Notes mentioning");
-  const item = page.locator('#pal-list [data-act="pal"]', { hasText: "Notes mentioning" }); // a conversation is named by its opening words
+  // A conversation is named by its opening words; the engine's search inside conversations can add a second row for the
+  // same words a moment later, so the first row (the conversation's own) is the one pressed.
+  const item = page.locator('#pal-list [data-act="pal"]', { hasText: "Notes mentioning" }).first();
   await item.waitFor({ state: "visible", timeout: 10000 });
   await item.click();
   await page.locator("#pal-in").waitFor({ state: "detached" });

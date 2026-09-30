@@ -44,6 +44,13 @@ export interface BwrapInput {
   seccompFd?: number;
   /** What is at a path to be hidden: a folder, a file, or nothing (then nothing needs hiding). */
   kindOf?: (path: string) => "dir" | "file" | null;
+  /**
+   * Folders covered by an empty one before the workspace is bound, so only the workspace shows
+   * inside them, then made read-only. Under WSL: `/mnt` (the Windows drives) and `/run/WSL`.
+   */
+  covered?: readonly string[];
+  /** The name the system uses for a place, links followed; a hidden file is covered there, where bwrap can reach it. */
+  canonical?: (path: string) => string;
 }
 
 /** The arguments for `bwrap`, ending with `--` and the program. */
@@ -55,6 +62,10 @@ export function bwrapArgs(input: BwrapInput, command: { executable: string; args
   args.push("--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc");
   // A private, empty temporary folder: the real one holds other programs' sockets (the ssh agent,
   // the screen, other runs' doors), and a socket file can be used even on a read-only disk.
+  // Covered folders first, so a private temporary folder that sits inside one (a TMPDIR under /run
+  // or the home) is made after the cover, and still shows.
+  const covered = input.covered ?? [];
+  for (const path of covered) args.push("--tmpfs", path);
   const temps = [...new Set(["/tmp", temp])];
   for (const path of temps) args.push("--tmpfs", path);
   args.push("--bind", input.workspace, input.workspace);
@@ -62,15 +73,19 @@ export function bwrapArgs(input: BwrapInput, command: { executable: string; args
   for (const path of input.extraWrites ?? []) args.push("--bind-try", path, path);
   for (const path of [...protectedWorkspaceNames.map((name) => join(input.workspace, name)), ...(input.readOnly ?? [])])
     args.push("--ro-bind-try", path, path);
+  // Only the folder itself turns read-only; the workspace bound inside it stays writable.
+  for (const path of covered) args.push("--remount-ro", path);
   const hidden = [...secretHomePlaces.map((place) => join(home, place)), ...(input.unreadable ?? []),
     ...(input.dataDir ? [input.dataDir] : []), ...socketPlaces(input.uid)];
   // An empty read-only folder over each folder, an empty file over each file; a missing one needs
   // nothing hidden (and bwrap could not make a place to hide it on a read-only disk anyway).
-  const kindOf = input.kindOf ?? (() => "dir" as const);
+  const kindOf = input.kindOf ?? (() => "dir" as const), canonical = input.canonical ?? ((path: string) => path);
+  const files = new Set<string>();
   for (const path of hidden) {
     const kind = kindOf(path);
     if (kind === "dir") args.push("--tmpfs", path, "--remount-ro", path);
-    else if (kind === "file") args.push("--ro-bind", "/dev/null", path);
+    // A file reached through a link (`/var/run` is `/run`, or a socket that is itself a link) is covered where it really is.
+    else if (kind === "file" && !files.has(canonical(path))) { files.add(canonical(path)); args.push("--ro-bind", "/dev/null", canonical(path)); }
   }
   if (input.seccompFd !== undefined) args.push("--seccomp", String(input.seccompFd));
   args.push("--chdir", input.workspace, "--", command.executable, ...command.args);
@@ -92,7 +107,7 @@ const arches: Record<string, { audit: number; ptrace: number; socket: number; x3
   arm64: { audit: 0xc00000b7, ptrace: 117, socket: 198, x32: false },
 };
 const LOAD = 0x20, JEQ = 0x15, JGE = 0x35, RET = 0x06;
-const KILL = 0x80000000, ERRNO_EPERM = 0x00050000 | 1, ALLOW = 0x7fff0000, AF_UNIX = 1;
+const KILL = 0x80000000, ERRNO_EPERM = 0x00050000 | 1, ALLOW = 0x7fff0000, AF_UNIX = 1, AF_VSOCK = 40;
 interface Op { code: number; k: number; jt?: string; jf?: string; label?: string }
 
 /** Lays out the program: jumps name a label and become forward offsets here. */
@@ -116,10 +131,16 @@ function assemble(ops: Op[]): Buffer {
 
 /**
  * The filter a program behind the wall runs under. It refuses tracing other programs always and,
- * with no network, opening any socket that is not a local one. A call made for another processor
+ * with no network, opening any socket that is not a local one; a link to a virtual machine's host
+ * is refused either way. A call made for another processor
  * type ends the program, so the filter cannot be sidestepped that way.
  */
-export function seccompFilter(options: { network: WallNetwork; arch?: string }): Buffer {
+export function seccompFilter(options: { network: WallNetwork; arch?: string;
+  /**
+   * selfdev: a held command, which always has a network of its own with nothing in it but itself (bwrap's
+   * `--unshare-net`), may open internet sockets there, so a test can start and reach its own local server.
+   */
+  ownNetwork?: boolean }): Buffer {
   const arch = arches[options.arch ?? process.arch];
   if (!arch) throw new Error(`The wall cannot filter system calls on this kind of processor (${options.arch ?? process.arch}). Switch the wall off in Settings.`);
   const ops: Op[] = [
@@ -130,7 +151,9 @@ export function seccompFilter(options: { network: WallNetwork; arch?: string }):
     { code: JEQ, k: arch.ptrace, jt: "refuse", jf: "socket", ...(arch.x32 ? { label: "plain" } : {}) },
     { code: JEQ, k: arch.socket, jt: "family", jf: "allow", label: "socket" },
     { code: LOAD, k: 16, label: "family" },
-    { code: JEQ, k: AF_UNIX, jt: "allow", jf: options.network === "none" ? "refuse" : "allow" },
+    { code: JEQ, k: AF_UNIX, jt: "allow", jf: "vsock" },
+    // A virtual machine's link to its host (WSL's way back to Windows) is never the program's to open, whatever the network.
+    { code: JEQ, k: AF_VSOCK, jt: "refuse", jf: options.network === "none" && !options.ownNetwork ? "refuse" : "allow", label: "vsock" },
     { code: RET, k: ERRNO_EPERM, label: "refuse" },
     { code: RET, k: ALLOW, label: "allow" },
     { code: RET, k: KILL, label: "kill" },

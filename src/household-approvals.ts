@@ -79,7 +79,11 @@ export function personTaskHere(store: Store, owner: string, runId: string): bool
   if (!run || (run.owner !== owner && run.owner !== profiles.scope())) return false;
   if (runOrigin(store, runId).personProfileId !== person.id) return false;
   const top = store.run(firstTask(store, runId));
-  return !!top && personConversation(store, owner, top.sessionId);
+  if (!top) return false;
+  if (store.ownsSession(profiles.scope(), top.sessionId)) return true;
+  // Lent to them only while the task that borrowed it works: a task that stopped was handed back, so a conversation of
+  // the owner's that still carries the old lending is the owner's, and nothing in it is theirs.
+  return top.status === "running" && personConversation(store, owner, top.sessionId);
 }
 
 /**

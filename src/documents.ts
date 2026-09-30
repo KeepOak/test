@@ -34,6 +34,7 @@ const scanLimit = 5000;
 export interface DocumentMetadata {
   id: string; name: string; filePath: string | null; fileType: string; fileSize: number;
   status: "indexed" | "needs_helper" | "failed"; note: string; chunks: number; embedded: number; updatedAt: string;
+  uploaded?: boolean;
 }
 export interface DocumentPassage {
   documentId: string; source: string; passage: number; text: string; highlight: string; score: number;
@@ -115,6 +116,7 @@ export class DocumentLibrary {
     this.ranked = this.createIndex();
   }
   private createTables(): void {
+    this.db.exec(`CREATE TABLE IF NOT EXISTS document_uploads(document_id TEXT PRIMARY KEY, owner TEXT NOT NULL, bytes BLOB NOT NULL);`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL,
       file_path TEXT, file_type TEXT NOT NULL, file_size INTEGER NOT NULL, status TEXT NOT NULL,
       note TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`);
@@ -173,20 +175,22 @@ export class DocumentLibrary {
     if (!route) return null;
     const model = this.settings(owner).embeddingModel;
     // A model on this computer reads passages through Ollama's own route, not the OpenAI one.
-    const here = localEmbedder(route, model);
+    const here = localEmbedder(route, model, route.fetchImpl);
     if (here) return here;
-    try { return new EmbeddingClient(route.endpoint, route.apiKey, model, embeddingFetch(route.endpoint, this.embeddingFetch)); }
+    try { return new EmbeddingClient(route.endpoint, route.apiKey, model, route.fetchImpl ?? embeddingFetch(route.endpoint, this.embeddingFetch)); }
     catch { return null; }
   }
   meaningSearchReady(owner: string): boolean { return this.client(owner) !== null; }
 
   list(owner: string): DocumentMetadata[] {
     return this.db.prepare(`SELECT d.*, (SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=d.id) AS chunks,
-      (SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=d.id AND c.embedding IS NOT NULL) AS embedded
+      (SELECT COUNT(*) FROM document_chunks c WHERE c.document_id=d.id AND c.embedding IS NOT NULL) AS embedded,
+      EXISTS(SELECT 1 FROM document_uploads u WHERE u.document_id=d.id AND u.owner=d.owner) AS uploaded
       FROM documents d WHERE d.owner=? ORDER BY d.updated_at DESC LIMIT 500`).all(owner).map((row) => ({
       id: String(row.id), name: String(row.name), filePath: row.file_path === null ? null : String(row.file_path),
       fileType: String(row.file_type), fileSize: Number(row.file_size), status: String(row.status) as DocumentMetadata["status"],
       note: String(row.note ?? ""), chunks: Number(row.chunks), embedded: Number(row.embedded), updatedAt: String(row.updated_at),
+      uploaded: Boolean(row.uploaded),
     }));
   }
   view(owner: string) {
@@ -197,14 +201,33 @@ export class DocumentLibrary {
   }
 
   /** Adds a document from pasted text, a workspace file, or uploaded file bytes. */
-  async add(owner: string, input: unknown, signal = AbortSignal.timeout(120000)): Promise<DocumentMetadata> {
+  async add(
+    owner: string, input: unknown, signal = AbortSignal.timeout(120000), embed: boolean | "background" = true,
+  ): Promise<DocumentMetadata> {
     const value = AddSchema.parse(input);
     const source = await this.sourceOf(value);
     const id = randomUUID(), now = new Date().toISOString();
     this.db.prepare("INSERT INTO documents VALUES(?,?,?,?,?,?,?,?,?,?)")
       .run(id, owner, source.name, source.path, source.type, source.bytes, "indexed", "", now, now);
-    await this.index(owner, id, source.text, signal, true, source.note, source.helper);
+    if (value.content !== undefined) this.db.prepare("INSERT INTO document_uploads VALUES(?,?,?)")
+      .run(id, owner, decodeUpload(value.content));
+    await this.index(owner, id, source.text, signal, embed, source.note, source.helper);
     return this.one(owner, id);
+  }
+  /**
+   * A file attached in a lasting conversation: listed and searchable by its words at once, compared by
+   * meaning in the background so the reply never waits on the embeddings service. Attaching the same
+   * file again keeps the one entry.
+   */
+  async fileAttachment(owner: string, name: string, bytes: Buffer): Promise<DocumentMetadata | null> {
+    const same = this.list(owner).find((one) => one.uploaded && one.name === name && one.fileSize === bytes.length);
+    if (same && this.uploadedBytes(owner, same.id)?.equals(bytes)) return null;
+    return this.add(owner, { name, content: bytes.toString("base64") }, AbortSignal.timeout(120000), "background");
+  }
+  /** Uploaded originals stay private and survive a restart, so spreadsheets retain their exact cells. */
+  uploadedBytes(owner: string, id: string): Buffer | null {
+    const row = this.db.prepare("SELECT bytes FROM document_uploads WHERE document_id=? AND owner=?").get(id, owner);
+    return row ? Buffer.from(row.bytes as Uint8Array) : null;
   }
   private async sourceOf(value: z.infer<typeof AddSchema>) {
     if (value.text !== undefined) {
@@ -238,7 +261,8 @@ export class DocumentLibrary {
   }
   /** Splits the text into passages, indexes them for word search, then adds meaning where possible. */
   private async index(
-    owner: string, id: string, text: string | null, signal: AbortSignal, embed = true, note = "", helper = false,
+    owner: string, id: string, text: string | null, signal: AbortSignal, embed: boolean | "background" = true,
+    note = "", helper = false,
   ): Promise<void> {
     this.clearChunks(id);
     // A file with no words to lift out — a PDF that is pictures of text — needs a different pair of
@@ -253,7 +277,8 @@ export class DocumentLibrary {
       if (this.ranked) this.db.prepare("INSERT INTO document_search(rowid,chunk_text) VALUES(?,?)").run(Number(row?.chunk_id), chunk);
     }
     this.mark(id, "indexed", note);
-    if (embed) await this.embedChunks(owner, id, chunks, signal);
+    if (embed === "background") void this.embedChunks(owner, id, chunks, signal).catch(() => undefined);
+    else if (embed) await this.embedChunks(owner, id, chunks, signal);
     else if (this.client(owner)) this.db.prepare("UPDATE documents SET note=? WHERE id=?")
       .run("Updated after the file changed. Matched by its words for now; choose Read the file again to also match by meaning.", id);
   }
@@ -334,6 +359,7 @@ export class DocumentLibrary {
     if (!this.db.prepare("SELECT id FROM documents WHERE id=? AND owner=?").get(id, owner))
       throw new Error("That document is not in your library");
     this.clearChunks(id);
+    this.db.prepare("DELETE FROM document_uploads WHERE document_id=? AND owner=?").run(id, owner);
     this.db.prepare("DELETE FROM documents WHERE id=?").run(id);
     return { removed: id };
   }

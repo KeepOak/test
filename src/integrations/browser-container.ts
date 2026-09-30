@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
-import { chromium, type Browser, type ConnectOptions } from 'playwright';
+import type { Browser, ConnectOptions } from 'playwright';
+import { chromium } from './playwright-lazy.js';
 import { z } from 'zod';
 import { FeatureModeSchema, optionalFields } from '../feature-switches.js';
 import { isTailnetAddress } from '../remote/tailscale.js';
@@ -180,7 +181,7 @@ interface Running { browser: Browser; containerId: string | null }
 export class BrowserSandbox {
   runner: ProgramRunner = runProgram;
   probe: Prober = probeHttp;
-  connect: Connector = (endpoint, options) => chromium.connect(endpoint, options);
+  connect: Connector = async (endpoint, options) => (await chromium()).connect(endpoint, options);
   port: () => Promise<number> = freePort;
   version: () => string = playwrightVersion;
   waitMs = 90_000;

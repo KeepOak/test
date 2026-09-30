@@ -432,7 +432,10 @@
         "neural-chat": { "input": 0, "output": 0 },
         "starling-lm": { "input": 0, "output": 0 }
       },
-      "note": "Runs on this computer, so nothing leaves it and nothing is charged. Install Ollama and run `ollama serve`. No key needed.",
+      "extras": [
+        { "key": "baseUrl", "label": "Ollama's address, when it is not the usual one on this computer", "required": false, "example": "http://192.168.1.20:11434" }
+      ],
+      "note": "Runs on this computer, so nothing leaves it and nothing is charged. Install Ollama and run `ollama serve`. No key needed. An Ollama on another machine at home works too: give its address.",
       "signUp": "https://ollama.com/download",
       "terms": { "route": "Runs on this computer", "url": "https://github.com/ollama/ollama/blob/main/LICENSE", "standing": "official" }
     },

@@ -13,6 +13,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const JPEG = Buffer.from("/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q==", "base64");
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -44,7 +45,7 @@ async function windowWith(t, prepare) {
     await page.getByLabel("Session token", { exact: true }).fill(server.token);
     await page.getByRole("button", { name: "Connect", exact: true }).click();
     await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
-    await page.locator(`[data-act="chat"][data-id="${run.sessionId}"]`).first().click();
+    await openChat(page, run.sessionId);
     await page.locator("#conversation .b").first().waitFor({ timeout: 30000 });
   } };
 }

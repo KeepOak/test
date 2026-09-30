@@ -11,9 +11,10 @@ import {
   createBranch, ToolLoader, OpenAIProvider, wireName, originalName, unofferedMark, openaiBody,
   announcesNextStep, madeByBranch, modelDisplayName,
 } from "../dist/index.js";
-import { OllamaProvider } from "../dist/providers/ollama.js";
+import { wireRuleFor } from "../dist/providers.js";
+import { OllamaProvider, contextRoom, roomFacts } from "../dist/providers/ollama.js";
 import { LocalRuntimes } from "../dist/local-runtimes.js";
-import { announcedEnding, unofferedEnding, textCallEnding, writesToolCallAsText } from "../dist/runtime.js";
+import { announcedEnding, unofferedEnding, textCallEnding, writesToolCallAsText, endsWithToolCallAsText } from "../dist/runtime.js";
 
 // ---------------------------------------------------------------- wire names
 
@@ -64,7 +65,7 @@ test("an OpenAI-shaped server on this computer gets readable names; the same sha
   const done = await local.complete({ ...request, signal: AbortSignal.timeout(5000) });
   assert.equal(bodies[0].tools[0].function.name, "files.read");
   assert.equal(done.toolCalls[0].name, "files.read");
-  const cloud = new OpenAIProvider({ endpoint: "https://api.example.com/v1", model: "m", apiKey: "k", fetchImpl });
+  const cloud = new OpenAIProvider({ endpoint: "https://api.example.com/v1", model: "m", apiKey: "k", fetchImpl, lookupImpl: async () => ["93.184.216.34"] });
   await cloud.complete({ ...request, signal: AbortSignal.timeout(5000) });
   assert.match(bodies[1].tools[0].function.name, /^branch_/);
 });
@@ -90,15 +91,23 @@ test("Ollama: readable names both ways, and two calls streamed apart never share
 // ---------------------------------------------------------------- the runtime, through a stand-in Ollama
 
 /** An Ollama that answers from a script, one reply per request; the requests are kept. */
+const NL = String.fromCharCode(10);
 function standIn(replies) {
   const requests = [];
-  const fetchImpl = async (_url, init) => {
+  const fetchImpl = async (url, init) => {
+    if (String(url).endsWith("/api/show")) return new Response("{}", { status: 404 }); // says nothing of its room
     const body = JSON.parse(init.body);
     requests.push(body);
     const step = replies[Math.min(requests.length - 1, replies.length - 1)];
     const reply = typeof step === "function" ? step(body) : step;
-    return new Response(JSON.stringify({ message: { content: reply.content ?? "", ...(reply.calls ? { tool_calls: reply.calls.map(([name, args]) => ({ function: { name, arguments: args } })) } : {}) },
-      done: true, prompt_eval_count: 100, eval_count: reply.spent ?? 20 }), { status: 200 });
+    const content = reply.chunks ? reply.chunks.join("") : reply.content ?? "";
+    const message = { content, ...(reply.calls ? { tool_calls: reply.calls.map(([name, args]) => ({ function: { name, arguments: args } })) } : {}) };
+    // Streamed as Ollama streams: the reply first (in `chunks`, when a test gives them), what it spent only on the last line.
+    const lines = reply.chunks ? reply.chunks.map((chunk) => JSON.stringify({ message: { content: chunk }, done: false }) + NL).join("")
+      : JSON.stringify({ message, done: false }) + NL;
+    if (body.stream) return new Response(lines
+      + JSON.stringify({ message: { content: "" }, done: true, prompt_eval_count: 100, eval_count: reply.spent ?? 20 }) + NL, { status: 200 });
+    return new Response(JSON.stringify({ message, done: true, prompt_eval_count: 100, eval_count: reply.spent ?? 20 }), { status: 200 });
   };
   return { requests, provider: new OllamaProvider({ endpoint: "http://127.0.0.1:11434/v1", model: "stand-in", fetchImpl }) };
 }
@@ -191,11 +200,78 @@ test("an empty reply that spent tokens is asked again once, naming what can be c
   assert.equal(run.status, "completed");
 });
 
-test("the four core file tools always travel, but only to a task that may use them", async (t) => {
+test("a streamed empty reply that spent tokens is asked again once, end to end", async (t) => {
+  const { requests, provider } = standIn([
+    { content: "", spent: 60 },
+    { calls: [["files.read", { path: "list.txt" }]] },
+    { content: "It says eggs." },
+  ]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], onTextDelta: () => undefined });
+  assert.equal(requests[0].stream, true, "the reply really was streamed");
+  assert.equal(events(branch, run, "model.dropped_call").length, 1);
+  assert.match(requests[1].messages.at(-1).content, /came back empty/);
+  assert.equal(run.status, "completed");
+});
+
+test("an answer ends a streak of calls to tools that were not offered", async (t) => {
+  const { provider } = standIn([
+    { calls: [["shell.whatever", {}]] },
+    { content: "hello" },
+    { calls: [["shell.whatever", {}]] },
+    { content: "Sorted: list.txt holds eggs." },
+  ]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], checks: { mustMention: ["sorted"], maxRetries: 2 } });
+  assert.equal(run.status, "completed", run.output);
+  assert.equal(events(branch, run, "tool.unoffered").length, 2);
+});
+
+test("home model servers get readable names; anything public, or not found, stays hashed", async () => {
+  const lookup = (answers) => async (host) => { if (!(host in answers)) throw new Error("not found"); return answers[host]; };
+  const names = lookup({ "box.home.example": ["192.168.1.20"], "nas.example": ["100.101.102.103"], "public.example": ["93.184.216.34"],
+    "mixed.example": ["192.168.1.20", "93.184.216.34"] });
+  for (const endpoint of ["http://127.0.0.1:1234/v1", "http://box.local:11434/v1", "http://tk-ug.tailebeed9.ts.net:11434/v1",
+    "http://nas.lan/v1", "http://192.168.1.5:8080/v1", "http://100.64.1.1/v1", "http://box.home.example/v1", "http://nas.example/v1"])
+    assert.equal(await wireRuleFor(endpoint, names), "local", endpoint);
+  for (const endpoint of ["https://api.openai.com/v1", "https://public.example/v1", "https://mixed.example/v1", "https://gone.example/v1", "http://8.8.8.8/v1"])
+    assert.equal(await wireRuleFor(endpoint, names), "cloud", endpoint);
+});
+
+test("a server that refuses dotted tool names gets the same request hashed, and hashed names from then on", async () => {
+  const bodies = [];
+  let refuse = true;
+  const fetchImpl = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if (refuse && body.tools?.some((tool) => tool.function.name.includes(".")))
+      return new Response(JSON.stringify({ error: { message: "Invalid 'tools[0].function.name': string does not match pattern. Expected a string that matches the pattern '^[a-zA-Z0-9_-]+$'.", type: "invalid_request_error", param: "tools[0].function.name", code: "invalid_value" } }), { status: 400 });
+    return new Response(JSON.stringify({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: body.tools[0].function.name, arguments: "{}" } }] } }] }), { status: 200 });
+  };
+  const provider = new OpenAIProvider({ endpoint: "http://127.0.0.1:4011/v1", model: "proxied", apiKey: "k", fetchImpl });
+  const request = { messages: [{ role: "user", content: "hi" }], tools: [{ name: "files.read", description: "d", parameters: {} }], maxTokens: 10, signal: AbortSignal.timeout(5000) };
+  const first = await provider.complete(request);
+  assert.equal(bodies[0].tools[0].function.name, "files.read", "readable first");
+  assert.match(bodies[1].tools[0].function.name, /^branch_/, "then the same request with hashed names");
+  assert.equal(first.toolCalls[0].name, "files.read", "the call still names the real tool");
+  await provider.complete(request);
+  assert.equal(bodies.length, 3, "remembered: the next request is hashed from the start");
+  assert.match(bodies[2].tools[0].function.name, /^branch_/);
+});
+
+test("a refusal about anything else is not retried with other names", async () => {
+  let calls = 0;
+  const fetchImpl = async () => { calls++; return new Response(JSON.stringify({ error: { message: "max_tokens is too large", type: "invalid_request_error" } }), { status: 400 }); };
+  const provider = new OpenAIProvider({ endpoint: "http://127.0.0.1:4012/v1", model: "m", apiKey: "k", fetchImpl });
+  await assert.rejects(provider.complete({ messages: [{ role: "user", content: "hi" }], tools: [{ name: "files.read", description: "d", parameters: {} }], maxTokens: 10, signal: AbortSignal.timeout(5000) }));
+  assert.equal(calls, 1);
+});
+
+test("the core file tools always travel, but only to a task that may use them", async (t) => {
   const { requests, provider } = standIn([{ content: "Hello." }]);
   const branch = await app(t, provider);
   await branch.runtime.run({ prompt: "say hello" });
-  for (const name of ["files.read", "files.list", "files.write", "files.edit"]) assert.ok(offeredIn(requests[0]).includes(name), name);
+  for (const name of ["files.read", "files.list", "files.write", "files.edit", "files.move"]) assert.ok(offeredIn(requests[0]).includes(name), name);
   await branch.runtime.run({ prompt: "say hello again", permissions: ["files.read"] });
   assert.ok(offeredIn(requests[1]).includes("files.read"));
   assert.ok(!offeredIn(requests[1]).includes("files.write"), "a narrowed task is not handed a tool it may not use");
@@ -318,7 +394,51 @@ test("a text call naming a tool by its hashed wire name is still one", async (t)
   assert.equal(run.output, textCallEnding);
 });
 
+test("a call with a stray word in front and a closing tag is one too, and never reaches a stream or a message", async (t) => {
+  // qfix3's real run: qwen2.5:7b wrote `portun {json} </tool_call>`, posted as a room reply. Mutation: drop the stray-word
+  // strip in writesToolCallAsText → the JSON is the answer, red; hand the gate no wait for the second word → streamed, red.
+  const { provider } = standIn([{ chunks: ["portun", " ", textCall, " </tool_call>"] }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." }]);
+  const branch = await app(t, provider);
+  const streamed = [];
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"], onTextDelta: (text) => streamed.push(text) });
+  assert.equal(run.output, "It says eggs.");
+  assert.ok(!streamed.join("").includes('"arguments"') && !streamed.join("").includes("portun"), streamed.join(""));
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => /"arguments"|portun/.test(String(message.content ?? ""))), "in no message");
+  assert.equal(events(branch, run, "model.text_call").length, 1);
+});
+
+test("an answer that ends with a call written out is asked to make it; showing a call someone asked about is an answer", async (t) => {
+  // The real run: "Here's the command to move the remaining files:" and a fenced files.move, and the task was done with
+  // two files still loose. Mutation: drop endsWithToolCallAsText from the round check → that is the answer, red.
+  const ending = "Two files are left. Here is the command:\n```json\n" + JSON.stringify({ name: "files.read", arguments: { path: "list.txt" } }) + "\n```";
+  const { requests, provider } = standIn([{ content: ending }, { calls: [["files.read", { path: "list.txt" }]] }, { content: "It says eggs." }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "read list.txt", permissions: ["files.read"] });
+  assert.equal(run.output, "It says eggs.");
+  assert.match(requests[1].messages.at(-1).content, /tool call written out as text/);
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => String(message.content ?? "").includes("Here is the command")));
+  const shown = standIn([{ content: ending }]);
+  const asked = await app(t, shown.provider);
+  const how = await asked.runtime.run({ prompt: "How would you read list.txt?", permissions: ["files.read"] });
+  assert.equal(how.output, ending);
+});
+
+test("only an answer's last block is read as a call, and only one naming Branch's tool", () => {
+  const call = '```json\n{"name":"files.read","arguments":{"path":"a"}}\n```';
+  assert.ok(endsWithToolCallAsText(`Next:\n${call}`));
+  assert.ok(endsWithToolCallAsText('Next: <tool_call>{"name":"files.read","arguments":{}}</tool_call>'));
+  assert.ok(!endsWithToolCallAsText(`${call}\nThat is what I would run.`), "not the last part");
+  assert.ok(!endsWithToolCallAsText('Here:\n```json\n{"name":"Rome","founded":-753}\n```'), "not a call");
+  assert.ok(!endsWithToolCallAsText('Try:\n```json\n{"name":"get_weather","arguments":{}}\n```', (name) => name === "files.read"), "not Branch's tool");
+  assert.ok(!endsWithToolCallAsText('```js\nconst a = 1;\n```\nand\n```json\n{"x":1}\n```'));
+});
+
 test("only a whole reply shaped like a call is one", () => {
+  for (const text of [`portun ${textCall} </tool_call>`, `portun\n${textCall}`, `${textCall}</tool_call>`, `<tool_call>${textCall}`,
+    "call```json\n" + textCall + "\n```"])
+    assert.ok(writesToolCallAsText(text), text);
+  for (const text of ["Here is the call: " + textCall, "Two words " + textCall, `Example: ${textCall}`, "averyveryveryverylongwordindeed " + textCall])
+    assert.ok(!writesToolCallAsText(text), text);
   for (const text of [textCall, `[${textCall}]`, '<tool_call>{"name":"files.read","arguments":{}}</tool_call>',
     '{"tool_calls":[{"type":"function","function":{"name":"files.read","arguments":"{}"}}]}', '{"name":"files.read","parameters":{"path":"a"}}'])
     assert.ok(writesToolCallAsText(text), text);
@@ -351,6 +471,65 @@ test("offers of help and plain answers are not promises", () => {
     assert.equal(announcesNextStep(said), false, said);
 });
 
+test("a list of changes after a promise to make them is a promise; a list of findings is an answer", () => {
+  // QA (first task): qwen2.5:7b ended with "Let's start moving the files:" and a list, and moved nothing. Mutation: drop
+  // promisesListedChanges from announcesNextStep → the first is not a promise, red.
+  const moves = "- holiday.jpg to ~/Downloads/Pictures\n- notes.txt to ~/Downloads/Documents";
+  for (const said of [`I found six files.\nLet's start moving the files:\n${moves}`, `Next, I will move them:\n\n1. a.pdf to Documents\n2. b.jpg to Pictures`,
+    `Okay, I'll sort them like this:\n${moves}`,
+    // The real run's last line, after five of six moves. Mutation: drop the "will be moved" line → red.
+    "I've moved `setup-tool.zip` to the `Installers` subfolder. Now, the last file, `song.mp3`, will be moved to the `Music` subfolder."])
+    assert.equal(announcesNextStep(said), true, said);
+  for (const said of ["The files will be moved automatically by the sync.", "All six files have been moved.", "Nothing will be deleted."])
+    assert.equal(announcesNextStep(said), false, said);
+  for (const said of [`Let me list what I found:\n- a.pdf\n- b.jpg`, `I moved these files:\n${moves}`, `Here is the plan:\n${moves}`,
+    `Let's start moving the files:\n${moves}\nAll done.`, `Let me show you the files:\n- a.pdf`])
+    assert.equal(announcesNextStep(said), false, said);
+});
+
+// ---------------------------------------------------------------- memory asks, and a local model's room
+
+test("asking to remember, forget or recall brings the tools that save, find and delete a fact", async (t) => {
+  const { requests, provider } = standIn([{ content: "Noted." }]);
+  const branch = await app(t, provider);
+  for (const prompt of ["Remember that my sister is called Ada", "Forget that I like tea", "What do you recall about my sister?"]) {
+    await branch.runtime.run({ prompt });
+    for (const name of ["memory.put", "memory.search", "memory.delete"]) assert.ok(offeredIn(requests.at(-1)).includes(name), `${prompt}: ${name}`);
+  }
+  await branch.runtime.run({ prompt: "Tidy my Downloads folder" });
+  assert.ok(!offeredIn(requests.at(-1)).some((name) => name.startsWith("memory.")), "a file task still gets none");
+});
+
+test("a local model's room comes from what it was made for, held to this computer's memory", () => {
+  const show = { model_info: { "qwen2.context_length": 32768, "qwen2.block_count": 28, "qwen2.attention.head_count": 28,
+    "qwen2.attention.head_count_kv": 4, "qwen2.embedding_length": 3584 }, parameters: "num_ctx                        8192\nstop \"<|im_end|>\"" };
+  const facts = roomFacts(show);
+  assert.deepEqual(facts, { contextLength: 32768, bakedNumCtx: 8192, bytesPerToken: 57344 });
+  const gb = 1024 ** 3;
+  assert.equal(contextRoom(facts, { free: 16 * gb, total: 32 * gb }), 8192, "a sized copy runs with its own room, never more");
+  assert.equal(contextRoom({ ...facts, bakedNumCtx: null }, { free: 16 * gb, total: 32 * gb }), 32768, "room enough: what it was made for");
+  assert.equal(contextRoom({ ...facts, bakedNumCtx: null }, { free: 0.5 * gb, total: 8 * gb }), 4096, "a busy computer: what a share of free memory holds");
+  assert.equal(contextRoom(facts, { free: 0.5 * gb, total: 8 * gb }), 8192, "a sized copy keeps its own room on a busy computer too");
+  assert.equal(contextRoom({ contextLength: 131072, bakedNumCtx: null, bytesPerToken: 1024 }, { free: 64 * gb, total: 128 * gb }), 65536, "never past 64k");
+});
+
+test("Ollama is told the room, and the task's budget stays inside it", async (t) => {
+  const chats = [];
+  const fetchImpl = async (url, init) => {
+    // A sized fixture has a fixed room even while other lanes use this computer's memory.
+    if (String(url).endsWith("/api/show")) return new Response(JSON.stringify({ model_info: { "llama.context_length": 9216 },
+      parameters: "num_ctx 9216" }), { status: 200 });
+    chats.push(JSON.parse(init.body));
+    return new Response(JSON.stringify({ message: { content: "Hello." }, done: true, prompt_eval_count: 10, eval_count: 3 }), { status: 200 });
+  };
+  const provider = new OllamaProvider({ endpoint: "http://127.0.0.1:11434/v1", model: "small", fetchImpl });
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "say hello" });
+  assert.equal(chats[0].options.num_ctx, 9216);
+  const [budget] = events(branch, run, "context.budget");
+  assert.equal(budget.limit, 9216, "the budget is the model's own room, not the built-in 20000");
+});
+
 // ---------------------------------------------------------------- Branch's own model copies (Q071)
 
 test("the copies Branch makes of a model are neither the person's models nor its name", async () => {
@@ -368,4 +547,25 @@ test("the copies Branch makes of a model are neither the person's models nor its
   };
   const inventory = await new LocalRuntimes({ fetch }).inventory();
   assert.deepEqual(inventory.ollama.models.map((model) => model.name), ["qwen2.5:7b"]);
+});
+
+test("a made-up tool in one of Branch's families, written out as text, is not the answer either (QA retest pass 2)", async (t) => {
+  // qwen2.5:7b answered a recall question with only {"name": "user.fact", "arguments": {}}: no such tool, but in the
+  // family of user.ask. Mutation: drop inToolFamily from the runtime's check → the JSON is the task's answer, red.
+  const { requests, provider } = standIn([{ content: '{"name": "user.fact", "arguments": {}}' }, { content: "Your favourite colour is teal." }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "Tell me my favourite colour." });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, "Your favourite colour is teal.");
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => String(message.content ?? "").includes("user.fact")), "in no message");
+  assert.match(requests[1].messages.at(-1).content, /tool call written out as text/);
+  assert.equal(events(branch, run, "model.text_call").length, 1);
+});
+
+test("a call-shaped answer naming a family Branch has none of is still an answer (QA retest pass 2)", async (t) => {
+  const { provider } = standIn([{ content: '{"name": "weather.today", "arguments": {"city": "Atlanta"}}' }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "Show me an example of a weather tool call as JSON." });
+  assert.equal(run.status, "completed");
+  assert.match(run.output, /weather\.today/);
 });

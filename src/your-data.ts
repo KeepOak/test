@@ -394,8 +394,13 @@ async function deleteEverything(app: Branch, confirm: string) {
   // A delete of this person's that was cut short carries on, beside this one.
   for (const journal of unfinished(app, scope)) void finishOnce(app, journal);
   const sessions = sessionsOf(app, scope).map((session) => session.id);
-  if (sessions.some((id) => app.store.conversations.busy([id, ...app.store.conversationCompanions(id)])))
+  const withCompanions = (id: string) => [id, ...app.store.conversationCompanions(id)];
+  // QA retest 2026-09-28 (D1): a task only waiting on the person's answer held the delete with "still working" while the
+  // status bar said nothing was running; it now says which it is, and where to answer it.
+  if (sessions.some((id) => app.store.conversations.busy(withCompanions(id), ["running"])))
     throw new HttpError(409, "A task is still working. Stop it or wait for it, then try again. Nothing was deleted.");
+  if (sessions.some((id) => app.store.conversations.busy(withCompanions(id))))
+    throw new HttpError(409, "A task is waiting for your answer. Answer it or stop it (the Inbox lists it), then try again. Nothing was deleted.");
   // An export being made would mix what was there with what is left.
   if ([...jobs.values()].some((job) => job.scope === scope && !job.zip && !job.error))
     throw new HttpError(409, "An export is still being made. Wait for it to finish, then try again. Nothing was deleted.");

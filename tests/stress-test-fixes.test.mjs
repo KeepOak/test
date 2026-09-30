@@ -48,7 +48,8 @@ test("B001 B005 B006 B007 engine: each switch the window draws is the engine's r
   const { app, call } = await engine(t);
   const run = app.store.createRun(app.runtime.owner, "Summarise the notes from Monday");
   app.store.finish(run.id, "completed", "Three points.");
-  assert.equal((await call("GET", `/api/runs/${run.id}/recording`)).status, 403, "recordings ship off");
+  // The owner's rule (ships on, 2026-09-26): recordings and prompts start on; procedures and the shared board stay off.
+  const shipped = { recordings: "when-needed", "prompts/settings": "on", "autonomy/switch": "off", "flows-boards/switch": "off" };
   const window = await read("public/app/places/switch-on.js");
   const routes = [
     ["recordings", "/api/recordings", { mode: "when-needed" }, async () => (await call("GET", "/api/recordings")).body.settings.mode],
@@ -59,7 +60,13 @@ test("B001 B005 B006 B007 engine: each switch the window draws is the engine's r
   for (let [name, path, body, mode] of routes) {
     const literal = `{ ${Object.entries(body).filter(([k]) => k !== "confirmLoosening").map(([k, v]) => `${k}: "${v}"`).join(", ")} }`;
     assert.ok(window.includes(`post: ["${name}", ${literal}]`), `the window switches ${name} with ${literal}`);
-    assert.equal(await mode(), "off", `${name} ships off`);
+    assert.equal(await mode(), shipped[name], `${name} ships ${shipped[name]}`);
+    if (shipped[name] !== "off") {
+      // The ship-on rule turns this part on; this test is about the window's switch turning it on from off.
+      assert.equal((await call("POST", path, { ...body, mode: "off" })).status, 200);
+      assert.equal(await mode(), "off", `${name} switched off through its own route`);
+    }
+    if (name === "recordings") assert.equal((await call("GET", `/api/runs/${run.id}/recording`)).status, 403, "switched off, a recording is refused");
     if (name === "autonomy/switch") {
       assert.equal((await call("POST", path, body)).status, 409, "procedures loosen approvals, so the owner's yes is asked first");
       assert.equal(await mode(), "off");
@@ -116,8 +123,8 @@ test("B003 and B004: greyed controls say why, steps in plain words", async () =>
 
 test("B008 window: a Trunk's picker greys sign-in connections, and a message is held back with its words kept", async () => {
   const trunk = await read("public/app/flows/trunk.js");
-  assert.match(trunk, /\$\{trunkCanUse\(p\) \? "" : "disabled"\}/);
-  assert.match(trunk, /<select class="inp" id="tm-model-sel"/, "the window's ordinary select, not a floating grid");
+  assert.match(trunk, /\[p\.id, p\.name, !trunkCanUse\(p\)\]/);
+  assert.match(trunk, /gsel\(\{ id: "tm-model-sel"/, "the window's own dropdown (core/gsel.js), not a floating grid");
   const chips = await read("public/app/chat/chips.js");
   assert.match(chips, /\$\{trunk && !trunkCanUse\(x\) \? " disabled" : ""\}/);
   const chat = await read("public/app/chat/chat.js");

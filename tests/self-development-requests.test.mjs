@@ -13,7 +13,7 @@
 import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { z } from "zod";
@@ -49,8 +49,8 @@ async function fakeGit(root) {
 while [ $# -gt 0 ]; do case "$1" in -c) shift 2;; --no-pager) shift; break;; *) break;; esac; done
 echo "$*" >> '${log}'
 case "$1" in
-  remote) [ "$2" = get-url ] && [ "$3" = origin ] && { echo https://github.com/stabrea/Branch-Agent.git; exit 0; }; exit 1;;
-  fetch) [ "$3" = no-such-base ] && { echo "fatal: couldn't find remote ref no-such-base" >&2; exit 128; }; exit 0;;
+  remote) for last; do :; done; [ "$2" = get-url ] && [ "$last" = origin ] && { echo https://github.com/stabrea/Branch-Agent.git; exit 0; }; [ "$2" = set-url ] && [ "$3" = origin ] && exit 0; exit 1;;
+  fetch) [ -e '${root}/fail-fetch' ] && { echo "fatal: couldn't find remote ref $3" >&2; exit 128; }; exit 0;;
   rev-parse) echo ${sha}; exit 0;;
   worktree) [ "$2" = add ] && mkdir -p "$5" && exit 0; exit 1;;
   *) exit 1;;
@@ -193,7 +193,7 @@ test("the owner sees the exact words, and a yes writes the contract through Cont
   assert.equal(more.length, 0);
   assert.equal(written.sourceSha, sha);
   // The worktree is made at exactly the contract's commit, once the contract is written.
-  assert.deepEqual(await f.prepared(), ["fetch origin mac/cross-platform",
+  assert.deepEqual(await f.prepared(), ["fetch origin redesign/window",
     `worktree add -b branch/self-remove-export .branch-worktrees/self-remove-export ${sha}`]);
   const answered = f.app.store.audit.list(f.owner, { limit: 100 })
     .find((entry) => entry.subject.startsWith(`request ${request.id}`) && entry.outcome === "approved");
@@ -291,11 +291,17 @@ test("a yes naming paths outside the worktree, or given while remote Git is off,
   assert.deepEqual(await f.prepared(), [], "none of those reached Git");
   remoteGit(f.app);
   // A yes that fails while preparing leaves the request waiting, with the reason.
-  const failed = await f.approve(request.id, { ...yes(), base: "no-such-base" });
+  // selfdev: only the line Beta builds is a base; any other is refused before Git, and the request keeps waiting.
+  const otherLine = await f.approve(request.id, { ...yes(), base: "mac/cross-platform" });
+  assert.equal(otherLine.status, 400, JSON.stringify(otherLine.body));
+  assert.deepEqual(await f.prepared(), [], "another line never reached Git");
+  await writeFile(join(gitRoot, "fail-fetch"), "");
+  const failed = await f.approve(request.id);
+  await rm(join(gitRoot, "fail-fetch"));
   assert.equal(failed.status, 400, JSON.stringify(failed.body));
   const [waiting] = await f.listed();
   assert.equal(waiting.status, "waiting");
-  assert.match(waiting.problem ?? "", /couldn't find remote ref no-such-base/, "the reason the yes did not go through");
+  assert.match(waiting.problem ?? "", /couldn't find remote ref redesign\/window/, "the reason the yes did not go through");
   assert.equal(f.contracts(), 0);
   const approved = await f.approve(request.id);
   assert.equal(approved.status, 200, JSON.stringify(approved.body));

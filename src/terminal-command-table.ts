@@ -121,8 +121,8 @@ const RUNNERS: Record<string, TerminalCommand["run"]> = {
   model: chooseModel,
   think,
   preset: (context, argument) => {
-    if (!argument) presetLines(context.runtime).forEach((line) => context.say("note", line));
-    else context.say("note", choosePreset(context.runtime, argument));
+    if (!argument) presetLines(context.runtime, context.words).forEach((line) => context.say("note", line));
+    else context.say("note", choosePreset(context.runtime, argument, undefined, context.words));
   },
   memory,
   skills,

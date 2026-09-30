@@ -3,6 +3,7 @@ import { z } from "zod";
 import { A2aError, SendParamsSchema, a2aError } from "./a2a.js";
 import type { A2aServer } from "./a2a.js";
 import type { RemoteAgent, RemoteAgents } from "./a2a-client.js";
+import type { IssuedToken } from "./session-tokens.js";
 import { agentBadge } from "./trunks/room-outside.js"; // a2a-rooms
 
 /**
@@ -90,11 +91,10 @@ export async function remoteAgentsApi(
   request: IncomingMessage,
   path: string,
   body: () => Promise<unknown>,
-  connection: { base: string; token: string },
+  connection: { base: string; pairingKey: () => IssuedToken },
 ): Promise<unknown> {
   // a2a-rooms: with the badge a room draws for each ("A2A · " and where it runs), for the room's member picker.
   if (request.method === "GET" && path === "/api/agents/remote") return { agents: agents.list().map((agent) => ({ ...withoutKey(agent), badge: agentBadge(agent) })) };
-  if (request.method === "GET" && path === "/api/agents/pairing") return agents.pairing(connection.base, connection.token);
   if (request.method === "GET" && path === "/api/agents/discover") {
     const targets = new URL(request.url ?? "/", "http://local").searchParams.get("targets") ?? "";
     const list = targets.split(",").map((entry) => entry.trim()).filter(Boolean);
@@ -105,5 +105,11 @@ export async function remoteAgentsApi(
   if (path === "/api/agents/remote") return withoutKey(await agents.add(AddSchema.parse(await body())));
   if (path === "/api/agents/remote/remove") return agents.remove(RemoveSchema.parse(await body()).agent);
   if (path === "/api/agents/pair") return withoutKey(await agents.pair(PairSchema.parse(await body()).link));
+  // Making a link makes a key, so it is a change and the owner's alone (a key that may only look cannot mint one).
+  if (path === "/api/agents/pairing") {
+    z.object({}).strict().parse(await body());
+    const key = connection.pairingKey();
+    return { ...agents.pairing(connection.base, key.token), expiresAt: key.entry.expiresAt, keyId: key.entry.id };
+  }
   throw new Error("Endpoint not found");
 }

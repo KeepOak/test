@@ -11,6 +11,7 @@ import { openDlg, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { gsel } from "../core/gsel.js";
 
 const P = { tools: [], name: "", pending: null, busy: false };
 const chosen = () => P.tools.find((t) => t.name === P.name) ?? null;
@@ -47,9 +48,9 @@ function parsedOr(raw) {
 function draw() {
   const tool = chosen();
   markLive(["sw:play-tool", ...fieldsOf(tool).map(([name]) => "sw:play-field-" + name)]);
-  const options = P.tools.map((t) => `<option value="${esc(t.name)}"${t.name === P.name ? " selected" : ""}>${esc(t.name)}</option>`).join(""); // state: the tool the person picked
+  const options = gsel({ id: "play-tool", label: t("window.chat.play.tool"), options: P.tools.map((tool) => [tool.name, tool.name]), value: P.name }); // state: the tool the person picked
   const body = `<p class="lead-b17">${t("window.chat.play.lead")}</p>
-    <div class="ctl"><b>${t("window.chat.play.tool")}</b><span class="right"><select class="inp" id="play-tool" aria-label="${t("window.chat.play.tool")}">${options}</select></span><small>${esc(tool?.description ?? "")}</small></div>
+    <div class="ctl"><b>${t("window.chat.play.tool")}</b><span class="right">${options}</span><small>${esc(tool?.description ?? "")}</small></div>
     ${fieldsOf(tool).map(fieldRow).join("")}<div id="play-result"></div>`;
   const run = tool ? `<button class="btn pri" type="button" data-act="playrunb17">${t("window.chat.play.run", { tool: esc(tool.name) })}</button>` : "";
   openDlg({ title: t("window.chat.play.title"), body, foot: `<button class="btn" type="button" data-act="dlg-close">${t("window.chat.play.close")}</button>${run}` });

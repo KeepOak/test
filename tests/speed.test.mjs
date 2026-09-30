@@ -1,4 +1,5 @@
 import test from "node:test";
+import { saveTroubleshootSettings } from "../dist/troubleshoot.js";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -494,7 +495,8 @@ test("the ceiling: a long task still gets its answer, not silence", async (t) =>
   // The round ceiling is what this is about. Work on files gets 40 rounds by default, and at 60 steps the
   // step limit would come first; a task out of steps is not asked the last question.
   const { saveKnobs } = await import("../dist/index.js");
-  saveKnobs(app.store, "local", "limits", { maxModelRounds: 12 });
+  // selfdev: a 40 KB file is now read (its first part) every round, so the tokens are raised to keep the rounds the limit.
+  saveKnobs(app.store, "local", "limits", { maxModelRounds: 12, maxTaskTokens: 2_000_000 });
   await writeFile(join(workspace, "src", "sum.js"), huge);
   const run = await app.runtime.run({ prompt: "read it and tell me what is in it" });
   assert.match(run.output, /found nothing conclusive/, `no answer came back: ${run.output.slice(0, 200)}`);
@@ -814,8 +816,10 @@ test("a switched-off feature's tools are not offered by a search, and saying the
     calls(["tools.describe", { names: ["troubleshoot.run"] }]),
     say("Understood."),
   ]);
-  // "Fixing failed commands" ships off, so troubleshoot.run would only refuse. On the plan it came
-  // first in all three of one task's shell searches, ahead of code.run, which is the actual shell.
+  // "Fixing failed commands" switched off by the owner (it ships when needed since the defaults audit), so
+  // troubleshoot.run would only refuse. On the plan it came first in all three of one task's shell searches, ahead of
+  // code.run, which is the actual shell.
+  saveTroubleshootSettings(app.store, app.runtime.owner, { mode: "off" });
   const run = await app.runtime.run({ prompt: "run the tests" });
   assert.equal(run.status, "completed", run.output);
   const answers = app.store.messages(run.sessionId).filter((m) => m.role === "tool").map((m) => JSON.parse(m.content));
@@ -932,6 +936,7 @@ test("under Lockdown a switched-off tool reads as absent, not as one to ask the 
     const { app } = await fixture(t, [
       calls(["tools.search", { query: "fix a failed command" }]), say("Understood."),
     ]);
+    saveTroubleshootSettings(app.store, app.runtime.owner, { mode: "off" }); // the owner's off (it ships when needed)
     if (lockdown) app.store.save("settings", "local", "lockdown", { on: true });
     const run = await app.runtime.run({ prompt: "the build command failed, sort it out" });
     if (lockdown) app.store.save("settings", "local", "lockdown", { on: false });
@@ -985,4 +990,15 @@ test("A: cancelling a task leaves no call in a group still running", async (t) =
   assert.notEqual(run.status, "completed", `the task should not have finished: ${run.output}`);
   assert.equal(settled.length, 2, `both slow calls settled before the task unwound: ${settled.join(", ")}`);
   assert.ok(settled.every((one) => one.endsWith(":stopped")), `nothing was left to finish later: ${settled.join(", ")}`);
+});
+
+test("defaults audit: with fixing failed commands on, a search to run something finds the real shell first", async (t) => {
+  const { app } = await fixture(t, []);
+  const { ToolIndex } = await import("../dist/tool-index.js");
+  const tools = app.registry.descriptions(new Set(app.registry.permissions()));
+  const index = new ToolIndex(tools);
+  const first = (query) => index.search(query, 3)[0]?.entry.name;
+  assert.notEqual(first("run a shell command in the workspace"), "troubleshoot.run", "a first attempt is not a repair");
+  assert.notEqual(first("run the tests"), "troubleshoot.run");
+  assert.equal(first("fix a failed command"), "troubleshoot.run", "a failure still finds it");
 });

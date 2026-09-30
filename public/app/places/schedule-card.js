@@ -18,18 +18,20 @@ import { t, language } from "../../i18n.js";
 const DAYN = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 const cap1 = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 const zone = () => E.profiles?.owner?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone; // your-profile: the owner's chosen time zone
+const localDateTime = (iso) => { const date = new Date(iso); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
 let P = null; // { proposal, what, days, day, time, trunk (the Trunk who does it, or null for the owner) }
 
 /* The engine's schedule on the card's own terms: repeats, which day, and the time (null when the words said none). */
 function fromProposal(proposal, what, trunk = null) {
   const s = proposal.schedule, w = (s.weekdays ?? []).join();
-  const days = s.intervalMs ? null : s.monthDay ? "monthly" : w === "1,2,3,4,5" ? "weekdays" : w === "0,6" ? "weekends" : s.weekdays?.length === 1 ? "weekly" : s.weekdays ? null : "daily";
+  const days = !s.intervalMs && !s.dailyAt ? "once" : s.intervalMs ? null : s.monthDay ? "monthly" : w === "1,2,3,4,5" ? "weekdays" : w === "0,6" ? "weekends" : s.weekdays?.length === 1 ? "weekly" : s.weekdays ? null : "daily";
   return { proposal, what: what ?? s.prompt, days, day: s.weekdays?.length === 1 ? s.weekdays[0] : null, time: proposal.time === "none" ? null : s.dailyAt ?? null, trunk };
 }
 const hm = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return new Date(2000, 0, 1, h, m).toLocaleTimeString(language(), { hour: "numeric", minute: "2-digit" }); };
 /* A weekday's name in the language chosen (0 is Sunday; 7 January 2024 was one). */
 const dayName = (i, weekday) => new Date(2024, 0, 7 + i).toLocaleDateString(language(), { weekday });
 function whenWords(p) {
+  if (p.days === "once") return t("window.places.schedule-card.once");
   const monthDay = p.proposal.schedule.monthDay;
   if (!p.days || (p.days === "monthly" && monthDay !== 1)) return p.proposal.words;
   const head = { weekdays: t("window.places.schedule-card.weekdays"), weekends: t("window.places.schedule-card.weekends"), monthly: t("window.places.schedule-card.the-1st-of-each-month"),
@@ -40,6 +42,7 @@ function whenWords(p) {
    "Weekdays at 7:30 AM", "Mondays at 9:00 AM". Null for what the card has no words for (every so often, another day of the
    month, several single days), which the list names by its next run instead. */
 export function repeatWords(data) {
+  if (typeof data?.dueAt === "string" && !data.dailyAt && !data.intervalMs && !data.cron) return t("window.places.schedule-card.once");
   if (typeof data?.dailyAt !== "string") return null;
   const p = fromProposal({ schedule: data, time: "said" });
   if (!p.days || (p.days === "monthly" && data.monthDay !== 1)) return null;
@@ -53,7 +56,7 @@ function firstRun(iso) {
 }
 /* "Every so often" has no day or time on the card; it is ready as the engine read it, until a Repeats button is pressed. */
 const everySoOften = (p) => !p.days && !!p.proposal.schedule.intervalMs;
-const ready = (p) => everySoOften(p) || (!!p.days && !!p.time);
+const ready = (p) => p.days === "once" || everySoOften(p) || (!!p.days && !!p.time);
 
 const seg = (k, v, label, pressed) => `<button type="button" data-act="ppset17d" data-k="${k}" data-v="${v}" aria-pressed="${pressed}">${label}</button>`;
 /* Who does it: the assistant itself (the owner's own schedule, by the assistant's own name) first, then the first five
@@ -67,15 +70,15 @@ function whoField() {
 export function propCard() {
   const p = P;
   if (!p) return "";
-  const repeats = [["daily", t("window.places.schedule-card.every-day")], ["weekdays", t("window.places.schedule-card.weekdays")], ["weekends", t("window.places.schedule-card.weekends")], ["weekly", t("window.places.schedule-card.once-a-week")], ["monthly", t("window.places.schedule-card.monthly")]].map(([v, l]) => seg("days", v, l, p.days === v)).join("");
+  const repeats = [["once", t("window.places.schedule-card.once")], ["daily", t("window.places.schedule-card.every-day")], ["weekdays", t("window.places.schedule-card.weekdays")], ["weekends", t("window.places.schedule-card.weekends")], ["weekly", t("window.places.schedule-card.once-a-week")], ["monthly", t("window.places.schedule-card.monthly")]].map(([v, l]) => seg("days", v, l, p.days === v)).join("");
   const on = p.days === "weekly" ? `<div class="fld"><span>${t("accounts.switch.on")}</span><span class="seg">${DAYN.map((d, i) => seg("day", i, cap1(dayName(i, "short")), p.day === i)).join("")}</span></div>` : "";
-  const need = !everySoOften(p) && !p.time;
+  const need = p.days !== "once" && !everySoOften(p) && !p.time;
   const first = ready(p) ? t("window.places.schedule-card.when-first-run-date", { when: `<b>${esc(whenWords(p))}</b>`, date: esc(firstRun(p.proposal.firstRunAt)) }) : t("window.places.schedule-card.pick-a-time-to-see-when");
   const cron = level() >= 2 && p.proposal.cron ? `<code class="pp-cron17d">cron ${esc(p.proposal.cron)} · ${esc(p.proposal.schedule.timezone)}</code>` : "";
   return `<div class="prop17d" role="region" aria-label="${t("window.places.schedule-card.proposed-schedule")}"><div class="pp-h17d">${ic("clock", "s")}<b>${t("window.places.schedule-card.heres-the-schedule-branch-understood")}</b><span class="pill idle"><i></i>${t("window.places.schedule-card.not-saved-yet")}</span></div>
     <label class="fld"><span>${t("window.places.schedule-card.it-does")}</span><input class="inp" id="pp-what17d" value="${esc(p.what)}"></label>
     <div class="fld"><span>${t("window.places.schedule-card.repeats")}</span><span class="seg" role="group" aria-label="${t("window.places.schedule-card.repeats")}">${repeats}</span></div>${on}
-    <div class="pp-g17d"><label class="fld ${need ? "need17d" : ""}"><span>${t("window.places.schedule-card.at")}${need ? ` · ${t("window.places.schedule-card.it-didnt-say-when")}` : ""}</span><input class="inp" type="time" id="pp-time17d" value="${esc(p.time ?? "")}"></label>${whoField()}</div>
+    <div class="pp-g17d"><label class="fld ${need ? "need17d" : ""}"><span>${t("window.places.schedule-card.at")}${need ? ` · ${t("window.places.schedule-card.it-didnt-say-when")}` : ""}</span>${p.days === "once" ? `<input class="inp" type="datetime-local" id="pp-once17d" aria-label="${esc(t("window.places.schedule-card.once-date"))}" value="${esc(localDateTime(p.proposal.schedule.dueAt))}"><small>${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}</small>` : `<input class="inp" type="time" id="pp-time17d" value="${esc(p.time ?? "")}">`}</label>${whoField()}</div>
     <p class="pp-first17d" id="pp-first17d">${first}${p.proposal.time === "guessed" ? ` · ${t("window.places.schedule-card.branch-guessed-part-of-this-check")}` : ""}</p>${cron}${p.proposal.reach ? `<p class="pp-first17d">${t("autonomy.orders.authority")}: ${esc(p.proposal.reach)}</p>` : ""}
     <div class="acts"><button class="btn ghost sm" type="button" data-act="ppno17d">${t("first-run-steps.restore-no")}</button><button class="btn pri sm" type="button" data-act="ppok17d" ${ready(p) ? "" : "disabled"}>${t("window.places.schedule-card.confirm-the-schedule")}</button></div>
     <p class="hint" data-css="margin:0">${t("window.places.schedule-card.it-runs-only-after-you-confirm")}</p></div>`;
@@ -96,9 +99,9 @@ export async function proposeWords() {
 async function reread() {
   keepWhat();
   const p = P;
-  if (!p.days || !p.time) return renderNow();
+  if (p.days !== "once" && (!p.days || !p.time)) return renderNow();
   const weekdays = { weekdays: [1, 2, 3, 4, 5], weekends: [0, 6], weekly: [p.day ?? 5] }[p.days];
-  const edit = { prompt: p.what.trim() || p.proposal.schedule.prompt, dailyAt: p.time, ...(weekdays ? { weekdays } : {}), ...(p.days === "monthly" ? { monthDay: p.proposal.schedule.monthDay ?? 1 } : {}) };
+  const edit = p.days === "once" ? { prompt: p.what.trim() || p.proposal.schedule.prompt, dueAt: p.proposal.schedule.dueAt } : { prompt: p.what.trim() || p.proposal.schedule.prompt, dailyAt: p.time, ...(weekdays ? { weekdays } : {}), ...(p.days === "monthly" ? { monthDay: p.proposal.schedule.monthDay ?? 1 } : {}) };
   try { P = fromProposal((await api("schedules/propose", { edit, timezone: p.proposal.schedule.timezone })).proposal, p.what, p.trunk); } catch (error) { toast(error.message); }
   renderNow();
 }
@@ -118,7 +121,7 @@ async function confirm() {
   if (!p || !ready(p) || sending) return;
   sending = true;
   // Read once more just before saving, so the first run is worked out from now and not from when the card opened.
-  const s = p.proposal.schedule, when = Object.fromEntries(["dailyAt", "weekdays", "monthDay", "intervalMs"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
+  const s = p.proposal.schedule, when = Object.fromEntries((p.days === "once" ? ["dueAt"] : ["dailyAt", "weekdays", "monthDay", "intervalMs"]).filter((k) => s[k] !== undefined).map((k) => [k, s[k]]));
   try {
     const fresh = (await api("schedules/propose", { edit: { prompt: p.what.trim() || s.prompt, ...when }, timezone: s.timezone })).proposal;
     // Dogfood: edited words can need a different reach; the card shows the new one and waits for a second Confirm.
@@ -130,26 +133,28 @@ async function confirm() {
   } catch (error) { toast(error.message); return; } finally { sending = false; }
   P = null;
   const box = $("#nl-in");
-  if (box) box.value = "";
+  if (box) { box.value = ""; box.dispatchEvent(new Event("input", { bubbles: true })); } // the page keeps the box's words (automations.js)
   await refresh().catch((error) => toast(error.message));
   renderNow();
   toast(t("window.places.schedule-card.scheduled-first-run-firstrunat", { firstRunAt: firstRun(p.proposal.firstRunAt) }));
 }
 
 export function initScheduleCard() {
-  markLive(["nl-add", "sw:nl-in", "ppset17d", "ppno17d", "ppok17d", "sw:pp-what17d", "sw:pp-time17d"]);
+  markLive(["nl-add", "sw:nl-in", "ppset17d", "ppno17d", "ppok17d", "sw:pp-what17d", "sw:pp-time17d", "sw:pp-once17d"]);
   on("nl-add", () => proposeWords());
   on("ppset17d", (el) => {
     if (!P) return;
     const k = el.dataset.k;
     if (k === "trunk") { keepWhat(); P.trunk = !el.dataset.v || P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
     P[k] = k === "day" ? +el.dataset.v : el.dataset.v;
+    if (k === "days" && el.dataset.v === "once") P.proposal.schedule.dueAt = new Date(Date.now() + 120000).toISOString();
     if (k === "days" && el.dataset.v === "weekly" && P.day == null) P.day = 5;
     reread();
   });
   on("ppno17d", () => { P = null; renderNow(); toast(t("window.places.schedule-card.nothing-was-saved")); });
   on("ppok17d", () => confirm());
   document.addEventListener("change", (e) => {
+    if (e.target.id === "pp-once17d" && P && e.target.value) { P.proposal.schedule.dueAt = new Date(e.target.value).toISOString(); reread(); return; }
     if (e.target.id !== "pp-time17d" || !P || !e.target.value) return;
     P.time = e.target.value;
     P.days ??= "daily";
