@@ -18,7 +18,24 @@ let phoneFrame = null;
 function phoneView() {
   if (!trunkOf(P.chat)) return "";
   const view = phoneFrame?.session === P.chat && phoneFrame.expiresAt > Date.now() ? phoneFrame : null;
-  return `<section><p>Read-only view requires the owner’s local, expiring grant.</p><button type="button" data-act="ph-view" data-v="browser">Refresh Trunk browser</button><button type="button" data-act="ph-view" data-v="computer">Refresh shared computer</button><button type="button" data-act="ph-view-close">Hide view</button>${view?.frame ? `<img src="${esc(view.frame)}" alt="Read-only ${esc(view.kind)} snapshot" style="max-width:100%"><p>Snapshot; refresh to see changes. No control permission.</p>` : ""}</section>`;
+  return `<section><p>Read-only view requires the owner’s local, expiring grant.</p><button type="button" data-act="ph-view" data-v="private-desktop">Refresh this Trunk’s private computer</button><button type="button" data-act="ph-view" data-v="browser">Refresh Trunk browser</button><button type="button" data-act="ph-view" data-v="computer">Refresh shared computer</button><button type="button" data-act="ph-view-close">Hide view</button>${view?.frame ? `<img src="${esc(view.frame)}" alt="Read-only ${esc(view.kind)} snapshot" style="max-width:100%"><p>Snapshot; refresh to see changes. No control permission.</p>` : ""}</section>`;
+}
+function privateImage(raw) {
+  if (raw?.format !== "rgbx" || !Number.isInteger(raw.width) || !Number.isInteger(raw.height)
+    || raw.width < 1 || raw.width > 1280 || raw.height < 1 || raw.height > 800 || typeof raw.pixels !== "string"
+    || raw.pixels.length > 5500000) throw new Error("Unsupported private computer frame.");
+  const bytes = atob(raw.pixels);
+  if (bytes.length !== raw.width * raw.height * 4) throw new Error("Incomplete private computer frame.");
+  const canvas = document.createElement("canvas"); canvas.width = raw.width; canvas.height = raw.height;
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) throw new Error("Phone canvas unavailable.");
+  const image = context.createImageData(raw.width, raw.height);
+  for (let i = 0; i < bytes.length; i += 4) {
+    image.data[i] = bytes.charCodeAt(i); image.data[i + 1] = bytes.charCodeAt(i + 1);
+    image.data[i + 2] = bytes.charCodeAt(i + 2); image.data[i + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+  const frame = canvas.toDataURL("image/png"); canvas.width = canvas.height = 1; return frame;
 }
 const waitingIn = (id) => asks().some((q) => q.sessionId === id);
 const runningIn = (id) => runs().some((r) => r.sessionId === id && r.status === "running");
@@ -159,6 +176,7 @@ export function initChats() {
     try {
       const view = await get("/api/phone/trunk-view", `session=${encodeURIComponent(session)}&kind=${el.dataset.v}`);
       if (P.chat !== session || document.hidden) return;
+      if (view.raw) { view.frame = privateImage(view.raw); delete view.raw; }
       phoneFrame = { ...view, session }; draw();
       setTimeout(() => { if (phoneFrame?.session === session) { phoneFrame = null; draw(); } }, Math.min(10000, Math.max(0, view.expiresAt - Date.now())));
     } catch (error) { toast(error.message); }

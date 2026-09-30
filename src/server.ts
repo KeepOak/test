@@ -1054,7 +1054,7 @@ async function api(
   if (path === "/api/phone/view-grants" || path === "/api/phone/trunk-view") {
     if (startedWithShortLivedKey()) throw new HttpError(403, "A short-lived key cannot manage or use phone view grants.");
     const deps = { store: app.store, owner: app.runtime.owner, profiles: app.store.profiles,
-      browser: app.browser, desktop: app.desktop ?? null,
+      browser: app.browser, desktop: app.desktop ?? null, privateDesktops: app.privateDesktops,
       locked: () => app.sessionLock.refusal("GET", "/api/panels/screen"),
       trunkOf: (id: string) => app.trunks.trunkForConversation(id)?.trunkId ?? null };
     try {
