@@ -16,7 +16,7 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
     public let jsName = "BranchPhone"
     public let pluginMethods: [CAPPluginMethod] = [
         "pair", "session", "forget", "request", "getSwitches", "setSwitches", "switchesChanged", "unlock",
-        "openBranch", "look", "notify", "lastSeen", "takeShared", "clearShared",
+        "openBranch", "openAppLink", "look", "notify", "lastSeen", "takeShared", "clearShared",
         // mac7/phone-pairing: lending this phone to Branch as one of the owner's devices.
         "deviceStatus", "devicePair", "deviceNever", "deviceForget",
         // mac7/residuals: the public half of this phone's key, for the check code both screens show.
@@ -26,6 +26,53 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         // PH-03: lending this phone while the app's own page is open.
         "lendStart", "lendStop", "lendResult",
     ].map { CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise) }
+
+    private var appLinkAsking = false
+    private func listingURL(_ value: String) -> (url: URL, name: String, kind: String)? {
+        guard value.count <= 4096, let parts = URLComponents(string: value), parts.scheme == "https",
+              parts.user == nil, parts.password == nil, parts.port == nil || parts.port == 443 else { return nil }
+        let targets: [(name: String, kind: String, hosts: [String], host: String, path: String)] = [
+            ("Airbnb", "listing", ["airbnb.com", "www.airbnb.com"], "www.airbnb.com", "^/rooms/[0-9]{1,20}/?$"),
+            ("Spotify", "track", ["open.spotify.com"], "open.spotify.com", "^/track/[A-Za-z0-9]{22}/?$")
+        ]
+        guard let target = targets.first(where: { $0.hosts.contains(parts.host?.lowercased() ?? "") &&
+            parts.percentEncodedPath.range(of: $0.path, options: .regularExpression) != nil }) else { return nil }
+        let path = parts.percentEncodedPath.hasSuffix("/") ? String(parts.percentEncodedPath.dropLast()) : parts.percentEncodedPath
+        guard let url = URL(string: "https://" + target.host + path) else { return nil }
+        return (url, target.name, target.kind)
+    }
+    @objc func openAppLink(_ call: CAPPluginCall) {
+        guard fromAppPage(call) else { return }
+        guard let link = listingURL(call.getString("url") ?? "") else {
+            call.reject("Only a supported HTTPS app link can open here"); return
+        }
+        DispatchQueue.main.async {
+            guard self.fromAppPage(call) else { return }
+            guard let controller = self.bridge?.viewController,
+                  controller.presentedViewController == nil, !self.appLinkAsking, UIApplication.shared.applicationState == .active else {
+                call.reject("Answer the open-listing question first"); return
+            }
+            self.appLinkAsking = true
+            let prompt = UIAlertController(title: "Open \(link.name) \(link.kind)?",
+                message: "\(link.url.absoluteString)\nThe app keeps its own sign-in. If it is unavailable, your browser opens.", preferredStyle: .alert)
+            prompt.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+                self.appLinkAsking = false; call.resolve(["opened": false])
+            })
+            prompt.addAction(UIAlertAction(title: "Open \(link.kind)", style: .default) { _ in
+                self.appLinkAsking = false
+                guard self.fromAppPage(call) else { return }
+                UIApplication.shared.open(link.url, options: [.universalLinksOnly: true]) { opened in
+                    if opened { call.resolve(["opened": true, "destination": "app"]); return }
+                    guard self.fromAppPage(call) else { return }
+                    guard UIApplication.shared.applicationState == .active else { call.resolve(["opened": false]); return }
+                    UIApplication.shared.open(link.url, options: [:]) { web in
+                        call.resolve(["opened": web, "destination": "system"])
+                    }
+                }
+            })
+            controller.present(prompt, animated: true)
+        }
+    }
 
     /// PH-03: the device socket. Asks reach the page only while the app's own page shows (never the owner's Branch).
     private lazy var lend = BranchLend(

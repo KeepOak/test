@@ -34,6 +34,12 @@ public class BranchPhonePlugin extends Plugin {
     private BranchLend lend; // PH-03
     private volatile boolean foreground;
 
+    @PluginMethod
+    public void openAppLink(PluginCall call) {
+        if (!appPageShowing()) { call.reject("Only the phone app may open a listing"); return; }
+        BranchAppLinks.open(getActivity(), call, this::appPageShowing);
+    }
+
     @Override
     public void load() {
         vault = new BranchVault(getContext());

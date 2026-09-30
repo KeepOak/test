@@ -12,6 +12,7 @@ import { E, P, attempt, av, big, draw, esc, firstLine, get, go, ic, ios, on, pos
 import { asks, chatName, exact, loadSession, loadSessionModel, loadSessions, loadState, loadTrunks, loadWaiting, roomOf, runs, trunkOf } from "/ph-data.js";
 import { planShare } from "/rules.js";
 import { switchesNow } from "/ph-switches.js";
+import { listingButtons, initAppLinks } from "/app-links.js";
 
 const C = { results: null, searched: "", pending: "", draft: "", attach: [], timer: 0 };
 const waitingIn = (id) => asks().some((q) => q.sessionId === id);
@@ -48,7 +49,7 @@ export const loadChats = () => Promise.all([loadSessions(), loadTrunks(), loadWa
 /* ---------- a chat ---------- */
 function bubble(m) {
   if (m.role === "user") return m.system ? "" : `<div class="pmsg pme">${esc(m.content)}</div>`;
-  if (m.role === "assistant" && String(m.content ?? "").trim()) return `<div class="pmsg bot">${esc(m.content)}</div>`;
+  if (m.role === "assistant" && String(m.content ?? "").trim()) return `<div class="pmsg bot">${esc(m.content)}${listingButtons(m.content)}</div>`;
   return "";
 }
 function askBlock(q) {
@@ -147,6 +148,7 @@ export async function attachFiles(list) {
   draw();
 }
 export function initChats() {
+  initAppLinks();
   on("ph-cf", (el) => { P.chatF = el.dataset.v; draw(); });
   on("new", () => { P.chat = null; C.attach = []; go("chat"); });
   on("ph-sheet", (el) => { P.sheet = el.dataset.v || null; draw(); });

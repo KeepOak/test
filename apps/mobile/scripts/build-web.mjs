@@ -16,6 +16,7 @@ const repo = join(app, "..", "..");
 const out = join(app, "www");
 /** Files from Branch's window that the phone screens use, as [from public/, to www/]. */
 export const REUSED = [
+  ["app-link-rules.js", "app-link-rules.js"],
   ["tokens.css", "tokens.css"], ["theme-catalogue.js", "theme-catalogue.js"],
   ["locales", "locales"], ["fonts", "fonts"],
   ["assets/icon-192.png", "assets/icon-192.png"], ["assets/keepoak-mark.png", "assets/keepoak-mark.png"],
