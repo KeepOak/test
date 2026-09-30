@@ -4,6 +4,7 @@ import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { ScriptedMcpApps } from './scripted-mcp-apps.js';
+import { McpOwnerRequests } from "./mcp-owner-requests.js";
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
 import { useFingerprintKey } from "./question-fingerprint.js";
 import { OwnClis } from "./own-clis.js"; // eng-connectors
@@ -1607,8 +1608,10 @@ ${result.output || "(it said nothing)"}`;
   // eng-connectors: whether another person's server is started as Branch starts or only when a task needs it, and
   // what it last said its tools are. The launch file's servers and the owner's own (kept in the store) share it.
   const scriptedMcpApps = new ScriptedMcpApps(runtime);
+  const mcpOwnerRequests = new McpOwnerRequests(store, () => runtime.owner, runtime.models);
   const mcpHost = {
     appSupport: (id: string) => scriptedMcpApps.support(id),
+    ownerRequests: mcpOwnerRequests,
     connectWhen: () => readLifecycleSettings(store, store.profiles.scope()).connect,
     cache: {
       read: (id: string) =>
@@ -1731,7 +1734,7 @@ ${result.output || "(it said nothing)"}`;
     /** mac3/security-check: the security self-check, its repairs, and the malware check on add-ons. */
     security,
     /** eng-connectors: the owner's own MCP servers, allowed command-line tools, and flagged replies. */
-    ownMcp, scriptedMcpApps,
+    ownMcp, scriptedMcpApps, mcpOwnerRequests,
     ownClis,
     replyFlags,
     /** mac2/fly-core: the learning core's three-way switch (off, when-needed, on); it ships off. */
