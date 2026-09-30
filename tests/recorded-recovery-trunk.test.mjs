@@ -7,10 +7,10 @@ async function scopedRun(t) {
   const f = await fixture(t);
   on(f.app);
   const home = f.app.trunks.ensureDefault(true);
-  const run = await f.app.runtime.run({ prompt: "Explain this isolated fixture task." });
+  const run = await f.app.runtime.run({ prompt: "Explain this isolated fixture task.", trunkId: home.id });
   assert.equal(run.status, "completed");
   const started = f.app.store.events(run.id).find((event) => event.kind === "run.started");
-  assert.equal(started?.data.trunkScope?.id, home.id, "new conversation has stable Trunk authority at its original start");
+  assert.equal(started?.data.trunkScope?.id, home.id, "an explicitly routed conversation records its original Trunk authority");
   assert.equal(typeof started.data.trunkScope.owners, "boolean");
   assert.deepEqual(started.data.trunkScope.keys, f.app.trunks.shapeOf({ prompt: "", sessionId: run.sessionId }).keys);
   f.app.store.finish(run.id, "interrupted", "fixture interruption");

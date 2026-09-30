@@ -31,8 +31,13 @@ const refusal = /recorded person and conversation ownership/;
 
 test("an actual person's original personal Trunk remains scoped through continuation", async (t) => {
   const f = await fixture(t);
-  const original = await asPerson({ profileId: f.ada.id, keyId: "fixture" }, () =>
-    f.app.runtime.run({ prompt: "Describe the isolated task.", lentTo: `profile:${f.ada.id}` }));
+  const original = await asPerson({ profileId: f.ada.id, keyId: "fixture" }, () => {
+    const personal = f.app.trunks.personDefault();
+    assert.ok(personal, "the recorded person has their own default in their profile scope");
+    assert.equal(personal.scope, `profile:${f.ada.id}`);
+    return f.app.runtime.run({ prompt: "Describe the isolated task.", trunkId: personal.trunk.id,
+      lentTo: `profile:${f.ada.id}` });
+  });
   assert.equal(original.status, "completed");
   const start = f.app.store.events(original.id).find((event) => event.kind === "run.started").data;
   assert.ok(start.trunkScope, "the original personal Trunk was recorded");

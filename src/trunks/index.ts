@@ -128,7 +128,6 @@ export class Trunks {
       runsOf: (id) => runtime.runsOfTrunk(id) }); // P17-D §9
     this.refresh();
     runtime.trunkShape = (options) => this.shapeOf(options);
-    runtime.trunkForNew = () => this.homeForNew();
     runtime.trunkClaim = (sessionId, trunkId) => this.claimThread(sessionId, trunkId); // defaulttrunk
     // selfdev: whether a turn in this conversation, as this Trunk, is the owner's designated default Trunk's own (read now, never remembered).
     runtime.ownersDefaultIn = (sessionId, trunkId) => {
