@@ -232,6 +232,24 @@ test("one switch opens the side panel in the calm window, its tabs are inside it
   assert.deepEqual(f.errors, []);
 });
 
+test("SCREEN-144: a command the owner approved says so in Terminal even when the owner has no name", async (t) => {
+  const f = await newWindow(t);
+  await f.page.route("**/api/profiles", async (route) => {
+    const response = await route.fetch(), data = await response.json();
+    await route.fulfill({ response, json: { ...data, owner: { ...(data.owner ?? {}), name: "" } } });
+  });
+  await f.page.route("**/api/panels/work?*", async (route) => {
+    const response = await route.fetch(), data = await response.json();
+    const entry = { id: "approved-1", command: "ls -la", state: "done", allowed: "owner", output: "" };
+    await route.fulfill({ response, json: { ...data, terminal: { ...(data.terminal ?? {}), entries: [entry] } } });
+  });
+  await f.conversation();
+  await f.page.locator('[data-act="pane"][data-p="activity"]').first().click();
+  await f.page.locator("#pane .ptab", { hasText: "Terminal" }).click();
+  await f.page.locator("#pane .term7", { hasText: "Approved by you" }).waitFor({ timeout: 20000 });
+  assert.deepEqual(f.errors, []);
+});
+
 test.skip("More offers Browser and Terminal, and a household window offers neither", async (t) => {
   // Redesign: the "More" menu button (#lx-more) is not in the new window yet (Coming soon)
   const f = await windowFixture(t);

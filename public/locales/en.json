@@ -7121,6 +7121,7 @@
   "window.chat.teach.watching": "{name} is watching and learning.",
   "window.chat.term.allowed-rules": "Allowed by your rules",
   "window.chat.term.approved-by": "Approved by {name}",
+  "window.chat.term.approved-owner": "Approved by you",
   "window.chat.term.close": "Close my terminal",
   "window.chat.term.empty": "No commands in this conversation yet. Commands a Trunk runs, and what came back, show here.",
   "window.chat.term.no": "No",
