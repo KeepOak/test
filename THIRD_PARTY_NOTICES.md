@@ -3500,6 +3500,10 @@ Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
 
+### Hermes Agent and OpenClaw: group command access and pairing (UP-CHAT-007..010), MIT
+
+`groupCommandRefusal` in `src/channels/router.ts` and the `groupCommands` line in `src/channels/chat-permissions.ts` adapt Hermes Agent's `gateway/slash_access.py` (admins run every command, everybody else a small floor, failing closed); resetting the wrong-code count after an approval follows `gateway/pairing.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). Answering a stranger only when a request is new, the cap of three waiting requests, no codes in groups and silent blocks follow OpenClaw's `src/pairing/pairing-store.ts` and `extensions/telegram/src/dm-access.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### Ollama, MIT
 
 The free-memory sum on a Mac in `src/local-fit.ts` (`parseVmStat`: active, inactive, speculative, wired and compressor pages, less purgeable and file-backed ones) follows `getFreeMemory` in Ollama's `discover/gpu_info_darwin.m`, and the default models folder in `src/local-files.ts` follows `envconfig.Models()` (https://github.com/ollama/ollama, commit 5ed8dde). Used under the MIT licence:
