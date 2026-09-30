@@ -65,19 +65,19 @@ export interface QuitReport {
   message: string;
 }
 
-const stillAlive = (pid: number): boolean => {
+export const processAlive = (pid: number): boolean => {
   try { process.kill(pid, 0); return true; } catch (error) { return (error as { code?: string }).code === "EPERM"; }
 };
 const pause = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 /** The running note, but only while the process it names still exists. */
-export async function runningNow(dataDir: string, alive: (pid: number) => boolean = stillAlive): Promise<RunningInstance | null> {
+export async function runningNow(dataDir: string, alive: (pid: number) => boolean = processAlive): Promise<RunningInstance | null> {
   const note = await readRunning(dataDir);
   return note && alive(note.pid) ? note : null;
 }
 
-async function gone(pid: number, deps: QuitDeps): Promise<boolean> {
-  const alive = deps.alive ?? stillAlive, sleep = deps.sleep ?? pause;
+export async function waitForExit(pid: number, deps: QuitDeps): Promise<boolean> {
+  const alive = deps.alive ?? processAlive, sleep = deps.sleep ?? pause;
   const deadline = Date.now() + (deps.waitMs ?? 20000);
   while (alive(pid)) {
     if (Date.now() >= deadline) return false;
@@ -100,10 +100,10 @@ async function ask(dataDir: string, note: RunningInstance, deps: QuitDeps): Prom
 
 /** Closes the running Branch and waits for it; "not running" counts as done. */
 export async function quitRunning(dataDir: string, deps: QuitDeps = {}): Promise<QuitReport> {
-  const note = await runningNow(dataDir, deps.alive ?? stillAlive);
+  const note = await runningNow(dataDir, deps.alive ?? processAlive);
   if (!note) return { stopped: true, wasRunning: false, pid: null, message: "Branch Agent is not running." };
   const pid = note.pid;
-  if ((await ask(dataDir, note, deps)) && (await gone(pid, deps)))
+  if ((await ask(dataDir, note, deps)) && (await waitForExit(pid, deps)))
     return { stopped: true, wasRunning: true, pid, message: "Branch Agent has closed." };
   if (note.mode === "daemon") {
     const report = await (deps.stopEngine ?? stopBackgroundEngine)(dataDir);

@@ -7,6 +7,7 @@ import { quitRunning, runningNow, type QuitDeps } from "./quit.js";
 import { fetchedFolders, performUnixUninstall, unixLayout, type UnixLayout, type UnixUninstallReport } from "./unix-install.js";
 import type { RunTool } from "./windows.js";
 import { managementDataDir } from "./manage-location.js";
+import { quitShellAndEngine, runningShell } from "./quit-shell.js";
 
 /**
  * The commands a script uses to manage an installed Branch without clicking (bucket 22, issue #106):
@@ -39,12 +40,13 @@ export async function versionInfo(context: ManageContext): Promise<VersionInfo> 
   const installRoot = context.env.BRANCH_INSTALL_ROOT;
   return {
     version: context.version, path: installRoot || context.packageRoot, dataDir,
-    running: (await runningNow(dataDir, context.deps?.quit?.alive)) !== null, installed: Boolean(installRoot),
+    running: (await runningNow(dataDir, context.deps?.quit?.alive)) !== null
+      || (await runningShell(dataDir, context.deps?.quit?.alive)) !== null, installed: Boolean(installRoot),
   };
 }
 
 async function quit(context: ManageContext): Promise<number> {
-  const report = await quitRunning(await managementDataDir(context), context.deps?.quit);
+  const report = await quitShellAndEngine(await managementDataDir(context), context.deps?.quit);
   context.print(report.message);
   return report.stopped ? 0 : 1;
 }

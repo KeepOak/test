@@ -14,7 +14,9 @@ const packet = z.discriminatedUnion("kind", [
 ]);
 const challenge = z.object({ hello: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const answer = z.object({ proof: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
-const descriptor = (dataDir: string): string => join(dataDir, "desktop-control", "authority.json");
+type ControlRole = "broker" | "shell";
+const descriptor = (dataDir: string, role: ControlRole): string =>
+  join(dataDir, "desktop-control", role === "shell" ? "shell-authority.json" : "authority.json");
 const proof = (key: string, side: string, nonce: string): string => createHmac("sha256", key).update(`${side}:${nonce}`).digest("hex");
 const matches = (a: string, b: string): boolean => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 type Handlers = Record<string, (args: unknown) => unknown>;
@@ -62,7 +64,7 @@ export interface DesktopControlHost {
 }
 
 /** Only trusted main processes that can read this data folder can prove either side of the private channel. */
-export async function serveDesktopControl(dataDir: string, handlers: Handlers): Promise<DesktopControlHost> {
+export async function serveDesktopControl(dataDir: string, handlers: Handlers, role: ControlRole = "broker"): Promise<DesktopControlHost> {
   const suffix = randomBytes(16).toString("hex"), key = randomBytes(32).toString("hex");
   const address = process.platform === "win32" ? `\\\\.\\pipe\\branch-desktop-${suffix}` : join(tmpdir(), `branch-desktop-${suffix}.sock`);
   const sockets = new Set<Socket>(); let current: Link | null = null;
@@ -71,21 +73,21 @@ export async function serveDesktopControl(dataDir: string, handlers: Handlers): 
     accept(socket, key, handlers, (link) => { current = link; socket.once("close", () => { if (current === link) current = null; }); });
   });
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(address, () => { server.off("error", reject); resolve(); }); });
-  try { await writeAtomic(descriptor(dataDir), JSON.stringify({ pid: process.pid, address, key })); }
+  try { await writeAtomic(descriptor(dataDir, role), JSON.stringify({ pid: process.pid, address, key })); }
   catch (error) { server.close(); throw error; }
   return { current: () => current, close: async () => {
     current = null; for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     let owned = false;
-    try { owned = shape.parse(JSON.parse(await readFile(descriptor(dataDir), "utf8"))).key === key; } catch { /* preserve unknown or replacement authority */ }
-    if (owned) await rm(descriptor(dataDir), { force: true });
+    try { owned = shape.parse(JSON.parse(await readFile(descriptor(dataDir, role), "utf8"))).key === key; } catch { /* preserve unknown or replacement authority */ }
+    if (owned) await rm(descriptor(dataDir, role), { force: true });
     if (process.platform !== "win32") await rm(address, { force: true });
   } };
 }
 
-export interface DesktopControlClient { link: Link; close(): void }
-export async function connectDesktopControl(dataDir: string, handlers: Handlers = {}): Promise<DesktopControlClient> {
-  const saved = shape.parse(JSON.parse(await readFile(descriptor(dataDir), "utf8")));
+export interface DesktopControlClient { pid: number; link: Link; close(): void }
+export async function connectDesktopControl(dataDir: string, handlers: Handlers = {}, role: ControlRole = "broker"): Promise<DesktopControlClient> {
+  const saved = shape.parse(JSON.parse(await readFile(descriptor(dataDir, role), "utf8")));
   process.kill(saved.pid, 0); // Refuse stale descriptors before connecting to their address.
   const socket = connect(saved.address);
   return new Promise((resolve, reject) => {
@@ -98,7 +100,7 @@ export async function connectDesktopControl(dataDir: string, handlers: Handlers 
       if (!nonce) { nonce = challenge.parse(message).hello; send({ proof: proof(saved.key, "shell", nonce) }); return; }
       if (!matches(answer.parse(message).proof, proof(saved.key, "broker", nonce))) { socket.destroy(); return; }
       clearTimeout(late); link = channel(socket, send, handlers);
-      resolve({ link, close: () => { link?.close(); socket.destroy(); } });
+      resolve({ pid: saved.pid, link, close: () => { link?.close(); socket.destroy(); } });
     });
   });
 }

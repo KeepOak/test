@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { installedLocation, resolveDataLocation } from "./layout.js";
 import { runningNow, type QuitDeps } from "./quit.js";
+import { runningShell } from "./quit-shell.js";
 import { unixLayout } from "./unix-install.js";
 
 interface ManagementLocation {
@@ -39,7 +40,8 @@ export async function managementDataDir(context: ManagementLocation): Promise<st
   if (context.env.BRANCH_DATA_DIR !== undefined) return resolve(context.env.BRANCH_DATA_DIR);
   const live: string[] = [];
   for (const candidate of await candidates(context)) {
-    if (await runningNow(candidate, context.deps?.quit?.alive)) live.push(candidate);
+    if (await runningNow(candidate, context.deps?.quit?.alive)
+      || await runningShell(candidate, context.deps?.quit?.alive)) live.push(candidate);
   }
   if (live.length > 1)
     throw new Error("More than one Branch data folder is running. Set BRANCH_DATA_DIR to the one you want to manage.");
