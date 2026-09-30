@@ -64,4 +64,5 @@ export async function saveKey(action, combo) {
   K.defaults = c.shortcutDefaults ?? K.defaults;
   // Pass 17: the desktop app reads the quick-ask keys again itself (src/desktop/quick-ask.ts); nothing is handed over.
   if (action === "quickAsk") await window.branchDesktop?.quickAskKeysChanged?.();
+  if (action === "talkLive") await window.branchDesktop?.talkShortcutKeysChanged?.();
 }

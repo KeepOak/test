@@ -64,6 +64,7 @@ import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
 // Pass 17: the quick-ask keys, from any app (src/desktop/quick-ask.ts).
 import { globalShortcut } from "electron";
 import { quickAskKeys, registerQuickAsk } from "./quick-ask.js";
+import { registerTalkShortcut, talkShortcutKeys } from "./talk-shortcut.js";
 // The engine runs in a process of its own, so nothing it does can freeze the window (src/desktop/engine-host.ts).
 import type { UtilityProcess } from "electron";
 import { desktopEngineServices, forkDesktopEngine } from "./engine-services.js";
@@ -335,6 +336,12 @@ async function startShell(
       for (let tries = 0; !access.ready() && tries < 20; tries++) await new Promise<void>((done) => setTimeout(done, 250));
       return quickAskKeys(url, key(), client.fetch);
     }, log: (line) => console.error(line) });
+  const stopTalkShortcut = registerTalkShortcut({ shortcuts: globalShortcut, ipc: ipcMain, window: openWindow,
+    origin: url, open: () => openShell(), keys: async () => {
+      for (let tries = 0; !access.ready() && tries < 20; tries++) await new Promise<void>((done) => setTimeout(done, 250));
+      return talkShortcutKeys(url, key(), client.fetch);
+    }, log: (line) => console.error(line) });
+  app.once("will-quit", stopTalkShortcut);
   ipcMain.handle("branch:notification-target", (event) => {
     if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame ||
       new URL(event.senderFrame.url).origin !== url) throw new Error("Notification access denied");

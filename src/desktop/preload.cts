@@ -55,6 +55,12 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
     ipcRenderer.on("branch:quick-ask", () => (callback as () => void)());
   },
   quickAskKeysChanged: () => ipcRenderer.invoke("branch:quick-ask-keys"),
+  onTalkShortcut: (callback: unknown) => {
+    if (typeof callback !== "function") return;
+    ipcRenderer.on("branch:talk-shortcut", () => (callback as () => void)());
+  },
+  takeTalkShortcut: () => ipcRenderer.invoke("branch:talk-shortcut-take"),
+  talkShortcutKeysChanged: () => ipcRenderer.invoke("branch:talk-shortcut-keys"),
   // attach-4: the menu bar's Help, "What can Branch do" or "About Branch" (src/desktop/app-menu.ts helpItems).
   onHelp: (callback: unknown) => {
     if (typeof callback !== "function") return;

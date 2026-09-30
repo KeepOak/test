@@ -11,7 +11,7 @@
    when the window switches person (the engine ends the socket with reason "profile"). A socket that never opens a
    conversation stops the task it made (POST /api/runs/<id>/cancel), so it holds no update or quit. */
 
-import { esc, applyCss } from "../core/dom.js";
+import { esc, applyCss, afterDraw } from "../core/dom.js";
 import { E, chatFace, ownName } from "../core/state.js";
 import { api, token, isDesktop } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -195,11 +195,32 @@ function end({ say } = {}) {
   if (opened && sessionId) hooks.reopen(sessionId).catch((error) => toast(error.message));
 }
 
+// The global press shows this page first. Take it once after sign-in/render, including a tray-only first open.
+let shortcutTaking = false, shortcutState = null;
+async function takeShortcut() {
+  if (!E.loaded || shortcutTaking || !window.branchDesktop?.takeTalkShortcut) return;
+  shortcutTaking = true;
+  const profiles = E.profiles, state = E.state;
+  try {
+    const wanted = await window.branchDesktop.takeTalkShortcut();
+    if (!wanted || profiles !== E.profiles || state !== E.state || E.profiles?.isOwner !== true ||
+      E.state?.lock?.locked || document.querySelector(".locked, .locked-b17, .dlg")) return;
+    if (L.phase !== "idle") stop(); else void press();
+  } catch { /* A retired shell or locked page does not start recording. */ }
+  finally { shortcutTaking = false; }
+}
+
 export function initTalkLive(given) {
   hooks = given;
   markLive(["voice", "call", "v-mute", "v-end"]);
   on("voice", () => press());
-  on("call", () => press());
+  on("call", () => L.phase === "idle" ? press() : stop());
   on("v-mute", () => { L.muted = !L.muted; draw(); });
   on("v-end", () => stop());
+  window.branchDesktop?.onTalkShortcut?.(() => { void takeShortcut(); });
+  afterDraw(() => {
+    if (!E.loaded || shortcutState === E.state) return;
+    shortcutState = E.state;
+    void takeShortcut();
+  });
 }
