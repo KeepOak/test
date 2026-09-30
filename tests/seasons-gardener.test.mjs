@@ -285,3 +285,17 @@ test("a household person's requests never seed the owner's skills", async (t) =>
   await asPerson({ profileId: sam.id, keyId: "test" }, invoices.bind(null, app));
   assert.deepEqual(app.gardener.plantFromTriggers(), []);
 });
+
+test("Lockdown switched on while a draft is being written pauses the Gardener: nothing is adopted or discarded, the seed waits", async (t) => {
+  const { setLockdown } = await import("../dist/lockdown.js");
+  let app;
+  const fixed = await fixture(t, { draft: () => { setLockdown(app.store, app.runtime.owner, { on: true }); return skillFile("paused-one"); } });
+  app = fixed.app;
+  await invoices(app);
+  const [seed] = app.gardener.plantFromTriggers();
+  const grown = await app.gardener.grow(seed, fixed.preset);
+  assert.equal(grown.status, "waiting", "the seed waits for a permitted night");
+  assert.equal(fixed.seen.replay, 0, "no replay runs under Lockdown");
+  assert.equal(app.gardener.book.ledger().length, 0, "nothing is adopted or discarded");
+  assert.equal(app.store.skills.list("local").filter((skill) => skill.active).length, 0);
+});
