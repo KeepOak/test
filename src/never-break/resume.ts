@@ -4,6 +4,8 @@ import type { Runtime } from "../runtime.js";
 import type { Run } from "../contracts.js";
 import { runOrigin } from "../key-context.js"; // bucket 19 (integration review)
 import { withRecoveryContext } from "./recovery-context.js";
+import { underProject } from "../project-scope.js";
+import { defaultProjectId } from "../projects.js";
 import { asPerson, currentPerson } from "../people/context.js"; // bucket 19 (integration review)
 import { scopeOf } from "../tool-gate.js";
 import type { Store } from "../store.js";
@@ -234,12 +236,17 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
   const carryOn = input.mode === "on" && !input.askOnly && !inbound;
   const decided: { tool: string; decision: StepDecision }[] = [];
   const asks: OpenStep[] = [];
+  const checkProject = () => {
+    if (!run.project || input.store.sessionProject(run.sessionId) !== run.project
+      || !input.store.projects.list(run.owner).some((project) => project.id === run.project))
+      throw new Error("The interrupted task's original project is unknown, deleted or differs from its conversation. Reconcile it before continuing.");
+  };
   let recovery: ReturnType<Runtime["beginInterruptedRecovery"]> | null = null;
   try {
     if (carryOn) recovery = input.runtime.beginInterruptedRecovery(runId);
     // Reconcile the saved role and workspace before any journal retry or automatic model continuation.
     if (carryOn) {
-      try { await withRecoveryContext(input, runId, async () => undefined); }
+      try { checkProject(); await withRecoveryContext(input, runId, async () => undefined); checkProject(); }
       catch (error) {
         recovery?.signal.throwIfAborted();
         const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
@@ -256,6 +263,7 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
     for (const step of steps) {
       // Once a step is left undecided, the ones the model asked for after it are not run ahead of it.
       recovery?.signal.throwIfAborted();
+      if (carryOn) checkProject();
       const { decision, settled } = await settleStep(input, runId, step, carryOn && clear);
       recovery?.signal.throwIfAborted();
       clear &&= settled;
@@ -269,11 +277,12 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
       return { runId, outcome: "offered", steps: decided };
     }
     recovery?.signal.throwIfAborted();
+    checkProject();
     // Each step keeps its call id, so a team task can tell which of them it has a record of (src/team-reconcile.ts).
     input.store.event(runId, "run.auto_resumed", { steps: steps.map((step, index) => ({ ...decided[index], callId: step.callId })) });
     // Transfer synchronously: normal resume claims this session before its first await.
     recovery?.release();
-    const resumed = input.runtime.resume(runId).catch(() => undefined);
+    const resumed = underProject(run.project ?? defaultProjectId, () => input.runtime.resume(runId)).catch(() => undefined);
     return { runId, outcome: "resumed", steps: decided, resumed };
   } catch (error) {
     const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
@@ -284,6 +293,13 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
         input.store.finish(runId, "cancelled", "Stopped during interrupted recovery. No automatic continuation was started.");
         return { runId, outcome: "gone", steps: decided };
       }
+      input.store.finish(runId, "needs_input", reason);
+      input.store.event(runId, "recovery.context_unavailable", { reason });
+      input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+      input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      return { runId, outcome: "asked", steps: decided };
+    }
+    if (recovery) {
       input.store.finish(runId, "needs_input", reason);
       input.store.event(runId, "recovery.context_unavailable", { reason });
       input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });

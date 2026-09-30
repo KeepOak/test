@@ -957,7 +957,7 @@ export class Runtime {
       || this.controllers.has(id) || this.pausing.get(id)?.signal.aborted || this.activeSessions.has(run.sessionId))
       throw new Error("This interrupted task cannot start automatic recovery while stopped, paused or already active.");
     const events = this.store.events(id);
-    if (events.some((event) => event.kind === "run.recovery_stopped" || event.kind === "run.pause_asked"))
+    if (events.some((event) => event.kind === "run.recovery_stopped" || event.kind === "run.pause_asked" || event.kind === "run.paused"))
       throw new Error("This task was stopped or paused. Continue it explicitly when ready.");
     const deadline = Number(events.find((event) => event.kind === "run.started")?.data.deadlineMs);
     if (!Number.isFinite(deadline) || deadline <= 0) throw new Error("The interrupted task has no recorded recovery deadline.");
