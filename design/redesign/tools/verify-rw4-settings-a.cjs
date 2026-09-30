@@ -80,10 +80,11 @@ async function voice(page) {
 
   for (const t of ["System voice", "Keep audio on this computer", "Read replies aloud"]) check(`not drawn (not in the design): ${t}`, (await page.locator(`.ctl > b:text-is("${t}")`).count()) === 0);
 
-  const s = await api("voice/settings");
-  const minutes = await page.locator('input[aria-label="Max duration"]').inputValue();
-  check("live conversations show the engine's limits", minutes === String(s.liveMaxMinutes), `shown ${minutes}, engine ${s.liveMaxMinutes}`);
-  for (const t of ["Listening", "Answer aloud", "Spoken morning brief"]) check(`greyed: ${t}`, await greyed(page, `.ctl:has(> b:text-is("${t}")) button, .ctl:has(> b:text-is("${t}")) input`));
+  // Live conversations (Max duration, Max cost) left Voice with the prototype (b250054e); it is not drawn.
+  check("not drawn (not in the design): Max duration", (await page.locator('input[aria-label="Max duration"]').count()) === 0);
+  // Listening is how Branch listens now, from the key and the wake word below: words, no control.
+  check("Listening is words, no control", (await page.locator('[data-fact="f15-listening"]').count()) === 1 && (await page.locator('.ctl:has(> b:text-is("Listening")) button, .ctl:has(> b:text-is("Listening")) input').count()) === 0);
+  check("live: Spoken morning brief (the engine's spoken-brief part)", !(await greyed(page, "#f15-spoken-morning-brief")));
 }
 
 async function appearance(page) {
@@ -112,7 +113,7 @@ async function people(page) {
     const card = page.locator(".t9-detail");
     check("p-sel: the test profile's card", (await card.locator(".t9-dh b").textContent()) === "Test Person");
     const role = (await api("profiles")).roles.find((r) => r.profileId === made.id);
-    const ticked = await card.locator('.acts10 input:checked').count();
+    const ticked = await card.locator(".acts10 .may15:not(.no10)").count();
     check("people: May shows the engine's effective kinds", ticked === role.categories.length, `${ticked} ticked, engine ${role.categories.length}`);
     // unhold/people: live now, each proved against the engine in verify-unhold-people.cjs.
     for (const a of ["p-switch", "p-role", "p-code", "p-signout", "p-remove"]) check(`live: ${a}`, !(await greyed(page, `.t9-detail [data-act="${a}"]`)));
@@ -136,7 +137,7 @@ async function notifications(page) {
     await openPage(page, "notifications");
     check("quiet-hours status drawn from the engine", (await page.locator(".set-col .status b", { hasText: "Quiet hours are" }).count()) === 1);
   } finally { await api("calendar", cal); }
-  for (const id of ["n-need", "n-done"]) check(`greyed: ${id}`, await greyed(page, `#${id}`));
+  for (const id of ["n-need", "n-done"]) check(`live: ${id} (POST /api/comfort notify needsYes | taskDone)`, !(await greyed(page, `#${id}`)));
 }
 
 async function general(page) {
