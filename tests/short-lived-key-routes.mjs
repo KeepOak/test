@@ -808,6 +808,7 @@ export const ROUTES = {
   "/api/memory/mirror": "owner POST",
   "/api/memory/proposals": "look",
   "/api/memory/provider": "owner POST", // FQ-memory.providers: where facts are kept is the owner's setting
+  "/api/memory/native": "owner GET,POST", // Owner-window connection references and native lifecycle opt-in.
   "/api/memory/proposals/:id/accept": "other POST",
   "/api/memory/proposals/:id/reject": "other POST",
   "/api/memory/refresh": "look",

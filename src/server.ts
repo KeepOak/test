@@ -2463,6 +2463,13 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
   // FQ-memory.providers: where facts are kept — this computer's database, or an outside memory
   // service the owner has switched on instead. Reading and saving both go through the same object
   // that decides, at every call, which one actually answers `memory.put`/`memory.search`/etc.
+  if (path === "/api/memory/native") {
+    app.store.profiles.requireOwner("Native outside memory context");
+    if (throughDoor(request)) throw new HttpError(403, hereOnly);
+    if (app.sessionLock.locked()) throw new HttpError(403, "Unlock Branch before changing native memory");
+    if (request.method === "GET") return app.nativeMemory.view();
+    if (request.method === "POST") return app.nativeMemory.configure(await readBody(request));
+  }
   if (path === "/api/memory/provider") {
     if (request.method === "GET") return app.memory.backend.view(owner);
     if (request.method === "POST") return app.memory.backend.configure(owner, await readBody(request));

@@ -10,6 +10,7 @@ import { backupFolder } from "./install/update-backup.js";
 import { lockdownActive } from "./lockdown.js";
 import { memoryProviderSettings, stillHeld } from "./memory-provider.js";
 import type { VectorStoreSettings } from "./vector-store-file.js";
+import type { NativeMemoryDestination } from "./native-memory.js";
 
 /**
  * Settings › Your data, Delete everything, "for good" (the half that cannot be one database transaction). The purge
@@ -20,13 +21,15 @@ import type { VectorStoreSettings } from "./vector-store-file.js";
  * Nothing leaves this computer under Lockdown: the outside service and the history's copy wait until it is off.
  */
 type Branch = Awaited<ReturnType<typeof createBranch>>;
-type Step = "files" | "outside" | "vectors" | "notes" | "history" | "copies" | "tidy";
-export const steps: readonly Step[] = ["files", "outside", "vectors", "notes", "history", "copies", "tidy"];
+type Step = "files" | "outside" | "vectors" | "native" | "notes" | "history" | "copies" | "tidy";
+export const steps: readonly Step[] = ["files", "outside", "vectors", "native", "notes", "history", "copies", "tidy"];
 export interface Journal {
   id: string; scope: string; startedAt: string; sessions: string[]; runIds: string[];
   outside: { url: string; pending: string[] } | null;
   /** Optional for journals written before external vectors existed. Holds references, never a key. */
   vectors?: VectorStoreSettings | null;
+  /** Destinations are captured before local purge and retained if a key/connection is removed. */
+  native?: { pending: NativeMemoryDestination[] } | null;
   history: boolean; done: Step[]; removed: string[]; waiting: string[];
 }
 /** The conversation and memory tables a delete empties, in any copy of the database. Never memory_outside_forgotten. */
@@ -98,6 +101,7 @@ const failed: Record<Step, string> = {
   files: "The files of the deleted conversations could not all be removed",
   outside: "The outside memory service could not be asked to delete them",
   vectors: "The selected vector service could not finish deleting this person's Branch vectors",
+  native: "Native outside conversation context could not finish being deleted",
   notes: "The memory notes in your workspace could not be written again",
   history: "The history of what is remembered could not be started again",
   copies: "The update safety copies could not all be made again without them",
@@ -110,6 +114,7 @@ async function run(app: Branch, journal: Journal, step: Step): Promise<Outcome> 
     case "files": return removeFiles(app, journal);
     case "outside": return forgetOutside(app, journal);
     case "vectors": return forgetVectors(app, journal);
+    case "native": return forgetNative(app, journal);
     case "notes": return rewriteNotes(app, journal);
     case "history": return rewriteHistory(app, journal);
     case "copies": return scrubCopies(app, journal);
@@ -148,6 +153,18 @@ async function forgetVectors(app: Branch, journal: Journal): Promise<Outcome> {
   const host = hostOf(journal.vectors.vectorsUrl);
   if (removed === null) return { waiting: `The vector connection was changed or removed. Its cleanup at ${host} is still pending; restore the same service and locker reference to finish. Nothing is sent to a different destination.` };
   return { removed: `This person's Branch vectors at ${host} were deleted and their namespace verified empty. Other owners and service collections were kept. Knowledge-base files stay here and can be read again.` };
+}
+
+async function forgetNative(app: Branch, journal: Journal): Promise<Outcome> {
+  if (!journal.native?.pending.length) return {};
+  if (locked(app)) return { waiting: "Lockdown is on, so native outside context cleanup waits until it is off." };
+  const pending: NativeMemoryDestination[] = [];
+  for (const destination of journal.native.pending) {
+    if (!await app.nativeMemory.forget(destination)) pending.push(destination);
+  }
+  journal.native.pending = pending;
+  if (pending.length) return { waiting: `Native context at ${pending.map((entry) => hostOf(entry.settings.url)).join(", ")} still needs cleanup. Restore each original service, locker project and key reference to finish. Removing a connection does not cancel this deletion.` };
+  return { removed: "This person's recorded Branch namespaces on native memory services were deleted. Accepted facts and other people's service namespaces were not sent or changed." };
 }
 
 async function rewriteNotes(app: Branch, journal: Journal): Promise<Outcome> {

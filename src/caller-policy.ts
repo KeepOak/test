@@ -117,6 +117,8 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
   // phones and folder, and an export's progress and file hand back everything kept, the full backup among it.
   if (handlesYourDataPath(path))
     return "A short-lived key cannot read, export or delete everything kept here. Do that in the app window.";
+  if (path === "/api/memory/native")
+    return "A short-lived key cannot read or change native memory connections. Do that in the app window.";
   if (path.startsWith("/api/attachments/"))
     return "A short-lived key cannot open a file somebody attached. Do that in the app window.";
   if (path.startsWith("/api/diagnostics/"))
@@ -274,6 +276,7 @@ const opensOnThisComputer: readonly RegExp[] = [/^\/api\/accounts\/sign-ins\/(st
 const permanentHereOnly: readonly RegExp[] = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/, /^\/api\/retention\/prune$/];
 /** Why a door (the paired door, a phone's own key, or a caller beyond this computer) may not send this, or null. */
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
+  if (path === "/api/memory/native") return hereOnly;
   if (/^\/api\/self-development\/merge(\/|$)/.test(path)) return hereOnly;
   if (secretToADoor.some((route) => route.test(path))) return hereOnly;
   if (method === "GET" || method === "HEAD") return null;

@@ -1,5 +1,35 @@
 # Third-party notices
 
+## Native memory lifecycle — Hermes Agent (MIT), Mem0 and Honcho Python (Apache-2.0)
+
+`src/native-memory.ts` and `src/native-memory-clients.ts` adapt actual source helpers:
+
+- Hermes Agent, immutable revision `16b214e1a1f0544218b1cf8c21b923b4e1c62768`:
+  [memory_provider.py](https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/agent/memory_provider.py)
+  supplies the prefetch/sync lifecycle contract;
+  [Mem0 backend](https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/plugins/memory/mem0/_backend.py)
+  supplies native self-hosted routes, X-API-Key and `infer:false` request construction;
+  [Mem0 plugin](https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/plugins/memory/mem0/__init__.py)
+  supplies the adapted `_truncate_for_sync` sentence-boundary helper. MIT, Copyright (c) 2025 Nous Research.
+- Mem0, immutable revision `94c3fe9f238f3dbf29c9ce98643bd71eb13077cd`:
+  [server/main.py](https://github.com/mem0ai/mem0/blob/94c3fe9f238f3dbf29c9ce98643bd71eb13077cd/server/main.py)
+  supplies scoped search/list/delete-all wire contracts and the admin requirement;
+  [memory/main.py](https://github.com/mem0ai/mem0/blob/94c3fe9f238f3dbf29c9ce98643bd71eb13077cd/mem0/memory/main.py)
+  supplies native memory payload/metadata conventions. Apache-2.0.
+- Honcho Python SDK, immutable revision `1c8f03ff0e9dd8adcab9e4ebb5b96bb6e1efc071`:
+  [workspaces.py](https://github.com/plastic-labs/honcho-python/blob/1c8f03ff0e9dd8adcab9e4ebb5b96bb6e1efc071/src/honcho_core/resources/workspaces/workspaces.py),
+  [peers.py](https://github.com/plastic-labs/honcho-python/blob/1c8f03ff0e9dd8adcab9e4ebb5b96bb6e1efc071/src/honcho_core/resources/workspaces/peers/peers.py),
+  [sessions.py](https://github.com/plastic-labs/honcho-python/blob/1c8f03ff0e9dd8adcab9e4ebb5b96bb6e1efc071/src/honcho_core/resources/workspaces/sessions/sessions.py),
+  and their message helpers/types supply native v2 create/context/message/workspace-delete request shapes. Apache-2.0.
+
+Modified for Branch: owner opt-in, bounded scrubbed text, untrusted-context labeling, explicit lifecycle
+integration, late credential references, cancellation, network/local-only/profile/permission checks,
+generated person namespaces and immutable deletion journals. Mem0 inference is disabled; accepted
+Branch facts are neither uploaded nor replaced. No SDK dependency or initialization probe is added.
+Original upstream licenses are retained in `licenses/hermes-agent-MIT.txt`,
+`licenses/mem0-APACHE-2.0.txt` and `licenses/honcho-python-APACHE-2.0.txt`.
+These source adaptations have not been validated against a running service in this delivery.
+
 ## Qdrant JavaScript client and Chroma JavaScript client — native vector protocols
 
 `src/vector-store-remote.ts` adapts request construction and native collection/upsert/query/scroll/
