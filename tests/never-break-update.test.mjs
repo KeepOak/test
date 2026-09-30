@@ -21,7 +21,9 @@ import {
 } from "../dist/never-break/canary.js";
 import { Gateway } from "../dist/never-break/gateway.js";
 import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gateway-config.js";
-import { rollBackUpdate } from "../dist/never-break/worker-link.js";
+import { rollBackUpdate, RollbackRefusedError } from "../dist/never-break/worker-link.js";
+import { readPointer, writePointer } from "../dist/desktop/app-folders.js";
+import { DatabaseSync } from "node:sqlite";
 
 const posix = process.platform !== "win32";
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("BRANCH_") && name !== "NODE_OPTIONS"));
@@ -150,8 +152,49 @@ test("Windows rolls back through the hidden launcher, with no console window", a
   const script = await rollBackUpdate({ from: "1.0.0", to: "2.0.0", target: "C:\\Apps\\Branch Agent", platform: "win32",
     executableName: "Branch Agent.exe", startedAt: new Date().toISOString() }, root, async (...args) => { launched.push(args); return "task"; });
   assert.match(script, /roll-back\.cmd$/);
-  assert.equal(launched[0][2].platform, "win32", "the Windows hand-over (scheduled task + hidden script host) starts it");
+  assert.equal(launched[0][2].platform, "win32", "the Windows hand-over (scheduled task + runner, no script host) starts it");
+  assert.equal(launched[0][2].runtime, "C:\\Apps\\Branch Agent", "its runner is linked from the installed program");
   assert.match(await readFile(script, "utf8"), /previous version is back/);
+});
+
+/** A versioned install (src/desktop/app-folders.ts): app-1.0.0 before, app-2.0.0 in use and being watched. */
+async function versionedInstall(root) {
+  for (const folder of ["app-1.0.0", "app-2.0.0"]) { await mkdir(join(root, "install", folder), { recursive: true }); await writeFile(join(root, "install", folder, "Branch Agent.exe"), "stand-in"); }
+  await writePointer(join(root, "install"), { folder: "app-2.0.0", version: "2.0.0", previous: { folder: "app-1.0.0", version: "1.0.0" }, at: new Date().toISOString() });
+  await mkdir(join(root, "data"), { recursive: true });
+  return { from: "1.0.0", to: "2.0.0", target: join(root, "install", "app-2.0.0"), platform: "win32", executableName: "Branch Agent.exe",
+    startedAt: new Date().toISOString(), understood: 3 };
+}
+
+test("Windows with versioned folders goes back by the pointer, then starts the version before once the gateway has closed", async (t) => {
+  const root = await temp(t);
+  const watch = await versionedInstall(root);
+  const launched = [];
+  const script = await rollBackUpdate(watch, join(root, "data"), async (...args) => { launched.push(args); return "task"; });
+  assert.equal((await readPointer(join(root, "install"))).folder, "app-1.0.0", "going back is one rename, made at once");
+  const text = await readFile(script, "utf8");
+  assert.match(text, /start "" ".*app-1\.0\.0[\\/]Branch Agent\.exe"/);
+  assert.doesNotMatch(text, /robocopy/i, "nothing is copied");
+  assert.equal(launched[0][1], process.pid, "the script waits for this gateway");
+  assert.equal(launched[0][2].runtime, join(root, "install", "app-1.0.0"));
+});
+
+test("Windows with versioned folders refuses to go back when the version before cannot read the saved work", async (t) => {
+  const root = await temp(t);
+  const watch = await versionedInstall(root);
+  const store = new DatabaseSync(join(root, "data", "branch.sqlite"));
+  closeFirst(t, () => undefined);
+  store.exec("PRAGMA user_version = 5; CREATE TABLE branch_format(id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL, readable_by INTEGER NOT NULL, changed_at TEXT NOT NULL); INSERT INTO branch_format VALUES (1, 5, 5, 'now')");
+  store.close();
+  const launched = [];
+  await assert.rejects(rollBackUpdate(watch, join(root, "data"), async (...args) => { launched.push(args); return "task"; }),
+    (error) => error instanceof RollbackRefusedError && /cannot read/.test(error.message));
+  assert.equal((await readPointer(join(root, "install"))).folder, "app-2.0.0", "nothing changed");
+  assert.deepEqual(launched, []);
+  await assert.rejects(rollBackUpdate({ ...watch, understood: 5 }, join(root, "data"), async () => "task").then(async () => {
+    // Readable now: it goes back; a second time there is nothing before it.
+    await rollBackUpdate({ ...watch, understood: 5 }, join(root, "data"), async () => "task");
+  }), (error) => error instanceof RollbackRefusedError && /nothing to go back to/.test(error.message));
 });
 
 test("the Windows update keeps the version before the previous one too", async (t) => {

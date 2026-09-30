@@ -56,22 +56,41 @@ export class Rewinds {
   /**
    * The runtime hook: called once as a task starts, after its message is written. Records which
    * message started which task and, when git is here, the workspace as it stood. Never fails a task.
+   *
+   * chat-speed: the snapshot is begun here but not waited for. Three git runs took 8 and 23 seconds on the owner's
+   * computer (2026-09-29), all of it before the model was even asked, so a Telegram "Hi" waited on the disk. Nothing
+   * can change the workspace before a tool call, and every call that can waits for it first (beforeChange).
    */
   async turnStarted(run: Run): Promise<void> {
     const last = this.db.prepare("SELECT MAX(id) AS id FROM messages WHERE session_id=?").get(run.sessionId);
     if (!last?.id) return;
+    const rowId = Number(last.id);
     // The row is kept whatever the switch says: it is what ties a message to its task for the copies.
-    const tree = this.mode() === "on" ? await this.snapshotNow() : null;
     this.db.prepare("INSERT OR REPLACE INTO turn_snapshots VALUES(?,?,?,?,?)")
-      .run(Number(last.id), run.sessionId, run.id, tree, new Date().toISOString());
+      .run(rowId, run.sessionId, run.id, null, new Date().toISOString());
+    if (this.mode() !== "on") return;
+    const taking = this.snapshotNow().then((tree) => {
+      try { if (tree) this.db.prepare("UPDATE turn_snapshots SET tree=? WHERE row_id=? AND run_id=? AND tree IS NULL").run(tree, rowId, run.id); }
+      catch { /* Branch closed meanwhile; like a snapshot that could not be taken, it never fails anything */ }
+    }).finally(() => this.begun.delete(taking));
+    this.begun.add(taking);
+  }
+  /** Snapshots begun as tasks started and not yet written down. */
+  private readonly begun = new Set<Promise<void>>();
+  /** Resolves once every snapshot begun so far is written down (never rejects). */
+  async settled(): Promise<void> {
+    await Promise.all([...this.begun]);
   }
 
   /**
-   * "When needed": called before every tool call. The first call in a task that can change
-   * something records the workspace as it still is; reading calls, and every later call, cost nothing.
+   * Called before every tool call. A call that can change something first waits for the snapshot begun as its task
+   * started ("on"). "When needed": the first such call in a task records the workspace as it still is; reading
+   * calls, and every later call, cost nothing.
    */
   async beforeChange(runId: string, tool: string): Promise<void> {
-    if (this.mode() !== "when-needed" || !runId || !this.changes(tool)) return;
+    if (!runId || !this.changes(tool)) return;
+    await this.settled();
+    if (this.mode() !== "when-needed") return;
     const row = this.db.prepare("SELECT row_id, tree FROM turn_snapshots WHERE run_id=?").get(runId);
     if (!row || row.tree !== null) return;
     let pending = this.taking.get(runId);
@@ -111,6 +130,7 @@ export class Rewinds {
     const start = this.db.prepare("SELECT id FROM messages WHERE session_id=? AND source_id=?").get(id, wanted.messageId);
     if (!start) throw new Error("That message is not in this conversation");
     const fromRow = Number(start.id);
+    await this.settled(); // a snapshot still being taken for that message's task is the one to go back to
     const record = { id: randomUUID(), cut: null as CutConversation | null, method: "none" as FilesMethod, beforeTree: null as string | null, beforeCopy: null as string | null };
     this.requireIdle(id);
     let files: FilesOutcome | null = null;

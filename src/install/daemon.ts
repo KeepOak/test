@@ -6,6 +6,15 @@ import { launchdCommand, launchdPlistPath } from "./launchd.js";
 import { systemdCommand, systemdUnitPath } from "./systemd.js";
 
 /**
+ * Windows Script Host text that runs a command with window style 0 (hidden) and does not wait. The sign-in task no
+ * longer uses it (src/install/gateway-task.ts), nor does the update hand-over (src/desktop/hand-over.ts); only the fresh
+ * engine an update starts does (src/install/old-engine.ts).
+ */
+export function hiddenRunner(command: string): string {
+  return `CreateObject("WScript.Shell").Run "${command.replace(/"/g, '""')}", 0, False\r\n`;
+}
+
+/**
  * Keeping Branch working with the window closed. The operating system starts Branch's background gateway when the
  * person signs in, with no window at all, and starts it again if it stops by accident, so timed jobs, chat channels
  * and triggers keep running. The app window, when it is opened later, joins that running gateway instead of starting
