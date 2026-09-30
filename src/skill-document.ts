@@ -1,5 +1,6 @@
 import { parseDocument } from "yaml";
 import { z } from "zod";
+import { normalizeSkillMetadata } from "./skill-metadata.js";
 
 export const skillDocumentLimit = 16000;
 export const skillMetadataSchema = z.object({
@@ -25,7 +26,7 @@ export function parseSkillDocument(document: string): SkillMetadata {
   if (!match[2]!.trim()) throw new Error("Skill instructions cannot be empty");
   const parsed = parseDocument(match[1]!, { strict: true, uniqueKeys: true });
   if (parsed.errors.length || parsed.warnings.length) throw new Error("Invalid skill YAML metadata");
-  const metadata = skillMetadataSchema.parse(parsed.toJS({ maxAliasCount: 0 }));
+  const metadata = skillMetadataSchema.parse(normalizeSkillMetadata(parsed.toJS({ maxAliasCount: 0 })));
   if (JSON.stringify({ document, metadata }).length > 60000)
     throw new Error("Encoded skill document exceeds the tool response limit");
   return metadata;
