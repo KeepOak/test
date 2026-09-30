@@ -45,3 +45,33 @@ The Linux packaged target is implemented but has not been run or validated.
 The changed source has not been compiled, tested or run in this
 delivery; authorized tests remain necessary. PR #1138 is an explicit prerequisite
 carried unchanged before this change's separate commit.
+
+Native Windows/macOS extension (stacked on #1155): the owner explicitly selects
+one to three fixed read-only journeys in Settings. Windows uses Windows Sandbox,
+with networking, clipboard, audio/video and printers disabled. Only the exact
+copy (read-only) and a new dedicated temp artifact/home directory (writable)
+are mapped. Portable Node must be prepared inside qa-runtime; copied package,
+runtime and dependencies containing links/junctions are refused. The worker
+requires WDAGUtilityAccount and schedules Sandbox shutdown even on a worker crash.
+No owner executable or data folder is mapped.
+
+macOS uses sandbox-exec around the worker and every descendant: deny-default,
+read access limited to OS libraries, the approved source copy, Node executable
+and dedicated temp root; write access limited to that temp root; network limited
+to loopback. Missing/deprecated sandbox-exec or unavailable Electron services
+holds execution; there is no unrestricted host fallback. Child process groups
+are terminated on cancellation/deadline. Windows cleanup targets only the spawned
+Sandbox launcher; Sandbox-internal shutdown supplies an independent deadline.
+
+The actual packaged Electron child must report the selected SHA, expected plain
+executable, dedicated userData and random worker identity, with a distinct live
+PID. Playwright launches that child; it never connects to an existing desktop or
+CDP endpoint. Rendered journey assertions and screenshots use that child's first
+window. Artifacts contain real observations only after a future authorized run.
+Native runs do not reuse container-focused tests: they are UI observation jobs;
+contract testing remains a separate Test-copy job before human publication.
+
+SELF210 remains partial: native runners are implemented source, not validated
+runtime proof; journeys cover Settings reading only. Arbitrary workflows and
+whole-app installed-app acceptance remain outstanding. No app, test, build,
+model or provider was executed in this delivery.

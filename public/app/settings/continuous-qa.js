@@ -14,7 +14,7 @@ export function initContinuousQa() {
     const field = (id) => document.getElementById(id);
     try {
       const settings = { ...state?.settings, enabled: field("qa-enabled").checked, copyId: field("qa-copy").value.trim() || null,
-        target: field("qa-target").value,
+        target: field("qa-target").value, journeys: ["settings-reading", "usage-reading", "self-reading"].filter((id) => field("qa-journey-" + id).checked),
         intervalMinutes: Number(field("qa-interval").value), maxCyclesPerDay: Number(field("qa-cycles").value),
         modelFixes: field("qa-model").checked, preset: field("qa-preset").value.trim(),
         fixTokens: Number(field("qa-tokens").value), dailyFixTokens: Number(field("qa-daily-tokens").value),
@@ -28,7 +28,9 @@ export function continuousQaSection() {
   const input = (id, label, value, type = "text") => `<label>${esc(label)}<input id="${id}" type="${type}" value="${esc(value)}"></label>`;
   return `<section class="sec"><h2>Continuous isolated QA</h2>
     <p>Use a prepared Test copy, never your installed app. Fixed navigation clicks only; no editing, deletion, sending, purchases or safety changes.</p>
-    <label>Isolated target<select id="qa-target"><option value="web" ${s.target !== "desktop-copy" ? "selected" : ""}>Browser app</option><option value="desktop-copy" ${s.target === "desktop-copy" ? "selected" : ""}>Prepared Linux packaged desktop copy</option></select></label>
+    <label>Isolated target<select id="qa-target"><option value="web" ${!s.target || s.target === "web" ? "selected" : ""}>Browser app</option><option value="desktop-copy" ${s.target === "desktop-copy" ? "selected" : ""}>Prepared Linux packaged desktop copy</option><option value="native-copy" ${s.target === "native-copy" ? "selected" : ""}>Prepared native Windows Sandbox / macOS sandbox copy</option></select></label>
+    <p>Native runs require your explicit read-only journey choices and prepared packaged copy. They never attach your app.</p>
+    ${["settings-reading", "usage-reading", "self-reading"].map((id) => `<label><input id="qa-journey-${id}" type="checkbox" ${(s.journeys ?? []).includes(id) ? "checked" : ""}>${esc(id)}</label>`).join("")}
     <label><input id="qa-enabled" type="checkbox" ${s.enabled ? "checked" : ""}>Enable recurring observations</label>
     ${input("qa-copy", "Prepared Test copy ID", s.copyId ?? "")}
     ${input("qa-interval", "Minutes between cycles (30–1440)", s.intervalMinutes ?? 120, "number")}
