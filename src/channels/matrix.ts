@@ -1,3 +1,4 @@
+import { calledByName, type GroupReading } from "./addressing.js";
 import { randomUUID } from "node:crypto";
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
@@ -35,7 +36,10 @@ export interface MatrixOptions {
 }
 const eventSchema = z.object({
   type: z.string(), event_id: z.string().optional(), sender: z.string().optional(),
-  content: z.object({ msgtype: z.string().optional(), body: z.string().optional(),
+  content: z.object({ msgtype: z.string().optional(), body: z.string().optional(), formatted_body: z.string().optional(),
+    /** Intentional mentions (Matrix 1.7): the users a message is for. */
+    "m.mentions": z.object({ user_ids: z.array(z.string()).optional() }).passthrough().optional(),
+    "m.relates_to": z.object({ "m.in_reply_to": z.object({ event_id: z.string().optional() }).passthrough().optional() }).passthrough().optional(),
     /** A file's own address on the homeserver (mxc://server/id), and what it is. */
     url: z.string().max(500).optional(),
     info: z.object({ mimetype: z.string().max(100).optional(), size: z.number().optional(), duration: z.number().optional() }).passthrough().optional(),
@@ -46,6 +50,8 @@ const syncSchema = z.object({
   rooms: z.object({
     join: z.record(z.string(), z.object({
       timeline: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
+      /** How many have joined, when the server says: two is a direct chat with the assistant. */
+      summary: z.object({ "m.joined_member_count": z.number().optional() }).passthrough().optional(),
     }).passthrough()).default({}),
   }).passthrough().optional(),
 }).passthrough();
@@ -140,13 +146,16 @@ export class MatrixAdapter implements ChannelAdapter {
     const first = this.since === undefined;
     this.since = body.next_batch;
     const messages: InboundMessage[] = [];
-    for (const [roomId, room] of Object.entries(body.rooms?.join ?? {}))
+    for (const [roomId, room] of Object.entries(body.rooms?.join ?? {})) {
+      const joined = room.summary?.["m.joined_member_count"];
+      if (joined !== undefined) this.members.set(roomId, joined);
       for (const event of room.timeline?.events ?? []) {
         if (event.type === "m.room.encrypted") { this.encryptedSeen++; continue; }
         const inbound = event.type === "m.reaction" ? this.answer(roomId, event) : this.inbound(roomId, event);
         // The first answer carries whatever was already there; answering it would reply to history.
         if (inbound && !first) messages.push(inbound);
       }
+    }
     return messages;
   }
   /** Questions a 👍 / 👎 annotation may answer, by the question's own event id (src/channels/reaction-answers.ts). */
@@ -201,13 +210,26 @@ export class MatrixAdapter implements ChannelAdapter {
       if (this.received.size > 200) this.received.delete(this.received.keys().next().value!);
     }
     const name = this.options.userId.split(":")[0]!.replace(/^@/, "");
+    // A room of two (the person and the assistant) is a direct chat; the server says how many have joined.
+    const direct = this.directRoom(roomId);
+    const content = event.content ?? {};
+    const mentioned = text.includes(this.options.userId) || (content.formatted_body ?? "").includes(this.options.userId)
+      || (content["m.mentions"]?.user_ids ?? []).includes(this.options.userId);
+    const replyTo = content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
+    const repliedTo = !!replyTo && [...this.sent.values()].includes(replyTo);
     return {
-      channel: this.id, chatId, chatKind: "group", chatTitle: roomId,
+      channel: this.id, chatId, chatKind: direct ? "direct" : "group", ...(direct ? {} : { chatTitle: roomId }),
       senderId: handle(sender, "who"), senderName: sender, text,
-      addressed: text.includes(this.options.userId) || text.includes(name),
+      addressed: direct || mentioned || repliedTo || calledByName(text, [name]),
       messageId,
     };
   }
+  /** A room with only the person and the assistant (the server's joined count of two) is a direct chat. */
+  private directRoom(roomId: string): boolean { return (this.members.get(roomId) ?? 3) <= 2; }
+  /** How many have joined each room, from the server's room summary. */
+  private readonly members = new Map<string, number>();
+  /** An unencrypted room hands the assistant every message in it. */
+  async groupReading(): Promise<GroupReading> { return { everyMessage: true }; }
   /**
    * CHAT-105: a picture, video or file sent to the room comes in as the task's material, and an audio message as a voice
    * note to transcribe. Fetched only once the message is answered, from this homeserver's own authenticated media.
@@ -222,8 +244,10 @@ export class MatrixAdapter implements ChannelAdapter {
     const host = new RegExp(`^${new URL(this.base).hostname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
     const bytes = () => fetchCapped(this.fetch, `${this.base}/_matrix/client/v1/media/download/${encodeURIComponent(mxc[1]!)}/${encodeURIComponent(mxc[2]!)}`,
       { headers: { authorization: `Bearer ${this.options.accessToken}` } }, host, content.msgtype === "m.audio" ? "voice note" : "file", content.info?.size ?? 0);
-    const base = { channel: this.id, chatId, chatKind: "group" as const, chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
-      text: "", addressed: false, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+    // #649: a room of two is a direct chat, so a file sent there is for the assistant; in a group it waits to be asked about.
+    const direct = this.directRoom(roomId);
+    const base = { channel: this.id, chatId, chatKind: direct ? "direct" as const : "group" as const, ...(direct ? {} : { chatTitle: roomId }),
+      senderId: handle(sender, "who"), senderName: sender, text: "", addressed: direct, messageId: handle(event.event_id ?? randomUUID(), "msg") };
     if (content.msgtype === "m.audio")
       return { ...base, voice: { mediaType, seconds: content.info?.duration !== undefined ? content.info.duration / 1000 : undefined, bytes } };
     return { ...base, attachments: [{ name: content.body || "file", sourceId: mxc[2]!, mediaType, kind: attachmentKind(mediaType),
@@ -345,7 +369,9 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!value) return null;
     const chatId = handle(roomId, "room");
     if (chatId !== roomId) this.rooms.set(chatId, roomId);
-    return { channel: this.id, chatId, chatKind: "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
+    // The same room rule as a message: a room of two is a direct chat, so a person's own per-person yes applies there.
+    const direct = this.directRoom(roomId);
+    return { channel: this.id, chatId, chatKind: direct ? "direct" : "group", ...(direct ? {} : { chatTitle: roomId }), senderId: handle(sender, "who"), senderName: sender,
       text: value, addressed: true, messageId: handle(event.event_id ?? randomUUID(), "msg") };
   }
   /** Questions this adapter asked with reactions: the question's event, and what each reaction on it answers. */

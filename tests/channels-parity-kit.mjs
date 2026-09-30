@@ -165,20 +165,29 @@ export async function socketService(t, onConnect, { json = true } = {}) {
  * `say(text)` makes the service deliver a message from the stranger; `sent()` lists what the
  * assistant has sent so far, as plain strings.
  */
-export async function pairingWalk({ app, provider }, { say, sent, label = "service" }) {
+export async function pairingWalk({ app, provider }, { say, sent, label = "service", group = false }) {
   await say("hello there");
-  const offer = await until(() => sent().find((text) => /\b\d{6}\b/.test(text)), `${label}: pairing code`);
+  // UP-CHAT-007: a direct chat is sent its code; in a group the code is never posted, and the request waits for the
+  // owner under Settings → Channels.
+  const offer = group
+    ? (await until(() => app.channels.summary().pending[0], `${label}: a pairing request`)).code
+    : /\b(\d{6})\b/.exec(await until(() => sent().find((text) => /\b\d{6}\b/.test(text)), `${label}: pairing code`))[1];
+  if (group) { await delay(50); assert.ok(!sent().some((text) => text.includes(offer)), `${label}: no code is posted in a group`); }
   assert.equal(provider.requests.length, 0, `${label}: a stranger never reaches the model`);
-  app.channels.approve(app.runtime.owner, { code: /\b(\d{6})\b/.exec(offer)[1] });
+  app.channels.approve(app.runtime.owner, { code: offer });
   await say("what is the time");
   const answer = await until(() => sent().find((text) => /Echo:.*what is the time/.test(text)), `${label}: an answer`);
   return answer;
 }
 
-/** With pairing off and nobody on the list, a stranger is refused and the model is never asked. */
+/**
+ * With pairing off and nobody on the list, a stranger is refused and the model is never asked. UP-CHAT-008: the refusal
+ * is silent, so it does not even confirm the bot is there.
+ */
 export async function refusalWalk({ provider }, { say, sent, label = "service" }) {
+  const before = sent().length;
   await say("let me in please");
-  await until(() => sent().some((text) => /private/i.test(text)), `${label}: the refusal`);
-  await delay(50);
+  await delay(400);
+  assert.equal(sent().length, before, `${label}: a refused stranger is told nothing`);
   assert.equal(provider.requests.length, 0, `${label}: a refused stranger never reaches the model`);
 }

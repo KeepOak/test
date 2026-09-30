@@ -15,7 +15,7 @@ import { buildConnection } from "../provider-factory.js";
 import { codexModelsFor } from "../codex-models.js";
 import { CliAgentProvider, accountHomeVariables, claudeDefaultEffort, claudeDefaultModel, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
 import { ClaudeSubscriptionProvider, type ClaudeSubscriptionDependencies } from "../providers/claude-subscription.js";
-import { claudeCodePool, claudeSubscriptionPreset } from "../providers/claude-models.js";
+import { type ClaudePickerRow, claudeCodePool, claudeSubscriptionPreset, claudeSubscriptionWindow, longContextIncluded } from "../providers/claude-models.js";
 import { currentAccountCall, refuseSignInForTrunk, withAccountCall } from "./context.js";
 import type { Store } from "../store.js";
 import { ChatGPTAccounts } from "./chatgpt-accounts.js";
@@ -23,12 +23,14 @@ import { claudePlanWindows, PlanWindowStore } from "../plan-windows.js";
 import { codexPlanWindows, type PlanWindowSaid } from "../rate-limit-headers.js";
 import type { AccountState } from "./pool.js";
 import { firstChoice, freshState, unavailable } from "./pool.js";
-import { pooled, unwrapProvider, type TrunkMove } from "./pool-provider.js";
+import { pooled, trunkOrder, unwrapProvider, type TrunkMove } from "./pool-provider.js";
 import {
   type Account, type AccountKind, type Pool, accountsSettings, applyPoolingRule, keyName, keyProject, primaryAccount,
   saveAccountsSettings, saveSessionChoice, savedAccountsSettings, sessionChoice,
 } from "./settings.js";
 import { AccountUsageLedger } from "./usage.js";
+import { AccountRestStore } from "./rests.js";
+import { AccountLeases, defaultJobsPerAccount } from "./leases.js";
 import { mergeChatGPTDuplicates } from "./dedupe.js";
 import { checkProgram, type RunStatus } from "./sign-ins.js";
 import { accountPresentation, identityKey, type AccountIdentity, type AccountSignIn } from "./identity.js";
@@ -56,7 +58,7 @@ export interface AccountsDeps {
   now?: () => number;
 }
 export interface HelperAccountRef { pool: string; account: string }
-export interface HelperConnection { preset: ModelPreset; accountRef?: Readonly<HelperAccountRef> }
+export interface HelperConnection { preset: ModelPreset; accountRef?: Readonly<HelperAccountRef>; release?: () => void }
 
 /** The lists whose plan can be read from the service itself, without a message; and how often, per account. */
 export const planReadEveryMs: Readonly<Record<string, number>> = {
@@ -71,6 +73,10 @@ export const planReadEveryMs: Readonly<Record<string, number>> = {
  */
 export class AccountsService {
   readonly ledger: AccountUsageLedger;
+  /** Each account's rest, kept on disk so a restart does not undo it (src/accounts/rests.ts). */
+  readonly rests: AccountRestStore;
+  /** MODEL-050: which accounts helpers are working through now, so parallel helpers spread out (src/accounts/leases.ts). */
+  readonly leases = new AccountLeases();
   readonly chatgptAccounts: ChatGPTAccounts;
   /** What each sign-in's plan windows were last measured at, per account, kept across restarts. */
   readonly planWindows: PlanWindowStore;
@@ -89,6 +95,7 @@ export class AccountsService {
 
   constructor(readonly deps: AccountsDeps) {
     this.ledger = new AccountUsageLedger(deps.store.sqlite);
+    this.rests = new AccountRestStore(deps.store.sqlite);
     // Read when each sign-in is made, so a test can hand in its stand-in service afterwards.
     this.chatgptAccounts = new ChatGPTAccounts({
       locker: deps.store.locker, owner: deps.owner, userAgent: deps.userAgent, get fetch() { return deps.fetchImpl; },
@@ -156,6 +163,11 @@ export class AccountsService {
     const asked = this.claudeReads.then(() => (this.deps.claudeUsage ?? runClaudeUsage)(env));
     this.claudeReads = asked.catch(() => undefined);
     const answer = await asked;
+    // provider-audit: the same run says the account's plan and model picker, which decide its 1M route.
+    if (answer.plan !== undefined || answer.picker) {
+      this.claudePlans.set(`${pool}/${account}`, { plan: answer.plan ?? null, picker: answer.picker ?? [] });
+      this.syncClaudeWindows();
+    }
     const said = claudeUsageWindows(answer, this.now());
     if (!said.length) throw new Error(claudeNoLimits);
     return said;
@@ -230,6 +242,25 @@ export class AccountsService {
       message: status.message, checkedAt: this.now() });
     if (status.signedIn && status.identity?.email) this.identities.set(key, status.identity.email);
     else this.identities.delete(key);
+    if (pool === claudeCodePool) this.syncClaudeWindows();
+  }
+  /** provider-audit: what each Claude account's `initialize` answer last said about its plan and model picker. */
+  private readonly claudePlans = new Map<string, { plan: string | null; picker: ClaudePickerRow[] }>();
+  /** Whether this Claude account's plan includes `model`'s 1M route: its `initialize` answer, else its `auth status`. */
+  private claudeLongContext(pool: string, account: string, model: string): boolean {
+    const read = this.claudePlans.get(`${pool}/${account}`);
+    return longContextIncluded(model, read?.plan ?? this.cachedSignIn(pool, account).identity?.plan, read?.picker ?? []);
+  }
+  /** A Claude preset budgets for 1M only when every account that can answer it has the 1M route included. */
+  private claudeWindow(model: string): number {
+    const listed = this.on() ? this.pool(claudeCodePool)?.accounts.filter((account) => !account.disabled).map((account) => account.id) ?? [] : [];
+    const answering = listed.length ? listed : [primaryAccount];
+    return claudeSubscriptionWindow(model, answering.every((account) => this.claudeLongContext(claudeCodePool, account, model)));
+  }
+  /** Registers a Claude preset again (through `wrap`) when what the plans say changes the window it budgets for. */
+  private syncClaudeWindows(): void {
+    for (const preset of [...this.deps.models.presets.values()])
+      if (claudeSubscriptionPreset(preset.id) && preset.contextWindow !== this.claudeWindow(preset.model)) this.deps.models.register(preset);
   }
   presentation(pool: string, account: Pick<Account, "id" | "label" | "disabled">, kind?: AccountKind) {
     if (!this.identityVisible()) return { ...accountPresentation(account.label), signedIn: null, duplicateOf: null,
@@ -263,7 +294,8 @@ export class AccountsService {
   pool(pool: string): Pool | null { return this.settings().pools.find((entry) => entry.pool === pool) ?? null; }
   statesOf(pool: string): Map<string, AccountState> {
     let found = this.states.get(pool);
-    if (!found) this.states.set(pool, found = new Map());
+    // The rests saved before a restart come back first: the map is handed to the pool by reference.
+    if (!found) this.states.set(pool, found = this.rests.load(this.deps.owner, pool, this.now()));
     return found;
   }
   stateOf(pool: string, account: string): AccountState { return this.statesOf(pool).get(account) ?? freshState(); }
@@ -285,6 +317,8 @@ export class AccountsService {
     // Branch's default, Opus 5.5 at medium; a model it names and an effort already set are left as they are.
     if (claude && preset.model === "claude") preset = { ...preset, model: claudeDefaultModel };
     if (preset.id === claudeCodePool && !preset.reasoning) preset = { ...preset, reasoning: claudeDefaultEffort };
+    // provider-audit: 200K, the window Claude Code keeps behind the relay, or 1M where every account's plan includes it.
+    if (claude) preset = { ...preset, contextWindow: this.claudeWindow(preset.model) };
     const original = claude ? this.programConnection(claudeCodePool, primaryAccount, preset.model) : unwrapProvider(preset.provider);
     // The program's first account is the connection itself: what it prints about its plan is that account's.
     if (claude && (original instanceof CliAgentProvider || original instanceof ClaudeSubscriptionProvider) && !original.onOutput)
@@ -310,6 +344,7 @@ export class AccountsService {
       refresh: (account: string) => this.refreshSignIn(kind, account),
       capReached: (account: Account) => this.capReached(pool, account),
       record: (account: Account, completion: Completion) => this.record(pool, account, preset.model, completion),
+      saveRest: (account: string, state: AccountState) => this.rests.save(owner, pool, account, state, this.now()),
       personIsNotOwner: () => store.profiles.scope() !== owner,
       sessionChoice: (sessionId: string) => sessionChoice(store, owner, sessionId)[pool] ?? null,
       rememberChoice: (sessionId: string, account: string) => {
@@ -346,8 +381,10 @@ export class AccountsService {
   private record(pool: string, account: Account, model: string, completion: Completion): void {
     const usage = completion.usage ?? { input: 0, output: 0 };
     const kind = this.pool(pool)?.kind;
+    // The cache reads and writes are parts of the input, priced at their own rates (src/pricing.ts).
+    const tokens = { input: usage.input, output: usage.output, cached: usage.cachedInput, cacheWrite: usage.cacheWrite, cacheWrite1h: usage.cacheWrite1h };
     const cost = kind === "api-key"
-      ? estimateCost(model, usage, pricingSettings(this.deps.store, this.deps.owner).overrides).amount ?? 0 : 0;
+      ? estimateCost(model, tokens, pricingSettings(this.deps.store, this.deps.owner).overrides).amount ?? 0 : 0;
     this.ledger.record(this.deps.owner, pool, account.id, { input: usage.input, output: usage.output, costUsd: cost }, new Date(this.now()));
   }
 
@@ -436,7 +473,9 @@ export class AccountsService {
     return made;
   }
   private claudeConnection(pool: string, account: string, model: string): Provider {
-    const native = new ClaudeSubscriptionProvider({ owner: this.deps.owner, model: model === "claude" ? claudeDefaultModel : model,
+    const named = model === "claude" ? claudeDefaultModel : model;
+    const native = new ClaudeSubscriptionProvider({ owner: this.deps.owner, model: named,
+      longContext: () => this.claudeLongContext(pool, account, named),
       accountHome: { name: "CLAUDE_CONFIG_DIR", path: account === primaryAccount ? this.primaryClaudeHome : this.homeOf(pool, account) } }, this.deps.claudeSubscription);
     native.onOutput = (stdout) => this.notePlanWindows(pool, account, claudePlanWindows(stdout, this.now()));
     return new Proxy(native, { get: (target, property) => {
@@ -473,16 +512,38 @@ export class AccountsService {
     if (found.kind !== "api-key") await this.readIdentities();
     this.authorizeHelper();
     const pool = this.usablePool(found.pool);
-    const account = asked?.account ?? sessionChoice(this.deps.store, this.deps.owner, parentSessionId)[found.pool]
-      ?? pool?.defaultAccount ?? primaryAccount;
-    this.requireHelperAccount(found.pool, found.kind, account);
-    const address = this.addressOf(preset.id);
-    const chosen = await this.providerFor(found.pool, found.kind, preset, account);
-    if (!chosen && account !== primaryAccount) throw new Error("The helper's exact account could not be bound");
-    const bound = chosen ?? unwrapProvider(preset.provider); // only the connection's own primary provider
-    this.authorizeHelper();
-    const ref = Object.freeze({ pool: found.pool, account });
-    return { preset: Object.freeze({ ...preset, provider: this.helperProvider(bound, preset, ref, found.kind, address) }), accountRef: ref };
+    const preferred = sessionChoice(this.deps.store, this.deps.owner, parentSessionId)[found.pool] ?? pool?.defaultAccount ?? primaryAccount;
+    // MODEL-050: a helper no account was named for takes the least-leased ready account, so helpers side by side spread.
+    const lease = asked ? null : this.leaseHelperAccount(pool, found.kind, preset.model, preferred);
+    const account = asked?.account ?? lease?.account ?? preferred;
+    try {
+      this.requireHelperAccount(found.pool, found.kind, account);
+      const address = this.addressOf(preset.id);
+      const chosen = await this.providerFor(found.pool, found.kind, preset, account);
+      if (!chosen && account !== primaryAccount) throw new Error("The helper's exact account could not be bound");
+      const bound = chosen ?? unwrapProvider(preset.provider); // only the connection's own primary provider
+      this.authorizeHelper();
+      const ref = Object.freeze({ pool: found.pool, account });
+      return { preset: Object.freeze({ ...preset, provider: this.helperProvider(bound, preset, ref, found.kind, address) }), accountRef: ref,
+        ...(lease ? { release: lease.release } : {}) };
+    } catch (error) { lease?.release(); throw error; }
+  }
+  /**
+   * MODEL-050 (Hermes Agent's acquire_lease, see src/accounts/leases.ts): the ready accounts of a list that moves on by
+   * itself, the conversation's own first, and the one fewest helpers hold. Null when there is nothing to spread over.
+   * Only accounts this call may use: switched on, signed in, not resting or capped, and a Trunk's own unless it copies.
+   */
+  private leaseHelperAccount(pool: Pool | null, kind: AccountKind, model: string, preferred: string): { account: string; release: () => void } | null {
+    if (!pool?.autoSwitch || pool.accounts.filter((one) => !one.disabled).length < 2) return null;
+    const trunk = currentAccountCall()?.trunk, own = trunk ? trunkOrder(trunk.keys, pool.pool) : [];
+    const ready = pool.accounts.filter((one) => !one.disabled && (!trunk || trunk.keys.copyFromOwner || own.includes(one.id))
+      && unavailable(one, this.stateOf(pool.pool, one.id), model, this.now(), this.capReached(pool.pool, one)) === null
+      && this.helperAccountReady(pool.pool, kind, one.id));
+    const ordered = [...ready].sort((a, b) => Number(b.id === preferred) - Number(a.id === preferred) || Number(b.pinned) - Number(a.pinned));
+    return this.leases.acquire(pool.pool, ordered.map((one) => one.id), pool.jobsPerAccount ?? defaultJobsPerAccount);
+  }
+  private helperAccountReady(pool: string, kind: AccountKind, id: string): boolean {
+    try { this.requireHelperAccount(pool, kind, id); return true; } catch { return false; }
   }
   private helperProvider(bound: Provider, preset: ModelPreset, ref: HelperAccountRef, kind: AccountKind, address: string | null): Provider {
     const authorize = (): void => {
