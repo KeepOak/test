@@ -1,0 +1,9 @@
+/* Whole-turn boundaries make the prompt release when the next question arrives. */
+[data-chat-turn]{display:flex;flex-direction:column;gap:14px;min-width:0}
+[data-sticky-question]{display:flex;justify-content:flex-end;min-width:0;position:relative}
+[data-sticky-question]>.u{margin-left:auto}
+.sticky-prompts:not(.sticky-paused) [data-sticky-question]:not([data-sticky-tall]){position:sticky;top:8px;z-index:3}
+[data-sticky-prompt-clip]{clip-path:inset(var(--sticky-prompt-clip,0px) 0 0 0)}
+/* Tall questions keep ordinary scrolling so an answer still has room; actions and text stay intact. */
+[data-sticky-tall]{position:relative}
+@media print{[data-sticky-question]{position:relative!important}[data-sticky-prompt-clip]{clip-path:none!important}}

@@ -1,4 +1,5 @@
 import { transcriptWindow, paintWeight, initTranscriptWindow, afterTranscriptWindow } from "./transcript-window.js";
+import { afterStickyPrompt } from "./sticky-prompt.js";
 import { privateContext } from "./scroll-follow.js";
 /* The conversation (design doc 4.1–4.4): the header (merged into the title bar on wide windows), the thread, the
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
@@ -131,7 +132,7 @@ const mid = (m) => (m.messageId ? ` data-i15="${esc(m.messageId)}"` : "");
 const acts = (m) => (viewingHelper() ? "" : msgActs(m));
 /* dogfood D15: a Trunk's routine is asked with "[Trunk @handle] " in front, for the scheduler; the thread shows its words. */
 const ownWords = (words) => String(words ?? "").replace(/^\[Trunk @[a-z0-9-]{1,60}\] /, "");
-function user(m) { return `<div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(ownWords(m.content))}${timeLine(m)}${acts(m)}</div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
+function user(m) { return `<div data-sticky-question><div class="u${pinnedClass(m)}${outClass(m)}"${mid(m)}>${esc(ownWords(m.content))}${timeLine(m)}${acts(m)}</div></div>${outBadge(m)}${fileRows(m)}${mediaRows(m)}`; }
 /* A reply is signed as the prototype's are: the face of whoever wrote it when the speaker changes (a Trunk's, or Branch's),
    and in a room the Trunk's name above it. */
 function bot(m, first, who, info) {
@@ -204,8 +205,8 @@ function thread() {
   const typing = C.sending ? `<div class="b"><div class="gut">${av(answerer(), 28)}</div><div>${liveShown() ? liveBlock() : think || `<span class="typing" aria-label="${t("window.chat.typing")}"><i></i><i></i><i></i></span>`}</div></div>` : "";
   const room = info?.kind === "room" ? roomLine(info.room?.members) : "";
   /* pass 18b: a room member's conversation, view only, is its messages alone; its questions are answered in the room. */
-  if (viewingHelper()) return (inRoom === null ? view.controls : "") + marks.start + T.out.join("");
-  return (inRoom === null ? view.controls : "") + summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + computerCard(C.messages) + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending || cardResumes() ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing;
+  if (viewingHelper()) return (inRoom === null ? view.controls : "") + marks.start + T.out.join("") + (T.turn ? "</div>" : "");
+  return (inRoom === null ? view.controls : "") + summaryCard(C.sessionId) + room + marks.start + T.out.join("") + helpersChip() + steeredNotes(list) + planBlock(liveRun()) + stageCard() + computerCard(C.messages) + failedLine(E.state?.runs, C.sessionId, C.sending, T.failed) + rememberCards(C.sessionId) + wakeOffer() + hooked(OUT.notes) + asks + (C.sending || cardResumes() ? "" : pausedCard(E.state?.runs, C.sessionId)) + typing + (T.turn ? "</div>" : "");
 }
 function flushSteps(T) {
   if (!T.calls.length) return;
@@ -241,10 +242,12 @@ function userRow(T, m, i, marks) {
   if (fromChat) { T.out.push(marks.before(m) + chatSteerLine(fromChat) + marks.after(m)); T.lastRole = "steer"; return; }
   flushDecided(T);
   flushFailed(T);
+  if (T.turn) { T.out.push("</div>"); T.turn = false; }
   const a2a = a2aOf(m);
   if (a2a) { T.out.push(marks.before(m) + stampBefore(m, T.prev) + a2aRow(T, m, i, a2a) + marks.after(m)); T.lastRole = "a2a"; return; }
   T.run = runOfPrompt(C.sessionId, m.content, m.at);
   T.worked = false;
+  T.out.push("<div data-chat-turn>"); T.turn = true;
   T.out.push(marks.before(m) + stampBefore(m, T.prev) + droppedNote(m, C.messages) + user(m) + marks.after(m));
   T.lastRole = "user";
 }
@@ -390,6 +393,7 @@ export function after(main) {
     lineAfter(box);
   }
   afterTranscriptWindow();
+  afterStickyPrompt(whoHere()?.kind !== "room" && !viewingHelper());
   applyFind();
   frameAfter(); // pass 18a: the helpers frame's clock, and the character window above it
   loadDictation();
