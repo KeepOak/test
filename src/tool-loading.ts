@@ -441,8 +441,11 @@ export class ToolLoader {
   }
   /**
    * Brings the tool section under its ceiling. The weakest loaded tool is moved down to a line in
-   * the index first, and only when nothing but the core is left is the index itself trimmed; each
-   * step is strictly smaller than the one before, so this always terminates under the budget.
+   * the index first, while it is only a guess or kept from before; a tool the task found or is using
+   * outranks the index, so the index is trimmed before one of those goes. With a thousand tools the
+   * index lines are the product's own guesses too, and a longer one used to push a just-found tool
+   * out of the round that was meant to call it. Each step is strictly smaller than the one before,
+   * so this always terminates under the budget.
    */
   private fit(core: ToolEntry[], wanted: ToolEntry[], listable: ToolEntry[], total: number, role: ReadonlyMap<string, Role>,
     waiting: readonly ToolEntry[] = []): Plan {
@@ -456,7 +459,9 @@ export class ToolLoader {
       if (estimateTokens(descriptions) < this.budgetTokens || (!loaded.length && !lines))
         return { loaded: [...core, ...loaded], indexed, deferred, descriptions };
       const fewer = loaded.length ? withoutWeakest(loaded, role, core) : loaded;
-      if (fewer.length < loaded.length) loaded = fewer;
+      const leaving = loaded.find((entry, at) => fewer[at] !== entry);
+      const asked = leaving !== undefined && ["found", "use"].includes(role.get(leaving.name) ?? "merit");
+      if (fewer.length < loaded.length && !(asked && lines)) loaded = fewer;
       else if (lines) lines = Math.max(0, lines - 4);
       // Only tools the task named itself are left: they travel, as tools.describe said they would.
       else return { loaded: [...core, ...loaded], indexed, deferred, descriptions };

@@ -322,7 +322,8 @@ test("a picture on the composer reaches the run as an image part, and the galler
   assert.ok(carried, "the picture reached the model with the message");
   assert.equal(carried.images[0].data, onePixelPng.toString("base64"));
 
-  await app.artifacts.write(run.body.id.replace(/-/g, "").slice(0, 16), "picture-aabbccdd.png", "image/png", onePixelPng);
+  // Kept under the task that made it: the file route serves a picture only to the profile that owns that task (SCREEN-162).
+  await app.artifacts.write(run.body.id, "picture-aabbccdd.png", "image/png", onePixelPng);
   const gallery = await call("/api/artifacts?type=image");
   assert.equal(gallery.status, 200);
   assert.equal(gallery.body.artifacts.length, 1);

@@ -240,6 +240,10 @@ export interface Provider {
   contextTokens?(): Promise<number | null>;
   /** Optional audio endpoints (OpenAI-compatible transcription and speech); null if unavailable. */
   audio?(): { endpoint: string; apiKey: string } | null;
+  /** Subscription media uses a browser offer and server-owned account authentication. */
+  readonly realtimeTransport?: "chatgpt-webrtc";
+  realtime?(policy: import("./network-policy.js").NetworkPolicy, settings: import("./realtime.js").RealtimeSettings,
+    offer: string, runId: string, signal: AbortSignal): Promise<import("./realtime.js").RealtimeSession>;
   /** Whether this connection can be shown a picture; absent means it cannot. */
   supportsImages?(): boolean;
   /**
