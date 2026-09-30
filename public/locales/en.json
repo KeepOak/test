@@ -7271,6 +7271,7 @@
   "window.flows.chw.default-answers": "Your default Trunk answers here.",
   "window.flows.chw.default-trunk": "default",
   "window.flows.chw.digit": "Digit {n}",
+  "window.flows.chw.dm-policy-hint": "Direct messages only; group rules stay as set. Only me needs your own verified account named on this app. Workspace access is not available yet.",
   "window.flows.chw.found-bot": "Found the bot: @{name}",
   "window.flows.chw.get-app": "Get the {name} app",
   "window.flows.chw.listening": "{name} is saved and listening for its messages",

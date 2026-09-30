@@ -5,7 +5,7 @@
 
 import { $, esc } from "../core/dom.js";
 import { openDlg, closeDlg, toast, ic } from "../core/ui.js";
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, ownerHere, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -15,6 +15,7 @@ import { t } from "../../i18n.js";
 import { manage17d, fixNote17d } from "./chatapps17d.js"; // pass 17 part D §8
 
 let vals = {};
+let wizardRequest = 0;
 /* owner-dm-signin: the App lock PIN typed to name the sender as the owner's own; sent once with the approval, then cleared. */
 let pin = "";
 /* Apps whose servers vouch for who sent each message (src/channels/owner-commands.ts vouchedSenderKinds), as far as the
@@ -84,12 +85,14 @@ function whoAnswers() {
 
 function save(c, w) {
   const who = whoAnswers();
-  const may = [t("window.flows.chw.only-me"), t("window.flows.chw.approved"), t("window.flows.chw.workspace")].map((l, i) => `<button type="button" aria-pressed="${i === 0}" data-act="chw-may">${l}</button>`).join("");
+  const choice = w.dmPolicyChoices?.find((one) => one.channel === (w.result?.channel ?? w.channelId));
+  const may = ["owner", "approved"].map((value) => `<button type="button" data-act="chw-may" data-v="${value}" aria-pressed="${choice?.policy === value}" ${!choice || w.maySaving || !ownerHere() || (value === "owner" && !choice.ownerEligible) ? "disabled" : ""}>${t(value === "owner" ? "window.flows.chw.only-me" : "window.flows.chw.approved")}</button>`).join("")
+    + `<button type="button" disabled aria-pressed="false">${t("window.flows.chw.workspace")}</button>`;
   /* Telegram keeps topics apart. Media intake uses the owner's existing channels/intake endpoint. */
   const tg = c.id === "telegram" ? `<div class="tg15"><div class="ctl"><b>${t("window.flows.chw.topics")}</b><input class="sw" type="checkbox" id="tg-topics15" checked aria-label="${t("window.flows.chw.topics")}" data-sw="set"><small>${t("window.flows.chw.topics-hint")}</small></div><div class="ctl"><b>${t("window.flows.chw.media")}</b><input class="sw" type="checkbox" id="tg-media15" ${w?.intake?.telegramMedia !== false ? "checked" : ""} aria-label="${t("window.flows.chw.media")}" data-sw="tg-media"><small>${t("window.flows.chw.media-hint")}</small></div></div>` : ""; // topic separation remains fixed
   return `<div class="chw-ok12">${ic("check", "s")}<span><b>${t("window.flows.chw.ready", { name: esc(c.name) })}</b><small>${t("window.flows.chw.choose")}</small></span></div>
     <div class="fld"><span>${t("window.flows.chw.who-answers", { name: esc(c.name) })}</span><span class="seg">${who}</span></div>
-    <div class="ctl"><b>${t("window.flows.chw.who-may")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.chw.who-may")}">${may}</span></span><small>${t("window.flows.chw.no-answer")}</small></div>${tg}${w?.result ? liveLine(c, w.result) : ""}${w?.connected ? manage17d(c, w.health) : ""}${c.setUpHere ? `<div class="acts"><button class="btn ghost sm" type="button" data-act="chw-remove">${t("window.flows.chw.remove", { name: esc(c.name) })}</button></div>` : ""}`; // pass 17 part D §8: the app's own page
+    <div class="ctl"><b>${t("window.flows.chw.who-may")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.chw.who-may")}">${may}</span></span><small>${t("window.flows.chw.dm-policy-hint")}</small></div>${tg}${w?.result ? liveLine(c, w.result) : ""}${w?.connected ? manage17d(c, w.health) : ""}${c.setUpHere ? `<div class="acts"><button class="btn ghost sm" type="button" data-act="chw-remove">${t("window.flows.chw.remove", { name: esc(c.name) })}</button></div>` : ""}`; // pass 17 part D §8: the app's own page
 }
 
 const BODIES = { Create: create, Paste: paste, Check: check, Pair: pair, Save: save };
@@ -104,11 +107,13 @@ function draw() {
   const next = cur === "Save" ? `<button class="btn pri" type="button" data-act="chw-save">${t("action.save")}</button>` : `<button class="btn pri" type="button" data-act="chw-next" ${canNext ? "" : "disabled"}>${cur === "Pair" ? t("action.approve") : t("window.flows.chw.continue")}</button>`;
   const head = `<div class="chw-head12">${logo(c.id, c.name, 40)}<span><b>${esc(c.name)}</b><small>${t(FAMILY[c.family] ?? "window.flows.chw.more-apps")}${c.app?.name ? " · " + esc(c.app.name) : ""}</small></span></div>`;
   const prerequisites = `<p class="hint">${esc(c.prerequisites ?? "")}</p>${c.unavailableReason ? `<p role="alert">${esc(c.unavailableReason)}</p>` : ""}`;
-  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${prerequisites}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
+  w.dialog = openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${prerequisites}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
   if (cur === "Pair") setTimeout(() => $('.code12 input[value=""]')?.focus(), 30);
 }
 
 export async function openChatWizard(id, at = null) {
+  const profile = activeId(), request = ++wizardRequest;
+  if (!ownerHere()) return;
   vals = {};
   let recipe, live;
   try {
@@ -116,9 +121,10 @@ export async function openChatWizard(id, at = null) {
   } catch (error) { toast(error.message); return; }
   const here = (live.channels ?? []).find((c) => c.id === id || c.kind === id), connected = !!here;
   const ownerNamed = live.ownerNamed !== false, pinSet = !ownerNamed && (await api("lock").catch(() => ({}))).pinSet === true;
+  if (!ownerHere() || activeId() !== profile || request !== wizardRequest) return;
   // pass 17 part D §8: "Paste a new token" opens a connected app at Paste, saying why.
   const step = at ? Math.max(0, stepsOf(recipe).indexOf(at)) : connected ? stepsOf(recipe).length - 1 : 0;
-  S.chw = { id, recipe, intake: live.intake ?? {}, connected, health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
+  S.chw = { id, recipe, intake: live.intake ?? {}, connected, profile, channelId: here?.id, dmPolicyChoices: live.dmPolicyChoices ?? [], health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
   draw();
 }
 
@@ -157,9 +163,43 @@ async function next() {
   const w = S.chw, steps = stepsOf(w.recipe), cur = steps[w.step];
   if (w.recipe.unavailableReason) { toast(w.recipe.unavailableReason); return; }
   if (cur === "Pair" && !(await approve(w))) return;
+  if (S.chw !== w) return;
   w.step = Math.min(w.step + 1, steps.length - 1);
   if (steps[w.step] === "Check") { w.result = null; w.error = ""; draw(); await runCheck(w); return; }
+  if (steps[w.step] === "Save" && !(await loadDmPolicies(w))) return;
   draw();
+}
+
+function currentWizard(w, dialog) {
+  return S.chw === w && ownerHere() && activeId() === w.profile && w.dialog === dialog && dialog?.isConnected;
+}
+
+async function loadDmPolicies(w) {
+  const dialog = w.dialog;
+  try {
+    const live = await api("channels");
+    if (!currentWizard(w, dialog)) return false;
+    w.dmPolicyChoices = live.dmPolicyChoices ?? [];
+    return true;
+  } catch (error) { if (currentWizard(w, dialog)) toast(error.message); return false; }
+}
+
+async function saveDmPolicy(el) {
+  const w = S.chw, channel = w?.result?.channel ?? w?.channelId;
+  if (!w || !channel || !currentWizard(w, w.dialog) || w.maySaving || !["owner", "approved"].includes(el.dataset.v)) return;
+  w.maySaving = true;
+  draw();
+  const dialog = w.dialog;
+  try {
+    const { intake } = await api("channels/intake", { dmPolicies: { [channel]: el.dataset.v } });
+    if (!currentWizard(w, dialog)) return;
+    const choice = w.dmPolicyChoices.find((one) => one.channel === channel);
+    if (choice) choice.policy = intake.dmPolicies[channel] ?? "approved";
+  } catch (error) { if (currentWizard(w, dialog)) toast(error.message); }
+  finally {
+    w.maySaving = false;
+    if (currentWizard(w, dialog)) draw();
+  }
 }
 
 /* The toast says what really happened: connected, listening for an app that posts to Branch, or saved but not connected. */
@@ -218,10 +258,11 @@ function onInput(e) {
 }
 
 export function init() {
-  markLive(["sw:tg-media15", "sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
+  markLive(["sw:tg-media15", "sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove", "chw-may"]); // the eye shows only what the owner just pasted, never a saved secret
   on("ch-open", (el) => openChatWizard(el.dataset.v));
   on("revfix17d", () => openChatWizard(S.chw?.id ?? "telegram", "Paste")); // pass 17 part D §8: the app whose page this is
   on("chw-remove", () => remove());
+  on("chw-may", (el) => saveDmPolicy(el));
   on("chw-next", () => next());
   on("chw-back", () => { const w = S.chw; vals = {}; w.ask = (w.ask ?? 0) + 1; w.step = Math.max(0, w.step - 1); w.error = ""; w.result = null; draw(); });
   on("chw-save", () => finish());

@@ -7272,6 +7272,7 @@
   "window.flows.chw.default-answers": "Votre Trunk par défaut répond ici.",
   "window.flows.chw.default-trunk": "par défaut",
   "window.flows.chw.digit": "Chiffre {n}",
+  "window.flows.chw.dm-policy-hint": "Messages directs uniquement ; les règles des groupes restent inchangées. « Seulement moi » exige que votre propre compte vérifié soit indiqué sur cette application. L'accès pour l'espace de travail n'est pas encore disponible.",
   "window.flows.chw.found-bot": "Bot trouvé : @{name}",
   "window.flows.chw.get-app": "Obtenir l’application {name}",
   "window.flows.chw.listening": "{name} est enregistré et attend ses messages",

@@ -19,7 +19,7 @@ import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatSte
 import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
 import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
-import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
+import { readChatIntake, saveChatIntake, ChatIntakeSchema, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
 import { chatLiveSwitches, commandsInPairedDm, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
@@ -508,6 +508,31 @@ export class ChannelRouter {
   }
   /** Settings › Chat apps (intake-settings.ts): read fresh each time. */
   intake(): ChatIntake { return readChatIntake(this.store, this.runtime.owner); }
+  /** Called after the request body is read, so a changed profile or lock cannot save stale settings. */
+  saveIntake(input: unknown): ChatIntake {
+    this.store.profiles.requireOwner("Changing chat intake");
+    const change = ChatIntakeSchema.partial().strict().parse(input ?? {});
+    // Who may send direct messages is a safety choice; the other intake fields keep saving under Lockdown, where nothing goes out.
+    const namesDm = typeof input === "object" && input !== null && "dmPolicies" in input; // partial() still fills defaults
+    if (namesDm && (this.appLocked() || lockedDown(this.store, this.runtime.owner)))
+      throw new Error("Unlock Branch and turn off Lockdown before changing who may message a chat app.");
+    for (const [channel, policy] of Object.entries(change.dmPolicies ?? {})) {
+      const adapter = this.adapters.get(channel)?.adapter;
+      if (!adapter) throw new Error("The selected chat app is no longer connected.");
+      if (policy === "owner" && !this.hasOwnDmAccount(adapter))
+        throw new Error("Name your own verified account on this chat app before choosing Only me.");
+    }
+    return saveChatIntake(this.store, this.runtime.owner, change);
+  }
+  private hasOwnDmAccount(adapter: Pick<ChannelAdapter, "id" | "kind">): boolean {
+    if (!vouchedSenderKinds.includes(adapter.kind)) return false;
+    return [...ownerCommands(this.store, this.runtime.owner).accounts, ...platformSettings(this.store, this.runtime.owner).owners]
+      .some((account) => account.channel === adapter.id && !!account.sender);
+  }
+  private directMessageAllowed(message: InboundMessage, adapter: ChannelAdapter): boolean {
+    if (message.chatKind !== "direct" || this.intake().dmPolicies[message.channel] !== "owner") return true;
+    return ownerDmHere(this.store, this.runtime.owner, adapter.kind, { ...message, caughtUp: false });
+  }
   /**
    * Presence: says "Online" or "Offline, back soon" in the bot's short description, on the apps that have one. Never
    * while Lockdown is on (nothing goes out then); a failure is written to the diagnostics, never thrown.
@@ -632,6 +657,8 @@ export class ChannelRouter {
       approved: this.pairs(owner).filter((p) => p.status === "approved"),
       chats: this.chats(owner),
       live: this.switches(),
+      dmPolicyChoices: [...this.adapters.values()].map(({ adapter }) => ({ channel: adapter.id, kind: adapter.kind,
+        policy: this.intake().dmPolicies[adapter.id] ?? "approved", ownerEligible: this.hasOwnDmAccount(adapter) })),
       intake: this.intake(), // Settings › Chat apps: what the Trunk sees, staying connected
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
@@ -723,6 +750,8 @@ export class ChannelRouter {
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
+    // The direct-message policy is decided before any pairing challenge; group rules stay separate.
+    if (!this.directMessageAllowed(message, adapter)) return "rejected";
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
     const held = platformGate(this.store, this.runtime.owner, message);

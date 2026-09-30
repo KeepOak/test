@@ -7271,6 +7271,7 @@
   "window.flows.chw.default-answers": "Dein Standard-Trunk antwortet hier.",
   "window.flows.chw.default-trunk": "Standard",
   "window.flows.chw.digit": "Ziffer {n}",
+  "window.flows.chw.dm-policy-hint": "Nur Direktnachrichten; die Gruppenregeln bleiben wie eingestellt. „Nur ich“ setzt voraus, dass dein eigenes bestätigtes Konto in dieser App angegeben ist. Zugriff für den Arbeitsbereich ist noch nicht verfügbar.",
   "window.flows.chw.found-bot": "Bot gefunden: @{name}",
   "window.flows.chw.get-app": "{name}-App holen",
   "window.flows.chw.listening": "{name} ist gespeichert und wartet auf Nachrichten",
