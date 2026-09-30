@@ -30,7 +30,7 @@ let hooks = { state: () => ({}), reopen: async () => {} };
 
 const fresh = () => ({ runId: null, sessionId: null, service: null, note: "", ready: false, muted: false, seconds: 0,
   timer: null, caption: "", partial: { person: "", assistant: "" }, last: "", nextAt: 0, playing: 0,
-  generation: 0, audioItem: null, sources: new Set(), heardItems: new Map(), playedMs: 0, transport: null, peer: null });
+  generation: 0, audioItem: null, sources: new Set(), heardItems: new Map(), playedMs: 0, transport: null, peer: null, opening: null });
 Object.assign(L, fresh());
 
 /* ---------- the view ---------- */
@@ -193,7 +193,9 @@ async function beginSocket(socket, call) {
   try {
     if (L.transport === "webrtc") {
       const peer = await openPeer({ current: () => current(call) && L.socket === socket, desktop: isDesktop,
-        muted: () => L.muted, speaking: () => setPhase("speaking"), failed: sentence => stop(sentence) });
+        muted: () => L.muted, speaking: () => setPhase("speaking"), failed: sentence => stop(sentence),
+        own: (close) => { L.opening = close; } });
+      L.opening = null;
       if (!peer) return;
       if (!current(call) || L.socket !== socket) { peer.close(); return; }
       L.peer = peer;
@@ -265,6 +267,7 @@ function end({ say } = {}) {
   clearPlayback();
   mic?.close();
   peer?.close(); L.peer = null;
+  L.opening?.(); L.opening = null; // a capture still being set up is stopped too
   if (player) void player.close();
   socket?.close();
   draw();
