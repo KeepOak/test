@@ -627,17 +627,29 @@ export async function createBranch(options: {
   registerWorkbookTools(registry, workbooks);
   runtime.learningRules = (sessionId) => workbooks.rules(sessionId); // sealed: only its own tools, every browser step asks
   // P17-D §4: small decisions on the owner's own connections, asked with no tools (src/decision-models.ts).
-  const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset) => {
+  const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset, origin) => {
     // Temporary, so a decision never adds a conversation to the list.
     const run = store.createRun(runtime.owner, "Making a small decision", undefined, true, "owner");
+    // A decision made for a task is that task's: it answers to the same asker (the start record names its parent, so
+    // runOrigin reads the task's source), under the same Trunk and accounts, and joins its privacy and spending.
+    if (origin) {
+      store.event(run.id, "run.started", { source: "owner", parentRunId: origin.runId, label: "decision", ...(origin.dryRun ? { dryRun: true } : {}) });
+      runtime.joinSideRun(run.id, origin.runId);
+    }
     let answer: ShapedAnswer | undefined;
     try {
-      answer = await runtime.shaped(run, runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) }), text, shape, preset);
+      // A decision made for a task stops with it and is paid from its budget (a list filter); any other has a minute.
+      const signal = origin ? AbortSignal.any([origin.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000);
+      const context = runtime.context({ runId: run.id, permissions: [], signal, ...(origin ? { budget: origin.budget } : {}), ...(origin?.dryRun ? { dryRun: true } : {}) });
+      const scoped = { ...context, ...(origin?.trunk ? { trunk: origin.trunk } : {}), ...(origin?.trunkKeys ? { trunkKeys: origin.trunkKeys } : {}) };
+      answer = await runtime.shaped(run, scoped, text, shape, preset);
       return answer;
     } finally {
+      if (origin) runtime.leaveSideRun(run.id);
       store.finish(run.id, answer?.status === "resolved" ? "completed" : "failed", answer?.status === "refused" ? answer.reason : "");
     }
   });
+  runtime.listFilter = (rule, lines, origin) => decisionModels.filterList(rule, lines, origin); // models-ui: long lists filtered before a task reads them
   runtime.journal = journalHook(journal, (text) => runtime.hideSecrets(text)); // mac3/never-break: nothing secret is written down
   // FQ-execution.browser: a tool's own steps (a browser.flow click) are judged as the tool they stand for.
   registry.judgeStep = (tool, args, context, target, index) => runtime.judgeStep(tool, args, context, target, index);

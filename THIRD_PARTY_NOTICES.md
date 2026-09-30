@@ -1,5 +1,40 @@
 # Third-party notices
 
+## Installed faster-whisper and Silero VAD integration
+
+`src/voice-whisper.ts` calls the installed faster-whisper local VAD and timestamp APIs,
+inspected at `ed9a06cd89a93e47838f564998a6c09b655d7f43` of
+https://github.com/SYSTRAN/faster-whisper (`faster_whisper/vad.py`, `transcribe.py`).
+Silero's MIT license was inspected at `1e261b036686cd0017d500ee96acd1c4ba572a9d`
+of https://github.com/snakers4/silero-vad. No inference implementation, ONNX model or
+Python dependency is bundled or downloaded; the existing external worker uses the
+owner's installed package asset and remains offline. The wrapper adapts faster-whisper's
+speech-span concatenation before language detection; it imports NumPy already required
+by that installed library.
+
+MIT License
+
+Copyright (c) 2023 SYSTRAN
+Copyright (c) 2020-present Silero Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ### Hermes chat branch argument parsing
 
 `src/channels/branch-command.ts` adapts the leading `--here` argument handling from `gateway/slash_commands_branch_thread.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, MIT. Branch uses its existing SessionBranches file/transcript copy, path records and per-conversation choices; it branches in place and does not open a native chat-app thread. The MIT license is reproduced elsewhere in this document under Hermes Agent.
@@ -37,6 +72,53 @@ and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
+
+## OpenClaw Realtime GA protocol adaptations
+
+The ChatGPT subscription adapter also adapts the pinned OpenClaw Quicksilver
+wire, audio-only SDP admission, sideband event and context append contracts
+(`extensions/openai/realtime-quicksilver-wire.ts`, `realtime-sdp-offer.ts`,
+`realtime-quicksilver-events.ts`, `realtime-quicksilver-protocol.ts`,
+`realtime-quicksilver-delegation-controller.ts`, `realtime-quicksilver-bridge-delegation.ts`).
+Branch adapts consultation generation/cancellation and bounded transcript admission
+to its existing delegated runtime and approval cards. OAuth is
+resolved by Branch's existing selected-account adapter; no account data or upstream
+implementation package is bundled. The MIT notice below covers these adaptations.
+
+`src/realtime-openai.ts` adapts beta/GA event names and the GA session shape from
+`extensions/openai/realtime-voice-events.ts` and `realtime-voice-session-policy.ts`
+at `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of https://github.com/openclaw/openclaw.
+
+## OpenClaw realtime voice adaptations
+
+`src/realtime-openai.ts` and `public/app/chat/talklive.js` adapt cancellation,
+playback truncation, the minimum played-prefix guard, and retiring output from
+`extensions/openai/realtime-voice-protocol.ts` and `realtime-voice-events.ts`
+at commit `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of
+https://github.com/openclaw/openclaw. The transport and browser integration are
+modified for Branch's existing run socket and PCM playback.
+
+MIT License
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 The browser also includes the pinned markdown-it 15.0.2 ESM bundle (MIT) at
 `public/app/vendor/markdown-it-15.0.2/markdown-it.js`. Its upstream license and
@@ -3298,6 +3380,10 @@ Copyright 2025 OpenAI
 
 The command names `branch` answers to beside its own (`config`, `skin`, `cron`, `pause`, `insights`, `checkpoints`, `kanban` and the rest, listed in `src/terminal-parity.ts` and `docs/configuration.md`) were chosen after reading the command lists of Hermes Agent (https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research) and OpenClaw (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation). No code was taken from either; both are under the MIT licence, whose text is given under IronClaw above.
 
+### OpenClaw and Hermes Agent: the owner's own chat as the main session, MIT
+
+owner-dm-full (`ownerChats` in `src/channels/chat-permissions.ts`, `ownerFullFrom`/`ownerFullRun` in `src/channels/router.ts`, and the per-store check in `runOrigin`, `src/key-context.ts`) follows OpenClaw's sandbox mode "non-main" (`shouldSandboxSession` in `src/agents/sandbox/runtime-status.ts`, with the DM "main" session key in `src/routing/session-key.ts`, https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation): the owner's direct chat is the main session and runs with the full toolset on the host, while groups and other senders are held back. Hermes Agent's gateway does the same for its allowed users (`_is_user_authorized` in `gateway/authz_mixin.py`, https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research). The design was followed and the code written anew for Branch. Both are under the MIT licence, whose text is given under IronClaw above.
+
 ### Letta Code (Letta, Inc.), Apache-2.0
 
 `src/reflection/settings.ts` and `src/reflection/pass.ts` follow the reflection trigger model (off, every N steps with a default of 25, or when the conversation is compacted) in Letta Code's `src/reflection-settings.ts` and `src/cli/helpers/post-turn-reflection.ts`, and the order of work in its reflection subagent, `src/agent/subagents/builtin/reflection-v2.md` (https://github.com/letta-ai/letta-code, commit 6e84e8a). The ideas were rewritten in Branch's words; Branch's pass stages suggestions instead of writing. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0): you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -3352,6 +3438,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### OpenClaw, MIT
 
+The meters on the dashboard's "This computer" card (`meter()` in `public/dashboard/sections.js`) follow the meter in OpenClaw's Control UI (`ui/src/pages/connection/system-section.ts`, https://github.com/openclaw/openclaw): an accessible `role="meter"` bar that turns to a warning at 75% and to a problem at 92%. The layout of the dashboard as a whole was studied from OpenClaw's Control UI and Hermes Agent's web dashboard; no other code was taken from either. Used under the MIT licence: In wave mac3, `src/channels/synology-chat.ts` follows the outgoing-webhook form fields and the `payload` reply shape in OpenClaw's `extensions/synology-chat`. In wave mac7 (nodes), Branch's devices (`src/devices/`, `apps/mobile/web/phone-node.js`) follow the shape of OpenClaw's node protocol (`docs/gateway/protocol/`, `src/gateway/server/ws-connection/connect-device-proof.ts`, `src/gateway/node-command-policy.ts`): a device dials out over a WebSocket, answers a per-connection challenge with an Ed25519 signature, advertises commands and answers `invoke` requests; its Linux GeoClue `where-am-i` output parsing follows `extensions/linux-node/src/location.ts`. The code was written anew; KDE Connect (GPL) inspired only the per-device, per-capability switches, and none of its code was read into Branch. The activity log's rotation (`rotate()` in `src/diagnostic-log.ts`), now shared by the engine and the desktop app's main process, is adapted from OpenClaw's file transport (`src/logging/logger-file-transport.ts`): it rotates only between whole lines, tries each move on its own, and still writes the line when a rotation fails. The gateway's engine watchdog (`src/never-break/engine-watchdog.ts`) is adapted from OpenClaw's armable stall watchdog (`src/channels/transport/stall-watchdog.ts`): armed only while it applies, it reports once per arming, and a failing callback never escapes its timer.
+
 The meters on the dashboard's "This computer" card (`meter()` in `public/dashboard/sections.js`) follow the meter in OpenClaw's Control UI (`ui/src/pages/connection/system-section.ts`, https://github.com/openclaw/openclaw): an accessible `role="meter"` bar that turns to a warning at 75% and to a problem at 92%. The layout of the dashboard as a whole was studied from OpenClaw's Control UI and Hermes Agent's web dashboard; no other code was taken from either. Used under the MIT licence: In wave mac3, `src/channels/synology-chat.ts` follows the outgoing-webhook form fields and the `payload` reply shape in OpenClaw's `extensions/synology-chat`. In wave mac7 (nodes), Branch's devices (`src/devices/`, `apps/mobile/web/phone-node.js`) follow the shape of OpenClaw's node protocol (`docs/gateway/protocol/`, `src/gateway/server/ws-connection/connect-device-proof.ts`, `src/gateway/node-command-policy.ts`): a device dials out over a WebSocket, answers a per-connection challenge with an Ed25519 signature, advertises commands and answers `invoke` requests; its Linux GeoClue `where-am-i` output parsing follows `extensions/linux-node/src/location.ts`. The code was written anew; KDE Connect (GPL) inspired only the per-device, per-capability switches, and none of its code was read into Branch. The activity log's rotation (`rotate()` in `src/diagnostic-log.ts`), now shared by the engine and the desktop app's main process, is adapted from OpenClaw's file transport (`src/logging/logger-file-transport.ts`): it rotates only between whole lines, tries each move on its own, and still writes the line when a rotation fails. The owner browser view's input-method handling (`captureInputCurrent` and the composition guard in `public/app/chat/stage-browser-control.js`) adapts the composition grant capture and IME key guard in OpenClaw's `ui/src/components/browser/browser-panel-controller-input.ts`: composed words are sent only while the conversation, control, tab and page they began in are still current.
 
 Copyright (c) 2026 OpenClaw Foundation
@@ -3364,7 +3452,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 ### Hermes Agent (Nous Research), MIT
 
-`src/channels/simplex.ts` follows the `newChatItems` event shape and reply handling in Hermes Agent's `plugins/platforms/simplex/adapter.py` (https://github.com/NousResearch/hermes-agent). Used under the MIT licence:
+`src/channels/simplex.ts` follows the `newChatItems` event shape and reply handling in Hermes Agent's `plugins/platforms/simplex/adapter.py` (https://github.com/NousResearch/hermes-agent). The same watchdog's probe follows Hermes Agent's desktop backend health check (`apps/desktop/electron/backend-health.ts`): a short timeout per probe inside a generous budget, since a busy backend can stall its event loop for tens of seconds without being gone. Used under the MIT licence:
 
 Copyright (c) 2025 Nous Research
 

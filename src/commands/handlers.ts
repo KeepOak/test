@@ -15,6 +15,7 @@ import { helpText } from "./help-text.js";
 import { promptsCommand } from "./saved.js";
 import { trunkCommand } from "./trunk.js"; // R17-A
 import { accountCommand } from "./account.js"; // mac6/accounts
+import { analyticsLines, usageAnalytics } from "../accounts/usage-analytics.js";
 import { BOARD_HANDLERS } from "../flows-boards/commands.js"; // r17-h
 import { AUTONOMY_HANDLERS } from "../autonomy/commands.js"; // r17-b
 import { initCommand } from "../coding/commands.js"; // mac7/r17-d
@@ -195,6 +196,7 @@ function usage(call: Call): Reply {
   lines.push(`This month (since ${month.monthStart}): ${month.currentMonthlyTokens} tokens · about $${month.estimatedCost.toFixed(2)}`
     + (month.unpricedRuns ? ` (${month.unpricedRuns} tasks had no price on file)` : "")
     + (month.stillBeingMade > 0 ? `, including about $${month.stillBeingMade.toFixed(2)} for something still being made` : "")); // hardening-3
+  lines.push(...analyticsLines(usageAnalytics(runtime.store, runtime.owner, month.monthStart.slice(0, 7))));
   return say(lines.join("\n"));
 }
 async function compact(call: Call): Promise<Reply> {

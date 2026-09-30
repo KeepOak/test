@@ -1310,7 +1310,7 @@ async function api(
   // RES-709: a piece of what the window's own microphone heard, written out on this computer (hearInWindow below).
   if (request.method === "POST" && path === "/api/voice/dictation/hear") {
     const host = { store: app.store, owner: app.runtime.owner, isOwner: app.store.profiles.isOwner(),
-      locked: app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
+      locked: app.sessionLock.locked(), isLocked: () => app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
     try { return await hearInWindow(host, request); } catch (error) {
       throw new HttpError(error instanceof HearRefused ? error.status : 400, errorText(error));
     }
@@ -4957,7 +4957,8 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {
-    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined) });
+    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined),
+      locked: () => app.sessionLock.refusal(request.method, path) });
     return true;
   }
   // ---- end of the bucket 13 block ----

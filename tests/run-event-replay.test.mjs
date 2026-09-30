@@ -4,6 +4,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { request as httpRequest } from "node:http";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -33,4 +34,39 @@ test("RES-512: a whole, unchanged event log plays back, and a restart needs a ye
   const done = await restart({ confirmed: true, jsonl });
   assert.equal(done.status, 200, JSON.stringify(done.body));
   assert.notEqual(done.body.replay, run.id, "a new task, not the old one");
+});
+
+test("RES-512: a restart admitted before App lock, whose body arrives after it, starts nothing", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-event-replay-lock-"));
+  let asked = 0;
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
+    provider: { name: "scripted", async complete() { asked++; return { content: "Done.", toolCalls: [] }; } } });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const run = await app.runtime.run({ prompt: "Say done" });
+  const body = Buffer.from(JSON.stringify({ confirmed: true, jsonl: runEventLog(app.store, app.runtime.owner, run.id, app.runtime.hideSecrets) }));
+  app.sessionLock.setPin({ pin: "1234" });
+  assert.equal(app.sessionLock.shut(), false, "unlocked when the request arrives");
+  const tasks = app.store.runs(app.runtime.owner).length;
+  asked = 0;
+  // The restart's own owner check runs once the request is admitted and just before its body is read.
+  let admitted;
+  const admittedNow = new Promise((resolve) => { admitted = resolve; });
+  const requireOwner = app.store.profiles.requireOwner.bind(app.store.profiles);
+  app.store.profiles.requireOwner = (...args) => { admitted(); return requireOwner(...args); };
+  const sending = httpRequest(`${server.url}/api/recordings/restart`, { method: "POST", headers: {
+    authorization: `Bearer ${server.token}`, "content-type": "application/json", "content-length": body.length } });
+  const answered = new Promise((resolve, reject) => {
+    sending.on("response", (response) => { let text = ""; response.on("data", (chunk) => { text += chunk; });
+      response.on("end", () => resolve({ status: response.statusCode, text })); });
+    sending.on("error", reject);
+  });
+  sending.write(body.subarray(0, 16));
+  await admittedNow;
+  app.sessionLock.lock();
+  sending.end(body.subarray(16));
+  const answer = await answered;
+  assert.equal(answer.status, 423, answer.text);
+  assert.equal(app.store.runs(app.runtime.owner).length, tasks, "no new task was started");
+  assert.equal(asked, 0, "the model was never asked");
 });
