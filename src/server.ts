@@ -149,6 +149,7 @@ import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
 import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
+import { comparisonOverview, configureComparison, startComparison } from "./agent-comparison.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
@@ -1063,6 +1064,14 @@ async function api(
   if (handlesSourceMergePath(path)) {
     if (throughADoor(request)) throw new HttpError(403, hereOnly);
     return sourceMergeApi(app.sourceMerges, request.method ?? "GET", path, () => readBody(request));
+  }
+  if (path.startsWith("/api/agent-comparison")) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    const deps = { store: app.store, runtime: app.runtime, policy: app.web.policy, unlocked: () => !app.sessionLock.locked() };
+    if (path === "/api/agent-comparison" && request.method === "GET") return comparisonOverview(deps);
+    if (path === "/api/agent-comparison/settings" && request.method === "POST") return configureComparison(deps, await readBody(request));
+    if (path === "/api/agent-comparison/start" && request.method === "POST") return startComparison(deps, await readBody(request));
+    throw new HttpError(404, "Not found");
   }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))

@@ -568,6 +568,8 @@ export interface RunOptions {
   temporary?: boolean;
   /** Preset id for this run only; the conversation's saved choice still applies afterwards. */
   model?: string;
+  /** Internal isolated comparisons: use only this explicit preset, with no model fallback or side-model compaction. */
+  fixedModel?: boolean;
   /** Thinking effort for this run only; null asks for the model's own default. */
   reasoning?: ReasoningEffort | null;
   permissions?: string[];
@@ -691,6 +693,7 @@ export class Runtime {
   private readonly replyCeilings = new Map<string, number>();
   private readonly children = new Map<string, number>();
   private readonly helperModels = new Map<string, ModelPreset>();
+  private readonly fixedModelRuns = new Set<string>();
   /** Accounts owns final authorization and binds an immutable provider without changing defaults. */
   resolveHelperModel = async (preset: ModelPreset, accountRef: HelperSelection["accountRef"], _parentSessionId: string): Promise<HelperConnection> => {
     if (accountRef) throw new Error("Helper account selection is not connected");
@@ -1565,8 +1568,11 @@ ${run.output.slice(0, 6000)}`;
     // QA retest 2026-09-28 (m10): a model picked for a new conversation is refused before anything is written, not after.
     if (!options.sessionId && options.conversationPreset && !this.models.presets.has(options.conversationPreset))
       throw new Error(`Unknown model preset ${options.conversationPreset}`);
+    const fixed = options.fixedModel && options.model ? this.models.presets.get(options.model) : null;
+    if (options.fixedModel && (!options.isolated || !fixed)) throw new Error("A fixed-model run requires isolation and a known explicit preset.");
     const project = !options.sessionId && options.conversationProject ? this.store.projects.of(this.owner, options.conversationProject).id : undefined;
     const run = this.store.createRun(this.owner, options.prompt, options.sessionId, options.temporary ?? false, "web", project);
+    if (fixed) { this.helperModels.set(run.id, fixed); this.fixedModelRuns.add(run.id); }
     // Redesign phase 1: only a conversation begun here is given a mode; one that exists keeps what it had.
     if (!options.sessionId && options.conversationMode) this.startMode(run.sessionId, options.conversationMode);
     // Dogfood B26: the level picked before the first message is this conversation's own, as one picked in it would be.
@@ -1839,6 +1845,7 @@ ${run.output.slice(0, 6000)}`;
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
     this.helperModels.delete(run.id);
+    this.fixedModelRuns.delete(run.id);
     if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
@@ -2162,7 +2169,7 @@ ${run.output.slice(0, 6000)}`;
     }
     const settled = this.finish(run, status, output);
     this.saveTrace(run.id);
-    this.sendSpans(run.id);
+    if (!this.fixedModelRuns.has(run.id)) this.sendSpans(run.id);
     return settled;
   }
   /**
@@ -2391,6 +2398,8 @@ ${run.output.slice(0, 6000)}`;
     const { catalog, coding } = this.openCatalog(run, context, messages, shape.groups);
     // A task that must stay on this computer is decided first, so no other rule (and no side question) sends it away.
     const here = this.privateRoute(run, context.owner, override);
+    const fixed = context.isolated ? this.helperModels.get(run.id) : null;
+    if (fixed && here?.localOnly && !presetRunsLocally(fixed)) throw new Error("This fixed model conflicts with the requirement to stay on this computer.");
     // R17-047: with the difficulty card on, a small model's "easy or hard" picks the connection.
     // A pinned helper keeps its model; staying on this computer still wins over it (keptHere, below).
     override = here ?? (this.helperModels.has(run.id) ? override : await savings.byDifficulty(this, run, context.owner, override, (id, system, question) =>
@@ -3425,6 +3434,10 @@ ${run.output.slice(0, 6000)}`;
     if (room) this.rooms.set(run.id, room); else this.rooms.delete(run.id);
     const before = this.budgetOf(messages, context, preset);
     this.store.event(run.id, "context.budget", { ...before });
+    if (this.fixedModelRuns.has(run.id)) {
+      if (before.headroom < 0) throw new BudgetError("The pinned comparison sources exceed the selected model's context. Choose fewer or smaller files.");
+      return;
+    }
     await this.maybeCompact(run, messages, ids, context, route, before);
     if (this.budgetOf(messages, context, preset).headroom >= 0) return;
     await this.foldTaskWork(run, messages, ids, context, route);
