@@ -885,7 +885,9 @@ splitting to keep escape characters inside the service's message limit.
 Settings › Chat apps reads `intake` from `GET /api/channels`; `POST /api/channels/intake` saves only the named
 fields and is owner-only. `edited` and `albums` default to true: edited messages replace a version still being
 gathered, and a photo album joins one turn. An edit after that turn has started is its own message.
-`splitWaitMs` is 0, 1000 (default), or 3000; messages from the same live chat arriving during that wait join a turn.
+`splitWaitMs` is 0, 1000 (default), or 3000. It is waited only after a message of at least 4,000 characters (the first
+piece of one an app split); the same person's messages arriving during that wait join its turn. A shorter message starts
+its turn at once.
 Fetched messages after a restart stay separate. Albums still wait at least one second when split waiting is off.
 
 `watchdog` defaults to true. A watched connection with no service contact for `stalledAfterSeconds` (30–3600,
@@ -2188,7 +2190,7 @@ back only those, so anything the owner paused by hand stays paused. Links back i
 
 **macOS and Linux.** Restart stops the background engine the way Ctrl+C does, with exit code 75, and
 the sign-in file starts it again: launchd's `KeepAlive` (`SuccessfulExit` false) on a Mac, systemd's
-`Restart=on-failure` on Linux. It is offered only when this copy is the background engine and was
+`Restart=always` on Linux (only a stop on purpose, exit code 78, is not restarted). It is offered only when this copy is the background engine and was
 started by that file (`XPC_SERVICE_NAME` is `com.keepoak.branch-agent`, or systemd set
 `INVOCATION_ID`); a copy started by hand or running in the app window says how to restart it
 instead. On Windows the button explains that Branch is closed from its icon by the clock and opened
@@ -2246,7 +2248,7 @@ The design, the threat list and the test for each threat are in [never-break.md]
 
 **The gateway.** `gateway.json` in the data folder, `GatewayConfigSchema` in `src/never-break/gateway-config.ts`: `mode` (`off`, the default; `when-needed`; `on`), `startSeconds` (90), `holdSeconds` (20), `maxQuickCrashes` (4), `gapSeconds` (300), `watchSeconds` (300) and `workerEnv` (only `BRANCH_*` names, never the data folder). With the mode not off, `branch start` runs the gateway on `BRANCH_PORT`, which runs the engine on a private loopback port and passes requests (and connection upgrades) through, checking the address exactly as the engine does. `GET /gateway/health` is answered by the gateway itself. An engine that stops is started again after 0.5, 1, 2 … 30 seconds; crashes chained less than `gapSeconds` apart, `maxQuickCrashes` times, slow it to once every five minutes and stop interrupted work carrying on by itself. Settings are promoted to `gateway.good.json` after a worker has stayed up; a broken `gateway.json`, or settings the engine fails to start with twice, are replaced by the good copy. `GET|POST /api/never-break { mode }` reads and sets the switch (the window offers one on/off switch that saves `on` or `off`; a file saved as `when-needed` still loads and reads as on there); `POST /api/never-break/proposal/accept|discard` answers a change the assistant suggested with the `gateway.propose` tool (offered only when the switch was on at launch), which is always tried on a throwaway gateway first. A short-lived key can do none of this.
 
-**Window-close preference.** Settings › General “Keep working when the window closes”, Settings › Gateway’s gateway switch and the footer popover save the same `gateway.json.mode`. They call `POST /api/never-break`, not `/api/deployment/daemon`; they do not create or remove a Windows scheduled task. The switch shows the saved choice, while the status and footer use `underGateway` to say whether this engine actually runs behind the gateway. A saved On with `underGateway: false` is shown as waiting for the next Branch launch. Saving Off while the retained gateway is running starts its shutdown after the API response; until that finishes, the status still reports it as running. Start with Windows and the separately managed CLI daemon remain distinct controls. If saving fails, the original choice and failure message remain visible.
+**Window-close preference.** Settings › General “Keep working when the window closes”, Settings › Gateway’s gateway switch and the footer popover save the same `gateway.json.mode`. They call `POST /api/never-break`, not `/api/deployment/daemon`; they do not create or remove a Windows scheduled task (the installed window registers the gateway's task when it starts the gateway, see "The operating system keeps the gateway running"). The switch shows the saved choice, while the status and footer use `underGateway` to say whether this engine actually runs behind the gateway. A saved On with `underGateway: false` is shown as waiting for the next Branch launch. Saving Off while the retained gateway is running starts its shutdown after the API response; until that finishes, the status still reports it as running. Start with Windows and the separately managed CLI daemon remain distinct controls. If saving fails, the original choice and failure message remain visible.
 
 **Desktop awake choice.** `gateway.json.keepAwake` defaults to `false`. The owner can change it under Settings › Gateway or with `POST /api/never-break { "keepAwake": true | false }`. This choice is excluded from the assistant's timing proposals and their rollback. `GET /api/never-break` shows the saved choice in `config.keepAwake`; `keepAwakeRuntime` is a separate trusted desktop broker report (`requested`, `active`, `suspended`, `error`) or `null` when unavailable. A saved `true` is not proof that a desktop blocker is active. The running desktop gateway applies the choice without an engine restart; it may let the screen turn off. Lid closure, battery limits and OS policy may still suspend the computer; normal gateway reconnect handles resume.
 
@@ -2270,7 +2272,7 @@ written stops the update, because an update nobody can undo is not worth making;
 be read is put aside and a new one started, and an undo with nothing recorded refuses rather than
 guesses.
 
-**A Branch working in the background comes back by itself** (`src/install/service-return.ts`). Closing it for the swap is a polite exit, which launchd's `KeepAlive{SuccessfulExit:false}` and systemd's `Restart=on-failure` do not restart, so after `branch update --yes` the service is started again through its own manager (`launchctl kickstart -k`, `systemctl --user restart branch-agent.service`, the scheduled task's `/Run` on Windows), and Branch waits up to a minute for a process other than the one it closed to say it is running. When none does, the version before is put back with `branch rollback --yes` and started as the service, so the owner is never left with no Branch running; `branch rollback --yes` itself brings a service back as the service, never as a window.
+**A Branch working in the background comes back by itself** (`src/install/service-return.ts`). Closing it for the swap is a stop on purpose, which launchd's `KeepAlive{SuccessfulExit:false}` and systemd (exit code 78, `RestartPreventExitStatus=78`) do not restart, so after `branch update --yes` the service is started again through its own manager (`launchctl kickstart -k`, `systemctl --user restart branch-agent.service`, the scheduled task's `/Run` on Windows), and Branch waits up to a minute for a process other than the one it closed to say it is running. When none does, the version before is put back with `branch rollback --yes` and started as the service, so the owner is never left with no Branch running; `branch rollback --yes` itself brings a service back as the service, never as a window.
 
 `branch rollback` says what going back would do; `branch rollback --yes` does it. The decision is
 `assessRollback` in `src/never-break/rollback.ts`, and it **refuses**, in a sentence saying why and
@@ -2317,7 +2319,9 @@ mid-update, mid-format-change and mid-start (`BRANCH_INSTALL_SEEDS=200` for the 
 
 **Telegram from a card.** `customize:channels` has a **Set up Telegram** card (`public/telegram-setup.js`, `src/never-break/telegram-setup.ts`): the BotFather steps in plain words, a password field whose token goes straight into the locker as `TELEGRAM_BOT_TOKEN` in the default project (checked for BotFather's shape, never sent back), the three-way switch (settings key `telegram-setup`, shipped off), and a box for the six-digit code the bot sends a new person, which approves the owner's own account through the ordinary pairing. `GET|POST /api/never-break/telegram { mode?, token? }`. On a real start with the switch not off, Branch connects that bot through the network rules, unless the integrations file already has a Telegram channel. No real token was used to build or test it.
 
-**macOS and Linux.** The gateway is the same program on every system. It starts the engine with the same runtime it runs on (the app's own on an installed copy), with no window on Windows. The sign-in entries (`launchd`, `systemd --user`, the Windows scheduled task) are unchanged: they run `branch start`, which becomes the gateway when the switch is on, so `KeepAlive`/`Restart=on-failure` look after the gateway and the gateway looks after the engine. An engine whose gateway is killed closes itself within seconds, so the database is never left held.
+**macOS and Linux.** The gateway is the same program on every system. It starts the engine with the same runtime it runs on (the app's own on an installed copy), with no window on Windows. The sign-in entries (`launchd`, `systemd --user`) run `branch start`, which becomes the gateway when the switch is on, so `KeepAlive`/`Restart=always` look after the gateway and the gateway looks after the engine; on Windows the scheduled task runs the app's own gateway (`"Branch Agent.exe" --branch-gateway`, see "The operating system keeps the gateway running" below). An engine whose gateway is killed closes itself within seconds, so the database is never left held.
+
+**The operating system keeps the gateway running (UP-PLATFORM-002).** On Windows the installed app registers the scheduled task `Branch Agent daemon` (`src/install/gateway-task.ts`) the first time its window starts the gateway, and `branch daemon install` does the same. The task runs `"Branch Agent.exe" --branch-gateway` directly, with no script host and no console. It belongs to the signed-in account alone (never a group, so no other account's sign-in starts it; when Windows does not say which account is signed in, nothing is registered), uses least privilege, has no time limit and ignores battery power, and Task Scheduler starts it again one minute after it stops with a failure code, up to three times. It has a sign-in trigger only while Start with Windows is on (the switch updates it), and the window starts the gateway through the task (`schtasks /Run`) so that a gateway the window started is also restarted. The task is registered through Task Scheduler's own interface from PowerShell, which prints the failure's HRESULT: when that is E_ACCESSDENIED (0x80070005, "Access is denied", told apart by number on every language of Windows) or the call does not answer, a shortcut in the account's Startup folder (`Branch Agent gateway.lnk`) starts the same program at sign-in instead; nothing restarts it then. After an update or a rollback, a gateway looked after only by that shortcut is started directly. The portable update's swap switches the task off before anything is ended and on again before any version starts, so a gateway ended for the swap is never started again from a half-copied folder, and uninstalling removes the shortcut and `gateway-task.json`. The windowless gateway exits with code 1 when a failure nobody caught leaves it unable to work, instead of hanging behind an invisible dialog. On Linux the unit is `Restart=always` with `StartLimitIntervalSec=600`/`StartLimitBurst=5`; `branch quit`, Ctrl+C and the update's close are stops on purpose that exit 78, which `RestartPreventExitStatus=78` leaves stopped and `SuccessExitStatus=78` counts as a clean end (a unit written by an earlier version keeps `Restart=on-failure` until `branch daemon install` writes it again). On a Mac, launchd's `KeepAlive` (`SuccessfulExit` false) already did this. Everywhere, three starts after an unclean stop within ten minutes are a restart storm, said once per ten minutes in Settings › Gateway (`gateway-restarts.json`, after OpenClaw's `restart-storm.ts`).
 **Tools run by hand or by a workflow (mac5/manual-actions).** A tool run outside a conversation goes through one gate, `src/tool-gate.ts`, called from `Runtime.executeTool`. Pressed by the owner in the app window (`POST /api/action`, the code editor's save, "Try a tool"), it obeys Branch's own files (above), a refusing rule, the role of a profile that is switched on, and the sandbox and OS wall the matching rule and `settings:computer` give a task's call; with Lockdown on, or in a folder marked untrusted while folder trust is on, anything that changes something is refused with a sentence saying why (looking still works). An "ask first" rule does not stop it, because the owner is the one asking ("Try a tool" still puts its question once); a short-lived key is not the owner at the window, so the same gate holds it to the full rules: only what the rules allow outright runs, "ask" is a refusal it cannot confirm, and every refusal names the key (HTTP 401; this is the one gate for both, shared with the key sweep). An address carrying a key or password (the leak guard) is never skipped by hand: "Try a tool" puts the question, `/api/action` refuses it. A saved workflow's tool step, a flow box and a live voice call are held to the full rules like a task (`mode: "policy"`, also what a caller that names no mode gets): "ask" stops them for the owner's yes, kept under the workflow's (or flow box's, or call's) own name. A workflow a task started (`workflows.run`, or `workflows.resume` carrying a saved or graph flow on) is also held to that task's own permissions (mac7/lockdown-fix): every tool step and box is refused before any question if the task could not use the tool itself (`within` in `src/tool-gate.ts`), its prompt steps and the flows inside it get only those permissions, and the limit is kept with the workflow, so the owner's yes later does not widen it. A workflow the owner starts afresh runs as before. Saving a workflow's steps again keeps the limit, a flow the
 `flow.search` tool drafts and tries keeps to the calling task's tools, and a graph flow run's kept limit
 (settings record `flow-run-limit:<runId>`, never reachable from the settings kit) is removed when the run
@@ -3787,7 +3791,7 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 { "git": { "remote": true, "github": { "tokenSecret": "GITHUB_TOKEN" } } }
 ```
 
-That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
+That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (300 by default, at most 600, looking again every `checksPollSeconds`, 15 by default, 1 to 120; it only looks, so one call may wait past the owner's tool time limit, and the loop guard treats it as a polled tool), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators and leaves required reviews to GitHub. When the base takes changes only through GitHub's merge queue, the checked commit joins the queue instead (GitHub's `enqueuePullRequest`, pinned to that commit), the tool says it is queued, not merged, and `github.wait_for_checks` stays pending until GitHub says merged, or failed if the queue took it out. It refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
 **GitLab (RES-719)** is a connection of its own, set up in the window: **Settings › Advanced › GitLab**. Its switch
 ships "when needed"; the row under it says whether GitLab is connected. **Connect** asks for your GitLab's address
@@ -3952,12 +3956,17 @@ the checks itself on the exact head commit rather than relying on GitHub enforci
 every check run, commit status and Actions workflow run must have finished and passed (skipped or neutral is
 accepted only for checks the base does not require), every check the base requires through classic
 protection or an active ruleset must have passed from its configured app, and the head must contain the exact
-base commit. Queued, running, missing or not-yet-registered checks are pending and never count as passed.
-Required approving reviews, merge queues and other rules Branch cannot satisfy by checking are left to
-GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
+base commit (unless the base has a merge queue, which tests the head on the newest base itself). Queued, running,
+missing or not-yet-registered checks are pending and never count as passed, and so is GitHub's "blocked" while
+they run. On a base with a merge queue (KeepOak/Branch-Agent's `redesign/window` has one) the checked commit joins
+the queue rather than merging directly, and the change is merged only when GitHub says so. Required approving
+reviews and other rules Branch cannot satisfy by checking are left to GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
 force-merges or bypasses a rule; the merge request names the checked head SHA, so a later push is refused by
 GitHub itself. `github.wait_for_checks` waits for the checks; in the owner's selected Full Access,
-`branch.finish_source_change` then gets an independent read-only review and merges without asking.
+`branch.finish_source_change` then gets an independent read-only review and merges without asking (or joins
+the merge queue). `branch.run_contract_tests` runs a worktree's contract tests the one way that counts as
+evidence (`node scripts/review.mjs --jobs 1` with its `expectedTests`, behind the command wall) and says whether
+they passed, with counts, or failed and why; a failed run is kept too, never as evidence.
 
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
@@ -4652,9 +4661,24 @@ files open as the window, so a hand-over would hit a locked file. Before the han
 written, the window reads `running.json`, asks that process to close (`taskkill /PID <pid> /T`, then
 `/T /F` if it will not), waits a bounded time for it to go and removes the note. An engine that
 still refuses is not treated as a failure: the hand-over script waits for the engine's process id
-as well as the window's, and ends it itself before mirroring anything. Nothing new is started: the
-hand-over still runs through the same hidden Windows Script Host launcher, and every tool is run
-with no window.
+as well as the window's, and ends it itself before mirroring anything. Every tool is run with no
+window.
+
+**How Windows installs an update (versioned folders).** Each version sits in a folder of its own,
+`<install>\app-<version>\`, beside the others; `current.json` names the one in use and the one
+before it. A new version is made beside the one running (Electron's own program is hard linked from
+it, never made anew), tried on a copy of the work, and put in use by one rename of `current.json`,
+so there is never a half-copied program. The version before is kept whole for going back; older
+ones are removed once nothing runs from them, so two are kept. Going back is the same rename the
+other way, and it is refused when the new version has already moved the saved work to a format the
+older one cannot read (then the new version is started again and the owner is told why). A start
+of an older version's program (an old shortcut, say) starts the version in use instead. A copy
+installed before this layout is the version before on its first update, and on the update after,
+when it is no longer needed to go back, its app is replaced by a small launcher that starts the
+version in use, so shortcuts to the top of the install keep working. The switch is run by a small
+runner: Electron's own program, linked with its files beside the update's scratch files, which runs
+the switch with no window and no Windows Script Host. A portable copy keeps its data beside the
+program, so it keeps the older swap, run by the same runner.
 
 **Checking a computer is ready.** `branch doctor --fix`, and the *Check and repair what I can*
 button, look for Git, the private browser Branch uses to read pages, a free address on this
@@ -9500,13 +9524,19 @@ authors who test their plugin against Branch before shipping it. A tool with `se
   their names: this computer, numbers and private-network names (`localhost`, `.local`, `.lan`, `.internal`,
   `.home.arpa`) are refused in the package. A hand-placed plugin walled by the tick is pinned to the code it
   had when it was loaded. One question to a plugin is at most 1 MB, and at most 4 plugin runs go at once.
-- **Windows.** Windows has no file and network wall, only a job object, so add-on code is refused there unless
-  the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships off); a plugin run
-  that way says so instead of claiming a wall. Nothing else on Windows changes.
-- **Hand-placed plugins stay in-process by default (decided).** "Also run plugin files I put in the plugins
-  folder myself in their own walled program" (`wallEveryPlugin`) keeps shipping off: those files are the owner's own, the switch
-  would change how existing plugins behave (Windows included), and a walled plugin loses model connections and
-  chat services. Add-ons from a package, list or draft are walled whatever the tick says.
+- **Windows.** Windows has no file and network wall, only a job object, so add-on code other people wrote is
+  refused there unless the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships
+  off; turning it on needs the owner's yes and is refused under Lockdown); a plugin run that way says so instead of
+  claiming a wall. A plugin the owner placed themselves runs there as its own program with the job object's limits.
+- **Hand-placed plugins run as their own program too (RES-251).** "Also run plugin files I put in the plugins folder
+  myself in their own walled program" (`wallEveryPlugin`) ships on: no plugin runs inside Branch unless the owner
+  chose that. Hand-placed plugins already switched on when this first started keep running as before, each recorded
+  (`grandfathered`, and `add-ons-plugin-wall-kept` on this computer), and Customize › Tools › Plugins lists them once
+  with **Wall it** beside each. A walled plugin brings no model connections or chat services, since those live inside
+  Branch; the owner lets one plugin run inside (`insideBranch`, set by `POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
+  "Where it runs") or switches the wall off for all. Either is less careful, so it needs the owner's yes
+  (`confirmLoosening`) and is refused under Lockdown; walling a plugin always goes through. A walled plugin is held to the same add-on
+  interface version as one inside. Add-ons from a package, list or draft are walled whatever the tick says.
 - **Branch as a plugin.** A `.branch-export.json` file is trusted only for folders Branch remembers writing, so a
   record planted in a folder cannot make Branch remove or overwrite the owner's files. A folder with a file the
   owner changed stays Branch's until everything it wrote is gone.

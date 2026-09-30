@@ -10,11 +10,16 @@ import { checksumAssetName, type PackageType } from "./release-assets.js";
 import type { LiveOutcome } from "../hot-update/live-build.js";
 import { buildDev, devStanding, devToolsMissing, prepareBuildFolder, realRun, remoteHead, type DevBuildPlan, type DevBuilt, type DevStage, type DevStanding, type Run } from "./dev-build.js";
 import { removeTree } from "./remove-tree.js";
+import { folderPath, partFolder, pointerFiles, readPointer, sealAppFolder, type Layout } from "./app-folders.js";
+import { failureName, invisibleWaitWords, shellUpMarker, type SwitchFailure } from "./shell-switch.js";
+import { SwitchPlanSchema } from "./version-switch.js";
+import { storeMigrations } from "../never-break/migrations.js";
 import { runHostedBuild, type HostedBuild } from "./build-client.js";
 import type { PauseReason } from "./quiet-build.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
 import { primaryRepo, fallbackRepo, isTrustedRepo } from "./repo-pair.js";
 import { diagnose, type Level } from "../diagnostic-log.js";
+import { gatewayTaskName } from "../install/gateway-task.js"; // UP-PLATFORM-002
 
 /** One line in the activity log for each step an update takes (src/desktop/main-log.ts: main's lines reach the file). */
 const note = (level: Level, message: string, fields?: Record<string, unknown>): void =>
@@ -93,6 +98,20 @@ export interface UpdaterOptions {
    * restart (src/hot-update/). `build` answers "shell" for a change that must go the packaged way.
    */
   live?: LiveHooks;
+  /**
+   * Windows, versioned app folders (app-folders.ts): where this copy's versions sit and which one runs (folder "": a
+   * flat copy from before). A new version is made beside it and switched to (shell-switch.ts); nothing is swapped or
+   * copied over, and the background engine is never stopped for it. Left out: the flat swap, as before.
+   */
+  appFolders?: Layout | null;
+  /** The saved work's folder: a versioned switch reads its format before it goes back (version-switch.ts). */
+  dataDir?: string;
+  /**
+   * Versioned app folders: waits for the moment the switch may happen (the window out of sight, or the owner away) and
+   * keeps what the window has open for the new version; answers whether the window was hidden, so the new version
+   * starts the same way.
+   */
+  handOver?: (target: { version: string; stillWanted: () => boolean }) => Promise<{ minimized: boolean }>;
 }
 /** hot-update: how the updater builds and applies a change live (supplied by main, src/desktop/hot-apply.ts). */
 export interface LiveHooks {
@@ -216,30 +235,8 @@ const releaseSchema = z.object({
   assets: z.array(assetSchema),
 });
 
-export function compareVersions(a: string, b: string): number {
-  const parse = (value: string) => {
-    const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value);
-    if (!match) throw new Error(`Invalid Branch version: ${value}`);
-    return { numbers: [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)],
-      pre: match[4]?.split(".") ?? [] };
-  };
-  const left = parse(a), right = parse(b);
-  for (let index = 0; index < 3; index++) {
-    const difference = left.numbers[index]! - right.numbers[index]!;
-    if (difference) return Math.sign(difference);
-  }
-  if (!left.pre.length || !right.pre.length) return Number(right.pre.length > 0) - Number(left.pre.length > 0);
-  for (let index = 0; index < Math.max(left.pre.length, right.pre.length); index++) {
-    const one = left.pre[index], two = right.pre[index];
-    if (one === undefined || two === undefined) return one === undefined ? -1 : 1;
-    if (one === two) continue;
-    const numericOne = /^\d+$/.test(one), numericTwo = /^\d+$/.test(two);
-    if (numericOne && numericTwo) return Math.sign(Number(one) - Number(two));
-    if (numericOne !== numericTwo) return numericOne ? -1 : 1;
-    return one < two ? -1 : 1;
-  }
-  return 0;
-}
+export { compareVersions } from "./versions.js";
+import { compareVersions } from "./versions.js";
 
 /** Automatic updates accept only ordinary final SemVer tags, never aliases or prereleases. */
 export function finalReleaseVersion(tag: string): string {
@@ -383,6 +380,8 @@ export class Updater {
     // empties the scratch folder the first is downloading into, and the first fails on its own
     // archive. Two hand-overs for one app is the multiplication this row forbids.
     this.busy = true;
+    // One install at a time across the whole app: a window's and the gateway's own loop never build or switch together.
+    const unlock = await installLock(`${this.options.scratchDir}.lock`).catch((error: unknown) => { this.busy = false; throw error; });
     this.stoppedBackground = false;
     this.automatic = options.automatic === true;
     this.calledOff = null;
@@ -401,6 +400,7 @@ export class Updater {
       // files removed, exactly as when these two refusals happened before the claim existed.
       this.busy = false;
       note("warn", `The update did not start: ${error instanceof Error ? error.message : String(error)}`);
+      await unlock();
       throw error;
     }
     let held = false;
@@ -409,8 +409,8 @@ export class Updater {
       commit: release.commit ?? null, automatic: this.automatic });
     // hot-update: a Beta change main does not load is applied live; one it does goes the packaged way below.
     if (beta && this.options.live && release.otherLine !== true) {
-      const applied = await this.tryLive(release).catch((error: unknown) => { this.busy = false; throw error; });
-      if (applied) { this.busy = false; return { live: applied }; }
+      const applied = await this.tryLive(release).catch(async (error: unknown) => { this.busy = false; await unlock(); throw error; });
+      if (applied) { this.busy = false; await unlock(); return { live: applied }; }
     }
     this.stages = (beta ? betaStages : stableStages).map((id) => ({ id, state: "waiting", startedAt: null, endedAt: null }));
     // A Beta build's version is known once its source is here; until then the screen names the change.
@@ -438,6 +438,8 @@ export class Updater {
         await this.verify(archive, release, checked);
         stagedDir = await this.unpack(archive);
       }
+      // Versioned app folders: a downloaded version goes into a folder of its own beside this one before it is tried.
+      if (this.options.appFolders && !beta) stagedDir = await this.intoAppFolder(stagedDir, expectedVersion);
       this.stage("checking");
       await validateStagedPackage(stagedDir, expectedVersion, this.platform);
       await this.untilUnpaused();
@@ -450,7 +452,10 @@ export class Updater {
       // Only once nothing is working: a task that started during the build defers the install, and the swap never began.
       await this.options.beforeStop?.();
       this.stage("swapping");
-      const script = await this.writeScript(stagedDir, await this.stopBackground());
+      // Versioned app folders: nothing is stopped or swapped; the new version takes over from this one (shell-switch.ts).
+      const script = this.options.appFolders
+        ? await this.writeSwitchScript(stagedDir, expectedVersion, release)
+        : await this.writeScript(stagedDir, await this.stopBackground());
       this.set("ready", "Restarting to finish the update…", 1, release);
       note("info", "The update is ready to hand over", { version: expectedVersion });
       held = options.hold === true;
@@ -462,7 +467,7 @@ export class Updater {
       await rm(join(this.options.scratchDir, this.options.assetName!), { force: true }).catch(() => undefined);
       await removeTree(join(this.options.scratchDir, "unpacked")).catch(() => undefined);
       throw error;
-    } finally { if (!held) this.busy = false; }
+    } finally { if (!held) { this.busy = false; await unlock(); } }
   }
   /**
    * hot-update: builds the change the light way and, unless main must load it (answer null: the packaged way goes on),
@@ -534,6 +539,34 @@ export class Updater {
     if (!release?.otherLine || release.commit !== confirm)
       throw new Error("The change you confirmed is no longer Beta's newest one, so nothing was installed. Check again and confirm the change shown.");
     return release;
+  }
+  /**
+   * Versioned app folders: the new version did not say its window was up, so the switch went back to this one by itself
+   * (shell-switch.ts). Said as a failed install of that release, with what is still installed, so the window tells the
+   * owner once and update by itself does not try that same change again (the next one is).
+   */
+  switchFailed(failure: SwitchFailure): UpdateStatus {
+    const short = failure.commit?.slice(0, 7);
+    const release: ReleaseInfo = { currentVersion: this.options.currentVersion, latestVersion: failure.tried, available: false,
+      tag: short ? `dev-${short}` : `v${failure.tried}`, title: short ? `Beta build of change ${short}` : `Version ${failure.tried}`, notes: "",
+      publishedAt: null, assetUrl: "", checksumUrl: "", assetBytes: 0, pageUrl: "", channel: short ? "beta" : "stable",
+      ...(failure.commit ? { commit: failure.commit } : {}) };
+    return this.keptAfter(failure.message, release);
+  }
+  /** The live hooks to use from the next install (the gateway's engine can be replaced under it). */
+  useLive(hooks: LiveHooks | null): void {
+    if (hooks) this.options.live = hooks; else delete this.options.live;
+  }
+  /**
+   * Versioned app folders with no window open (gateway-updates.ts): the new version is in use from the next window, as
+   * `current.json` now says; nothing had to close. The claim is given back and the status says so.
+   */
+  switchedWithoutWindow(): UpdateStatus {
+    const release = this.status.release;
+    this.installed = { version: release?.latestVersion ?? this.installed.version, commit: release?.commit ?? this.installed.commit };
+    this.busy = false;
+    this.stages = this.target = null;
+    return this.set("current", `Version ${this.installed.version} is in place; the next time Branch's window opens, it is this version.`, null, release ? { ...release, available: false } : null);
   }
   /** Gives back a claim `install({ hold: true })` kept, when the hand-over it was kept for did not start. */
   release(): void { this.busy = false; }
@@ -773,6 +806,8 @@ export class Updater {
     const plan: DevBuildPlan = {
       repo: this.devRepo(), buildDir, commit: release.commit, running: this.installed.commit, assetName: this.options.assetName!,
       platform: this.platform, otherLineConfirmed: release.otherLine === true,
+      ...(this.options.appFolders ? { appFolder: { root: this.options.appFolders.root,
+        running: folderPath(this.options.appFolders.root, this.options.appFolders.folder), executableName: this.options.executableName } } : {}),
       onStage: (stage, state) => {
         this.stage(stage, state);
         if (state === "running") this.set("downloading", words[stage], null, this.status.release);
@@ -791,6 +826,8 @@ export class Updater {
       throw new Error(`The newest Beta build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);
     this.stage("checking");
     this.set("verifying", "Checking the build is whole…", null, this.status.release);
+    // Versioned app folders: already in place beside the running version, whole (it was renamed in only once it was).
+    if ("appFolder" in built) return { version: built.version, stagedDir: built.appFolder };
     if ("folder" in built) {
       const app = await findExecutableDir(built.folder, this.options.executableName);
       const into = join(this.options.scratchDir, "unpacked"), stagedDir = join(into, basename(app));
@@ -988,6 +1025,8 @@ export class Updater {
     await writeFile(script, [
       "@echo off", "setlocal", 'set "PID=%~1"', "set TRIES=0", `echo [%date% %time%] update started for pid %PID% >>"${log}"`,
       // The app asked itself to close; if it has not gone within about two minutes, end it so the update still lands.
+      // The gateway's task is switched off first, so a gateway ended below is not started again mid-swap (windowsSwap).
+      "call :taskoff",
       ...waitFor("%PID%", "wait", "WAITED", "app"),
       // The engine that keeps working with the window closed holds the same files open, so it is
       // waited for too; it was already asked to close before this script was started.
@@ -1001,6 +1040,43 @@ export class Updater {
         started: this.startedFile(),
         archive: join(this.options.scratchDir, this.options.assetName!), unpacked: join(this.options.scratchDir, "unpacked") }),
     ].join("\r\n"), "utf8");
+    return script;
+  }
+  /** Versioned app folders: a downloaded version, unpacked in the scratch folder, moved into its own folder beside this one. */
+  private async intoAppFolder(stagedDir: string, version: string): Promise<string> {
+    const { root } = this.options.appFolders!;
+    const part = partFolder(root, version);
+    await removeTree(part);
+    await rename(stagedDir, part).catch(async () => { await cp(stagedDir, part, { recursive: true, verbatimSymlinks: true }); await removeTree(stagedDir); });
+    return sealAppFolder(root, version, await readPointer(root));
+  }
+  /**
+   * Versioned app folders: the pointers the switch renames, the note the old version reads if the new one does not come
+   * up, and the plan the hand-over runner follows to switch and watch it (version-switch.ts). Written only after the window has
+   * reached its moment (`handOver`), so the new version starts shown or in the tray exactly as this one was.
+   */
+  private async writeSwitchScript(stagedDir: string, version: string, release: ReleaseInfo): Promise<string> {
+    const { root, folder } = this.options.appFolders!;
+    const running = { folder, version: this.options.currentVersion };
+    const next = { folder: basename(stagedDir), version };
+    this.set("ready", invisibleWaitWords, 1, release);
+    const { minimized } = this.options.handOver ? await this.options.handOver({ version, stillWanted: () => !this.calledOff }) : { minimized: false };
+    await this.untilUnpaused();
+    const files = await pointerFiles(root, running, next);
+    const scratch = this.options.scratchDir, exe = this.options.executableName;
+    const failure: SwitchFailure = { kept: this.options.currentVersion, tried: version, commit: release.commit ?? null, at: new Date().toISOString(),
+      message: `Version ${version} did not open its window within two minutes, so Branch went back to ${this.options.currentVersion} by itself. Your conversations and chat apps kept running. The next change is tried as soon as it lands.` };
+    await writeFile(join(scratch, `${failureName}.draft`), JSON.stringify(failure));
+    await rm(join(scratch, failureName), { force: true });
+    // Read by the hand-over runner (hand-over.ts), which switches from this version's own folder (version-switch.ts).
+    const script = join(scratch, "switch-version.json");
+    const plan = SwitchPlanSchema.parse({ root, next: files.next, rollback: folder ? files.rollback : null,
+      newExe: join(stagedDir, exe), oldExe: join(folderPath(root, folder), exe), pid: process.pid, marker: shellUpMarker(scratch, version),
+      failureDraft: join(scratch, `${failureName}.draft`), failure: join(scratch, failureName), log: join(scratch, "apply-update.log"), minimized,
+      version, kept: this.options.currentVersion, commit: release.commit ?? null,
+      // Going back is refused when the new version has moved the saved work past what this version can read.
+      dataDir: this.options.dataDir ?? null, understood: storeMigrations.at(-1)?.version ?? null });
+    await writeFile(script, JSON.stringify(plan, null, 2), "utf8");
     return script;
   }
   /** macOS and Linux: the shell hand-over from hand-over.ts, written beside the download. */
@@ -1098,11 +1174,27 @@ export function windowsRecoveryScript(plan: { install: string; previous: string;
   ].join("\r\n");
 }
 
+/**
+ * UP-PLATFORM-002: `:taskoff` switches the gateway's scheduled task off for the swap, remembering that it did (the task
+ * may not exist: Startup shortcut, or never registered), and `:taskon` switches it back on. schtasks reads no input.
+ */
+export function windowsGatewayTaskSwitch(sys: string): string[] {
+  const change = (how: string) => `${sys}schtasks.exe /Change /TN "${gatewayTaskName}" /${how} <NUL >NUL 2>&1`;
+  return [
+    ":taskoff", change("DISABLE"), 'if not errorlevel 1 set "TASKOFF=1"', "exit /b 0",
+    ":taskon", `if defined TASKOFF ${change("ENABLE")}`, "exit /b 0",
+  ];
+}
+
 /** The Windows swap: copy beside, rename twice, carry what is kept; the copy over the folder is the fallback. */
 export function windowsSwap(plan: WindowsSwapPlan): string[] {
   const { install, previous, log, exe } = plan;
   const incoming = `${install}.incoming`, failed = `${install}.failed`, folder = windowsKeep.folder;
   const note = (text: string) => `echo [%time%] ${text} >>"${log}"`;
+  // UP-PLATFORM-002: the gateway's scheduled task restarts a gateway that ends with a failure, as a forced end does.
+  // It is switched off for the swap (`:taskoff`, called by the script before it waits) and on again before any version
+  // starts, so it never starts one from a half-copied folder and the new version's window can start through it.
+  const launch = `call :taskon & start "" "${exe}"`;
   const reg = `${plan.sys}reg.exe`;
   // Armed only for the two renames, so a cut there is put right at the next sign-in.
   const arm = `${reg} add "${plan.runOnceKey}" /v "${recoveryValueName}" /t REG_SZ /d "\\"${plan.recover}\\"" /f >NUL 2>&1`;
@@ -1115,7 +1207,7 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
   return [
     ":copy", "set /a TRIES+=1", note("copying new version beside the old one, attempt %TRIES%"),
     `rmdir /s /q "${incoming}" 2>NUL`, plan.mirror(plan.staged, incoming),
-    `if errorlevel 8 ( if %TRIES% lss 3 ( ${plan.sleep(3)} & goto copy ) else ( ${note("copy failed; nothing was changed")} & rmdir /s /q "${incoming}" 2>NUL & start "" "${exe}" & exit /b 1 ) )`,
+    `if errorlevel 8 ( if %TRIES% lss 3 ( ${plan.sleep(3)} & goto copy ) else ( ${note("copy failed; nothing was changed")} & rmdir /s /q "${incoming}" 2>NUL & ${launch} & exit /b 1 ) )`,
     `call :drop "${previous}-2"`,
     `if exist "${previous}\\" if not exist "${previous}-2\\" move "${previous}" "${previous}-2" >NUL`,
     note("keeping previous version"),
@@ -1123,19 +1215,19 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
     `if exist "${previous}\\" goto inplace`,
     arm, `move "${install}" "${previous}" >NUL 2>&1`, `if errorlevel 1 ( ${disarm} & goto inplace )`,
     `move "${incoming}" "${install}" >NUL 2>&1`,
-    `if errorlevel 1 ( ${note("new version could not be moved in; restoring previous")} & move "${previous}" "${install}" >NUL & ${disarm} & start "" "${exe}" & exit /b 1 )`,
+    `if errorlevel 1 ( ${note("new version could not be moved in; restoring previous")} & move "${previous}" "${install}" >NUL & ${disarm} & ${launch} & exit /b 1 )`,
     disarm, ...carry(previous, install), "goto swapped",
     ":inplace", note("the program folder is in use; copying over it instead"),
-    plan.mirror(install, previous, windowsKeepOut), `if errorlevel 8 ( ${note("could not keep the previous version; nothing was changed")} & start "" "${exe}" & exit /b 1 )`,
+    plan.mirror(install, previous, windowsKeepOut), `if errorlevel 8 ( ${note("could not keep the previous version; nothing was changed")} & ${launch} & exit /b 1 )`,
     plan.mirror(incoming, install, windowsKeepOut), `if errorlevel 8 goto restore`, `rmdir /s /q "${incoming}" 2>NUL`,
     ":swapped",
-    'if "%~2"=="stay" exit /b 0',
+    'if "%~2"=="stay" ( call :taskon & exit /b 0 )',
     ...(plan.started ? [`del /q "${plan.started}" 2>NUL`] : []),
-    note("starting new version"), `start "" "${exe}"`, plan.sleep(20),
+    note("starting new version"), `${launch}`, plan.sleep(20),
     // selfdev (Beta): up means it said so (its engine started) within about ninety seconds and is still running.
     ...(plan.started ? ["set UPWAIT=0", ":upwait", `if exist "${plan.started}" goto upcheck`,
       `if %UPWAIT% lss 70 ( set /a UPWAIT+=1 & ${plan.sleep(1)} & goto upwait )`,
-      note("new version did not say it was up; ending it"), `${plan.sys}taskkill.exe /IM "${plan.image}" /T /F >NUL 2>&1`, plan.sleep(2), "goto restore",
+      note("new version did not say it was up; ending it"), "call :taskoff", `${plan.sys}taskkill.exe /IM "${plan.image}" /T /F >NUL 2>&1`, plan.sleep(2), "goto restore",
       ":upcheck", plan.running, "if not errorlevel 1 goto done", "goto restore"] : []),
     plan.running, "if not errorlevel 1 goto done",
     plan.sleep(15), plan.running, "if not errorlevel 1 goto done",
@@ -1145,14 +1237,39 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
     `move "${previous}" "${install}" >NUL 2>&1`, `if errorlevel 1 ( move "${failed}" "${install}" >NUL & ${disarm} & goto restorecopy )`,
     disarm, ...carry(failed, install), "goto restored",
     ":restorecopy", plan.mirror(previous, install, windowsKeepOut),
-    ":restored", note("previous version is back"), `start "" "${exe}"`, "exit /b 1",
+    ":restored", note("previous version is back"), `${launch}`, "exit /b 1",
     ":done", note("new version is running"), `rmdir /s /q "${plan.unpacked}" 2>NUL`, `del /q "${plan.archive}" 2>NUL`, "exit /b 0",
     // Removes an old copy, first moving any Branch Data left in it out beside the program; keeps the copy when that fails.
     ":drop", `if not exist "%~1\\" exit /b 0`,
     `if exist "%~1\\${folder}\\" move "%~1\\${folder}" "${install} - saved ${folder} %RANDOM%" >NUL 2>&1`,
     `if exist "%~1\\${folder}\\" ( ${note("kept %~1 because it holds " + folder)} & exit /b 1 )`,
-    `rmdir /s /q "%~1" 2>NUL`, "exit /b 0", "",
+    `rmdir /s /q "%~1" 2>NUL`, "exit /b 0",
+    ...windowsGatewayTaskSwitch(plan.sys), "",
   ];
+}
+
+/**
+ * The app-wide install lock: a file naming the process installing. One whose process has ended is stale and taken
+ * over; one whose process runs means another part of Branch is installing, and this install waits (said, not failed).
+ * Answers how to give it back.
+ */
+export async function installLock(path: string, pid = process.pid): Promise<() => Promise<void>> {
+  const { open, readFile: read, rm: remove } = await import("node:fs/promises");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const file = await open(path, "wx");
+      await file.writeFile(String(pid)); await file.close();
+      return async () => { const owner = Number(await read(path, "utf8").catch(() => "")); if (owner === pid) await remove(path, { force: true }); };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const owner = Number(await read(path, "utf8").catch(() => ""));
+      let alive = false;
+      try { if (owner > 0 && owner !== pid) { process.kill(owner, 0); alive = true; } } catch (probe) { alive = (probe as NodeJS.ErrnoException).code === "EPERM"; }
+      if (alive) throw new UpdateDeferredError("Another part of Branch is installing an update right now, so this one waits for it.");
+      await remove(path, { force: true });
+    }
+  }
+  throw new UpdateDeferredError("Branch could not take the update lock, so the update waits.");
 }
 
 /** hot-update: how long a live update took, as the status says it ("1.4 s", "38 s"). */
