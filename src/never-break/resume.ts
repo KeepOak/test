@@ -336,17 +336,26 @@ export function lateNote(dueAt: unknown, now: Date, graceMs = 120_000): string |
 }
 
 /**
- * A repeating job whose turn was cut off by the restart goes back on the list for its next turn,
- * instead of staying stuck as "interrupted" for ever. The cut-off turn itself is settled with its task.
+ * Every interrupted job turn is settled independently of task replay. A repeating job moves to its
+ * next turn; a one-time job stays failed until the owner asks to run it, never replaying side effects.
  */
 export function releaseInterruptedSchedules(store: Store, nextTurn: (data: Record<string, unknown>, now: Date) => string, now = new Date()): number {
   const rows = store.sqlite.prepare("SELECT id, owner, data FROM schedules WHERE json_extract(data,'$.status')='interrupted'").all();
   let released = 0;
   for (const row of rows) {
     const data = JSON.parse(String(row.data)) as Record<string, unknown>;
-    if (typeof data.intervalMs !== "number" && typeof data.dailyAt !== "string" && typeof data.cron !== "string") continue;
-    store.save("schedules", String(row.owner), String(row.id), { ...data, status: "pending", dueAt: nextTurn(data, now),
-      lastInterruption: { at: now.toISOString(), note: "Branch was restarted during this job's turn. That turn is settled with its task; the job carries on at its next turn." } });
+    const repeats = typeof data.intervalMs === "number" || typeof data.dailyAt === "string" || typeof data.cron === "string";
+    let status = repeats ? "pending" : "failed", dueAt = data.dueAt;
+    let note = repeats ? "Branch restarted during this job's turn. That turn was interrupted; the job carries on at its next turn."
+      : "Branch restarted during this one-time job. It was not replayed because its steps may already have taken effect. Review its task, then use Run now if needed.";
+    if (repeats) try { dueAt = nextTurn(data, now); }
+    catch { status = "failed"; note = "Branch restarted during this job, and its next turn could not be calculated. Review the schedule before running it again."; }
+    const history = Array.isArray(data.history) ? data.history.map((entry: unknown) => {
+      if (!entry || typeof entry !== "object" || (entry as { status?: unknown }).status !== "running") return entry;
+      return { ...entry, status: "interrupted", finishedAt: now.toISOString() };
+    }) : [];
+    store.save("schedules", String(row.owner), String(row.id), { ...data, status, dueAt, history,
+      ...(status === "failed" ? { error: note } : {}), lastInterruption: { at: now.toISOString(), note } });
     released++;
   }
   return released;
@@ -354,18 +363,18 @@ export function releaseInterruptedSchedules(store: Store, nextTurn: (data: Recor
 
 /**
  * What a real start (the app window, the background engine, or an engine run by the gateway) does
- * once it is listening: settle interrupted tasks and put cut-off repeating jobs back on the list.
- * With the switch off it does nothing, which is how Branch behaved before.
+ * once it is listening: settle interrupted jobs and, with task replay on, recover interrupted tasks.
+ * Settling a job never runs its interrupted turn, even when task replay is switched off.
  */
 export async function recoverOnStart(input: RecoveryInput & { nextTurn: (data: Record<string, unknown>, now: Date) => string }): Promise<RecoveredRun[]> {
+  const released = releaseInterruptedSchedules(input.store, input.nextTurn);
   // hot-update: a newer engine carries them on only once it has passed its check (main asks it to, `carryOnHandedOver`).
   const handedOver = process.env.BRANCH_HOLD_HANDED_OVER === "1" ? [] : resumeHandedOver(input);
   if (handedOver.length) console.log(`Carried on from the engine this one replaced: ${handedOver.length} task(s).`);
   if (input.mode === "off") return handedOver.map(({ runId, resumed }) => ({ runId, outcome: "resumed" as const, steps: [], resumed }));
-  const released = releaseInterruptedSchedules(input.store, input.nextTurn);
   const report = await recoverAfterRestart({ ...input, askOnly: input.askOnly || process.env.BRANCH_RESUME === "ask" });
   const counts = report.reduce<Record<string, number>>((all, run) => ({ ...all, [run.outcome]: (all[run.outcome] ?? 0) + 1 }), {});
   if (report.length || released)
-    console.log(`Picked up after a restart: ${JSON.stringify(counts)}; repeating jobs put back: ${released}.`);
+    console.log(`Picked up after a restart: ${JSON.stringify(counts)}; interrupted jobs settled: ${released}.`);
   return report;
 }

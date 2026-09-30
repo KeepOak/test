@@ -39,6 +39,13 @@ after each message is handled, and a schedule is claimed in the database before 
 
 ### Desktop gateway draft
 
+At a real engine start, interrupted schedule turns are settled even with task replay off.
+Repeating jobs move to their next due turn. A one-time job becomes failed with a reason and
+keeps its interrupted task/history for review; its side effects are never replayed just to
+settle the job. Run now and authenticated triggers can claim an interrupted job atomically,
+with the existing delivery-slot deduplication. A turn retried this way does not restore the
+stuck interrupted state. Installed restart and schedule acceptance remain pending.
+
 The desktop candidate starts a windowless stock Electron broker with `--branch-gateway` and a
 separate single-instance lock. It retains the encrypted device vault, Stop notices and Mac login
 service. Its worker owns the database; its shell windows join the proved public gateway. An absent

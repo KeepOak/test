@@ -697,3 +697,28 @@ test("a task cut off by Branch closing is cancelled with the gateway and carryin
     assert.equal(run.status, mode === "off" && !resumeAfterRestart ? "cancelled" : "interrupted", `gateway ${mode}, carrying on ${resumeAfterRestart}`);
   }
 });
+
+test("a one-time job cut off by a restart is settled as failed, not replayed, and Run now can still start it", async (t) => {
+  const root = await temp(t);
+  const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider: scripted([say("ran")]) });
+  closeFirst(t, () => app.close());
+  const now = new Date(), earlier = new Date(now.getTime() - 3600_000).toISOString();
+  const once = "55555555-5555-4555-8555-555555555555", broken = "66666666-6666-4666-8666-666666666666";
+  app.store.save("schedules", "local", once, { kind: "task", prompt: "send the invoice", dueAt: earlier, status: "interrupted",
+    permissions: [], history: [{ runId: "r1", status: "running", startedAt: earlier }] });
+  app.store.save("schedules", "local", broken, { kind: "task", prompt: "hourly", dueAt: earlier, intervalMs: 3600_000,
+    status: "interrupted", permissions: [], history: [] });
+  const next = (data) => { if (data.prompt === "hourly") throw new Error("no next turn"); return now.toISOString(); };
+  assert.equal(releaseInterruptedSchedules(app.store, next, now), 2);
+  const settled = app.store.get("schedules", "local", once).data;
+  assert.equal(settled.status, "failed", "a one-time job is never replayed: its steps may already have taken effect");
+  assert.equal(settled.dueAt, earlier);
+  assert.match(settled.error, /was not replayed/);
+  assert.equal(settled.history[0].status, "interrupted", "the cut-off turn is settled in its history");
+  assert.equal(settled.history[0].finishedAt, now.toISOString());
+  const unscheduled = app.store.get("schedules", "local", broken).data;
+  assert.equal(unscheduled.status, "failed", "a repeating job whose next turn cannot be worked out waits for the owner");
+  assert.match(unscheduled.error, /could not be calculated/);
+  app.store.save("schedules", "local", once, { ...settled, status: "interrupted" });
+  assert.ok(app.store.claimScheduleTrigger("local", once, now.toISOString(), null), "Run now can start an interrupted job");
+});
