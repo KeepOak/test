@@ -1283,7 +1283,9 @@ ${result.output || "(it said nothing)"}`;
     key: async (owner, settings) => {
       const current = knowledgeBases.vectorStoreSettings(owner);
       if (JSON.stringify(current) !== JSON.stringify(settings)) throw new Error("This vector service is no longer the one selected, so its key was not sent");
-      return (await store.secrets.resolve(owner, store.projects.active(owner).id, [settings.vectorsSecret],
+      if (!settings.vectorsProject || !store.projects.list(owner).some((project) => project.id === settings.vectorsProject))
+        throw new Error("Save this vector connection again in its locker project before its key can be used");
+      return (await store.secrets.resolve(owner, settings.vectorsProject, [settings.vectorsSecret],
         { purpose: `Vectors for the selected ${settings.vectorsIn} service` }))[settings.vectorsSecret]!;
     },
   };

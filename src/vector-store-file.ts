@@ -31,6 +31,8 @@ export const VectorStoreSettingsSchema = z.object({
   vectorsFile: z.string().trim().max(400).default(""),
   vectorsUrl: z.string().trim().max(500).default(""),
   vectorsSecret: z.string().trim().max(200).regex(/^([A-Z][A-Z0-9_]*)?$/).default(""),
+  /** Captured when the owner saves the connection; changing the active project never changes its key. */
+  vectorsProject: z.string().trim().max(100).default(""),
   vectorsHeader: z.enum(["", "api-key", "x-chroma-token", "Authorization"]).default(""),
   vectorsTimeoutMs: z.number().int().min(500).max(30000).default(8000),
   chromaTenant: z.string().trim().min(1).max(120).default("default_tenant"),

@@ -197,7 +197,7 @@ export class KnowledgeBases {
    */
   chooseVectorStore(owner: string, input: unknown): { settings: VectorStoreSettings; backend: string; note: string } {
     this.store.profiles.requireOwner("Where document meaning vectors are kept");
-    const settings = VectorStoreSettingsSchema.parse({ ...this.vectorStoreSettings(owner), ...(input as object) });
+    const settings = VectorStoreSettingsSchema.parse({ ...this.vectorStoreSettings(owner), ...(input as object), vectorsProject: this.store.projects.active(owner).id });
     const remote = this.vectorServiceDependencies ? { owner, dependencies: this.vectorServiceDependencies } : undefined;
     const chosen = chooseVectorStore(settings, new SqliteVectors(this.db), remote);
     this.store.save("settings", owner, "vector-store", settings);
