@@ -50,7 +50,7 @@ test("Advanced: a standing instruction for one Trunk is kept, listed and removed
   await add.click();
   // Other Trunks may be listed too (the default one); this is kept for Scout alone.
   await page.locator(".dlg #fno-trunk").click();
-  await page.locator('.gsel-pop [role="menuitemradio"]', { hasText: "Scout" }).click();
+  await page.locator('.gsel-pop [role="option"]', { hasText: "Scout" }).click();
   await page.locator(".dlg #fno-text").fill("Always cite the source page.");
   await page.locator('.dlg [data-act="ad-fno-save"]').click();
   await page.locator(".toast", { hasText: "Kept for Scout" }).waitFor();

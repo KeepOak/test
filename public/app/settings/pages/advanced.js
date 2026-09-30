@@ -100,7 +100,7 @@ function searchRow() {
   const buttons = SEARCH.map(([v, words]) => `<button type="button" aria-pressed="${D.search ? chosen === v : false}" data-act="ad-search" data-v="${v}">${words}</button>`).join("");
   const address = `<span class="right num15"><input class="inp" id="ad-searx" value="${esc(D.search?.chosen?.searxngUrl ?? "")}" placeholder="https://search.example.org" aria-label="${t("window.settings.advanced.search-address")}"></span>`;
   return `<div class="ctl"><b>${label}</b><span class="right"><span class="seg" role="group" aria-label="${label}">${buttons}</span></span><small>${sub}${from}</small></div>`
-    + `<div class="ctl"><b>${t("window.settings.advanced.search-address")}</b>${address}<small></small></div>`;
+    + `<div class="ctl"><b>${t("window.settings.advanced.search-address")}</b>${address}<small>${t("window.settings.advanced.search-address-explain")}</small></div>`;
 }
 
 async function chooseSearch(v) {

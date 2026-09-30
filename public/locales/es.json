@@ -8838,6 +8838,7 @@
   "window.settings.advanced.rewrite-short-notes": "Reescribir notas breves",
   "window.settings.advanced.room": "Sala",
   "window.settings.advanced.search-address": "Dirección de SearXNG",
+  "window.settings.advanced.search-address-explain": "Dónde responde tu propio SearXNG. Solo se usa si arriba eliges SearXNG; nada va a nadie más.",
   "window.settings.advanced.search-documents-by-meaning": "Buscar documentos por significado",
   "window.settings.advanced.search-from-file": "Lo elige el archivo de arranque hasta que elijas uno aquí.",
   "window.settings.advanced.search-has-key": "Usa tu clave guardada como {name} en Secretos.",
