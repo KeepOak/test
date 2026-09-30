@@ -1,4 +1,5 @@
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
+import { retiredPhoneWorker } from "./retired-phone-worker.js";
 import {
   createServer,
   type IncomingMessage,
@@ -33,7 +34,9 @@ import {
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
 import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
+import { usageByPerson } from "./usage-by-person.js";
 import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
+import { RecapSettingsSchema, weeklyRecap } from "./weekly-recap.js";
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
@@ -126,6 +129,7 @@ import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "
 import { conversationPathsApi, conversationPathsRoute, readMarksPath } from "./conversation-paths-api.js";
 import { ArtifactPageSchema, ArtifactSaveSchema, artifactPageRoute, holdArtifactPage } from "./artifact-pages.js";
 import { readServingSettings, saveServingSettings } from "./mcp-server.js";
+import { validateStateless, statelessFailure, StatelessError } from "./mcp-stateless.js";
 import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from "./tool-loading.js";
 import { handleA2a, remoteAgentsApi } from "./a2a-routes.js";
 import type { createBranch } from "./index.js";
@@ -298,6 +302,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
+import { streamLiveStage } from "./live-stage-stream.js";
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { MiniAppDoor } from "./miniapp/door.js";
 import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
@@ -334,13 +339,16 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
 import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
+import { githubDeviceApi, handlesGitHubDevicePath } from "./github-device-connection.js";
+import { GitHubDeviceError } from "./integrations/github-device-auth.js";
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
+import { readScheduledDashboard } from "./scheduled-dashboards.js";
 import { proposeTrigger } from "./trigger-words.js";
-import { ownerTimezone } from "./person-about.js"; // your-profile
+import { aboutOf, ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
@@ -565,6 +573,13 @@ async function staticFile(
   response: ServerResponse,
   request?: IncomingMessage,
 ): Promise<boolean> {
+  // Keep the old worker URL updateable, so previously installed registrations can retire.
+  if (path === "/service-worker.js") {
+    response.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store",
+      "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
+    response.end(retiredPhoneWorker);
+    return true;
+  }
   const assets: Record<string, [string, string]> = {
     // The window (public/index.html, public/app.css; its modules and art under /app/ and /art/ are served by exact file).
     "/": ["index.html", "text/html; charset=utf-8"],
@@ -572,9 +587,8 @@ async function staticFile(
     "/fonts/archivo.woff2": ["fonts/archivo.woff2", "font/woff2"],
     "/fonts/geist.woff2": ["fonts/geist.woff2", "font/woff2"],
     "/fonts/geist-mono.woff2": ["fonts/geist-mono.woff2", "font/woff2"],
-    // The installable web app: its manifest, icons and service worker.
+    // The window's manifest and icons; no offline shell is registered.
     "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json; charset=utf-8"],
-    "/service-worker.js": ["service-worker.js", "text/javascript; charset=utf-8"],
     "/assets/icon-192.png": ["assets/icon-192.png", "image/png"],
     "/assets/icon-512.png": ["assets/icon-512.png", "image/png"],
     "/assets/icon-maskable-512.png": ["assets/icon-maskable-512.png", "image/png"],
@@ -640,7 +654,7 @@ async function staticFile(
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "content-security-policy":
-      // worker-src and manifest-src let the installable web app register its service worker.
+      // The manifest can name the web app; worker-src permits the legacy retirement update.
       // phase2/delight: blob: lets the owner's own background picture or video, kept in the window's own
       // storage, be shown without ever being sent anywhere. Only the page's own script can make one.
       // Integration review: blob: is allowed for pictures and sound/video only, never for scripts,
@@ -1112,6 +1126,10 @@ async function api(
       requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof GitLabApiError ? new HttpError(error.status, error.message) : error;
     });
+  if (handlesGitHubDevicePath(path))
+    return githubDeviceApi(app.githubDevice, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
+      throw error instanceof GitHubDeviceError ? new HttpError(error.status, error.message) : error;
+    });
   // ── Bucket 21: the switch for building on Branch, and flows written out and read back as YAML. ──
   if (handlesSdkKitPath(path))
     return sdkKitApi({ store: app.store, owner: app.runtime.owner, flows: app.flows,
@@ -1300,7 +1318,7 @@ async function api(
   // RES-709: a piece of what the window's own microphone heard, written out on this computer (hearInWindow below).
   if (request.method === "POST" && path === "/api/voice/dictation/hear") {
     const host = { store: app.store, owner: app.runtime.owner, isOwner: app.store.profiles.isOwner(),
-      locked: app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
+      locked: app.sessionLock.locked(), isLocked: () => app.sessionLock.locked(), voice: app.voice, platform: app.dictation.platform, present: app.dictation.present };
     try { return await hearInWindow(host, request); } catch (error) {
       throw new HttpError(error instanceof HearRefused ? error.status : 400, errorText(error));
     }
@@ -1343,6 +1361,17 @@ async function api(
     answer.windowBuild = liveWindowCommit() ?? ownBuild();
     for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
     return answer;
+  }
+  if (path === "/api/weekly-recap") {
+    app.store.profiles.requireOwner("The weekly recap");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "The weekly recap belongs to the owner at the app.");
+    if (request.method === "POST") {
+      const input = RecapSettingsSchema.parse(await readBody(request, 4096));
+      app.store.profiles.requireOwner("The weekly recap");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing your weekly estimate.");
+      app.store.save("settings", app.runtime.owner, "weekly_recap", input);
+    } else if (request.method !== "GET") throw new HttpError(405, "Use GET or POST");
+    return weeklyRecap(app.store, app.runtime.owner, (id) => app.trunks.records.find(id)?.name ?? null);
   }
   // FQ-collaboration.unified-search: one query across conversations, saved workflows and the
   // record of what the assistant was allowed to do. Owner-only: it reads across everything the
@@ -1392,7 +1421,8 @@ async function api(
   // everything else, so a paired phone can pick up what was started at the computer.
   if (request.method === "GET" && path === "/api/sessions") {
     const scope = app.store.profiles.scope();
-    const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
+    const params = new URL(request.url ?? "/", "http://x").searchParams;
+    const recent = app.store.recentSessions(scope, Number(params.get("limit") ?? 20) || 20, Number(params.get("offset") ?? 0));
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
     // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
     const away = app.store.putAwayConversations(scope, { limit: 1 });
@@ -1402,7 +1432,7 @@ async function api(
     const trunkOf = (sessionId: string) => app.store.profiles.isOwner()
       ? app.trunks.trunkForConversation(sessionId)?.trunkId ?? null
       : personal?.threads.get(sessionId)?.trunkId ?? null;
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
+    return { ...recent, profileId: app.store.profiles.active()?.id ?? null, isOwner: app.store.profiles.isOwner(), sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
       archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
@@ -1588,7 +1618,14 @@ async function api(
   }
   if (request.method === "GET" && path === "/api/artifacts") {
     const type = new URL(request.url ?? "/", "http://local").searchParams.get("type") ?? "";
-    const kept = await app.artifacts.list();
+    // SCREEN-162: the same rule as the file route, so the gallery lists only files this profile can open.
+    const requestingScope = scopeWhileUnlocked(app);
+    const all = await app.artifacts.list();
+    // Recheck that the profile scope captured at the start is still current and AppLock is not on.
+    // This matches the pattern in the /api/artifacts/file route: if scope changed during the await, refuse.
+    if (!requestingScope || scopeWhileUnlocked(app) !== requestingScope)
+      return { artifacts: [] };
+    const kept = all.filter((entry) => ownArtifact(app, requestingScope, entry.runId));
     return { artifacts: type ? kept.filter((entry) => entry.mediaType.startsWith(`${type}/`)) : kept };
   }
   // Batch 26 (wave 8): what Windows itself allows, with the page that turns each one on.
@@ -1704,7 +1741,8 @@ async function api(
       // DESIGN-DIRECTION PR 1: a helper is steered by the owner or its own person only, never by a key or into Lockdown.
       const helperRefusal = helperSteerRefusal(app.store, app.runtime.owner, run.id);
       if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
-      return app.runtime.steer(run.id, text);
+      // The Steer chip's note, too late for the task to read, runs as its own next turn (the runtime says whose may).
+      return app.runtime.steer(run.id, text, undefined, { lateTurn: true });
     }
     if (request.method === "GET" && match[2] === "plan")
       return { plan: app.runtime.orchestration.plan(run.sessionId) ?? null };
@@ -2120,9 +2158,12 @@ async function api(
   if (request.method === "GET" && path === panelsWorkPath)
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
-  if (request.method === "GET" && path === liveStagePath)
-    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
-      new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  if (request.method === "GET" && path === liveStagePath) {
+    const query = new URL(request.url ?? "/", "http://local").searchParams;
+    const replay = query.has("step") ? { step: query.get("step"), runId: query.get("run"), planAt: query.get("plan") } : undefined;
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser,
+      plan: session => app.runtime.orchestration.plan(session), observeSteps: query.get("observe") === "steps" }, query.get("session") ?? "", replay);
+  }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))
@@ -2147,7 +2188,11 @@ async function api(
     const stats = app.store.usageStore().getMonthlyStats(budget?.maxMonthlyTokens, overrides);
     // Wave 7: the few numbers that say how it is behaving, beside what it cost.
     const statistics = app.store.usageStore().statistics(app.runtime.owner, range === "7d" ? 7 : range === "90d" ? 90 : 30);
-    return { data, stats, statistics, pricing: pricingTableInUse(app.store, app.runtime.owner) };
+    // The household return above stays scoped; full person attribution is only for the owner window.
+    const byPerson = url.searchParams.get("people") === "1" && !currentPerson() && !startedWithShortLivedKey()
+      ? usageByPerson({ store: app.store, owner: app.runtime.owner, modelCostOf: (id) => runCost(app, id).amount },
+        range === "7d" ? 7 : range === "90d" ? 90 : 30) : null;
+    return { data, stats, statistics, pricing: pricingTableInUse(app.store, app.runtime.owner), byPerson };
   }
   if (request.method === "GET" && path === "/api/pricing")
     return pricingTableInUse(app.store, app.runtime.owner);
@@ -2560,6 +2605,11 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
  * App lock: whose records an open stream or socket may still carry. Once Branch locks with a PIN set
  * the answer is nobody's, so a stream opened before the lock ends there instead of flowing on.
  */
+/** A kept file is this profile's when the task that made it is theirs, in a conversation they own. */
+const ownArtifact = (app: Branch, scope: string, runId: string): boolean => {
+  const run = app.store.run(runId);
+  return !!run && run.owner === scope && app.store.ownsSession(scope, run.sessionId);
+};
 const scopeWhileUnlocked = (app: Branch): string => (app.sessionLock.refusal("GET", "/api/events/stream") ? "" : app.store.profiles.scope());
 /** An App lock refusal answered with its own status (400, 403 or 429); anything else as it was. */
 async function appLockAnswer(step: () => Promise<unknown>): Promise<unknown> {
@@ -2632,17 +2682,34 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   if (path === "/api/schedules" || path === "/api/schedules/") {
     app.store.profiles.requireOwner("Your schedules");
     if (request.method === "GET") return { schedules: app.store.list("schedules", owner) };
-    if (request.method === "POST") return app.scheduler.create(scheduleContext(app), await readBody(request));
+    if (request.method === "POST") {
+      const input = await readBody(request);
+      app.store.profiles.requireOwner("Creating your schedule");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a schedule.");
+      return app.scheduler.create(scheduleContext(app), input);
+    }
     throw new HttpError(404, "Endpoint not found");
   }
   // Words to a schedule (src/schedule-words.ts): a proposal only, which the owner confirms with POST /api/schedules.
   if (path === "/api/schedules/propose" && request.method === "POST") {
     app.store.profiles.requireOwner("Your schedules");
-    const proposal = await proposeSchedule(await readBody(request), { now: new Date(),
+    const input = await readBody(request);
+    app.store.profiles.requireOwner("Reading your schedule proposal");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading a schedule proposal.");
+    const proposal = await proposeSchedule(input, { now: new Date(),
       defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) });
+    app.store.profiles.requireOwner("Reading your schedule proposal");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading a schedule proposal.");
     // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
     const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
+  }
+  const dashboard = /^\/api\/schedules\/([a-f0-9-]{36})\/dashboard$/.exec(path);
+  if (dashboard && request.method === "GET") {
+    app.store.profiles.requireOwner("Your scheduled dashboard");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Scheduled dashboards belong to the owner at the app.");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch to read the dashboard.");
+    return readScheduledDashboard(app.store, owner, dashboard[1]!);
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
@@ -3129,6 +3196,12 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/allowlist") {
+    if (request.method === "GET") return { allowlist: app.channels.senderAllowlist() };
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
+    try { return { allowlist: app.channels.setSenderAllowlist(await readBody(request)) }; }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   if (path === "/api/channels/formatting") {
     if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
@@ -3308,8 +3381,17 @@ function conversationCost(app: Branch, owner: string, sessionId: string): { amou
  * models-ui: the connection that makes pictures now (src/media.ts preset: the owner's plan for "media") and the kind of
  * picture route it has, or null when it has none, so Settings › Models › Media offers only models that route can make.
  */
-function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini"; defaultModel: string } | null {
+function picturesNow(app: Branch): { connection: string; kind: "openai" | "gemini" | "codex"; defaultModel: string } | null {
   const preset = app.runtime.models.plan(app.runtime.owner, "media").candidates[0];
+  if (preset && typeof (preset.provider as { signInImages?: unknown }).signInImages === "function" &&
+      (preset.provider as { signInImagesAvailable?: boolean }).signInImagesAvailable !== false) {
+    const service = accountsServiceFor(app.runtime.models), found = service?.poolFor(preset), pool = found ? service?.usablePool(found.pool) : null;
+    if (!app.store.profiles.isOwner() || app.store.profiles.scope() !== app.runtime.owner || currentPerson() || startedWithShortLivedKey() || lockdownActive(app.store, app.runtime.owner) ||
+        (found && found.kind === "chatgpt" && !service?.legacySignedIn) ||
+        (pool && (pool.accounts.length !== 1 || pool.accounts[0]!.id !== "primary" || pool.accounts[0]!.disabled || pool.accounts[0]!.monthlyCapUsd !== null ||
+          (pool.defaultAccount !== null && pool.defaultAccount !== "primary")))) return null;
+    return { connection: preset.name, kind: "codex", defaultModel: "gpt-image-2" };
+  }
   const where = preset ? providerImages(preset.provider) : null;
   return preset && where ? { connection: preset.name, kind: where.kind, defaultModel: where.defaultModel } : null;
 }
@@ -3451,8 +3533,16 @@ async function documentsApi(app: Branch, request: IncomingMessage, path: string)
     if (request.method === "POST") return library.configure(owner, await readBody(request));
   }
   if (request.method === "GET" && path === "/api/documents") return library.view(owner);
-  if (request.method === "POST" && path === "/api/documents")
-    return library.add(owner, await readBody(request, documentBodyBytes));
+  if (request.method === "POST" && path === "/api/documents") {
+    const body = await readBody(request, documentBodyBytes);
+    const allowed = () => {
+      app.store.profiles.requireOwner("Adding a document");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before adding a document.");
+    };
+    // Checked again after waiting for the body, and again after the file's words are read, before anything is kept.
+    allowed();
+    return library.add(owner, body, undefined, true, { kind: "person", name: aboutOf(app, "owner").name, role: "owner" }, allowed);
+  }
   if (request.method === "POST" && path === "/api/documents/search")
     return { results: await library.search(owner, await readBody(request)) };
   if (request.method === "POST" && path === "/api/documents/reindex") {
@@ -3491,7 +3581,22 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   const owner = app.runtime.owner;
   if (request.method === "GET" && path === "/api/research") return { reports: app.research.list(owner) };
   if (request.method === "GET" && path === "/api/monitors") return { monitors: app.monitors.list(owner) };
-  if (request.method === "POST" && path === "/api/monitors") return app.monitors.create(owner, await readBody(request));
+  if (request.method === "POST" && path === "/api/monitors") {
+    const body = await readBody(request);
+    const allowed = () => {
+      app.store.profiles.requireOwner("Creating a watch");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a watch.");
+    };
+    // Checked again after waiting for the body, before a price watch's first look at the page, and before saving.
+    allowed();
+    return app.monitors.create(owner, body, undefined, undefined, allowed);
+  }
+  const prices = /^\/api\/monitors\/([a-f0-9-]{36})\/prices$/.exec(path);
+  if (prices && request.method === "GET") {
+    app.store.profiles.requireOwner("Your watched prices");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Watched price history belongs to the owner at the app.");
+    return app.monitors.history(owner, prices[1]!);
+  }
   const watch = /^\/api\/monitors\/([a-f0-9-]{36})(?:\/(check))?$/.exec(path);
   if (watch && request.method === "DELETE" && !watch[2]) return app.monitors.remove(owner, watch[1]!);
   if (watch && request.method === "POST" && watch[2] === "check") return app.monitors.check(owner, watch[1]!);
@@ -3630,6 +3735,8 @@ async function handleMcpRequest(
     const owner = app.runtime.owner;
     const mcp = app.mcpServer;
     if (!mcp) throw new HttpError(500, "MCP server not initialized");
+    if (request.headers["mcp-protocol-version"] === "2026-07-28" && request.method !== "POST")
+      throw new HttpError(405, "Stateless MCP uses POST only");
 
     const sessionId = request.headers["mcp-session-id"] as string | undefined;
 
@@ -3659,6 +3766,23 @@ async function handleMcpRequest(
     }
 
     const body = request.method === "POST" ? await readBody(request, 65536) : undefined;
+
+    const metadata = body && typeof body === "object" ? (body as { params?: { _meta?: unknown } }).params?._meta : undefined;
+    if (request.headers["mcp-protocol-version"] === "2026-07-28" || metadata && typeof metadata === "object"
+      && "io.modelcontextprotocol/protocolVersion" in metadata) {
+      try {
+        const parsed = validateStateless(body, request.headers);
+        const result = await mcp.handleStateless(parsed);
+        const status = result.error?.code === -32601 ? 404 : result.error ? 400 : 200;
+        if (!response.destroyed && !response.writableEnded) {
+          response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+          response.end(JSON.stringify(result));
+        }
+      } catch (error) {
+        send(response, 400, statelessFailure(body, error instanceof StatelessError ? error : new StatelessError(-32602, "Invalid stateless request")));
+      }
+      return true;
+    }
 
     if (request.method === "POST" && body) {
       const JsonRpcSchema = z
@@ -4903,10 +5027,24 @@ async function noteFirstStart(app: Branch, dataDir: string): Promise<void> {
 }
 /** Endpoints that write the response themselves (streams and the OpenAI-style chat). */
 async function rawApi(app: Branch, request: IncomingMessage, response: ServerResponse, path: string): Promise<boolean> {
+  if (request.method === "GET" && path === liveStagePath
+    && new URL(request.url ?? "/", "http://local").searchParams.get("stream") === "1") {
+    const session = new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "";
+    if (!/^[a-f0-9-]{36}$/.test(session)) throw new HttpError(400, "Choose a conversation for the live view.");
+    const scope = scopeWhileUnlocked(app);
+    const readable = () => !!scope && scopeWhileUnlocked(app) === scope && app.store.profiles.isOwner()
+      && app.store.ownsSession(scope, session);
+    if (!readable()) throw new HttpError(404, "Conversation not found");
+    // The stream is read only while the view shows the browser, so it observes plan steps as a fast read does (#996).
+    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser,
+      plan: session => app.runtime.orchestration.plan(session), observeSteps: true }, session, response, readable);
+    return true;
+  }
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {
-    await recordingApi(app, request, response, path, { readBody: () => readBody(request) });
+    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined),
+      locked: () => app.sessionLock.refusal(request.method, path) });
     return true;
   }
   // ---- end of the bucket 13 block ----
@@ -4978,11 +5116,15 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   // One kept picture or sound, so the gallery can show it. Anything outside the artifacts folder
   // is refused by RunArtifacts itself, and only kinds the browser can safely display are served.
   if (request.method === "GET" && path === "/api/artifacts/file") {
+    const requestingScope = scopeWhileUnlocked(app);
     const wanted = new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "";
     const entry = (await app.artifacts.list(500)).find((kept) => kept.path === wanted);
     if (!entry) throw new HttpError(404, "That file was not made by the assistant");
+    const readable = () => !!requestingScope && scopeWhileUnlocked(app) === requestingScope && ownArtifact(app, requestingScope, entry.runId);
+    if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     if (!/^(image|audio)\//.test(entry.mediaType)) throw new HttpError(415, "Only pictures and sounds are shown here");
     const bytes = await app.artifacts.read(entry.path);
+    if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     response.writeHead(200, {
       "content-type": entry.mediaType, "cache-control": "no-store",
       "x-content-type-options": "nosniff", "content-disposition": `inline; filename="${entry.name}"`,

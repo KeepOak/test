@@ -62,26 +62,23 @@ const seen = (page) => page.evaluate(() => {
    sections, in order, each headed once; the five tabs stay, at 1440 and 400 px. */
 for (const width of [1440, 400]) {
   test(`DG-185 at ${width}: Models opens on Connections, with the prototype's sections at each level, each headed once`, async (t) => {
-    const { settingsWindow, openSettingsPage, setLevel } = await import("./settings-window.mjs");
+    const { settingsWindow, openSettingsPage, setLevel, assertHeadings, shownHeadings } = await import("./settings-window.mjs");
     const { page, errors } = await settingsWindow(t, { name: "models-dg185", width, height: 900 });
     await openSettingsPage(page, "models");
-    const heads = () => page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
-      all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
     await setLevel(page, "regular");
     await page.locator('.set-col [role="tab"][aria-selected="true"]', { hasText: "Connections" }).waitFor();
-    assert.deepEqual(await heads(), ["Models"]);
+    await assertHeadings(page, ["Models"], "Regular");
     assert.equal(await page.locator('.set-col [role="tab"]').count(), 5, "the Models tabs stay");
     await setLevel(page, "advanced");
-    const advanced = await heads();
     // Pass 17 adds "Mixtures and savings" at Advanced (whereB17("models", 1, ...)), and its part D adds "Decision models"
-    // after it (addSettings15('models', 1, ...)).
-    assert.deepEqual(advanced, ["Models", "Budgets", "Models for smaller jobs", "Compare models", "Mixtures and savings", "Decision models"]);
+    // after it (addSettings15('models', 1, ...)), drawn once GET /api/decisions answers (Checks read the page before it).
+    await assertHeadings(page, ["Models", "Budgets", "Models for smaller jobs", "Compare models", "Mixtures and savings", "Decision models"], "Advanced");
     await setLevel(page, "technical");
-    const technical = await heads();
     // The prototype draws the FINE15 rows first, then pass 17's (whereB17): Technical adds "Retries and timeouts" and
     // "Per connection" among the FINE15 rows, and "Connections, technical" after "Mixtures and savings"; part D's two
     // sections come last, in the order they were added (addSettings15('models', 1 | 2, ...)).
-    assert.deepEqual(technical, ["Models", "Budgets", "Models for smaller jobs", "Compare models", "Retries and timeouts", "Per connection", "Mixtures and savings", "Connections, technical", "Decision models", "Decision models, technical"]);
+    await assertHeadings(page, ["Models", "Budgets", "Models for smaller jobs", "Compare models", "Retries and timeouts", "Per connection", "Mixtures and savings", "Connections, technical", "Decision models", "Decision models, technical"], "Technical");
+    const technical = await shownHeadings(page);
     assert.equal(new Set(technical).size, technical.length, "no heading is drawn twice");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `${width} px fits`);
     assert.deepEqual(errors, []);

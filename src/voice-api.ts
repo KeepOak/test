@@ -112,7 +112,8 @@ export function voicePlan(deps: VoiceApiDeps) {
     settings: plan.settings,
     speechToText: { route: plan.stt.kind, reason: plan.stt.reason, ready: plan.stt.kind === "local" || plan.stt.provider !== null },
     readAloud: { route: plan.tts.kind, reason: plan.tts.reason,
-      ready: plan.tts.kind === "windows" ? plan.settings.systemVoice !== "off" : plan.tts.provider !== null },
+      ready: plan.tts.kind === "windows" ? plan.settings.systemVoice !== "off" : plan.tts.kind === "piper"
+        ? plan.tts.ready === true && plan.settings.systemVoice !== "off" : plan.tts.provider !== null },
     whereAudioGoes: whereAudioGoes(plan.stt.kind, plan.tts.kind, deps.voice.platform),
     // mac2/desktop-ui: the words this computer uses, without asking it for its voices.
     systemVoice: systemVoiceLabels(deps.voice.platform),
@@ -152,7 +153,8 @@ export function microphoneHelp(platform: string): string {
 /** One sentence about where recordings and spoken replies travel, in the owner's own terms. */
 export function whereAudioGoes(stt: string, tts: string, platform: string = process.platform): string {
   const isWindows = platform === "win32";
-  const both = stt === "local" && tts === "windows";
+  const both = stt === "local" && (tts === "windows" || tts === "piper");
+  if (both && tts === "piper") return "Nothing leaves this computer: recordings are written out here, and replies use an installed Piper voice.";
   if (both) return isWindows
     ? "Nothing leaves this computer: recordings are written out here, and replies are read aloud by a voice that comes with Windows."
     : "Nothing leaves this computer: recordings are written out here, and replies are read aloud by your computer's own voice.";
@@ -160,7 +162,7 @@ export function whereAudioGoes(stt: string, tts: string, platform: string = proc
   parts.push(stt === "local"
     ? "Your recordings are written out on this computer."
     : "Your recordings are sent to your model provider to be written out, and you are charged for the minutes.");
-  parts.push(tts === "windows"
+  parts.push(tts === "piper" ? "Replies use an installed Piper voice on this computer, which costs nothing." : tts === "windows"
     ? (isWindows ? "Replies are read aloud by a voice that comes with Windows, which costs nothing." : `Replies are read aloud by ${systemVoiceWords(platform).chosen}, which costs nothing.`)
     : "The words of a reply are sent to your model provider to be read aloud, and you are charged for the characters.");
   return parts.join(" ");

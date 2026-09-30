@@ -39,6 +39,35 @@ after each message is handled, and a schedule is claimed in the database before 
 
 ### Desktop gateway draft
 
+At a real engine start, interrupted schedule turns are settled even with task replay off.
+Repeating jobs move to their next due turn. A one-time job becomes failed with a reason and
+keeps its interrupted task/history for review; its side effects are never replayed just to
+settle the job. Run now and authenticated triggers can claim an interrupted job atomically,
+with the existing delivery-slot deduplication. A turn retried this way does not restore the
+stuck interrupted state. Installed restart and schedule acceptance remain pending.
+
+An installed desktop engine establishes a doctor baseline on its first accepted start. Later
+version or saved-state schema changes run the existing doctor checks in that same database owner.
+A live successor waits until handover acceptance before starting them. Completed reports, including
+unresolved prerequisites, are saved as `doctor-after-update` and summarized in updater diagnostics;
+ordinary restarts do not repeat them. The Git probe has a ten-second limit and is cancelled on
+engine shutdown. These unattended checks never bind another port, call a model, or launch a
+package installer. A missing browser remains an explicit manual `branch doctor --fix` step.
+Config-specific migration repairs and automatic package installation remain separate work.
+
+When the owner presses Update now while tasks are busy, the desktop asks **Let them finish
+first**, **Install now**, or **Cancel update** using the authenticated engine's task count.
+Waiting pins the request to that release and channel for the current desktop session. It keeps
+working after the window closes to the tray, checks every ten seconds without overlapping reads,
+and cancels when the release/channel changes or the app quits. Update now opens the choice again
+so the owner can cancel it. A task that starts again before adoption defers the queued install.
+
+Install now bypasses task-based build pauses only for that explicit owner request; typing still
+pauses it. The final busy-work gate permits versioned shell updates, which retain the engine, and
+checked live engine handover carries work forward. A live build that falls back to a flat packaged
+swap still refuses to stop busy work. Automatic updates keep their existing idle policy.
+Waiting questions remain in the task store; installed handover/resumption acceptance is pending.
+
 The desktop candidate starts a windowless stock Electron broker with `--branch-gateway` and a
 separate single-instance lock. It retains the encrypted device vault, Stop notices and Mac login
 service. Its worker owns the database; its shell windows join the proved public gateway. An absent
@@ -56,6 +85,19 @@ adoption/rollback refreshes gateway readiness so public requests wait for the se
 Isolated tests cover engine crash replacement, shell close/rejoin, live module/draft/caret retention,
 active-task drain/adoption and failed-page rollback. Packaged installation, Windows job escape,
 gateway implementation replacement and overlapping shell handoff remain draft acceptance work.
+
+Compatible changes to `src/never-break/gateway.ts` can replace the resident gateway's methods from
+a manifest-checked live build. The listener, proof door, held proof connections, tunnels, worker,
+waiters and timers stay on the same object. A candidate is prepared before engine transfer and
+adopted only after the successor engine proves itself; renderer refusal restores the old methods
+before engine rollback. Start-up restores compatible code from the engine's checked live build.
+The owner stop wrapper remains resident so closing the gateway still releases its desktop broker.
+
+`gatewayCodeContract` must change whenever resident fields, private brands, callback assumptions
+or lifecycle invariants change. A changed contract, method layout or stable stop wrapper is refused
+as a live update and requires a packaged restart. Shared gateway dependencies still keep their
+main-process classification. This method-replacement path has not received installed continuity
+acceptance; compatibility must be reviewed along with every gateway change.
 Native capture through a detached broker is refused until the shell's ownership can be proved.
 
 The owner can enable **Keep awake** in Settings. The retained gateway asks Electron to prevent app
@@ -123,8 +165,13 @@ permissions and the owner's rules are the only defence against them:
 - `find . -delete`, `git clean` and wildcards in a workspace that contains the data folder are
   refused, which is stricter than needed; a sweeping `cd ~ && rm -rf …` is read, other ways of
   changing folder (`pushd` in a script file, `Set-Location` through a variable) are not;
-- `/gateway/health` answers without a key (only on this computer); it shows process ids, versions
-  and the gateway's recent notes.
+- `/gateway/health` answers without a key (only on this computer); it shows process ids, versions,
+  the gateway's recent notes,
+  and query-time resource measurements for the gateway process (the resident Electron broker in
+  desktop mode). Memory values are bytes; CPU values are cumulative microseconds since process
+  start, rather than sampled percentages. The engine worker and shell processes are explicitly
+  excluded. These measurements add no sampler or timer and make no idle-footprint or hibernation
+  claim. Single-binary deployment and safe idle hibernation remain separate work.
 
 On the undo side: the gate is only as good as the record. `branch update --yes` and the app's own
 Update button both write one; an update applied any other way (a copy unpacked by hand, a package

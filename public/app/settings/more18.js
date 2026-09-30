@@ -20,7 +20,7 @@ import { t } from "../../i18n.js";
 
 const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"]];
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
-const M = { signin: {}, busy: false, typed: {} };
+const M = { signin: {}, busy: false, typed: {}, checking: {} };
 const typed = (id, saved) => esc(M.typed[id] ?? saved ?? "");
 /* Reuse the password controls during a draw of Accounts: a late read must not discard input. No secret goes into
    markup or draft state, and these transient node references are released at the end of that same draw. */
@@ -47,10 +47,25 @@ function service([id, name]) {
   if (!got) return "";
   const s = got.settings ?? {};
   const state = got.status?.signedIn ? `<span class="pill ok"><i></i>${t("personal.signin.yes")}</span>` : `<span class="pill idle"><i></i>${t("personal.signin.no")}</span>`;
+  const health = got.status?.health;
+  const checks = health ? `<div aria-live="polite">${health.checks.map((check) => `<p class="hint">${esc(check.capability)} · ${esc(t(check.ok ? "flowsBoards.recipes.passed" : "task.failed"))}${check.reason ? ` · ${esc(check.reason)}` : ""}</p>`).join("")}<small>${esc(new Date(health.checkedAt).toLocaleString())}</small></div>` : "";
   return `<div class="more18-svc"><div class="th"><b>${t(name)}</b>${state}</div>`
     + `<label class="fld"><span>${t("personal.signin.client")}</span><input class="inp" id="more18-${id}-client" value="${typed(`more18-${id}-client`, s.clientId)}" autocomplete="off"></label>`
     + `<label class="fld"><span>${t("personal.signin.secret-value")}</span><input class="inp" type="password" id="more18-${id}-secret" value="" autocomplete="new-password" spellcheck="false"></label>`
-    + `<div class="acts"><button class="btn sm" type="button" data-act="more18-save" data-v="${id}">${t("personal.save")}</button><button class="btn pri sm" type="button" data-act="more18-signin" data-v="${id}">${t("personal.signin.go")}</button></div></div>`;
+    + `<div class="acts"><button class="btn sm" type="button" data-act="more18-save" data-v="${id}">${t("personal.save")}</button><button class="btn pri sm" type="button" data-act="more18-signin" data-v="${id}">${t("personal.signin.go")}</button><button class="btn sm" type="button" data-act="more18-test" data-v="${id}" ${!got.status?.signedIn || M.checking[id] ? "disabled" : ""}>${t(M.checking[id] ? "live.working" : "action.test-this-connection")}</button></div>${checks}</div>`;
+}
+
+/* Explicit metadata reads show what this sign-in can do. A refused read never signs the owner out. */
+async function testConnection(id) {
+  if (!ownerHere() || M.checking[id]) return;
+  M.checking[id] = true;
+  if (M.signin[id]?.status) M.signin[id].status.health = null;
+  renderNow();
+  try {
+    const checked = await api(`personal/signin/${id}/test`, {});
+    if (ownerHere() && M.signin[id]) M.signin[id].status = checked.status;
+  } catch (error) { toast(error.message); }
+  finally { M.checking[id] = false; renderNow(); }
 }
 
 /* The two sections, drawn at the foot of Settings › Accounts; the owner's alone. */
@@ -116,9 +131,10 @@ async function restore(file) {
 }
 
 export function initMore() {
-  markLive(["more18-save", "more18-signin", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`])]);
+  markLive(["more18-save", "more18-signin", "more18-test", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`])]);
   on("more18-save", async (el) => { if (await save(el.dataset.v)) { toast(t("accounts.saved")); await loadMore(); } });
   on("more18-signin", (el) => signIn(el.dataset.v));
+  on("more18-test", (el) => testConnection(el.dataset.v));
   on("more18-restore", () => document.getElementById("more18-file")?.click());
   document.addEventListener("input", (e) => { if (/^more18-\w+-client$/.test(e.target?.id ?? "")) M.typed[e.target.id] = e.target.value; }); // never the secret
   document.addEventListener("change", (e) => {

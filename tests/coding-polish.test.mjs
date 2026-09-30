@@ -386,6 +386,12 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
   const run = await repository(app);
   app.store.message(app.store.createRun(app.runtime.owner, "hi").sessionId, { role: "user", content: "hi" });
   const first = app.store.runs(app.runtime.owner)[0];
+  const started = (task) => {
+    app.store.event(task.id, "run.started", { source: "owner", parentRunId: null,
+      permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false });
+    return task;
+  };
+  started(first);
   const messageId = app.runtime.store.sqlite.prepare("SELECT source_id FROM messages WHERE session_id=?").get(first.sessionId)?.source_id;
   app.coding.setMode("worktrees", "off");
   await assert.rejects(app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000)), /switched off/);
@@ -397,7 +403,8 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
   const fork = await app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000));
   assert.match(fork.path, /^\.branch-worktrees\/fork-[a-f0-9]{8}$/);
   assert.ok(existsSync(join(app.runtime.workspace, fork.path, "README.md")));
-  const place = await app.coding.placeTask({ id: first.id, sessionId: fork.sessionId }, context(), undefined);
+  const forkTask = started(app.store.createRun(app.runtime.owner, "fork task", fork.sessionId));
+  const place = await app.coding.placeTask(forkTask, context(), undefined);
   assert.equal(place.scope, fork.path);
   const inside = await app.coding.inPlace(place.scope, async () => {
     await app.registry.execute("files.write", { path: "made-in-fork.txt", content: "fork" }, context({ workspace: place.workspace }));
@@ -406,27 +413,32 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
   assert.equal(inside, fork.path);
   assert.ok(existsSync(join(app.runtime.workspace, fork.path, "made-in-fork.txt")));
   assert.equal(existsSync(join(app.runtime.workspace, "made-in-fork.txt")), false, "the main folder is left alone");
+  await place.release();
+  app.store.finish(forkTask.id, "completed", "fixture fork write");
   assert.equal(await app.coding.placeTask({ id: first.id, sessionId: first.sessionId }, context(), undefined), null);
   const forkedRun = await app.runtime.run({ prompt: "carry on", sessionId: fork.sessionId });
   assert.ok(app.store.events(forkedRun.id).some((event) => event.kind === "worktree.used" && event.data.path === fork.path),
     "a task in the forked conversation works in its copy");
 
   const parent = context();
-  const helperRun = () => app.store.createRun(app.runtime.owner, "helper").id;
+  const helperRun = () => started(app.store.createRun(app.runtime.owner, "helper"));
   app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", perHelper: false });
-  assert.equal(await app.coding.placeTask({ id: helperRun(), sessionId: "x" }, context(), parent), null, "with per-helper copies off, helpers share the folder");
+  assert.equal(await app.coding.placeTask(helperRun(), context(), parent), null, "with per-helper copies off, helpers share the folder");
   app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on" }); // perHelper by default
-  const empty = await app.coding.placeTask({ id: helperRun(), sessionId: "x" }, context(), parent);
+  const empty = await app.coding.placeTask(helperRun(), context(), parent);
   assert.ok(existsSync(empty.workspace));
   await empty.release();
   assert.equal(existsSync(empty.workspace), false, "an untouched helper copy is removed");
-  const busy = await app.coding.placeTask({ id: helperRun(), sessionId: "x" }, context(), parent);
+  const busy = await app.coding.placeTask(helperRun(), context(), parent);
   await writeFile(join(busy.workspace, "work.txt"), "unsaved");
   await busy.release();
   assert.ok(existsSync(busy.workspace), "a helper copy with work in it is kept");
   assert.ok(app.store.events(parent.runId).length >= 0);
-  assert.equal(await inWorktree("elsewhere", async () => app.coding.placeTask({ id: helperRun(), sessionId: "x" }, context(), parent)), null,
-    "a task already in a copy never makes another");
+  await mkdir(join(app.runtime.workspace, "elsewhere"), { recursive: true });
+  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", perHelper: false });
+  const borrowed = await inWorktree("elsewhere", async () => app.coding.placeTask(helperRun(), context(), parent));
+  assert.equal(borrowed.scope, "elsewhere", "a task already in a copy records its borrowed placement without making another");
+  await borrowed.release();
   await app.coding.worktrees.remove(fork.sessionId, AbortSignal.timeout(30_000)).catch(() => undefined);
   void run;
 });
