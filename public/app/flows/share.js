@@ -9,9 +9,10 @@
      conversations only, src/people/groups.ts TupleSchema) and With the team needs keepoak.com, which the engine does not reach. */
 
 import { esc } from "../core/dom.js";
-import { openDlg, closePop, toast, mi, ic } from "../core/ui.js";
-import { S, E, ownerHere } from "../core/state.js";
-import { api, isDesktop } from "../core/api.js";
+import { openDlg, closePop, toast, mi, ic, dialog } from "../core/ui.js";
+import { S, E, activeId, ownerHere } from "../core/state.js";
+import { api } from "../core/api.js";
+import { say } from "../core/words.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { ctlSeg } from "../settings/parts.js";
@@ -75,25 +76,34 @@ async function setRelation(el) {
 }
 
 /* The engine's file of the Trunk, saved under its own name. */
-async function saveFile() {
+let savingFile = false;
+async function saveFile(el) {
   const tr = E.trunks.find((x) => x.id === SH.id);
-  if (!tr) return;
+  if (!tr || !ownerHere() || savingFile || SH.kind !== "trunk" || SH.tab !== "file") return;
+  const person = activeId(), opened = dialog(), id = tr.id;
+  const current = () => ownerHere() && activeId() === person && dialog() === opened && opened?.isConnected
+    && SH.kind === "trunk" && SH.id === id && SH.tab === "file";
+  savingFile = true;
+  el.disabled = true;
   try {
     const file = await api(`trunks/${encodeURIComponent(tr.id)}/export`);
-    const name = `${tr.name}.branch-trunk`;
+    if (!current()) return;
+    const name = `${tr.name.replace(/[^a-z0-9_.-]+/gi, "-").replace(/^\.+/, "").slice(0, 80) || "Trunk"}.branch-trunk`;
     const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([JSON.stringify(file, null, 2)], { type: "application/json" })), download: name });
+    document.body.append(a);
     a.click();
+    a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    toast(t("window.flows.share.saved-as", { name }));
-  } catch (error) { toast(error.message); }
+    toast(`${say("File download started:")} ${name}`);
+  } catch (error) { if (current()) toast(error.message); }
+  finally { savingFile = false; if (el.isConnected) el.disabled = false; }
 }
 
 export function init() {
-  /* The desktop app refuses every download (src/desktop/main.ts protectWindow, will-download), so As a file stays
-     greyed there rather than saying it saved a file that never arrives. */
-  markLive(["share10", "share-tab", "share-rel", ...(isDesktop ? [] : ["share-file"])]);
+  /* protectWindow permits app-origin blob downloads through ownDownload; other desktop downloads stay refused. */
+  markLive(["share10", "share-tab", "share-rel", "share-file"]);
   on("share10", (el) => open(el.dataset.k === "trunk" ? "trunk" : "conv"));
   on("share-tab", (el) => { SH.tab = el.dataset.v; draw(); });
   on("share-rel", (el) => setRelation(el));
-  on("share-file", () => saveFile());
+  on("share-file", (el) => saveFile(el));
 }
