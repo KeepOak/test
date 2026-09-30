@@ -226,7 +226,10 @@ const heard = new WeakSet();
 /** After the conversation is drawn: scrolling near its top reads further back, and so does a thread too short to scroll. */
 export function lineAfter(box) {
   if (!box || !L.trunkId) return;
-  const due = () => $("#tl-more", box) && box.scrollTop < 240;
+  /* Only a box still on screen: the browser sends a scroll it queued (the thread put at its end on a drawing) on the next
+     frame, and when a redraw has replaced the box by then, the old one is off the page, where its scrollTop reads 0, so
+     it looked scrolled to the top and read the conversation above what was drawn (CI, window-trunk-timeline). */
+  const due = () => box.isConnected && $("#tl-more", box) && box.scrollTop < 240;
   const short = () => box.isConnected && $("#tl-more", box) && box.scrollHeight <= box.clientHeight + 240;
   if (!heard.has(box)) {
     heard.add(box);
