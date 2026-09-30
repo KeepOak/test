@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { powerShellPath, scriptEnvironment } from './desktop-script.js';
+import { builtinModules, powerShellPath, scriptEnvironment } from './desktop-script.js';
 import type { BannerNotice, BannerWindow, BannerWindowFactory } from './desktop-banner.js';
 
 /**
@@ -16,6 +16,7 @@ export const takeOverBannerTitle = 'Branch is using a shared desktop';
 export const takeOverNotice: BannerNotice = { title: takeOverBannerTitle, text: 'Branch is using a shared Linux desktop', button: 'Take over' };
 const bannerScript = String.raw`
 $ErrorActionPreference = 'Stop'
+${builtinModules}
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 $form = New-Object System.Windows.Forms.Form
 $form.Text = 'Branch is using a shared desktop'

@@ -53,6 +53,8 @@ function headers(json) {
    on in any page takes effect at once, not at the next refresh). Called with the values each successful POST
    /api/comfort answers. */
 export const comfortSaved = new Set();
+/* UP-UI-050: how many engine answers have come back, so settings/find.js knows when what it drew may be out of date. */
+export const answers = { n: 0 };
 
 /* GET when there is no body, POST when there is, unless a method is given. Throws the engine's own error words. */
 export async function api(path, body, method, signal) {
@@ -83,6 +85,7 @@ async function ask(path, body, method, signal, again) {
     throw error;
   }
   if (path === "comfort" && body !== undefined && data?.values) for (const heard of comfortSaved) heard(data.values);
+  if (!path.startsWith("search?")) answers.n += 1; // the Ctrl K palette's own search is not something Settings draws from
   return data;
 }
 

@@ -29,13 +29,14 @@ function recorder(answer = () => Response.json({ ok: true, ts: "1.1", user_id: "
   return { calls, fetch };
 }
 
-test("the app's picker lists the chat's commands from the one table, and nothing while chat commands are off", async (t) => {
+test("the app's picker lists the chat's commands from the one table, and only /new and /trunk while chat commands are off", async (t) => {
   const { app } = await fixture(t);
   const menus = [];
   await app.channels.attach({ id: "picker", kind: "fake", botName: () => "bot", async start() {}, async stop() {}, async send() { return "1"; },
     async setCommands(commands) { menus.push(commands); } }, {});
   await app.channels.refreshCommandMenus();
-  assert.deepEqual(menus.at(-1), [], "chat commands ship off, so the picker offers nothing that would be read as a message");
+  assert.deepEqual(menus.at(-1).map((one) => one.command), ["new", "trunk"],
+    "chat commands ship off, so the picker offers only /new and /trunk, which work even then (nothing that would be read as a message)");
   app.channels.setSwitches({ commands: "on" });
   saveCommandSettings(app.store, app.runtime.owner, { mode: "on" });
   await app.channels.refreshCommandMenus();
@@ -45,7 +46,7 @@ test("the app's picker lists the chat's commands from the one table, and nothing
   assert.ok(menus.at(-1).every((one) => one.description.length > 0));
   app.channels.setSwitches({ commands: "off" });
   await app.channels.refreshCommandMenus();
-  assert.deepEqual(menus.at(-1), [], "switching commands off empties the picker too");
+  assert.deepEqual(menus.at(-1).map((one) => one.command), ["new", "trunk"], "switching commands off leaves only /new and /trunk");
 });
 
 test("Discord: the list is registered once the application is known, as one overwrite, with a text option each", async () => {

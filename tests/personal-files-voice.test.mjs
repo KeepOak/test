@@ -106,7 +106,7 @@ test("R17-022: Telegram sends a picture as a photo (CHAT-102), Discord a multipa
   const dc = recorder(() => ({ id: "900" }));
   assert.equal(await new DiscordAdapter({ id: "dc", token: "D", fetch: dc.fetch }).sendFile("c1", file), "900");
   const payload = JSON.parse(dc.seen[0].init.body.get("payload_json"));
-  assert.deepEqual(payload, { content: "Here it is", attachments: [{ id: 0, filename: "chart.png" }] });
+  assert.deepEqual(payload, { content: "Here it is", allowed_mentions: { parse: ["users"], replied_user: true }, attachments: [{ id: 0, filename: "chart.png" }] });
   assert.equal(dc.seen[0].init.body.get("files[0]").size, 3);
   assert.equal(dc.seen[0].init.headers.authorization, "Bot D");
 
