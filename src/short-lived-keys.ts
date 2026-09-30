@@ -112,6 +112,8 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/self-development\/publications(\/|$)/,
   /^\/api\/schedules\/[a-f0-9-]{36}\/dashboard$/,
   /^\/api\/backup$/,
+  // A paid Daytona workspace's state names the owner's locker secrets (src/remote/daytona-api.ts).
+  /^\/api\/daytona$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
   /^\/api\/chatgpt\/status$/,
   // Q168 B: what a restore is holding for the owner's yes carries their model accounts and who may get in.

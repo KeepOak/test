@@ -402,6 +402,13 @@ export const ROUTES = {
   "/api/asks/sources/sync": "other POST",
   "/api/asks/surfaces": "secret-read",
   // mac7/nodes: the owner's devices; pairing and the device socket carry their own proof (src/devices/).
+  "/api/daytona": "secret-read",
+  "/api/daytona/check": "owner POST",
+  "/api/daytona/prepare": "owner POST",
+  "/api/daytona/create": "owner POST",
+  "/api/daytona/reconcile": "owner POST",
+  "/api/daytona/lifecycle": "owner POST",
+  "/api/daytona/run": "owner POST",
   "/api/devices": "secret-read",
   "/api/devices/": "prefix",
   "/api/devices/pair": "pre-auth POST",

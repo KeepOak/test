@@ -660,8 +660,6 @@ export async function createBranch(options: {
     allowedForThisRun: allowedForThisRun(store, runtime.owner, context) }, folder); // mac7/tests-unattended: --allow-tests
   // Locking the app: after a quiet spell the locker stays shut until the owner unlocks it again.
   const sessionLock = new SessionLock(store, runtime.owner);
-  const daytona = new DaytonaWorkspace(store, runtime.owner, web.policy, () => !sessionLock.locked());
-  registerDaytonaWorkspace(registry, daytona);
   runtime.fullAccessLocked = () => sessionLock.locked();
   // Owner ruling 2026-09-30: in the owner's Full access the file tools reach the whole computer (src/files.ts).
   files.wholeComputer = (context) => context !== undefined && runtime.ownerFullMode(context);
@@ -764,6 +762,9 @@ export async function createBranch(options: {
   registerOrchestrationModes(registry, runtime, knowledge);
   registerSecondOpinion(registry, runtime);
   const web = new WebAccess(options.web ?? {}, globalThis.fetch, `BranchAgent/${String(createRequire(import.meta.url)("../package.json").version)}`);
+  // A paid, disposable Daytona sandbox, only after the owner confirms it (src/remote/daytona-workspace.ts).
+  const daytona = new DaytonaWorkspace(store, runtime.owner, web.policy, () => !sessionLock.locked());
+  registerDaytonaWorkspace(registry, daytona);
   // Q12: Branch changing its own source is held to a contract written before anything changes.
   const selfContracts = new ContractBook(store.sqlite);
   // Branch builds Branch: a coding job handed to the owner's own Claude Code or Codex, inside one folder (src/coding/hand-off.ts).
