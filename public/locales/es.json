@@ -1340,6 +1340,7 @@
   "commands.usage": "tokens y coste hasta ahora; en una app de chat, on u off añade una línea a cada respuesta",
   "commands.verify": "activar o desactivar la revisión de la respuesta por un revisor",
   "commands.version": "qué versión de Branch es esta",
+  "commands.voice": "respuestas habladas en este chat: a las notas de voz (on), a cada mensaje (always) o nunca (off)",
   "commands.where.chat": "apps de chat",
   "commands.where.dashboard": "panel",
   "commands.where.phone": "teléfono",

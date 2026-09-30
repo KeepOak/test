@@ -1340,6 +1340,7 @@
   "commands.usage": "tokens and cost so far; in a chat app, on or off adds a line to each reply",
   "commands.verify": "turn a reviewer's check of the answer on or off",
   "commands.version": "which Branch this is",
+  "commands.voice": "spoken replies in this chat: to voice notes (on), to every message (always), or never (off)",
   "commands.where.chat": "chat apps",
   "commands.where.dashboard": "dashboard",
   "commands.where.phone": "phone",

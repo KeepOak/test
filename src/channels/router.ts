@@ -33,6 +33,7 @@ import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usa
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
 import { homeGate, noHome, resolveHome } from "./home-chat.js"; // CHAT-190
+import { chatVoiceMode, speaksHere } from "./chat-voice.js"; // CHAT-096
 import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
 import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
@@ -1166,6 +1167,8 @@ export class ChannelRouter {
       runtime: this.runtime, channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
+      // As for the owner's commands from a chat (#727): only on an app whose servers vouch for who sent it.
+      ownAccount: vouchedSenderKinds.includes(this.adapters.get(channel)?.adapter.kind ?? "") && this.ownAccount(channel, message.senderId),
       dropWaiting: () => {
         if (!turn || turn.runId) return false;
         turn.dropped = true;
@@ -1541,7 +1544,9 @@ export class ChannelRouter {
     const delivered = await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null, turn);
     // The owner's "remove the steps message after a good answer"; a failed task keeps it as the record.
     if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
-    if (message.voice) await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
+    // CHAT-096: this chat's /voice choice says when a reply is spoken too (a voice note, every reply, or never).
+    if (speaksHere(chatVoiceMode(this.store, this.runtime.owner, message.channel, message.chatId), !!message.voice))
+      await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
     return ok ? "replied" : "failed";
   }
   /**

@@ -32,6 +32,7 @@ export const PARITY: readonly ParityRow[] = [
   row("Version", "/version (Hermes), /about (Gemini)", "/version", "built"),
   row("Health check", "/doctor (Claude Code), /diagnostics (OpenClaw), /debug (Hermes)", "/health", "built", "The same check as `branch doctor`."),
   row("Approval mode", "/permissions (Codex, Gemini, Claude Code), /approvals (Hermes), /yolo (Hermes)", "/preset", "existed", "Changing it needs the key of this computer; never from a chat."),
+  row("Spoken replies", "/voice (Hermes), /tts (OpenClaw)", "/voice", "built", "Per chat: voice notes, every reply (owner's own account only), or never. Settings › Voice still decides whether anything is spoken."),
   row("Emergency stop for everything", "/pause (Hermes), /elevated (OpenClaw)", "/lockdown", "existed", "Owner only; ends earlier yeses as the route does."),
   row("Memory", "/memory (Hermes, Gemini, Claude Code, Codex)", "/memory", "existed"),
   row("Skills", "/skills (Hermes, Codex, Gemini)", "/skills", "existed"),

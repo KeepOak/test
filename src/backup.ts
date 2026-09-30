@@ -270,6 +270,8 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // Q230: a chat made known for sends, a plan the next message carries on, a project's every-turn instructions and
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
   "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
+  // CHAT-096: a chat's /voice choice; "always" speaks every reply there, which a paid speech service charges for.
+  "channel-voice:",
   "skill-origin:", "skill-package:",
   // #890: an API skill learned from a browser recording names an outside address and the request it sends.
   "captured-api-skill:",

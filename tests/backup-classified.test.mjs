@@ -63,6 +63,7 @@ const reviewedComputedKeys = new Set([
   "src/channels/catch-up.ts: id",
   "src/channels/catch-up.ts: key",
   "src/channels/chat-commands.ts: usageKey",
+  "src/channels/chat-voice.ts: key",
   "src/commands/steer-skill.ts: key", // CHAT-205: pinned-skill:<conversation>, the window's own skill pin
   "src/channels/threads.ts: chatThreadKey", // defaulttrunk: channel-session:<channel>:<chat>, the same key the router always wrote
   "src/trunks/defaults.ts: restoredTrunksKey", // defaulttrunk: only read, the Trunks a restore still holds (restore-trunks-held)
@@ -192,7 +193,7 @@ const computedExamples = {
     "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch"],
   held: ["account-session:s", "add-on-export:a", "add-on-list:a", "add-on:a", "add-on-pipelines:a", "asks-hindsight",
     "asks-nodes-list", "autonomy-loop:s", "autonomy-heartbeat:s", "autonomy-subgoals:s", "browser-container",
-    "channel-session:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",
+    "channel-session:telegram:1", "channel-voice:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",
     "conversation-mode:s", "goal:s", "interop-fleet", "interop-handoff", "knobs-compaction", "learning-more-providers-settings",
     "model-savings-mixtures", "handoffs:x", "openapi-service:w", "profile-role:p", "personal-email-settings", "plan-act:project:p",
     "plan-act:session:s", "pinned-skill:s", "skill-package:k", "captured-api-skill:c", "registry-key:r", "skill-candidate:k:1", "trunks-messages", "trunks-routines",

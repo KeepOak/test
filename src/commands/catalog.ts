@@ -139,6 +139,8 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // ---- end r17-h ----
   // A change to Branch itself, asked for from a chat app (src/self-development-requests.ts). It only files
   // a request; the owner's yes or no is given in the Branch app, never with a command.
+  // CHAT-096 / CHAT-200: when this chat's replies are spoken (src/channels/chat-voice.ts); the Voice settings still decide whether at all.
+  entry("voice", ["tts"], "[on|always|off]", "spoken replies in this chat: to voice notes (on), to every message (always), or never (off)", ["chat"], "run", { bareLooks: true }),
   entry("improve", [], "<what to change in Branch>", "ask the owner for a change to Branch itself; only the owner answers, in the Branch app", ["chat"], "run"),
   // mac7/learn: a map of a folder of code or a knowledge base, and a guided walk through it. Building
   // a map reads a whole folder and a tour may ask a model, and every /api/learn route is the owner's,

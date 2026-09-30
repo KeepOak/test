@@ -1340,6 +1340,7 @@
   "commands.usage": "Tokens und Kosten bisher; in einer Chat-App fügt on oder off jeder Antwort eine Zeile hinzu",
   "commands.verify": "die Prüfung der Antwort durch einen Prüfer ein- oder ausschalten",
   "commands.version": "welches Branch das ist",
+  "commands.voice": "gesprochene Antworten in diesem Chat: auf Sprachnachrichten (on), auf jede Nachricht (always) oder nie (off)",
   "commands.where.chat": "Chat-Apps",
   "commands.where.dashboard": "Dashboard",
   "commands.where.phone": "Handy",
