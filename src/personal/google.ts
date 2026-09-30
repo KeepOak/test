@@ -156,7 +156,8 @@ export class GoogleConnector {
       .passthrough().parse(await this.call(url));
     if (event.etag !== v.etag) throw new Error("This event changed. List it again and confirm the updated event.");
     if (event.recurrence || event.recurringEventId) throw new Error("Recurring events must be changed in Google Calendar.");
-    const json = "starts" in v ? { start: { dateTime: v.starts }, end: { dateTime: v.ends }, reminders: googleDayBefore } : undefined;
+    const moved = action === "move" ? CalendarMoveSchema.parse(input) : null;
+    const json = moved ? { start: { dateTime: moved.starts }, end: { dateTime: moved.ends }, reminders: googleDayBefore } : undefined;
     const result = await this.call(`${url}?sendUpdates=all`, { method: action === "delete" ? "DELETE" : "PATCH",
       headers: { "if-match": v.etag }, ...(json ? { json } : {}) });
     return { action, id: v.id, result };
