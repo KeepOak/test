@@ -15,6 +15,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { supportedProtocolVersions } from "../dist/mcp-server.js";
 import { startServer } from "../dist/server.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -32,7 +33,7 @@ test("the shipped SDK client connects to branch mcp-serve over standard input an
     command: process.execPath,
     args: ["dist/cli.js", "mcp-serve"],
     cwd: projectRoot,
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
+    env: { ...process.env, ...(await fixtureModel()).env, BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
     stderr: "pipe",
   });
   let stderr = "";
