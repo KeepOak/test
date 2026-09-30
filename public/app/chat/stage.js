@@ -455,7 +455,7 @@ function paintFrames() {
 
 /* Words typed in the dock's box and the address bar survive a redraw: their words, focus and caret are put back. The
    address bar otherwise shows the page's own address, so it keeps the owner's words only while they are typing. */
-const BOXES = ["#st-in", "#st-addr", "#ob7-keys"];
+const BOXES = ["#st-in", "#st-addr", "#ob7-keys", "#ob7-find"];
 function redraw(el, html) {
   const kept = BOXES.map((sel) => el.querySelector(sel)).map((box) => box && { value: box.value, focused: document.activeElement === box, start: box.selectionStart, end: box.selectionEnd });
   el.innerHTML = html;
