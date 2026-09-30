@@ -21,7 +21,9 @@ import { ShellSessions, registerShellSessions } from '../shell-session.js';
 import { commandTuning } from '../knobs/commands.js'; // R17-S10
 import type { Store } from '../store.js';
 import { ChannelPolicySchema, type ChannelAdapter, type ChannelRouter } from '../channels/router.js';
-import { TelegramAdapter, telegramBotId } from '../channels/telegram.js';
+import { TelegramAdapter, telegramBotId, type TelegramOptions } from '../channels/telegram.js';
+import { TelegramWebhookConfigSchema, TelegramWebhookInbox } from '../channels/telegram-webhook.js';
+import { webhookAddress, webhookSecret } from '../channels/webhook-address.js';
 import { DiscordAdapter } from '../channels/discord.js';
 import { SlackAdapter } from '../channels/slack.js';
 import { WhatsAppAdapter } from '../channels/whatsapp.js';
@@ -65,6 +67,8 @@ export const TelegramChannelSchema = z.object({
   /** Name of a secret in the default project's locker that holds the bot token. */
   tokenSecret: credentialName.optional(),
   apiBase: z.string().url().optional(),
+  receiving: z.enum(['polling', 'webhook']).optional(),
+  webhook: TelegramWebhookConfigSchema.optional(),
 }).merge(ChannelPolicySchema).strict();
 export const DiscordChannelSchema = z.object({
   id: channelId.default('discord'),
@@ -166,6 +170,8 @@ export const ChannelConfigSchema = z.discriminatedUnion('type', [
 ]).superRefine((value, context) => {
   if (value.type === 'telegram' && !value.tokenEnv === !value.tokenSecret)
     context.addIssue({ code: 'custom', message: 'Give exactly one of tokenEnv or tokenSecret' });
+  if (value.type === 'telegram' && (value.receiving === 'webhook') !== !!value.webhook)
+    context.addIssue({ code: 'custom', message: 'Webhook reception requires receiving: webhook and its HTTPS origin/header-secret settings together' });
 });
 export interface ChannelHost { router: ChannelRouter; secret: (name: string) => Promise<string>; web?: WebAccess; hooks?: Hooks; context?: (runId: string) => ToolContext;
   /** mac6/bucket-16: Slack's own events, for the automations they start. */
@@ -508,6 +514,17 @@ async function credential(name: string, env: NodeJS.ProcessEnv, host: ChannelHos
   if (!value) throw new Error(`Set ${name} as an environment variable, or save a secret called ${name} in the default project.`);
   return value;
 }
+async function telegramTransport(channel: z.infer<typeof TelegramChannelSchema>, token: string, env: NodeJS.ProcessEnv, host: ChannelHost, policy?: NetworkPolicy): Promise<Pick<TelegramOptions, 'webhook' | 'webhookInbox' | 'deleteWebhookOnStart'>> {
+  const store = host.store as Store | undefined, owner = host.context?.('bootstrap').owner ?? 'local';
+  const writable = store && typeof store.get === 'function' && typeof store.save === 'function';
+  const webhookInbox = store && writable ? new TelegramWebhookInbox(store, owner, channel.id, telegramBotId(token)) : undefined;
+  if (channel.receiving !== 'webhook') return { ...(webhookInbox ? { webhookInbox } : {}), deleteWebhookOnStart: channel.receiving === 'polling' };
+  if (!store || !writable || !channel.webhook) throw new Error('Telegram webhook reception needs private saved settings and its explicit HTTPS configuration.');
+  await policy?.assertAllowed(new URL(channel.webhook.publicOrigin), 'Telegram webhook destination');
+  const currentUrl = () => new URL(webhookAddress('chat', channel.id, webhookSecret(store, owner, channel.id)), channel.webhook!.publicOrigin).href;
+  return { webhookInbox: webhookInbox!, webhook: { url: currentUrl(), currentUrl,
+    secretToken: await credential(channel.webhook.secretTokenSecret, env, host) } };
+}
 /** Every outbound call a channel makes is checked against the network settings first. */
 function guardedSocket(policy: NetworkPolicy | undefined): WebSocketConnect | undefined {
   if (!policy) return undefined;
@@ -555,7 +572,8 @@ async function buildChannel(channel: ChannelConfig, env: NodeJS.ProcessEnv, host
     // apiBase cannot be used to reach somewhere the owner never allowed.
     // mac3/never-break: the read position is kept, so messages sent during a restart are answered.
     const position = channelPosition(host.store, channel.id, undefined, telegramBotId(token)); // kept per bot
-    return new TelegramAdapter({ id: channel.id, token, fetch: guardedFetch, ...base, ...(position ? { position } : {}) });
+    return new TelegramAdapter({ id: channel.id, token, fetch: guardedFetch, ...base, ...(position ? { position } : {}),
+      ...await telegramTransport(channel, token, env, host, policy) });
   }
   if (channel.type === 'discord')
     return new DiscordAdapter({ id: channel.id, token: await credential(channel.tokenSecret, env, host),

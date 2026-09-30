@@ -154,6 +154,7 @@ const unreadKeys = {
   "src/autonomy/orders.ts": "standing orders, one record each",
   "src/autonomy/procedures.ts": "procedures, one record each",
   "src/deferred.ts": "deferred work, one record each",
+  "src/channels/telegram-webhook.ts": "Telegram webhook updates waiting to be handled, not in the catalogue",
   "src/delight.ts": "the delight progress record",
   "src/feature-switch-migration.ts": "the ticked screen and Keychain switches at start-up (see above)",
   "src/github-device-connection.ts": "the GitHub device sign-in's client ID and account link (github.device.config/account), set from Developer, not a Settings card",

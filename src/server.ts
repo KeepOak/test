@@ -86,6 +86,8 @@ import { readBodyWithRaw, type TriggerState } from "./triggers.js";
 import { knowledgeApi } from "./knowledge-tools.js";
 import { knowledgeExtrasApi } from "./knowledge-more.js";
 import { WhatsAppAdapter } from "./channels/whatsapp.js";
+import { TelegramAdapter } from "./channels/telegram.js";
+import { TelegramWebhookUnavailable } from "./channels/telegram-webhook.js";
 import { WebhookChatAdapter } from "./channels/webhook-chat.js";
 // Wave mac3 (channels-parity).
 import { isPostedChannel, type PostedChannel } from "./channels/parity-switch.js";
@@ -2938,7 +2940,10 @@ async function postedChatWebhook(app: Branch, adapter: ChannelAdapter & PostedCh
   }
   const { raw } = await readBodyWithRaw(request, 256 * 1024).catch(() => { throw new HttpError(400, "That message could not be read"); });
   const result = await adapter.receivePost(raw, request.headers)
-    .catch((error: unknown) => { throw refusedChatPost(app, adapter.id, adapter.kind, error, limit); });
+    .catch((error: unknown) => {
+      if (error instanceof TelegramWebhookUnavailable) throw new HttpError(503, error.message);
+      throw refusedChatPost(app, adapter.id, adapter.kind, error, limit);
+    });
   limit.limiter.succeed(limit.from);
   send(response, 200, result.reply ?? { accepted: result.accepted });
   return true;
@@ -3290,6 +3295,8 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   if (request.method === "POST" && path === "/api/channels/addresses/rotate") {
     const { channel } = z.object({ channel: z.string().regex(/^[a-z][a-z0-9_-]{0,29}$/) }).strict().parse(await readBody(request));
     rotateWebhookSecret(app.store, owner, channel);
+    const adapter = app.channels.adapter(channel);
+    if (adapter instanceof TelegramAdapter) await adapter.refreshWebhook();
     return channelAddresses(app, owner);
   }
   if (request.method === "POST" && path === "/api/channels/addresses/settings")
