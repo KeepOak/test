@@ -2212,6 +2212,8 @@ owner GET /api/panels/browser/start | here=ok remote=403/4bac86 phone=403/4bac86
 owner POST /api/panels/browser/start | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/panels/browser/control | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/panels/browser/control | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/panels/browser/library | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/panels/browser/library | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/panels/browser/action | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/panels/browser/action | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/panels/browser/disconnect | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -4456,6 +4458,8 @@ owner+lockdown GET /api/panels/browser/start | here=ok remote=403/4bac86 phone=4
 owner+lockdown POST /api/panels/browser/start | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/panels/browser/control | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/panels/browser/control | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/panels/browser/library | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/panels/browser/library | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/panels/browser/action | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/panels/browser/action | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/panels/browser/disconnect | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -6700,6 +6704,8 @@ household GET /api/panels/browser/start | here=400/f6e21c remote=403/4bac86 read
 household POST /api/panels/browser/start | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/panels/browser/control | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household POST /api/panels/browser/control | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/panels/browser/library | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household POST /api/panels/browser/library | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/panels/browser/action | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household POST /api/panels/browser/action | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/panels/browser/disconnect | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
@@ -8944,6 +8950,8 @@ household+lockdown GET /api/panels/browser/start | here=400/f6e21c remote=403/4b
 household+lockdown POST /api/panels/browser/start | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/panels/browser/control | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/panels/browser/control | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/panels/browser/library | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/panels/browser/library | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/panels/browser/action | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/panels/browser/action | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/panels/browser/disconnect | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
@@ -11188,6 +11196,8 @@ applock GET /api/panels/browser/start | here=423/a8f863
 applock POST /api/panels/browser/start | here=423/a8f863
 applock GET /api/panels/browser/control | here=423/a8f863
 applock POST /api/panels/browser/control | here=423/a8f863
+applock GET /api/panels/browser/library | here=423/a8f863
+applock POST /api/panels/browser/library | here=423/a8f863
 applock GET /api/panels/browser/action | here=423/a8f863
 applock POST /api/panels/browser/action | here=423/a8f863
 applock GET /api/panels/browser/disconnect | here=423/a8f863

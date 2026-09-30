@@ -4521,3 +4521,14 @@ audio.docread18m{width:100%}
 .owner-browser7 .ob7-extras,.owner-browser7 .ob7-find{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 12px;border-bottom:1px solid #e6e9ec;background:#fff;color:#3b4650}
 .owner-browser7 .ob7-find input{flex:1;min-width:150px;padding:6px 8px;border:1px solid #c9d2da;border-radius:6px;color:inherit;background:#fff}
 .owner-browser7 .ob7-find small{min-width:120px;color:inherit}
+/* Scoped saved pages for the owner browser. */
+.owner-browser7 .ob7-library-bar{display:flex;gap:6px;padding:6px 12px;background:var(--raise);border-bottom:1px solid var(--line)}
+.owner-browser7 .ob7-library{max-height:240px;overflow:auto;padding:10px 12px;background:var(--raise);color:var(--ink);border-bottom:1px solid var(--line)}
+.owner-browser7 .ob7-library ul{list-style:none;padding:0;margin:8px 0 12px}
+.owner-browser7 .ob7-library li{display:flex;align-items:center;gap:8px;margin:4px 0;min-width:0}
+.owner-browser7 .ob7-library li small{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.owner-browser7 .ob7-library li button:first-child{max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+#stage7 .ob7-library-range { display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin:8px 0; }
+#stage7 .ob7-library-range label { display:grid; gap:3px; }
+#stage7 .ob7-library-range small { flex-basis:100%; }

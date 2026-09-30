@@ -1289,6 +1289,7 @@ export const ROUTES = {
   "/api/panels/browser": "secret-read",
   "/api/panels/browser/start": "owner POST",
   "/api/panels/browser/control": "owner POST",
+  "/api/panels/browser/library": "owner POST",
   "/api/panels/browser/action": "owner POST",
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
