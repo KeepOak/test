@@ -3471,6 +3471,17 @@ async function mediaCommentsApi(app: Branch, request: IncomingMessage, path: str
  */
 async function researchApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
   const owner = app.runtime.owner;
+  const sourceGuard = () => {
+    if (throughDoor(request) || app.sessionLock.shut() || request.headers["x-branch-origin"] !== "window") throw new HttpError(403, "Use brief sources and watch history in the owner's unlocked app window");
+    app.personal.oura.guard();
+  };
+  if (path === "/api/brief/sources") {
+    sourceGuard();
+    if (request.method === "GET") return { sources: app.brief.sources(owner), settings: app.brief.settings(owner), watches: app.monitors.list(owner).filter(w => w.kind === "search") };
+    if (request.method === "POST") { const input = await readBody(request, 4000); sourceGuard(); return app.brief.configureSources(owner, input); }
+  }
+  const history = /^\/api\/monitors\/([a-f0-9-]{36})\/history$/.exec(path);
+  if (history && request.method === "GET") { sourceGuard(); return { entries: app.monitors.history(owner, history[1]!) }; }
   if (request.method === "GET" && path === "/api/research") return { reports: app.research.list(owner) };
   if (request.method === "GET" && path === "/api/monitors") return { monitors: app.monitors.list(owner) };
   if (request.method === "POST" && path === "/api/monitors") return app.monitors.create(owner, await readBody(request));

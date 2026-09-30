@@ -108,6 +108,30 @@ export class Monitors {
     if (!columns.has("last_error")) this.db.exec("ALTER TABLE monitors ADD COLUMN last_error TEXT");
     // Q141: the Trunk that made the watch, if one did.
     if (!columns.has("made_by")) this.db.exec("ALTER TABLE monitors ADD COLUMN made_by TEXT");
+    if (!columns.has("history")) this.db.exec("ALTER TABLE monitors ADD COLUMN history TEXT NOT NULL DEFAULT '[]'");
+  }
+  /** Retained outcomes, not reconstructed or invented historical observations. */
+  history(owner: string, id: string, context?: ToolContext): unknown[] {
+    const row = this.db.prepare("SELECT made_by,history FROM monitors WHERE owner=? AND id=?").get(owner, id);
+    if (!row || !watchVisibleTo(context, this.trunks, row.made_by)) throw new Error("There is no watch with that number");
+    return parseHistory(row.history);
+  }
+  private retain(owner: string, id: string, entry: Record<string, unknown>): void {
+    const row = this.db.prepare("SELECT history FROM monitors WHERE owner=? AND id=?").get(owner, id);
+    if (!row) return;
+    const history = [...parseHistory(row.history), entry].slice(-100);
+    this.db.prepare("UPDATE monitors SET history=? WHERE owner=? AND id=?").run(JSON.stringify(history), owner, id);
+  }
+  /** Owner-curated search watches only; no new network request while assembling a brief. */
+  news(owner: string, ids: string[], now = new Date()): string[] {
+    return ids.slice(0, 3).flatMap(id => {
+      const row = this.db.prepare("SELECT * FROM monitors WHERE owner=? AND id=? AND kind='search' AND made_by IS NULL").get(owner, id);
+      if (!row) return [`Selected news watch ${id} is unavailable.`];
+      if (!row.checked_at || row.last_error || String(row.snapshot ?? "").startsWith("Could not be read:")) return [`${String(row.label).slice(0, 120)}: no current successful result; check the watch.`];
+      const text = applyContentPolicy(String(row.snapshot ?? ""), detectInjection(String(row.snapshot ?? "")), this.web.injectionPolicy).text;
+      const stale = now.getTime() - Date.parse(String(row.checked_at)) > 86400000 ? " (over 24 hours old)" : "";
+      return [`${String(row.label).slice(0, 120)} — checked ${String(row.checked_at)}${stale}`, ...text.split("\n").filter(Boolean).slice(0, 3).map(line => line.slice(0, 500))];
+    });
   }
   /** Writes one look into the short record the health badge reads. */
   private remember(id: string, entry: HealthEntry, error: string | null): void {
@@ -147,6 +171,7 @@ export class Monitors {
     const text = await this.observe(kind, target, signal).catch((error) => `Could not be read: ${errorText(error)}`);
     this.db.prepare("UPDATE monitors SET hash=?, snapshot=?, checked_at=? WHERE id=?")
       .run(digest(text), text.slice(0, snapshotChars), now.toISOString(), id);
+    this.retain(owner, id, { at: now.toISOString(), status: text.startsWith("Could not be read:") ? "failed" : "baseline", changed: false, summary: text.startsWith("Could not be read:") ? text.slice(0, 600) : "Initial baseline; not an alert", delivered: null });
     return this.one(owner, id);
   }
   private one(owner: string, id: string): MonitorRecord {
@@ -190,7 +215,11 @@ export class Monitors {
       this.db.prepare("UPDATE monitors SET hash=?, snapshot=?, checked_at=?, next_at=?, changes=? WHERE id=?")
         .run(digest(text), text.slice(0, snapshotChars), now.toISOString(), next, record.changes + (changed ? 1 : 0), id);
       this.remember(id, { status: "completed", startedAt: started, finishedAt: new Date().toISOString() }, null);
+      this.retain(owner, id, { at: now.toISOString(), status: "completed", changed, summary: summary.slice(0, 600), delivered, held: held ?? null });
       return { id, changed, summary, delivered, ...(held ? { held } : {}) };
+    } catch (error) {
+      this.retain(owner, id, { at: now.toISOString(), status: "failed", changed: false, summary: errorText(error).slice(0, 600), delivered: null });
+      throw error;
     } finally { this.inFlight.delete(id); }
   }
   /** Every watch that is due; each one's own failure is recorded and does not stop the others. */
@@ -231,6 +260,9 @@ export class Monitors {
   }
 }
 const digest = (text: string): string => createHash("sha256").update(text).digest("hex");
+function parseHistory(value: unknown): unknown[] {
+  try { const parsed: unknown = JSON.parse(String(value ?? "[]")); return Array.isArray(parsed) ? parsed.slice(-100) : []; } catch { return []; }
+}
 function parseRecent(value: unknown): HealthEntry[] {
   try { const parsed: unknown = JSON.parse(String(value ?? "[]")); return Array.isArray(parsed) ? parsed as HealthEntry[] : []; }
   catch { return []; }
