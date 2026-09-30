@@ -1329,6 +1329,7 @@
   "commands.theme": "el tema, compartido con la ventana",
   "commands.think": "cuánto piensa el modelo en esta conversación",
   "commands.tokens": "qué llena la próxima petición: instrucciones, herramientas, la conversación, y cuánto cuesta",
+  "commands.topic": "crear un tema privado aparte en Telegram; solo, explica cómo configurarlo",
   "commands.trunk": "tus Trunks; con un nombre y un mensaje, habla con uno",
   "commands.usage": "tokens y coste hasta ahora; en una app de chat, on u off añade una línea a cada respuesta",
   "commands.verify": "activar o desactivar la revisión de la respuesta por un revisor",

@@ -79,6 +79,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("attach", ["image"], "<file>", "send a file or picture with your next message", [...W, "terminal"], "look", was("terminal")),
   entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
   entry("diff", [], "[--staged] [relative folder]", "tracked Git changes in a workspace folder, shortened to one reply; owner direct chat with git.read", ["chat"], "look"), // reads only; the runner holds it to the owner's own direct chat and git.read
+  entry("topic", [], "[name]", "create a separate private Telegram topic; on its own, setup guidance", ["chat"], "look"), // like /new: a new conversation place, no Branch setting changes; the runner holds it to the owner's own direct chat
   entry("export", ["save"], "[file]", "save this conversation as a Markdown file", [...W, "terminal"], "look", was("terminal")),
   entry("new", ["clear", "reset"], "", "start a fresh conversation", ["window", "phone", "terminal", "chat"], "look", { ...was("terminal", "chat"), newAliases: added(["clear"], "chat") }),
   entry("branch", ["fork"], "[--here] [name]", "copy this chat's conversation and follow the copy here; the original is kept", ["chat"], "run"),

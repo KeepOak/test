@@ -166,6 +166,22 @@ export class TelegramAdapter implements ChannelAdapter {
   async setPresence(words: string): Promise<void> {
     await this.call("setMyShortDescription", { short_description: words.slice(0, 120) });
   }
+  /** Hermes run_topics.py (MIT): require getMe's actual private-topic flag and sanitize the title. */
+  async createDirectTopic(address: string, title: string): Promise<string> {
+    const target = telegramTarget(address);
+    if (!Number.isSafeInteger(target.chat_id) || target.chat_id <= 0) throw new Error("Create a topic in your Telegram direct chat.");
+    const chat = z.object({ type: z.string() }).passthrough().parse(await this.call("getChat", { chat_id: target.chat_id }));
+    if (chat.type !== "private") throw new Error("Only private Telegram topics can be created from this command.");
+    const me = z.object({ has_topics_enabled: z.boolean().optional() }).passthrough().parse(await this.call("getMe", {}));
+    if (me.has_topics_enabled !== true) throw new Error("Enable forum topic mode for this bot in BotFather, then send /topic <name> again.");
+    const cleaned = title.replace(/\s+/g, " ").trim();
+    const characters = Array.from(cleaned);
+    if (!characters.length) throw new Error("Give the topic a name.");
+    const name = characters.length <= 120 ? cleaned : characters.slice(0, 117).join("").trimEnd() + "...";
+    const result = z.object({ message_thread_id: z.number().int().positive() }).passthrough()
+      .parse(await this.call("createForumTopic", { chat_id: target.chat_id, name }));
+    return topicAddress(target.chat_id, result.message_thread_id);
+  }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
       ...telegramTarget(chatId), text, ...formatted(format),

@@ -197,7 +197,9 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   "memory-snapshot:",
   // The programs each Trunk has opened on this computer (src/desktop-app-ask.ts): the record stands in for the owner's
   // yes to opening them again, so a file must never write one.
-  "desktop-apps-used:"];
+  "desktop-apps-used:",
+  // CHAT-081: a /topic request's outcome, kept so an uncertain Telegram write is never sent twice; this computer's chat record.
+  "topic-request:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**
