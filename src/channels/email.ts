@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js";
 import { ImapClient, sendMail, type MailFile, type MailMessage, type MailServer } from "./mail-client.js";
+import { authenticatedSender } from "./mail-auth.js";
 
 /**
  * Email as a chat channel: the assistant checks the inbox every so often, answers each unread
@@ -20,6 +21,10 @@ export interface EmailOptions {
   pollMs?: number;
   /** Most messages to answer in one look, so a full inbox cannot flood the assistant. */
   batch?: number;
+  /** Require receiving-server DMARC or aligned SPF/DKIM results before routing a sender; default true. */
+  requireAuthenticatedSender?: boolean;
+  /** Exact authserv-ids the receiving mailbox stamps; only the first header is considered. */
+  trustedAuthservIds?: string[];
 }
 /** What is needed to answer a message, kept out of the delivery ledger because ids are long. */
 interface Thread { address: string; messageId: string; references: string; subject: string }
@@ -83,6 +88,8 @@ export class EmailAdapter implements ChannelAdapter {
   private inbound(mail: MailMessage): InboundMessage | null {
     const files = mail.attachments ?? [];
     if (!mail.from || (!mail.text && !files.length) || mail.from === this.options.address.toLowerCase()) return null;
+    if (this.options.requireAuthenticatedSender !== false
+      && !authenticatedSender(mail.from, mail.authenticationResults, this.options.trustedAuthservIds)) return null;
     const chatId = handle(mail.from, "who");
     const messageId = handle(mail.messageId || `<${mail.seq}@branch>`, "msg");
     this.remember(chatId, messageId, mail);
