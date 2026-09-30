@@ -54,9 +54,11 @@ export async function waiting() {
 const RN = { tab: "installed" };
 const GROUPS = [["new", "window.flows.whatsnew.new"], ["better", "window.flows.whatsnew.better"], ["fixed", "window.flows.whatsnew.fixed"]];
 const note = (n) => `<li><span>${esc(n.title)}</span>${ready(n.act) ? `<button class="link" type="button" data-act="rngo17d" data-a="${esc(n.act)}" ${dataAttrs(n.data)}>${t("window.flows.whatsnew.show-me")}</button>` : ""}</li>`;
+const installedVersion = (notes) => notes.installedVersion ?? notes.version;
 function installedBody(notes) {
   const groups = GROUPS.map(([g, key]) => [key, (notes.items ?? []).filter((n) => (n.group ?? "new") === g)]).filter(([, items]) => items.length);
-  return `<p class="hint" data-css="margin:10px 0 4px">${esc(t("window.flows.whatsnew.these", { version: notes.version }))}</p>${groups.map(([key, items]) => `<div class="rn-g17d"><h3>${t(key)}</h3><ul>${items.map(note).join("")}</ul></div>`).join("")}`;
+  const edition = installedVersion(notes) === notes.version ? "" : `<p class="hint">${esc(t("release-notes.edition", { version: notes.version }))}</p>`;
+  return `<p class="hint" data-css="margin:10px 0 4px">${esc(t("release-notes.installed-build", { version: installedVersion(notes) }))}</p>${edition}${groups.map(([key, items]) => `<div class="rn-g17d"><h3>${t(key)}</h3><ul>${items.map(note).join("")}</ul></div>`).join("")}`;
 }
 const readyBody = (next) => `<p class="hint" data-css="margin:10px 0 4px">${esc(t("window.flows.whatsnew.is-ready", { version: next.version }))}</p><div class="rn-g17d"><ul>${next.lines.map((l) => `<li><span>${esc(l)}</span></li>`).join("")}</ul></div>`;
 
@@ -66,7 +68,7 @@ async function openNotes(tab) {
   try { notes = await api("release-notes"); } catch (error) { toast(error.message); return; }
   try { next = await waiting(); } catch (error) { toast(error.message); }
   RN.tab = tab === "ready" && next ? "ready" : "installed";
-  const seg = next ? `<span class="seg" role="group" aria-label="${t("window.flows.whatsnew.version")}"><button type="button" data-act="relnotes17d" data-v="installed" aria-pressed="${RN.tab === "installed"}">${esc(t("window.flows.whatsnew.installed", { version: notes.version }))}</button><button type="button" data-act="relnotes17d" data-v="ready" aria-pressed="${RN.tab === "ready"}">${esc(t("window.flows.whatsnew.ready", { version: next.version }))}</button></span>` : "";
+  const seg = next ? `<span class="seg" role="group" aria-label="${t("window.flows.whatsnew.version")}"><button type="button" data-act="relnotes17d" data-v="installed" aria-pressed="${RN.tab === "installed"}">${esc(t("window.flows.whatsnew.installed", { version: installedVersion(notes) }))}</button><button type="button" data-act="relnotes17d" data-v="ready" aria-pressed="${RN.tab === "ready"}">${esc(t("window.flows.whatsnew.ready", { version: next.version }))}</button></span>` : "";
   const foot = RN.tab === "ready"
     ? `<button class="btn ghost" type="button" data-act="dlg-close">${t("window.flows.first.later")}</button><button class="btn pri" type="button" data-act="rninstall17d">${t("window.settings.updates.install-when-nothing-is-running")}</button>`
     : `<button class="btn pri" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>`;

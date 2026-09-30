@@ -7729,6 +7729,8 @@
   "window.flows.whatsnew.fixed": "Fixed",
   "window.flows.whatsnew.have": "You have {version}. See what it has.",
   "window.flows.whatsnew.have-next": "You have {version}. See what it has, and what {next} adds.",
+  "release-notes.installed-build": "Installed build: Branch {version}",
+  "release-notes.edition": "This build includes the release notes for {version}.",
   "window.flows.whatsnew.installed": "{version} · installed",
   "window.flows.whatsnew.is-ready": "Branch {version} is ready",
   "window.flows.whatsnew.lede": "Everything added in the last passes, and where it lives. Your choices are kept on this computer.",
