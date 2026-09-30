@@ -116,6 +116,7 @@ import { hiddenToolsText } from "./mcp-policy.js";
 import { listSnapshots } from "./mcp-snapshots.js";
 import { readLifecycleSettings, saveLifecycleSettings } from "./mcp-lifecycle.js";
 import { tryServer } from "./mcp-workbench.js";
+import { lockerSecret } from "./integrations/mcp-config.js";
 // mac3/security-check: the self-check card's routes.
 import { securityCheckApi } from "./security-audit/api.js";
 import { signIn as mcpSignIn } from "./integrations/mcp-oauth.js";
@@ -3543,7 +3544,7 @@ async function mcpModeApi(app: Branch, request: IncomingMessage, path: string): 
     app.store.profiles.requireOwner("Trying another AI tool's server");
     const trying = await readBody(request, 65536);
     await vetTriedServer(app, trying); // mac3/security-check
-    return tryServer(app.store, app.runtime.owner, trying, process.env, app.web.policy);
+    return tryServer(app.store, app.runtime.owner, trying, process.env, app.web.policy, lockerSecret(app.store, () => app.runtime.owner));
   }
   // The pages outside servers offered during one conversation, newest first. The page itself
   // travels with the answer so the card can hand it straight back for a one-time address; it is
