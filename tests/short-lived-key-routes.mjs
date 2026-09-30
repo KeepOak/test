@@ -1278,6 +1278,7 @@ export const ROUTES = {
   "/api/voice/engines": "owner POST",
   "/api/voice/live": "owner POST", // phase2/rooms: its tools run as the owner
   "/api/voice/plan": "look",
+  "/api/voice/sentences": "task POST", // splits text into sentences; reads and changes nothing
   "/api/voice/settings": "owner POST",
   "/api/voice/speak": "task POST",
   "/api/voice/transcribe": "task POST",
