@@ -581,3 +581,19 @@ test("nothing but the owner's own route may write a line of the book: a settings
   assert.deepEqual(after.logins[0].alsoHosts, [], "an extra website name was added from outside");
   assert.equal(after.timeoutMs, 10000, "something other than the switch was written");
 });
+
+test("a schedule the owner made fills a password only where that sign-in opted in at its exact HTTPS address", async (t) => {
+  const { store } = await fixture(t, { entry: { address: "https://example.com/login", scheduledPassword: true } });
+  const runId = context().runId, entry = readVaultAutofillSettings(store, OWNER).logins[0];
+  store.eventRows.set(runId, [{ kind: "run.started", data: { source: "schedule" } }]);
+  assert.equal(autofillGuard(store, OWNER, context({ source: "schedule" }), entry), null, "the opted-in root task of the owner's schedule");
+  assert.equal(autofillGuard(store, OWNER, context({ source: "schedule" }), { ...entry, scheduledPassword: false }), autofillStartedElsewhereRefusal);
+  assert.equal(autofillGuard(store, OWNER, context({ source: "schedule", depth: 1 }), entry), autofillStartedElsewhereRefusal, "not its helpers");
+  assert.equal(autofillGuard(store, OWNER, context({ source: "schedule", trunkKeys: { copyFromOwner: false, accounts: {} } }), entry), autofillTrunkRefusal);
+  store.eventRows.set(runId, [{ kind: "run.started", data: { source: "schedule", personProfileId: "p1" } }]);
+  assert.equal(autofillGuard(store, OWNER, context({ source: "schedule" }), entry), autofillStartedElsewhereRefusal, "nor a household person's schedule");
+  store.eventRows.delete(runId);
+  assert.throws(() => saveVaultAutofillSettings(store, OWNER, { logins: [{ name: "shop", site: "example.com", service: "bitwarden", item: "My Shop",
+    address: "http://example.com/login", scheduledPassword: true }] }), /exact HTTPS sign-in address/);
+  assert.equal(readVaultAutofillSettings(fakeStore(), OWNER).logins.length, 0);
+});
