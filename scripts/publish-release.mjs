@@ -27,6 +27,7 @@ function groups(tag) {
   return [
     ...[...downloads, ...installers].map((name) => [name, `${name}.sha256`]),
     [cli, `${cli}.sha256`],
+    ["Branch-Agent-source-dependencies.cdx.json", "Branch-Agent-source-dependencies.cdx.json.sha256"],
     ["Install Branch Agent.cmd"],
     ["install-branch-agent.sh"],
   ];
