@@ -11,6 +11,7 @@ import { z } from "zod";
 import { createBranch } from "../dist/index.js";
 import { notes } from "../dist/inspect.js";
 import { DecisionModels } from "../dist/decision-models.js";
+import { runOrigin } from "../dist/key-context.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const NEEDLE = "invoice-2026-0917 from Acme Ltd: 4,120.00 overdue";
@@ -140,4 +141,22 @@ test("a list filter's decision is part of its task: it stays on this computer wh
   assert.equal(seen.elsewhere, 0, "a task kept on this computer never sends its list to a connection elsewhere");
   assert.equal(seen.here, 1, "the model here decided instead");
   assert.equal(seen.family, true, "the decision's run counts toward the task's spending while it runs");
+});
+
+test("a list filter's decision answers to its task's asker, with no program tools of its own", async (t) => {
+  const { app } = await fixture(t);
+  const here = app.runtime.models.presets.get("here");
+  const seen = [];
+  const decide = here.provider.complete.bind(here.provider);
+  here.provider.complete = async (request) => {
+    const side = app.store.runs(app.runtime.owner).find((run) => run.prompt === "Making a small decision" && run.status === "running");
+    seen.push({ programTools: request.programTools, source: side ? runOrigin(app.store, side.id).source : null });
+    return decide(request);
+  };
+  for (const source of ["schedule", "owner"]) {
+    const run = await app.runtime.run({ prompt: "Find the overdue invoice in my mail", permissions: ["files.read"], source });
+    assert.equal(run.status, "completed", run.output);
+  }
+  assert.deepEqual(seen.map((one) => one.source), ["schedule", "owner"], "the decision is asked as its task's own asker");
+  assert.deepEqual(seen.map((one) => one.programTools), [false, false], "a tool-free decision never gets a program's own tools");
 });

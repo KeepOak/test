@@ -630,12 +630,19 @@ export async function createBranch(options: {
   const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset, origin) => {
     // Temporary, so a decision never adds a conversation to the list.
     const run = store.createRun(runtime.owner, "Making a small decision", undefined, true, "owner");
-    if (origin) runtime.joinSideRun(run.id, origin.runId);
+    // A decision made for a task is that task's: it answers to the same asker (the start record names its parent, so
+    // runOrigin reads the task's source), under the same Trunk and accounts, and joins its privacy and spending.
+    if (origin) {
+      store.event(run.id, "run.started", { source: "owner", parentRunId: origin.runId, label: "decision" });
+      runtime.joinSideRun(run.id, origin.runId);
+    }
     let answer: ShapedAnswer | undefined;
     try {
       // A decision made for a task stops with it and is paid from its budget (a list filter); any other has a minute.
       const signal = origin ? AbortSignal.any([origin.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000);
-      answer = await runtime.shaped(run, runtime.context({ runId: run.id, permissions: [], signal, ...(origin ? { budget: origin.budget } : {}) }), text, shape, preset);
+      const context = runtime.context({ runId: run.id, permissions: [], signal, ...(origin ? { budget: origin.budget } : {}) });
+      const scoped = { ...context, ...(origin?.trunk ? { trunk: origin.trunk } : {}), ...(origin?.trunkKeys ? { trunkKeys: origin.trunkKeys } : {}) };
+      answer = await runtime.shaped(run, scoped, text, shape, preset);
       return answer;
     } finally {
       if (origin) runtime.leaveSideRun(run.id);

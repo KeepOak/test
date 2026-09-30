@@ -2738,7 +2738,7 @@ ${run.output.slice(0, 6000)}`;
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
-  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget; runId: string }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"] }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
   /**
    * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
    * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
@@ -2755,7 +2755,8 @@ ${run.output.slice(0, 6000)}`;
     const lines = found.items.map((item) => (typeof item === "string" ? item : JSON.stringify(item) ?? ""));
     try {
       // The task's own Stop and budget: a filter never runs on after the task stops, nor past what it may spend.
-      const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget, runId: run.id });
+      const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget, runId: run.id,
+        ...(context.trunk ? { trunk: context.trunk } : {}), ...(context.trunkKeys ? { trunkKeys: context.trunkKeys } : {}) });
       if (!said) return result;
       if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
       const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);
@@ -4053,7 +4054,8 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}),
         // An installed program answering as the model (Claude Code, Codex) keeps its own tools only for the owner's own
         // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
-        ...(runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
+        // A shaped answer asked with no tools of Branch's (a decision) is words only, whoever asked it.
+        ...(runOrigin(this.store, run.id).source === "owner" && !(shape && !context.permissions.size) ? {} : { programTools: false }) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime

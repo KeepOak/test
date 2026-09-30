@@ -4,7 +4,7 @@ import { declareShape, type AnswerShape, type ShapedAnswer } from "./answer-shap
 import type { ModelPreset, ModelRouter } from "./models.js";
 import { presetRunsLocally } from "./models.js";
 import type { Store } from "./store.js";
-import type { Budget } from "./contracts.js";
+import type { Budget, ToolContext } from "./contracts.js";
 
 /**
  * P17-D §4: decision models. Small, bounded judgments (yes or no, pick one, a score from 1 to 10, keep or drop each
@@ -70,7 +70,7 @@ type Raw = { answer?: boolean; choice?: string; score?: number; keep?: number[];
  * never by a request) makes the decision's own run part of the task: it stays on this computer when the task must, and
  * its spending counts against the task's cap.
  */
-export interface DecisionOrigin { signal: AbortSignal; budget: Budget; runId: string }
+export interface DecisionOrigin { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"] }
 export type DecisionAsk = (text: string, shape: AnswerShape, preset: ModelPreset, origin?: DecisionOrigin) => Promise<ShapedAnswer>;
 
 export interface DecisionResult {
