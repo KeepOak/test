@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import type { LiveTarget, OutboundGuard } from "./live-status.js";
 import { retryAfterMs } from "./live-status.js";
 import { chunkText } from "./deliveries.js";
@@ -8,6 +9,8 @@ export class ReplyStream {
   private words = "";
   private messageId: string | null = null;
   private shown = "";
+  private readonly draftId = randomInt(1, 0x7fffffff);
+  private draftDisabled = false;
   private closed = false;
   private failures = 0;
   private pausedUntil = 0;
@@ -56,6 +59,7 @@ export class ReplyStream {
   async finish(text: string): Promise<PlacedReply | null> {
     this.cancel();
     return this.enqueue(async () => {
+      // Native drafts have no message id: the caller persists the full answer with its ordinary send path.
       if (!this.messageId) return null;
       const checked = await this.checked(text);
       if (checked === null) return null;
@@ -80,6 +84,10 @@ export class ReplyStream {
   }
   private async write(text: string): Promise<boolean> {
     if (text === this.shown) return true;
+    if (!this.messageId && !this.draftDisabled && this.target.adapter.sendDraft) {
+      const drafted = await this.draft(text);
+      if (drafted !== null) return drafted;
+    }
     try {
       if (!(this.target.allowed?.() ?? true) || !this.target.adapter.edit || Date.now() < this.pausedUntil) return false;
       if (this.messageId) await this.target.adapter.edit(this.target.chatId, this.messageId, text);
@@ -93,6 +101,22 @@ export class ReplyStream {
       if (wait) this.pausedUntil = Date.now() + wait;
       else this.failures++;
       return false;
+    }
+  }
+  /** Hermes Agent's draft-to-edit fallback (MIT), using the same guarded, serialized preview as ordinary edits. */
+  private async draft(text: string): Promise<boolean | null> {
+    if (this.closed || !(this.target.allowed?.() ?? true) || Date.now() < this.pausedUntil) return false;
+    try {
+      await this.target.adapter.sendDraft!(this.target.chatId, this.draftId, text);
+      this.shown = text;
+      this.failures = 0;
+      return true;
+    } catch (error) {
+      const wait = retryAfterMs(error);
+      if (wait) { this.pausedUntil = Date.now() + wait; return false; }
+      // A topic may refuse drafts even when the bot supports them. Preserve this chat's exact address on fallback.
+      this.draftDisabled = true;
+      return this.closed ? false : null;
     }
   }
   private enqueue<T>(work: () => Promise<T>): Promise<T> {

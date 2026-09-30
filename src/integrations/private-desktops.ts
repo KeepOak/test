@@ -21,11 +21,11 @@ export class PrivateDesktops {
   constructor(private readonly store: Store, private readonly knownAgent: (agent: string) => boolean) {}
 
   private records(owner: string): z.infer<typeof Records> {
-    const saved = Records.safeParse(this.store.get('settings', owner, recordKey)?.data ?? []);
+    const saved = Records.safeParse(this.store.get('settings', owner, recordKey)?.data?.records ?? []);
     if (!saved.success) throw new Error('Private desktop records are unreadable; no lifecycle action was taken.');
     return saved.data;
   }
-  private persist(owner: string, records: z.infer<typeof Records>): void { this.store.save('settings', owner, recordKey, Records.parse(records)); }
+  private persist(owner: string, records: z.infer<typeof Records>): void { this.store.save('settings', owner, recordKey, { records: Records.parse(records) }); }
   private requireRecord(owner: string, agent: string): void {
     this.store.profiles.requireOwner('Private computers');
     if (this.closed || lockdownActive(this.store, owner)) throw new Error('Private desktops are unavailable while Branch is closing or Lockdown is on.');

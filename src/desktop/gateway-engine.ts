@@ -10,15 +10,16 @@ import { builtFrom } from "./build-identity.js";
 import { fallbackRepo } from "./repo-pair.js";
 import type { DetachedDesktopOptions } from "./gateway-desktop.js";
 import type { DesktopWorkerOptions } from "./gateway-worker.js";
-import type { DesktopControlHost } from "./gateway-control.js";
-import { tellGatewayWindow } from "./gateway-live.js";
+import { recoverAdoptionWindow, tellAdoptionWindow, type AdoptionControl } from "./gateway-live.js";
 import type { LiveHooks } from "./updater.js";
 import { EngineClient } from "./engine-client.js";
 import { proveOnce } from "../engine-proof.js";
 import { requestUpdateBackup } from "../install/background-engine.js";
 import type { GatewayPowerPolicy } from "./gateway-power.js";
+import type { PreparedGatewayCode } from "./gateway-code.js";
+import type { InUse } from "../hot-update/live-folder.js";
 
-async function brokerRequest<T>(host: EngineHost, action: (client: EngineClient) => Promise<T>): Promise<T> {
+export async function brokerRequest<T>(host: EngineHost, action: (client: EngineClient) => Promise<T>): Promise<T> {
   const boot = await proveOnce(host.url, host.token);
   if (!boot) throw new Error("The retained engine did not prove its identity.");
   const client = new EngineClient({ origin: host.url, access: { boot: () => host.running ? boot : null }, windowKey: () => host.token });
@@ -26,28 +27,26 @@ async function brokerRequest<T>(host: EngineHost, action: (client: EngineClient)
 }
 
 function retainedLive(options: DetachedDesktopOptions, host: EngineHost, env: NodeJS.ProcessEnv, ready: (version: string, provisional?: boolean) => void, checking: () => void,
-  control: Pick<DesktopControlHost, "current">, packaged: string | null, closeBroker: () => void): LiveHooks {
+  control: AdoptionControl, packaged: string | null, closeBroker: () => void,
+  prepareCode?: (inUse: InUse) => Promise<PreparedGatewayCode>): LiveHooks {
   const { appRoot, dataDir } = options;
   return liveHooks({ appRoot, dataDir, repo: fallbackRepo, buildDir: join(dataDir, "updates", "beta-build"), packaged,
     host: () => host, forkLive: (file) => forkDesktopEngine(file, env), runtime: process.execPath,
-    gateway: { ready, checking, packagedVersion: app.getVersion() }, onEngineDeparture: closeBroker,
+    gateway: { ready, checking, packagedVersion: app.getVersion(), ...(prepareCode ? { prepareCode } : {}) }, onEngineDeparture: closeBroker,
     snapshot: () => brokerRequest(host, async (client) => {
       const response = await client.fetch(`${host.url}/api/never-break/snapshot`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(120000) });
       const body = await response.json() as { folder?: unknown };
       if (!response.ok || typeof body.folder !== "string") throw new Error("The retained engine did not make an update copy.");
       return body.folder;
     }), backup: () => brokerRequest(host, async (client) => { await requestUpdateBackup(host.url, "", { fetch: client.fetch }); }),
-    tellWindow: (update) => tellGatewayWindow(control, update),
-    recoverWindow: async () => {
-      const shell = control.current();
-      if (!shell || await shell.call("window-recover", undefined, 30000) !== true) throw new Error("The previous window did not restore and draw.");
-    }, log: (line) => console.error(line) });
+    tellWindow: (update) => tellAdoptionWindow(control, update),
+    recoverWindow: () => recoverAdoptionWindow(control), log: (line) => console.error(line) });
 }
 
 /** Every crash replacement reloads checked live state and encrypted settings, after the departed writer ended. */
 export function retainedDesktopWorker(options: DetachedDesktopOptions, env: NodeJS.ProcessEnv, ready: (version: string, provisional?: boolean) => void, checking: () => void,
-  control: Pick<DesktopControlHost, "current">, activated: (hooks: LiveHooks, host: EngineHost) => void, quit: () => void,
-  power?: GatewayPowerPolicy): DesktopWorkerOptions {
+  control: AdoptionControl, activated: (hooks: LiveHooks, host: EngineHost) => void, quit: () => void,
+  power?: GatewayPowerPolicy, prepareCode?: (inUse: InUse) => Promise<PreparedGatewayCode>): DesktopWorkerOptions {
   const services = desktopEngineServices(options.base); let host: EngineHost, version = app.getVersion();
   const { vault, banner, loginItem } = services;
   const broker = engineBroker({ vault, banner, loginItem, tell: (method) => host.tell(method), quit,
@@ -62,7 +61,7 @@ export function retainedDesktopWorker(options: DetachedDesktopOptions, env: Node
         executable: app.isPackaged ? process.execPath : null, installRoot: installedAppRoot(app.isPackaged, process.platform, process.execPath),
         packaged: app.isPackaged, loginItem: services.loginItem?.read() ?? null, appPid: process.pid, testHooks: false, appRoot: options.appRoot,
         ...(live.window ? { liveWindow: live.window } : {}) }, log: (line) => console.error(line) });
-    activated(retainedLive(options, host, env, ready, checking, control, await builtFrom(options.appRoot, app.isPackaged), () => broker.close()), host);
+    activated(retainedLive(options, host, env, ready, checking, control, await builtFrom(options.appRoot, app.isPackaged), () => broker.close(), prepareCode), host);
     return host;
   } };
 }

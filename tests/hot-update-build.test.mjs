@@ -117,6 +117,7 @@ test("a change to the engine is compiled, never packaged, and holds the engine's
   assert.ok(!seen.some((line) => /package-desktop|dependency-notices/.test(line)), "never packaged");
   assert.equal(lf(await readFile(join(outcome.dir, "dist", "runtime.js"), "utf8")), "export const run = 2;\n");
   assert.equal(JSON.parse(await readFile(join(outcome.dir, "dist", "build-info.json"), "utf8")).commit, commit);
+  assert.ok(JSON.parse(await readFile(join(outcome.dir, "dist", "build-info.json"), "utf8")).ancestors.includes(repo.first));
   assert.equal(JSON.parse(await readFile(join(outcome.dir, "package.json"), "utf8")).version, outcome.version, "it answers to its own version");
   await verifyLive(outcome.dir, { commit, digest: outcome.digest });
 });
@@ -130,6 +131,18 @@ test("a change the app's main process loads, or new packages, goes the packaged 
   assert.equal(await exists(join(first.appRoot, "live")), false, "nothing was staged");
   const packages = await repo.change({ "package.json": JSON.stringify({ name: "branch-agent", version: "1.2.3", scripts: { build: "node scripts/build-ts.mjs" }, dependencies: { zod: "5" } }, null, 2) });
   assert.equal((await plan(t, repo, packages)).outcome.tier, "shell");
+});
+
+test("a main-process file that only the running engine has not seen still goes the packaged way", { timeout: 120000 }, async (t) => {
+  // Seen live 2026-09-30: the app was packaged from a newer change than its running engine, so the main-process file was
+  // in the engine's list only. The live update carried a "shell" part its own check refuses, and waited for ever.
+  const repo = await repository(t);
+  const shared = await repo.change({ "src/shared.ts": "export const shared = 2;\n" });
+  const next = await repo.change({ "public/app.css": "body{color:blue}\n" });
+  const { outcome, appRoot } = await plan(t, repo, next, { packaged: shared, running: shared });
+  assert.equal(outcome.tier, "shell");
+  assert.match(outcome.reason, /src\/shared\.ts is loaded by the app's main process/);
+  assert.equal(await exists(join(appRoot, "live")), false, "nothing was staged");
 });
 
 test("the gateway's own code is its own part; a change touching nothing that runs needs nothing", { timeout: 120000 }, async (t) => {

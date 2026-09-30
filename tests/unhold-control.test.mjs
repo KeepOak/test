@@ -78,8 +78,9 @@ test("the playground cannot run a tool the owner's policy denies, even when it s
 // src/runtime.ts checkPolicy's `lockdownToolRefusal` return (the second half goes red).
 test("a command from the window still asks first, runs only after the yes, and is refused under Lockdown", async (t) => {
   const f = await served(t, { shell: true });
-  // No approval preset at all ("off"): a command nobody has ruled on still asks (the policy's unmatchedCommands).
-  assert.equal((await f.call("POST", "/api/policy", undefined, { preset: "off" })).status, 200);
+  // No approval preset at all ("off"), with the owner's "ask" for commands nobody has ruled on (the policy's
+  // unmatchedCommands; owner ruling 2026-09-30: it ships as "allow").
+  assert.equal((await f.call("POST", "/api/policy", undefined, { preset: "off", unmatchedCommands: "ask" })).status, 200);
   const asked = await f.call("POST", "/api/tools/try", undefined, { ...command("asked"), confirm: false });
   assert.equal(asked.body.status, "asked", JSON.stringify(asked.body));
   assert.match(asked.body.question, /Before I go ahead/);
