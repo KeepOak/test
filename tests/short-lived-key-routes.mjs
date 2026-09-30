@@ -1072,7 +1072,7 @@ export const ROUTES = {
   "/api/schedules": "other POST",
   "/api/schedules/": "prefix",
   "/api/schedules/:id": "look",
-  "/api/schedules/:id/dashboard": "owner look",
+  "/api/schedules/:id/dashboard": "secret-read", // RES-189: the owner's retained dashboard; no short-lived key reads it
   "/api/schedules/:id/gate": "owner POST",
   "/api/schedules/:id/remove": "other POST",
   "/api/schedules/:id/trigger": "task POST",
