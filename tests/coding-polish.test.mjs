@@ -48,7 +48,7 @@ test("every part ships as the owner's rule says, its tools are left out while of
   // The owner's rule (ships on, 2026-09-26): the coding parts ship "when needed", read-first ships on (Q250, a stricter
   // guard), fewer-rounds ships "when needed" too (2026-09-27); a damaged record reads as off; what "off" does is tested by
   // switching every part off.
-  const ships = { "read-first": "on", worktrees: "off" }; // worktrees: heavy disk
+  const ships = { "read-first": "on" }; // worktrees ships when needed for helpers only (the owner's ruling, 2026-09-30)
   for (const part of codingParts) assert.equal(app.coding.modes()[part], ships[part] ?? "when-needed", `${part} on a fresh install`);
   assert.equal(codingMode({ get: () => ({ data: { mode: "sideways" } }) }, "local", "notebooks"), "off", "a damaged record reads as off");
   for (const part of codingParts) app.coding.setMode(part, "off");
@@ -387,9 +387,13 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
   app.store.message(app.store.createRun(app.runtime.owner, "hi").sessionId, { role: "user", content: "hi" });
   const first = app.store.runs(app.runtime.owner)[0];
   const messageId = app.runtime.store.sqlite.prepare("SELECT source_id FROM messages WHERE session_id=?").get(first.sessionId)?.source_id;
-  app.coding.setMode("worktrees", "off"); // ships off (heavy disk); switched off explicitly all the same
+  app.coding.setMode("worktrees", "off");
   await assert.rejects(app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000)), /switched off/);
   on("worktrees");
+  // The owner's ruling (2026-09-30): helpers get copies by default, a forked conversation does not until forks is on.
+  await assert.rejects(app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000)), /Forking a conversation .* is off/);
+  assert.equal(app.coding.worktrees.forks().length, 0, "nothing was copied");
+  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", forks: true });
   const fork = await app.coding.worktrees.fork({ sessionId: first.sessionId, messageId }, AbortSignal.timeout(30_000));
   assert.match(fork.path, /^\.branch-worktrees\/fork-[a-f0-9]{8}$/);
   assert.ok(existsSync(join(app.runtime.workspace, fork.path, "README.md")));
@@ -409,8 +413,9 @@ test("R17-036: a forked conversation works in its own copy, and a helper's copy 
 
   const parent = context();
   const helperRun = () => app.store.createRun(app.runtime.owner, "helper").id;
-  assert.equal(await app.coding.placeTask({ id: helperRun(), sessionId: "x" }, context(), parent), null, "helpers share the folder unless asked");
-  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", perHelper: true });
+  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on", perHelper: false });
+  assert.equal(await app.coding.placeTask({ id: helperRun(), sessionId: "x" }, context(), parent), null, "with per-helper copies off, helpers share the folder");
+  app.coding.worktrees["deps"].store.save("settings", app.runtime.owner, "coding-worktrees", { mode: "on" }); // perHelper by default
   const empty = await app.coding.placeTask({ id: helperRun(), sessionId: "x" }, context(), parent);
   assert.ok(existsSync(empty.workspace));
   await empty.release();
@@ -503,6 +508,6 @@ test("the API: switches, settings and refusals in plain words", async (t) => {
   await assert.rejects(call("GET", "/api/coding/nowhere"), (error) => error.status === 404);
   assert.equal(codingMode(app.store, app.runtime.owner, "init"), "when-needed");
   saveCodingMode(app.store, app.runtime.owner, "worktrees", "on");
-  assert.deepEqual((await call("POST", "/api/coding/worktrees", { perHelper: true })).settings, { perHelper: true });
+  assert.deepEqual((await call("POST", "/api/coding/worktrees", { perHelper: true })).settings, { perHelper: true, forks: false });
   assert.equal(codingMode(app.store, app.runtime.owner, "worktrees"), "on", "saving a part's settings keeps its switch");
 });

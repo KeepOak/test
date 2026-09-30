@@ -60,7 +60,9 @@ const codingShipsOn: Partial<Record<CodingPart, CodingMode>> = {
   "review-checks": "when-needed",
   // The owner's rule (ships on, 2026-09-27): the same tool calls in fewer rounds, and only calls that look run side by side; none of (a)–(f).
   "fewer-rounds": "when-needed",
-  // Parallel coding helpers get a separate Git copy by default; an explicitly saved off choice still wins.
+  // The owner's ruling (2026-09-30): helpers only, on. Each coding helper in a Git project works in its own worktree,
+  // removed when it finishes holding nothing (src/coding/worktrees.ts). A forked conversation's copy stays off (heavy
+  // disk: a whole copy kept for as long as the fork lives) until the owner switches `forks` on. A saved off still wins.
   worktrees: "when-needed",
 };
 

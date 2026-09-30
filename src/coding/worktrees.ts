@@ -9,8 +9,8 @@ import type { Store } from "../store.js";
 import { codingOn, partSettings, requireCoding } from "./settings.js";
 
 /**
- * R17-036: a conversation forked into its own copy of the project (a Git worktree), and by default
- * a copy of its own for each helper a task hands work to. The owner can switch either behaviour off. The copies live where
+ * R17-036: a copy of its own (a Git worktree) for each helper a task hands work to, by default (the owner's ruling,
+ * 2026-09-30), and, only when the owner switches `forks` on, a conversation forked into its own copy. The copies live where
  * every parallel copy already lives (`.branch-worktrees`, src/integrations/git.ts), are made with the
  * owner's own Git (hooks off, never asking for a password), and a helper's copy is removed afterwards
  * only when it provably holds nothing: no commits of its own and no unsaved change. Otherwise it is
@@ -26,8 +26,10 @@ export const worktreeScope = (): string | undefined => place.getStore();
 export const inWorktree = <T>(scope: string, work: () => Promise<T>): Promise<T> => place.run(scope, work);
 
 export const WorktreeSettingsSchema = z.object({
-  /** Give each helper a task hands work to a copy of its own. */
+  /** Give each helper a task hands work to a copy of its own (on: the owner's ruling, 2026-09-30). */
   perHelper: z.boolean().default(true),
+  /** Let a conversation be forked into a copy of its own. Off: each fork keeps a whole copy on disk for as long as it lives. */
+  forks: z.boolean().default(false),
 }).strict();
 const ForksSchema = z.object({
   forks: z.array(z.object({ sessionId: z.string().uuid(), name: z.string(), branch: z.string(), folder: z.string(), createdAt: z.string() }).strict()).max(200).default([]),
@@ -67,6 +69,8 @@ export class WorktreePlaces {
   async fork(input: { sessionId: string; messageId: number }, signal: AbortSignal) {
     const { store, owner } = this.deps;
     requireCoding(store, owner, "worktrees");
+    if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).forks)
+      throw new Error("Forking a conversation into its own copy of the project is off, because each fork keeps a whole copy on disk. The owner can switch it on (coding worktrees: forks).");
     if (worktreeScope()) throw new Error("This conversation already works in a copy of the project.");
     const branched = await this.deps.branchSession(owner, input);
     const name = `fork-${short(branched.sessionId)}`, branch = `branch/fork-${short(branched.sessionId)}`;
