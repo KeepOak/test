@@ -444,17 +444,32 @@ async function fromTemplate(i) {
   } catch (error) { toast(error.message); }
 }
 
-/* ---------- a new Trunk: the prototype's "Trunk 6 for now", made with POST /api/trunks; the engine has it introduce itself in its
-   own conversation, which then opens. Its name, colour and face change from the editor. ---------- */
-async function newTrunk() {
+/* A new Trunk is made only after the owner gives it a name. Cancelling leaves no Trunk or conversation behind. */
+function newTrunk() {
   closePop();
+  openDlg({ title: t("trunks.new"), body: `<div class="field"><label for="nt-name">${t("accounts.field.name")}</label><input class="inp" id="nt-name" maxlength="40" aria-describedby="nt-need-name"><small id="nt-need-name" class="hint">${esc(say("Give your Trunk a name."))}</small></div>`,
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("window.chat.mktrunk.cancel")}</button><button class="btn pri" type="button" data-act="new-trunk-create" disabled>${t("action.create")}</button>` });
+  $("#nt-name")?.focus();
+}
+
+let creatingTrunk = false;
+async function createNamedTrunk() {
+  const input = $("#nt-name"), name = (input?.value ?? "").trim();
+  if (creatingTrunk || !input) return;
+  if (!name) { input.setAttribute("aria-invalid", "true"); input.focus(); return; }
+  const dlg = dialog(), from = [S.view, S.chat];
+  creatingTrunk = true;
+  dlg?.querySelector('[data-act="new-trunk-create"]')?.setAttribute("disabled", "");
   try {
-    let n = E.trunks.length + 1;
-    while (E.trunks.some((tr) => tr.name === `Trunk ${n}`)) n += 1;
-    const { trunk } = await api("trunks", { name: `Trunk ${n}` });
-    await refresh();
-    openChat(trunk.chatSessionId);
-  } catch (error) { toast(error.message); }
+    const { trunk } = await api("trunks", { name });
+    if (dialog() === dlg) closeDlg();
+    await refresh().catch((error) => console.warn(error.message));
+    if (S.view === from[0] && S.chat === from[1]) openChat(trunk.chatSessionId);
+    toast(t("window.flows.trunk.ready", { name: trunk.name }));
+  } catch (error) {
+    toast(error.message);
+    if (dialog() === dlg) dlg?.querySelector('[data-act="new-trunk-create"]')?.removeAttribute("disabled");
+  } finally { creatingTrunk = false; }
 }
 
 /* ---------- a new room: a name, two to six Trunks and up to eight people on this computer (POST /api/trunks/rooms
@@ -584,6 +599,19 @@ export function init() {
   on("grp-rule", (el) => { grp.name = $("#grp-name")?.value ?? grp.name; grp.rule = el.dataset.v; groupDlg(); });
   markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
+  on("new-trunk-create", () => createNamedTrunk());
+  markLive(["new-trunk-create", "sw:nt-name"]);
+  document.addEventListener("input", (e) => {
+    if (e.target.id !== "nt-name" || creatingTrunk) return;
+    e.target.removeAttribute("aria-invalid");
+    const button = dialog()?.querySelector('[data-act="new-trunk-create"]');
+    if (button) button.disabled = !e.target.value.trim();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.target.id !== "nt-name" || e.key !== "Enter" || e.isComposing) return;
+    e.preventDefault();
+    createNamedTrunk();
+  });
   on("edit", (el) => editTrunk(el.dataset.id));
   on("st-tab", async (el) => {
     if (!ed) return; // only while an editor is open (a household person's Edit on the owner's Trunk opens none)
