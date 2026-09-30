@@ -150,6 +150,8 @@ export interface ChannelAdapter {
   setCommands?(commands: { command: string; description: string }[]): Promise<void>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
+  /** UP-CHAT-005: the sound a spoken reply must be for this app to show it as a voice bubble ("audio/ogg": OGG/Opus). */
+  readonly voiceNoteType?: string;
   /**
    * Sends a question with buttons to press, on the channels that have them. Absent means this
    * channel has none, and the question goes out as words with "reply y / a / n" instead.
@@ -435,7 +437,7 @@ export class ChannelRouter {
    * Reads a reply aloud so it can be sent back as a voice note, but only when the owner has asked
    * for that. Returning null means "send the words instead", which is what happens by default.
    */
-  speakReply: (text: string) => Promise<{ bytes: Uint8Array; mediaType: string } | null> = async () => null;
+  speakReply: (text: string, voiceNoteType?: string) => Promise<{ bytes: Uint8Array; mediaType: string } | null> = async () => null;
   /**
    * Messages from one chat that arrive within this many milliseconds of the first become one
    * turn, so a thought typed as three quick messages is answered once.
@@ -783,7 +785,7 @@ export class ChannelRouter {
     if (!adapter?.sendVoice) return;
     const checked = await this.outboundGuard(text);
     if (checked.blocked) return;
-    const spoken = await this.speakReply(checked.text);
+    const spoken = await this.speakReply(checked.text, adapter.voiceNoteType);
     if (!spoken) return;
     await adapter.sendVoice(message.chatId, spoken.bytes, spoken.mediaType, replyTo);
   }
