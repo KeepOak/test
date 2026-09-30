@@ -127,6 +127,8 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
     return "A short-lived key cannot read an update's problem or make its file. Do that in the app window.";
   if (path === "/api/updates/data-copies")
     return "A short-lived key cannot see or put back the copies of the data folder taken before updates. Do that in the app window.";
+  // CHAT-156: who may message Branch names people; like the door above, a script's key may not even read it.
+  if (path === "/api/channels/allowlist") return "A short-lived key cannot read or change who may message Branch. Do that in the app window.";
   if (method === "GET") return ownerOnlyRead(path);
   // Wave mac3 (commands, integration review): when Branch checks with you, which model every new
   // conversation starts with (and the model services behind it), and which commands are offered
@@ -182,7 +184,6 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
   // mac7/connect: saving a chat app's token or switching setting-up on is the owner's alone.
   if (handlesChannelSetupPath(path)) return "A short-lived key cannot save a chat app's token or change how chat apps are set up. Do that in the app window.";
   // mac3/never-break (integration review): letting a new person reach the assistant is the owner's alone.
-  if (path === "/api/channels/allowlist") return "A short-lived key cannot read or change who may message Branch. Do that in the app window.";
   if (path.startsWith("/api/channels/pairings/")) return "A short-lived key cannot let a new person reach the assistant, or remove one. Do that in the app window.";
   // Bucket 17: naming a program for Branch to run (ffmpeg, yt-dlp, a reading-aloud program) is the owner's step.
   if (path === "/api/media/programs" || path === "/api/voice/engines")
