@@ -272,3 +272,13 @@ test("SELF-090 a Claude Code that ends after its one result falls back to a fres
   assert.equal(f.seen.length, 2);
   await until(() => gone(f.launches[0].cwd));
 });
+
+test("SELF-090 a Claude Code that ends just after its result, before the next turn sees it gone, answers on a fresh transport", async (t) => {
+  const f = await fixture(t, { mode: "exit-soon" });
+  const first = [{ role: "user", content: "Read the file" }];
+  await scope(() => f.provider.complete(request(first)));
+  const next = await scope(() => f.provider.complete(request([...first, ...answered])));
+  assert.equal(next.toolCalls.length, 1);
+  assert.equal(f.launches.length, 2, "the ended session was replaced once");
+  assert.equal(f.seen.length, 2, "and nothing was generated twice");
+});

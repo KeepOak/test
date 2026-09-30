@@ -101,6 +101,10 @@ function removeLater(target: string, attempt: number): void {
       .catch(() => { if (attempt < 30) removeLater(target, attempt + 1); });
   }, 2000).unref();
 }
+/** A kept native session could not take this turn before any generation was admitted (for example, it had ended). */
+class NativeSessionEnded extends Error {
+  constructor(cause: unknown) { super("Claude subscription kept session ended before this turn", { cause }); }
+}
 /** Request folders being used right now, so two requests never share one and a late removal never takes a live one. */
 const inUse = new Set<string>();
 type NativeSession = { root: string; native: NativeProcess; relay: NativeAdmission; frames: NativeFrame[]; closing: Promise<void> | null };
@@ -163,7 +167,9 @@ export class ClaudeSubscriptionProvider implements Provider {
     timer.unref();
     const scope = { ...request, signal }, authorize = (): void => { signal.throwIfAborted(); authorized(this.options.owner); };
     try {
-      return await this.completeTurn(scope, authorize);
+      try { return await this.completeTurn(scope, authorize); }
+      // A kept session that ended between turns admitted nothing, so one fresh transport may take the turn.
+      catch (error) { if (!(error instanceof NativeSessionEnded)) throw error; return await this.completeTurn(scope, authorize); }
     } finally {
       clearTimeout(timer); controller.abort();
     }
@@ -187,11 +193,11 @@ export class ClaudeSubscriptionProvider implements Provider {
   }
   private async completeTurn(request: CompletionRequest, authorize: () => void): Promise<Completion> {
     const lease = this.continuations.lease(request), marker = nativeTurnMarker();
-    let session = lease.value, retained = false;
+    let session = lease.value, retained = false, armed = false;
     const stop = (): void => { void session?.native.stop().catch(() => undefined); };
     request.signal.addEventListener("abort", stop, { once: true });
     try {
-      if (session) { session.native.beginTurn(); session.relay.arm(request, nativeInventory(request.tools), authorize, marker); }
+      if (session) { session.native.beginTurn(); session.relay.arm(request, nativeInventory(request.tools), authorize, marker); armed = true; }
       else { await lease.released; session = await this.startSession(request, authorize, marker); }
       authorize();
       if (lease.continued) await session.native.send(nativeTrigger(marker), request.signal);
@@ -203,8 +209,11 @@ export class ClaudeSubscriptionProvider implements Provider {
       const rateEvents = session.native.rateEvents(); if (rateEvents) this.onOutput?.(rateEvents);
       authorize(); retained = this.continuations.finish(lease, session, result);
       return result;
-    } catch (error) { this.continuations.fail(lease); throw error; }
-    finally {
+    } catch (error) {
+      this.continuations.fail(lease);
+      if (lease.continued && !request.signal.aborted && !(armed && session?.relay.used)) throw new NativeSessionEnded(error);
+      throw error;
+    } finally {
       request.signal.removeEventListener("abort", stop);
       if (session && !retained) await disposeSession(session);
     }
