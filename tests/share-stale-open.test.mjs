@@ -24,6 +24,7 @@ const stubs = {
   "app/core/actions.js": "export const on = (name, fn) => { globalThis.__sh.acts[name] = fn; };",
   "app/core/features.js": "export const markLive = () => {};",
   "app/core/logos.js": "export const logo = () => \"\";",
+  "app/core/words.js": "export const say = (s) => s;", // newer share.js says its download line through say()
   "app/settings/parts.js": "export const ctlSeg = () => \"\";",
   "app/places/team-tabs.js": "export const peopleRows = () => \"\"; export const relate = async () => null;",
   "i18n.js": "export const t = (key) => key;",
