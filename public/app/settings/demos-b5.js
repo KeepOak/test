@@ -62,6 +62,24 @@ function money() {
 
 /* ---------- Models ---------- */
 function models() {
+  /* Retirement is the router's current flag; health retains only the latest failure per connection, in memory. */
+  onDemo17("retired", { open: async () => {
+    const state = await api("state"), cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const rows = list(state.models?.presets).flatMap((preset) => {
+      const health = preset.health, failedAt = Date.parse(health?.lastErrorAt ?? "");
+      const recent = Number.isFinite(failedAt) && failedAt >= cutoff;
+      if (!preset.retired && !recent) return [];
+      const details = [];
+      if (preset.retired) details.push(t("window.settings.retired.unavailable"));
+      if (recent) details.push(t("window.settings.retired.failed-at", { at: when(health.lastErrorAt) }), health.summary);
+      const recovered = recent && Date.parse(health?.lastOkAt ?? "") > failedAt;
+      if (recovered) details.push(t("window.settings.retired.answered-at", { at: when(health.lastOkAt) }));
+      const status = preset.retired ? ["warn", t("window.settings.retired.retired")]
+        : recovered ? ["ok", t("window.settings.retired.recovered")] : ["warn", t("window.settings.retired.failure")];
+      return [[preset.name, details.filter(Boolean).join(" · "), status]];
+    });
+    show("retired", t("window.settings.retired.lead"), rows);
+  } });
   /* Private things stay here: the engine's local routing (GET /api/local-models/routing). */
   onDemo17("localroute", { open: async () => {
     const r = await api("local-models/routing");
@@ -300,7 +318,7 @@ export function initDemosB5() {
 
 /* Rows left without a button, and why (the engine has nothing the window could show, or showing it is for the security
    review):
-   debate, retired, jev's live answers — the engine keeps no record of challenges or retired-model moves (GET
+   debate, jev's live answers — the engine keeps no record of challenges (GET
    /api/second-opinion holds only the debate's limits);
    injection, codecheck — always-on checks with no log to read (the injection policy is the launch file's web section;
    /api/code-check is the project's own check, not the script check in src/code-check.ts);
