@@ -21,7 +21,10 @@ test("dropdowns are the window's glass list: ticked, keyboard, saves, narrows, a
   const lang = page.locator("#lang");
   await lang.waitFor();
   assert.equal(await selects(), 0, "no system select on Appearance");
-  assert.equal(await lang.getAttribute("aria-haspopup"), "menu");
+  // UP-UI-058: a selection control, as a screen reader should hear it (Hermes searchable-select, MIT, adapted).
+  assert.equal(await lang.getAttribute("role"), "combobox");
+  assert.equal(await lang.getAttribute("aria-haspopup"), "listbox");
+  assert.equal(await lang.getAttribute("aria-controls"), "gsel-options");
   assert.equal(await lang.evaluate((el) => el.value), "en");
 
   // Open: the popover lists every language, English ticked and focused.
@@ -29,10 +32,12 @@ test("dropdowns are the window's glass list: ticked, keyboard, saves, narrows, a
   const list = page.locator(".gsel-pop");
   await list.waitFor();
   assert.equal(await lang.getAttribute("aria-expanded"), "true");
-  const items = list.locator('[role="menuitemradio"]');
+  assert.equal(await list.locator('#gsel-options[role="listbox"]').count(), 1, "the list it controls is a named listbox");
+  const items = list.locator('[role="option"]');
   assert.equal(await items.count(), (await gselChoices(lang)).length);
-  assert.equal(await list.locator('[aria-checked="true"]').innerText(), "English");
-  assert.ok(await list.locator('[aria-checked="true"]').evaluate((el) => el === document.activeElement), "the choice in use has the keyboard");
+  assert.equal(await list.locator('[aria-selected="true"]').innerText(), "English");
+  assert.equal(await list.locator('[aria-selected="true"]').count(), 1, "one choice is selected");
+  assert.ok(await list.locator('[aria-selected="true"]').evaluate((el) => el === document.activeElement), "the choice in use has the keyboard");
   await page.keyboard.press("ArrowDown");
   assert.ok(await items.nth(1).evaluate((el) => el === document.activeElement), "ArrowDown moves to the next choice");
   await page.keyboard.press("Escape");
@@ -41,12 +46,12 @@ test("dropdowns are the window's glass list: ticked, keyboard, saves, narrows, a
 
   // Pick French: the window and the engine both switch, as the select's change did.
   await lang.click();
-  await list.locator('[role="menuitemradio"]', { hasText: "Français" }).click();
+  await list.locator('[role="option"]', { hasText: "Français" }).click();
   await page.waitForFunction(() => document.documentElement.lang === "fr");
   assert.equal((await call("/api/look")).language, "fr", "the engine keeps the choice");
   await page.locator("#lang").click();
   await page.locator(".gsel-pop").waitFor();
-  await page.locator('.gsel-pop [role="menuitemradio"]', { hasText: "English" }).click();
+  await page.locator('.gsel-pop [role="option"]', { hasText: "English" }).click();
   await page.waitForFunction(() => document.documentElement.lang === "en");
 
   // Your profile's time zone: a long list over a dialog, narrowed by typing, saved by the engine.
@@ -60,11 +65,12 @@ test("dropdowns are the window's glass list: ticked, keyboard, saves, narrows, a
   const narrow = page.locator(".gsel-pop .gsel-q input");
   await narrow.waitFor();
   assert.ok(await narrow.evaluate((el) => el === document.activeElement), "the narrowing box has the keyboard");
-  assert.equal(await page.locator(".gsel-pop").getAttribute("role"), "dialog", "box and menu sit in a small dialog");
+  assert.equal(await narrow.getAttribute("role"), "combobox", "the narrowing box is a combobox");
+  assert.equal(await narrow.getAttribute("aria-controls"), "gsel-options", "that controls the listbox it narrows");
   await narrow.fill("tokyo");
-  const shown = page.locator('.gsel-pop [role="menuitemradio"]:not([hidden])');
+  const shown = page.locator('.gsel-pop [role="option"]:not([hidden])');
   assert.deepEqual(await shown.allInnerTexts(), ["Asia/Tokyo"]);
-  const onTop = await page.evaluate(() => { const r = document.querySelector('.gsel-pop [role="menuitemradio"]:not([hidden])').getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(".gsel-pop") !== null; });
+  const onTop = await page.evaluate(() => { const r = document.querySelector('.gsel-pop [role="option"]:not([hidden])').getBoundingClientRect(); return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(".gsel-pop") !== null; });
   assert.ok(onTop, "the list is drawn above the dialog it came from");
   await page.keyboard.press("Enter");
   await page.locator(".gsel-pop").waitFor({ state: "detached" });
