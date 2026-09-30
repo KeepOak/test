@@ -3361,7 +3361,7 @@ ${run.output.slice(0, 6000)}`;
   private screenWithheld(tool: string, args: unknown, context: ToolContext): boolean {
     const run = this.store.run(context.runId);
     if (!run || !reachesScreen(tool, this.registry.permissionOf(tool), args, this.registry.declaresScreen(tool))) return false;
-    return !this.screenWanted(run, context) && !this.ownerFullMode(context); // owner ruling 2026-09-30: Full access uses the screen
+    return !this.screenWanted(run, context);
   }
   /**
    * A server has connected, or a plugin has been switched on, while this task was working. Its

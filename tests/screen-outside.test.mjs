@@ -112,12 +112,13 @@ test("research is not offered outside screen tools, and a call to one is refused
   void mcpEcho;
 });
 
-test("the owner starting a screen task is offered them, is asked first under Full access, and Lockdown refuses them", async (t) => {
+test("the owner starting a screen task is offered them, is asked first outside Full access, and Lockdown refuses them", async (t) => {
   const { app, seen, calls, mcpShot } = await scripted(t, [call(shotName, {}, "s1"), done]);
-  const run = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
+  // Owner ruling 2026-09-30: under Full access the screen asks nothing (tests/screen-guard.test.mjs); Auto still asks.
+  const run = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "auto" });
   assert.equal(events(app, run, "policy.denied").filter((event) => event.data.screen === "withheld").length, 0, "asked for in the owner's words, it is not withheld");
   void seen;
-  assert.equal(run.status, "needs_input", "the first screen use asks, even under Full access");
+  assert.equal(run.status, "needs_input", "the first screen use asks outside Full access");
   assert.equal(calls.length, 0);
   const [waiting] = app.runtime.approvals.waiting(run.sessionId);
   assert.equal(waiting.tool, mcpShot);
