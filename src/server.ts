@@ -2149,9 +2149,12 @@ async function api(
   if (request.method === "GET" && path === panelsWorkPath)
     return panelsWork(app.store, app.runtime.owner, new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
   // live-stage: the full-size view of Branch's browser, a frame of what a conversation's task sees now (src/live-stage.ts).
-  if (request.method === "GET" && path === liveStagePath)
-    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
-      new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "");
+  if (request.method === "GET" && path === liveStagePath) {
+    const query = new URL(request.url ?? "/", "http://local").searchParams;
+    const replay = query.has("step") ? { step: query.get("step"), runId: query.get("run"), planAt: query.get("plan") } : undefined;
+    return liveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser,
+      plan: session => app.runtime.orchestration.plan(session), observeSteps: query.get("observe") === "steps" }, query.get("session") ?? "", replay);
+  }
   // Redesign phase 1: the mode chip in the message box (src/conversation-mode-api.ts).
   if (handlesConversationModePath(path))
     return conversationModeApi(app, request.method ?? "GET", new URL(request.url ?? "/", "http://local"), () => readBody(request))

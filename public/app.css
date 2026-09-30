@@ -4548,3 +4548,6 @@ audio.docread18m{width:100%}
 .owner-browser7 .ob7-extras,.owner-browser7 .ob7-find{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 12px;border-bottom:1px solid #e6e9ec;background:#fff;color:#3b4650}
 .owner-browser7 .ob7-find input{flex:1;min-width:150px;padding:6px 8px;border:1px solid #c9d2da;border-radius:6px;color:inherit;background:#fff}
 .owner-browser7 .ob7-find small{min-width:120px;color:inherit}
+
+/* Plan-step pictures are visibly separate from the live browser. */
+#stage7 .st7-replay-note{position:absolute;bottom:12px;left:12px;padding:6px 10px;border-radius:6px;background:var(--bg);color:var(--ink);box-shadow:0 2px 8px #0002}
