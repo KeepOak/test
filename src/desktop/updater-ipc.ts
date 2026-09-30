@@ -46,6 +46,8 @@ const settingsPages = openableSettingsPages(process.platform);
  * joined one that was already working, so an update behaves the same either way.
  */
 export interface UpdateHooks {
+  /** The saved work's folder (a versioned switch checks its format before going back, version-switch.ts). */
+  dataDir?: string;
   /** Authenticated current channel and full task count from the local or joined engine. */
   readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "workingTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
   backup: () => Promise<void>;
@@ -139,6 +141,7 @@ export function registerUpdaterIpc(
     beforeStop: () => ensureIdle(),
     ...(hooks?.live ? { live: hooks.live } : {}),
     ...(appFolders ? { appFolders } : {}),
+    ...(hooks?.dataDir ? { dataDir: hooks.dataDir } : {}),
     ...(hooks?.handOver ? { handOver: hooks.handOver } : {}),
     devBuildDir: hooks?.buildDir ?? null,
     onChange: statusSender((status) => {

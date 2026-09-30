@@ -5,7 +5,8 @@ import { channelPosition } from '../never-break/channel-position.js'; // mac3/ne
 import { channelMark } from '../channels/catch-up.js'; // mac6/bucket-16
 import { z } from 'zod';
 import type { ToolRegistry } from '../registry.js';
-import { McpConfigSchema } from './mcp-config.js';
+import { McpConfigSchema, reachFor, withLockerSecrets, type SecretLookup } from './mcp-config.js';
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
 import { connectMcp, openMcp, registerCachedMcp, type LiveMcp, type McpToolCache } from './mcp.js';
 import { BranchBrowser, BrowserConfigSchema, defaultBrowserConfig, registerBrowser, type WorkspacePaths } from './browser.js';
 // mac7/vault-autofill (R17-068): filling one of the owner's saved sign-ins into the page they are on.
@@ -108,6 +109,11 @@ export const EmailChannelSchema = z.object({
   passwordSecret: credentialName.default('EMAIL_PASSWORD'),
   /** How often to look for new mail, in seconds. */
   pollSeconds: z.number().int().min(5).max(3600).default(60),
+  /**
+   * The name the mailbox's own server writes first in its Authentication-Results header (for Gmail, mx.google.com).
+   * Set, only that server's verdict on the sender is believed; unset, the server that wrote the top header is.
+   */
+  authservId: z.string().trim().min(1).max(253).regex(/^[^s;]+$/).optional(),
 }).merge(ChannelPolicySchema).strict();
 /**
  * Every team-chat service that works the same way: a row in `data/channels.json` says how it sends
@@ -433,7 +439,11 @@ export async function startMcp(
   registry: ToolRegistry, server: unknown, env: NodeJS.ProcessEnv,
   policy: NetworkPolicy | undefined, host: McpHost | undefined,
 ): Promise<(() => Promise<void>) | null> {
-  const guard = policy ? { guard: (base: typeof fetch) => policy.guard(base) } : undefined;
+  // Credentials the environment does not have come from the locker, looked up again for every start.
+  const given = env, transportConfig = McpConfigSchema.parse(server);
+  const guard = reachFor(policy, transportConfig.transport === 'http' ? host?.signIn?.(transportConfig.id, transportConfig.url) : undefined);
+  const credentials = () => withLockerSecrets(transportConfig, given, host?.secret);
+  env = await credentials();
   // mac3/security-check: a server fetched from a package registry is looked up in the malware list
   // before it is added, and again before it is opened later (src/security-audit/malware-check.ts).
   // With no checker this adds nothing.
@@ -443,9 +453,9 @@ export async function startMcp(
   const reopen = async () => {
     await host?.beforeRestart?.();
     await vet();
-    return openMcp(server, env, guard, host?.cache, host?.startupTimeoutMs?.());
+    return openMcp(server, await credentials(), guard, host?.cache, host?.startupTimeoutMs?.());
   };
-  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen); // R17-S20
+  const connect = () => connectMcp(registry, server, env, guard, host?.cache, host?.startupTimeoutMs?.(), reopen, host?.injection); // R17-S20
   if (!host || host.connectWhen() !== 'on-demand') {
     const connection = await connect();
     return connection.close;
@@ -463,7 +473,7 @@ export async function startMcp(
     // Whether it is still alive travels too, so a connection whose program has ended is opened again on the next call.
     return { call: opened.call, ...(opened.secrets ? { secrets: opened.secrets } : {}),
       ...(opened.found ? { tools: opened.found } : {}), ...(opened.alive ? { alive: opened.alive } : {}) };
-  });
+  }, host.injection);
   if (!names.length) {
     const connection = await connect();
     return connection.close;
@@ -481,11 +491,17 @@ export interface McpHost {
   connectWhen(): 'startup' | 'on-demand';
   /** mac3/security-check: throws a plain sentence for a package listed as malware. */
   vetLaunch?: (command: string, args: readonly string[]) => Promise<void>;
+  /** A credential the environment does not have, looked up in the default project's locker. */
+  secret?: SecretLookup;
+  /** The saved sign-in for a web server the owner signed in to (src/integrations/mcp-oauth.ts), or undefined. */
+  signIn?: (id: string, url: string) => OAuthClientProvider | undefined;
   cache: McpToolCache;
   /** Checks made before a server's program is started again, after a crash or on demand (src/mcp-own-servers.ts); throws to refuse. */
   beforeRestart?: () => void | Promise<void>;
   /** R17-S20: how long a server may take to start, in milliseconds; unset keeps 10 seconds. */
   startupTimeoutMs?: () => number;
+  /** How text that reads like instructions is handled in a server's answers (the web setting); "redact" when unset. */
+  injection?: () => 'warn' | 'redact' | 'block';
   connections: { register(id: string, opener: () => Promise<{ close(): Promise<void> }>): void;
     acquire(runId: string, id: string): Promise<{ close(): Promise<void> }>;
     /** Forgets a server the owner switched off or removed (src/mcp-own-servers.ts). */
@@ -591,6 +607,7 @@ async function buildEmail(channel: Extract<ChannelConfig, { type: 'email' }>, en
   for (const server of [channel.imap, channel.smtp])
     await policy?.assertAllowed(new URL(`https://${server.host}`), 'mail server');
   return new EmailAdapter({ id: channel.id, address: channel.address, pollMs: channel.pollSeconds * 1000,
+    ...(channel.authservId ? { authservId: channel.authservId } : {}),
     imap: { ...channel.imap, password }, smtp: { ...channel.smtp, password } });
 }
 
@@ -668,8 +685,8 @@ function parseVerdict(printed: string): unknown {
 }
 
 function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext): HookRunner {
-  // The shell runs one host command at a time. Hooks for the same event fire together, so they take
-  // turns here, and each waits for any task command still running before it starts.
+  // Hooks for the same event fire together, so they take turns here; the shell itself queues each one behind any
+  // command still running in the same folder (SELF-302, src/integrations/command-turns.ts).
   let turn: Promise<unknown> = Promise.resolve();
   return (hook, payload) => {
     const mine = turn.then(() => runHook(shell, context, hook, payload));
@@ -680,17 +697,12 @@ function hookRunner(shell: BranchShell, context: (runId: string) => ToolContext)
 
 async function runHook(shell: BranchShell, context: (runId: string) => ToolContext, hook: HookConfig, payload: Record<string, unknown>): ReturnType<HookRunner> {
   const scoped = { ...context(String(payload.runId ?? '')), signal: AbortSignal.timeout(hook.timeoutMs + 1000) };
-  for (;;) {
-    try {
-      await shell.whenIdle(scoped.signal);
-      const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
-      // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
-      // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
-      return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // Another command started between the shell going quiet and this one asking: wait again.
-      if (!/already active/.test(message) || scoped.signal.aborted) return { ok: false, error: message };
-    }
+  try {
+    const result = await shell.execute({ executable: hook.executable, args: [...hook.args, JSON.stringify(payload).slice(0, 4000)], cwd: '.', secrets: [], timeoutMs: hook.timeoutMs }, scoped);
+    // A check that can stop a call says so by printing {"decision":"ask","reason":"..."}.
+    // Anything else it prints is ignored, so an ordinary notify-only hook behaves as before.
+    return result.status === 'completed' ? { ok: true, verdict: parseVerdict(result.stdout) } : { ok: false, error: `${result.status}${result.stderr ? ': ' + result.stderr.slice(0, 200) : ''}` };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

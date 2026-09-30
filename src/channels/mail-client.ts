@@ -2,6 +2,7 @@ import { connect as netConnect, type Socket } from "node:net";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { randomUUID } from "node:crypto";
 import { mimeParts, textOf } from "../personal/mime.js";
+import { fromAddress } from "./mail-auth.js";
 
 /**
  * Just enough IMAP and SMTP, over Node's own TLS, to read new mail and answer it: no library, no
@@ -35,6 +36,11 @@ export interface MailMessage {
   messageId: string;
   references: string;
   text: string;
+  /**
+   * Every Authentication-Results header, top first, as the receiving mail server stamped them; src/channels/mail-auth.ts
+   * reads them to decide whether `from` is really the sender.
+   */
+  authResults?: string[];
   /** Files attached to the message, at most `maxMailFiles` of them, already decoded. */
   attachments?: MailFile[];
 }
@@ -253,15 +259,18 @@ export function parseFetched(seq: number, raw: string): MailMessage {
   const body = literals.TEXT ?? "";
   const header = (name: string) => new RegExp(`^${name}:[ \\t]*([\\s\\S]*?)(?=\\r\\n[^ \\t]|$)`, "im").exec(headers)?.[1]?.replace(/\r\n[ \t]+/g, " ").trim() ?? "";
   const from = header("From");
-  const address = /<([^>]+)>/.exec(from)?.[1] ?? from.split(/\s+/).pop() ?? "";
+  // Quoted names and comments are stepped over, so a display name that spells an address is not taken for the sender.
+  const address = fromAddress(from);
+  const authResults = headers.split(/\r?\n\r?\n/)[0]!.replace(/\r?\n[ \t]+/g, " ").split(/\r?\n/)
+    .filter((line) => /^authentication-results:/i.test(line)).map((line) => line.slice(line.indexOf(":") + 1).trim());
   // The body is read with the message's own headers, so a formatted, encoded or multipart message gives its words and its files.
   const parts = mimeParts(`${headers.split(/\r?\n\r?\n/)[0]}\r\n\r\n${body}`);
   const attachments = parts.filter((part) => part.filename || part.disposition === "attachment").slice(0, maxMailFiles)
     .map((part, index) => ({ name: part.filename || `attachment-${index + 1}`, mediaType: part.contentType, bytes: new Uint8Array(part.body) }));
   return {
-    seq, from: address.toLowerCase(), fromName: from.replace(/<[^>]*>/, "").replace(/"/g, "").trim() || address,
+    seq, from: address, fromName: from.replace(/<[^>]*>/, "").replace(/"/g, "").trim() || address,
     subject: header("Subject"), messageId: header("Message-ID"), references: header("References"),
-    text: textOf(parts).replace(/\r\n/g, "\n").trim(),
+    text: textOf(parts).replace(/\r\n/g, "\n").trim(), authResults,
     ...(attachments.length ? { attachments } : {}),
   };
 }

@@ -57,6 +57,8 @@ export function acceptValue(spec: FieldSpec, value: unknown): Value | undefined 
   const kind = spec.kind;
   // A number that also takes a word for "no figure of the owner's own" (the round limit's "auto").
   if (kind.type === "number" && kind.unset !== undefined && value === kind.unset) return kind.unset;
+  // ...and one for no limit at all ("no limit"; "none" and "unlimited" are read as it too).
+  if (kind.type === "number" && kind.unlimited !== undefined && typeof value === "string" && unlimitedWords.has(value.trim().toLowerCase())) return kind.unlimited;
   const schema = kind.type === "switch" ? z.enum(switchPositions)
     : kind.type === "yes-no" ? z.boolean()
       : kind.type === "choice" ? z.enum(kind.options as [string, ...string[]])
@@ -65,13 +67,15 @@ export function acceptValue(spec: FieldSpec, value: unknown): Value | undefined 
   return parsed.success ? parsed.data : undefined;
 }
 
-/** A number's range, and the word it also takes when it has one (the round limit's "auto"). */
-export type Range = { min: number; max: number; or?: string };
+/** A number's range, and the words it also takes when it has them (the round limit's "auto", a task limit's "no limit"). */
+export type Range = { min: number; max: number; or?: string; unlimited?: string };
 export function rangeOf(field: FieldSpec): Range | null {
   const kind = field.kind;
   if (kind.type !== "number") return null;
-  return { min: kind.min, max: kind.max, ...(kind.unset !== undefined ? { or: kind.unset } : {}) };
+  return { min: kind.min, max: kind.max, ...(kind.unset !== undefined ? { or: kind.unset } : {}), ...(kind.unlimited !== undefined ? { unlimited: kind.unlimited } : {}) };
 }
+/** The words read as a task limit's "no limit". */
+const unlimitedWords = new Set(["no limit", "none", "unlimited", "no-limit"]);
 
 /** What the field holds now; an unset or unreadable value counts as its starting value. */
 export function currentValue(store: Store, owner: string, spec: SettingSpec, field: FieldSpec): Value {

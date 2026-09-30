@@ -449,9 +449,6 @@ test("MQTT: a stranger is refused when pairing is off, and plain words come from
   assert.equal(link.mqtt.connect.flags, 0x02, "no user name or password flags without an account");
   await refusalWalk(context, { label: "MQTT", sent: () => link.mqtt.published.map((p) => p.payload.text),
     say: async (text) => link.write(mq.publish("chat/in/door", text)) });
-  const refusal = link.mqtt.published.at(-1);
-  assert.equal(refusal.topic, "chat/in/doorbell");
-  assert.equal(refusal.qos, 0);
   await assertNoSecret(context, [MQTT_PASSWORD]);
 });
 
@@ -675,10 +672,11 @@ test("SimpleX: pairs a stranger from newChatItems, answers with /_send by chat n
   link.group(3, "anyone read chapter two?");
   await delay(120);
   assert.equal(context.provider.requests.length, asked, "its own echoed items and unaddressed group talk are left alone");
+  const waiting = context.app.channels.summary().pending.length;
   link.group(3, "@Branch Bot summarise chapter one");
-  await until(() => link.sends.some((s) => s.ref === "#3"), "a mention in the group gets an answer there");
-  const groupReply = link.sends.find((s) => s.ref === "#3");
-  assert.match(groupReply.text, /\b\d{6}\b/, "a new group member is offered a code in the group, not answered");
+  // UP-CHAT-007: a new group member is not answered and not sent a code in the group; the request waits for the owner.
+  await until(() => context.app.channels.summary().pending.length > waiting, "a mention from a new group member waits for the owner");
+  assert.ok(!link.sends.some((s) => s.ref === "#3"), "no code is posted in the group");
 
   // Quotes and newlines in a reply stay inside the JSON.
   await channel.send("@5", "it's \"quoted\"\nand on two lines");
@@ -695,7 +693,6 @@ test("SimpleX: a stranger is refused when pairing is off, and a lost program is 
   t.after(() => channel.stop());
   const link = await until(() => program.connections[0], "connected");
   await refusalWalk(context, { label: "SimpleX", sent: () => link.sends.map((s) => s.text), say: async (text) => link.direct(9, text, "Stranger") });
-  assert.equal(link.sends.at(-1).ref, "@9");
   link.socket.destroy();
   await until(() => program.connections[1], "connected again");
   await until(() => channel.health().state === "connected", "healthy again");

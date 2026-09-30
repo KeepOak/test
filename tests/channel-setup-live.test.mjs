@@ -162,7 +162,7 @@ async function homeserver(t) {
   return { base: `http://127.0.0.1:${server.address().port}`, sends, syncs };
 }
 
-test("Matrix set up in the window connects at once and answers a stranger with a pairing code, then again after a restart", async (t) => {
+test("Matrix set up in the window connects at once and records a stranger's pairing request, then connects again after a restart", async (t) => {
   const service = await homeserver(t);
   const { app, dataDir } = await freshApp(t);
   app.web.policy.configure({ allowPrivateAddresses: true }); // the stand-in homeserver is on this computer
@@ -175,8 +175,10 @@ test("Matrix set up in the window connects at once and answers a stranger with a
   assert.equal(outcome.connected, true, outcome.note ?? "");
   assert.equal(outcome.channel, "matrix");
   assert.ok(app.channels.summary().channels.some((channel) => channel.id === "matrix"), "attached to the running router, no restart");
-  const code = await until(() => service.sends.find((send) => /\b\d{6}\b/.test(send.body.body ?? "")), "a pairing code in the room");
-  assert.match(code.path, /\/rooms\/!room%3Aexample\.org\/send\/m\.room\.message\//);
+  // UP-CHAT-007: a Matrix room is a group to Branch, so the code is not posted there; the stranger's request waits for the owner.
+  const waiting = await until(() => app.channels.summary().pending.find((p) => p.channel === "matrix"), "a pairing request from the room");
+  assert.match(waiting.code, /^\d{6}$/);
+  assert.ok(!service.sends.some((send) => /\b\d{6}\b/.test(send.body.body ?? "")), "no code is posted in the room");
   assert.ok(service.syncs.every((auth) => auth === `Bearer ${TOKEN}`), "the token came from the locker");
   await app.close();
 
