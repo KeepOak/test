@@ -8942,6 +8942,7 @@
   "window.settings.advanced.rewrite-short-notes": "Kurze Notizen umformulieren",
   "window.settings.advanced.room": "Platz",
   "window.settings.advanced.search-address": "SearXNG-Adresse",
+  "window.settings.advanced.search-address-explain": "Wo Ihr eigenes SearXNG antwortet. Wird nur verwendet, wenn oben SearXNG gewählt ist; nichts geht an Dritte.",
   "window.settings.advanced.search-documents-by-meaning": "Dokumente nach Bedeutung durchsuchen",
   "window.settings.advanced.search-from-file": "Von der Startdatei gewählt, bis Sie hier einen wählen.",
   "window.settings.advanced.search-has-key": "Nutzt Ihren Schlüssel, gespeichert als {name} unter Geheimnisse.",
