@@ -7,6 +7,7 @@ import type { Store } from "./store.js";
 import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
 import { goalWithSubgoals } from "./autonomy/subgoals.js"; // r17-b: /subgoal
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
+import { ownerChatMark } from "./key-context.js"; // owner-dm-full
 
 /**
  * Wave mac2: goal mode. `/goal <objective> [--max n]` keeps one conversation working in rounds until
@@ -103,8 +104,13 @@ export interface GoalState {
   activeSince: number | null;
   lastRunId: string | null;
   /** CHAT-185: a goal set from a chat runs every round as that chat's task. Never taken from a request body. */
-  origin?: { source: "channel"; permissions: string[] };
+  origin?: GoalOrigin;
 }
+/**
+ * CHAT-185: where a goal set from a chat came from. owner-dm-full: from the owner's own verified direct chat with full
+ * access it is the owner's ("owner"), and each round carries that chat's mark so it is checked again at every step.
+ */
+export interface GoalOrigin { source: "channel" | "owner"; permissions: string[]; chat?: { channel: string; senderId: string } }
 export interface Verdict { score: number; missing: string[]; done: boolean; blocked: string | null }
 
 /** The part of the runtime goal mode uses; tests hand in a fake. */
@@ -141,7 +147,7 @@ export class GoalMode {
     return recordedWrite(this.store, this.runtime.owner, byCard("goal-undo"), ["goal-undo"], () => saveGoalUndoSettings(this.store, this.runtime.owner, input));
   }
 
-  async start(input: GoalStart, origin?: { source: "channel"; permissions: string[] }): Promise<GoalState> {
+  async start(input: GoalStart, origin?: GoalOrigin): Promise<GoalState> {
     const wanted = GoalStartSchema.parse(input);
     if (this.settings().goal === "off") throw new Error(offNote);
     if (wanted.sessionId && this.live.has(wanted.sessionId)) throw new Error("This conversation is already working on a goal.");
@@ -149,7 +155,8 @@ export class GoalMode {
       sessionId: wanted.sessionId ?? "", objective: wanted.objective, status: "working", round: 0, maxRounds: wanted.maxRounds,
       score: null, best: 0, flatRounds: 0, missing: [], reason: "", checks: wanted.checks ?? null,
       startedAt: new Date(this.now()).toISOString(), elapsedMs: 0, activeSince: this.now(), lastRunId: null,
-      ...(origin ? { origin: { source: "channel", permissions: [...origin.permissions] } } : {}),
+      ...(origin ? { origin: { source: origin.chat ? origin.source : "channel", permissions: [...origin.permissions],
+        ...(origin.chat ? { chat: { channel: origin.chat.channel, senderId: origin.chat.senderId } } : {}) } } : {}),
     };
     const started = new Promise<void>((resolve, reject) => {
       void this.drive(state, resolve).then(() => resolve(), (error: unknown) => reject(error));
@@ -239,6 +246,7 @@ export class GoalMode {
           ...(state.sessionId ? { sessionId: state.sessionId } : {}),
           ...(state.origin ? { source: state.origin.source, permissions: state.origin.permissions } : {}),
           onStarted: (run) => {
+            if (state.origin?.chat) this.store.event(run.id, ownerChatMark, { ...state.origin.chat, chatKind: "direct" }); // owner-dm-full
             if (!state.sessionId) { state.sessionId = run.sessionId; this.live.set(run.sessionId, { controller, runId: null }); }
             this.live.get(state.sessionId)!.runId = run.id;
             state.lastRunId = run.id;

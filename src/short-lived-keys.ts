@@ -104,11 +104,15 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
 
 /** Reads a short-lived key may not make: what they return is a secret, or everybody's data. */
 const ownerOnlyReads: readonly RegExp[] = [
-  new RegExp(`^/api/monitors/${id}/prices$`),
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
   /^\/api\/chatgpt\/status$/,
   // Q168 B: what a restore is holding for the owner's yes carries their model accounts and who may get in.
+  new RegExp(`^/api/monitors/${id}/prices$`),
+  /^\/api\/reach\/continuity(\/|$)/,
+  /^\/api\/taste(\/|$)/,
+  /^\/api\/self-development\/publications(\/|$)/,
+  /^\/api\/schedules\/[a-f0-9-]{36}\/dashboard$/,
   /^\/api\/restore\/held$/,
   // #484: the Trunks a restore brought back cut down, with what each had (its tools, servers, chat apps and accounts).
   /^\/api\/restore\/trunks$/,
