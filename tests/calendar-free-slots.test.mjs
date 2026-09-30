@@ -20,7 +20,8 @@ test("RES-103: one calendar with an error means no suggestions", async () => {
   const store = fakeStore();
   on(store, "google");
   const signIn = { mailPreviewIdentity: () => "same", settings: () => ({ availability: true }),
-    status: async () => ({ scope: "https://www.googleapis.com/auth/calendar.freebusy" }), token: async () => "t" };
+    status: async () => ({ scope: "https://www.googleapis.com/auth/calendar.freebusy" }), token: async () => "t",
+    withAccount: (_id, work) => work(), accountId: () => "default" };
   const answer = { timeMin: "2026-10-01T09:00:00Z", timeMax: "2026-10-01T12:00:00Z",
     calendars: { primary: { busy: [] }, "ada@example.com": { errors: [{ reason: "notFound" }], busy: [] } } };
   const helper = new CalendarAvailability({ store, owner: "local", requireOwner: () => undefined,
