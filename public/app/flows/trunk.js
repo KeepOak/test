@@ -5,7 +5,7 @@
 
 import { $, esc, onRender } from "../core/dom.js";
 import { openDlg, closeDlg, openPop, closePop, toast, ic, av, mi, COLOURS, SHAPE_NAMES, hex, faceOf, dialog } from "../core/ui.js";
-import { S, E, refresh, activeId } from "../core/state.js";
+import { S, E, refresh, activeId, level } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -71,8 +71,12 @@ function keepFields() {
 }
 
 function filesTab() {
-  markLive((ed.files ?? []).map((file) => `sw:personality-${file.name}`));
-  return (ed.files ?? []).map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button></div>`).join("");
+  const shownAt = { "SOUL.md": 0, "USER.md": 0, "IDENTITY.md": 1, "MEMORY.md": 1, "AGENTS.md": 2, "TOOLS.md": 2, "HEARTBEAT.md": 2 };
+  const files = (ed.files ?? []).filter((file) => level() >= (shownAt[file.name] ?? 2));
+  markLive(files.map((file) => `sw:personality-${file.name}`));
+  const more = files.length < (ed.files ?? []).length
+    ? `<p class="hint">${esc(say(level() === 0 ? "More personality files are available in Advanced and Technical." : "Working instructions, tool notes and check-ins are available in Technical."))}</p>` : "";
+  return more + files.map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button></div>`).join("");
 }
 
 function voicePicker() {
