@@ -89,6 +89,6 @@ document.addEventListener("keydown", (e) => {
     items[Math.max(0, Math.min(items.length - 1, to))]?.focus();
   } else if (e.key === "Enter" && e.target.tagName === "INPUT" && items[0]) {
     e.preventDefault();
-    pick(Number(items[0].dataset.i));
+    pick(Number(items[0].dataset.i), items[0].dataset.v);
   }
 });
