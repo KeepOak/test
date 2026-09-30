@@ -3434,6 +3434,10 @@ Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
 
+### OpenClaw per-agent workspaces (idea only), MIT
+
+`src/trunks/shell-fence.ts` follows OpenClaw's stance on per-agent workspaces (`docs/concepts/multi-agent.md`, https://github.com/openclaw/openclaw, commit 1794d8b): an agent's workspace is its default working folder, not a hard sandbox, and its state is kept outside it. No code was taken. OpenClaw is under the MIT licence (Copyright (c) 2026 OpenClaw Foundation), whose text is given under IronClaw above.
+
 ### Goose and Codex approval reviewers (idea only), Apache-2.0
 
 The second model that reviews tool calls in `src/approval-reviewer.ts` — deciding whether a tool that does not say only reads, and checking a risky call against the owner's own rules with its arguments treated as untrusted data — follows the ideas of Goose's `crates/goose/src/permission/permission_judge.rs` and `crates/goose/src/security/adversary_inspector.rs` (https://github.com/block/goose) and Codex's `codex-rs/core/src/guardian/` (https://github.com/openai/codex, Copyright 2025 OpenAI), both licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). It was written afresh; no code was copied.
@@ -3656,7 +3660,3 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 - `public/art/channels/xmpp.svg`: Simple Icons `xmpp` (XMPP), source https://github.com/xsf/xmpp.org/blob/82856a2cec0a99b197c6985191635544e6b3ed69/static/images/logos/xmpp-logo.svg; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zalo.svg`: Simple Icons `zalo` (Zalo), source https://zalo.me; usage rules: none published that I found; used unmodified to identify the service
 - `public/art/channels/zulip.svg`: Simple Icons `zulip` (Zulip), source https://github.com/zulip/zulip/blob/df9e40491dc77b658d943cff36a816d46e32ce1b/static/images/logo/zulip-org-logo.svg; usage rules: none published that I found; used unmodified to identify the service
-
-### OpenClaw per-agent workspaces (idea only), MIT
-
-`src/trunks/shell-fence.ts` follows OpenClaw's stance on per-agent workspaces (`docs/concepts/multi-agent.md`, https://github.com/openclaw/openclaw, commit 1794d8b): an agent's workspace is its default working folder, not a hard sandbox, and its state is kept outside it. No code was taken. OpenClaw is under the MIT licence (Copyright (c) 2026 OpenClaw Foundation), whose text is given under IronClaw above.
