@@ -24,6 +24,7 @@ import { initPlayground } from "../playground.js";
 import { initOpenApiPick } from "../openapi-pick.js";
 import { seasonsSettingsRows, initSeasonsSettings } from "../seasons.js";
 import { loadKit } from "../kit17.js";
+import { drawGitHubDevice, initGitHubDevice, loadGitHubDevice } from "../github-device.js";
 import { say } from "../../core/words.js";
 import { reason } from "../../core/why.js";
 import { t } from "../../../i18n.js";
@@ -91,10 +92,11 @@ export function draw() {
     + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
     + fact15("Save task trajectories", "f15-save-task-trajectories"));
-  return html + seasonsSettingsRows() + developer17(level17());
+  return html + seasonsSettingsRows() + drawGitHubDevice() + developer17(level17());
 }
 
 async function loadAll() {
+  await loadGitHubDevice();
   const [ls, dbg, interop, counters, loop, comfort, tracing, safety] = await Promise.all(
     ["developer/language-servers", "developer/debug-adapters", "interop", "usage/counters", "event-loop", "comfort", "tracing/settings", "safety-extras"]
       .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
@@ -112,6 +114,7 @@ export function init() {
   on("dv-status", (el) => setStatusLine(el.dataset.v));
   initPlayground();
   initOpenApiPick();
+  initGitHubDevice();
   markLive(["dv-copy", "dv-status", ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];

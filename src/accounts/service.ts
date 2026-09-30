@@ -31,6 +31,7 @@ import {
 import { AccountUsageLedger } from "./usage.js";
 import { AccountRestStore } from "./rests.js";
 import { AccountLeases, defaultJobsPerAccount } from "./leases.js";
+import { accountCallReceipt } from "./call-usage.js";
 import { mergeChatGPTDuplicates } from "./dedupe.js";
 import { checkProgram, type RunStatus } from "./sign-ins.js";
 import { accountPresentation, identityKey, type AccountIdentity, type AccountSignIn } from "./identity.js";
@@ -311,7 +312,7 @@ export class AccountsService {
     if (!cursor) this.cursors.set(pool, cursor = { value: 0 });
     const store = this.deps.store, owner = this.deps.owner;
     return {
-      owner, pool, name: preset.name, model: preset.model, states: this.statesOf(pool), cursor, now: this.now,
+      owner, pool, name: preset.name, model: preset.model, originalAccount: primaryAccount, states: this.statesOf(pool), cursor, now: this.now,
       moved: (move: TrunkMove) => { this.trunkMoves.unshift(move); this.trunkMoves.splice(20); },
       settings: () => this.usablePool(pool),
       providerFor: (account: string) => this.providerFor(pool, kind, preset, account),
@@ -552,7 +553,7 @@ export class AccountsService {
         const completion = await target.complete(request); authorize(); request.signal.throwIfAborted();
         const listed = this.pool(ref.pool)?.accounts.find((one) => one.id === ref.account);
         if (listed) this.record(ref.pool, listed, preset.model, completion);
-        currentAccountCall()?.note?.("model.account", { pool: ref.pool, account: ref.account, label: listed?.label ?? ref.account });
+        currentAccountCall()?.note?.("model.account", accountCallReceipt(ref.pool, ref.account, listed?.label ?? ref.account, preset.model, completion));
         return completion;
       };
       const value: unknown = Reflect.get(target, property, target);

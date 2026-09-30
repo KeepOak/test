@@ -88,10 +88,102 @@ and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this
 Apache-2.0; https://github.com/cline/cline). Branch replaces its protobuf catalog with the official
 registry response schema, checks the owner's network policy, caps response bytes, and offers no
 automatic installation. The Apache-2.0 license text is reproduced in this document.
+## Optional external Piper voice program
+
+The original `src/voice-piper.ts` adapter uses the stdin and WAV output contract documented by
+OHF-Voice/piper1-gpl at `efffbfb226bfb511ebbcf55d0cecd8b35a89743d`
+(`src/piper/__main__.py`, `docs/CLI.md`). Piper is GPL-3.0 software installed separately by the
+owner. Branch does not import, bundle, download or redistribute that program or any voice model.
+No Piper implementation code is copied here. Each chosen model has its own license.
+
+The persistent-worker approach was informed by Hermes Agent's MIT-licensed local TTS cache
+(`tools/tts_tool_local.py`, `a9a54245b2311c705d29050b7f9868c015917aec`) and Pipecat's BSD-2-Clause
+external Piper service distinction (`src/pipecat/services/piper/tts.py`,
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc`). Their implementation code is not copied.
+
+## Installed faster-whisper and Silero VAD integration
+
+`src/voice-whisper.ts` calls the installed faster-whisper local VAD and timestamp APIs,
+inspected at `ed9a06cd89a93e47838f564998a6c09b655d7f43` of
+https://github.com/SYSTRAN/faster-whisper (`faster_whisper/vad.py`, `transcribe.py`).
+Silero's MIT license was inspected at `1e261b036686cd0017d500ee96acd1c4ba572a9d`
+of https://github.com/snakers4/silero-vad. No inference implementation, ONNX model or
+Python dependency is bundled or downloaded; the existing external worker uses the
+owner's installed package asset and remains offline. The wrapper adapts faster-whisper's
+speech-span concatenation before language detection; it imports NumPy already required
+by that installed library.
+
+MIT License
+
+Copyright (c) 2023 SYSTRAN
+Copyright (c) 2020-present Silero Team
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+### Hermes chat branch argument parsing
+
+`src/channels/branch-command.ts` adapts the leading `--here` argument handling from `gateway/slash_commands_branch_thread.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, MIT. Branch uses its existing SessionBranches file/transcript copy, path records and per-conversation choices; it branches in place and does not open a native chat-app thread. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
+### OpenClaw Telegram inbound locations
+
+`src/channels/telegram-location.ts` adapts `extractTelegramLocation` from `extensions/telegram/src/bot/body-helpers.ts` and location text formatting from `src/channels/location.ts` in [OpenClaw](https://github.com/openclaw/openclaw), Copyright (c) 2026 OpenClaw Foundation, under the MIT License. Its Telegram venue precedence, live-pin detection, coordinate precision and accuracy formatting are retained; the implementation uses Branch's schemas and quotes venue labels as sender-provided material. The OpenClaw MIT license is reproduced elsewhere in this document.
+
+### Hermes chat progress level command
+
+`verboseInChat` in `src/channels/steps-display.ts` adapts the level cycle in `gateway/slash_commands.py` and override precedence in `gateway/display_config.py` from [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch persists the level per direct chat rather than per platform and supports its own four display levels.
+
+### Hermes Signal monospace formatting
+
+`src/channels/signal-format.ts` adapts code-block extraction, formatting marker removal and `MONOSPACE` style ranges from `gateway/platforms/signal_format.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent), Copyright (c) 2025 Nous Research, under the MIT license reproduced elsewhere in this document. Branch uses JavaScript's UTF-16 offsets and its existing progress spans, and sends signal-cli's `textStyle` parameters. OpenClaw `extensions/signal/src/format.ts` was reviewed but depends on its shared markdown renderer, which is not included here.
+
+### Hermes email sender authentication
+
+`src/channels/mail-auth.ts` ports the comment/quote-aware Authentication-Results clause and property parsing and sender-authentication decision from `plugins/platforms/email/adapter.py` in [Hermes Agent](https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/plugins/platforms/email/adapter.py), Copyright (c) 2025 Nous Research, MIT. Branch considers only the first header, uses exact optional authserv-id pins, and uses exact domain alignment for SPF/DKIM fallback. The MIT license is reproduced elsewhere in this document under Hermes Agent.
+
+### MCP tool error feedback
+
+`src/integrations/mcp-errors.ts` adapts Gemini CLI's MCP tool error-result handling, with Branch's
+credential redaction, text-only limit and outside-content guard. Source:
+https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-tool.ts
+(Copyright Google LLC, Apache-2.0). The Apache-2.0 license text is reproduced in this document.
+
+### MCP outside-content scanning
+
+`src/integrations/mcp-content.ts` adapts Hermes Agent's description scanning and scans both cached
+and live tools using Branch's existing content detector. Copyright (c) 2025 Nous Research, MIT;
+https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py
+and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this document.
 
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
+
+## Hermes wake-word adapter
+
+`src/voice-wake-kws.ts` adapts threshold and phrase display mapping from
+`tools/wake_word_engines.py` at `a9a54245b2311c705d29050b7f9868c015917aec`
+of https://github.com/NousResearch/hermes-agent. Branch uses an external installed
+sherpa-onnx CLI and owner-supplied models/keywords, with no model downloads.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
 
 ## OpenClaw realtime voice adaptations
 
@@ -129,6 +221,69 @@ The browser also includes the pinned markdown-it 15.0.2 ESM bundle (MIT) at
 the notices for bundled entities (BSD-2-Clause), linkify-it, mdurl, punycode.js
 and uc.micro (MIT) are retained alongside the bundle. See that folder's README
 for the official package source, version and checksum.
+
+## Hermes wake-word adapter
+
+`src/voice-wake-kws.ts` adapts threshold and phrase display mapping from
+`tools/wake_word_engines.py` at `a9a54245b2311c705d29050b7f9868c015917aec`
+of https://github.com/NousResearch/hermes-agent. Branch uses an external installed
+sherpa-onnx CLI and owner-supplied models/keywords, with no model downloads.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## Pipecat dictation VAD and pre-speech adaptations
+
+`src/voice-dictation.ts` and `src/voice-dictation-preroll.ts` port the four-state
+speech hysteresis and pre-speech buffer approach from
+`src/pipecat/audio/vad/vad_analyzer.py` and
+`src/pipecat/audio/turn/smart_turn/base_smart_turn.py` at
+`20999cd7b816dc5950eb9553b1ae36a1e771f2bc` of https://github.com/pipecat-ai/pipecat.
+Modified to use Branch's local energy detector and forward every recorder frame.
+
+BSD 2-Clause License
+
+Copyright (c) 2024–2026, Daily
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## @hono/node-server 2.1.1
 
@@ -3880,6 +4035,18 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
 
+## Hermes weekly recap aggregation
+
+`src/weekly-recap.ts` adapts guarded duration aggregation from `agent/insights.py` (`_compute_overview`) in NousResearch/hermes-agent at `16b214e1a1f0544218b1cf8c21b923b4e1c62768`. The listed weekly-review-planning recipe was read for context only. Branch owner scoping, task completion counts, Trunk attribution and manual-time estimate are original integration code.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/agent/insights.py
+
+## Price-watch condition recipe
+
+The listed Hermes `product-price-monitor` skill was read at commit `7327624d3500d4bbc9ad58b0a75c324a306d882a` (MIT). Its threshold/drop, successful-baseline, retained-good-observation and duplicate-alert shape informed the implementation. It is a recipe, not an executable price parser: `src/monitor-price.ts` and the Branch integration are original code, not a claimed source-code port.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/7327624d3500d4bbc9ad58b0a75c324a306d882a/skills/productivity/product-price-monitor/SKILL.md
+
 ## Hermes live-dashboard recipe (scheduled dashboard design)
 
 Reviewed `optional-skills/productivity/live-dashboard/SKILL.md` at bddd22be7c2e5f7630c3d90507e6e7280ff092e3. Its recipe informed source/timestamp state, stale last-good retention, regeneration and change notes. Branch scheduling, validators, persistence and script-free renderer are original implementation, not a port of executable upstream code. Upstream live read/verify instructions were not executed.
@@ -3921,9 +4088,21 @@ Licensed under the Apache License, Version 2.0 (the License); you may not use th
 
 The Trunk import preview/apply flow adapts the staged manifest review in [hermes_cli/profile_distribution.py](https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/profile_distribution.py) (`plan_install`/`install_distribution`), reviewed on 2026-09-29. The implementation uses Branch Trunk JSON and its existing import route; no archive installer is included.
 
+## Hermes Agent Codex notification scope
+
+src/asks/codex-conversation.ts adapts _notification_scope_ids and
+_notification_belongs_to_turn from Hermes Agent's
+[agent/transports/codex_app_server_session.py](https://github.com/NousResearch/hermes-agent/blob/a4c31d592b9d8916ffed9ab80ebee48ba428c172/agent/transports/codex_app_server_session.py).
+The functions were translated to TypeScript for Branch's existing app-server transport.
+The transcript-prefix cache and Branch account/conversation binding are original code.
+
 MIT License
 
 Copyright (c) 2025 Nous Research
+
+## OpenClaw GitHub device flow
+
+`src/integrations/github-device-auth.ts` adapts device response validation, anchored expiry and cumulative polling-delay behavior from [OpenClaw login.ts](https://github.com/openclaw/openclaw/blob/2663c6b6202807712586bb2928c22397ccc14b27/extensions/github-copilot/login.ts). Branch uses an owner-supplied OAuth client identity; no OpenClaw/Copilot client ID is included.
 
 ## OpenClaw chat session lifecycle helpers
 

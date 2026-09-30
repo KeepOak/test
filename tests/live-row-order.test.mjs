@@ -31,5 +31,5 @@ test("the live row comes after the conversation in the page, as it is shown", as
   // while a message is on its way, or while its Resume is already shown elsewhere (cardResumes).
   assert.match(drawn, /asks \+ (?:\(C\.sending(?: \|\| cardResumes\(\))? \? "" : pausedCard\([^)]*\)\) \+ )?typing$/, "the working card is last");
   assert.match(thread, /id="live-ask"|askCard/, "the question is the thread's ask card");
-  assert.match(chat, /<div class="card ask" id="live-ask">/);
+  assert.match(chat, /<div class="card ask" id="live-ask"[ >]/);
 });

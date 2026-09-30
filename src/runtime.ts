@@ -170,6 +170,7 @@ import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
 import * as savings from "./model-savings/hook.js";
 import { KeepAlive } from "./model-savings/keep-alive.js";
+import { thresholdPreset } from "./model-savings/cost-thresholds.js";
 // --- end R17-E ---
 import { Orchestration, PlanOnlyAnswer, orchestrationSettings, type ConductOptions, type PlanAnswer, type StoredPlan } from "./orchestration.js";
 import { patternNote, patternOfTool, patternQuestion, type TeamPattern } from "./team-pattern.js"; // eng-trunk-controls
@@ -178,7 +179,7 @@ import { heldMode, policyForMode, readConversationMode, saveConversationMode, ty
 import { type AnswerShape, askInShape, shapeInstructions, type ShapedAnswer } from "./answer-shape.js";
 import { advisorInstructions, advisorQuestion, adviceLine, readAdvice, secondOpinionSettings, type Advice } from "./second-opinion.js";
 import { styleShape, takeScratch, type SpecialistStyle } from "./specialist-styles.js";
-import { Deferrals, deferredCall } from "./deferred.js";
+import { Deferrals, deferredCall, deferredFollowUp, deferredOutcome, type DeferredAction } from "./deferred.js";
 import { switchedToolTiers } from "./feature-switches.js";
 import { troubleshootInTask } from "./troubleshoot.js"; // w911 (A0374) hook: the debugging loop.
 import { RequestCache, type CacheKeyParts } from "./request-cache.js";
@@ -876,15 +877,19 @@ export class Runtime {
    * The answer to a tool call that was handed over earlier. It is written down and then put to the
    * conversation as an ordinary follow-up message, so the assistant picks the thread back up.
    */
-  settleDeferred(id: string, outcome: string): { id: string; sessionId: string; queued: number } {
+  settleDeferred(id: string, outcome?: string, action?: DeferredAction): { id: string; sessionId: string; queued: number } {
     const waiting = this.deferrals.get(id);
-    // Q44: refused before the step is marked answered; one already answered is told so first, by settle.
-    if (waiting && !waiting.settledAt) this.queueGuard(waiting.sessionId);
-    const entry = this.deferrals.settle(id, outcome);
-    if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool });
+    if (!waiting) throw new Error("There is no handed-over job with that number");
+    if (waiting.settledAt) throw new Error("That job has already been answered");
+    const answer = deferredOutcome(waiting, outcome, action);
+    if (!this.store.ownsSession(this.owner, waiting.sessionId)) throw new Error("Session not found");
+    // Q44: a refused continuation must leave the step unanswered.
+    this.queueGuard(waiting.sessionId);
+    const entry = this.deferrals.settle(id, answer);
+    if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool, kind: entry.kind, ...(action ? { action } : {}) });
     // mac7/outside-resume: the answer carries the task that handed the step over on, as that task.
     const queued = this.followUp(entry.sessionId,
-      `The "${entry.tool}" step you handed over earlier has finished${entry.description ? ` (${entry.description})` : ""}. What came of it: ${entry.outcome}`,
+      deferredFollowUp(entry, action),
       null, { originFrom: entry.runId || undefined });
     return { id: entry.id, sessionId: entry.sessionId, queued: queued.queued };
   }
@@ -3988,6 +3993,14 @@ ${run.output.slice(0, 6000)}`;
     // A task that must stay on this computer never reaches a connection elsewhere, whichever part of it asks:
     // a side job that names its own connection is answered by the one here instead, and with none here it stops.
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
+    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
+    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
+    preset = thresholdPreset(this.store, this.models, this.owner, preset, { runId: run.id,
+      allowFallback: !pinnedHelper && !this.helperModels.has(run.id),
+      mayUse: (next) => (!this.staysHere.has(run.id) || presetRunsLocally(next))
+        && (!context.trunkKeys || trunkSignIns || !isSignInConnection(next))
+        && this.models.canDo(next, "tools") && (!shape || this.models.canDo(next, "json-mode"))
+        && (!messages.some((message) => message.images?.length) || this.models.canDo(next, "vision")) });
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
     // The owner's "auto" limits are no limit on a sign-in or a model here, and finite on a key billed per token; a key's
@@ -4002,7 +4015,6 @@ ${run.output.slice(0, 6000)}`;
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
-    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
@@ -4017,7 +4029,6 @@ ${run.output.slice(0, 6000)}`;
       messages, tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
       shape: shape?.name ?? null,
     };
-    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
     const kept = pinnedHelper ? null : this.requestCache.look(cacheKey);
     if (kept) return this.shownThinking(this.answeredFromCache(run, preset, kept, input));
     context.budget.charge(input);
@@ -4092,6 +4103,7 @@ ${run.output.slice(0, 6000)}`;
         preset: preset.id,
         provider: preset.provider.name,
         model: preset.model,
+        ...(preset.catalogId ? { catalogId: preset.catalogId } : {}),
       });
       // Dogfood B7: a real model has answered, so the first-run card is done with (src/onboarding.ts). An empty
       // reply is no answer (NAS ca8db88): only words, or a tool call, count.
@@ -4550,7 +4562,7 @@ ${run.output.slice(0, 6000)}`;
     // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
     const loosening = fullAccess ? settingsHold(tool, args) : null;
-    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
@@ -5259,10 +5271,12 @@ ${run.output.slice(0, 6000)}`;
     const deferred = deferredCall(result);
     if (!deferred) return null;
     const entry = this.deferrals.open({ id: deferred.id, runId: context.runId, sessionId: this.sessionOf(context),
-      tool: call.name, description: deferred.description });
-    this.store.event(context.runId, "tool.deferred", { name: call.name, id: call.id, deferredId: entry.id, description: entry.description });
-    return { deferred: true, id: entry.id,
-      note: "This is not finished yet and you are not to wait for it. Carry on with whatever else you can do, and finish your answer. When it is done, what came of it arrives as a new message in this conversation." };
+      tool: call.name, description: deferred.description, ...(deferred.kind ? { kind: deferred.kind } : {}) });
+    this.store.event(context.runId, "tool.deferred", { name: call.name, id: call.id, deferredId: entry.id, description: entry.description, kind: entry.kind });
+    return { deferred: true, id: entry.id, kind: entry.kind,
+      note: entry.kind === "later"
+        ? "This work is set aside and still unfinished. Do not do the remaining work now. Finish your answer with what is pending. The person's Finish now button queues a continuation in this conversation."
+        : "This is not finished yet and you are not to wait for it. Carry on with whatever else you can do, and finish your answer. When it is done, what came of it arrives as a new message in this conversation." };
   }
   /**
    * Some servers answer with a small page meant to be looked at rather than read out. It is kept
