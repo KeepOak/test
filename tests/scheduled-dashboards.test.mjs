@@ -44,6 +44,11 @@ test("RES-189: a scheduled dashboard keeps its last good value, marks a failed s
   assert.match(kept.error, /last valid page is retained/);
   assert.match(kept.html, /Site health/);
 
+  const saved = JSON.parse(kept.exportJson);
+  assert.equal(saved.format, "branch-scheduled-dashboard");
+  assert.equal(saved.snapshot.state.rows[0].cells.state.value, "<script>up</script>", "the export keeps the data as data");
+  assert.equal(saved.sourceVerification, "task-reported");
+
   const other = { ...data, dashboard: { title: "Changed" } };
   assert.equal(recordScheduledDashboard(app.store, owner, id, other, await run(page("x"))), null, "a run for a changed schedule is not recorded");
 });

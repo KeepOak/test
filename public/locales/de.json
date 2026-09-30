@@ -4726,6 +4726,8 @@
   "savings.warn.keep-alive": "Jeder Ping kostet Geld. Er stoppt bei der Anzahl an Pings oder bevor er die Ausgabengrenze überschreiten würde, und ein Modell ohne hinterlegten Preis wird nie angepingt.",
   "savings.warn.mixtures": "Eine Frage an eine Mischung kostet eine Frage an jede Verbindung darin plus die geschriebene Antwort.",
   "scheduleddash.enable": "Das Ergebnis als Dashboard behalten",
+  "scheduleddash.export-html": "Als HTML speichern",
+  "scheduleddash.export-json": "Als JSON speichern",
   "scheduleddash.help": "Diese Aufgabe liefert bei jedem Lauf eine Tabelle mit Quellen und Zeitstempeln. Es werden keine zusätzlichen Berechtigungen erteilt.",
   "scheduleddash.note": "Lokale geplante Momentaufnahme. Das Lesen startet keine Aufgabe. Quellwerte und Zeiten meldet die Aufgabe; sie werden nicht unabhängig geprüft.",
   "scheduleddash.pending": "Noch kein gültiges Dashboard. Es entsteht nach einer abgeschlossenen geplanten Aufgabe.",
