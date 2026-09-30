@@ -7,6 +7,7 @@ import { setPriority } from "node:os";
 import { activeDeadline, quietPriority, type BuildGate } from "./quiet-build.js";
 import { join, relative, sep } from "node:path";
 import { useBuiltOutput } from "./build-output.js";
+import { linkRuntime, partFolder, readPointer, runtimeVersion, sealAppFolder } from "./app-folders.js";
 
 /**
  * The Beta update channel: like Hermes Desktop, Branch follows one line of work and builds the newest merged change
@@ -153,17 +154,20 @@ export const wholeSuiteWorkflow = "checks.yml";
  * moved (one small request, unauthenticated); when it cannot answer, the last passing change found is kept. Null when
  * none is known yet, and the tip is taken as before.
  */
-export function newestGreen(fetchImpl: typeof fetch = globalThis.fetch): (repo: string, tip: string) => Promise<string | null> {
-  let lastTip: string | null = null, green: string | null = null;
+export function newestGreen(fetchImpl: typeof fetch = globalThis.fetch, now: () => number = Date.now): (repo: string, tip: string) => Promise<string | null> {
+  let lastTip: string | null = null, green: string | null = null, askedAt = 0;
   return async (repo, tip) => {
-    if (tip === lastTip && green) return green;
+    // The same tip is asked about again only while it is not the passing change itself: a tip still being checked turns
+    // green later without moving, and remembering the older answer kept the owner a change behind until the next merge.
+    // Every five minutes at most, so GitHub's unauthenticated allowance (60 an hour) is never the limit.
+    if (tip === lastTip && green && (green === tip || now() - askedAt < 5 * 60_000)) return green;
     try {
       const url = `https://api.github.com/repos/${repo}/actions/workflows/${wholeSuiteWorkflow}/runs?branch=${encodeURIComponent(betaLine)}&event=push&status=success&per_page=1`;
       const response = await fetchImpl(url, { headers: { accept: "application/vnd.github+json", "user-agent": "Branch-Agent-updater" }, signal: AbortSignal.timeout(15_000) });
       if (!response.ok) return green;
       const body = await response.json() as { workflow_runs?: { head_sha?: unknown; head_branch?: unknown }[] };
       const sha = body.workflow_runs?.[0]?.head_sha;
-      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) && body.workflow_runs?.[0]?.head_branch === betaLine) { green = sha; lastTip = tip; }
+      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) && body.workflow_runs?.[0]?.head_branch === betaLine) { green = sha; lastTip = tip; askedAt = now(); }
     } catch { /* offline or refused: the last passing change found stands */ }
     return green;
   };
@@ -352,9 +356,17 @@ export interface DevBuildPlan {
   builtOutput?: { repo: string; waitMs?: number };
   /** A line for the build's log (what was waited for, why GitHub's build was not used). */
   note?: (line: string) => void;
+  /**
+   * Windows, versioned app folders (app-folders.ts): the new version is laid out as `<root>/app-<version>/` beside the
+   * running one (`running`, its program folder), sharing its Electron runtime by hard links; nothing is packaged.
+   */
+  appFolder?: { root: string; running: string; executableName: string };
 }
-/** Windows: the app folder itself (nothing to zip and unzip again). macOS and Linux: the download, as a release has. */
-export type DevBuilt = { version: string; reusedPackages: boolean } & ({ folder: string } | { archive: string; checksumFile: string });
+/**
+ * Windows: the app folder itself (nothing to zip and unzip again), or with versioned app folders the new version's own
+ * folder, already in place beside the running one. macOS and Linux: the download, as a release has.
+ */
+export type DevBuilt = { version: string; reusedPackages: boolean } & ({ folder: string } | { appFolder: string } | { archive: string; checksumFile: string });
 
 /** The source of one change, checked out and shown to be on Beta's line (see `fetchSource`). */
 export interface FetchedSource {
@@ -453,6 +465,11 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   // Windows: the app folder is what the update swaps in, so the zip and its checksum are left out.
   const release = platform === "win32" ? [] : ["--release"], env = quietEnv(buildDir), timeoutMs = minutes(30), pausable = true;
   const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+  if (plan.appFolder && platform === "win32" && await lstat(join(source, "scripts", "assemble-app.mjs")).then((found) => found.isFile(), () => false)) {
+    const appFolder = await intoAppFolder(run, plan, plan.appFolder, { source, committedAt, version });
+    await recordPackages(buildDir, source, now);
+    return { version, reusedPackages, appFolder };
+  }
   if (manifest?.scripts?.["package:desktop"] === packageSteps) {
     // The same three steps the commit's own `npm run package:desktop` runs, with the version stamped after compiling.
     await compileChange(run, plan, source);
@@ -475,6 +492,37 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   return platform === "win32"
     ? { version, reusedPackages, folder: out }
     : { version, reusedPackages, archive: join(out, assetName), checksumFile: join(out, `${assetName}.sha256`) };
+}
+
+/**
+ * Versioned app folders: the change compiled (or GitHub's build of it taken), stamped, and laid out beside the running
+ * version as `<root>/app-<version>/`, with no packager and no new program. Its Electron runtime is the running one's, by
+ * hard links, when Electron did not change; otherwise Electron's own stock folder, copied and checked by the change's
+ * own script. The app (resources/app) is the change's own script's too, pruned as packaging prunes it. The folder is
+ * made as `app-<version>.part` and renamed only once whole, so a cut-off build is never taken for a version.
+ */
+async function intoAppFolder(run: Run, plan: DevBuildPlan, target: NonNullable<DevBuildPlan["appFolder"]>,
+  built: { source: string; committedAt: number; version: string }): Promise<string> {
+  const { source, version } = built, env = quietEnv(plan.buildDir), timeoutMs = minutes(30), pausable = true;
+  await compileChange(run, plan, source);
+  await stampDevVersion(source, built.committedAt, plan.commit);
+  await run("node", ["scripts/dependency-notices.mjs"], { cwd: source, timeoutMs, env, pausable });
+  await writeFile(join(source, "dist", "build-info.json"), `${JSON.stringify({ commit: plan.commit, builtAt: new Date().toISOString() })}
+`);
+  const part = partFolder(target.root, version);
+  await removeTree(part);
+  const electron = await readFile(join(source, "node_modules", "electron", "package.json"), "utf8").then((text) => String(JSON.parse(text)?.version), () => null);
+  if (electron && electron === await runtimeVersion(target.running)) {
+    const linked = await linkRuntime(target.running, part, target.executableName);
+    plan.note?.(`Shared the running version's Electron ${electron} (${linked.files} files, ${linked.copied} copied): no program was made.`);
+  } else {
+    await run("node", ["scripts/assemble-app.mjs", "--runtime", part, "--name", target.executableName], { cwd: source, timeoutMs, env, pausable });
+    plan.note?.(`Electron changed (${await runtimeVersion(target.running) ?? "unknown"} to ${electron ?? "unknown"}): Electron's own stock program was copied and checked, not built.`);
+  }
+  await run("node", ["scripts/assemble-app.mjs", "--app", join(part, "resources", "app")], { cwd: source, timeoutMs, env, pausable });
+  const stamped = await readFile(join(part, "resources", "app", "dist", "build-info.json"), "utf8").then((text) => JSON.parse(text)?.commit, () => null);
+  if (stamped !== plan.commit) throw new Error("The new version's folder does not record which change it was made from, so nothing was changed.");
+  return sealAppFolder(target.root, version, await readPointer(target.root));
 }
 
 /**
