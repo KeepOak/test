@@ -13,7 +13,12 @@ const hasPrice = (store: Store, owner: string, preset: ModelPreset): boolean =>
 const ReceiptSchema = z.object({
   catalogId: z.string().optional(), preset: z.string(), model: z.string(), cached: z.boolean().optional(),
   estimatedInput: z.number().nonnegative(), estimatedOutput: z.number().nonnegative(),
-  reported: z.object({ input: z.number().nonnegative(), output: z.number().nonnegative() }).nullable().optional(),
+  reported: z.object({
+    input: z.number().nonnegative(), output: z.number().nonnegative(),
+    cachedInput: z.number().nonnegative().optional(),
+    cacheWrite: z.number().nonnegative().optional(),
+    cacheWrite1h: z.number().nonnegative().optional(),
+  }).nullable().optional(),
 });
 
 /** Validate actual connections before saving; the API has already checked who is asking. */
@@ -43,8 +48,13 @@ function spent(store: Store, owner: string, rule: Rule, since: string): { dollar
     if (!parsed.success) { unknown = true; continue; }
     const receipt = parsed.data;
     if ((receipt.catalogId ?? receipt.preset) !== rule.provider || (rule.model && receipt.model !== rule.model) || receipt.cached) continue;
-    const cost = estimateCost(receipt.model, { input: Math.max(receipt.estimatedInput, receipt.reported?.input ?? 0),
-      output: Math.max(receipt.estimatedOutput, receipt.reported?.output ?? 0) }, overrides).amount;
+    const cost = estimateCost(receipt.model, {
+      input: Math.max(receipt.estimatedInput, receipt.reported?.input ?? 0),
+      output: Math.max(receipt.estimatedOutput, receipt.reported?.output ?? 0),
+      cached: receipt.reported?.cachedInput,
+      cacheWrite: receipt.reported?.cacheWrite,
+      cacheWrite1h: receipt.reported?.cacheWrite1h,
+    }, overrides).amount;
     if (cost === null) unknown = true;
     else dollars += cost;
   }
