@@ -150,6 +150,7 @@ import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
 import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
+import { sourceCiApi } from "./self-development-ci-api.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
 import { handlesLearningMorePath, learningMoreApi, LearningMoreHttpError } from "./learning-more/api.js"; // R17-F
 import { handlesSeasonsPath, seasonsApi, SeasonsHttpError } from "./seasons/api.js"; // Seasons
@@ -1084,6 +1085,9 @@ async function api(
   if (handlesSourceMergePath(path)) {
     if (throughADoor(request)) throw new HttpError(403, hereOnly);
     return sourceMergeApi(app.sourceMerges, request.method ?? "GET", path, () => readBody(request));
+  }
+  if (path === "/api/self-development/ci") {
+    return sourceCiApi(app, request.method ?? "GET", throughADoor(request), () => readBody(request));
   }
   // bucket-18: code editor (A0098)
   if (handlesWorkspaceEditorPath(path))
