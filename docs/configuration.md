@@ -8139,13 +8139,15 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | `useProviderVoice` | Prefer the connected service's higher-quality voice over the browser's. |
 | `sttRoute` | Who writes out what you say: `auto`, `openai`, `gemini`, or `local` (a speech program here). |
 | `sttModel` | The model name to use for writing speech out, when the route wants one. |
-| `ttsRoute` | Who reads replies aloud: `auto`, `openai`, `gemini`, or `windows` (the voices Windows ships). |
+| `ttsRoute` | Who reads replies aloud: `auto`, `openai`, `gemini`, `windows` (the computer's voice), or `piper` (an installed CLI and model). Auto prefers an available Piper model for the default local voice; an explicit system or provider route keeps that choice. Local voices still obey `systemVoice`. Piper reuses one external process across sentences and releases it after two idle minutes. |
 | `ttsModel` | The model name to use for reading aloud, when the route wants one. |
 | `keepAudioOnThisComputer` | Nothing containing sound may leave. Both cloud routes then refuse in plain words, and so does a live conversation. |
 | `replyWithVoiceOnChannels` | Answer a voice note on a chat app with a voice note back. Telegram only, today. |
 | `localSpeechExecutable` | The full path to whisper.cpp, or to the Python that has faster-whisper. Empty: Branch looks for faster-whisper where `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli` put it. Branch downloads nothing. |
 | `localSpeechModel` | The model file whisper.cpp should use; for faster-whisper a model name (`base.en`) or folder. Empty: the fastest faster-whisper model already on this computer. |
 | `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`. faster-whisper runs as a small worker kept loaded while it is used, offline. |
+| `localVoiceExecutable` | Absolute path to an already installed Piper CLI. Empty looks for `piper` or `piper.exe` on PATH. Branch does not install it. |
+| `localVoiceModel` | Absolute path to an existing Piper `.onnx` voice with an adjacent `.onnx.json`; empty uses `PIPER_VOICE`. No model is downloaded. The voice's license remains the owner's responsibility. |
 | `localSpeechStream` | The full path to a streaming speech program that is handed sound on its standard input and writes words out as it hears them, for live dictation. Empty means none, and Branch looks for `whisper-stream` or sherpa-onnx on your search path instead. Branch downloads nothing. |
 | `liveMaxMinutes` | How many minutes one live conversation may last. 10 by default. |
 | `liveMaxDollars` | How much one live conversation may cost. $1.00 by default. |
