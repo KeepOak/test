@@ -250,7 +250,9 @@ jobs:
         run: printf '%s' "$SELECTED" > "$RUNNER_TEMP/selected-tests.json"
       # Linux has no screen on the runner; Electron and browser tests draw into a virtual one.
       - shell: bash
-        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}node scripts/run-tests.mjs --lane=${{ matrix.lane }} --shard=${{ matrix.shard }}/${{ matrix.total }}${{ matrix.selected && format(' --files-from={0}/selected-tests.json', runner.temp) || '' }}
+        # A merge-queue group or a push reruns a failed file once, alone (scripts/run-tests.mjs --retry-failed); a pull
+        # request's own run does not, so a new flake still shows there first.
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}node scripts/run-tests.mjs --lane=${{ matrix.lane }} --shard=${{ matrix.shard }}/${{ matrix.total }}${{ matrix.selected && format(' --files-from={0}/selected-tests.json', runner.temp) || '' }}${{ github.event_name != 'pull_request' && ' --retry-failed' || '' }}
         env:
           BRANCH_TEST_TIMINGS: ${{ runner.temp }}/test-timings.json
           BRANCH_TEST_CONCURRENCY: ${{ matrix.concurrency }}
