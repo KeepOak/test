@@ -1261,6 +1261,7 @@
   "commands.automations": "planifications, procédures et déclencheurs",
   "commands.bg": "faire quelque chose dans une conversation à part, pour garder celle-ci libre",
   "commands.blueprint": "le catalogue d'automatisations ; avec un nom et ses champs, en créer une",
+  "commands.branch": "copier la conversation de ce chat et continuer dans la copie ici ; l'original est conservé",
   "commands.btw": "une petite question en aparté ; elle ne rejoint pas la tâche",
   "commands.busy": "ce qui se passe quand vous écrivez pendant qu’une tâche travaille : attendre, transmettre, ou arrêter et passer en premier",
   "commands.card.off": "Désactivé : chaque endroit garde seulement les commandes qu'il a toujours eues.",

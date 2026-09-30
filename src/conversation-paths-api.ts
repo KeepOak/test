@@ -22,7 +22,7 @@ export const readMarksPath = "/api/read-marks";
  * it; none of them is a setting in the Settings catalogue (each belongs to one conversation), so the copy leaves no
  * change record, and that test checks nothing in the catalogue moves when a path is made.
  */
-function carryChoices(store: Branch["store"], who: string, from: string, to: string): void {
+export function carryChoices(store: Branch["store"], who: string, from: string, to: string): void {
   const model = store.get("settings", who, `session-model:${from}`);
   if (model) store.save("settings", who, `session-model:${to}`, model.data);
   const skill = store.get("settings", who, `pinned-skill:${from}`);

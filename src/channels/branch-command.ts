@@ -1,4 +1,5 @@
 import { trunksFor } from "../trunks/index.js";
+import { carryChoices } from "../conversation-paths-api.js";
 import type { CommandContext } from "./chat-commands.js";
 
 /** Leading --here parsing is adapted from Hermes slash_commands_branch_thread.py (MIT). */
@@ -29,7 +30,8 @@ async function forkHere(argument: string, context: CommandContext): Promise<stri
   if (!last) return "This chat has no message to branch from yet.";
   const made = await store.branchSession(owner, { sessionId, messageId: last.messageId });
   carryLeftOut(context, sessionId, made.sessionId, messages.slice(0, made.copiedMessages).map((message) => message.messageId));
-  carryChoices(context, sessionId, made.sessionId);
+  // The same narrowing choices the window's branch route carries (model, pinned skill, mode), for each owner scope.
+  for (const who of new Set([owner, store.profiles.scope()])) carryChoices(store, who, sessionId, made.sessionId);
   if (store.memorySuppressed(owner, sessionId)) store.setMemorySuppressed(owner, made.sessionId, true);
   trunks?.conversations.carryTo(sessionId, made.sessionId);
   store.paths.record(made.sessionId, name, null, "after", made.copiedMessages);
@@ -37,16 +39,6 @@ async function forkHere(argument: string, context: CommandContext): Promise<stri
   if (!context.bindBranch(sessionId, made.sessionId))
     return `Made "${name}" in the Branch app, but this chat changed while it was copied, so its conversation was kept.`;
   return `Branched here as "${name}". Your next message follows the copy; the original remains in this chat's history and the Branch app. No new chat-app thread was opened.`;
-}
-
-/** Carry the same narrowing choices as the window's branch route, under the caller's owner scope. */
-function carryChoices(context: CommandContext, from: string, to: string): void {
-  const store = context.runtime.store;
-  for (const owner of new Set([context.runtime.owner, store.profiles.scope()]))
-    for (const prefix of ["session-model:", "pinned-skill:", "conversation-mode:"]) {
-      const saved = store.get("settings", owner, `${prefix}${from}`);
-      if (saved) store.save("settings", owner, `${prefix}${to}`, saved.data);
-    }
 }
 
 /** A message excluded by the owner stays excluded in the copy under its new lasting identity. */

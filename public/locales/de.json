@@ -1260,6 +1260,7 @@
   "commands.automations": "Zeitpläne, Prozeduren und Auslöser",
   "commands.bg": "etwas in einer eigenen Unterhaltung erledigen, damit diese frei bleibt",
   "commands.blueprint": "der Automatisierungskatalog; mit einem Namen und seinen Lücken eine erstellen",
+  "commands.branch": "die Unterhaltung dieses Chats kopieren und hier mit der Kopie weitermachen; das Original bleibt erhalten",
   "commands.btw": "eine schnelle Nebenfrage; sie wird nicht Teil der Aufgabe",
   "commands.busy": "was passiert, wenn du tippst, während eine Aufgabe läuft: warten, weitergeben oder stoppen und weiter",
   "commands.card.off": "Aus: Jeder Ort behält nur die Befehle, die er schon immer hatte.",
