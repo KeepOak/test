@@ -45,6 +45,7 @@ export class BrowserControl {
   private queued = 0;
   private active: AbortController | null = null;
   private paused: string | null = null;
+  private offered = false;
   /** Tasks that work in this browser on their own (a Trunk's task in this conversation), not only when handed it. */
   private readonly tasks = new Set<string>();
   private waiters = new Set<() => void>();
@@ -52,11 +53,10 @@ export class BrowserControl {
 
   constructor(binding: BrowserBinding, clientId: string, agent?: { runId: string; tabs: number }) {
     this.binding = checkedBinding(binding);
-    if (!clientId) throw new BrowserControlError("The owner window needs an identity.");
-    this.writer = { kind: "owner", id: clientId };
+    if (!clientId && !agent) throw new BrowserControlError("The owner window needs an identity.");
+    this.writer = agent ? { kind: 'agent', id: agent.runId } : { kind: 'owner', id: clientId };
     if (agent) {
       // A task's own window, taken over by the owner: the task holds it until the takeover drains its current step.
-      this.writer = { kind: "agent", id: agent.runId };
       this.state = "agent";
       this.runs.add(agent.runId);
       this.tasks.add(agent.runId);
@@ -114,7 +114,7 @@ export class BrowserControl {
         if (this.state === "agent" && this.writer?.kind === "agent" && this.writer.id === runId) return;
         if (!this.runs.has(runId) || (!this.tasks.has(runId) && this.paused !== runId)) return; // write() refuses it
         if (this.state === "agent") throw new BrowserControlError("Another task is using this browser.");
-        if (this.state === "transferring" || this.paused || this.writer) {
+        if (this.state === "transferring" || this.paused || this.writer || this.offered) {
           this.waitingRuns.add(runId);
           await this.changed(signal, until);
           continue;
@@ -136,6 +136,19 @@ export class BrowserControl {
     this.tasks.add(runId);
     return this.transfer(epoch, { kind: "agent", id: runId }, clientId);
   }
+  /** An agent offers its page; only a real owner takeover may subsequently issue an owner capability. */
+  async offerToOwner(epoch: number, runId: string, authorize: () => void): Promise<BrowserControlView> {
+    this.current(epoch, { kind: 'agent', id: runId }); authorize();
+    this.offered = true; this.paused = runId; this.state = 'transferring'; this.writer = null;
+    const granted = ++this.epoch; this.notify();
+    try {
+      await this.tail;
+      if (this.epoch !== granted || this.state !== 'transferring') throw new BrowserControlError('Browser control changed.');
+      authorize();
+      this.state = 'owner'; this.sequence = 0; this.notify();
+      return this.view();
+    } catch (error) { if (this.epoch === granted && this.state === 'transferring') this.revoke(); throw error; }
+  }
   private async transfer(epoch: number, destination: BrowserWriter, clientId: string): Promise<BrowserControlView> {
     this.open();
     if (epoch !== this.epoch) throw new BrowserControlError("Browser control changed; refresh before continuing.");
@@ -156,7 +169,7 @@ export class BrowserControl {
     this.state = destination.kind;
     this.sequence = 0;
     // Taking over from a task pauses that task until Hand back; handing to a task ends any pause.
-    if (destination.kind === "agent") this.paused = null;
+    if (destination.kind === "agent") { this.paused = null; this.offered = false; }
     else if (from?.kind === "agent" && this.runs.has(from.id)) this.paused = from.id;
     this.notify();
     return this.view();
@@ -168,7 +181,7 @@ export class BrowserControl {
     return this.view();
   }
   stop(): BrowserControlView {
-    if (this.state !== "stopped") { this.revoke(); this.state = "stopped"; this.runs.clear(); this.tasks.clear(); this.paused = null; }
+    if (this.state !== "stopped") { this.revoke(); this.state = "stopped"; this.runs.clear(); this.tasks.clear(); this.paused = null; this.offered = false; }
     this.notify();
     return this.view();
   }
