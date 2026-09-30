@@ -4,9 +4,21 @@ import { esc } from "../core/dom.js";
 import { gsel } from "../core/gsel.js";
 
 /** Custom editors and legacy label rows use this same container, without rebuilding or escaping their slots. */
-export function controlRow(body, { tag = "div", className = "ctl", attributes = "" } = {}) {
+export function controlRow(body, { tag = "div", className = "ctl", attributes = "", help = "", configPath = "" } = {}) {
   if (tag !== "div" && tag !== "label") throw new Error("Unsupported Settings row container");
-  return `<${tag} class="${esc(className)}"${attributes ? ` ${attributes}` : ""}>${body}</${tag}>`;
+  return `<${tag} class="${esc(className)}"${attributes ? ` ${attributes}` : ""}>${body}${tag === "label" ? "" : rowHelp(body, help, configPath)}</${tag}>`;
+}
+
+/* Already-escaped trusted slots become text only: never duplicate an action from a description.
+   Native details supplies tap, Enter/Space and collapsed state; data-tip reuses Branch's hover help.
+   Short/status-only notes have no inferred explanation. Callers can supply accurate field copy instead. */
+function rowHelp(body, explicit, configPath) {
+  const plain = html => html.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  const title = plain(body.match(/<b>([\s\S]*?)<\/b>/)?.[1] ?? "");
+  const note = plain(body.match(/<small>([\s\S]*?)<\/small>/)?.[1] ?? "");
+  const words = explicit ? esc(explicit) : note.length >= 24 ? esc(note) : "";
+  if (!title || !words) return "";
+  return `<details class="setting-help"><summary aria-label="${esc(title)}: ${words}" data-tip="${words}">?</summary><div>${words}${configPath ? `<code>${esc(configPath)}</code>` : ""}</div></details>`;
 }
 
 export function settingsRow({ title, description = "", control = "", wrapControl = true, ...container }) {
@@ -27,8 +39,8 @@ export function segmentedControl({ title, options, current, action = "seg", attr
   }).join("");
   return `<span class="seg" role="group" aria-label="${esc(title)}">${buttons}</span>`;
 }
-export function segmentedRow({ title, description = "", ...options }) {
-  return settingsRow({ title, description, control: segmentedControl({ title, ...options }) });
+export function segmentedRow({ title, description = "", help, configPath, ...options }) {
+  return settingsRow({ title, description, help, configPath, control: segmentedControl({ title, ...options }) });
 }
 
 export function dropdownRow({ title, description = "", dropdown, ...container }) {

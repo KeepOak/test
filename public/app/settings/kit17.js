@@ -1,3 +1,4 @@
+import { fieldHelp } from "./field-help.js";
 import { segmentedRow } from "./row-kit.js";
 /* Settings rows that are the engine's own settings (parity B5). Two engine stores back them:
    the settings kit: GET /api/settings-kit lists every setting with its value; POST /api/settings-kit/apply
@@ -84,10 +85,10 @@ export const numBox = (id, title, value, unit = "") =>
   `<span class="right num15"><input class="inp" id="${esc(id)}" value="${esc(value ?? "")}" aria-label="${esc(title)}">${unit ? `<small>${esc(unit)}</small>` : ""}</span>`;
 
 /** A segmented control on a kit field: opts are [value, label]; the pressed one is the engine's value. */
-export const kitSeg = (title, sub, key, field, opts) => segmentedRow({title, description: sub, options: opts, action: "kitseg17", valueAttribute: false, selected: v => Boolean(K.kit) && JSON.stringify(kitVal(key, field)) === JSON.stringify(v), attributes: v => `data-key="${esc(key)}" data-field="${esc(field)}" data-j="${esc(JSON.stringify(v))}"`});
+export const kitSeg = (title, sub, key, field, opts) => segmentedRow({title, description: sub, help: fieldHelp(`settings-kit.${key}.${field}`), configPath: `settings-kit.${key}.${field}`, options: opts, action: "kitseg17", valueAttribute: false, selected: v => Boolean(K.kit) && JSON.stringify(kitVal(key, field)) === JSON.stringify(v), attributes: v => `data-key="${esc(key)}" data-field="${esc(field)}" data-j="${esc(JSON.stringify(v))}"`});
 
 /** A segmented control on a knob: opts are [value, label]; `cur` is the engine's value. */
-export const knobSeg = (title, sub, card, field, opts, cur) => segmentedRow({title, description: sub, options: opts, action: "knobseg17", valueAttribute: false, selected: v => Boolean(K.knobs) && JSON.stringify(cur) === JSON.stringify(v), attributes: v => `data-card="${esc(card)}" data-field="${esc(field)}" data-j="${esc(JSON.stringify(v))}"`});
+export const knobSeg = (title, sub, card, field, opts, cur) => segmentedRow({title, description: sub, help: fieldHelp(`knobs.${card}.${field}`), configPath: `knobs.${card}.${field}`, options: opts, action: "knobseg17", valueAttribute: false, selected: v => Boolean(K.knobs) && JSON.stringify(cur) === JSON.stringify(v), attributes: v => `data-card="${esc(card)}" data-field="${esc(field)}" data-j="${esc(JSON.stringify(v))}"`});
 
 let started = false;
 export function initKit() {
