@@ -115,6 +115,11 @@ async function voiceRoute(deps: PersonalHttpDeps, path: string): Promise<unknown
 
 async function route(deps: PersonalHttpDeps, path: string): Promise<unknown> {
   const { personal, method } = deps, post = method === "POST";
+  if (path === "/api/personal/purchases") return post ? personal.purchases.configure(await deps.readBody()) : personal.purchases.overview();
+  if (path === "/api/personal/purchases/authorize" && post) return personal.purchases.authorize(await deps.readBody());
+  if (path === "/api/personal/purchases/quote" && post) return deps.runtime.executeTool("payments.quote", await deps.readBody(), { mode: "owner", source: "owner" });
+  if (path === "/api/personal/purchases/spend" && post) return deps.runtime.executeTool("payments.spend", await deps.readBody(), { mode: "owner", source: "owner" });
+  if (path === "/api/personal/purchases/complete" && post) return deps.runtime.executeTool("payments.complete", await deps.readBody(), { mode: "owner", source: "owner" });
   if (path === "/api/personal") return { modes: personal.modes(), labels: personalLabels, parts: personalParts };
   if (path === "/api/personal/switch" && post) {
     const { part, mode } = SwitchSchema.parse(await deps.readBody());

@@ -16,6 +16,8 @@ import { WebhookTunnel, type TunnelSpawn } from "./tunnel.js";
 import { VoiceApprovals } from "./voice-approvals.js";
 import { registerXSearch, XSearch } from "./x-search.js";
 import { opensTheHouse, ownerOnlyTools } from "./guard.js";
+import { Purchases, QuoteInput, SpendInput } from "../purchases/index.js";
+import { z } from "zod";
 import { categoryOf } from "../tool-categories.js";
 import type { MailServer } from "../channels/mail-client.js";
 
@@ -47,6 +49,7 @@ export interface PersonalDeps {
   transcribe: (clip: { bytes: Uint8Array; mediaType: string }) => Promise<string>;
   /** A sentence when starting a program is refused right now (Lockdown), or null. */
   lockdownRefusal: () => string | null;
+  purchaseRefusal?: () => string | null;
   /** Replaced in tests so nothing real is started or dialled. */
   tunnelSpawn?: TunnelSpawn;
   imap?: (server: MailServer) => MailClient;
@@ -58,6 +61,7 @@ function riskyQuestion(tool: string, permission: string, target: string): boolea
 }
 
 export class Personal {
+  readonly purchases: Purchases;
   readonly signIns: { google: SignIn; microsoft: SignIn; spotify: SignIn };
   readonly google: GoogleConnector;
   readonly microsoft: MicrosoftConnector;
@@ -95,6 +99,18 @@ export class Personal {
     this.tunnel = new WebhookTunnel({ store, owner, refusal: deps.lockdownRefusal, ...(deps.tunnelSpawn ? { spawn: deps.tunnelSpawn } : {}) });
     // Integration review: every personal tool refuses anybody but the owner before it runs (src/personal/guard.ts).
     const tools = ownerOnlyTools(registry, store, deps.requireOwner);
+    this.purchases = new Purchases({ runtime, fetch: deps.fetch, secret: deps.secret, requireOwner: deps.requireOwner,
+      refusal: deps.purchaseRefusal ?? deps.lockdownRefusal });
+    tools.register({ name: "payments.quote", group: "personal", permission: "personal.read", reach: "outbound", parameters: QuoteInput,
+      description: "Get an untrusted bounded USD Stripe MPP charge quote from an owner-enabled exact seller origin. No wallet credential is released. Item/seller labels are user-provided, not verified inventory.",
+      execute: (input, context) => this.purchases.quote(input, context) });
+    tools.register({ name: "payments.spend", group: "personal", permission: "payments.spend", reach: "outbound", parameters: SpendInput,
+      description: "Submit one exact owner-authorized Stripe Link USD MPP purchase. Paid requests require an explicit one-time owner authorization and Link approval. Zero follows the owner's money condition while retaining ordinary write/security gates. Unknown failures need inspection; no automatic retry.",
+      target: (input) => this.purchases.target(input.quoteId), execute: (input, context) => this.purchases.spend(input, context) });
+    tools.register({ name: "payments.complete", group: "personal", permission: "payments.spend", reach: "outbound",
+      parameters: z.object({ requestId: z.string().regex(/^lsrq_[A-Za-z0-9]+$/) }).strict(),
+      description: "Explicitly complete one pending exact purchase after approval in Link. Original one-time scope/expiry and write/security gates apply. Never re-creates or automatically retries a request.",
+      target: (input) => this.purchases.pendingTarget(input.requestId), execute: (input, context) => this.purchases.complete(input, context) });
     this.registrars = {
       "chat-files": () => registerChatFiles(tools, this.chatFiles),
       "home-control": () => registerHomeControl(tools, this.home),
@@ -127,6 +143,7 @@ export class Personal {
 
   /** Stops what keeps running: the tunnel program and its door, and any spoken answers still open. */
   async close(): Promise<void> {
+    this.purchases.clear();
     this.voiceApprovals.clear();
     await this.tunnel.stop();
   }

@@ -1523,7 +1523,9 @@ ${result.output || "(it said nothing)"}`;
     morningBrief: () => brief.preview(runtime.owner).markdown,
     speak: async (text) => { const spoken = await voice.speak(runtime.owner, { text, voice: "", speed: 1 }); return { bytes: spoken.bytes, mediaType: spoken.mediaType }; },
     transcribe: async (clip) => (await voice.transcribe(runtime.owner, { ...clip, name: "spoken answer" })).text,
+    purchaseRefusal: () => sessionLock.locked() ? "Unlock Branch before a purchase." : lockedDown(store, runtime.owner) ? lockdownRefusal : null,
     lockdownRefusal: () => (lockedDown(store, runtime.owner) ? lockdownRefusal : null) });
+  releaseOnLock.push(async () => { personalBuilt?.purchases.clear(); });
     built.tunnel.localAddress = localAddress;
     return built;
   };
