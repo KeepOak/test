@@ -194,7 +194,7 @@ async function saveMedia(el, w) {
   el.disabled = true;
   try {
     const saved = await api("channels/intake", { telegramMedia: el.checked });
-    w.intake = saved.intake ?? w.intake;
+    if (still()) w.intake = saved.intake ?? w.intake;
   } catch (error) { el.checked = before; if (still()) toast(error.message); }
   finally { el.disabled = false; }
   if (still()) draw();

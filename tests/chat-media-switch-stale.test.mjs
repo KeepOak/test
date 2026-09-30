@@ -3,7 +3,7 @@
    newer wizard started while it saved, the late answer changes nothing on screen.
    The real public/app/flows/chat.js runs in Node next to stand-ins for the window's core modules; the save is held open
    by the test, so the change happens while it waits, with no timers.
-   Mutation: drop still() from saveMedia -> every late case fails. */
+   Mutation: drop still() from saveMedia (the redraw, the toast or keeping the answer) -> the late cases fail. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -79,9 +79,11 @@ for (const [what, change] of LATE) {
     const { ms, opened, answer, flip } = await mediaPage(t);
     flip();
     change(ms);
+    const wizard = ms.S.chw;
     await answer("channels/intake", { intake: { telegramMedia: false } });
     await new Promise((resolve) => setImmediate(resolve));
     assert.equal(opened.length, 1);
+    assert.equal(wizard.intake.telegramMedia, true, "the late answer is not kept on the wizard either");
   });
   test(`${what} while the switch saved: its error is not shown`, async (t) => {
     const { ms, fail, flip } = await mediaPage(t);
