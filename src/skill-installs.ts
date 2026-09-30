@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import { shippedUnlessChosen } from "./ship-on.js";
 import type { createBranch } from "./index.js";
@@ -7,6 +7,8 @@ import { PackageInstallSchema } from "./skill-packages.js";
 import { agentSkillPackage, readAgentSkill, writeAgentSkill } from "./agent-skills.js";
 import { describeFindings, scanSkill } from "./skill-scan.js";
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
+import { fetchGitHubSkill, quarantineGitHubSkill, takeGitHubSkill, requireGitHubSkillOwner } from "./skill-github.js";
+import { readSkillPackage } from "./skill-package.js";
 
 /**
  * Bucket 12 (A2374, A0776): installing and removing a skill while Branch runs, with a written
@@ -130,6 +132,7 @@ async function remove(app: Branch, body: unknown, note: (text: string) => void, 
   const tools = app.skillPackages.list().find((entry) => entry.skillId === skillId)?.tools ?? [];
   app.store.skills.remove(owner, skillId, { expectedRevision: view.revision });
   app.skillPackages.forget(skillId);
+  app.store.delete("settings", owner, `skill-github:${skillId}`);
   note(`Removed "${view.name}", which was switched ${view.activeVersion === null ? "off" : "on"}.`);
   note(tools.length ? `Took its ${tools.length} tool(s) out of the list: ${tools.join(", ")}.` : "It had no tools of its own to take out.");
   return { removed: true };
@@ -156,6 +159,8 @@ async function change(app: Branch, path: string, body: unknown): Promise<unknown
     return value;
   }
   if (skillInstallMode(app) === "off") throw new Error(skillInstallsOff);
+  if (path === "/api/skill-installs/github") return inspectGitHub(app, body);
+  if (path === "/api/skill-installs/github/install") return installGitHub(app, body);
   if (path === "/api/skill-installs/inspect") {
     const { file } = z.object({ file: fileField }).strict().parse(body);
     const folder = readAgentSkill(Buffer.from(file, "base64"));
@@ -167,6 +172,41 @@ async function change(app: Branch, path: string, body: unknown): Promise<unknown
   }
   if (path === "/api/skill-installs/remove") return recorded(app, "remove", "installed", (note, name) => remove(app, body, note, name));
   return undefined;
+}
+
+/** Every kept text file is scanned before a preview is quarantined, and again before its one-use install. */
+function githubFindings(app: Branch, bytes: Buffer) {
+  const { files } = readSkillPackage(bytes);
+  const findings = Object.entries(files).flatMap(([path, text]) => scanSkill(text).map((finding) => ({ ...finding, path }))).slice(0, 20);
+  return { findings, blocked: findings.length > 0 && app.store.skills.policy(app.runtime.owner) === "block" };
+}
+async function inspectGitHub(app: Branch, body: unknown) {
+  const fetched = await fetchGitHubSkill(app, body);
+  requireGitHubSkillOwner(app);
+  if (skillInstallMode(app) === "off") throw new Error(skillInstallsOff);
+  const bytes = agentSkillPackage(fetched.folder, `${fetched.origin.owner}/${fetched.origin.repo}`.slice(0, 120));
+  const origin = { ...fetched.origin, digest: createHash("sha256").update(bytes).digest("hex") };
+  const preview = app.skillPackages.inspect(bytes), scanned = githubFindings(app, bytes);
+  const ticket = quarantineGitHubSkill(app, bytes, origin);
+  return { ticket, origin, ...preview, ...scanned, leftOut: [...fetched.leftOut, ...fetched.folder.leftOut.map((file) => file.path)] };
+}
+async function installGitHub(app: Branch, body: unknown) {
+  requireGitHubSkillOwner(app);
+  const { ticket } = z.object({ ticket: z.string().uuid(), approve: z.literal(true) }).strict().parse(body);
+  const entry = takeGitHubSkill(app, ticket);
+  try {
+    if (githubFindings(app, entry.bytes).blocked) throw new Error("This GitHub skill is blocked by the current skill scan policy.");
+    return await recorded(app, "install", "github", async (note, name) => {
+      requireGitHubSkillOwner(app);
+      note(`Read the pinned GitHub tree ${entry.origin.treeSha} from ${entry.origin.owner}/${entry.origin.repo}.`);
+      const done = await installPackage(app, { kind: "package", file: entry.bytes.toString("base64"), approve: true, allow: [] }, note, name);
+      if (!("skill" in done)) throw new Error("The GitHub skill was not installed.");
+      requireGitHubSkillOwner(app);
+      const skill = done.skill as View & { id: string };
+      app.store.save("settings", app.runtime.owner, `skill-github:${skill.id}`, { ...entry.origin, skillVersion: skill.headVersion });
+      return { ...done, origin: entry.origin };
+    });
+  } finally { entry.bytes.fill(0); }
 }
 
 /** Answers one request under /api/skill-installs, or undefined when the address is not one of these. */
