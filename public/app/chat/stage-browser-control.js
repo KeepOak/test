@@ -22,7 +22,7 @@ import { networkLearningButtons, initNetworkLearning } from './network-learning.
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
   busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
-  error: "", typed: "", opening: false, names: { name: "", runId: null } };
+  error: "", typed: "", opening: false, touch: "scroll", names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const visible = () => B.shown && !document.hidden && !locked();
@@ -185,6 +185,61 @@ function pageHTML() {
 export function ownerBrowserHTML() {
   return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${statusHTML()}${pageHTML()}</div></div>`;
 }
+/** What the page is waiting for, when it is waiting for a person rather than the task. */
+export function ownerBrowserNeeds() {
+  return hasOwnerBrowser() && B.control.writer?.kind === "agent" ? B.page?.needs ?? null : null;
+}
+/**
+ * "Needs you": the page in front is a sign-in (Branch never types a password) or a "prove you're a person" check. Drawn
+ * over the live picture, unscaled, with the two ways on: take the browser (Branch waits), or stop the task.
+ */
+export function needsHTML(needs, url, take, runId) {
+  if (!needs) return "";
+  const host = (() => { try { return new URL(url).hostname; } catch { return ""; } })();
+  const title = t(needs === "captcha" ? "window.chat.stage.ob.needs-captcha" : "window.chat.stage.ob.needs-sign-in");
+  const stop = runId ? `<button class="btn ghost" type="button" data-act="stage-stop" data-id="${esc(runId)}">${t("window.chat.stage.ob.stop-task")}</button>` : "";
+  return `<div class="needs7" role="alertdialog" aria-label="${title}"><div class="needs7-card"><span class="pill warn"><i></i>${t("window.chat.stage.ob.needs-you")}</span>
+    <b>${title}</b>${host ? `<small>${esc(host)}</small>` : ""}<p>${t("window.chat.stage.ob.needs-why")}</p>
+    <div class="needs7-acts"><button class="btn pri" type="button" data-act="${take.act}"${take.id ? ` data-id="${esc(take.id)}"` : ""}>${t("window.chat.stage.ob.take-control")}</button>${stop}</div></div></div>`;
+}
+/**
+ * "You're in control": touch-sized tools over the page, unscaled so they stay usable on a phone. The keyboard opens the
+ * page's own key box (a phone's keyboard comes up), Scroll or Point says what a finger drag does, Copy and Paste use the
+ * owner's own clipboard, the tick hands back (or lets go), and the red button stops the task or closes the browser.
+ */
+export function ownerBrowserToolbar(runId, name) {
+  if (!hasOwnerBrowser() || !owned()) return "";
+  const task = B.control.paused ?? B.control.waiting;
+  const done = task ? `<button class="tb7-btn tb7-done" type="button" data-act="owner-browser-handback" data-id="${esc(task)}" aria-label="${t("window.chat.stage.hand-back-to", { name: esc(name) })}" title="${t("window.chat.stage.hand-back-to", { name: esc(name) })}">${ic("check")}</button>`
+    : `<button class="tb7-btn tb7-done" type="button" data-act="owner-browser-release" aria-label="${t("window.chat.stage.ob.done")}" title="${t("window.chat.stage.ob.done")}">${ic("check")}</button>`;
+  const stop = runId ? `<button class="tb7-btn tb7-stop" type="button" data-act="stage-stop" data-id="${esc(runId)}" aria-label="${t("window.chat.stage.ob.stop-task")}" title="${t("window.chat.stage.ob.stop-task")}">${ic("stop")}</button>`
+    : `<button class="tb7-btn tb7-stop" type="button" data-act="owner-browser-stop" aria-label="${t("window.chat.stage.ob.close-browser")}" title="${t("window.chat.stage.ob.close-browser")}">${ic("stop")}</button>`;
+  const tool = (act, icon, words, pressed) => `<button class="tb7-btn" type="button" data-act="${act}" aria-label="${words}" title="${words}"${pressed === undefined ? "" : ` aria-pressed="${pressed}"`}>${ic(icon)}</button>`;
+  return `<div class="tb7" role="toolbar" aria-label="${t("window.chat.stage.ob.in-control")}"><span class="tb7-host">${esc(hostOf(B.page?.url ?? ""))}</span>
+    ${tool("owner-browser-keys", "keyboard", t("window.chat.stage.ob.keyboard"))}${tool("owner-browser-touch", B.touch === "scroll" ? "touch16" : "cursor16", t(B.touch === "scroll" ? "window.chat.stage.ob.touch-scroll" : "window.chat.stage.ob.touch-point"), B.touch === "point")}
+    ${tool("owner-browser-copy", "copy", t("window.chat.stage.ob.copy"))}${tool("owner-browser-paste", "clip", t("window.chat.stage.ob.paste"))}${done}${stop}</div>`;
+}
+/** From the conversation's card: take the browser a working task is in, whether it is still the task's own window or
+    already the conversation's kept browser. */
+export async function takeControl(sid, runId) {
+  if (!sid) return;
+  if (B.sid !== sid) Object.assign(B, { sid, control: null, page: null, meta: "", found: null, error: "", profile: null });
+  await inOrder(async () => {
+    if (!hasOwnerBrowser()) await find(sid);
+    if (hasOwnerBrowser()) await send("control", { ...bound(), operation: "takeover" });
+    else await send("start", { ...scope(), runId });
+  });
+}
+async function copy() {
+  const answer = await inOrder(() => action("browser.owner_input", { kind: "copy" }));
+  const text = answer?.result?.text ?? "";
+  if (!text) { toast(t("window.chat.stage.ob.nothing-selected")); return; }
+  try { await navigator.clipboard.writeText(text); toast(t("window.chat.stage.ob.copied")); }
+  catch (error) { toast(error.message); }
+}
+async function paste() {
+  try { typeText(await navigator.clipboard.readText()); } catch (error) { toast(error.message); }
+}
 /** The small window shows only the page. */
 export const ownerBrowserPip = () => `<div class="desk7 brfull7 live7"><div class="dk-win br7"><img class="shot7 owner-browser7-img" alt=""></div></div>`;
 
@@ -232,22 +287,23 @@ async function ensureDriving() {
   return false;
 }
 async function action(tool, args, retried = false) {
-  if (!B.sid || B.pending || !(await ensureDriving())) return;
+  if (!B.sid || B.pending || !(await ensureDriving())) return null;
   const body0 = { sid: B.sid };
   // Input goes to the page the owner can see: a fresh frame first (a picture can miss while the page is busy).
   for (let tries = 0; tries < 6 && (!B.frameId || (tool === "browser.owner_input" && !B.ready)); tries++) {
     await drain();
     if (tries) await pause(150);
-    if (!visible() || B.sid !== body0.sid) return;
+    if (!visible() || B.sid !== body0.sid) return null;
     await readView();
   }
-  if (!B.frameId || (tool === "browser.owner_input" && !B.ready)) return;
+  if (!B.frameId || (tool === "browser.owner_input" && !B.ready)) return null;
   const body = { ...bound(), frameId: B.frameId, tabId: B.tabId, sequence: B.control.sequence + 1, tool, arguments: args };
   const answer = await send("action", body);
   // The page moved on between the frame and the input (checked before anything reaches the page): read it and try once more.
   if (!retried && answer?.status === "error" && answer.code === 409 && /refresh/i.test(answer.error ?? "")) {
-    B.error = ""; await readView(); await action(tool, args, true);
+    B.error = ""; await readView(); return action(tool, args, true);
   }
+  return answer;
 }
 function confirm() {
   const pending = B.pending; B.pending = null; closeDlg();
@@ -308,9 +364,21 @@ function key(event) {
   if (!modifiers.some((m) => m !== "Shift") && event.key.length === 1) return;
   if (KEYS.includes(name)) { event.preventDefault(); flushText(); void inOrder(() => action("browser.owner_input", { kind: "key", key: [...modifiers, name].join("+") })); }
 }
+/* A finger in Scroll mode moves the page like a phone's own browser: its drag becomes scrolling, a tap a click. */
+function pointerMove(event) {
+  const start = B.pointer;
+  if (!start || start.type !== "touch" || B.touch !== "scroll") return;
+  const at = point(event, start.img) ?? start.last;
+  const size = { w: start.img.naturalWidth || 1280, h: start.img.naturalHeight || 720 };
+  const dx = (start.last.x - at.x) * size.w, dy = (start.last.y - at.y) * size.h;
+  if (Math.hypot(dx, dy) < 2) return;
+  start.last = at; start.scrolled = true;
+  B.wheel = { dx: (B.wheel?.dx ?? 0) + dx, dy: (B.wheel?.dy ?? 0) + dy };
+  setTimeout(flushWheel, 40);
+}
 function pointerUp(event) {
   const start = B.pointer; B.pointer = null;
-  if (!start || !canDrive()) return;
+  if (!start || !canDrive() || start.scrolled) return;
   const end = point(event, start.img); if (!end) return;
   const moved = Math.hypot(end.x - start.x, end.y - start.y) > 0.012;
   const args = moved ? { kind: "drag", x: start.x, y: start.y, toX: end.x, toY: end.y }
@@ -326,7 +394,13 @@ export function initOwnerBrowser() {
     inOrder: work => { flushText(); return inOrder(work); } });
   markLive(["owner-browser-adopt", "owner-browser-stop", "owner-browser-take", "owner-browser-handback",
     "owner-browser-tab", "owner-browser-tab-close", "owner-browser-new-tab", "owner-browser-back", "owner-browser-forward",
-    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys"]);
+    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys", "owner-browser-keys", "owner-browser-touch",
+    "owner-browser-copy", "owner-browser-paste", "owner-browser-release"]);
+  on("owner-browser-keys", () => { document.getElementById("ob7-keys")?.focus(); });
+  on("owner-browser-touch", () => { B.touch = B.touch === "scroll" ? "point" : "scroll"; changed(true); });
+  on("owner-browser-copy", () => { void copy(); });
+  on("owner-browser-paste", () => { void paste(); });
+  on("owner-browser-release", () => { if (hasOwnerBrowser() && owned()) void inOrder(() => send("disconnect", bound())); });
   on("owner-browser-adopt", (el) => { if (B.sid && !hasOwnerBrowser()) void inOrder(() => send("start", { ...scope(), runId: el.dataset.id })); });
   on("owner-browser-stop", () => { if (hasOwnerBrowser()) void inOrder(() => send("stop", bound())); });
   on("owner-browser-take", () => { if (hasOwnerBrowser()) void inOrder(() => send("control", { ...bound(), operation: "takeover" })); });
@@ -347,8 +421,9 @@ export function initOwnerBrowser() {
     if (!img || !canDrive()) return;
     const at = point(event, img); if (!at) return;
     event.preventDefault(); document.getElementById("ob7-keys")?.focus({ preventScroll: true });
-    B.pointer = { ...at, img, button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left" };
+    B.pointer = { ...at, img, last: at, type: event.pointerType, button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left" };
   }, true);
+  document.addEventListener("pointermove", (event) => { if (B.pointer) pointerMove(event); }, true);
   document.addEventListener("pointerup", (event) => { if (B.pointer) pointerUp(event); }, true);
   // Pressing on the picture never takes the keys away from the page: they stay in its own box.
   document.addEventListener("mousedown", (event) => {

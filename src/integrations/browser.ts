@@ -147,6 +147,8 @@ export interface WatchedWindow {
   /** A JPEG of the tab being worked in, or null (a borrowed window, or no frame could be taken). */
   frame: Buffer | null;
   borrowed: boolean;
+  /** The page is asking for a person: a sign-in (a password or one-time-code box) or a "prove you're a person" check. */
+  needs?: 'sign-in' | 'captcha' | null;
 }
 /** w911 (A1726): a page Branch itself opened for a benchmark task, before the task starts. */
 export interface BenchmarkWindow {
@@ -1212,7 +1214,8 @@ export class BranchBrowser {
     // A box a saved sign-in was typed into holds that secret whatever kind of box it is (a code goes into a plain one).
     const filled = entry.filled.get(seen.page)?.boxes ?? [];
     const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
-    return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed };
+    const needs = borrowed ? null : await needsPerson(seen.page);
+    return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed, needs };
   }
   /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
   private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
@@ -1412,6 +1415,25 @@ export class BranchBrowser {
     const failures = results.filter(result => result.status === 'rejected');
     if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Browser cleanup failed');
   }
+}
+
+/**
+ * Whether the page in front is waiting for a person rather than a task: a visible password or one-time-code box (a
+ * sign-in, which Branch never types for itself), or a "prove you're a person" check (never solved by Branch). Read
+ * only, bounded to a third of a second; a page that cannot be asked counts as needing nobody.
+ */
+export async function needsPerson(page: Page): Promise<'sign-in' | 'captcha' | null> {
+  const asked = page.evaluate(() => {
+    const shown = (element: Element): boolean => {
+      const box = element.getBoundingClientRect(), style = getComputedStyle(element);
+      return box.width > 0 && box.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const frames = [...document.querySelectorAll('iframe')].map(frame => frame.getAttribute('src') ?? '');
+    if (frames.some(src => /recaptcha|hcaptcha|challenges\.cloudflare\.com|turnstile|arkoselabs|funcaptcha/i.test(src))) return 'captcha';
+    const boxes = document.querySelectorAll('input[type="password"], input[autocomplete~="one-time-code"], input[autocomplete~="current-password"]');
+    return [...boxes].some(shown) ? 'sign-in' : null;
+  }).catch(() => null);
+  return Promise.race([asked, new Promise<null>(done => { setTimeout(() => done(null), 300).unref?.(); })]);
 }
 
 /**
