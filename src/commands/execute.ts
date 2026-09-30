@@ -1,6 +1,6 @@
 import { levelFor, parseLine, type CatalogCommand, type Level, type Surface } from "./catalog.js";
 import { available, commandMode } from "./settings.js";
-import { HANDLERS, type Access, type Call, type CommandHost, type Reply } from "./handlers.js";
+import { HANDLERS, type Access, type Call, type CommandHost, type OwnerChat, type Reply } from "./handlers.js";
 import { promptsLine, runSavedCommand } from "./saved.js";
 import { householdCommandRefusal, householdHere } from "./household.js"; // Q259
 import { householdRefusal } from "../household-routes.js"; // Q259
@@ -29,6 +29,8 @@ export interface Invocation {
    * (src/channels/owner-dm-commands.ts). Only the commands named there, and only after their own refusals.
    */
   ownerDm?: boolean;
+  /** owner-dm-full: the owner's own verified direct chat with full access on (the router checked it just now). */
+  ownerChat?: OwnerChat;
 }
 export interface Outcome extends Reply { command: string; refused?: true }
 
@@ -72,6 +74,7 @@ export async function executeCommand(host: CommandHost, input: Invocation): Prom
   const call: Call = {
     host, surface: input.surface, argument, sessionId: input.sessionId, access: input.access,
     mode: commandMode(host.runtime.store, host.runtime.owner, input.surface, input.ownWindow === true), ...(input.permissions ? { permissions: input.permissions } : {}),
+    ...(dm && input.ownerChat ? { ownerChat: input.ownerChat } : {}),
   };
   try {
     if (level === "owner") host.requireOwner(`/${name}`);

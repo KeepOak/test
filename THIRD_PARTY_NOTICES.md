@@ -1,5 +1,19 @@
 # Third-party notices
 
+### MCP tool error feedback
+
+`src/integrations/mcp-errors.ts` adapts Gemini CLI's MCP tool error-result handling, with Branch's
+credential redaction, text-only limit and outside-content guard. Source:
+https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-tool.ts
+(Copyright Google LLC, Apache-2.0). The Apache-2.0 license text is reproduced in this document.
+
+### MCP outside-content scanning
+
+`src/integrations/mcp-content.ts` adapts Hermes Agent's description scanning and scans both cached
+and live tools using Branch's existing content detector. Copyright (c) 2025 Nous Research, MIT;
+https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py
+and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this document.
+
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
@@ -3258,6 +3272,10 @@ Copyright 2025 OpenAI
 
 The command names `branch` answers to beside its own (`config`, `skin`, `cron`, `pause`, `insights`, `checkpoints`, `kanban` and the rest, listed in `src/terminal-parity.ts` and `docs/configuration.md`) were chosen after reading the command lists of Hermes Agent (https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research) and OpenClaw (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation). No code was taken from either; both are under the MIT licence, whose text is given under IronClaw above.
 
+### OpenClaw and Hermes Agent: the owner's own chat as the main session, MIT
+
+owner-dm-full (`ownerChats` in `src/channels/chat-permissions.ts`, `ownerFullFrom`/`ownerFullRun` in `src/channels/router.ts`, and the per-store check in `runOrigin`, `src/key-context.ts`) follows OpenClaw's sandbox mode "non-main" (`shouldSandboxSession` in `src/agents/sandbox/runtime-status.ts`, with the DM "main" session key in `src/routing/session-key.ts`, https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation): the owner's direct chat is the main session and runs with the full toolset on the host, while groups and other senders are held back. Hermes Agent's gateway does the same for its allowed users (`_is_user_authorized` in `gateway/authz_mixin.py`, https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research). The design was followed and the code written anew for Branch. Both are under the MIT licence, whose text is given under IronClaw above.
+
 ### Letta Code (Letta, Inc.), Apache-2.0
 
 `src/reflection/settings.ts` and `src/reflection/pass.ts` follow the reflection trigger model (off, every N steps with a default of 25, or when the conversation is compacted) in Letta Code's `src/reflection-settings.ts` and `src/cli/helpers/post-turn-reflection.ts`, and the order of work in its reflection subagent, `src/agent/subagents/builtin/reflection-v2.md` (https://github.com/letta-ai/letta-code, commit 6e84e8a). The ideas were rewritten in Branch's words; Branch's pass stages suggestions instead of writing. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0): you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -3265,6 +3283,10 @@ The command names `branch` answers to beside its own (`config`, `skin`, `cron`, 
 ### Gemini CLI (Google LLC), Apache-2.0
 
 The test in `src/skill-authoring.ts` for whether something deserves to be a new skill (a concrete, repeatable procedure, not general knowledge, a one-off fix or a preference; when in doubt, none) follows `packages/core/src/agents/skill-extraction-agent.ts` in Gemini CLI (https://github.com/google-gemini/gemini-cli, commit 6a466a7), rewritten in Branch's words. Copyright 2026 Google LLC. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), on the same terms as above.
+
+### Hermes Agent dangerous-command list (Nous Research), MIT
+
+`src/safety-extras/dangerous-commands.ts` is a port of Hermes Agent's `DANGEROUS_PATTERNS` and `HARDLINE_PATTERNS` (`tools/approval_detection.py` in https://github.com/NousResearch/hermes-agent, commit a9a54245) to JavaScript regular expressions, less the rows about Hermes's own gateway, updater and config files. Under Full access these are the only commands Branch asks about, as Hermes's CLI asks about them for its owner. Copyright (c) 2025 Nous Research. Used under the MIT licence, whose text is given below.
 
 ### Hermes Agent (Nous Research), MIT
 

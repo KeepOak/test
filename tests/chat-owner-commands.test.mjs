@@ -35,6 +35,9 @@ async function fixture(t, options = {}) {
   if (options.paired !== false) app.store.save("settings", app.runtime.owner, "channel-pair:chat:owner",
     { status: "approved", code: "123456", name: "Owner", requestedAt: new Date().toISOString(), approvedAt: new Date().toISOString() });
   app.channels.setOwnerCommandSettings({ on: options.on !== false, accounts: [{ channel: "chat", sender: "owner" }] });
+  // owner-dm-full: with "Your own chats have your full access" on, this DM is the owner and runs commands as the window
+  // does (tests/owner-dm-full-access.test.mjs). These tests are about the per-command Yes when that switch is off.
+  app.channels.setPermissionSettings({ ownerChats: false });
   return { app, sent, root, executed: () => executed };
 }
 const lastRun = (app) => app.store.runs(app.runtime.owner)[0];
