@@ -46,7 +46,7 @@ export const ScheduleSchema = z
     /** Numeric five-field cron: minute hour day-of-month month weekday. */
     cron: z.string().trim().max(100).refine(validCron, "Invalid five-field cron expression").optional(),
     timezone: timezone.optional(),
-    /** Send the finished result to a connected channel chat. */
+    /** Send the finished result to a connected channel chat; {"channel":"home","chatId":"home"} is the chat the owner chose with /sethome. */
     deliverTo: z.object({ channel: z.string().min(1).max(64), chatId: z.string().min(1).max(64) }).strict().optional(),
     /** Allow an authenticated webhook to trigger this schedule with a payload. */
     webhook: z.boolean().optional(),
@@ -663,7 +663,7 @@ export function registerSchedules(
   registry.register({
     name: "schedules.create",
     description:
-      "Persist a reminder, task or monitoring check with an optional interval, wall-clock weekday/monthly recurrence, or five-field cron in a timezone; optional delivery to a channel chat; and optional webhook triggering. Runs when online; missed periods coalesce into one execution. Failed tasks do not auto-retry.",
+      "Persist a reminder, task or monitoring check with an optional interval, wall-clock weekday/monthly recurrence, or five-field cron in a timezone; optional delivery to a channel chat (channel and chatId both set to home send to the owner's home chat, chosen with /sethome); and optional webhook triggering. Runs when online; missed periods coalesce into one execution. Failed tasks do not auto-retry.",
     permission: "schedules.manage",
     parameters: ScheduleSchema,
     execute: async (a, c) => scheduler.create(c, a),
