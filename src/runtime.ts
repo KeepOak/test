@@ -1729,7 +1729,7 @@ ${run.output.slice(0, 6000)}`;
       const saved = this.deferredScope(options.deferredFrom, options.sessionId);
       this.checkDeferredCredentials(saved.credentials, trunk, options.sessionId);
       // Bind the validated saved keys, not a mutable current configuration object.
-      if (trunk && saved.credentials) trunk = { ...trunk, keys: saved.credentials.keys };
+      if (trunk) trunk = { ...trunk, keys: saved.credentials?.keys ?? { copyFromOwner: true, accounts: {} } };
     }
     // eng-trunk-controls: a paused Trunk starts nothing new, whoever asks; said in words, above the first await.
     const paused = trunk ? this.trunkPaused(trunk.trunkId) : null;
