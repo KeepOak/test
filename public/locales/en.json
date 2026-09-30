@@ -10554,5 +10554,14 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "window.chat-delivery.title": "Chat delivery",
+  "window.chat-delivery.hint": "Delivered means the chat app accepted the message, not that someone read it. Parts can be partly delivered while others are queued or failed. Recent records only; refresh for the current status.",
+  "window.chat-delivery.refresh": "Refresh status",
+  "window.chat-delivery.delivered": "Delivered",
+  "window.chat-delivery.queued": "Queued",
+  "window.chat-delivery.failed": "Failed",
+  "window.chat-delivery.parts": "{delivered} delivered · {queued} queued · {failed} failed parts",
+  "window.chat-delivery.empty": "No recent delivery records.",
+  "window.chat-delivery.unavailable": "Delivery status is unavailable."
 }

@@ -10554,5 +10554,14 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "window.chat-delivery.title": "Nachrichtenzustellung",
+  "window.chat-delivery.hint": "Zugestellt bedeutet, dass die Chat-App die Nachricht angenommen hat, nicht dass jemand sie gelesen hat. Einige Teile können zugestellt sein, während andere warten oder fehlgeschlagen sind. Nur jüngste Einträge; für den aktuellen Stand aktualisieren.",
+  "window.chat-delivery.refresh": "Status aktualisieren",
+  "window.chat-delivery.delivered": "Zugestellt",
+  "window.chat-delivery.queued": "In Warteschlange",
+  "window.chat-delivery.failed": "Fehlgeschlagen",
+  "window.chat-delivery.parts": "{delivered} zugestellt · {queued} wartend · {failed} fehlgeschlagene Teile",
+  "window.chat-delivery.empty": "Keine jüngsten Zustellungsdaten.",
+  "window.chat-delivery.unavailable": "Der Zustellungsstatus ist nicht verfügbar."
 }

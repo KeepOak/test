@@ -10555,5 +10555,14 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "window.chat-delivery.title": "Livraison des messages",
+  "window.chat-delivery.hint": "Livré signifie que l’application de discussion a accepté le message, pas qu’une personne l’a lu. Certaines parties peuvent être livrées tandis que d’autres sont en attente ou en échec. Historique récent uniquement ; actualisez pour connaître l’état actuel.",
+  "window.chat-delivery.refresh": "Actualiser l’état",
+  "window.chat-delivery.delivered": "Livré",
+  "window.chat-delivery.queued": "En attente",
+  "window.chat-delivery.failed": "Échec",
+  "window.chat-delivery.parts": "{delivered} livrées · {queued} en attente · {failed} parties en échec",
+  "window.chat-delivery.empty": "Aucune livraison récente.",
+  "window.chat-delivery.unavailable": "L’état des livraisons est indisponible."
 }
