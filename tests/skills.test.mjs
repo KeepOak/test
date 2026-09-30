@@ -30,10 +30,11 @@ test('skill parser accepts YAML metadata and rejects malformed, ambiguous, alias
     '---\nname: example\ndescription: &description example\nlicense: *description\n---\nbody',
     '---\nname: example\nname: duplicate\ndescription: example\n---\nbody',
     '---\nname: example\ndescription: !custom example\n---\nbody',
-    '---\nname: example\ndescription: example\nunknown: true\n---\nbody',
-    document('example', 'x'.repeat(48000)), document('example', '\u0000'.repeat(11000)),
-    '---\nname: example\ndescription: example\nmetadata:\n  count: 12\n---\nbody'])
+    document('example', 'x'.repeat(48000)), document('example', '\u0000'.repeat(11000))])
     assert.throws(() => parseSkillDocument(invalid), invalid.slice(0, 90));
+  // Upstream skills carry extra keys; they are kept as bounded string metadata, never as new standard fields.
+  assert.deepEqual(parseSkillDocument('---\nname: example\ndescription: example\nunknown: true\nmetadata:\n  count: 12\n---\nbody'),
+    { name: 'example', description: 'example', metadata: { unknown: 'true', count: '12' } });
 });
 
 test('skill documents retain exact bytes, owner isolation, revisions and selection across restart', async t => {
