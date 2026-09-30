@@ -1257,7 +1257,7 @@ export class Runtime {
     return { authority: { ...saved, permissions }, copy, workspace: context.workspace };
   }
 
-  async resume(runId: string, restriction?: ReturnType<Runtime["recoveryHandoff"]>): Promise<Run> {
+  async resume(runId: string, restriction?: ReturnType<Runtime["recoveryHandoff"]>, onAdmitted?: (run: Run) => void): Promise<Run> {
     const previous = this.store.run(runId);
     const origin = previous ? runOrigin(this.store, runId) : null;
     // bucket 19 (integration review): a person's own task, handed back to them at start, may carry on too.
@@ -1275,6 +1275,7 @@ export class Runtime {
     // A room turn or a Trunk's routine keeps its plain title (run.titled) when it carries on.
     const titled = this.store.events(runId).find((event) => event.kind === "run.titled")?.data.title;
     const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id,
+      ...(onAdmitted ? { onCreated: onAdmitted } : {}),
       ...(Number.isFinite(deadline) && deadline > 0 ? { timeoutMs: deadline } : {}),
       ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {

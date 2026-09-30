@@ -284,10 +284,32 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
     recovery?.signal.throwIfAborted();
     checkProject();
     // Each step keeps its call id, so a team task can tell which of them it has a record of (src/team-reconcile.ts).
-    input.store.event(runId, "run.auto_resumed", { steps: steps.map((step, index) => ({ ...decided[index], callId: step.callId })) });
-    // Transfer synchronously: normal resume claims this session before its first await.
+    // Record success only after normal resume has admitted its new run, not before its
+    // asynchronous authority checks. Rejection remains actionable on the original task.
+    let accept!: () => void, reject!: (error: unknown) => void;
+    const admission = new Promise<void>((resolve, fail) => { accept = resolve; reject = fail; });
+    let admitted = false;
     recovery?.release();
-    const resumed = underProject(run.project ?? defaultProjectId, () => input.runtime.resume(runId, restriction)).catch(() => undefined);
+    const resumed = underProject(run.project ?? defaultProjectId, () => input.runtime.resume(runId, restriction, (next) => {
+      input.store.event(runId, "run.auto_resumed", { resumedRunId: next.id,
+        steps: steps.map((step, index) => ({ ...decided[index], callId: step.callId })) });
+      admitted = true;
+      accept();
+    })).then((result) => {
+      if (!admitted) reject(new Error("The continuation finished without a recorded admission receipt."));
+      return result;
+    }).catch((error: unknown) => {
+      if (!admitted) reject(error);
+      else {
+        const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+        input.store.event(runId, "recovery.continuation_failed", { reason });
+        input.store.finish(runId, "needs_input", reason);
+        input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+        input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      }
+      return undefined;
+    });
+    await admission;
     return { runId, outcome: "resumed", steps: decided, resumed };
   } catch (error) {
     const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
