@@ -94,6 +94,8 @@ import { SessionLock } from "./session-lock.js";
 import { Moderation } from "./moderation.js";
 import { PrivacyGuard } from "./privacy-guard.js";
 import { OAuthConnections } from "./oauth.js";
+import { KeepOakConnection } from "./keepoak-connection.js";
+import { pinnedFetch } from "./pinned-fetch.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
 import { registerAttachmentTools } from "./attachment-tools.js";
@@ -1032,6 +1034,14 @@ export async function createBranch(options: {
   releaseOnLock.push(async () => runtime.keepAlive.stop()); // R17-050 (integration review): locking Branch stops cache pings
   // Signing in to outside services the ordinary way, with the answer coming back to this computer.
   const oauth = new OAuthConnections(runtime.owner, store.secrets, web.policy, web.policy.guard(globalThis.fetch));
+  const keepoak = new KeepOakConnection({ store, owner: runtime.owner, policy: web.policy, fetch: pinnedFetch,
+    requireOwner: () => {
+      store.profiles.requireOwner("Connecting KeepOak");
+      if (startedWithShortLivedKey()) throw new Error("Connect KeepOak in the owner's app window.");
+      if (sessionLock.state().locked) throw new Error("Unlock Branch before connecting KeepOak.");
+      sessionLock.require();
+    } });
+  releaseOnLock.push(async () => keepoak.close());
   // accounts-wizard-plans: the coding assistants and the Gemini sign-in the owner added come back (src/accounts/saved-sign-ins.ts).
   attachCodexModels(runtime.models, new CodexModels(store, runtime.owner)); // QA 2026-09-28: Codex's model, chosen in Branch
   await restoreSignIns({ store, owner: runtime.owner, models: runtime.models, oauth });
@@ -1940,6 +1950,8 @@ ${result.output || "(it said nothing)"}`;
     miniAppSessions,
     /** Signing in to outside services with the standard authorization-code flow and PKCE. */
     oauth,
+    /** Owner-only, off by default KeepOak device-code connection; keys stay in the locker. */
+    keepoak,
     /** Personal details and the optional content check, either side of the assistant. */
     privacy,
     moderation,
@@ -2113,6 +2125,7 @@ ${result.output || "(it said nothing)"}`;
       } finally {
         journal.close(); // mac3/never-break
         oauth.closeAll();
+        keepoak.close();
         outbound.reset(); // R17-S-C: the program's proxy and certificates go back as they were
       }
     })()),
@@ -2272,6 +2285,7 @@ export * from "./moderation.js";
 export * from "./privacy-guard.js";
 export * from "./session-lock.js";
 export * from "./oauth.js";
+export * from "./keepoak-connection.js";
 export * from "./integrations/job-object.js";
 export * from "./artifacts.js";
 export * from "./channels/router.js";

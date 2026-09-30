@@ -10691,5 +10691,19 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "keepoak.disconnect": "Desconectar",
+  "keepoak.connect": "Conectar tu cuenta de KeepOak",
+  "keepoak.enable": "Activar conexión de KeepOak",
+  "keepoak.connected": "Conectado a KeepOak",
+  "keepoak.off": "La conexión de KeepOak está desactivada",
+  "keepoak.ready": "Listo para conectar",
+  "keepoak.profile-only": "Solo se solicita tu perfil. Los equipos, el relé, el equipo de trabajo, la sincronización y las copias de seguridad siguen sin estar disponibles. No se suben conversaciones, memoria ni claves.",
+  "keepoak.profile": "Leer perfil de la cuenta",
+  "keepoak.enter-code": "Introduce este código en KeepOak",
+  "keepoak.open": "Abrir keepoak.com/activate",
+  "keepoak.waiting": "Esperando tu aprobación en KeepOak.",
+  "keepoak.expired": "El código ha caducado. Empieza de nuevo.",
+  "keepoak.enable-first": "Activa la conexión antes de iniciar sesión.",
+  "keepoak.disconnected": "Desconectado. Tus datos de ambos lados se han conservado."
 }

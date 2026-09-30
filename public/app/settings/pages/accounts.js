@@ -9,6 +9,7 @@ import { ic, toast } from "../../core/ui.js";
 import { logo } from "../../core/logos.js";
 import { A, allAccounts, loadAccounts, ownerOnly, accountDetail } from "../../flows/account.js";
 import { accounts17 } from "../p17-more.js";
+import { keepOakCard, loadKeepOak } from "../../flows/keepoak.js";
 import { t } from "../../../i18n.js";
 import { moreSections, loadMore, initMore } from "../more18.js"; // Finish setting up's "Two more things": email and calendar, a backup
 
@@ -16,7 +17,7 @@ import { moreSections, loadMore, initMore } from "../more18.js"; // Finish setti
 let picked = null;
 const key = (a) => `${a.pool}/${a.id}`;
 
-export function load() { loadMore(); return loadAccounts(); }
+export function load() { loadMore(); void loadKeepOak(); return loadAccounts(); }
 
 /* QA retest 2026-09-28 (m8): "used next" is said of the account the next answer comes from: the first of the list of
    the model that answers now (GET /api/accounts pools[].answering), or that model itself when it is on this computer. A
@@ -63,9 +64,7 @@ export function draw() {
   html += (A.view?.pools ?? []).map((p) => `<button class="btn" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${mine}>${t("window.settings.accounts.another-value-account", { value: esc(p.name ?? p.pool) })}</button>`).join("");
   html += `</div></div>`;
   html += whenOneRunsOut();
-  html += `<div class="sec"><h2>keepoak.com</h2><div class="ko-card"><span class="ko-mark" aria-hidden="true"></span><span class="grow"><b>${t("window.settings.accounts.your-keepoak-com-account")}</b><small>${t("window.settings.accounts.have-a-keepoak-computer-or-a")}</small></span><span class="pill idle" title="${t("window.settings.accounts.branch-does-not-link-to-keepoak")}">${t("window.settings.accounts.proposal")}</span></div>`
-    + `<ul class="may6"><li>${ic("check", "s")}${t("window.settings.accounts.your-keepoak-computer-joins-the-computer")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-theme-saved-colours-and-season")}</li><li>${ic("check", "s")}${t("window.settings.accounts.your-team-workspace-members-shared-trunks")}</li><li>${ic("check", "s")}${t("window.settings.accounts.conversations-memory-and-keys-stay-on")}</li></ul>`
-    + `<div class="acts"><button class="btn pri" type="button" data-act="ko-start">${t("window.settings.accounts.connect-your-keepoak-com-account")}</button></div></div>`;
+  html += keepOakCard();
   return html + accounts17(lev) + moreSections();
 }
 

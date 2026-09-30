@@ -10691,5 +10691,19 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "keepoak.disconnect": "Disconnect",
+  "keepoak.connect": "Connect your KeepOak account",
+  "keepoak.enable": "Enable KeepOak connection",
+  "keepoak.connected": "Connected to KeepOak",
+  "keepoak.off": "KeepOak connection is off",
+  "keepoak.ready": "Ready to connect",
+  "keepoak.profile-only": "Only your profile is requested. Computers, relay, team, sync and backup remain unavailable. No conversations, memory or keys are uploaded.",
+  "keepoak.profile": "Read account profile",
+  "keepoak.enter-code": "Enter this code on KeepOak",
+  "keepoak.open": "Open keepoak.com/activate",
+  "keepoak.waiting": "Waiting for your approval on KeepOak.",
+  "keepoak.expired": "The sign-in code expired. Start again.",
+  "keepoak.enable-first": "Enable the connection before signing in.",
+  "keepoak.disconnected": "Disconnected. Your data on both sides was kept."
 }

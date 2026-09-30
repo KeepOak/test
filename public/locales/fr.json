@@ -10691,5 +10691,19 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "keepoak.disconnect": "Déconnecter",
+  "keepoak.connect": "Connecter votre compte KeepOak",
+  "keepoak.enable": "Activer la connexion KeepOak",
+  "keepoak.connected": "Connecté à KeepOak",
+  "keepoak.off": "La connexion KeepOak est désactivée",
+  "keepoak.ready": "Prêt à se connecter",
+  "keepoak.profile-only": "Seul votre profil est demandé. Les ordinateurs, le relais, l’équipe, la synchronisation et la sauvegarde restent indisponibles. Aucune conversation, mémoire ou clé n’est envoyée.",
+  "keepoak.profile": "Lire le profil du compte",
+  "keepoak.enter-code": "Saisissez ce code sur KeepOak",
+  "keepoak.open": "Ouvrir keepoak.com/activate",
+  "keepoak.waiting": "En attente de votre approbation sur KeepOak.",
+  "keepoak.expired": "Le code a expiré. Recommencez.",
+  "keepoak.enable-first": "Activez la connexion avant de vous connecter.",
+  "keepoak.disconnected": "Déconnecté. Vos données des deux côtés sont conservées."
 }
