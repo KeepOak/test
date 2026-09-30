@@ -77,8 +77,10 @@ export function initIsolatedChat() {
   on("ig-open", async (el) => {
     if (!active() || busy) return;
     const version = context.revision, id = el.dataset.id;
+    busy = true; render();
     try { const view = await route({ operation: "read", sessionId: id }, version); sessionId = id; messages = view.messages ?? []; render(); }
     catch (failure) { toast(failure.message); }
+    finally { if (version === context.revision) { busy = false; render(); } }
   });
   on("ig-exit", async () => {
     if (busy) return;
