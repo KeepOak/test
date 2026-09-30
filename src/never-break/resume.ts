@@ -295,6 +295,10 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
       const stopped = recovery.signal.reason instanceof Error ? recovery.signal.reason.message : reason;
       input.store.event(runId, "run.recovery_stopped", { reason: input.runtime.hideSecrets(stopped) });
       if (recovery.cancelled()) {
+        // Registered recovery Stop returns through runtime.cancel, bypassing the server's
+        // waiting-task cleanup. Abandon only this task's plan, never a newer session plan.
+        if (input.runtime.orchestration.plan(run.sessionId)?.runId === runId)
+          input.runtime.orchestration.clearPlan(run.sessionId);
         input.store.finish(runId, "cancelled", "Stopped during interrupted recovery. No automatic continuation was started.");
         return { runId, outcome: "gone", steps: decided };
       }
