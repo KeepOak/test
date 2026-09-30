@@ -9,6 +9,7 @@ import { TestCopyJobs } from "./self-development-test-copy-jobs.js";
 import { draftQaFix, type QaFixModel } from "./continuous-qa-fix.js";
 
 export const QaSettings = z.object({ enabled: z.boolean().default(false), copyId: z.string().uuid().nullable().default(null),
+  target: z.enum(["web", "desktop-copy"]).default("web"),
   intervalMinutes: z.number().int().min(30).max(1440).default(120), maxCyclesPerDay: z.number().int().min(1).max(12).default(2),
   modelFixes: z.boolean().default(false), preset: z.string().max(64).default(""),
   fixTokens: z.number().int().min(1000).max(50_000).default(10_000), dailyFixTokens: z.number().int().min(1000).max(200_000).default(20_000),
@@ -70,7 +71,7 @@ export class ContinuousQa {
     const controller = new AbortController(); this.controller = controller;
     try {
       const copy = await this.jobs.verifiedReceipt(settings.copyId);
-      const job = await this.jobs.start({ id: copy.id, mode: "dogfood" }); this.jobId = job.id;
+      const job = await this.jobs.start({ id: copy.id, mode: "dogfood", target: settings.target }); this.jobId = job.id;
       let result = job;
       while (result.status === "running") {
         await new Promise<void>((resolve) => setTimeout(resolve, 5000));

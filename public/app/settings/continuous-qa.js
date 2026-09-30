@@ -14,6 +14,7 @@ export function initContinuousQa() {
     const field = (id) => document.getElementById(id);
     try {
       const settings = { ...state?.settings, enabled: field("qa-enabled").checked, copyId: field("qa-copy").value.trim() || null,
+        target: field("qa-target").value,
         intervalMinutes: Number(field("qa-interval").value), maxCyclesPerDay: Number(field("qa-cycles").value),
         modelFixes: field("qa-model").checked, preset: field("qa-preset").value.trim(),
         fixTokens: Number(field("qa-tokens").value), dailyFixTokens: Number(field("qa-daily-tokens").value),
@@ -26,7 +27,8 @@ export function continuousQaSection() {
   const s = state?.settings ?? {};
   const input = (id, label, value, type = "text") => `<label>${esc(label)}<input id="${id}" type="${type}" value="${esc(value)}"></label>`;
   return `<section class="sec"><h2>Continuous isolated QA</h2>
-    <p>Use a prepared Test copy, never your installed app. Observations only: no clicks, deletion, sending, purchases or safety changes.</p>
+    <p>Use a prepared Test copy, never your installed app. Fixed navigation clicks only; no editing, deletion, sending, purchases or safety changes.</p>
+    <label>Isolated target<select id="qa-target"><option value="web" ${s.target !== "desktop-copy" ? "selected" : ""}>Browser app</option><option value="desktop-copy" ${s.target === "desktop-copy" ? "selected" : ""}>Prepared Linux packaged desktop copy</option></select></label>
     <label><input id="qa-enabled" type="checkbox" ${s.enabled ? "checked" : ""}>Enable recurring observations</label>
     ${input("qa-copy", "Prepared Test copy ID", s.copyId ?? "")}
     ${input("qa-interval", "Minutes between cycles (30–1440)", s.intervalMinutes ?? 120, "number")}
