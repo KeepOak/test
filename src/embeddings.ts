@@ -4,7 +4,7 @@ import { z } from "zod";
 import { estimateTokens } from "./contracts.js";
 import { EmbeddingClient, defaultEmbeddingModel, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
 import { OllamaClient, defaultLocalEmbeddingModel, ollamaHome } from "./local-models.js";
-import { keptOnThisComputer, type ModelRouter } from "./models.js";
+import { keptOnThisComputer, presetRunsLocally, type ModelRouter } from "./models.js";
 import type { Store } from "./store.js";
 import { assertProviderEndpoint, providerEmbeddings } from "./providers.js";
 import { parseRetryPolicy, planRetry, waitForRetry, type RetryPolicy } from "./provider-retry.js";
@@ -50,11 +50,12 @@ export function embeddingConnection(
   models: ModelRouter | undefined, _owner: string, model: string = defaultLocalEmbeddingModel, presetId?: string,
 ): EmbeddingConnection | null {
   if (!presetId) return { shape: "ollama", endpoint: ollamaHome, apiKey: "", model, local: true };
-  const provider = models?.find(presetId)?.provider;
-  if (!provider) return null;
+  const preset = models?.find(presetId);
+  const provider = preset?.provider;
+  if (!preset || !provider) return null;
   const route = providerEmbeddings(provider);
   if (route) {
-    const local = onThisComputer(route.endpoint);
+    const local = presetRunsLocally(preset) && onThisComputer(route.endpoint);
     const ollama = local && new URL(route.endpoint).port === new URL(ollamaHome).port;
     const chosen = ollama && model === defaultEmbeddingModel ? defaultLocalEmbeddingModel : model;
     return { shape: ollama ? "ollama" : "openai", endpoint: route.endpoint, apiKey: route.apiKey, model: chosen, local,
@@ -63,7 +64,7 @@ export function embeddingConnection(
   const pictures = (provider as { images?: () => { kind: string; endpoint: string; apiKey: string } }).images?.();
   if (pictures?.kind !== "gemini") return null;
   const chosen = model === defaultEmbeddingModel ? defaultGeminiEmbeddingModel : model;
-  return { shape: "gemini", endpoint: pictures.endpoint, apiKey: pictures.apiKey, model: chosen, local: onThisComputer(pictures.endpoint) };
+  return { shape: "gemini", endpoint: pictures.endpoint, apiKey: pictures.apiKey, model: chosen, local: presetRunsLocally(preset) && onThisComputer(pictures.endpoint) };
 }
 
 /** Independent of chat selection, following Open WebUI's separate embedding-engine configuration.

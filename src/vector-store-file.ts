@@ -4,17 +4,15 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { errorText } from "./contracts.js";
 import { SqliteVectors, type VectorBackend } from "./vector-store.js";
+import { ChromaVectors, QdrantVectors } from "./vector-store-remote.js";
 
 /**
  * Somewhere else to keep the lists of numbers: a database file of your own choosing, anywhere on
  * this computer, instead of inside the one Branch keeps everything else in.
  *
- * This is the whole of the second place, and it is deliberately not a connector to a hosted vector
- * service. Nobody running Branch on their own computer is running Qdrant or Chroma beside it, an
- * adapter for one could not be tested here without a network, and adding a dependency to talk to a
- * service you do not have is a worse answer than saying so. What there is instead is the
- * `VectorBackend` contract, one real second implementation of it that you can switch on today, and
- * a worked example in `docs/configuration.md` of how to write a third against anything you like.
+ * Qdrant and Chroma are also explicit choices for an owner who already runs either service. Their
+ * native HTTP adapters use an injected guarded fetch and locker reference; no server, SDK or model
+ * is installed. Without this explicit choice the vectors stay in the built-in SQLite database.
  *
  * Why anyone would want this. A large personal library's vectors can be bigger than everything else
  * Branch stores put together; putting them on another drive keeps the main database small and quick
@@ -27,12 +25,24 @@ import { SqliteVectors, type VectorBackend } from "./vector-store.js";
  * fills up the next time you press **Read it again**.
  */
 export const VectorStoreSettingsSchema = z.object({
-  /** `database` is the one Branch already keeps; `file` is one you name. */
-  vectorsIn: z.enum(["database", "file"]).default("database"),
+  /** External services are opt-in; the built-in database remains the default. */
+  vectorsIn: z.enum(["database", "file", "qdrant", "chroma"]).default("database"),
   /** The full path of that file, such as `D:/branch/vectors.db`. Only read when `vectorsIn` is `file`. */
   vectorsFile: z.string().trim().max(400).default(""),
+  vectorsUrl: z.string().trim().max(500).default(""),
+  vectorsSecret: z.string().trim().max(200).regex(/^([A-Z][A-Z0-9_]*)?$/).default(""),
+  vectorsHeader: z.enum(["", "api-key", "x-chroma-token", "Authorization"]).default(""),
+  vectorsTimeoutMs: z.number().int().min(500).max(30000).default(8000),
+  chromaTenant: z.string().trim().min(1).max(120).default("default_tenant"),
+  chromaDatabase: z.string().trim().min(1).max(120).default("default_database"),
 }).strict();
 export type VectorStoreSettings = z.infer<typeof VectorStoreSettingsSchema>;
+export interface VectorServiceDependencies {
+  fetchFor(endpoint: string): typeof fetch;
+  key(owner: string, settings: VectorStoreSettings): Promise<string>;
+  current(owner: string, settings: VectorStoreSettings): boolean;
+  assertAllowed(endpoint: string, target: string): void;
+}
 
 /** What a knowledge base shows when the vectors are somewhere the owner chose. */
 export const fileBackendName = (path: string): string => `a database file you chose (${path})`;
@@ -70,8 +80,20 @@ export const cannotOpen = (path: string, reason: string): string =>
  * the app starts, so a wrong setting is one sentence on the panel rather than a failure per search.
  */
 export function chooseVectorStore(
-  settings: VectorStoreSettings, shipped: VectorBackend,
+  settings: VectorStoreSettings, shipped: VectorBackend, remote?: { owner: string; dependencies: VectorServiceDependencies },
 ): { backend: VectorBackend; note: string } {
+  if (settings.vectorsIn === "qdrant" || settings.vectorsIn === "chroma") {
+    if (!remote || !settings.vectorsUrl) return { backend: shipped, note: "The chosen vector service needs an address and guarded connection; vectors are kept in this computer's database for now." };
+    try {
+      const config = { url: settings.vectorsUrl, fetch: remote.dependencies.fetchFor(settings.vectorsUrl),
+        active: () => remote.dependencies.current(remote.owner, settings),
+        assertAllowed: (target: string) => remote.dependencies.assertAllowed(settings.vectorsUrl, target),
+        timeoutMs: settings.vectorsTimeoutMs, header: settings.vectorsHeader || (settings.vectorsIn === "qdrant" ? "api-key" : "x-chroma-token"),
+        tenant: settings.chromaTenant, database: settings.chromaDatabase,
+        ...(settings.vectorsSecret ? { key: () => remote.dependencies.key(remote.owner, settings) } : {}) };
+      return { backend: settings.vectorsIn === "qdrant" ? new QdrantVectors(config) : new ChromaVectors(config), note: "" };
+    } catch (error) { return { backend: shipped, note: `The vector service could not be configured: ${errorText(error).slice(0, 160)}. Vectors stay in this computer's database.` }; }
+  }
   if (settings.vectorsIn !== "file") return { backend: shipped, note: "" };
   const opened = openVectorFile(settings.vectorsFile);
   return "backend" in opened

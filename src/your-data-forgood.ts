@@ -9,6 +9,7 @@ import type { createBranch } from "./index.js";
 import { backupFolder } from "./install/update-backup.js";
 import { lockdownActive } from "./lockdown.js";
 import { memoryProviderSettings, stillHeld } from "./memory-provider.js";
+import type { VectorStoreSettings } from "./vector-store-file.js";
 
 /**
  * Settings › Your data, Delete everything, "for good" (the half that cannot be one database transaction). The purge
@@ -19,11 +20,13 @@ import { memoryProviderSettings, stillHeld } from "./memory-provider.js";
  * Nothing leaves this computer under Lockdown: the outside service and the history's copy wait until it is off.
  */
 type Branch = Awaited<ReturnType<typeof createBranch>>;
-type Step = "files" | "outside" | "notes" | "history" | "copies" | "tidy";
-export const steps: readonly Step[] = ["files", "outside", "notes", "history", "copies", "tidy"];
+type Step = "files" | "outside" | "vectors" | "notes" | "history" | "copies" | "tidy";
+export const steps: readonly Step[] = ["files", "outside", "vectors", "notes", "history", "copies", "tidy"];
 export interface Journal {
   id: string; scope: string; startedAt: string; sessions: string[]; runIds: string[];
   outside: { url: string; pending: string[] } | null;
+  /** Optional for journals written before external vectors existed. Holds references, never a key. */
+  vectors?: VectorStoreSettings | null;
   history: boolean; done: Step[]; removed: string[]; waiting: string[];
 }
 /** The conversation and memory tables a delete empties, in any copy of the database. Never memory_outside_forgotten. */
@@ -94,6 +97,7 @@ export async function finish(app: Branch, journal: Journal): Promise<Journal> {
 const failed: Record<Step, string> = {
   files: "The files of the deleted conversations could not all be removed",
   outside: "The outside memory service could not be asked to delete them",
+  vectors: "The selected vector service could not finish deleting this person's Branch vectors",
   notes: "The memory notes in your workspace could not be written again",
   history: "The history of what is remembered could not be started again",
   copies: "The update safety copies could not all be made again without them",
@@ -105,6 +109,7 @@ async function run(app: Branch, journal: Journal, step: Step): Promise<Outcome> 
   switch (step) {
     case "files": return removeFiles(app, journal);
     case "outside": return forgetOutside(app, journal);
+    case "vectors": return forgetVectors(app, journal);
     case "notes": return rewriteNotes(app, journal);
     case "history": return rewriteHistory(app, journal);
     case "copies": return scrubCopies(app, journal);
@@ -134,6 +139,15 @@ async function forgetOutside(app: Branch, journal: Journal): Promise<Outcome> {
   return { ...(removed ? { removed } : {}), waiting: changed
     ? `The outside memory service was changed, so ${outside.pending.length === 1 ? "one fact" : `${outside.pending.length} facts`} waiting to be deleted at ${hostOf(outside.url)} ${outside.pending.length === 1 ? "is" : "are"} not sent anywhere else. Switch back to it to finish.`
     : stillHeld(outside.pending.length) };
+}
+
+async function forgetVectors(app: Branch, journal: Journal): Promise<Outcome> {
+  if (!journal.vectors) return {};
+  if (locked(app)) return { waiting: "Lockdown is on, so the selected service's Branch vectors are deleted once it is off." };
+  const removed = await app.knowledgeBases.clearSelectedVectors(journal.scope, app.runtime.owner, journal.vectors);
+  const host = hostOf(journal.vectors.vectorsUrl);
+  if (removed === null) return { waiting: `The vector connection was changed or removed. Its cleanup at ${host} is still pending; restore the same service and locker reference to finish. Nothing is sent to a different destination.` };
+  return { removed: `This person's Branch vectors at ${host} were deleted and their namespace verified empty. Other owners and service collections were kept. Knowledge-base files stay here and can be read again.` };
 }
 
 async function rewriteNotes(app: Branch, journal: Journal): Promise<Outcome> {

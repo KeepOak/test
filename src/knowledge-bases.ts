@@ -18,7 +18,7 @@ import { filterIsSet, filterSql, nothingMatchedNote, RetrievalFilterSchema,
   type RetrievalFilter } from "./retrieval-filters.js";
 import type { Store } from "./store.js";
 import { SqliteVectors, comfortableChunkCount, type VectorBackend } from "./vector-store.js";
-import { chooseVectorStore, VectorStoreSettingsSchema, type VectorStoreSettings } from "./vector-store-file.js";
+import { chooseVectorStore, VectorStoreSettingsSchema, type VectorStoreSettings, type VectorServiceDependencies } from "./vector-store-file.js";
 import type { RerankablePassage } from "./documents.js";
 
 /**
@@ -95,6 +95,9 @@ export class KnowledgeBases {
   backendNote = "";
   readonly cache: EmbeddingCache;
   readonly embeddingSources: EmbeddingSources;
+  /** Set at startup; external vector services never acquire an unguarded network connection. */
+  vectorServiceDependencies: VectorServiceDependencies | undefined;
+  private readonly vectorWork = new Map<string, Promise<void>>();
   /** False only where this build of SQLite has no full-text search; every collection is then read whole. */
   readonly ranked: boolean;
   /** Set at start-up: puts the passages a search found into the best order. See src/retrieval.ts. */
@@ -151,14 +154,52 @@ export class KnowledgeBases {
     const saved = VectorStoreSettingsSchema.safeParse(this.store.get("settings", owner, "vector-store")?.data ?? {});
     return saved.success ? saved.data : VectorStoreSettingsSchema.parse({});
   }
+  /** Configuration only: deleting never opens a connection just to discover what is configured. */
+  vectorDeletionChoice(owner: string): VectorStoreSettings | null {
+    const settings = this.vectorStoreSettings(owner);
+    return settings.vectorsIn === "qdrant" || settings.vectorsIn === "chroma" ? settings : null;
+  }
+  /** A pending delete cannot be undone by another index/search while the service is offline. */
+  private vectorsWaiting(owner: string): boolean {
+    const exists = this.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='your_data_deletes'").get();
+    if (!exists) return false;
+    const rows = this.db.prepare("SELECT data FROM your_data_deletes WHERE scope=? AND finished=0").all(owner);
+    return rows.some((row) => {
+      const journal = JSON.parse(String(row.data)) as { vectors?: unknown; done: string[] };
+      return journal.vectors && !journal.done.includes("vectors");
+    });
+  }
+  /** Replays only against the current matching destination; never resolves a removed service's key. */
+  async clearSelectedVectors(scope: string, owner: string, input: VectorStoreSettings): Promise<number | null> {
+    const saved = VectorStoreSettingsSchema.parse(input);
+    if (JSON.stringify(saved) !== JSON.stringify(this.vectorStoreSettings(owner))) return null;
+    if (!this.vectors.clearOwner) throw new Error("The selected external vector store is unavailable; its cleanup is still pending");
+    return this.withVectors(scope, () => this.vectors.clearOwner!(scope), true);
+  }
+  private async withVectors<T>(owner: string, operation: () => Promise<T>, cleanup = false): Promise<T> {
+    const previous = this.vectorWork.get(owner);
+    let release!: () => void;
+    const next = new Promise<void>((resolve) => { release = resolve; });
+    this.vectorWork.set(owner, next);
+    try {
+      await previous;
+      if (!cleanup && this.vectorsWaiting(owner)) throw new Error("External vector cleanup is pending; meaning indexing waits until it finishes");
+      return await operation();
+    } finally {
+      release();
+      if (this.vectorWork.get(owner) === next) this.vectorWork.delete(owner);
+    }
+  }
   /**
    * Moves where new vectors are written. The change takes at once, so the owner sees a refusal now
    * rather than after a long reading; nothing is deleted from the place they were in before, and
    * the new place fills up the next time the knowledge base is read.
    */
   chooseVectorStore(owner: string, input: unknown): { settings: VectorStoreSettings; backend: string; note: string } {
+    this.store.profiles.requireOwner("Where document meaning vectors are kept");
     const settings = VectorStoreSettingsSchema.parse({ ...this.vectorStoreSettings(owner), ...(input as object) });
-    const chosen = chooseVectorStore(settings, new SqliteVectors(this.db));
+    const remote = this.vectorServiceDependencies ? { owner, dependencies: this.vectorServiceDependencies } : undefined;
+    const chosen = chooseVectorStore(settings, new SqliteVectors(this.db), remote);
     this.store.save("settings", owner, "vector-store", settings);
     if (this.vectors !== chosen.backend) this.vectors.close?.();
     this.vectors = chosen.backend;
@@ -474,6 +515,7 @@ export class KnowledgeBases {
   }
   /** Turns the passages that have no current list of numbers into one; the cache makes repeats free. */
   private async embedCollection(owner: string, collection: string, signal: AbortSignal, runId?: string) {
+    if (this.vectorsWaiting(owner)) return { embedded: 0, model: "", tokens: 0, note: "External vector cleanup is pending. Word search works; meaning indexing waits until it finishes.", error: "cleanup-pending" };
     const reader = this.embeddings(owner);
     if (!reader) return { embedded: 0, model: "", tokens: 0, note: noEmbeddingsMessage, error: "" };
     try { await reader.prepare(signal); } catch (error) {
@@ -487,10 +529,10 @@ export class KnowledgeBases {
     if (tooMuch) return { embedded: 0, model: reader.model, tokens: 0, note: tooMuch, error: "" };
     try {
       const vectors = await reader.embedFor(runId, texts, signal);
-      const written = await this.vectors.upsert(owner, rows.map((row, at) => ({
+      const written = await this.withVectors(owner, () => this.vectors.upsert(owner, rows.map((row, at) => ({
         collection, docId: String(row.doc_id), chunkId: String(row.chunk_id), model: reader.vectorKey,
         vector: vectors[at] ?? new Float32Array(), textHash: String(row.text_hash),
-      })));
+      }))));
       return { embedded: written, model: reader.model, tokens: reader.stats.tokens, note: "", error: "" };
     } catch (error) {
       const message = errorText(error).slice(0, 200);
@@ -543,7 +585,7 @@ export class KnowledgeBases {
     // Passages survived the filter but nothing came through the ranking or the active project's own
     // list: still an honest nothing, and still not a reason to answer from outside the filter.
     if (!hits.length && narrowing) return { hits, note: nothingMatchedNote(narrowing, this.collectionWords(owner)) };
-    return { hits, note: leftOut };
+    return { hits, note: [leftOut, this.backendNote].filter(Boolean).join(" ") };
   }
   /** Every name and id a filter may have meant, so an unknown one can be named back to the owner. */
   private collectionWords(owner: string): string[] {
@@ -616,13 +658,17 @@ export class KnowledgeBases {
     });
   }
   private async meaningMatches(owner: string, collection: string | undefined, query: string, signal: AbortSignal): Promise<string[]> {
+    if (this.vectorsWaiting(owner)) return [];
     const reader = this.embeddings(owner);
     if (!reader) return [];
     const asked = await reader.embed([query], signal).catch(() => null);
     if (!asked?.[0]?.length) return [];
     const collections = collection ? [collection] : this.list(owner).map((entry) => entry.id);
     const scanAtMost = this.settings(owner).compareAtMost;
-    const found = await Promise.all(collections.map((id) => this.vectors.search(owner, id, asked[0]!, candidates, scanAtMost, reader.vectorKey)));
+    let found: Awaited<ReturnType<VectorBackend["search"]>>[];
+    try { found = await Promise.all(collections.map((id) => this.vectors.search(owner, id, asked[0]!, candidates, scanAtMost, reader.vectorKey))); }
+    catch (error) { this.backendNote = `Word search works. The chosen vector store could not compare by meaning: ${errorText(error).slice(0, 160)}`; return []; }
+    if (this.vectors.clearOwner) this.backendNote = "";
     return found.flat().filter((match) => match.score > 0.15).sort((a, b) => b.score - a.score)
       .slice(0, candidates).map((match) => match.chunkId);
   }

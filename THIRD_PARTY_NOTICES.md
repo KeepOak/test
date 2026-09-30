@@ -1,5 +1,25 @@
 # Third-party notices
 
+## Qdrant JavaScript client and Chroma JavaScript client — native vector protocols
+
+`src/vector-store-remote.ts` adapts request construction and native collection/upsert/query/scroll/
+get/delete conventions from these actual Apache-2.0 licensed source files:
+
+- Qdrant `qdrant-js`, immutable revision `38fe9949cb21451052d1cabab2b9a423b50ca19b`:
+  [qdrant-client.ts](https://github.com/qdrant/qdrant-js/blob/38fe9949cb21451052d1cabab2b9a423b50ca19b/packages/js-client-rest/src/qdrant-client.ts),
+  including waited upserts/deletes and cursor-based scroll; generated REST endpoint definitions.
+- Chroma `chroma`, immutable revision `1b4233084158f85011e873a3777dda8d129b27c6`:
+  [ChromaClient.ts](https://github.com/chroma-core/chroma/blob/1b4233084158f85011e873a3777dda8d129b27c6/clients/js/packages/chromadb-core/src/ChromaClient.ts),
+  [Collection.ts](https://github.com/chroma-core/chroma/blob/1b4233084158f85011e873a3777dda8d129b27c6/clients/js/packages/chromadb-core/src/Collection.ts),
+  and their generated v2 `api.ts` endpoint/payload definitions.
+
+Modified for Branch: no SDK dependency or embedding function; owner/generation/dimension namespaces,
+scope validation, bounded responses and pagination, owner-selected policy/credential injection,
+and verified namespace cleanup through the existing deletion journal. These adapters were written
+from reviewed source and have not been validated against a running service in this delivery.
+Original upstream license texts are retained in `licenses/qdrant-js-APACHE-2.0.txt` and
+`licenses/chroma-APACHE-2.0.txt`. Upstream SDK source/package code is not shipped.
+
 ## Ollama JavaScript client — embedding availability helper
 
 The `/api/tags` request and JSON response flow in `src/embeddings.ts` adapts

@@ -5809,8 +5809,8 @@ into text is counted in the knowledge base's note rather than passed over in sil
 `vectors`, and the comparison is done in TypeScript. That is comfortable up to roughly **50,000
 passages in one knowledge base**; past that a real vector database would be the right answer.
 
-There is one alternative you can switch on today: a **database file of your own**, anywhere on this
-computer. `POST /api/knowledge/vectors` holds `vectorsIn` (`database`, the default, or `file`) and
+One alternative is a **database file of your own**, anywhere on this
+computer. `POST /api/knowledge/vectors` holds `vectorsIn` (`database`, the default, `file`, `qdrant` or `chroma`) and
 `vectorsFile` (the full path of that file, such as `D:/branch/vectors.db`). The card **Where your
 vectors are kept** in Documents sets the same two. A large library's vectors can be bigger than
 everything else Branch stores put together, so putting them on another drive keeps the main database
@@ -5823,13 +5823,37 @@ never starts up broken and it never fails a search in silence. And **nothing is 
 changing it**: the vectors you already had stay where they were, and the new place fills up the next
 time you press **Read it again**.
 
-**The hosted vector services are deliberately not built.** Qdrant, Chroma, Pinecone, Weaviate and
-the rest are all real products, and an adapter for each was asked for in the capability audit. None
-is built here, for one reason: nobody running Branch on their own computer is also running one of
-them, an adapter could not be tested on this machine without a network, and each one would be a new
-dependency to talk to a service you do not have. What exists instead is the contract, a second real
-implementation of it, and the worked example below. If you do run one, that example is enough to
-write the adapter in an afternoon.
+**Qdrant and Chroma native adapters.** Library's **Where meaning vectors are kept** chooser can use
+an existing Qdrant REST service or Chroma v2 tenant/database. This is an owner opt-in; Branch installs
+no server, SDK or embedding function. Set `vectorsUrl`, an optional `vectorsSecret` locker name,
+and for Chroma `chromaTenant`/`chromaDatabase` (defaults `default_tenant`/`default_database`). Keys
+are resolved only for the selected destination. The default key headers are `api-key` and
+`x-chroma-token`; the API also accepts `vectorsHeader` and `vectorsTimeoutMs` (500–30,000ms).
+Opening or saving the chooser reads configuration only. A service connection is first used when
+indexing, searching or explicitly deleting; a failure leaves word search available. The owner's
+host/path rules govern local services too, outside services use the ordinary network guard, and a
+task restricted to this computer refuses an off-computer store before resolving its key.
+
+Each physical namespace includes the person, embedding generation and dimensions. Stored payloads
+hold passage identifiers and fingerprints, without passage text. Reads validate scope and generation;
+changed embedding routes never compare equal-size incompatible vectors. Re-read knowledge bases to
+fill a newly selected store. Changing or removing a connection leaves earlier vectors at their
+original destination, so clean the selected service before switching if those should be gone.
+
+**Delete everything** captures the currently selected Qdrant/Chroma connection in its deletion
+journal and deletes only that person's entries in Branch namespaces, across generations, then
+verifies they are empty. It keeps service collections and other owners' entries. Knowledge-base
+files remain on this computer and can be read again. An offline service keeps cleanup pending;
+indexing and meaning search for that person pause until cleanup finishes. Removing or changing the
+configuration does not cancel the journal: restore the same address, tenant/database and locker
+reference to finish. Branch never redirects pending deletion or resolves credentials for a removed
+connection. Earlier destinations are not inventoried automatically and remain the owner's responsibility.
+
+Qdrant listing is bounded to 2,048 collections, Chroma to 2,000 collections, reads to 50,000 passages
+per generation and transport responses to 8 MiB. Exceeding these limits fails visibly and retains
+pending cleanup. Milvus, Elasticsearch, Postgres, Redis, Pinecone, Weaviate, MongoDB and Azure native
+adapters remain unimplemented; QMD retrieval remains outside the accepted scope. This change is
+RES-321's Qdrant/Chroma slice, not delivery of every memory, session or vector backend.
 
 ### Writing your own place to keep the vectors, end to end
 
@@ -5943,7 +5967,7 @@ now), `POST /api/knowledge` with `{ name, sources }`, `POST /api/knowledge/reind
 `{ collection }`, `POST /api/knowledge/search` with `{ collection?, query, limit, filter? }`,
 `POST /api/knowledge/ask` with `{ collection?, question }`, `POST /api/knowledge/attach` with
 `{ collection, attached }`, `POST /api/knowledge/settings` with `{ maxIndexTokens?, compareAtMost? }`,
-`POST /api/knowledge/vectors` with `{ vectorsIn?, vectorsFile? }`,
+`POST /api/knowledge/vectors` with `{ vectorsIn?, vectorsFile?, vectorsUrl?, vectorsSecret?, vectorsHeader?, vectorsTimeoutMs?, chromaTenant?, chromaDatabase? }`,
 `POST /api/knowledge/source` with `{ collection, source }` or
 `{ collection, remove }`, and `DELETE /api/knowledge/{id}`. The tools are `knowledge.collections`,
 `knowledge.search` and `knowledge.ask` under `documents.read`, and `knowledge.create`,
@@ -6717,9 +6741,10 @@ going to be built. They are written down here so nobody goes looking for them.
 - **No screen control on a Mac or Linux outside the app.** There the screen and keyboard tools work
   only inside the Branch Agent app, whose own window carries the Stop notice; see "Using this
   computer's screen and keyboard".
-- **No outside vector databases.** Everything Branch remembers is searched in the SQLite file beside
-  your own data. There are no connectors to Postgres, Redis, Qdrant, Pinecone, Chroma, Weaviate,
-  MongoDB or Azure, because that would mean sending what you said to a server somewhere else.
+- **Outside vector databases need an explicit choice.** The default is SQLite on this computer.
+  Qdrant and Chroma are owner-selected native knowledge-base vector stores; the other requested
+  native database adapters remain pending. Saved facts still use the built-in memory backend or
+  the explicitly selected Branch-protocol outside memory service.
 - **No crash reporting service.** Nothing is sent to Sentry or anywhere like it. Problems are
   recorded in the traces and counters on this computer, where only you can read them.
 - **No company sign-in.** There is no OpenID Connect, no single sign-on and no identity provider.

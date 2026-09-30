@@ -216,8 +216,8 @@ import { MemoryMirror, readOnlyRefusal, registerMemoryMirror } from "./memory-mi
 // bucket-18: memory history (A2317)
 import { MemoryHistory, registerMemoryHistory } from "./memory-git.js";
 import { EphemeralDocuments, EphemeralRetriever, registerEphemeralDocuments } from "./memory-ephemeral.js";
-import { CachedEmbeddings, asEmbeddings } from "./embeddings.js";
-import { localRuntimeFetch } from "./local-policy.js";
+import { CachedEmbeddings, asEmbeddings, onThisComputer } from "./embeddings.js";
+import { assertLocalRuntimeAllowed, localRuntimeFetch } from "./local-policy.js";
 import { MemoryConsolidation } from "./memory-consolidate.js";
 import { PracticeWorkspace } from "./practice-workspace.js";
 import { ProviderPlugins } from "./provider-plugins.js";
@@ -1276,11 +1276,23 @@ ${result.output || "(it said nothing)"}`;
   const knowledgeBases = new KnowledgeBases(store, files, runtime.models,
     { charge: (runId, tokens) => store.addUsage(runId, tokens, 0, undefined, false) }, undefined, guardedFetch);
   knowledgeBases.embeddingSources.localFetch = embeddingLocalFetch;
+  knowledgeBases.vectorServiceDependencies = {
+    fetchFor: (endpoint) => onThisComputer(endpoint) ? embeddingLocalFetch(endpoint) : guardedFetch,
+    current: (owner, settings) => JSON.stringify(knowledgeBases.vectorStoreSettings(owner)) === JSON.stringify(settings),
+    assertAllowed: (endpoint, target) => { if (onThisComputer(endpoint)) assertLocalRuntimeAllowed(web.policy, new URL(target)); else web.policy.assertAllowed(target); },
+    key: async (owner, settings) => {
+      const current = knowledgeBases.vectorStoreSettings(owner);
+      if (JSON.stringify(current) !== JSON.stringify(settings)) throw new Error("This vector service is no longer the one selected, so its key was not sent");
+      return (await store.secrets.resolve(owner, store.projects.active(owner).id, [settings.vectorsSecret],
+        { purpose: `Vectors for the selected ${settings.vectorsIn} service` }))[settings.vectorsSecret]!;
+    },
+  };
   knowledgeBases.reranker = (owner, query, passages, signal) => retrieval.order(owner, query, passages, signal);
   // Wave 9: the vectors go wherever the owner asked. A file that cannot be opened is one sentence on
   // the Documents panel and Branch's own database carries on holding them, so nothing is ever lost.
   {
-    const chosen = chooseVectorStore(knowledgeBases.vectorStoreSettings(runtime.owner), knowledgeBases.vectors);
+    const chosen = chooseVectorStore(knowledgeBases.vectorStoreSettings(runtime.owner), knowledgeBases.vectors,
+      { owner: runtime.owner, dependencies: knowledgeBases.vectorServiceDependencies });
     knowledgeBases.vectors = chosen.backend;
     knowledgeBases.backendNote = chosen.note;
   }
@@ -2323,6 +2335,7 @@ export * from "./memory-consolidate.js";
 export * from "./embeddings.js";
 export * from "./vector-store.js";
 export * from "./vector-store-file.js";
+export * from "./vector-store-remote.js";
 export * from "./retrieval-filters.js";
 export * from "./retrieval-pipeline.js";
 export * from "./context-providers.js";
