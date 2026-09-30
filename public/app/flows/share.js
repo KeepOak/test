@@ -60,19 +60,28 @@ function draw() {
     foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
 }
 
+/* The window is not behind the App lock. */
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
+/* Share opens asked, and dialogs the owner closed (close button or Escape): a Share still being read must not open after
+   a newer one, or over a dialog opened or closed meanwhile. */
+let shareRequest = 0, dialogsClosed = 0;
+
 async function open(kind) {
   closePop();
-  if (!ownerHere()) return;
-  const profile = activeId(), source = S.chat;
+  if (!ownerHere() || !unlocked()) return;
+  const profile = activeId(), source = S.chat, view = S.view, opened = dialog(), closed = dialogsClosed, request = ++shareRequest;
   const tr = kind === "trunk" ? trunkOf(S.chat) : null;
   if (!S.chat || (kind === "trunk" && !tr)) return;
-  Object.assign(SH, { kind, id: tr ? tr.id : source, tab: "people", card: null, targets: [], agent: "", result: "" });
+  const id = tr ? tr.id : source;
+  const still = () => request === shareRequest && ownerHere() && activeId() === profile && unlocked() && S.view === view
+    && S.chat === source && SH.id === id && dialog() === opened && dialogsClosed === closed;
+  Object.assign(SH, { kind, id, tab: "people", card: null, targets: [], agent: "", result: "" });
   try {
     const [card, chats] = await Promise.all([api("people/settings"), kind === "conv" ? api("channels") : Promise.resolve({})]);
-    if (!ownerHere() || activeId() !== profile || S.chat !== source || SH.id !== (tr ? tr.id : source)) return;
+    if (!still()) return;
     SH.card = card;
     SH.targets = Array.isArray(chats.handoffTargets) ? chats.handoffTargets : [];
-  } catch (error) { if (ownerHere() && activeId() === profile) toast(error.message); return; }
+  } catch (error) { if (still()) toast(error.message); return; }
   draw();
 }
 
@@ -80,7 +89,7 @@ let handingOff = false;
 async function handoff(el) {
   if (!ownerHere() || handingOff || SH.kind !== "conv" || SH.tab !== "handoff" || !SH.id) return;
   const source = SH.id, profile = activeId(), opened = dialog();
-  const current = () => ownerHere() && activeId() === profile && dialog() === opened && opened?.isConnected
+  const current = () => ownerHere() && activeId() === profile && unlocked() && dialog() === opened && opened?.isConnected
     && S.chat === source && SH.kind === "conv" && SH.id === source && SH.tab === "handoff";
   const to = el.dataset.v;
   let line = "";
@@ -122,6 +131,8 @@ async function saveFile() {
 }
 
 export function init() {
+  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) dialogsClosed += 1; }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && dialog()) dialogsClosed += 1; }, true); // main.js closes it on Escape
   markLive(["share-handoff", "sw:share-assistant"]);
   on("share-handoff", handoff);
   document.addEventListener("input", (event) => {
