@@ -11,6 +11,7 @@ import { roundsOf } from "./rounds.js";
 import { openRouterAddress, openRouterCompanies } from "./openrouter.js";
 import { lockedDown } from "../lockdown.js";
 import { errorText, validationText } from "../request-errors.js";
+import { checkCostThresholds, thresholdProvider } from "./cost-thresholds.js";
 
 /**
  * R17-E: the screen's way in.
@@ -49,11 +50,13 @@ function requireOwnerHere(store: Store): void {
 
 function view(app: SavingsApp) {
   const { store, runtime } = app;
+  requireOwnerHere(store);
   const presets = [...runtime.models.presets.values()];
   const mixtureIds = new Set(wantedMixtures(store, runtime.owner, runtime.models).map((mixture) => `${mixturePrefix}${mixture.id}`));
   return {
     values: allSavings(store, runtime.owner),
-    connections: presets.filter((preset) => !mixtureIds.has(preset.id)).map((preset) => ({ id: preset.id, name: preset.name, provider: preset.provider.name })),
+    connections: presets.filter((preset) => !mixtureIds.has(preset.id)).map((preset) => ({ id: preset.id, name: preset.name, provider: preset.provider.name,
+      thresholdProvider: thresholdProvider(preset), model: preset.model })),
     liveMixtures: presets.filter((preset) => mixtureIds.has(preset.id)).map((preset) => preset.id),
     keptWarmProviders,
     /** True when an OpenRouter connection is set up, so its list of companies can be asked for. */
@@ -66,6 +69,7 @@ function checkValues(app: SavingsApp, card: SavingsCard, values: Record<string, 
   const known = (id: unknown) => id === null || id === undefined || (typeof id === "string" && app.runtime.models.presets.has(id));
   const notSetUp = () => new SavingsApiError(400, "That connection is not set up. Pick one from the list.");
   if (card === "phases" && !known(values.planModel)) throw notSetUp();
+  if (card === "costThresholds") checkCostThresholds(app.store, app.runtime.owner, app.runtime.models, values);
   if (card === "difficulty" && ![values.classifierModel, values.easyModel, values.hardModel].every(known)) throw notSetUp();
   if (card === "mixtures") {
     const parsed = MixtureSettingsSchema.parse({ ...readSavings(app.store, app.runtime.owner, "mixtures"), ...values });

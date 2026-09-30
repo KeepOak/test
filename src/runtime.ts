@@ -171,6 +171,7 @@ import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
 import * as savings from "./model-savings/hook.js";
 import { KeepAlive } from "./model-savings/keep-alive.js";
+import { thresholdPreset } from "./model-savings/cost-thresholds.js";
 // --- end R17-E ---
 import { Orchestration, PlanOnlyAnswer, orchestrationSettings, type ConductOptions, type PlanAnswer, type StoredPlan } from "./orchestration.js";
 import { patternNote, patternOfTool, patternQuestion, type TeamPattern } from "./team-pattern.js"; // eng-trunk-controls
@@ -1450,6 +1451,7 @@ export class Runtime {
       signal: AbortSignal.any([parent.signal, timeout.signal]),
       permissions: new Set(permissions),
       depth: parent.depth + 1,
+      ownCopy: options.ownCopy === true, delegates: options.delegates === true,
       ...(options.agent ? { agent: options.agent } : {}),
     };
     let connection: HelperConnection | undefined;
@@ -1956,6 +1958,12 @@ ${run.output.slice(0, 6000)}`;
     if (!parent) this.drainFollowUps(run.sessionId);
     return settled;
   }
+  /**
+   * A run made on a task's behalf outside its own loop (a list filter's decision): it keeps the task's privacy (a task
+   * that stays on this computer keeps it here too) and its spending counts against the task's cap. Left when it ends.
+   */
+  joinSideRun(runId: string, parentRunId: string): void { this.joinSpend(runId, parentRunId); }
+  leaveSideRun(runId: string): void { this.leaveSpend(runId); }
   /** R17-S09: a sub-task's spending counts against the task at the top of its tree. */
   private joinSpend(runId: string, parentRunId: string | undefined): void {
     if (parentRunId && this.staysHere.has(parentRunId)) this.staysHere.add(runId);
@@ -2515,7 +2523,8 @@ ${run.output.slice(0, 6000)}`;
     // mac7/smoke-fixes (B5): nobody can be asked about the plan. A chat app is a person who can
     // answer, so it is not one of them (nobodyToAskAboutPlan in src/coding/project-tests.ts).
     const conductor = this.orchestration.conductor(run,
-      { ...conduct, ...planned, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
+      { ...conduct, ...planned, signal: context.signal, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
+        checkLifecycle: () => this.checkPaused(run.id),
         memory: { scope: memoryScope(this.store, context), agent: memoryAgent(context) } },
       (aside) => this.aside(run, context, route, aside));
     const opening = await this.openConductor(run, conductor);
@@ -2719,7 +2728,7 @@ ${run.output.slice(0, 6000)}`;
             if (outOfSteps(context, outcome.reason)) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
             throw outcome.reason;
           }
-          const call = group[at]!, result = await this.filteredList(run, call, outcome.value);
+          const call = group[at]!, result = await this.filteredList(run, context, call, outcome.value);
           const message: Message = { role: "tool", toolCallId: call.id, content: this.clipped(run, call, JSON.stringify(result)) };
           messages.push(message); ids.push(null);
           this.store.message(run.sessionId, message);
@@ -2733,14 +2742,14 @@ ${run.output.slice(0, 6000)}`;
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
-  listFilter: ((rule: string, lines: string[]) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"]; dryRun?: boolean }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
   /**
    * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
    * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
    * so the owner still sees every line, and Look inside says what was kept (list.filtered). Anything that goes wrong,
    * or a model that is not sure, leaves the list whole.
    */
-  private async filteredList(run: Run, call: ToolCall, result: unknown): Promise<unknown> {
+  private async filteredList(run: Run, context: ToolContext, call: ToolCall, result: unknown): Promise<unknown> {
     if (!this.listFilter || !/(^|\.|_)(search|list|glob|grep|find|inbox|messages|results)/i.test(call.name)) return result;
     // A tool's answer reaches the task wrapped ({ ok, result }); the list is inside it, and the wrapper is kept.
     const wrapped = !!result && typeof result === "object" && "ok" in result && "result" in result;
@@ -2749,7 +2758,10 @@ ${run.output.slice(0, 6000)}`;
     if (!found || found.items.length < 2) return result;
     const lines = found.items.map((item) => (typeof item === "string" ? item : JSON.stringify(item) ?? ""));
     try {
-      const said = await this.listFilter(run.prompt, lines);
+      // The task's own Stop and budget: a filter never runs on after the task stops, nor past what it may spend.
+      const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget, runId: run.id,
+        ...(context.trunk ? { trunk: context.trunk } : {}), ...(context.trunkKeys ? { trunkKeys: context.trunkKeys } : {}),
+        ...(context.dryRun ? { dryRun: true } : {}) });
       if (!said) return result;
       if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
       const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);
@@ -3989,6 +4001,14 @@ ${run.output.slice(0, 6000)}`;
     // A task that must stay on this computer never reaches a connection elsewhere, whichever part of it asks:
     // a side job that names its own connection is answered by the one here instead, and with none here it stops.
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
+    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
+    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
+    preset = thresholdPreset(this.store, this.models, this.owner, preset, { runId: run.id,
+      allowFallback: !pinnedHelper && !this.helperModels.has(run.id),
+      mayUse: (next) => (!this.staysHere.has(run.id) || presetRunsLocally(next))
+        && (!context.trunkKeys || trunkSignIns || !isSignInConnection(next))
+        && this.models.canDo(next, "tools") && (!shape || this.models.canDo(next, "json-mode"))
+        && (!messages.some((message) => message.images?.length) || this.models.canDo(next, "vision")) });
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
     // The owner's "auto" limits are no limit on a sign-in or a model here, and finite on a key billed per token; a key's
@@ -4003,7 +4023,6 @@ ${run.output.slice(0, 6000)}`;
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
-    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
@@ -4018,7 +4037,6 @@ ${run.output.slice(0, 6000)}`;
       messages, tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
       shape: shape?.name ?? null,
     };
-    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
     const kept = pinnedHelper ? null : this.requestCache.look(cacheKey);
     if (kept) return this.shownThinking(this.answeredFromCache(run, preset, kept, input));
     context.budget.charge(input);
@@ -4047,7 +4065,8 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}),
         // An installed program answering as the model (Claude Code, Codex) keeps its own tools only for the owner's own
         // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
-        ...(runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
+        // A shaped answer asked with no tools of Branch's (a decision) is words only, whoever asked it.
+        ...(runOrigin(this.store, run.id).source === "owner" && !(shape && !context.permissions.size) ? {} : { programTools: false }) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
@@ -4093,6 +4112,7 @@ ${run.output.slice(0, 6000)}`;
         preset: preset.id,
         provider: preset.provider.name,
         model: preset.model,
+        ...(preset.catalogId ? { catalogId: preset.catalogId } : {}),
       });
       // Dogfood B7: a real model has answered, so the first-run card is done with (src/onboarding.ts). An empty
       // reply is no answer (NAS ca8db88): only words, or a tool call, count.
@@ -4488,6 +4508,9 @@ ${run.output.slice(0, 6000)}`;
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
     const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
+    // A helper's lead controls whether it may hand work on, including a named call omitted from its catalogue.
+    const handOn = this.handOnReason(tool, args, context);
+    if (handOn) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: handOn };
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
     const screen = reachesScreen(tool, permission, args, this.registry.declaresScreen(tool))
@@ -4551,7 +4574,7 @@ ${run.output.slice(0, 6000)}`;
     // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
     const loosening = fullAccess ? settingsHold(tool, args) : null;
-    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? ownMessageHold(tool) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? ownMessageHold(tool) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
@@ -5304,8 +5327,23 @@ ${run.output.slice(0, 6000)}`;
     const outcome = await this.runToolCall(call, context, prepared, shown);
     return ignored.length && outcome && typeof outcome === "object" ? { ...outcome, note: ignoredNote(ignored) } : outcome;
   }
+  /** A lead's ceiling and a specialist's target rule are independent, narrowing restrictions. */
+  private handOnReason(name: string, args: unknown, context: ToolContext): string | null {
+    const ceiling = handOnRefusal(name, context);
+    if (!ceiling) return null;
+    if (name === "delegate.handoff" && args && typeof args === "object" && !Array.isArray(args)) {
+      const specialist = (args as { specialist?: unknown }).specialist;
+      if (typeof specialist === "string") {
+        const target = this.handoffs.refusal(context.agent, specialist);
+        if (target) return `${target} ${ceiling}`;
+      }
+    }
+    return ceiling;
+  }
   /** The registry's own refusal (src/registry.ts execute) for a tool that is not there or not this task's, else null. */
-  private outsideReach(name: string, context: ToolContext): string | null {
+  private outsideReach(name: string, context: ToolContext, args: unknown): string | null {
+    const handOn = this.handOnReason(name, args, context);
+    if (handOn) return handOn;
     const permission = this.registry.permissionOf(name);
     if (!permission) return `Unknown tool: ${name}`;
     return context.permissions.has(permission) ? null : `Permission denied: ${permission}`;
@@ -5324,7 +5362,7 @@ ${run.output.slice(0, 6000)}`;
     if (call.name === toolNoteName) return this.noteTool(call, context, args);
     // Q050 follow-up: a tool that does not exist, or one this task was not given, is refused here as the registry would
     // refuse it when run, before any rule, question or yes is weighed: a question about it could never lead anywhere.
-    const outside = this.outsideReach(call.name, context);
+    const outside = this.outsideReach(call.name, context, args);
     if (outside) { this.store.event(context.runId, "tool.failed", { name: call.name, id: call.id, error: outside }); return { ok: false, error: outside }; }
     const blocked = this.reconciliationBlock(context, call);
     if (blocked) { this.store.event(context.runId, "reconciliation.required", { name: call.name, id: call.id }); return { ok: false, error: blocked }; }

@@ -625,6 +625,23 @@ export class Store {
     return this.db.prepare("SELECT id FROM tasks WHERE owner=? AND created_at >= ? ORDER BY created_at DESC LIMIT ?")
       .all(owner, since, limit).map((row) => String(row.id));
   }
+  /** Weekly recap: finish time includes a task started earlier; deleted conversations remain out of sight. */
+  completedRunsBetween(owner: string, since: string, until: string, limit: number): Run[] {
+    return this.db.prepare("SELECT * FROM tasks WHERE owner=? AND status='completed' AND updated_at>=? AND updated_at<=? "
+      + "AND session_id NOT IN (SELECT session_id FROM conversation_marks WHERE deleted_at IS NOT NULL) "
+      + "ORDER BY updated_at DESC, rowid DESC LIMIT ?")
+      .all(owner, since, until, limit).map((row) => this.toRun(row));
+  }
+  /** Original Trunk attribution for an already owner-scoped list, read once rather than loading every task's events. */
+  runTrunkIds(ids: readonly string[]): Map<string, string> {
+    const rows = this.db.prepare("SELECT run_id, json_extract(data,'$.trunkId') AS trunk FROM events "
+      + "WHERE kind='trunk.turn' AND run_id IN (SELECT value FROM json_each(?)) ORDER BY id")
+      .all(JSON.stringify(ids));
+    const trunks = new Map<string, string>();
+    for (const row of rows) if (typeof row.trunk === "string" && row.trunk && !trunks.has(String(row.run_id)))
+      trunks.set(String(row.run_id), row.trunk);
+    return trunks;
+  }
   /** Settings › Permissions › Messages per conversation per hour: how many tasks a conversation started since then. */
   sessionTasksSince(sessionId: string, since: string): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);
@@ -1138,7 +1155,7 @@ export class Store {
     const result = this.db
       .prepare(
         `UPDATE schedules SET data=json_set(data,'$.statusBeforeTrigger',json_extract(data,'$.status'),'$.status','running'),updated_at=?
-         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed')
+         WHERE owner=? AND id=? AND json_extract(data,'$.status') IN ('pending','paused','completed','failed','interrupted')
          AND (? IS NULL OR NOT EXISTS (SELECT 1 FROM json_each(data,'$.triggerSlots') WHERE json_extract(value,'$.slot')=?))
          RETURNING *`,
       )

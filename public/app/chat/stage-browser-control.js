@@ -22,7 +22,7 @@ import { networkLearningButtons, initNetworkLearning } from './network-learning.
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
   busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
-  error: "", typed: "", opening: false, touch: "scroll", downloadsOpen: false, composition: null, names: { name: "", runId: null } };
+  error: "", typed: "", opening: false, findOpen: false, findText: "", findStatus: "", touch: "scroll", downloadsOpen: false, composition: null, names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const visible = () => B.shown && !document.hidden && !locked();
@@ -106,7 +106,7 @@ export function watchOwnerBrowser(sid, show, onChange, names = {}) {
   B.onChange = onChange;
   B.names = { name: names.name ?? "", runId: names.runId ?? null };
   const next = show && sid ? sid : null;
-  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, downloadsOpen: false }); }
+  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, findOpen: false, findText: "", findStatus: "", downloadsOpen: false }); }
   if (next) B.sid = next;
   B.shown = !!next;
   if (!visible()) { if (B.reading || B.timer || owned()) disconnect(); return; }
@@ -188,6 +188,17 @@ function statusHTML() {
   const title = B.opening ? "" : `<b>${t("window.chat.stage.opening-failed")}</b>`;
   return `<div class="browser-status7 ob7-status" role="status">${title}<small>${esc(said)}</small></div>`;
 }
+function extrasHTML() {
+  const drive = canDrive() && hasOwnerBrowser() && B.ready, zoom = B.page?.tabs?.find(tab => tab.active)?.zoom;
+  const button = (act, label, accessible = label) => `<button type="button" class="btn ghost sm" aria-label="${esc(accessible)}" data-act="owner-browser-${act}"${drive ? "" : " disabled"}>${esc(label)}</button>`;
+  const find = `<button type="button" class="btn ghost sm" data-act="owner-browser-find-show" aria-expanded="${B.findOpen}">${esc(t("window.chat.stage.ob.find"))}</button>`;
+  const zoomed = typeof zoom === "number" ? `${Math.round(zoom * 100)}%` : t("window.chat.stage.ob.zoom");
+  const bar = `<div class="ob7-extras">${find}${button("zoom-out", "−", t("window.chat.stage.ob.zoom-out"))}${button("zoom-reset", zoomed, t("window.chat.stage.ob.zoom-reset"))}${button("zoom-in", "+", t("window.chat.stage.ob.zoom-in"))}${button("pdf", t("window.chat.stage.ob.pdf"))}</div>`;
+  if (!B.findOpen) return bar;
+  return bar + `<form class="ob7-find" data-form="owner-browser-find"><input id="ob7-find" autocomplete="off" maxlength="300" aria-label="${esc(t("window.chat.stage.ob.find"))}" value="${esc(B.findText)}">
+    <button type="submit" class="btn ghost sm"${drive ? "" : " disabled"}>${esc(t("window.chat.stage.ob.find-next"))}</button>${button("find-prev", t("window.chat.stage.ob.find-prev"))}
+    <button type="button" class="btn ghost sm" data-act="owner-browser-find-close">${esc(t("window.chat.stage.ob.find-close"))}</button><small role="status">${esc(B.findStatus)}</small></form>`;
+}
 function pageHTML() {
   const ready = !!B.frame, input = owned() || free();
   const empty = !hasOwnerBrowser() ? t("window.chat.stage.ob.empty") : B.page?.borrowed ? t("window.chat.stage.borrowed-preview")
@@ -209,7 +220,7 @@ function downloadsHTML() {
 }
 /** The whole browser, drawn at the stage's 1280 × 800 like the task's live view. */
 export function ownerBrowserHTML() {
-  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${statusHTML()}${downloadsHTML()}${pageHTML()}</div></div>`;
+  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${extrasHTML()}${statusHTML()}${downloadsHTML()}${pageHTML()}</div></div>`;
 }
 /** What the page is waiting for, when it is waiting for a person rather than the task. */
 export function ownerBrowserNeeds() {
@@ -281,6 +292,10 @@ function accept(answer, path, body) {
   const failed = answer.status === "refused" || answer.status === "failed" || answer.ok === false;
   if (failed) B.error = answer.reason || answer.error || t("window.chat.stage.ob.failed");
   else if (path === "action") B.error = "";
+  if (path === "action" && answer.status === "ran" && body.arguments?.kind === "find" && typeof answer.result?.found === "boolean")
+    B.findStatus = t(answer.result.found ? "window.chat.stage.ob.find-found" : "window.chat.stage.ob.find-missing");
+  if (path === "action" && answer.status === "ran" && body.tool === "browser.pdf" && answer.result?.path)
+    toast(t("window.chat.stage.ob.pdf-saved", { path: answer.result.path }));
   // An input's answer carries the page as it is now: drawn at once, and the next input is aimed at it.
   if (path === "action" && answer.view?.status === "ready" && B.control) { applyView(answer.view); return; }
   if (B.control && !failed) staleFrame(); else clearFrame();
@@ -415,6 +430,35 @@ function pointerUp(event) {
 }
 const inPage = (event) => event.target.closest?.("#stage7 .owner-browser7-page");
 
+function initBrowserExtras() {
+  const showFind = () => { B.findOpen = true; changed(true); document.getElementById("ob7-find")?.focus(); };
+  const findText = (backwards = false) => {
+    const text = B.findText;
+    if (text.trim()) void inOrder(() => action("browser.owner_input", { kind: "find", text, backwards }));
+  };
+  const zoom = (by) => {
+    void inOrder(() => {
+      const current = B.page?.tabs?.find(tab => tab.active)?.zoom ?? 1;
+      const factor = by === 0 ? 1 : Math.max(0.5, Math.min(2, Math.round((current + by) * 100) / 100));
+      return action("browser.owner_input", { kind: "zoom", factor });
+    });
+  };
+  on("owner-browser-find-show", showFind);
+  on("owner-browser-find-close", () => { B.findOpen = false; changed(true); });
+  on("owner-browser-find-prev", () => findText(true));
+  on("owner-browser-zoom-out", () => zoom(-0.1)); on("owner-browser-zoom-in", () => zoom(0.1)); on("owner-browser-zoom-reset", () => zoom(0));
+  on("owner-browser-pdf", () => { void inOrder(() => action("browser.pdf", {})); });
+  document.addEventListener("submit", event => {
+    if (event.target.matches?.('#stage7 form[data-form="owner-browser-find"]')) { event.preventDefault(); findText(); }
+  }, true);
+  document.addEventListener("input", event => { if (event.target.id === "ob7-find") { B.findText = event.target.value; B.findStatus = ""; } }, true);
+  document.addEventListener("keydown", event => {
+    if (event.isComposing || event.keyCode === 229 || !event.target.closest?.("#stage7 .owner-browser7")) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") { event.preventDefault(); event.stopImmediatePropagation(); showFind(); }
+    else if (event.target.id === "ob7-find" && event.key === "Escape") { event.preventDefault(); B.findOpen = false; changed(true); }
+  }, true);
+}
+
 export function initOwnerBrowser() {
   document.addEventListener("toggle", (event) => {
     if (event.target.matches?.("#stage7 .ob7-downloads")) B.downloadsOpen = event.target.open;
@@ -424,8 +468,10 @@ export function initOwnerBrowser() {
     inOrder: work => { flushText(); return inOrder(work); } });
   markLive(["owner-browser-adopt", "owner-browser-stop", "owner-browser-take", "owner-browser-handback",
     "owner-browser-tab", "owner-browser-tab-close", "owner-browser-new-tab", "owner-browser-back", "owner-browser-forward",
-    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys", "owner-browser-keys", "owner-browser-touch",
-    "owner-browser-copy", "owner-browser-paste", "owner-browser-release"]);
+    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys", "sw:ob7-find", "owner-browser-keys", "owner-browser-touch",
+    "owner-browser-copy", "owner-browser-paste", "owner-browser-release",
+    "owner-browser-find-show", "owner-browser-find-close", "owner-browser-find-prev", "owner-browser-zoom-out", "owner-browser-zoom-reset", "owner-browser-zoom-in", "owner-browser-pdf"]);
+  initBrowserExtras();
   on("owner-browser-keys", () => { document.getElementById("ob7-keys")?.focus(); });
   on("owner-browser-touch", () => { B.touch = B.touch === "scroll" ? "point" : "scroll"; changed(true); });
   on("owner-browser-copy", () => { void copy(); });

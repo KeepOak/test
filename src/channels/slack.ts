@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
 import { EditedWords } from "./edited-words.js";
@@ -333,29 +334,99 @@ export class SlackAdapter implements ChannelAdapter {
   // address; 3. files.completeUploadExternal shares the file in the chat, in the thread if one is named.
   readonly maxFileBytes = 100 * 1024 * 1024;
   async sendFile(chatId: string, file: OutgoingFile, replyToMessageId?: string): Promise<string | undefined> {
+    const fileId = await this.uploadBytes(file);
+    await this.call("files.completeUploadExternal", this.options.token, {
+      files: [{ id: fileId, title: file.name }], channel_id: chatId,
+      ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
+    });
+    return fileId;
+  }
+  private async uploadBytes(file: OutgoingFile): Promise<string> {
     const form = new URLSearchParams({ filename: file.name, length: String(file.bytes.byteLength) });
     const response = await this.fetch(`${this.base}/files.getUploadURLExternal`, {
       method: "POST", headers: { authorization: `Bearer ${this.options.token}`, "content-type": "application/x-www-form-urlencoded" },
-      body: form.toString(), signal: AbortSignal.timeout(20000),
+      body: form.toString(), redirect: "error", signal: AbortSignal.timeout(20000),
     });
+    this.rateLimit(response);
     const slot = z.object({ ok: z.boolean(), error: z.string().optional(), upload_url: z.string().url().optional(), file_id: z.string().optional() })
       .passthrough().parse(await response.json());
     if (!slot.ok || !slot.upload_url || !slot.file_id) throw new Error(`Slack files.getUploadURLExternal failed: ${slot.error ?? response.status}`);
     if (!/^https:\/\/([a-z0-9-]+\.)*slack\.com\//i.test(slot.upload_url)) throw new Error("Slack gave an upload address outside slack.com"); // R17-C
     const upload = await this.fetch(slot.upload_url, { method: "POST", body: new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }),
-      signal: AbortSignal.timeout(120000) });
+      redirect: "error", signal: AbortSignal.timeout(120000) });
+    this.rateLimit(upload);
     if (!upload.ok) throw new Error(`Slack would not take the file (${upload.status})`);
-    await this.call("files.completeUploadExternal", this.options.token, {
-      files: [{ id: slot.file_id, title: file.name }], channel_id: chatId,
-      ...(file.caption ? { initial_comment: toMrkdwn(file.caption) } : {}), ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}),
-    });
     return slot.file_id;
+  }
+  private readonly pictures = new Map<string, { chatId: string; peer: string; fileId: string; digest: string }>();
+  private async pictureDM(chatId: string, peer?: string): Promise<string> {
+    if (!/^[A-Z][A-Z0-9]+$/.test(chatId)) throw new Error("Slack browser pictures require a direct message.");
+    const result = await this.call("conversations.info", this.options.token, { channel: chatId, include_num_members: true });
+    const { channel } = z.object({ channel: z.object({ id: z.string(), is_im: z.literal(true), is_mpim: z.literal(false).optional(),
+      is_ext_shared: z.literal(false).optional(), num_members: z.literal(2).optional(), user: z.string().min(1) }).passthrough() }).passthrough().parse(result);
+    if (channel.id !== chatId || (peer && channel.user !== peer)) throw new Error("The Slack picture recipient changed.");
+    return channel.user;
+  }
+  private pictureBlocks(file: OutgoingFile, fileId: string, buttons: { label: string; value: string }[]) {
+    const caption = (file.caption || file.name).slice(0, 2000);
+    return { text: slackText(caption, { plain: true }), blocks: [
+      { type: "image", block_id: `branch-screen-${randomUUID()}`, slack_file: { id: fileId }, alt_text: caption },
+      { type: "section", text: { type: "plain_text", text: caption, emoji: false } },
+      ...(buttons.length ? [{ type: "actions", elements: buttons.slice(0, 25).map((button, index) => ({ type: "button",
+        action_id: `branch_answer_${index}`, value: button.value.slice(0, 2000), text: { type: "plain_text", text: button.label.slice(0, 75) } })) }] : []),
+    ] };
+  }
+  private pictureDigest(file: OutgoingFile): string {
+    if (!["image/jpeg", "image/png", "image/gif"].includes(file.mediaType) || !file.bytes.byteLength || file.bytes.byteLength > 2 * 1024 * 1024)
+      throw new Error("Slack browser pictures must be supported images of at most 2 MB.");
+    return createHash("sha256").update(file.bytes).digest("hex");
+  }
+  private async privatePicture(file: OutgoingFile): Promise<string> {
+    const fileId = await this.uploadBytes(file);
+    // Complete without channel_id: only this bot has the file; the image block is the sharing surface.
+    await this.call("files.completeUploadExternal", this.options.token, { files: [{ id: fileId, title: file.name }] });
+    return fileId;
+  }
+  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const digest = this.pictureDigest(file), peer = await this.pictureDM(chatId), fileId = await this.privatePicture(file);
+    try {
+      await this.pictureDM(chatId, peer);
+      const result = await this.call("chat.postMessage", this.options.token, { channel: chatId, ...this.pictureBlocks(file, fileId, buttons),
+        ...(threadOf(replyToMessageId) ? { thread_ts: threadOf(replyToMessageId) } : {}) });
+      const { ts } = z.object({ ts: z.string().regex(/^\d+\.\d+$/) }).passthrough().parse(result);
+      this.pictures.set(ts, { chatId, peer, fileId, digest });
+      if (this.pictures.size > 200) this.pictures.delete(this.pictures.keys().next().value!);
+      return ts;
+    } catch (error) {
+      // A network error may follow a successful post; keep its private image instead of breaking that message.
+      throw error;
+    }
+  }
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string }[]): Promise<void> {
+    const previous = this.pictures.get(messageId);
+    if (!previous || previous.chatId !== chatId) throw new Error("Slack: that picture was not sent in this direct message.");
+    const digest = this.pictureDigest(file); await this.pictureDM(chatId, previous.peer);
+    const fileId = digest === previous.digest ? previous.fileId : await this.privatePicture(file);
+    try {
+      await this.pictureDM(chatId, previous.peer);
+      await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, ...this.pictureBlocks(file, fileId, buttons) });
+      this.pictures.set(messageId, { ...previous, fileId, digest });
+    } catch (error) {
+      // The update may have reached Slack before a network failure; retain its private upload.
+      throw error;
+    }
+    if (fileId !== previous.fileId) await this.call("files.delete", this.options.token, { file: previous.fileId }).catch(() => undefined);
   }
   /** CHAT-094: a spoken reply, as an audio file in the chat. */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
     return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio }, replyToMessageId);
   }
   // ---- end R17-C ----
+  private rateLimit(response: Response): void {
+    if (response.status !== 429) return;
+    const seconds = Number(response.headers.get("retry-after"));
+    throw Object.assign(new Error("Slack asked us to slow down"), { retryAfter: Number.isFinite(seconds) && seconds > 0 ? seconds : 1 });
+  }
   /** One Web API request. A `gate` (an owner's own-message edit or delete) is checked last before sending, and its
       signal aborts the request, including while the address is still being checked. */
   private async call(method: string, token: string, body: unknown, gate?: SendGate): Promise<unknown> {
@@ -365,6 +436,7 @@ export class SlackAdapter implements ChannelAdapter {
       method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
       body: JSON.stringify(body), signal,
     });
+    this.rateLimit(response);
     const parsed = z.object({ ok: z.boolean(), error: z.string().optional() }).passthrough().parse(await response.json());
     if (!parsed.ok) throw new Error(`Slack ${method} failed: ${parsed.error ?? response.status}`);
     return parsed;

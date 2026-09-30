@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { activeRuns, QUEUE_ACTOR, schedule, waitingRuns, waitingWords } from "../scripts/ci-queue.mjs";
+import { activeRuns, github, QUEUE_ACTOR, schedule, waitingRuns, waitingWords } from "../scripts/ci-queue.mjs";
 
 const wait = (pr, created, priority = false) => ({ pr, runId: pr * 10, created, priority });
 
@@ -128,4 +128,30 @@ test("a run that must wait is marked waiting before the queue tries any write", 
   assert.ok(main.indexOf("held=true") < main.indexOf("await rerun(api, decision.rerun)"));
   assert.match(source, /async function attempt\(what, call\) \{\n  try \{/, "each write is caught on its own");
   assert.doesNotMatch(main, /await api\("POST"/, "every write in main goes through attempt()");
+});
+
+test("a passing GitHub error is tried again, so a run that is to wait is still cancelled; a refusal is not", async () => {
+  const answer = (status) => ({ ok: status < 300, status, text: async () => "", json: async () => ({}) });
+  const seen = [];
+  const replies = [502, 503, 202];
+  const api = github("t", "o/r", { get: async (url, init) => { seen.push(init.method); return answer(replies.shift()); }, pause: async () => {} });
+  assert.equal(await api("POST", "actions/runs/1/cancel"), null);
+  assert.deepEqual(seen, ["POST", "POST", "POST"]);
+  const down = github("t", "o/r", { get: async () => answer(502), pause: async () => {} });
+  await assert.rejects(down("POST", "actions/runs/1/cancel"), /502/);
+  let calls = 0;
+  const refused = github("t", "o/r", { get: async () => { calls += 1; return answer(403); }, pause: async () => {} });
+  await assert.rejects(refused("POST", "actions/runs/1/cancel"), /403/);
+  assert.equal(calls, 1);
+});
+
+test("a rerun is never sent twice, even after a passing error: GitHub may have started it already", async () => {
+  let reruns = 0;
+  const api = github("t", "o/r", { get: async () => { reruns += 1; return { ok: false, status: 502, text: async () => "" }; }, pause: async () => {} });
+  await assert.rejects(api("POST", "actions/runs/7/rerun"), /502/);
+  assert.equal(reruns, 1);
+  let labels = 0;
+  const label = github("t", "o/r", { get: async () => { labels += 1; return labels < 2 ? { ok: false, status: 503, text: async () => "" } : { ok: true, status: 200, json: async () => [] }; }, pause: async () => {} });
+  await label("POST", "issues/5/labels", { labels: ["ci-waiting"] });
+  assert.equal(labels, 2, "adding a label is the same done twice, so it is tried again");
 });

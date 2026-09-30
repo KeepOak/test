@@ -55,6 +55,13 @@ export interface RealtimePlaybackItem extends RealtimeAudioItem { audioEndMs: nu
  */
 export interface RealtimeSession {
   readonly service: "openai" | "gemini";
+  /** WebRTC media negotiation only; never contains provider authentication headers. */
+  readonly answerSdp?: string;
+  /** Server-private exact account binding; never sent in the browser's ready payload. */
+  readonly consultationAccountRef?: Readonly<import("./delegation.js").HelperAccountRef>;
+  readonly consultationCurrent?: () => boolean;
+  onAgentConsult?: (request: { id: string; question: string }) => void;
+  agentConsultResult?(id: string, text: string): void;
   open(): Promise<void>;
   /** One chunk of what the person is saying, as PCM16 at 16kHz. */
   sendAudio(chunk: Uint8Array): void;
