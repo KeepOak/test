@@ -49,6 +49,8 @@ const GUARDS = [
   { file: "src/settings-kit/tools.ts", tool: "settings.loosen", args: { changes: [{ setting: "fly-core.mode", value: "on" }] } },
   { file: "src/settings-kit/tools.ts", tool: "settings.why", args: { setting: "fly-core.mode" } },
   { file: "src/settings-kit/tools.ts", tool: "settings.undo", args: { record: "no-such-change" } },
+  // TRUNK-106: tying a private saved fact to a local picture is the owner's own memory.
+  { file: "src/memory-images.ts", tool: "memory.image", args: { id: "no-such-fact" } },
   { file: "src/channels/connectors.ts", tool: "channels.broadcast", args: { text: "hello" } },
   { file: "src/channels/connectors.ts", tool: "channels.digest", args: { channel: "telegram", chatId: "1" } },
   // Choosing the chat the morning brief goes to is choosing where the owner's messages go.

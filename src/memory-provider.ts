@@ -210,6 +210,7 @@ export class RemoteMemoryBackend implements MemoryBackend {
     const key = `${owner}:${id}`;
     const doWrite = async (): Promise<MemoryRecord> => {
       const checked = MemoryDataSchema.parse(data); // never sends anything off this computer unvalidated
+      if (checked.image) throw new Error("Local picture references cannot be sent to an outside memory service; detach the reference first");
       // Remove any accidental secrets before sending, then check again: a hidden value's marker can be longer than
       // the value, and a fact the service keeps but Branch cannot read back would break listing and forgetting.
       const hidden = MemoryDataSchema.safeParse(redactLeaksIn(checked).value);

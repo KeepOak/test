@@ -113,6 +113,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/self-development\/publications(\/|$)/,
   // Saved task images are read by the profile window, never through a short-lived script key.
   /^\/api\/artifacts\/file$/,
+  new RegExp(`^/api/monitors/${id}/prices$`),
   /^\/api\/schedules\/[a-f0-9-]{36}\/dashboard$/,
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
@@ -130,6 +131,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/terminal$/,
   // phase2/delight: the owner's achievements are the owner's alone (src/delight.ts).
   /^\/api\/delight\/achievements$/,
+  /^\/api\/weekly-recap$/, // owner-wide completed work and the owner's manual-time assumption
   new RegExp(`^/api/(triggers|webhooks)(/${id})?$`),
   /^\/api\/channels\/addresses$/,
   // integration review (bucket 16, merged into bucket 19): the waiting Slack events carry message text.
