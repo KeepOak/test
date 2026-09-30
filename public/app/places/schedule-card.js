@@ -83,7 +83,7 @@ export function propCard() {
     <div class="fld"><span>${t("window.places.schedule-card.repeats")}</span><span class="seg" role="group" aria-label="${t("window.places.schedule-card.repeats")}">${repeats}</span></div>${on}
     <div class="pp-g17d"><label class="fld ${need ? "need17d" : ""}"><span>${t("window.places.schedule-card.at")}${need ? ` · ${t("window.places.schedule-card.it-didnt-say-when")}` : ""}</span>${p.days === "once" ? `<input class="inp" type="datetime-local" id="pp-once17d" aria-label="${esc(t("window.places.schedule-card.once-date"))}" value="${esc(localDateTime(p.proposal.schedule.dueAt))}"><small>${esc(Intl.DateTimeFormat().resolvedOptions().timeZone)}</small>` : `<input class="inp" type="time" id="pp-time17d" value="${esc(p.time ?? "")}">`}</label>${whoField()}</div>
     <p class="pp-first17d" id="pp-first17d">${first}${p.proposal.time === "guessed" ? ` · ${t("window.places.schedule-card.branch-guessed-part-of-this-check")}` : ""}</p>${cron}${p.proposal.reach ? `<p class="pp-first17d">${t("autonomy.orders.authority")}: ${esc(p.proposal.reach)}</p>` : ""}
-    ${!p.trunk && ownerHere() ? `<label class="fld"><span><input type="checkbox" id="pp-dashboard" ${p.dashboard ? "checked" : ""}>${esc(t("scheduleddash.enable"))}</span><small>${esc(t("scheduleddash.help"))}</small></label>` : ""}
+    ${ownerHere() ? `<label class="fld"><span><input type="checkbox" id="pp-dashboard" ${p.dashboard ? "checked" : ""}>${esc(t("scheduleddash.enable"))}</span><small>${esc(t("scheduleddash.help"))}</small></label>` : ""}
     <div class="acts"><button class="btn ghost sm" type="button" data-act="ppno17d">${t("first-run-steps.restore-no")}</button><button class="btn pri sm" type="button" data-act="ppok17d" ${ready(p) ? "" : "disabled"}>${t("window.places.schedule-card.confirm-the-schedule")}</button></div>
     <p class="hint" data-css="margin:0">${t("window.places.schedule-card.it-runs-only-after-you-confirm")}</p></div>`;
 }
@@ -125,9 +125,10 @@ async function reread() {
 
 /* A Trunk's routine (POST /api/trunks/<id>/routines): the same schedule, run as that Trunk, its result in its conversation.
    Its name is the first line of what it does; its first run is the one the card shows. */
-function routineOf(fresh) {
+function routineOf(fresh, dashboard = false) {
   const s = fresh.schedule, line = s.prompt.trim().split("\n")[0];
   return { name: line.length > 80 ? line.slice(0, 79) + "…" : line, prompt: s.prompt, dueAt: fresh.firstRunAt,
+    ...(dashboard ? { dashboard: { title: s.prompt.trim().slice(0, 120) || "Scheduled dashboard" } } : {}),
     ...Object.fromEntries(["intervalMs", "dailyAt", "weekdays", "monthDay", "timezone"].filter((k) => s[k] !== undefined).map((k) => [k, s[k]])) };
 }
 
@@ -149,7 +150,7 @@ async function confirm() {
     const reachMoved = fresh.reach !== p.proposal.reach || String(fresh.schedule.permissions) !== String(p.proposal.schedule.permissions);
     p.proposal = fresh;
     if (reachMoved) { renderNow(); return; }
-    if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh));
+    if (p.trunk) await api(`trunks/${encodeURIComponent(p.trunk)}/routines`, routineOf(fresh, p.dashboard));
     else await api("schedules", { ...fresh.schedule, ...(p.dashboard ? { dashboard: { title: p.what.trim().slice(0, 120) || "Scheduled dashboard" } } : {}) });
   } catch (error) { toast(error.message); return; } finally { sending = false; }
   if (P !== p || !ownerHere() || activeId() !== profile || S.view !== view) return;
@@ -168,7 +169,7 @@ export function initScheduleCard() {
   on("ppset17d", (el) => {
     if (!P) return;
     const k = el.dataset.k;
-    if (k === "trunk") { revision++; keepWhat(); P.trunk = !el.dataset.v || P.trunk === el.dataset.v ? null : el.dataset.v; if (P.trunk) P.dashboard = false; renderNow(); return; }
+    if (k === "trunk") { revision++; keepWhat(); P.trunk = !el.dataset.v || P.trunk === el.dataset.v ? null : el.dataset.v; renderNow(); return; }
     P[k] = k === "day" ? +el.dataset.v : el.dataset.v;
     if (k === "days" && el.dataset.v === "once") P.proposal.schedule.dueAt = new Date(Date.now() + 120000).toISOString();
     if (k === "days" && el.dataset.v === "weekly" && P.day == null) P.day = 5;
@@ -177,7 +178,7 @@ export function initScheduleCard() {
   on("ppno17d", () => { revision++; P = null; renderNow(); toast(t("window.places.schedule-card.nothing-was-saved")); });
   on("ppok17d", () => confirm());
   document.addEventListener("change", (e) => {
-    if (e.target.id === "pp-dashboard" && P && ownerHere() && !P.trunk) { P.dashboard = e.target.checked; revision++; return; }
+    if (e.target.id === "pp-dashboard" && P && ownerHere()) { P.dashboard = e.target.checked; revision++; return; }
     if (e.target.id === "pp-once17d" && P && e.target.value) { P.proposal.schedule.dueAt = new Date(e.target.value).toISOString(); reread(); return; }
     if (e.target.id !== "pp-time17d" || !P || !e.target.value) return;
     P.time = e.target.value;

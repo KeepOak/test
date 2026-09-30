@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ScheduleDashboardSchema } from "../scheduled-dashboards.js";
 import { leastPermissions } from "../schedule-reach.js"; // dogfood
 import type { Run } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
@@ -26,6 +27,7 @@ export const RoutineSchema = z.object({
   weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
   monthDay: z.number().int().min(1).max(31).optional(),
   timezone: z.string().min(1).max(64).optional(),
+  dashboard: ScheduleDashboardSchema.optional(),
 }).strict().refine((value) => (!value.weekdays && !value.monthDay) || value.dailyAt, "Days of the week or of the month need a time of day")
   .refine((value) => !(value.weekdays && value.monthDay), "Choose days of the week or a day of the month, not both");
 
@@ -74,6 +76,7 @@ export class TrunkRoutines {
       ...(extra.length ? { permissions: [...least, ...extra.filter((p) => context.permissions.has(p))] } : {}),
       prompt: `[Trunk @${trunk.handle}] ${value.name}\n${value.prompt}`, kind: "task",
       dueAt: value.dueAt ?? firstTurn(value),
+      ...(value.dashboard ? { dashboard: value.dashboard } : {}),
       ...(value.intervalMs ? { intervalMs: value.intervalMs } : {}),
       ...(value.dailyAt ? { dailyAt: value.dailyAt, timezone: value.timezone ?? "UTC" } : {}),
       ...(value.weekdays ? { weekdays: value.weekdays } : {}),
@@ -89,7 +92,8 @@ export class TrunkRoutines {
       if (!link || (trunkId && link.trunkId !== trunkId)) return [];
       const data = record.data;
       return [{ id: record.id, trunkId: link.trunkId, name: link.name, status: String(data.status ?? ""), dueAt: String(data.dueAt ?? ""),
-        dailyAt: data.dailyAt ?? null, intervalMs: data.intervalMs ?? null, lastResult: data.lastResult ?? null }];
+        dailyAt: data.dailyAt ?? null, intervalMs: data.intervalMs ?? null, lastResult: data.lastResult ?? null,
+        dashboard: data.dashboard ?? null }];
     });
   }
   remove(scheduleId: string): { removed: boolean } {
