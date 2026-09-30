@@ -53,9 +53,15 @@ export interface ProofRequest {
   label: string;
 }
 export type ProofParts = { replay: Replayer; grade: (parent: { id: string }, context: ToolContext) => Grader };
+/** A paused night keeps its draft dormant instead of counting it as a failed comparison. */
+export class GardenPaused extends Error {
+  constructor() { super("The quiet night or model permission changed"); }
+}
 /** Replays each task on the baseline and with the skill, and grades both answers. */
 export async function prove(store: Store, runtime: Runtime, preset: ModelPreset, request: ProofRequest,
-  parts: ProofParts = runtimeProof(store, runtime, preset)): Promise<Proof> {
+  parts: ProofParts = runtimeProof(store, runtime, preset), allowed: () => boolean = () => true): Promise<Proof> {
+  const check = () => { if (!allowed()) throw new GardenPaused(); };
+  check();
   const { tasks, withDocument, baseline, label } = request;
   const { parent, context } = learningTask(store, runtime.owner, `Seasons: prove ${label} on ${tasks.length} task(s)`, runtime, true);
   const grade = parts.grade(parent, { ...context, permissions: new Set() });
@@ -63,12 +69,16 @@ export async function prove(store: Store, runtime: Runtime, preset: ModelPreset,
   try {
     const sidesToRun = [["without", baseline ? `The skill being tried:\n${baseline}` : noSkill], ["with", `The skill being tried:\n${withDocument}`]] as const;
     for (const task of tasks) for (const [name, instructions] of sidesToRun) {
+      check();
       const done = await parts.replay(task, instructions, context);
+      check();
       const score = done ? (done.finished ? await grade(task, done.answer) : 0) : null;
+      check();
       if (score === null) { sides[name].errors++; continue; }
       sides[name].scores.push(score);
       sides[name].tokens += done?.tokens ?? 0;
     }
+    check();
     store.finish(parent.id, "completed", `Proved ${label}`);
   } catch (error) {
     store.finish(parent.id, "failed", error instanceof Error ? error.message : String(error));
