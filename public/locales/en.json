@@ -7208,6 +7208,7 @@
   "window.flows.chw.mine-hint": "Branch then treats this account in a direct chat as you: your sign-in accounts may answer it, and your own-chat commands (/memory, /goal and the rest) work from it. Only for the first account you name; change it later under Settings › Chat apps › Commands from your own chat.",
   "window.flows.chw.mine-kept": "Approved. An account is already marked as yours, so this one can only talk to Branch.",
   "window.flows.chw.more-apps": "More apps",
+  "window.flows.chw.dm-policy-hint": "Direct messages only; group rules stay as set. Only me needs your own verified account named on this app. Workspace access is not available yet.",
   "window.flows.chw.no-answer": "Everyone else gets no answer.",
   "window.flows.chw.no-restart": "Nothing needs restarting.",
   "window.flows.chw.not-accepted": "{name} did not accept it",
