@@ -2179,7 +2179,12 @@ ${run.output.slice(0, 6000)}`;
       if ((context.scratchRoot ?? run.id) === run.id) this.orchestration.clearScratch(run.id);
       // A plan that was being carried out by a task that stopped early is not resumed by the next
       // message; one still waiting for the owner's yes stays, because that task stopped to ask.
-      if (status !== "completed") this.orchestration.dropAbandonedPlan(run.sessionId, status);
+      if (status === "failed" && !placementReady && this.orchestration.plan(run.sessionId)?.approved) {
+        // Required placement failed before the conductor/model could run. Keep the owner's
+        // approved plan and progress for reconciliation; this does not schedule a retry.
+        this.orchestration.pausePlan(run.sessionId);
+        this.store.event(run.id, "plan.placement_blocked", { preserved: true, waitingOnOwner: true });
+      } else if (status !== "completed") this.orchestration.dropAbandonedPlan(run.sessionId, status);
     }
     const settled = this.finish(run, status, output);
     this.saveTrace(run.id);
