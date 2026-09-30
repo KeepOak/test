@@ -78,7 +78,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("temporary", ["incognito"], "[on|off]", "a conversation that is not remembered; set it before the first message", [...W, "terminal"], "look", was("terminal")),
   entry("attach", ["image"], "<file>", "send a file or picture with your next message", [...W, "terminal"], "look", was("terminal")),
   entry("history", [], "", "this conversation so far", ["terminal", "chat"], "look", was("terminal")),
-  entry("topic", [], "[name]", "create a separate private Telegram topic; on its own, setup guidance", ["chat"], "owner"),
+  entry("topic", [], "[name]", "create a separate private Telegram topic; on its own, setup guidance", ["chat"], "look"), // like /new: a new conversation place, no Branch setting changes; the runner holds it to the owner's own direct chat
   entry("export", ["save"], "[file]", "save this conversation as a Markdown file", [...W, "terminal"], "look", was("terminal")),
   entry("new", ["clear", "reset"], "", "start a fresh conversation", ["window", "phone", "terminal", "chat"], "look", { ...was("terminal", "chat"), newAliases: added(["clear"], "chat") }),
   entry("sessions", ["resume"], "[id]", "earlier conversations; with a number, carry one on", [...W, "terminal"], "look", was("terminal")),
