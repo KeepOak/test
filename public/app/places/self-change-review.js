@@ -92,12 +92,18 @@ async function answer(el) {
   if (!prepare && (!review.snapshot || !form.elements.consent.checked)) return;
   const payload = prepare ? prepareInput(form) : { review: review.snapshot.review,
     title: form.elements.title.value.trim(), summary: form.elements.summary.value.trim(), consent: true };
+  /* The engine records its answer whatever happens here. Its result or error is shown, the review closed and the Inbox
+     read again only for this same review: its dialog still open with nothing closed or opened since, the same person on
+     the same page, unlocked. */
+  const opened = dialog(), mine = generation, view = S.view;
+  const still = () => current === review && review.who === here() && allowed() && S.view === view && mine === generation
+    && dialog() === opened && opened?.querySelector("[data-source-review]")?.dataset.sourceReview === review.id;
   el.disabled = true;
   let result;
   try { result = await api(route(review.id, prepare ? "approve" : "publish"), payload); }
-  catch (error) { if (review.who === here() && current === review) { el.disabled = false; toast(error.message); } return; }
-  if (review.who !== here() || current !== review || !allowed()) return;
-  if (dialog()?.querySelector("[data-source-review]")?.dataset.sourceReview === review.id) closeDlg();
+  catch (error) { if (still()) { el.disabled = false; toast(error.message); } return; }
+  if (!still()) return;
+  closeDlg();
   current = null;
   toast(prepare ? t("window.sourceReview.prepared") : result.publication?.reason ?? t(`sourcePublication.${result.publication?.state ?? "checked"}`));
   await reread(!prepare);
