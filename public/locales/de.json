@@ -10417,5 +10417,8 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "gatewaySleep.pauses": "Wenn Sie diesen Computer manuell in den Ruhezustand versetzen, pausiert Branchs Arbeit. Auch das Schließen des Deckels kann einen Laptop schlafen legen. Das Gateway kann nicht weiterarbeiten, während der Computer schläft.",
+  "gatewaySleep.cloud": "Für längere Ziele können Sie Branch auf einem ständig eingeschalteten Cloud-Computer betreiben, den Sie kontrollieren, und ihn hier mit Branch koppeln. Richten Sie ihn zuerst bei Ihrem Anbieter ein; Kosten und Ruhezustandsregeln sind separat.",
+  "gatewaySleep.computers": "Computer und Kopplung"
 }

@@ -10418,5 +10418,8 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "gatewaySleep.pauses": "Mettre cet ordinateur en veille manuellement suspend le travail de Branch. Fermer le capot peut aussi mettre un portable en veille. La passerelle ne peut pas continuer à travailler pendant que l’ordinateur dort.",
+  "gatewaySleep.cloud": "Pour les objectifs longs, exécutez Branch sur un ordinateur cloud toujours allumé que vous contrôlez, puis associez-le à Branch ici. Configurez-le d’abord chez votre fournisseur ; ses coûts et sa politique de veille sont distincts.",
+  "gatewaySleep.computers": "Ordinateurs et association"
 }

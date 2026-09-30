@@ -95,7 +95,9 @@ export async function load() {
   await loadGateway();
 }
 
-const BASE = () => `<h1>${t("window.settings.gateway.gateway")}</h1><p class="lede">${t("window.settings.gateway.a-small-helper-that-keeps-branch")}</p>`;
+const BASE = () => `<h1>${t("window.settings.gateway.gateway")}</h1><p class="lede">${t("window.settings.gateway.a-small-helper-that-keeps-branch")}</p>`
+  + `<p class="hint">${esc(t("gatewaySleep.pauses"))}</p><p class="hint">${esc(t("gatewaySleep.cloud"))}</p>`
+  + `<button class="btn ghost sm" type="button" data-act="setgo" data-v="computer">${esc(t("gatewaySleep.computers"))}</button>`;
 
 /* QA retest 2026-09-28 (G1): the switch is what the owner chose; whether the gateway runs is the engine's own word
    (`underGateway`: this engine was started by it). It takes over only at the next start (src/cli.ts,

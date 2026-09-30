@@ -10417,5 +10417,8 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "gatewaySleep.pauses": "Putting this computer to sleep manually pauses Branch’s work. Closing the lid can put a laptop to sleep too. The gateway cannot keep working while the computer sleeps.",
+  "gatewaySleep.cloud": "For long goals, run Branch on an always-on cloud computer you control, then pair it with Branch here. Set up that computer with your provider first; its costs and sleep policy are separate.",
+  "gatewaySleep.computers": "Computers and pairing"
 }

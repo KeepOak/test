@@ -10417,5 +10417,8 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "gatewaySleep.pauses": "Suspender este equipo manualmente pausa el trabajo de Branch. Cerrar la tapa también puede suspender un portátil. El gateway no puede seguir trabajando mientras el equipo está suspendido.",
+  "gatewaySleep.cloud": "Para objetivos largos, ejecuta Branch en un equipo en la nube siempre encendido que controles y vincúlalo aquí con Branch. Configúralo primero con tu proveedor; sus costes y política de suspensión son independientes.",
+  "gatewaySleep.computers": "Equipos y vinculación"
 }
