@@ -1,0 +1,11 @@
+{
+  "protocol": 1,
+  "automaticBuild": false,
+  "automaticInstall": false,
+  "helpers": [
+    { "platform": "darwin", "source": "macos.swift", "artifact": "branch-native-window-capture", "minimumRuntime": "macOS14", "prerequisites": ["ScreenCaptureKit", "ImageIO", "helper Screen Recording owner grant"], "pathEnvironment": "BRANCH_NATIVE_WINDOW_CAPTURE", "sha256Environment": "BRANCH_NATIVE_WINDOW_CAPTURE_SHA256" },
+    { "platform": "linux-x11", "source": "linux-x11.c", "artifact": "branch-native-window-capture", "prerequisites": ["Xlib", "XComposite0.2+", "json-c", "libpng", "owner X11 session"], "pathEnvironment": "BRANCH_NATIVE_WINDOW_CAPTURE", "sha256Environment": "BRANCH_NATIVE_WINDOW_CAPTURE_SHA256" },
+    { "platform": "linux-window-portal", "source": "linux-portal.py", "artifact": "branch-portal-window-capture", "interpreter": "/usr/bin/python3 -I", "prerequisites": ["Python3", "PyGObject Gio/GLib", "GStreamer1.22+ GstVideo", "PipeWire GStreamer target-object/fd/on-disconnect", "ScreenCast portal v6 WINDOW", "owner-selected nonpersistent grant"], "pathEnvironment": "BRANCH_PORTAL_WINDOW_CAPTURE", "sha256Environment": "BRANCH_PORTAL_WINDOW_CAPTURE_SHA256" }
+  ],
+  "ownerPreparation": "Review source, prepare dependencies and artifact outside app startup, set executable owner-only write permissions, then pin SHA256. No prepared artifact or acceptance evidence is supplied by this manifest."
+}

@@ -645,6 +645,10 @@ export class DesktopScriptRunner {
     if (!(typeof enabled === "function" ? enabled() : enabled)) throw new Error("Native capture requires the visible Stop notice; nothing was captured.");
     return nativeWindowAction(this.platform, this.posix.env ?? process.env, this.posix.exec ?? boundedRunner(false), input, signal);
   }
+  /** Only the owner-local viewer uses this path; it never exposes a task or remote input capability. */
+  async nativeViewer(input: { action: "list" } | { action: "capture"; watch: NativeWatch; outPath: string }, signal: AbortSignal): Promise<Record<string, unknown>> {
+    return nativeWindowAction(this.platform, this.posix.env ?? process.env, this.posix.exec ?? boundedRunner(false), input, signal);
+  }
   /** Writes the script once, into a private folder of its own, and gives back its path. */
   private async scriptPath(): Promise<string> {
     this.folder ??= mkdtemp(join(tmpdir(), 'branch-desktop-')).then(async (folder) => {

@@ -84,6 +84,28 @@ export class DesktopControl {
     this.record(context, "desktop.watchNative", terms.target.kind === "window" ? terms.target.window.title : terms.target.display.id, { frames: terms.frames, changes: changes.length });
     return { ...kept, target: terms.target, excluded: terms.exclude, method: terms.target.kind === "display" ? "native-filter" : "native-window", changes };
   }
+  /** Owner-local picture source, separate from task tools and the broad screen/phone viewer. */
+  async nativeViewerReady(owner: string): Promise<void> {
+    if (!readDesktopSettings(this.store, owner).enabled) throw new Error(switchedOffMessage);
+    const allowed = await this.permissions?.check("screen"); if (allowed && !allowed.allowed) throw new Error(allowed.message);
+  }
+  async nativeViewerTargets(owner: string, signal: AbortSignal): Promise<Record<string, unknown>> {
+    await this.nativeViewerReady(owner); return this.runner.nativeViewer({ action: "list" }, signal);
+  }
+  async nativeViewerFrame(owner: string, terms: NativeWatch, signal: AbortSignal): Promise<{ png: string; width: number; height: number; method: string }> {
+    await this.nativeViewerReady(owner);
+    const before = await this.runner.nativeViewer({ action: "list" }, signal);
+    if (terms.target.kind === "display") privateShowing(before.windows);
+    else { const message = refusalFor(terms.target.window); if (message) throw new Error(message); }
+    const path = await this.runner.temporaryPng(`native-view-${randomUUID()}`);
+    try {
+      const answer = await this.runner.nativeViewer({ action: "capture", watch: terms, outPath: path }, signal);
+      if (terms.target.kind === "display") { privateShowing(answer.before); privateShowing(answer.windows); }
+      signal.throwIfAborted(); await this.nativeViewerReady(owner);
+      const info = await stat(path); if (!info.isFile() || info.size > 20_000_000) throw new Error("Native view PNG bound exceeded.");
+      return { png: (await readFile(path)).toString("base64"), width: Number(answer.width), height: Number(answer.height), method: String(answer.method) };
+    } finally { await rm(path, { force: true }).catch(() => undefined); }
+  }
   /** Whether the owner has turned the screen and keyboard on. Read again before every action. */
   enabled(owner: string): boolean {
     return readDesktopSettings(this.store, owner).enabled;
