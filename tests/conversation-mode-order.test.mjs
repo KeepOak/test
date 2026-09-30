@@ -88,7 +88,7 @@ const mixedPermissions = {
   "memory.write": { local: ["checklist.write","memory.block_edit","memory.delete","memory.delete_file","memory.keep","memory.label","memory.put","memory.tidy","memory.update","memory.write_file","todos.add","todos.done","wiki.write"], outbound: ["hindsight.retain","memory.outside_keep"] },
   "browser.read": { local: ["browser.annotate","browser.console","browser.extract","browser.network","browser.notes","browser.pdf","browser.recording","browser.screenshot","browser.scroll","browser.shape","browser.site","browser.snapshot","browser.unmark","browser.wait","browser.watch_change","computer.look"], outbound: ["browser.navigate"] },
   "media.write": { local: ["media.convert","media.frames","media.image","media.speak","media.trim","voice.say"], outbound: ["media.download","video.generate"] },
-  "skills.read": { local: ["environment.about","sdk.route","sdk.routes","sdk.starter","skills.list","skills.read","skills.usage","tools.services"], outbound: ["skills.bundle.preview"] },
+  "skills.read": { local: ["environment.about","sdk.route","sdk.routes","sdk.starter","skills.list","skills.read","skills.read_file","skills.usage","tools.services"], outbound: ["skills.bundle.preview"] },
   "skills.write": { local: ["tools.forget_service"], outbound: ["tools.from_openapi"] },
   "specialists.use": { local: ["delegate.debate","delegate.handoff","delegate.parallel","delegate.route","delegate.supervise","delegate.swarm","delegate.teams","helpers.list","helpers.message","helpers.start","helpers.stop","helpers.tell_lead","mode.task","specialists.delegate","specialists.fanout"], outbound: ["fleet.send","trunks.remote.message"] },
   "specialists.read": { local: ["fleet.status","mode.list"], outbound: ["trunks.remote.roster"] },
