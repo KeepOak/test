@@ -236,7 +236,9 @@ export class WorktreePlaces {
       const top = await this.deps.run(workspace, ["rev-parse", "--show-toplevel"], context.signal).catch(() => null);
       const line = await this.deps.run(workspace, ["symbolic-ref", "--quiet", "--short", "HEAD"], context.signal).catch(() => null);
       const ancestor = await this.deps.run(workspace, ["merge-base", "--is-ancestor", data.base, "HEAD"], context.signal).catch(() => null);
-      if (top?.status !== "completed" || top.exitCode !== 0 || !top.stdout.trim() || !samePath(top.stdout.trim(), actual)
+      const copyActual = top?.status === "completed" && top.exitCode === 0 && top.stdout.trim()
+        ? await realpath(resolve(top.stdout.trim())).catch(() => null) : null;
+      if (!copyActual || !samePath(copyActual, actual)
         || line?.status !== "completed" || line.exitCode !== 0 || line.stdout.trim() !== branch
         || ancestor?.status !== "completed" || ancestor.exitCode !== 0) throw unavailable();
       const sourceTop = await this.deps.run(cwd, ["rev-parse", "--show-toplevel"], context.signal).catch(() => null);
