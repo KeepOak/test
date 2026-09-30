@@ -1,0 +1,11 @@
+# KeepOak computer team
+
+The desktop Team page can read the members and member-place allowance of the current KeepOak computer team. The owner first opens the isolated KeepOak view and signs in there, then explicitly selects **Read team**. Invited and active members both count toward the allowance. This is the product's member limit, not a purchased billing-seat balance.
+
+An authenticated KeepOak owner or admin can review an invitation, role change or removal. Each change requires a native confirmation naming the email, organization and proposed action. Branch checks the current desktop owner, App Lock, Lockdown, isolated session and complete team fingerprint before and after the confirmation. It sends one request, then validates the response and reads the team again before displaying success. An uncertain result requires a refresh; Branch never retries a membership write automatically.
+
+The adapter uses only the existing cookie-authenticated product routes at `https://api.keepoak.com/v1/customer/team`: GET, POST `/invitations`, and PATCH or DELETE `/members/:id`. It does not export cookies, accept an arbitrary endpoint, fall back to bearer authentication, or convert cloud roles into local Branch permissions. Responses, member counts, request duration and admission rates are bounded. Disabling the view or losing the desktop owner aborts pending network work. The remote view has no Branch preload bridge.
+
+The implementation uses existing Electron [partitioned sessions and Session.fetch](https://www.electronjs.org/docs/latest/api/session) and [native confirmation dialogs](https://www.electronjs.org/docs/latest/api/dialog). It adds no dependency. The KeepOak resource and navigation restrictions remain in force, including restrictions on external login origins. A supported sign-in must complete inside those existing restrictions; no authenticated sign-in or membership request was exercised during source delivery.
+
+Local Branch profiles, model-worker Teams and KeepOak human members remain separate. There is no verified product API here for shared Trunk definitions, activity synchronization, purchased seats, organization selection or payment changes. This feature does not upload Trunks, grant tool access to invited people, or claim those remaining workspace capabilities.

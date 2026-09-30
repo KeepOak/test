@@ -1,9 +1,11 @@
 import { BrowserWindow, WebContentsView, ipcMain, session, type IpcMainInvokeEvent, type Session } from "electron";
 import { randomUUID } from "node:crypto";
 import { fromOwnPage } from "./clipboard-paths.js";
+import { KeepOakWorkspace } from "./keepoak-workspace.js";
 
 const ORIGIN = "https://keepoak.com";
 const CHANNELS = ["branch:keepoak-view-status", "branch:keepoak-view-open", "branch:keepoak-view-disconnect"];
+const TEAM_CHANNELS = ["branch:keepoak-team-read", "branch:keepoak-team-change"];
 export function keepOakViewUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -111,20 +113,30 @@ async function openView(state: ViewState, main: BrowserWindow, owner: () => Prom
 function makeKeepOakView(main: BrowserWindow, origin: string, key: () => string, call: typeof fetch) {
   const state: ViewState = { host: null, view: null, partition: null, enabled: false, timer: null, clearing: Promise.resolve() };
   const owner = async () => {
-    const answer = await call(`${origin}/api/profiles`, { headers: { authorization: `Bearer ${key()}`, "x-branch-origin": "window" } });
+    const headers = { authorization: `Bearer ${key()}`, "x-branch-origin": "window" };
+    const [answer, lockdown, lock] = await Promise.all([call(`${origin}/api/profiles`, { headers, signal: AbortSignal.timeout(3000) }),
+      call(`${origin}/api/lockdown`, { headers, signal: AbortSignal.timeout(3000) }),
+      call(`${origin}/api/lock`, { headers, signal: AbortSignal.timeout(3000) })]);
     if (!answer.ok || ((await answer.json()) as { isOwner?: boolean }).isOwner !== true)
       throw new Error("Only the owner can open the KeepOak view");
+    if (!lockdown.ok || ((await lockdown.json()) as { on?: boolean }).on !== false)
+      throw new Error("KeepOak access is unavailable during Lockdown");
+    if (!lock.ok || ((await lock.json()) as { locked?: boolean }).locked !== false)
+      throw new Error("Unlock Branch before using its KeepOak session");
   };
   const ownPage = (event: IpcMainInvokeEvent) => {
     if (!fromOwnPage(event, main, origin)) throw new Error("KeepOak view access denied");
   };
-  return { ownPage, status: () => viewStatus(state), open: () => openView(state, main, owner), disconnect: () => disconnectView(state) };
+  const workspace = new KeepOakWorkspace(main, { owner, session: () => state.enabled ? state.partition : null });
+  return { ownPage, workspace, status: () => viewStatus(state), open: () => openView(state, main, owner), disconnect: () => disconnectView(state) };
 }
 
 export function registerKeepOakViewIpc(main: BrowserWindow, origin: string, key: () => string, call: typeof fetch = fetch): void {
-  const { status, ownPage, open, disconnect } = makeKeepOakView(main, origin, key, call);
+  const { status, ownPage, open, disconnect, workspace } = makeKeepOakView(main, origin, key, call);
   let changing = false;
   ipcMain.handle(CHANNELS[0]!, (event: IpcMainInvokeEvent) => { ownPage(event); return status(); });
+  ipcMain.handle(TEAM_CHANNELS[0]!, (event: IpcMainInvokeEvent) => { ownPage(event); return workspace.read(); });
+  ipcMain.handle(TEAM_CHANNELS[1]!, (event: IpcMainInvokeEvent, input: unknown) => { ownPage(event); return workspace.update(input); });
   for (const [channel, action] of [[CHANNELS[1]!, open], [CHANNELS[2]!, disconnect]] as const) {
     ipcMain.handle(channel, async (event: IpcMainInvokeEvent) => {
       ownPage(event);
@@ -134,7 +146,7 @@ export function registerKeepOakViewIpc(main: BrowserWindow, origin: string, key:
     });
   }
   main.on("closed", () => {
-    for (const channel of CHANNELS) ipcMain.removeHandler(channel);
+    for (const channel of [...CHANNELS, ...TEAM_CHANNELS]) ipcMain.removeHandler(channel);
     void disconnect().catch(() => {});
   });
 }

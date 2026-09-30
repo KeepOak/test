@@ -34,6 +34,7 @@ import { api } from "../core/api.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
+import { keepOakWorkspaceSection, initKeepOakWorkspace } from './keepoak-workspace.js';
 
 const tabs = [["live", "Live now"], ["people", "People"], ["groups", "Groups"],
   ["shared", "Shared"], ["agents", "Teams of specialists"], ["activity", "Activity"],
@@ -180,7 +181,7 @@ export function draw() {
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
 
   let html = `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place">
-    ${head(tab)}
+      ${head(tab)}${keepOakWorkspaceSection()}
     ${tabBar(tabs.filter(([id]) => id !== "signin" || ownerHere()).map(([id, label]) => [id, say(label), counts()[id] ?? 0]), "team", tab)}`;
 
   if (tab === "live") html += liveTab();
@@ -193,6 +194,7 @@ export function draw() {
 }
 
 export function init() {
+  initKeepOakWorkspace();
   markLive(["ptab", "p-open-team", "si-mode", "si-chain", "si-stay", "si-link"]);
   on("si-mode", (el) => saveSignin("people/settings", { mode: el.dataset.v }));
   on("si-chain", (el) => toggleChain(el.dataset.v));
