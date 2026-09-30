@@ -95,7 +95,7 @@ export class McpOwnerRequests {
       if (!validate(answer.content ?? {}).valid) throw new Error('Please complete the fields in the requested format.');
       if (!this.ready() || !this.pending.has(item.id)) throw new Error('This question is no longer available.');
     }
-    item.finish(answer);
+    item.finish({ action: answer.action, ...(answer.content ? { content: answer.content } : {}) });
   }
   private ask(server: string, kind: Pending['kind'], details: unknown, settings: Settings, signal: AbortSignal): Promise<Answer> {
     if (this.pending.size >= 8 || Buffer.byteLength(JSON.stringify(details)) > 32768) throw new Error('Server request is too large or too many are waiting.');
