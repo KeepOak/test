@@ -31,7 +31,7 @@ test("A0776: an Agent Skills folder is read as the layout says, and its programs
   assert.equal(read.name, "tidy-summary");
   assert.equal(read.folder, "tidy-summary");
   assert.deepEqual(Object.keys(read.notes), ["reference-style-guide.md"]);
-  assert.match(read.document, /## Reference: style-guide\.md\n\nShort sentences\. No jargon\./);
+  assert.doesNotMatch(read.document, /Short sentences/, "references stay separate and are loaded when a task needs them");
   assert.deepEqual(read.leftOut.map((item) => item.path).sort(), ["tidy-summary/assets/logo.svg", "tidy-summary/scripts/run.py"]);
   assert.match(read.leftOut.find((item) => item.path.endsWith("run.py")).why, /does not run a skill's own programs/);
   const unpacked = zipRead(agentSkillPackage(read), undefined);
@@ -198,15 +198,11 @@ test("integrator: pasted instructions arrive switched off, and an export never c
   assert.match(pasted.body.record.steps.join(" "), /switched off until you turn it on/);
   assert.equal(app.store.skills.list(owner).find((entry) => entry.name === "pasted-one").activeVersion, null);
 
-  // A reference too long to add to the instructions is kept with the package without being scanned.
+  // A reference can now be read by the assistant, so it is scanned like the instructions: a key in it stops the install.
   const long = `${"Background. ".repeat(1600)}\napi_key=abcdefghijklmnopqrstuvwx1234\n`;
   const leaky = await json("/api/skill-installs/install", { kind: "agent-skill", approve: true,
     file: file(zipWrite([["leaky-one/SKILL.md", skill("leaky-one")], ["leaky-one/references/notes.md", long]])) });
-  assert.equal(leaky.body.record.ok, true);
-  assert.match(leaky.body.record.steps.join(" "), /too long to add/);
-  const id = app.store.skills.list(owner).find((entry) => entry.name === "leaky-one").id;
-  const exported = await json(`/api/skill-installs/export?skill=${id}`);
-  assert.notEqual(exported.status, 200);
-  assert.doesNotMatch(JSON.stringify(exported.body), /abcdefghijklmnopqrstuvwx1234/);
-  assert.match(exported.body.error, /key|secret/i);
+  assert.equal(leaky.body.record.ok, false);
+  assert.doesNotMatch(JSON.stringify(leaky.body), /abcdefghijklmnopqrstuvwx1234/);
+  assert.equal(app.store.skills.list(owner).some((entry) => entry.name === "leaky-one"), false);
 });
