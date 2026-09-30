@@ -224,6 +224,10 @@ test('Inbox shows arriving exact start and step questions; answers only the revi
   assert.equal(prompts.length, 1);
   await row(next.id).waitFor({ timeout: 20000 });
   await row(next.id).click();
+  /* Review reads the ledger again before it opens its dialog (places/inbox-autonomy.js review). Switched off before that
+     read landed, the question was already gone and rightly never shown (CI run 36587157671). The dialog is waited for,
+     so this is the stale review it means to test: open on screen, then withdrawn by the engine. */
+  await page.locator('.dlg [data-act="autonomy-answer"][data-v="yes"]').waitFor();
   await api('/api/autonomy/switch', { part: 'procedures', mode: 'off' });
   const answers = [];
   page.on('request', (request) => { if (request.url().endsWith('/api/autonomy/decide')) answers.push(request.postDataJSON()); });

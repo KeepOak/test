@@ -50,7 +50,7 @@ async function approve(el) {
 async function finish(el) {
   if (!review) return;
   el.disabled = true;
-  try { const merged = await api("self-development/merge/finish", { id: review.id }); review = null; closeDlg(); toast(t("selfMerge.done", { sha: merged.sha })); }
+  try { const merged = await api("self-development/merge/finish", { id: review.id }); review = null; closeDlg(); toast(merged.merged === false ? t("selfMerge.queued") : t("selfMerge.done", { sha: merged.sha })); }
   catch (error) { review = null; closeDlg(); toast(error.message); }
 }
 async function runner(el) {

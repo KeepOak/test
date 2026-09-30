@@ -137,8 +137,14 @@ export function neverBreakModeSync(dataDir: string): GatewayConfig["mode"] {
 
 /* ---------- a change suggested by the assistant, waiting for the owner ---------- */
 
+const TimingsSchema = GatewayConfigSchema.omit({ mode: true, keepAwake: true, workerEnv: true });
+type Timings = z.infer<typeof TimingsSchema>;
+const timingsOf = ({ mode: _mode, keepAwake: _awake, workerEnv: _env, ...timings }: GatewayConfig): Timings => TimingsSchema.parse(timings);
+
 export const ProposalSchema = z.object({
   config: GatewayConfigSchema,
+  /** Exact timings the model read and the dry run was based on; absent on older proposals. */
+  basedOn: TimingsSchema.optional(),
   why: z.string().max(500),
   proposedAt: z.iso.datetime(),
   /** What the dry run found: null while it has not been tried. */
@@ -156,10 +162,11 @@ export type DryRun = (config: GatewayConfig) => Promise<{ ok: boolean; detail: s
  */
 export async function proposeConfig(dataDir: string, input: unknown, why: string, dryRun: DryRun): Promise<Proposal> {
   const { mode: _mode, keepAwake: _awake, workerEnv: _env, ...change } = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  const merged = GatewayConfigSchema.safeParse({ ...(await loadGatewayConfig(dataDir)).config, ...change });
+  const { config: current } = await loadGatewayConfig(dataDir);
+  const merged = GatewayConfigSchema.safeParse({ ...current, ...change });
   const check = merged.success ? await dryRun(merged.data).catch((error: unknown) => ({ ok: false, detail: String(error).slice(0, 300) }))
     : { ok: false, detail: plainProblem(merged.error) };
-  const proposal: Proposal = { config: merged.success ? merged.data : defaultGatewayConfig(), why: why.slice(0, 500),
+  const proposal: Proposal = { config: merged.success ? merged.data : defaultGatewayConfig(), basedOn: timingsOf(current), why: why.slice(0, 500),
     proposedAt: new Date().toISOString(), check };
   await writeAtomic(join(dataDir, proposedFile), JSON.stringify(proposal, null, 2));
   return proposal;
@@ -177,6 +184,13 @@ export async function acceptProposal(dataDir: string): Promise<GatewayConfig> {
   if (!proposal.check?.ok) throw new Error(`This change did not start cleanly when it was tried, so it cannot be used: ${proposal.check?.detail ?? "it was never tried"}.`);
   // Only the timings the assistant may suggest are taken; the owner's switch and engine settings stay as they are now.
   const { config: current } = await loadGatewayConfig(dataDir);
+  const base = proposal.basedOn;
+  if (!base)
+    throw new Error("This older suggestion has no record of the timings it was based on. Ask Branch for a fresh suggestion and review it before accepting. Nothing was accepted.");
+  const timings = timingsOf(current);
+  const changed = (Object.keys(base) as (keyof Timings)[]).filter((name) => base[name] !== timings[name]);
+  if (changed.length)
+    throw new Error(`The gateway timings changed since this suggestion was prepared: ${changed.join(", ")}. Ask Branch for a fresh suggestion using your current settings, review it, then accept it. Your later timing edits were kept; nothing was accepted.`);
   const accepted = { ...proposal.config, mode: current.mode, keepAwake: current.keepAwake, workerEnv: current.workerEnv };
   await saveGatewayConfig(dataDir, accepted);
   await rm(join(dataDir, proposedFile), { force: true });
@@ -193,15 +207,12 @@ export async function acceptProposal(dataDir: string): Promise<GatewayConfig> {
  * owner's switch and the engine's settings are never changed by a suggestion, so neither by rolling one back.
  */
 export const changesFile = "gateway.changes.json";
-const TimingsSchema = GatewayConfigSchema.omit({ mode: true, keepAwake: true, workerEnv: true });
-type Timings = z.infer<typeof TimingsSchema>;
 export const AcceptedChangeSchema = z.object({
   before: TimingsSchema, after: TimingsSchema, why: z.string().max(500),
   acceptedAt: z.iso.datetime(), rolledBackAt: z.iso.datetime().nullable(),
 }).strict();
 export type AcceptedChange = z.infer<typeof AcceptedChangeSchema>;
 const keptChanges = 20;
-const timingsOf = ({ mode: _mode, keepAwake: _awake, workerEnv: _env, ...timings }: GatewayConfig): Timings => TimingsSchema.parse(timings);
 
 export async function readChanges(dataDir: string): Promise<AcceptedChange[]> {
   try { return z.array(AcceptedChangeSchema).parse(JSON.parse(await readFile(join(dataDir, changesFile), "utf8"))); }

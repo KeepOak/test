@@ -2,11 +2,12 @@
    invented). Only the few window choices worth keeping between visits are saved, in this browser. */
 
 import { api } from "./api.js";
+import { readSessionPages, resetSessionPages, sessionPrincipal } from "./session-pages.js";
 import { render } from "./dom.js";
 import { t } from "../../i18n.js";
 
 const SAVED_KEY = "branch-window";
-const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden", "home19", "simple", "simpleFrom", "advLevel"];
+const SAVED = ["level", "placesShut", "theme", "sideW", "paneW", "dockW", "rail", "sideHidden", "home19", "panes19", "simple", "simpleFrom", "advLevel"];
 
 export const S = {
   view: "chat",
@@ -25,6 +26,7 @@ export const S = {
   dockW: null,
   rail: false,
   sideHidden: false,
+  panes19: null, // RES-703: the panes beside the open conversation, their widths and the active one (chat/panes.js)
   home19: { open: false, sid: null }, // RES-701: the Home panel open or not, and its own conversation (shell/home.js)
   signedIn: true,
 };
@@ -52,15 +54,19 @@ export function save() {
 }
 
 /* The engine's picture of things: state, the Trunks and the conversation list. */
+let refreshGeneration = 0;
 export async function refresh() {
+  const mine = ++refreshGeneration;
   /* One request first: until the engine accepts the window, every refused request counts against sign-in. */
   const state = await api("state");
   const stateReadAt = Date.now();
-  const [trunks, sessions, profiles] = await Promise.all([
+  if (mine !== refreshGeneration) return;
+  const [trunks, profiles] = await Promise.all([
     api("trunks").catch(() => null),
-    api("sessions?limit=50").catch(() => null),
     api("profiles").catch(() => null),
   ]);
+  if (mine !== refreshGeneration) return;
+  if (resetSessionPages(profiles ?? E.profiles)) E.sessions = [];
   /* A read that failed keeps what the window last had. Emptied, one refused or dropped GET /api/trunks lost every Trunk
      and the modes: "@Ada …" then found no Ada and went out as an ordinary message in a new conversation (trunks-ui on
      CI), and the side list lost its Trunks and conversations until the next read. */
@@ -75,6 +81,11 @@ export async function refresh() {
     E.rooms = Array.isArray(trunks.rooms) ? trunks.rooms : [];
     if (Array.isArray(trunks.characters)) E.characters = trunks.characters; // the characters a Trunk can wear (core/art17.js)
   }
+  const who = sessionPrincipal(E.profiles);
+  const stillHere = () => mine === refreshGeneration && sessionPrincipal(E.profiles) === who && S.signedIn
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+  const sessions = await readSessionPages(E.profiles, stillHere);
+  if (!stillHere()) return;
   if (sessions) {
     E.sessions = sessions.sessions ?? [];
     E.putAway = { archived: sessions.archived ?? 0, deleted: sessions.deleted ?? 0 }; // chat/putaway.js: Archived, Recently Deleted

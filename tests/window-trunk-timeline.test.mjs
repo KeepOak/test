@@ -80,10 +80,49 @@ test("each Trunk is one row, and its conversations are one timeline, oldest firs
   await page.waitForFunction((id) => document.querySelector('#side .row[aria-current="true"]')?.dataset.id === id, first.sessionId);
   await page.locator(`#side .row[data-line="${home.id}"]`).click();
   await page.waitForFunction((id) => document.querySelector('#side .row[aria-current="true"]')?.dataset.id === id, third.sessionId);
+  // A slow engine may still be answering "fourth words": until it has, the next words join its waiting line instead.
+  await page.locator("#send:not(.stop)").waitFor();
   const again = runBody(page);
   await page.locator("#prompt").fill("fifth words");
   await page.keyboard.press("Enter");
   assert.equal((await again).sessionId, third.sessionId);
+  assert.deepEqual(errors, []);
+});
+
+/* A slow engine (CI under load) answered the fourth message after the first conversation had been opened, and the window
+   drew the answered one over it (#900, #901). Here the answer is held until the other conversation is open. */
+test("an answer that comes back after another conversation was opened leaves that one on screen", async (t) => {
+  const { app, root } = await fixture(t);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  const older = await app.runtime.run({ prompt: "older talk", trunkId: home.id });
+  age(app, older.sessionId, 3600000);
+  const newer = await app.runtime.run({ prompt: "newer talk", trunkId: home.id });
+  const { page, errors } = await open(t, app, root);
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  await page.locator("#scroll .u", { hasText: "newer talk" }).waitFor();
+
+  let release;
+  const held = new Promise((done) => { release = done; });
+  await page.route("**/api/run", async (route) => { const response = await route.fetch(); await held; await route.fulfill({ response }); });
+  const sent = runBody(page);
+  await page.locator("#prompt").fill("slow words");
+  await page.keyboard.press("Enter");
+  assert.equal((await sent).sessionId, newer.sessionId);
+  await page.evaluate((id) => import("/app/chat/chat.js").then((chat) => chat.openConversation(id)), older.sessionId);
+  const answered = page.waitForResponse((r) => r.url().endsWith("/api/run"));
+  release();
+  await answered;
+  // The send's last reads (its conversation's cost) come after anything it would have drawn.
+  await page.waitForRequest((r) => /^\/api\/sessions\/[^/]+\/cost$/.test(new URL(r.url()).pathname));
+  const shown = await page.evaluate(() => ({ open: document.querySelector('#side .row[aria-current="true"]')?.dataset.id, words: [...document.querySelectorAll("#scroll .u")].map((u) => u.textContent) }));
+  assert.equal(shown.open, older.sessionId, "the conversation opened meanwhile stays open");
+  assert.ok(shown.words.some((w) => w.includes("older talk")), shown.words.join(" | "));
+
+  // The answer is not lost: the Trunk's row goes back to the newest conversation, which has it.
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  await page.locator("#scroll .u", { hasText: "slow words" }).waitFor();
   assert.deepEqual(errors, []);
 });
 
@@ -108,10 +147,14 @@ test("New conversation starts fresh in the same timeline, under a new line, neve
   assert.equal(await page.locator(`#side .row[data-line="${home.id}"]`).getAttribute("aria-current"), "true");
 
   const sent = runBody(page);
+  // The bubble is drawn before the run is even sent (chat.js sendPlain), so the engine's store is read only once the run
+  // has answered, which it does after making the session (CI run 36674068082: read before, it had none).
+  const ran = page.waitForResponse((r) => r.url().endsWith("/api/run") && r.request().method() === "POST");
   await page.locator("#prompt").fill("fresh words");
   await page.keyboard.press("Enter");
   assert.equal((await sent).sessionId, undefined, "a new session for a new context");
   await page.locator("#scroll").locator(".u", { hasText: "fresh words" }).waitFor();
+  assert.ok((await ran).ok(), "the run was taken");
   const fresh = app.store.recentSessions(app.runtime.owner, 10).sessions.find((s) => s.opening === "fresh words");
   assert.equal(app.trunks.trunkForConversation(fresh.sessionId)?.trunkId, home.id, "the engine keeps it with the default Trunk");
   await page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`), fresh.sessionId);
@@ -119,6 +162,41 @@ test("New conversation starts fresh in the same timeline, under a new line, neve
   assert.equal(await page.locator("#scroll .tl-sep19").count(), lines + 1, "one more line in the same timeline");
   assert.equal(await page.locator("#scroll").locator(".u", { hasText: "earlier words" }).count(), 1);
   assert.notEqual(fresh.sessionId, before.sessionId);
+  assert.deepEqual(errors, []);
+});
+
+/* The same stale scroll as trunkline.js's: the browser sends a scroll queued on a box to that box on the next frame, even
+   when a redraw took it off the page meanwhile. Off the page its scrollTop and heights read 0, so the conversation's own
+   listener took it for a reader at the end, and the next drawing threw someone reading back down to the bottom. Here
+   the box is drawn anew (its place put back, a scroll queued) and the window leaves for Settings in one step. */
+test("a scroll that lands on a box off the page does not move a reader who scrolled back", async (t) => {
+  const { app, root } = await fixture(t, [long]);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  await app.runtime.run({ prompt: "one long talk", trunkId: home.id });
+  const { page, errors } = await open(t, app, root, { width: 1100, height: 640 });
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  await page.locator("#scroll .u", { hasText: "one long talk" }).waitFor();
+  const frame = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await page.locator("#scroll").evaluate((box) => { box.scrollTop = 300; });
+  await frame(); // the reader's own scroll is heard: they are reading back, 300 from the top
+  const stale = await page.evaluate(async () => {
+    const { renderNow } = await import("/app/core/dom.js"), { S } = await import("/app/core/state.js");
+    const seen = { heard: false };
+    S.view = "settings"; renderNow(); S.view = "chat"; renderNow(); // drawn anew, in a new box put back at 300
+    const box = document.querySelector("#scroll");
+    box.addEventListener("scroll", () => { seen.heard = !box.isConnected; });
+    S.view = "settings"; renderNow(); // and left before the frame: the box is off the page when its scroll is sent
+    await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+    return seen;
+  });
+  assert.ok(stale.heard, "the box taken off the page was sent its scroll");
+  await page.evaluate(async () => {
+    const { renderNow } = await import("/app/core/dom.js"), { S } = await import("/app/core/state.js");
+    S.view = "chat"; renderNow();
+  });
+  assert.equal(await page.locator("#scroll").evaluate((box) => box.scrollTop), 300, "back in the conversation, the reader is where they left it");
   assert.deepEqual(errors, []);
 });
 
@@ -146,6 +224,84 @@ test("older conversations are read only when scrolled to", async (t) => {
   assert.ok(reads.includes(`/api/sessions/${oldest.sessionId}`), "read once scrolled to");
   assert.equal(await thread.locator(".u", { hasText: "oldest long talk" }).count(), 1);
   assert.ok(await page.locator("#scroll").evaluate((box) => box.scrollTop > 0), "the reader keeps their place, not thrown to the top");
+  assert.deepEqual(errors, []);
+});
+
+/* CI flake (runs 36574033111, 36636445522): opened, the thread is short until its reads land, and a short thread reads
+   further back on a timer. On a busy machine the timer ran after the conversation above had been read, and read the
+   one above that as well, before anyone scrolled. Here every zero-delay timer is held back until the reads have landed
+   and been drawn, which is that busy machine every time. */
+test("a short thread's check that runs late does not read further back than the window needs", async (t) => {
+  const { app, root } = await fixture(t, [long]);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  age(app, home.chatSessionId, 5 * 3600000);
+  const oldest = await app.runtime.run({ prompt: "oldest long talk", trunkId: home.id });
+  age(app, oldest.sessionId, 4 * 3600000);
+  const middle = await app.runtime.run({ prompt: "middle long talk", trunkId: home.id });
+  age(app, middle.sessionId, 3 * 3600000);
+  await app.runtime.run({ prompt: "newest long talk", trunkId: home.id });
+  const { page, errors, reads } = await open(t, app, root, { width: 1100, height: 640 });
+  await page.evaluate(() => {
+    const real = window.setTimeout, late = window.lateTimers = { held: [], ran: new Set(), next: 0 }, fetch = window.fetch;
+    window.readsAsked = [];
+    window.fetch = (url, ...rest) => { window.readsAsked.push(String(url)); return fetch(url, ...rest); };
+    window.setTimeout = (fn, ms, ...args) => {
+      if (ms) return real(fn, ms, ...args);
+      const id = ++late.next;
+      late.held.push(() => { try { if (typeof fn === "function") fn(...args); } finally { late.ran.add(id); } });
+      return real(() => undefined, 0);
+    };
+    window.releaseLateTimers = () => { const due = late.held.splice(0); for (const run of due) real(run, 0); return late.next; };
+  });
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  const thread = page.locator("#scroll");
+  await thread.locator(".u", { hasText: "newest long talk" }).waitFor();
+  await thread.locator(".u", { hasText: "middle long talk" }).waitFor();
+  const upTo = await page.evaluate(() => window.releaseLateTimers());
+  assert.ok(upTo > 0, "the short thread's check was held back");
+  await page.waitForFunction((upTo) => Array.from({ length: upTo }, (_, i) => i + 1).every((id) => window.lateTimers.ran.has(id)), upTo);
+  // A read starts inside the timer that asks for it (api.js calls fetch at once), so the page's own list is complete here.
+  const asked = await page.evaluate(() => window.readsAsked);
+  assert.ok(asked.includes(`/api/sessions/${middle.sessionId}`) || reads.includes(`/api/sessions/${middle.sessionId}`), "the conversation just above is read at once");
+  assert.equal([...asked, ...reads].some((url) => url.endsWith(`/api/sessions/${oldest.sessionId}`)), false, "the conversation above that is not read before it is scrolled to");
+  assert.deepEqual(errors, []);
+});
+
+/* CI flake after the timer fix (PR #1079's run, 05:00 UTC): the browser sends a scroll it queued on the next frame, and a
+   redraw in that frame had replaced the thread's box. The old box, off the page, reads scrollTop 0, so its scroll looked
+   like the reader at the top and read the conversation above. Here the queued scroll and the redraw are made in one step. */
+test("a scroll that lands on a thread box a redraw already replaced reads nothing further back", async (t) => {
+  const { app, root } = await fixture(t, [long]);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  age(app, home.chatSessionId, 5 * 3600000);
+  const oldest = await app.runtime.run({ prompt: "oldest long talk", trunkId: home.id });
+  age(app, oldest.sessionId, 4 * 3600000);
+  const middle = await app.runtime.run({ prompt: "middle long talk", trunkId: home.id });
+  age(app, middle.sessionId, 3 * 3600000);
+  await app.runtime.run({ prompt: "newest long talk", trunkId: home.id });
+  const { page, errors, reads } = await open(t, app, root, { width: 1100, height: 640 });
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  const thread = page.locator("#scroll");
+  await thread.locator(".u", { hasText: "newest long talk" }).waitFor();
+  await thread.locator(".u", { hasText: "middle long talk" }).waitFor();
+  const { replaced, asked } = await page.evaluate(async () => {
+    const asked = [], fetch = window.fetch;
+    window.fetch = (url, ...rest) => { asked.push(String(url)); return fetch(url, ...rest); }; // api.js calls fetch at once
+    const { renderNow } = await import("/app/core/dom.js"), { S } = await import("/app/core/state.js");
+    const box = document.querySelector("#scroll");
+    box.scrollTop -= 50; // a scroll the browser sends on the next frame
+    S.view = "settings"; renderNow(); S.view = "chat"; renderNow(); // the conversation drawn anew, in a new box
+    const gone = !box.isConnected && document.querySelector("#scroll") !== box;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))); // the queued scroll is sent
+    window.fetch = fetch;
+    return { replaced: gone, asked };
+  });
+  assert.equal(replaced, true, "the box the scroll was queued on was replaced");
+  assert.equal([...asked, ...reads].some((url) => url.endsWith(`/api/sessions/${oldest.sessionId}`)), false, "the conversation above is not read by a scroll on a box off the page");
   assert.deepEqual(errors, []);
 });
 

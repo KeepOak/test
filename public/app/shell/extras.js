@@ -3,7 +3,7 @@
    copy of the conversation to Library › Documents (and, in the desktop app, offers its archive to the Save dialog). The shortcuts the engine keeps (its "keys" card,
    shell/keys.js) are set by pressing the keys (#179); the fixed ones are only the keys this window answers to. */
 
-import { esc, renderNow } from "../core/dom.js";
+import { esc, renderNow, afterDraw } from "../core/dom.js";
 import { openPop, closePop, openDlg, mi, toast, ic } from "../core/ui.js";
 import { S, E, ownerHere, activeId } from "../core/state.js";
 import { api, token } from "../core/api.js";
@@ -18,7 +18,7 @@ import { binding, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./ke
 import { toggleSide, hiddenNow } from "./resize.js";
 import { initMachines } from "./machines.js";
 import { initFileView } from "./fileview.js";
-import { t } from "../../i18n.js";
+import { t, language } from "../../i18n.js";
 import { say } from "../core/words.js";
 
 /* The saved choice and the worker actually running behind a gateway are separate facts. */
@@ -27,13 +27,29 @@ let gwReadAt = 0, gwProfile = undefined;
 /** Only successfully read facts for the profile still at the window; no problem text or private worker details. */
 export const petGateway = () => ownerHere() && gwProfile === activeId() && Date.now() - gwReadAt <= 60000
   ? { running: typeof gw?.underGateway === "boolean" ? gw.underGateway : null, problem: !!gw?.problem } : null;
+let gwHealth = null, gwPopContext = null;
+const gatewayAccess = () => S.signedIn && ownerHere() && !document.getElementById("app")?.classList.contains("locked-b17");
+const gatewayContext = () => JSON.stringify([activeId(), S.signedIn, S.view, S.chat, S.setPage]);
+const gatewayPanel = () => document.querySelector(".pop .gateway-activity14");
+const gatewayFresh = (context, panel) => gatewayAccess() && context === gatewayContext() && panel?.isConnected && gatewayPanel() === panel;
+
+/* https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/apps/desktop/src/app/shell/gateway-menu-panel.tsx
+   (MIT, Nous Research) keeps recent activity and restart beside
+   current status. Branch reads its own bounded health notes once per open; no upstream code or polling copied. */
+function gatewayActivity() {
+  const notes = Array.isArray(gwHealth?.notes) ? gwHealth.notes.filter((n) => typeof n?.text === "string").slice(-5).reverse() : [];
+  const rows = notes.map((n) => `<li><span>${esc(n.text)}</span>${typeof n.at === "string" && Number.isFinite(Date.parse(n.at)) ? `<time datetime="${esc(n.at)}">${esc(new Date(n.at).toLocaleString(language()))}</time>` : ""}</li>`).join("");
+  const empty = !gw ? t("gatewayActivity.unavailable") : gw.underGateway !== true ? t("window.settings.gateway.nothing-is-watching-branch")
+    : gwHealth ? t("window.settings.gateway.nothing-to-report") : t("gatewayActivity.unavailable");
+  return `<div class="gateway-activity14"><div class="ph">${esc(t("window.settings.gateway.what-it-has-been-doing"))}</div>${rows ? `<ol>${rows}</ol>` : `<p class="pp">${esc(empty)}</p>`}</div>`;
+}
 
 function gatewayPop() {
   const saved = (gw?.mode ?? "off") !== "off", running = gw?.underGateway === true;
-  const line = gw?.problem ? String(gw.problem) : running && !saved ? t(gw.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater") : running ? t("gatewayChoice.running")
+  const line = !gw ? t("gatewayChoice.unavailable") : gw.problem ? String(gw.problem) : running && !saved ? t(gw.stopsWhenOff === true ? "gatewayChoice.stopping" : "gatewayChoice.offLater") : running ? t("gatewayChoice.running")
     : saved ? t("gatewayChoice.saved") : t("gatewayChoice.off");
   const note = gw?.note ? `<p class="pp">${esc(gw.note)}</p>` : "";
-  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("gatewayChoice.preference")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${saved ? "checked" : ""} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
+  return `<div class="pt">${t("window.settings.gateway.gateway")}</div><p class="pp">${esc(line)}</p>${note}<div class="row-in"><span>${t("gatewayChoice.preference")}</span><input class="sw" type="checkbox" id="gwpop-sw" data-sw="gwpop-sw" ${saved ? "checked" : ""} ${gw ? "" : "disabled"} aria-label="${t("window.settings.gateway.gateway")}"></div><hr>${gatewayActivity()}<hr>${mi("gwpop-restart14", "retry", t("window.settings.gateway.restart-the-engine"))}${mi("setgo", "sliders", t("window.shell.extras.gateway-settings"), "", 'data-v="gateway"')}`;
 }
 
 /* The status bar reports the actual worker, not the next-start preference. */
@@ -47,34 +63,73 @@ export function noteGateway(read) {
 }
 let gwFor = null, gwReading = false;
 export async function readGateway() {
-  if (!E.state || E.state === gwFor || gwReading || !ownerHere()) return;
+  if (!E.state || E.state === gwFor || gwReading || !gatewayAccess()) return;
   gwFor = E.state;
   gwReading = true;
+  const who = activeId();
   const was = gatewayOn();
-  const profile = activeId();
-  try { gw = await api("never-break"); gwReadAt = Date.now(); gwProfile = profile; } catch (error) { console.warn(error.message); } finally { gwReading = false; }
+  try { const read = await api("never-break"); if (gatewayAccess() && activeId() === who) { gw = read; gwReadAt = Date.now(); gwProfile = who; } }
+  catch (error) { console.warn(error.message); } finally { gwReading = false; }
   if (gatewayOn() !== was) renderNow();
 }
 
-async function openGateway(el) {
-  gw = await api("never-break").catch(() => gw);
-  openPop(el, gatewayPop(), { right: true });
+async function openGateway(el, force = false) {
+  if (!gatewayAccess()) return;
+  const context = gatewayContext();
+  gwPopContext = context;
+  openPop(el, `<div class="gateway-activity14"><p class="pp" role="status">${esc(t("gatewayActivity.reading"))}</p></div>`, { right: true, force });
+  const panel = gatewayPanel();
+  if (!panel) return; // pressing the same status item closes it
+  try {
+    const read = await api("never-break");
+    if (!gatewayFresh(context, panel)) return;
+    let health = null;
+    if (read.underGateway === true) {
+      health = await fetch("/gateway/health", { cache: "no-store" }).then((r) => r.ok ? r.json() : null).catch(() => null);
+      if (!gatewayFresh(context, panel)) return;
+    }
+    gw = read; gwHealth = health;
+  } catch (error) {
+    if (!gatewayFresh(context, panel)) return;
+    gw = null; gwHealth = null;
+    toast(error.message);
+  }
+  if (gatewayFresh(context, panel)) {
+    const anchor = el.isConnected ? el : document.querySelector('[data-act="gwpop"]');
+    if (anchor) openPop(anchor, gatewayPop(), { right: true, force: true });
+  }
 }
 
 async function setGateway(v) {
-  try { gw = await api("never-break", { mode: v }); } catch (error) { toast(error.message); }
+  const context = gatewayContext(), panel = gatewayPanel();
+  if (!gatewayFresh(context, panel) || gwPopContext !== context) return;
+  try { const read = await api("never-break", { mode: v }); if (gatewayAccess() && gatewayContext() === context) gw = read; }
+  catch (error) { if (gatewayAccess() && gatewayContext() === context) toast(error.message); }
+  if (!gatewayFresh(context, panel)) return;
   renderNow();
   const anchor = document.querySelector('[data-act="gwpop"]');
-  if (anchor) openPop(anchor, gatewayPop(), { right: true, force: true });
-  setTimeout(() => { gwFor = null; void readGateway(); }, 1200);
+  if (anchor && gatewayFresh(context, panel)) void openGateway(anchor, true);
+  setTimeout(() => { if (gatewayAccess() && gatewayContext() === context) { gwFor = null; void readGateway(); } }, 1200);
+}
+
+function clearGatewayPanel() {
+  if (!gatewayPanel()) return;
+  if (!gatewayAccess() || gwPopContext !== gatewayContext()) { gwHealth = null; gwPopContext = null; closePop(); }
+}
+
+function restartFromGateway() {
+  const panel = gatewayPanel();
+  if (!gatewayFresh(gwPopContext, panel)) return;
+  closePop();
+  run("gw-restart"); // existing Settings action and backend authorization/refusals
 }
 
 /* ---------- keyboard shortcuts ---------- */
 /* The engine's changeable shortcuts this window answers to, by the engine's names, with the prototype's words. */
-/* The prototype's KEYS15, less Lockdown (its keys would also turn it off, which loosens: that stays with its banner). */
+/* Lockdown's shortcut only turns it on; turning it off stays with its banner or Settings. */
 const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sidePane", "Show or hide the side panel"], ["focusMode", "Focus mode"], ["talkLive", "Talk live"], ["stopTask", "Stop the current task"], ["openInbox", "Open the Inbox"], ["nextConversation", "Next conversation"], ["previousConversation", "Previous conversation"],
   ["searchHistory", "Search the history"], ["focusPrompt", "Focus the message box"], ["lookInside", "Look inside the latest task"], ["newTrunk", "Start a new Trunk"],
-  ["switchPerson", "Who is using Branch"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"]];
+  ["switchPerson", "Who is using Branch"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"], ["lockdownOn", "Turn Lockdown on"]];
 const FIXED = [["Open conversation 1 to 9 in the list", "Ctrl+1…9"], ["New line in a message", "Shift+Enter"], ["Call a Trunk in a message", "@"], ["Use a skill", "/"], ["This list", "?"], ["Close anything", "Esc"]];
 let listening = null;
 const nameOf = (action) => KEYS.find(([a]) => a === action)?.[1] ?? "";
@@ -198,10 +253,14 @@ function focusPrompt() {
 const live = (act) => has(act) && isLive(act);
 
 export function initExtras() {
-  markLive(["gwpop", "sw:gwpop-sw", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
+  markLive(["gwpop", "sw:gwpop-sw", "gwpop-restart14", "shortcuts", "chatmenu", "export-conv", "key15", "keyreset15"]);
   initMachines();
   initFileView();
   on("gwpop", (el) => openGateway(el));
+  on("gwpop-restart14", () => restartFromGateway());
+  afterDraw(clearGatewayPanel);
+  const app = document.getElementById("app");
+  if (app) new MutationObserver(clearGatewayPanel).observe(app, { attributes: true, attributeFilter: ["class"] });
   document.addEventListener("change", (e) => { if (e.target.id === "gwpop-sw") setGateway(e.target.checked ? "when-needed" : "off"); });
   on("shortcuts", () => showShortcuts());
   on("key15", (el) => { listening = el.dataset.v; showShortcuts(); });
