@@ -2,8 +2,11 @@ import { describeToolCall } from "../activity.js";
 import type { FeatureMode } from "../feature-switches.js";
 import type { Runtime } from "../runtime.js";
 import type { Run } from "../contracts.js";
+import { outsideSourceOf } from "../outside-origin.js";
 import { runOrigin } from "../key-context.js"; // bucket 19 (integration review)
-import { outsideSourceOf } from "../outside-origin.js"; // mac7/outside-resume
+import { withRecoveryContext } from "./recovery-context.js";
+import { underProject } from "../project-scope.js";
+import { defaultProjectId } from "../projects.js";
 import { asPerson, currentPerson } from "../people/context.js"; // bucket 19 (integration review)
 import { scopeOf } from "../tool-gate.js";
 import type { Store } from "../store.js";
@@ -94,29 +97,44 @@ async function redoStep(input: RecoveryInput, runId: string, step: OpenStep): Pr
   if (step.redacted) return false;
   let args: unknown;
   try { args = JSON.parse(step.arguments); } catch { return false; }
-  // A chat message's step is checked as the chat's, with the chat's tools, never as the owner's own;
-  // mac7/outside-resume: so is a trigger's, a schedule's or another program's, as that source.
-  const origin = runOrigin(input.store, runId);
-  const outside = outsideSourceOf(input.store, runId);
-  const context = input.runtime.context({ runId, ...(outside
-    ? { source: outside, ...(origin.permissions ? { permissions: origin.permissions } : {}) } : {}) });
-  const check = input.runtime.checkPolicy(step.tool, args, context);
-  if (check.decision !== "allow") return false;
-  // Q63: the call done again is recorded like any other call, under the run it is done for, so what
-  // that run did can be read back (a team task settles from these records, src/team-reconcile.ts).
-  const recorded = { name: step.tool, id: step.callId, redone: true };
-  input.store.event(runId, "tool.started", { ...recorded, label: label(step) });
   try {
-    // mac5/manual-actions: redone where the rule and the owner's wall say, as the first attempt was.
-    const result = await input.runtime.registry.execute(step.tool, args, { ...context, ...scopeOf(input.runtime, step.tool, args, context, check) });
-    const shown = input.runtime.hideSecrets(result);
-    input.store.event(runId, "tool.completed", { ...recorded, result: shown, receipt: await input.store.receipts.sign(runId, step.callId, step.tool, shown) });
-    return replaceResult(input.store, step.sessionId, step.callId, { ok: true, result, status: "redone",
-      note: "Branch was restarted while this step ran; it changes nothing or gives the same result every time, so it was simply done again." });
+    return await withRecoveryContext(input, runId, async (context) => {
+      context.signal.throwIfAborted();
+      const check = input.runtime.checkPolicy(step.tool, args, context);
+      if (check.decision !== "allow") return false;
+      // Q63: the call done again is recorded like any other call, under the run it is done for, so what
+      // that run did can be read back (a team task settles from these records, src/team-reconcile.ts).
+      const recorded = { name: step.tool, id: step.callId, redone: true };
+      input.store.event(runId, "tool.started", { ...recorded, label: label(step) });
+      try {
+        // mac5/manual-actions: redone where the rule and the owner's wall say, as the first attempt was.
+        const result = await input.runtime.registry.execute(step.tool, args, { ...context, ...scopeOf(input.runtime, step.tool, args, context, check) });
+        context.signal.throwIfAborted();
+        const shown = input.runtime.hideSecrets(result);
+        const receipt = await input.store.receipts.sign(runId, step.callId, step.tool, shown);
+        context.signal.throwIfAborted();
+        input.store.event(runId, "tool.completed", { ...recorded, result: shown, receipt });
+        return replaceResult(input.store, step.sessionId, step.callId, { ok: true, result, status: "redone",
+          note: "Branch was restarted while this step ran; it changes nothing or gives the same result every time, so it was simply done again." });
+      } catch (error) {
+        input.store.event(runId, "tool.failed", { ...recorded, error: input.runtime.hideSecrets(error instanceof Error ? error.message : String(error)) });
+        return false;
+      }
+    });
   } catch (error) {
-    input.store.event(runId, "tool.failed", { ...recorded, error: input.runtime.hideSecrets(error instanceof Error ? error.message : String(error)) });
+    const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+    input.store.event(runId, "recovery.context_unavailable", { callId: step.callId, reason });
+    input.store.finish(runId, "needs_input", reason);
+    input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+    input.runtime.notifyEvent("approval.needed", { runId, question: reason });
     return false;
   }
+}
+
+function checkRecovery(input: RecoveryInput, runId: string): void {
+  const signal = input.runtime.activeRunSignal(runId);
+  if (!signal) throw new Error("The interrupted recovery was stopped or paused.");
+  signal.throwIfAborted();
 }
 
 const label = (step: OpenStep): string => {
@@ -130,7 +148,10 @@ async function settleNotStarted(input: RecoveryInput, runId: string, step: OpenS
   if (runNow) {
     let args: unknown = null;
     try { args = JSON.parse(step.arguments); } catch { /* redo refuses it */ }
-    const evidence = step.effects === "none" ? null : await evidenceFor(step.tool, args, input.runtime.context({ runId }).workspace).catch(() => null);
+    const evidence = step.effects === "none" ? null : await withRecoveryContext(input, runId, (context) => evidenceFor(step.tool, args, context.workspace)).catch(() => null);
+    const signal = input.runtime.activeRunSignal(runId);
+    if (!signal) throw new Error("Recovery was stopped before its journal retry.");
+    signal.throwIfAborted();
     let started = false;
     try { input.journal.start(step.id, evidence); started = true; } catch { /* not written down, so not done */ }
     if (started && await redo(input, runId, { ...step, evidence, state: "started" })) {
@@ -148,6 +169,7 @@ async function settleNotStarted(input: RecoveryInput, runId: string, step: OpenS
 /** Settles one step; `settled` is false when it was left for the model or the owner, so later steps wait. */
 async function settleStep(input: RecoveryInput, runId: string, step: OpenStep, carryOn: boolean): Promise<{ decision: StepDecision; settled: boolean }> {
   const decision = await decideStep(step);
+  if (carryOn) checkRecovery(input, runId);
   if (decision === "not-started") return { decision, settled: await settleNotStarted(input, runId, step, carryOn) };
   if (decision === "done") {
     replaceResult(input.store, step.sessionId, step.callId, { ok: true, status: "verified",
@@ -157,6 +179,7 @@ async function settleStep(input: RecoveryInput, runId: string, step: OpenStep, c
   }
   if (decision === "not-done" || decision === "redo") {
     const done = carryOn && await redo(input, runId, step);
+    if (carryOn) checkRecovery(input, runId);
     if (done) input.journal.finish(step.id, "redone");
     else if (decision === "redo") input.journal.finish(step.id, "abandoned");
     else {
@@ -212,26 +235,100 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
   // chat app sends the message again: that message is held, and the owner decides in the app.
   if (inbound) holdReplay(input, inbound.data as Record<string, unknown>, runId);
   const carryOn = input.mode === "on" && !input.askOnly && !inbound;
-  noteFinishedWithoutResult(input, run);
   const decided: { tool: string; decision: StepDecision }[] = [];
   const asks: OpenStep[] = [];
-  let clear = true;
-  for (const step of steps) {
-    // Once a step is left undecided, the ones the model asked for after it are not run ahead of it.
-    const { decision, settled } = await settleStep(input, runId, step, carryOn && clear);
-    clear &&= settled;
-    decided.push({ tool: step.tool, decision });
-    if (decision === "ask") asks.push(step);
-  }
-  if (asks.length) { askOwner(input, runId, asks); return { runId, outcome: "asked", steps: decided }; }
-  if (!carryOn) {
-    input.store.event(runId, "run.can_continue", { note: "Branch was restarted while this task was working. Continue it when you are ready." });
+  const checkProject = () => {
+    if (!run.project || input.store.sessionProject(run.sessionId) !== run.project
+      || !input.store.projects.list(run.owner).some((project) => project.id === run.project))
+      throw new Error("The interrupted task's original project is unknown, deleted or differs from its conversation. Reconcile it before continuing.");
+  };
+  let recovery: ReturnType<Runtime["beginInterruptedRecovery"]> | null = null;
+  try {
+    if (carryOn) recovery = input.runtime.beginInterruptedRecovery(runId);
+    // Reconcile the saved role and workspace before any journal retry or automatic model continuation.
+    if (carryOn) {
+      try { checkProject(); await withRecoveryContext(input, runId, async () => undefined); checkProject(); }
+      catch (error) {
+        recovery?.signal.throwIfAborted();
+        const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+        input.store.finish(runId, "needs_input", reason);
+        input.store.event(runId, "recovery.context_unavailable", { reason });
+        input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+        input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+        return { runId, outcome: "asked", steps: [] };
+      }
+    }
+    recovery?.signal.throwIfAborted();
+    noteFinishedWithoutResult(input, run);
+    let clear = true;
+    for (const step of steps) {
+      // Once a step is left undecided, the ones the model asked for after it are not run ahead of it.
+      recovery?.signal.throwIfAborted();
+      if (carryOn) checkProject();
+      const { decision, settled } = await settleStep(input, runId, step, carryOn && clear);
+      recovery?.signal.throwIfAborted();
+      clear &&= settled;
+      decided.push({ tool: step.tool, decision });
+      if (decision === "ask") asks.push(step);
+    }
+    if (input.store.run(runId)?.status === "needs_input") return { runId, outcome: "asked", steps: decided };
+    if (asks.length) { askOwner(input, runId, asks); return { runId, outcome: "asked", steps: decided }; }
+    if (!carryOn) {
+      input.store.event(runId, "run.can_continue", { note: "Branch was restarted while this task was working. Continue it when you are ready." });
+      return { runId, outcome: "offered", steps: decided };
+    }
+    recovery?.signal.throwIfAborted();
+    checkProject();
+    // Journal reconciliation has a saved context; normal resume must independently preserve that authority.
+    await withRecoveryContext(input, runId, (context) => {
+      const events = input.store.events(runId);
+      const started = events.find((event) => event.kind === "run.started")?.data;
+      const helperCopy = events.some((event) => event.kind === "worktree.used"
+        && typeof event.data.branch === "string" && event.data.branch.startsWith("branch/helper-"));
+      if (context.depth > 0 || context.agent || started?.ownCopy === true || helperCopy)
+        throw new Error("The interrupted helper's saved authority and copy cannot yet be restored by normal continuation. Its journal was reconciled within the saved limits; automatic model continuation was held.");
+      // Normal execute restores practice mode only from this original run's own start record.
+      if (context.dryRun && started?.dryRun !== true)
+        throw new Error("The interrupted task's practice mode cannot be restored by normal continuation. Automatic model continuation was held.");
+      const candidate = outsideSourceOf(input.store, runId)
+        ? runOrigin(input.store, runId).permissions
+        : [...input.runtime.context({ signal: context.signal }).permissions];
+      if (!candidate || candidate.some((permission) => !context.permissions.has(permission)))
+        throw new Error("Normal continuation would exceed this task's recorded tool permissions. Its journal was reconciled within the saved limits; automatic model continuation was held.");
+    });
+    recovery?.signal.throwIfAborted();
+    checkProject();
+    // Each step keeps its call id, so a team task can tell which of them it has a record of (src/team-reconcile.ts).
+    input.store.event(runId, "run.auto_resumed", { steps: steps.map((step, index) => ({ ...decided[index], callId: step.callId })) });
+    // Transfer synchronously: normal resume claims this session before its first await.
+    recovery?.release();
+    const resumed = underProject(run.project ?? defaultProjectId, () => input.runtime.resume(runId)).catch(() => undefined);
+    return { runId, outcome: "resumed", steps: decided, resumed };
+  } catch (error) {
+    const reason = input.runtime.hideSecrets(error instanceof Error ? error.message : String(error));
+    if (recovery?.signal.aborted) {
+      const stopped = recovery.signal.reason instanceof Error ? recovery.signal.reason.message : reason;
+      input.store.event(runId, "run.recovery_stopped", { reason: input.runtime.hideSecrets(stopped) });
+      if (recovery.cancelled()) {
+        input.store.finish(runId, "cancelled", "Stopped during interrupted recovery. No automatic continuation was started.");
+        return { runId, outcome: "gone", steps: decided };
+      }
+      input.store.finish(runId, "needs_input", reason);
+      input.store.event(runId, "recovery.context_unavailable", { reason });
+      input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+      input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      return { runId, outcome: "asked", steps: decided };
+    }
+    if (recovery) {
+      input.store.finish(runId, "needs_input", reason);
+      input.store.event(runId, "recovery.context_unavailable", { reason });
+      input.store.event(runId, "attention.needed", { question: reason, afterRestart: true });
+      input.runtime.notifyEvent("approval.needed", { runId, question: reason });
+      return { runId, outcome: "asked", steps: decided };
+    }
+    input.store.event(runId, "run.can_continue", { note: reason });
     return { runId, outcome: "offered", steps: decided };
-  }
-  // Each step keeps its call id, so a team task can tell which of them it has a record of (src/team-reconcile.ts).
-  input.store.event(runId, "run.auto_resumed", { steps: steps.map((step, index) => ({ ...decided[index], callId: step.callId })) });
-  const resumed = input.runtime.resume(runId).catch(() => undefined);
-  return { runId, outcome: "resumed", steps: decided, resumed };
+  } finally { recovery?.release(); }
 }
 
 /** True when a step of this task that could reach the outside world was started, whatever became of it. */
