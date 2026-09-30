@@ -72,6 +72,23 @@ test("an enabled budget stops the next round at its limit, holds on unknown cost
   assert.match(routineBudgetRefusal(store, owner, root, priced, "api-key"), /incomplete/, "unknown use holds the budget");
   const unrelated = store.createRun(owner, "not a routine");
   assert.equal(routineBudgetRefusal(store, owner, unrelated.id, priced, "api-key"), null, "a task outside routines is untouched");
-  const evaluation = schedule("grader", "evaluation");
-  assert.throws(() => saveRoutineBudget(store, owner, evaluation, { monthlyEstimatedDollars: 5 }), /Evaluation schedules/);
+});
+
+test("an evaluation routine's judges and a resumed turn count toward its budget", async (t) => {
+  const { store, owner, schedule, turn, call } = await fixture(t);
+  const grader = schedule("grader", "evaluation"), priced = { model: "gpt-4o" };
+  const root = turn(grader);
+  const judge = store.createRun(owner, "judge");
+  store.event(judge.id, "run.started", {});
+  store.event(judge.id, "routine.parent", { runId: root });
+  const resumed = store.createRun(owner, "resumed turn");
+  store.event(resumed.id, "run.started", { resumedFrom: root });
+  call(judge.id, "api-key", 1_000_000);
+  call(resumed.id, "api-key", 400_000);
+  const usage = routineUsage(store, owner, grader);
+  assert.equal(usage.tasks, 3, "the turn, its judge and its resumed task");
+  assert.equal(usage.estimatedModelDollars, 3.5);
+  saveRoutineBudget(store, owner, grader, { monthlyEstimatedDollars: 3 });
+  assert.match(routineBudgetRefusal(store, owner, judge.id, priced, "api-key"), /reached its monthly estimate budget/,
+    "a judge is stopped by its evaluation routine's budget");
 });
