@@ -1700,6 +1700,21 @@ ${run.output.slice(0, 6000)}`;
           ...(options.unattended ? { unattended: true } : {}),
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
         }), trunk);
+    // A resumed helper retains its isolation requirement, without borrowing another conversation's placement.
+    if (!parent) {
+      const pending = [options.continuing ? run.id : options.resumeFrom, options.originFrom].filter((id): id is string => !!id);
+      const seen = new Set<string>();
+      while (pending.length && seen.size < 200) {
+        const id = pending.pop()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const previous = this.store.run(id);
+        if (!previous || previous.owner !== run.owner || previous.sessionId !== run.sessionId || previous.project !== run.project) continue;
+        const started = this.store.events(id).find((event) => event.kind === "run.started")?.data;
+        if (started?.ownCopy === true) context.ownCopy = true;
+        for (const from of [started?.resumedFrom, started?.originFrom]) if (typeof from === "string") pending.push(from);
+      }
+    }
     // QA R1: the call a yes was given for (or, carried on after a restart, the call whose question was lost) is run by the
     // engine itself, through the same gate, before the model's next turn; the model never has to make it again.
     const approved = this.approvedFor(run, options);
@@ -1746,6 +1761,7 @@ ${run.output.slice(0, 6000)}`;
     else this.store.event(run.id, "run.started", {
       provider: this.provider.name,
       parentRunId: parent?.runId ?? null,
+      ownCopy: context.ownCopy === true,
       deadlineMs, // long-work: a resumed task is given the same time again
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
       // Its name as it was then (agentName), so a helper whose specialist is deleted later is still named, never by its id.
