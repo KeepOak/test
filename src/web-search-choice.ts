@@ -73,12 +73,19 @@ export class WebSearchApiError extends Error {
 
 /** GET /api/web-search reads the choice; POST changes it (the owner only). */
 export async function webSearchApi(
-  deps: { store: Store; owner: string; launch: () => SearchBackendSettings; hasSecret: (name: string) => boolean; requireOwner: (what: string) => void },
+  deps: { store: Store; owner: string; launch: () => SearchBackendSettings; hasSecret: (name: string) => boolean; requireOwner: (what: string) => void;
+    requireUnlocked: () => void },
   method: string, body: () => Promise<unknown>,
 ): Promise<SearchChoiceView> {
   if (method === "POST") {
     deps.requireOwner("Choosing where web searches go");
-    try { saveSearchChoice(deps.store, deps.owner, await body()); } catch (error) {
+    const input = await body().catch((error: unknown) => {
+      throw new WebSearchApiError(400, error instanceof Error ? error.message : "That choice can't be read.");
+    });
+    // Reading the body takes time: the owner and the app lock are checked again right before the choice is kept.
+    deps.requireOwner("Choosing where web searches go");
+    deps.requireUnlocked();
+    try { saveSearchChoice(deps.store, deps.owner, input); } catch (error) {
       const message = error instanceof z.ZodError ? error.issues[0]?.message ?? "That choice can't be read." : (error as Error).message;
       throw new WebSearchApiError(400, message);
     }
