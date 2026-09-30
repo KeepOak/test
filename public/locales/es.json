@@ -6562,6 +6562,8 @@
   "voiceView.title": "Hablar en directo",
   "voiceView.unmute": "Activar el sonido",
   "voiceView.you": "Tú",
+  "weather.confirm-city": "¿Enviar {city}, {country} a Open-Meteo para un pronóstico de tres días?",
+  "weather.confirm-enable": "¿Activar solo para uso no comercial? Las consultas de ciudad van a Open-Meteo. Sus registros pueden guardar coordenadas 90 días. Los datos son CC BY 4.0; conserva la atribución. Esto no activa acceso de pago ni ubicación precisa.",
   "window.applock.after-min": "Tras {count} min",
   "window.applock.anyone-can-open": "Cualquiera en este equipo puede abrir Branch.",
   "window.applock.asks-every-open": "Pide tu PIN cada vez que se abre.",
