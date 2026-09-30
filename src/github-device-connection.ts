@@ -119,7 +119,9 @@ export class GitHubDeviceConnection {
       this.ownerGuard();
     } catch (error) {
       store.secrets.remove(owner, "default", secret);
-      if (this.account()?.secret === secret) store.save("settings", owner, accountKey, previous);
+      if (this.account()?.secret === secret) {
+        if (previous) store.save("settings", owner, accountKey, previous); else store.delete("settings", owner, accountKey);
+      }
       throw error;
     }
     this.cancel();
@@ -128,7 +130,7 @@ export class GitHubDeviceConnection {
   }
   private removeAccount(): void {
     const account = this.account(), { store, owner } = this.deps;
-    store.save("settings", owner, accountKey, null);
+    store.delete("settings", owner, accountKey);
     if (account) store.secrets.remove(owner, "default", account.secret);
   }
   disconnect() { this.ownerGuard(); this.cancel(); this.removeAccount(); return this.view(); }
