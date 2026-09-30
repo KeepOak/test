@@ -172,6 +172,7 @@ function status(context: CommandContext): string {
 function fresh(context: CommandContext): string {
   if (context.turn) return "I am still working on something. Send /stop first, then /new.";
   if (!context.sessionId) return "This chat has no conversation yet; your next message starts one.";
+  context.runtime.stopHelpers(context.sessionId); // helper-lifecycle: the helpers it started stop with it
   context.forget();
   return "Your next message starts a new conversation. The earlier one is kept in the app.";
 }

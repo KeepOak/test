@@ -27,6 +27,7 @@ import { registerHumanTasks } from "./deferred.js";
 import { BackgroundProcesses, registerProcesses } from "./processes.js";
 import { CodeRunner, registerCodeRun } from "./code-run.js";
 import { HandOff, registerHandOff } from "./coding/hand-off.js";
+import { heldHandOffCommands } from "./coding/hand-off-commands.js";
 import { CredentialResolver } from "./credential-cli.js";
 import { OsPermissions, probeReader } from "./os-permissions.js";
 import { Runtime, argumentFingerprint } from "./runtime.js";
@@ -744,8 +745,9 @@ export async function createBranch(options: {
   // Q12: Branch changing its own source is held to a contract written before anything changes.
   const selfContracts = new ContractBook(store.sqlite);
   // Branch builds Branch: a coding job handed to the owner's own Claude Code or Codex, inside one folder (src/coding/hand-off.ts).
+  // SELF-083: a handed-off Claude Code's commands are weighed and run as the task's own shell.execute, held to its folder.
   registerHandOff(registry, new HandOff({ store, owner: runtime.owner, workspace, dataDir, book: selfContracts,
-    git: (options, signal) => gitRunner.run(options, signal) }));
+    git: (options, signal) => gitRunner.run(options, signal), commands: heldHandOffCommands({ registry, store, runtime }) }));
   // FQ-memory.providers: an outside memory service the owner switches on in Settings replaces this
   // computer's database for the assistant's remember/recall/forget loop, not only sits beside it —
   // src/memory-provider.ts reads the owner's choice fresh on every call, and web.policy is the same
@@ -924,7 +926,8 @@ export async function createBranch(options: {
     if (remoteTools.includes(name)) throw new Error(outsideRemoteRefusal(who, name));
     if (name !== heldOnly) throw new Error(outsideProgramRefusal(who, name));
     store.event(context.runId, "sandbox.outside_caller", { tool: name, who });
-    return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.workspace };
+    // SELF-083: a command already held to a narrower folder (a hand-off's) stays held there.
+    return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.writesConfinedTo ?? context.workspace };
   };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
@@ -1097,6 +1100,8 @@ ${result.output || "(it said nothing)"}`;
   processes.finished.add(() => { void scheduler.heartbeat.wake("a background command finished").catch(() => undefined); });
   // workbench (SELF-304): a command the assistant may run once it may also leave running, and be woken when it ends.
   processes.commandPrograms = () => ownClis.commandPrograms();
+  // SELF-304: while Branch's own source is checked out, a program left running is walled by the shell, as a held command is.
+  processes.heldLauncher = (input, context, timeoutMs) => ownClis.launchHeld(input, context, timeoutMs);
   // selfdev (SELF-304): a program left running with wakeOnExit or wakeOnText wakes its own conversation, as a follow-up
   // of the task that started it, so the assistant is told instead of checking on it.
   processes.waker = ({ sessionId, runId, text }) => {

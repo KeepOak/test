@@ -77,6 +77,7 @@ import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOver
 import { keepOnThisComputer, nothingHere, presetRunsLocally } from "./models.js"; // mac7/coding-next
 import { ownerTidyRemainder } from "./owner-folders.js";
 import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
+import { boundSummaryInput, ownerWordsMaxTokens, ownerWordsSection, transcriptLine } from "./compaction-input.js"; // P0 (self-build)
 import { contractHold, sourceSendHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
@@ -147,7 +148,7 @@ import {
 import type { RunToolEmbedder, ToolEmbedder } from "./tool-index.js";
 import { mcpAppIn } from "./mcp-apps.js";
 import { NoteInputSchema } from "./tool-usage.js";
-import { estimateCost, formatCost, pricingSettings } from "./pricing.js";
+import { estimateCost, formatCost, pricingSettings, tokenCountsOf } from "./pricing.js";
 // --- R17-S-B: the owner's knobs, read fresh at each marked hook (src/knobs/apply.ts) ---
 import * as knobs from "./knobs/apply.js";
 import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
@@ -155,6 +156,8 @@ import { loadWords, type Words } from "./terminal-words.js"; // the workspace's 
 import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
 import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
+import { HelperTree, handOnRefusal, mayHandOn, nestedHelperRefusal } from "./helper-tree.js"; // helper-lifecycle
+import { helperParent } from "./helper-control.js"; // helper-lifecycle
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
@@ -226,7 +229,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** workbench (SELF-302): the helper works in its own copy of the project (a git worktree). */ ownCopy?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** workbench (SELF-302): the helper works in its own copy of the project (a git worktree). */ ownCopy?: boolean; /** helper-lifecycle: the helper may start helpers of its own (src/helper-tree.ts). */ delegates?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -583,6 +586,8 @@ export interface RunOptions {
   timeoutMs?: number;
   budget?: BudgetOptions;
   onStarted?: (run: Run) => void;
+  /** helper-lifecycle: the task exists and its start is written, before any slow setup (its own copy of the project). */
+  onCreated?: (run: Run) => void;
   onTextDelta?: (text: string) => void;
   /** FQ-surfaces: the id of the user message this run saved, for playback clip matching. */
   onUserMessageId?: (id: number) => void;
@@ -680,6 +685,9 @@ export const lockdownStandingYes = "Lockdown is on, so a yes cannot be kept for 
 const ownerSources = new Set(["owner", "schedule", "trigger"]);
 export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOwner() && !startedWithShortLivedKey();
 
+/** helper-lifecycle: a background helper not created within this long is stopped and reported as not started. */
+const helperStartMs = 30_000;
+const helperNotStarted = "The background specialist did not start";
 export class Runtime {
   private readonly controllers = new Map<string, AbortController>();
   /** long-work: tasks the owner paused; each stops after the step it is on (or at once while it only waits). */
@@ -692,6 +700,8 @@ export class Runtime {
    */
   private readonly replyCeilings = new Map<string, number>();
   private readonly children = new Map<string, number>();
+  /** helper-lifecycle: which live task started which, and background helpers at once (src/helper-tree.ts). */
+  private readonly helperTree = new HelperTree();
   private readonly helperModels = new Map<string, ModelPreset>();
   /** Accounts owns final authorization and binds an immutable provider without changing defaults. */
   resolveHelperModel = async (preset: ModelPreset, accountRef: HelperSelection["accountRef"], _parentSessionId: string): Promise<HelperConnection> => {
@@ -894,6 +904,8 @@ export class Runtime {
       allowProjectTests?: boolean;
       /** FQ-routing.isolated-agents: the agent executing this context, for scope-aware memory and fact writes. */
       agent?: string;
+      /** helper-lifecycle: a helper carried on keeps its lead's leave to hand work on (src/helper-tree.ts). */
+      delegates?: boolean;
     } = {},
   ): ToolContext {
     // FQ-routing.isolated-agents: work a Trunk set going (a workflow or flow step, a procedure it replays)
@@ -916,6 +928,7 @@ export class Runtime {
       ...(options.unattended ? { unattended: true } : {}),
       ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
       ...(options.agent ? { agent: options.agent } : {}),
+      ...(options.delegates ? { delegates: true } : {}),
       ...(trunkWork ? { trunk: trunkWork } : {}),
       // Q123 (NAS 24f2b9c): and with that Trunk's keys, so every guard that knows a Trunk by them (a saved sign-in
       // filled, Branch removed, a program installed, a sign-in connection) knows its work too, not only its turn.
@@ -930,7 +943,27 @@ export class Runtime {
   cancel(id: string): boolean {
     const controller = this.controllers.get(id);
     controller?.abort(new Error("Cancelled by user"));
+    // helper-lifecycle: a stop reaches every helper this task started, and theirs, even after the task itself ended.
+    // The answer still says only whether this task itself was working (callers go on to stop a waiting one otherwise).
+    for (const child of this.helperTree.descendants(id))
+      this.controllers.get(child)?.abort(new Error("Stopped with the task that started it"));
     return !!controller;
+  }
+  /** helper-lifecycle: a child task joins its parent's tree; one started after its parent was stopped stops at once. */
+  private adoptChild(parentId: string, runId: string, controller: AbortController): void {
+    this.helperTree.adopt(parentId, runId);
+    if (this.controllers.get(parentId)?.signal.aborted) controller.abort(new Error("Stopped with the task that started it"));
+  }
+  /** helper-lifecycle: /new and reset stop the helpers a conversation's tasks started, and theirs; answers how many. */
+  stopHelpers(sessionId: string): number {
+    let stopped = 0;
+    for (const lead of this.helperTree.parents())
+      if (this.store.run(lead)?.sessionId === sessionId)
+        for (const helper of this.helperTree.descendants(lead)) {
+          const working = this.controllers.get(helper);
+          if (working && !working.signal.aborted) { working.abort(new Error("Stopped: its conversation started afresh")); stopped++; }
+        }
+    return stopped;
   }
   /**
    * long-work: the owner's Pause. The task stops after the step it is on (a wait for a limit or a connection ends at
@@ -1085,35 +1118,75 @@ export class Runtime {
    */
   async delegateBackground(prompt: string, parent: ToolContext, permissions: string[], instructions: string, options: DelegateOptions = {}): Promise<{ childRunId: string; sessionId: string }> {
     if (parent.depth >= 3) throw new Error("Delegation depth limit reached");
+    // helper-lifecycle: a helper starts no helpers of its own unless its lead let it (src/helper-tree.ts).
+    if (!mayHandOn(parent)) throw new Error(nestedHelperRefusal);
     if (permissions.some((p) => !parent.permissions.has(p))) throw new Error("Delegation permission escalation denied");
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
     // selfdev (SELF-303): a background helper may be given up to two hours; one in the foreground keeps its two minutes.
     if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 7_200_000) throw new Error("A background helper may work 1 second to 2 hours");
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
-    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1, ownCopy: options.ownCopy === true,
-      budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
     // workbench (SELF-303): only a helper's own conversation (one with a pinned helper route) is carried on in, and only
     // on the model and account it was pinned to, so a lead cannot pour a helper into any other conversation.
     const resumed = options.sessionId ? helperRoute(this.store, this.owner, options.sessionId) : null;
     if (options.sessionId && !resumed) throw new Error("That conversation is not a helper's own, so it cannot be carried on as one.");
-    const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
-    context.signal.throwIfAborted();
-    let started: Run | undefined;
-    const startedAt = new Promise<Run>((resolve) => { started = undefined; void resolve; });
-    void startedAt;
-    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.sessionId ? { sessionId: options.sessionId } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+    parent.signal.throwIfAborted();
+    // helper-lifecycle: no more background helpers at once in a conversation than its sub-tasks at once; the place is
+    // reserved before anything is awaited, so helpers asked for in one step cannot all pass the check.
+    const home = this.helperTree.homeFor(parent.runId, this.store.run(parent.runId)?.sessionId ?? parent.runId);
+    const release = this.helperTree.reserve(home, sub.atOnce);
+    if (!release) throw new Error(`Helper limit reached: ${sub.atOnce} helpers already work at once in this conversation. Wait for one to finish, or stop one, and start it then.`);
+    // helper-lifecycle: stopping the helper before it exists (its lead stopped, or it never started) stops it all the same.
+    const stop = new AbortController();
+    const context = { ...parent, signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), stop.signal]), permissions: new Set(permissions), depth: parent.depth + 1,
+      ownCopy: options.ownCopy === true, delegates: options.delegates === true,
+      budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
+    let connection: HelperConnection | undefined;
+    try {
+      connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
+      context.signal.throwIfAborted();
+      parent.signal.throwIfAborted(); // helper-lifecycle: a lead stopped while its helper's connection was chosen starts none
+      return await this.startHelper(prompt, parent, context, instructions, connection, options, { home, release, stop });
+    } catch (error) {
+      release();
+      connection?.release?.(); // MODEL-050: its account lease (released once, however often it is called)
+      throw error;
+    }
+  }
+  /**
+   * helper-lifecycle: the background helper exists, is in its lead's tree and is on the lead's record (so helpers.list
+   * and helpers.stop reach it) as soon as its task is created, before any slow setup such as its own copy of the project.
+   * One that does not start in time is stopped rather than left running where nothing can see it.
+   */
+  private async startHelper(prompt: string, parent: ToolContext, context: ToolContext, instructions: string, connection: HelperConnection,
+    options: DelegateOptions, held: { home: string; release: () => void; stop: AbortController }): Promise<{ childRunId: string; sessionId: string }> {
+    let created!: (run: Run) => void;
+    const exists = new Promise<Run>((resolve) => { created = resolve; });
+    const onCreated = (run: Run) => {
+      this.helperTree.setHome(run.id, held.home);
+      this.store.event(parent.runId, "delegation.background_started", { childRunId: run.id, prompt: prompt.slice(0, 200), sessionId: run.sessionId });
+      created(run);
+    };
+    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onCreated, ...(options.sessionId ? { sessionId: options.sessionId } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+    void child.then(held.release, held.release);
     void child.then((run) => {
       const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString(),
         ...(options.tellsLead ? { tellsLead: true } : {}) };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
-      if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
+      this.store.event(parent.runId, "delegation.background_finished", { ...result });
       try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
-    }, () => undefined);
-    for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
-    if (!started) throw new Error("The background specialist did not start");
-    if (parent.runId) this.store.event(parent.runId, "delegation.background_started", { childRunId: started.id, prompt: prompt.slice(0, 200), sessionId: started.sessionId });
-    return { childRunId: started.id, sessionId: started.sessionId };
+    }, () => { connection.release?.(); }); // MODEL-050: a helper that failed before it settled gives its account back too
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(helperNotStarted)), helperStartMs); });
+    try {
+      const run = await Promise.race([exists, child.then(() => { throw new Error(helperNotStarted); }), late]);
+      return { childRunId: run.id, sessionId: run.sessionId };
+    } catch (error) {
+      held.stop.abort(error);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
   /**
    * Continues a task that was interrupted (for example by a restart) from its saved transcript.
@@ -1368,11 +1441,14 @@ export class Runtime {
       depth: parent.depth + 1,
       ...(options.agent ? { agent: options.agent } : {}),
     };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, options);
+      connection = await this.helperConnection(parent, options);
       context.signal.throwIfAborted();
-      return await this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+      const chosen = connection;
+      return await this.track(() => this.execute({ prompt, signal: context.signal, model: chosen.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, chosen));
     } finally {
+      connection?.release?.(); // MODEL-050: the helper's account lease, also when it never started
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
@@ -1678,6 +1754,9 @@ ${run.output.slice(0, 6000)}`;
     const controller = new AbortController();
     this.controllers.set(run.id, controller);
     this.activeSessions.add(run.sessionId);
+    // helper-lifecycle: a helper carried on after a question or a restart stays in its lead's tree.
+    const lead = parent?.runId ?? helperParent(this.store, options.continuing?.runId ?? options.resumeFrom ?? run.id);
+    if (lead) this.adoptChild(lead, run.id, controller);
     if (!parent) this.restoreCarried(run);
     // Answering a question resumes this same task with the time it originally received, as resume() does.
     const carriedDeadline = options.continuing
@@ -1701,6 +1780,7 @@ ${run.output.slice(0, 6000)}`;
           ...(options.source ? { source: options.source } : {}),
           ...(options.unattended ? { unattended: true } : {}),
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
+          ...this.carriedHelper(options), // helper-lifecycle
         }), trunk);
     // QA R1: the call a yes was given for (or, carried on after a restart, the call whose question was lost) is run by the
     // engine itself, through the same gate, before the model's next turn; the model never has to make it again.
@@ -1756,11 +1836,15 @@ ${run.output.slice(0, 6000)}`;
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
+      ...(context.depth ? { depth: context.depth } : {}),
+      ...(context.delegates ? { delegates: true } : {}),
       // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
       ...(context.dryRun ? { dryRun: true } : {}),
       ...(options.channel ? { channel: options.channel.slice(0, 64) } : {}),
     });
     this.recordedSources.delete(run.id); // mac7/outside-resume: read again now that the start is written
+    options.onCreated?.(run); // helper-lifecycle: before placeTask, which may take a while (git worktree add)
     // ── mac2/fly-core: the learning core ranks what worked before as the task starts, and learns from
     // the outcome once it has settled (src/fly-core/hook.ts). Advice only; it never fails a task. ──
     // P17-D §3: a learning task's conversation is sealed: nothing of the owner's goes in, and nothing it read is learned from.
@@ -1775,6 +1859,7 @@ ${run.output.slice(0, 6000)}`;
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
@@ -1782,6 +1867,7 @@ ${run.output.slice(0, 6000)}`;
       const pinned = helperRoute(this.store, run.owner, run.sessionId);
       if (pinned) {
         const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
+        pinnedHelper = connection;
         context.signal.throwIfAborted();
         keepHelperRoute(this.store, run.owner, run.sessionId, connection);
         this.helperModels.set(run.id, connection.preset);
@@ -1841,6 +1927,7 @@ ${run.output.slice(0, 6000)}`;
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
     this.helperModels.delete(run.id);
+    pinnedHelper?.release?.(); helper?.release?.(); // MODEL-050: the helper's account is free for the next one
     if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
@@ -1940,10 +2027,7 @@ ${run.output.slice(0, 6000)}`;
   private spentOnRun(runId: string, model: string): string {
     const usage = this.store.usage(runId);
     const { overrides } = pricingSettings(this.store, this.owner);
-    const estimate = estimateCost(model, {
-      input: usage.reportedInput || usage.estimatedInput || 0,
-      output: usage.reportedOutput || usage.estimatedOutput || 0,
-    }, overrides);
+    const estimate = estimateCost(model, tokenCountsOf(usage), overrides); // cache parts at their own rates
     return estimate.amount === null ? "" : ` So far this task has used about ${formatCost(estimate)}.`;
   }
   /**
@@ -2135,6 +2219,7 @@ ${run.output.slice(0, 6000)}`;
       output = `Run cleanup failed: ${errorText(error)}. Work result before cleanup: ${output}`;
     } finally {
       this.controllers.delete(run.id);
+      this.helperTree.release(run.id); // helper-lifecycle
       this.pausing.delete(run.id); // long-work
       this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
@@ -3256,7 +3341,7 @@ ${run.output.slice(0, 6000)}`;
    * in a toolbox for anything else (a web page's cookie wall included).
    */
   private offered(run: Run, context: ToolContext): ToolDescription[] {
-    const tools = this.registry.descriptions(context.permissions);
+    const tools = this.visibleTools(context);
     if (this.screenWanted(run, context)) return tools;
     return tools.filter((tool) => !screenTool(tool.name, this.registry.permissionOf(tool.name), this.registry.declaresScreen(tool.name)));
   }
@@ -3348,7 +3433,22 @@ ${run.output.slice(0, 6000)}`;
    */
   private toolsFor(context: ToolContext): ToolDescription[] {
     if (!context.permissions.size) return [];
-    return this.catalogs.get(context.runId)?.descriptions() ?? this.registry.descriptions(context.permissions);
+    return this.catalogs.get(context.runId)?.descriptions() ?? this.visibleTools(context);
+  }
+  /** helper-lifecycle: the tools this task may use, less those a helper may not hand work on with (src/helper-tree.ts). */
+  private visibleTools(context: ToolContext): ToolDescription[] {
+    return this.registry.descriptions(context.permissions).filter((tool) => !handOnRefusal(tool.name, context));
+  }
+  /**
+   * helper-lifecycle: a helper carried on after a question or a restart runs with no lead's context in hand, so it keeps
+   * the depth and the leave to hand work on that its first start recorded (an older record: depth 1 when it had a lead).
+   */
+  private carriedHelper(options: RunOptions): { depth?: number; delegates?: boolean } {
+    const from = options.continuing?.runId ?? options.resumeFrom;
+    const started = from ? this.store.events(from).find((event) => event.kind === "run.started")?.data : undefined;
+    if (!started) return {};
+    const depth = Number.isInteger(started.depth) ? Number(started.depth) : typeof started.parentRunId === "string" ? 1 : 0;
+    return { ...(depth > 0 ? { depth } : {}), ...(started.delegates === true ? { delegates: true } : {}) };
   }
   /** What this round costs and what is left, so compaction can be decided on the conversation alone. */
   private budgetOf(messages: Message[], context: ToolContext, preset?: ModelPreset): ContextBudget {
@@ -3492,11 +3592,12 @@ ${run.output.slice(0, 6000)}`;
     if (from < 1 || to - from < 2) return;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!);
     const room = Math.max(2000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4);
-    const transcript = messages.slice(from, to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n");
+    const transcript = messages.slice(from, to).map(transcriptLine).join("\n");
     this.store.event(run.id, "context.folding_task", { messages: to - from });
     const summariser: Message[] = [
       { role: "system", content: taskFoldInstructions },
-      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${transcript.slice(-room)}` },
+      // P0 (self-build): the start and the end of the work, as a conversation's fold reads it (src/compaction-input.ts).
+      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${boundSummaryInput(transcript, room)}` },
     ];
     const summary = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim().slice(0, 6000);
     if (!summary) return;
@@ -3532,13 +3633,8 @@ ${run.output.slice(0, 6000)}`;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!); // R17-S11
     // dogfood D22: the summariser's own question fits the room of the model that answers it.
     const room = Math.max(2000, Math.min(60000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4));
-    const transcript = messages.slice(split.from, split.to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n").slice(0, room);
     const previous = messages.slice(1, split.from).filter((m) => m.role === "system").map((m) => m.content).join("\n");
-    const summariser: Message[] = [
-      { role: "system", content: compactionInstructions },
-      { role: "user", content: (previous ? previous + "\n\n" : "") + transcript },
-    ];
-    const answer = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+    const answer = await this.summariseRange(run, context, preset, previous, messages.slice(split.from, split.to).map(transcriptLine), room);
     const reply = answer.slice(0, 6000);
     // long-work: what earlier folds kept is merged in, never left to the model to remember, and the record's own
     // files touched and open to-dos are added; a reply that is not the shape asked for is kept beside them. The whole
@@ -3549,15 +3645,54 @@ ${run.output.slice(0, 6000)}`;
     const summary = [summaryText(structured), parsed ? "" : reply].filter(Boolean).join("\n\n").slice(0, 8000);
     const throughId = ids[split.to - 1]!;
     this.store.saveSessionSummary(context.owner, run.sessionId, structured, summary);
-    this.store.saveCompaction(run.sessionId, throughId, summary);
+    // P0 (self-build): the owner's own words stay word for word beside the summary, up to a share of the room.
+    const words = ownerWordsSection(this.ownerWordsThrough(run.sessionId, throughId),
+      Math.min(ownerWordsMaxTokens, Math.floor(budget.threshold / 10)) * 4);
+    const working = words ? `${summary}\n\n${words}` : summary;
+    this.store.saveCompaction(run.sessionId, throughId, working);
     const kept = this.keepAfterCompaction(run.sessionId, messages, ids, split);
-    messages.splice(1, messages.length - 1, summaryMessage(summary), ...kept.messages);
+    messages.splice(1, messages.length - 1, summaryMessage(working), ...kept.messages);
     ids.splice(1, ids.length - 1, null, ...kept.ids);
     this.store.event(run.id, "context.compacted", {
       droppedMessages: split.to - split.from - kept.pinned, keptMessages: kept.messages.length, summaryChars: summary.length,
-      pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold,
+      pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold, ownerWordsChars: words?.length ?? 0,
       estimatedBefore: before, estimatedAfter: estimateTokens(messages.map(textOnly)), throughMessageId: throughId,
     });
+  }
+  /**
+   * P0 (self-build): the summariser's answer for a folded range, its input held to `room` with the start and the end
+   * kept (src/compaction-input.ts). A summariser that is itself refused as too long is asked again without the oldest
+   * part, as Codex does (openai/codex, codex-rs/core/src/compact.rs, Apache-2.0), until one part is left.
+   */
+  private async summariseRange(run: Run, context: ToolContext, preset: ModelPreset, previous: string, lines: string[], room: number): Promise<string> {
+    const prefix = previous ? previous + "\n\n" : "";
+    for (let first = 0; ; first++) {
+      const summariser: Message[] = [
+        { role: "system", content: compactionInstructions },
+        { role: "user", content: prefix + boundSummaryInput(lines.slice(first).join("\n"), Math.max(2000, room - prefix.length)) },
+      ];
+      try {
+        return (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+      } catch (error) {
+        const overflow = overflowOf(error).overflow || (error instanceof BudgetError && error.message === tooLong);
+        if (!overflow || first >= lines.length - 1) throw error;
+        this.store.event(run.id, "context.compaction_trimmed", { dropped: first + 1 });
+      }
+    }
+  }
+  /** P0 (self-build): the owner's own messages up to a fold, newest first; Branch's own notes, pinned and left-out ones are not. */
+  private ownerWordsThrough(sessionId: string, throughId: number): string[] {
+    const pinned = this.store.pinnedMessageIds(sessionId);
+    const rows = this.store.sqlite.prepare(`SELECT id, body FROM messages WHERE session_id=? AND id<=?
+      AND COALESCE(source_id,id) NOT IN (SELECT source_id FROM session_left_out WHERE session_id=?) ORDER BY id DESC LIMIT 200`)
+      .all(sessionId, throughId, sessionId);
+    const words: string[] = [];
+    for (const row of rows) {
+      if (pinned.has(Number(row.id))) continue;
+      const message = JSON.parse(String(row.body)) as Message;
+      if (message.role === "user" && !message.from && message.content.trim()) words.push(message.content);
+    }
+    return words;
   }
   /** long-work: what the record itself says a summary must keep — the files this conversation's tools touched, its open to-dos. */
   private recordedForSummary(sessionId: string): Partial<SessionSummary> {
@@ -5083,7 +5218,8 @@ ${run.output.slice(0, 6000)}`;
     // Q250: a model's own call is always held to read-before-edit, whatever context it was started from.
     const scoped: ToolContext = { ...unwalled, askable: true, readFirstExempt: false, signal: AbortSignal.any([context.signal, timeout]),
       // selfdev: the owner's selected Full Access reaches a held command too: the network, never wider writes.
-      ...(call.name === "shell.execute" && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
+      // SELF-304: and a held program left running (process.start), walled the same way.
+      ...((call.name === "shell.execute" || call.name === "process.start") && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
       ...(gated.sandbox ? { sandbox: gated.sandbox } : {}),
       ...(gated.backend ? { sandboxBackend: gated.backend } : {}),
       ...(gated.paths?.length ? { sandboxPaths: gated.paths } : {}),

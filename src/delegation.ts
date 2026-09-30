@@ -7,7 +7,12 @@ export const HelperAccountRefSchema = z.object({ pool: poolId, account: AccountS
 export const HelperSelectionSchema = z.object({ model: poolId.optional(), accountRef: HelperAccountRefSchema.optional() }).strict();
 export type HelperSelection = z.infer<typeof HelperSelectionSchema>;
 export type HelperAccountRef = z.infer<typeof HelperAccountRefSchema>;
-export interface HelperConnection { preset: ModelPreset; accountRef?: HelperAccountRef }
+export interface HelperConnection {
+  preset: ModelPreset;
+  accountRef?: HelperAccountRef;
+  /** MODEL-050: gives back the account lease this helper holds (src/accounts/leases.ts); safe to call more than once. */
+  release?: () => void;
+}
 const HelperRouteSchema = HelperSelectionSchema.extend({ model: poolId });
 export type HelperRoute = z.infer<typeof HelperRouteSchema>;
 
