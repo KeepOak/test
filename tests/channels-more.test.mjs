@@ -157,8 +157,9 @@ test("Discord: a stranger is turned away and the token stays out of what the app
   await until(() => adapter.botName(), "ready");
   connection.send({ op: 0, s: 2, t: "MESSAGE_CREATE", d: { id: "m1", channel_id: "dm9",
     content: "let me in", author: { id: "6666", username: "mallory" }, mentions: [] } });
-  const refusal = await until(() => rest.calls[0], "refusal");
-  assert.equal(refusal.body.content, "This assistant is private.");
+  // UP-CHAT-008: a block is silent, so it does not even confirm the bot is there.
+  await delay(300);
+  assert.equal(rest.calls.length, 0, "nothing is sent to a stranger");
   assert.equal(provider.requests.length, 0, "a stranger never reaches the model");
 
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
@@ -315,8 +316,9 @@ test("Email: a stranger is turned away, and the mail helpers read what a server 
     imap: { host: "127.0.0.1", port: mailbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 },
     smtp: { host: "127.0.0.1", port: outbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 } });
   await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["alice@example.com"] });
-  const refusal = await until(() => outbox.messages[0], "refusal sent");
-  assert.equal(refusal.body.trim(), "This assistant is private.");
+  // UP-CHAT-008: a block is silent: no mail goes back to the stranger.
+  await delay(500);
+  assert.equal(outbox.messages.length, 0);
   assert.equal(provider.requests.length, 0);
   await adapter.stop();
 

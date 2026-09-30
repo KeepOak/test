@@ -902,7 +902,34 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 { "channels": [{ "type": "telegram", "tokenSecret": "TELEGRAM_BOT_TOKEN", "activation": "mention", "pairing": true, "allowlist": [] }] }
 ```
 
-`tokenEnv` names an environment variable instead of a secret. Each chat (direct or group) keeps its own conversation. A sender who is neither on the `allowlist` (Telegram user ids) nor approved receives a six-digit code; approve it in **Settings → Channels** or with `POST /api/channels/pairings/approve {code}`. With `pairing: false`, strangers are told the assistant is private. In groups, `activation: "mention"` answers only messages that mention the bot or reply to it; `"always"` answers everything. A channel task may only read and answer, and nothing else unless you say so (see **What a chat may do beyond talking** below). `GET /api/channels` lists connected channels, pending and approved people.
+`tokenEnv` names an environment variable instead of a secret. Each chat (direct or group) keeps its own conversation. A sender who is neither on the `allowlist` (Telegram user ids) nor approved receives a six-digit code in a direct chat, once per code; approve it in **Settings → Channels** or with `POST /api/channels/pairings/approve {code}`. A code is never posted in a group: there the request waits in **Settings → Channels** with its code. At most three requests wait on one chat app at a time. With `pairing: false`, or a sender the list blocks, nothing is sent back at all. In a group, only your own account, or a person you named with `groupCommands` on a line of **What a chat may do beyond talking**, can switch the model, start the group's conversation afresh, fold it or stop somebody else's task; everyone else has /help, /status, /usage, /btw, /steer, /improve and /stop for their own task. In groups, `activation: "mention"` answers only messages that mention the bot or reply to it; `"always"` answers everything. A channel task may only read and answer, and nothing else unless you say so (see **What a chat may do beyond talking** below). `GET /api/channels` lists connected channels, pending and approved people.
+
+### Group chats: when the assistant answers there
+
+In a group the assistant answers when it is **@mentioned**, **replied to**, or **called by name** as a whole word
+("Juniper, what's the time?"; "junipers" does not count, and a generic name such as "Bot" or "Assistant" never does).
+A direct chat is always answered. On each app:
+
+- **Telegram**: a mention, a reply to one of its messages, or its name. With BotFather's default privacy mode on, a
+  group hands a bot only mentions, replies and commands, so its name alone and "Every message" reach it only once
+  privacy mode is off (send `/setprivacy` to @BotFather, choose Disable, then remove the bot from the group and add it
+  again) or the bot is an admin of that group. Branch asks Telegram (`getMe` `can_read_all_group_messages`, then
+  `getChatMember`) and says so when "Every message" is chosen.
+- **Discord**: a mention, a reply, or its user or display name, in a server channel. Discord does not let bots into
+  group DMs.
+- **Slack**: a mention, its name, or a reply in a thread it started. Group messages (several people in one DM) are
+  groups too; the wizard's Slack app has `mpim:history` and `message.mpim`. Invite the bot to a channel first.
+- **Matrix**: a mention (in the text, a pill in `formatted_body`, or `m.mentions`), a reply to one of its messages, or
+  its name. A room with only you and it (the server's `m.joined_member_count` of 2) is a direct chat.
+- **Signal**: an @mention of its number, or a reply to one of its messages. Groups were never answered before.
+
+**Every message, per group.** Settings › Chat apps › **Group chats** lists each group the assistant has answered in,
+with **Only when mentioned** and **Every message** (`POST /api/channels/groups {"channel", "chatId", "activation":
+"mention" | "always" | null}`, where null follows the app's own `activation`). The owner can also type
+`/activation always` or `/activation mention` in the group from one of their own chat accounts (the exact list
+`/platform` and `/sethome` use), on Telegram, Discord, Slack or Matrix, whose servers vouch for who sent a message;
+from anybody else it is an ordinary group message. In a group answered at every message, a stranger who did not speak
+to the assistant is let be, rather than sent a pairing code at each message.
 
 ### What every channel shares
 
@@ -3313,7 +3340,7 @@ Two switches, both saved in `settings/reflection` (`src/reflection/`). Looking b
 
 **Receipts.** Each successful tool result is hashed and signed with a key derived from the locker key. `GET /api/runs/:id/receipts` classifies every tool event (success, modified, forged, unsigned, failed, blocked, stalled). `POST /api/receipts/verify` with `{ runId, data }` (the event's data) says whether a result is still the one the runtime observed.
 
-**Web content.** `web.fetch` returns `provenance` (source, url, fetchedAt, trust: untrusted) and `warnings` for lines that read like instructions to the assistant; `web.search` checks snippets the same way. The web setting `injection` is `redact` by default (replace flagged lines with a notice), or `warn` (keep the text, add warnings) or `block` (refuse the page or drop the result). Every detection is a `content.flagged` event. What the browser reads off a page (`browser.snapshot`, `browser.extract`, `browser.shape`) always has such lines taken out, with a `note` saying how many, and a file read with `files.read` does the same.
+**Web content.** `web.fetch` returns `provenance` (source, url, fetchedAt, trust: untrusted) and `warnings` for lines that read like instructions to the assistant; `web.search` checks snippets the same way. The web setting `injection` is `redact` by default (replace flagged lines with a notice), or `warn` (keep the text, add warnings) or `block` (refuse the page or drop the result). Every detection is a `content.flagged` event. What the browser reads off a page (`browser.snapshot`, `browser.extract`, `browser.shape`) always has such lines taken out, with a `note` saying how many, and a file read with `files.read` does the same. A tool from another MCP server is outside text too: lines in its description that read like instructions are always taken out, and its answers follow the same `injection` setting (`warnings` and a `note` added for `redact` and `warn`, the answer refused for `block`). When such a tool fails, the model is given the server's own reason, with credentials taken out, instruction-like lines removed and at most 1,000 characters, marked as the server's words.
 
 **Exit criteria for delegated tasks.** `specialists.delegate` and fan-out tasks accept `checks` (same shape as a run's checks); a miss fails the child with the reason and the parent sees it as unresolved with that evidence.
 
@@ -3329,17 +3356,17 @@ Branch is itself a Model Context Protocol (MCP) server, so another AI tool on th
 
 **What is shared, and when.** Nothing until you switch it on. Switching it on offers the tools that only read (their permission ends in `.read`) and leaves everything else unticked and marked *can change things*; you tick those yourself. While it is off the door offers nothing at all: no tools (not even `branch.ask`), no resources and no prompts. While it is on, `branch.ask` — asking Branch a question in plain words — is offered too; its task may use only the permissions the tools you ticked need, and like every task from outside it asks before any change. The saved choice lives in `settings/mcp-sharing` as `{ enabled, exposedTools }` and is read fresh on every call, so a change takes effect at once.
 
-**Two ways to connect.** Over HTTP, at `/mcp` on the same port as the web interface: JSON-RPC 2.0 by `POST`, with your session key as `Authorization: Bearer …`. If you send no `Mcp-Session-Id`, the reply to your first message names one in an `Mcp-Session-Id` header; send it back on everything afterwards and your work is kept together. `DELETE` ends that conversation (204). A plain `GET` is refused (405), but a `GET` that asks for `text/event-stream` opens a stream Branch writes down when something changes on this side — see **Streaming** below. Responses carry `MCP-Protocol-Version`. Branch speaks `2025-06-18`, `2025-03-26` and `2024-11-05`; ask for anything else and you get a plain error saying which ones work. Or as a child program: `branch mcp-serve` speaks newline-delimited JSON-RPC on standard input and output, writes every message for a person to standard error, and stops cleanly when the other tool closes the connection.
+**Two ways to connect.** Over HTTP, at `/mcp` on the same port as the web interface: JSON-RPC 2.0 by `POST`, with your session key as `Authorization: Bearer …`. If you send no `Mcp-Session-Id`, the reply to your first message names one in an `Mcp-Session-Id` header; send it back on everything afterwards and your work is kept together. `DELETE` ends that conversation (204). A plain `GET` is refused (405), but a `GET` that asks for `text/event-stream` opens a stream Branch writes down when something changes on this side — see **Streaming** below. A message with no `id` (a notification such as `notifications/initialized`) is answered 202 with no body. Responses carry `MCP-Protocol-Version`. Branch speaks `2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05` and `2024-10-07`, the same list as the MCP SDK it ships; ask for any other and `initialize` answers with `2025-11-25`, leaving the client to decide whether it can use that. Or as a child program: `branch mcp-serve` speaks newline-delimited JSON-RPC on standard input and output, writes every message for a person to standard error, and stops cleanly when the other tool closes the connection.
 
 **What Branch says it can do.** `initialize` answers with `tools: { listChanged: true }`, `resources: { subscribe: true, listChanged: true }`, `prompts: { listChanged: true }` and `logging: {}`. `logging/setLevel` is accepted and remembered for that connection.
 
-**Streaming.** A `GET /mcp` with `Accept: text/event-stream` stays open and carries messages that expect no reply, each as `event: message` with the JSON-RPC notification as its data. Two things travel down it. `notifications/tools/list_changed` goes to every open stream whenever the set of tools changes — a skill loaded, a plugin added or removed, another server's tools arriving — so a connected tool never goes on calling something that is no longer there. `notifications/resources/updated` goes only to a connection that asked for it with `resources/subscribe`, naming the resource: subscribe to `runs://recent` to be told whenever a task finishes, or to `run://<id>` for one in particular. `resources/unsubscribe` stops it, and one connection may watch fifty things at most.
+**Streaming.** A `GET /mcp` with `Accept: text/event-stream` stays open and carries messages that expect no reply, each as `event: message` with the JSON-RPC notification as its data. Two things travel down it. `notifications/tools/list_changed` goes to every open stream whenever the set of tools changes — a skill loaded, a plugin added or removed, another server's tools arriving — so a connected tool never goes on calling something that is no longer there. `notifications/resources/updated` goes only to a connection that asked for it with `resources/subscribe`, naming the resource, and only while that connection may read it (see **Resources**): subscribe to `runs://recent` to be told whenever a task finishes, or to `run://<id>` for one in particular. `resources/unsubscribe` stops it, and one connection may watch fifty things at most.
 
 Use HTTP when Branch is already open — that is what the Claude Code and Cursor snippets do. `mcp-serve` starts a second copy of Branch against the same records, so close the app first; the snippet sets `BRANCH_DATA_DIR` and `BRANCH_WORKSPACE` for the child, because it inherits the other tool's working directory rather than Branch's.
 
 **Resources.** `memory://facts` (what Branch remembers), `workspace://files` (the workspace listing) and `documents://library` (documents Branch has read) as JSON; `runs://recent` (the twenty most recent tasks) and `run://<id>` for one of them; the twenty most recent saved conversations as `conversation://<id>`, named after their first message and dated; and `policy://hidden-tools`, the note described under **What is offered** below. Reading a conversation returns the transcript as plain `role: text` lines in the order they were said, read-only: the most recent messages are kept and older ones dropped once the text passes 64 KiB. Temporary conversations are never listed, and a conversation belonging to someone else is not found.
 
-Every resource is read-only, and each one is scoped by your approval settings. A resource is shown only when your settings would allow the tool that reads the same thing: `memory://facts` follows `memory.search`, `workspace://files` follows `files.list`, `documents://library` follows `documents.search`, and everything to do with tasks and conversations follows `history.search`. If your settings refuse one of those, the resource is not listed and reading it by name answers "unknown resource" — a connected tool cannot tell the difference between something you have hidden and something that was never there.
+Every resource is read-only, and each one follows the tool that reads the same thing: `memory://facts` follows `memory.search`, `workspace://files` follows `files.list`, `documents://library` follows `documents.search`, and everything to do with tasks and conversations follows `history.search`. A resource is shown only when you share that tool and your approval settings let it run without asking; sharing one tool offers no other tool's resources. If you do not share one of those, or your settings refuse it or would ask first, the resource is not listed and reading it by name answers "unknown resource" — a connected tool cannot tell the difference between something you have hidden and something that was never there.
 
 **What is offered, and what is held back.** When a tool connects, every tool you share is checked against your approval settings before any of them is offered. A tool your settings flatly refuse is not offered at all. A tool your settings want you asked about *is* still offered, because with an approval setting chosen almost everything that changes something becomes a question, and hiding all of those would leave the other tool looking at an empty toolbox — instead the call is stopped at the moment it is made, with a message saying it needs your yes here in Branch. The `policy://hidden-tools` resource says which tools are in which group and why, in plain sentences, and **Settings → Sharing with other AI tools → What another tool is offered** shows the same thing.
 
@@ -3789,7 +3816,7 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 { "git": { "remote": true, "github": { "tokenSecret": "GITHUB_TOKEN" } } }
 ```
 
-That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
+That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (300 by default, at most 600, looking again every `checksPollSeconds`, 15 by default, 1 to 120; it only looks, so one call may wait past the owner's tool time limit, and the loop guard treats it as a polled tool), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators and leaves required reviews to GitHub. When the base takes changes only through GitHub's merge queue, the checked commit joins the queue instead (GitHub's `enqueuePullRequest`, pinned to that commit), the tool says it is queued, not merged, and `github.wait_for_checks` stays pending until GitHub says merged, or failed if the queue took it out. It refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
 **GitLab (RES-719)** is a connection of its own, set up in the window: **Settings › Advanced › GitLab**. Its switch
 ships "when needed"; the row under it says whether GitLab is connected. **Connect** asks for your GitLab's address
@@ -3954,12 +3981,17 @@ the checks itself on the exact head commit rather than relying on GitHub enforci
 every check run, commit status and Actions workflow run must have finished and passed (skipped or neutral is
 accepted only for checks the base does not require), every check the base requires through classic
 protection or an active ruleset must have passed from its configured app, and the head must contain the exact
-base commit. Queued, running, missing or not-yet-registered checks are pending and never count as passed.
-Required approving reviews, merge queues and other rules Branch cannot satisfy by checking are left to
-GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
+base commit (unless the base has a merge queue, which tests the head on the newest base itself). Queued, running,
+missing or not-yet-registered checks are pending and never count as passed, and so is GitHub's "blocked" while
+they run. On a base with a merge queue (KeepOak/Branch-Agent's `redesign/window` has one) the checked commit joins
+the queue rather than merging directly, and the change is merged only when GitHub says so. Required approving
+reviews and other rules Branch cannot satisfy by checking are left to GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
 force-merges or bypasses a rule; the merge request names the checked head SHA, so a later push is refused by
 GitHub itself. `github.wait_for_checks` waits for the checks; in the owner's selected Full Access,
-`branch.finish_source_change` then gets an independent read-only review and merges without asking.
+`branch.finish_source_change` then gets an independent read-only review and merges without asking (or joins
+the merge queue). `branch.run_contract_tests` runs a worktree's contract tests the one way that counts as
+evidence (`node scripts/review.mjs --jobs 1` with its `expectedTests`, behind the command wall) and says whether
+they passed, with counts, or failed and why; a failed run is kept too, never as evidence.
 
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
@@ -4654,9 +4686,24 @@ files open as the window, so a hand-over would hit a locked file. Before the han
 written, the window reads `running.json`, asks that process to close (`taskkill /PID <pid> /T`, then
 `/T /F` if it will not), waits a bounded time for it to go and removes the note. An engine that
 still refuses is not treated as a failure: the hand-over script waits for the engine's process id
-as well as the window's, and ends it itself before mirroring anything. Nothing new is started: the
-hand-over still runs through the same hidden Windows Script Host launcher, and every tool is run
-with no window.
+as well as the window's, and ends it itself before mirroring anything. Every tool is run with no
+window.
+
+**How Windows installs an update (versioned folders).** Each version sits in a folder of its own,
+`<install>\app-<version>\`, beside the others; `current.json` names the one in use and the one
+before it. A new version is made beside the one running (Electron's own program is hard linked from
+it, never made anew), tried on a copy of the work, and put in use by one rename of `current.json`,
+so there is never a half-copied program. The version before is kept whole for going back; older
+ones are removed once nothing runs from them, so two are kept. Going back is the same rename the
+other way, and it is refused when the new version has already moved the saved work to a format the
+older one cannot read (then the new version is started again and the owner is told why). A start
+of an older version's program (an old shortcut, say) starts the version in use instead. A copy
+installed before this layout is the version before on its first update, and on the update after,
+when it is no longer needed to go back, its app is replaced by a small launcher that starts the
+version in use, so shortcuts to the top of the install keep working. The switch is run by a small
+runner: Electron's own program, linked with its files beside the update's scratch files, which runs
+the switch with no window and no Windows Script Host. A portable copy keeps its data beside the
+program, so it keeps the older swap, run by the same runner.
 
 **Checking a computer is ready.** `branch doctor --fix`, and the *Check and repair what I can*
 button, look for Git, the private browser Branch uses to read pages, a free address on this
@@ -9502,13 +9549,19 @@ authors who test their plugin against Branch before shipping it. A tool with `se
   their names: this computer, numbers and private-network names (`localhost`, `.local`, `.lan`, `.internal`,
   `.home.arpa`) are refused in the package. A hand-placed plugin walled by the tick is pinned to the code it
   had when it was loaded. One question to a plugin is at most 1 MB, and at most 4 plugin runs go at once.
-- **Windows.** Windows has no file and network wall, only a job object, so add-on code is refused there unless
-  the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships off); a plugin run
-  that way says so instead of claiming a wall. Nothing else on Windows changes.
-- **Hand-placed plugins stay in-process by default (decided).** "Also run plugin files I put in the plugins
-  folder myself in their own walled program" (`wallEveryPlugin`) keeps shipping off: those files are the owner's own, the switch
-  would change how existing plugins behave (Windows included), and a walled plugin loses model connections and
-  chat services. Add-ons from a package, list or draft are walled whatever the tick says.
+- **Windows.** Windows has no file and network wall, only a job object, so add-on code other people wrote is
+  refused there unless the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships
+  off; turning it on needs the owner's yes and is refused under Lockdown); a plugin run that way says so instead of
+  claiming a wall. A plugin the owner placed themselves runs there as its own program with the job object's limits.
+- **Hand-placed plugins run as their own program too (RES-251).** "Also run plugin files I put in the plugins folder
+  myself in their own walled program" (`wallEveryPlugin`) ships on: no plugin runs inside Branch unless the owner
+  chose that. Hand-placed plugins already switched on when this first started keep running as before, each recorded
+  (`grandfathered`, and `add-ons-plugin-wall-kept` on this computer), and Customize › Tools › Plugins lists them once
+  with **Wall it** beside each. A walled plugin brings no model connections or chat services, since those live inside
+  Branch; the owner lets one plugin run inside (`insideBranch`, set by `POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
+  "Where it runs") or switches the wall off for all. Either is less careful, so it needs the owner's yes
+  (`confirmLoosening`) and is refused under Lockdown; walling a plugin always goes through. A walled plugin is held to the same add-on
+  interface version as one inside. Add-ons from a package, list or draft are walled whatever the tick says.
 - **Branch as a plugin.** A `.branch-export.json` file is trusted only for folders Branch remembers writing, so a
   record planted in a folder cannot make Branch remove or overwrite the owner's files. A folder with a file the
   owner changed stays Branch's until everything it wrote is gone.

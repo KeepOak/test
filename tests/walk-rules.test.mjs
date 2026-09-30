@@ -214,8 +214,8 @@ test("a pull request made from the workspace's changes never sends a refused fil
 test("another program reading the workspace through the MCP server's file list does not see finance", async (t) => {
   const { app, root } = await fixture(t);
   await financeRule(app);
-  // The MCP door offers nothing while sharing is off, so the owner shares (no tools) first.
-  app.store.save("settings", app.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: [], a2a: false });
+  // The MCP door offers a resource only while its tool is shared, so the owner shares files.list.
+  app.store.save("settings", app.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: ["files.list"], a2a: false });
   const { startServer } = await import("../dist/server.js");
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); });
@@ -404,8 +404,8 @@ test("integration: documents.list and the MCP document library do not name a doc
   assert.doesNotMatch(text(completed.data.result.documents), /q1/);
   assert.match(completed.data.result.leftOut ?? "", /1 file in finance/);
   assert.equal(app.documents.list("local").length, 3, "the owner's own window still lists everything");
-  // The MCP door offers nothing while sharing is off, so the owner shares (no tools) first.
-  app.store.save("settings", app.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: [], a2a: false });
+  // The MCP door offers a resource only while its tool is shared, so the owner shares documents.search.
+  app.store.save("settings", app.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: ["documents.search"], a2a: false });
   const { startServer } = await import("../dist/server.js");
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { await server.close(); });

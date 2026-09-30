@@ -54,7 +54,8 @@ test("an automatic install that finds the channel just changed only switches it,
   // src/desktop/updater-ipc.ts is Electron code, so its order is read here, as tests/update-install-claim.test.mjs does.
   const { readFile } = await import("node:fs/promises");
   const source = await readFile(new URL("../src/desktop/updater-ipc.ts", import.meta.url), "utf8");
-  const handler = source.slice(source.indexOf('"branch:update-install"'));
+  // One install for the Update button and the app's own loop (updater-ipc.ts installNow).
+  const handler = source.slice(source.indexOf("const installNow = "));
   const moved = handler.indexOf("const moved = updater.selectedChannel !== readiness.channel;");
   const setChannel = handler.indexOf("updater.setChannel(readiness.channel);");
   const goesBack = handler.indexOf("if (automatic === true && moved) throw new UpdateDeferredError(");
