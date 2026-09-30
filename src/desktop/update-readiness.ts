@@ -53,3 +53,17 @@ export async function updateReadiness(url: string, token: string, call: typeof f
   if (!response.ok) throw new Error("Branch could not confirm that work is idle, so the update is waiting.");
   return readinessSchema.parse(await response.json());
 }
+
+/** The engine's plan for the updater's facts (`/api/comfort/update-plan`), for the app's own update loop (update-loop.ts). */
+export async function updatePlanFrom(url: string, token: string, facts: unknown, call: typeof fetch = fetch): Promise<import("./update-loop.js").LoopPlan> {
+  const origin = new URL(url);
+  if (origin.protocol !== "http:" || origin.hostname !== "127.0.0.1" || origin.pathname !== "/")
+    throw new Error("The local engine address is not safe for an update check.");
+  const response = await call(`${origin.origin}/api/comfort/update-plan`, {
+    method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify(facts ?? {}), signal: AbortSignal.timeout(10000),
+  });
+  const body = await response.json().catch(() => null) as import("./update-loop.js").LoopPlan & { error?: string } | null;
+  if (!response.ok || !body) throw new Error(body?.error ?? "Branch could not ask its engine what to do about updates.");
+  return body;
+}
