@@ -7,6 +7,8 @@ import { fixture } from "./trunks-helpers.mjs";
 test("a proposal changes nothing until accepted, a rejection leaves the file, and a stale one is refused", async (t) => {
   const { app } = await fixture(t);
   const trunk = app.trunks.create({ name: "Writer" });
+  const permission = app.registry.permissionOf("trunk.propose_file");
+  assert.ok(app.runtime.trunkShape({ prompt: "", trunkId: trunk.id }).permissions.includes(permission), "the Trunk's own turn may propose");
   const files = app.trunks.files;
   const text = (name) => files.view(trunk.id).files.find((file) => file.name === name).text;
   files.edit(trunk.id, { name: "USER.md", text: "Likes short answers." });
