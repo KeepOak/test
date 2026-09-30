@@ -35,6 +35,7 @@ import {
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
 import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
 import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
+import { RecapSettingsSchema, weeklyRecap } from "./weekly-recap.js";
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
 import { SkillScanPolicySchema } from "./skill-scan.js";
@@ -336,6 +337,8 @@ import { handlesOrchestrationPath, orchestrationApi, OrchestrationApiError } fro
 import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
 import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
+import { githubDeviceApi, handlesGitHubDevicePath } from "./github-device-connection.js";
+import { GitHubDeviceError } from "./integrations/github-device-auth.js";
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
@@ -1121,6 +1124,10 @@ async function api(
       requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
       throw error instanceof GitLabApiError ? new HttpError(error.status, error.message) : error;
     });
+  if (handlesGitHubDevicePath(path))
+    return githubDeviceApi(app.githubDevice, request.method ?? "GET", path, () => readBody(request)).catch((error: unknown) => {
+      throw error instanceof GitHubDeviceError ? new HttpError(error.status, error.message) : error;
+    });
   // ── Bucket 21: the switch for building on Branch, and flows written out and read back as YAML. ──
   if (handlesSdkKitPath(path))
     return sdkKitApi({ store: app.store, owner: app.runtime.owner, flows: app.flows,
@@ -1352,6 +1359,17 @@ async function api(
     answer.windowBuild = liveWindowCommit() ?? ownBuild();
     for (const part of ["triggers", "webhooks"]) if (part in answer) answer[part] = withoutSecretToADoor(request, answer[part]);
     return answer;
+  }
+  if (path === "/api/weekly-recap") {
+    app.store.profiles.requireOwner("The weekly recap");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "The weekly recap belongs to the owner at the app.");
+    if (request.method === "POST") {
+      const input = RecapSettingsSchema.parse(await readBody(request, 4096));
+      app.store.profiles.requireOwner("The weekly recap");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing your weekly estimate.");
+      app.store.save("settings", app.runtime.owner, "weekly_recap", input);
+    } else if (request.method !== "GET") throw new HttpError(405, "Use GET or POST");
+    return weeklyRecap(app.store, app.runtime.owner, (id) => app.trunks.records.find(id)?.name ?? null);
   }
   // FQ-collaboration.unified-search: one query across conversations, saved workflows and the
   // record of what the assistant was allowed to do. Owner-only: it reads across everything the
@@ -3525,7 +3543,16 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   const owner = app.runtime.owner;
   if (request.method === "GET" && path === "/api/research") return { reports: app.research.list(owner) };
   if (request.method === "GET" && path === "/api/monitors") return { monitors: app.monitors.list(owner) };
-  if (request.method === "POST" && path === "/api/monitors") return app.monitors.create(owner, await readBody(request));
+  if (request.method === "POST" && path === "/api/monitors") return app.monitors.create(owner, await readBody(request), undefined, undefined, () => {
+    app.store.profiles.requireOwner("Creating a watch");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a watch.");
+  });
+  const prices = /^\/api\/monitors\/([a-f0-9-]{36})\/prices$/.exec(path);
+  if (prices && request.method === "GET") {
+    app.store.profiles.requireOwner("Your watched prices");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Watched price history belongs to the owner at the app.");
+    return app.monitors.history(owner, prices[1]!);
+  }
   const watch = /^\/api\/monitors\/([a-f0-9-]{36})(?:\/(check))?$/.exec(path);
   if (watch && request.method === "DELETE" && !watch[2]) return app.monitors.remove(owner, watch[1]!);
   if (watch && request.method === "POST" && watch[2] === "check") return app.monitors.check(owner, watch[1]!);

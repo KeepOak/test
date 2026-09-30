@@ -89,6 +89,7 @@ const reviewedComputedKeys = new Set([
   "src/flows-boards/settings.ts: key",
   "src/gitlab-connection.ts: gitlabAccountKey", // RES-719: "gitlab-account" stays on this computer (its token is in the locker)
   "src/gitlab-connection.ts: gitlabSwitchKey", // RES-719: "gitlab-connection" waits for the owner's yes
+  "src/github-device-connection.ts: accountKey", // SELF-021: "github.device.account" stays on this computer (its token is in the locker)
   "src/goal-mode.ts: key",
   "src/integrations/mcp-oauth.ts: settingsKey",
   "src/channels/steps-display.ts: chatDetailKey",

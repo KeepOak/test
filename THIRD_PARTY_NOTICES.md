@@ -3788,6 +3788,18 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
 
+## Hermes weekly recap aggregation
+
+`src/weekly-recap.ts` adapts guarded duration aggregation from `agent/insights.py` (`_compute_overview`) in NousResearch/hermes-agent at `16b214e1a1f0544218b1cf8c21b923b4e1c62768`. The listed weekly-review-planning recipe was read for context only. Branch owner scoping, task completion counts, Trunk attribution and manual-time estimate are original integration code.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/agent/insights.py
+
+## Price-watch condition recipe
+
+The listed Hermes `product-price-monitor` skill was read at commit `7327624d3500d4bbc9ad58b0a75c324a306d882a` (MIT). Its threshold/drop, successful-baseline, retained-good-observation and duplicate-alert shape informed the implementation. It is a recipe, not an executable price parser: `src/monitor-price.ts` and the Branch integration are original code, not a claimed source-code port.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/7327624d3500d4bbc9ad58b0a75c324a306d882a/skills/productivity/product-price-monitor/SKILL.md
+
 ## Hermes live-dashboard recipe (scheduled dashboard design)
 
 Reviewed `optional-skills/productivity/live-dashboard/SKILL.md` at bddd22be7c2e5f7630c3d90507e6e7280ff092e3. Its recipe informed source/timestamp state, stale last-good retention, regeneration and change notes. Branch scheduling, validators, persistence and script-free renderer are original implementation, not a port of executable upstream code. Upstream live read/verify instructions were not executed.
@@ -3832,6 +3844,10 @@ The Trunk import preview/apply flow adapts the staged manifest review in [hermes
 MIT License
 
 Copyright (c) 2025 Nous Research
+
+## OpenClaw GitHub device flow
+
+`src/integrations/github-device-auth.ts` adapts device response validation, anchored expiry and cumulative polling-delay behavior from [OpenClaw login.ts](https://github.com/openclaw/openclaw/blob/2663c6b6202807712586bb2928c22397ccc14b27/extensions/github-copilot/login.ts). Branch uses an owner-supplied OAuth client identity; no OpenClaw/Copilot client ID is included.
 
 ## OpenClaw chat session lifecycle helpers
 
