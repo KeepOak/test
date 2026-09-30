@@ -11,7 +11,7 @@ import {
   shortcutDefaults, statusItems, type ComfortCard,
 } from "./settings.js";
 import { checkCertificate, validateNetwork, type OutboundNetwork } from "./network.js";
-import { busyTasks, updateHold, staleTaskMs, noteUpdateLook, stalledWords, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, updatePlan, updateProblem } from "./auto-update.js";
+import { busyTasks, updateHold, staleTaskMs, noteUpdateLook, stalledWords, clearUpdateProblem, holdingTasks, noteFailedInstall, noteUpdateCheck, noteUpdateProblem, noteUpdateWait, updatePlan, updateProblem } from "./auto-update.js";
 import { sensitiveBrowserTools } from "./browser-safety.js";
 import { diagnose } from "../diagnostic-log.js";
 import { staleAfterMs } from "../activity.js";
@@ -186,9 +186,14 @@ function plan(app: ComfortApp, body: unknown) {
   const { working: workingTasks, asking: askingTasks } = held;
   const busyTasks = workingTasks + askingTasks;
   // The Update button asks this too: tasks working now are offered a wait before anything closes.
-  return { ...updatePlan(store, owner, { busyTasks, workingTasks, askingTasks, overdueTasks: held.overdue, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag }),
+  const decided = updatePlan(store, owner, { busyTasks, workingTasks, askingTasks, overdueTasks: held.overdue, updaterPhase: input.updaterPhase, updaterTag: input.updaterTag });
+  const holding = held.overdue ? [] : holdingTasks(store, owner, Date.now(), staleMsOf(app));
+  // A ready update held back leaves its reason in the activity log, once per reason: otherwise nothing says why it waits.
+  noteUpdateWait(owner, decided, { channel: readComfort(store, owner, "notify").releaseChannel, version: input.updaterTag ?? null,
+    busyTasks, workingTasks, askingTasks, holding, heldSince: held.heldSince, overdueTasks: held.overdue });
+  return { ...decided,
     busyTasks, workingTasks, askingTasks, staleTasks: held.stale.length, overdueTasks: held.overdue,
-    holding: held.overdue ? [] : holdingTasks(store, owner, Date.now(), staleMsOf(app)), problem: updateProblem(store, owner), ...(problemIsNew ? { tellProblem: true } : {}),
+    holding, problem: updateProblem(store, owner), ...(problemIsNew ? { tellProblem: true } : {}),
     ...(tell ? { failed: "The newest version did not install here, so Branch will not try it again by itself. It tries the next one as soon as it lands; Update in Settings tries this one again now." } : {}) };
 }
 

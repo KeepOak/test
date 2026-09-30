@@ -32,14 +32,15 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
-import { ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
+import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
+import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
 import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
-import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands } from "./owner-commands.js";
+import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
 import { ModelPicker, staleModelMenu } from "./model-picker.js";
@@ -97,6 +98,8 @@ export interface ChannelHealth {
 }
 /** mac3/never-break: how long a pairing code can be used; the sender gets a new one after that. */
 const pairingCodeMs = 60 * 60_000;
+/** owner-dm-signin: the task sources a chat's chain may hold and still be the owner's own (never MCP, ACP or A2A). */
+const ownersOrChat = new Set(["owner", "channel", "schedule", "trigger"]);
 const pairingCodeFresh = (pair: { requestedAt?: string }): boolean => Date.now() - Date.parse(pair.requestedAt ?? "") <= pairingCodeMs;
 export interface ChannelAdapter {
   readonly id: string;
@@ -633,6 +636,8 @@ export class ChannelRouter {
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
       ownerCommands: ownerCommands(this.store, owner),
+      // owner-dm-signin: whether any chat account is named as the owner's yet, so approving a pairing may offer "this is me".
+      ownerNamed: ownerAccountNamed(this.store, owner),
       // Settings › Chat apps › Show steps in chats: the knobs, for every app and for each (src/channels/steps-display.ts).
       steps: this.stepsView(),
     };
@@ -1089,6 +1094,37 @@ export class ChannelRouter {
     return false;
   }
   /**
+   * owner-dm-signin: whether a chat's task came only from the owner's own account, so the owner's sign-in accounts may
+   * answer it (Runtime.trunkSignIns). Every chat message along the task's chain (parent, resumed, carried on) must pass
+   * `ownerDmHere` (an account the owner named as their own, in a direct chat, on an app whose servers vouch for the
+   * sender) and still be allowed to talk to Branch; nothing along it may come from another program. A message fetched
+   * after a restart is the same person's (the app still vouched for it), so its freshness is not asked, as `ownerDmLine`
+   * does. Pairing alone is never enough: a friend or a household member pairs the same way. Anything unread: no.
+   */
+  ownerDmRun(runId: string): boolean {
+    const queue = [runId], seen = new Set<string>();
+    let chats = 0;
+    while (queue.length && seen.size < 100) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const events = this.store.events(id);
+      for (const event of events) {
+        if (event.kind !== "channel.inbound") continue;
+        const came = event.data;
+        if (typeof came.channel !== "string" || typeof came.senderId !== "string" || came.chatKind !== "direct") return false;
+        const kind = this.adapters.get(came.channel)?.adapter.kind ?? "";
+        if (!ownerDmHere(this.store, this.runtime.owner, kind, { channel: came.channel, senderId: came.senderId, chatKind: "direct", caughtUp: false })
+          || !this.senderAllowed(came.channel, came.senderId)) return false;
+        chats++;
+      }
+      const started = events.find((event) => event.kind === "run.started")?.data;
+      if (typeof started?.source === "string" && !ownersOrChat.has(started.source)) return false;
+      for (const next of [started?.parentRunId, started?.resumedFrom, started?.originFrom]) if (typeof next === "string") queue.push(next);
+    }
+    return chats > 0 && !queue.length;
+  }
+  /**
    * A command is approved in a chat only with its own Yes button (the exact request's fingerprint), pressed by the
    * owner's own account, in the very chat the task came from. A typed "y" is not enough: it answers whatever this chat
    * was last shown. Another chat pointed at the same conversation (a linked group) can never say yes to it.
@@ -1476,8 +1512,13 @@ export class ChannelRouter {
     saveChatThread(this.store, this.runtime.owner, message.channel, message.chatId, { sessionId: run.sessionId,
       title: message.chatKind === "group" ? (message.chatTitle ?? message.chatId) : message.senderName, updatedAt: run.updatedAt,
       ...(trunkId ? { trunkId } : {}) });
+    // hot-update: a newer engine took this task over and carries it on; its answer goes to the chat from there
+    // (carryOnReply), so nothing is said from here: no "could not finish", and no second answer.
+    if (run.status === "interrupted" && this.handedOver(run.id)) { live?.cancel(); turn.reply?.cancel(); return "replied"; }
     const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
-      : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
+      : run.status === "cancelled" ? "Stopped."
+      // owner-dm-signin: the task's own reason, scrubbed and kept short, rather than the bare status.
+      : chatFailureLine(run.status, run.output ?? "", message.chatKind, (text) => this.hideLeaks(this.runtime.hideSecrets(text)));
     // A task that stopped to ask goes out as a question with buttons, not as words to read.
     // PR #289 review 2: its own question, not whichever one is newest in the conversation.
     const own = run.status === "needs_input" ? this.runtime.waitingApprovals(run.sessionId).find((one) => one.runId === run.id) : undefined;
@@ -1497,6 +1538,51 @@ export class ChannelRouter {
     if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
     if (message.voice) await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
     return ok ? "replied" : "failed";
+  }
+  /**
+   * hot-update: resolves once no chat's turn is still finishing (its answer written down and sent) and no send is under
+   * way, or after `ms`; answers whether all were done. An engine handing over waits for this before it lets go.
+   */
+  async settle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (this.turns.size > 0 && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 25));
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.flushing, new Promise((resolve) => { timer = setTimeout(resolve, Math.max(0, until - Date.now())); })]);
+    clearTimeout(timer);
+    return this.turns.size === 0;
+  }
+  /**
+   * The chat message a task began from, through every engine it was carried on in: each carried-on task names the one
+   * it carried on (`resumedFrom`), and only the first holds the chat's mark (`channel.inbound`).
+   */
+  private chatOrigin(runId: string): { channel?: unknown; chatId?: unknown; messageId?: unknown } | undefined {
+    let id: string | undefined = runId;
+    for (let hops = 0; id && hops < 50; hops++) {
+      const events = this.store.events(id);
+      const inbound = events.find((event) => event.kind === "channel.inbound");
+      if (inbound) return inbound.data as { channel?: unknown; chatId?: unknown; messageId?: unknown };
+      const from = events.find((event) => event.kind === "run.started")?.data.resumedFrom;
+      id = typeof from === "string" ? from : undefined;
+    }
+    return undefined;
+  }
+  private handedOver(runId: string): boolean {
+    return !!this.store.sqlite.prepare("SELECT 1 FROM events WHERE run_id=? AND kind='run.handed_over' LIMIT 1").get(runId);
+  }
+  /**
+   * hot-update: a chat's task that an older engine handed to this one (src/never-break/resume.ts resumeHandedOver)
+   * answers the chat from here once it finishes, in reply to the message that started it. The older engine said
+   * nothing for it (finishTurn), and a chat app that sent its message once never sends it again.
+   */
+  async carryOnReply(runId: string, resumed: Promise<Run | undefined>): Promise<boolean> {
+    const inbound = this.chatOrigin(runId);
+    if (typeof inbound?.channel !== "string" || typeof inbound.chatId !== "string") return false;
+    const run = await resumed ?? this.store.run(runId);
+    if (!run || run.status === "interrupted") return false; // handed on again: the next engine answers it
+    const said = run.status === "completed" ? run.output || "(no reply)" : run.status === "needs_input" ? run.output
+      : run.status === "cancelled" ? "Stopped." : `I could not finish that (${run.status}).`;
+    await this.deliver(inbound.channel, inbound.chatId, said, `reply:${run.id}`, typeof inbound.messageId === "string" ? inbound.messageId : undefined);
+    return true;
   }
   /**
    * Batch 20 (wave 8): the message going back out is the last step of the task, so it hangs off the
@@ -1742,7 +1828,30 @@ export class ChannelRouter {
     return code;
   }
   /** The owner approves a pending sender by typing the code the sender was shown. */
-  approve(owner: string, input: unknown) {
+  /**
+   * `firstOwner` (owner-dm-signin): the owner, in the window, said the sender is their own account. It is taken only while
+   * no account is named as the owner's yet and only on an app that vouches for its senders; the caller has already
+   * checked that this is the window on this computer (and the PIN, where one is set).
+   */
+  approve(owner: string, input: unknown, options: { firstOwner?: boolean } = {}) {
+    if (options.firstOwner) this.store.profiles.requireOwner("Naming your own chat account");
+    const approved = this.approveCode(owner, input);
+    const madeOwner = options.firstOwner === true && this.nameFirstOwner(owner, approved.channel, approved.senderId);
+    return { ...approved, madeOwner };
+  }
+  /**
+   * owner-dm-signin: names this approved sender as the owner's own account, as the only one, in "Commands from your own
+   * chat" (its switch left as it is). The model is OpenClaw's "Also make this sender the first command owner"
+   * (github.com/openclaw/openclaw, docs/channels/pairing.md, MIT): offered only while no owner exists, never replacing
+   * or adding to one; the code here is Branch's own. False when an owner is already named or the app cannot vouch.
+   */
+  private nameFirstOwner(owner: string, channel: string, senderId: string): boolean {
+    const kind = this.adapters.get(channel)?.adapter.kind ?? "";
+    if (!vouchedSenderKinds.includes(kind) || ownerAccountNamed(this.store, owner)) return false;
+    saveOwnerCommands(this.store, owner, { ...ownerCommands(this.store, owner), accounts: [{ channel, sender: senderId }] });
+    return true;
+  }
+  private approveCode(owner: string, input: unknown) {
     const { code } = z.object({ code: z.string().regex(/^\d{6}$/) }).strict().parse(input);
     // mac3/never-break (integration review): a code works once, only while fresh, never when two
     // requests share it, and a run of wrong guesses is slowed down.

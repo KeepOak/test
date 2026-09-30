@@ -28,7 +28,7 @@ import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.j
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, approved: [], steps: null };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null };
 const STEPS = "Show steps in chats";
 const kindOf = (c) => c.kind ?? c.id;
 
@@ -40,6 +40,7 @@ async function loadApps() {
   A.intake = live?.intake ?? null;
   A.live = live?.live ?? null;
   A.ownerCommands = live?.ownerCommands ?? null;
+  A.ownerNamed = live?.ownerNamed !== false; // owner-dm-signin: no chat account is marked as the owner's yet
   A.approved = live?.approved ?? [];
   A.steps = live?.steps ?? null;
   A.apps = setup?.channels ?? [];

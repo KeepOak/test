@@ -2,16 +2,21 @@ import { app, ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { launchHandOver } from "./hand-over.js";
 import { join } from "node:path";
-import { Updater, UpdateDeferredError, type LiveHooks, type UpdateChannel, type UpdateStatus } from "./updater.js";
+import { Updater, UpdateDeferredError, beforeInstall, type LiveHooks, type UpdateChannel, type UpdateStatus } from "./updater.js";
 import { changedMind, confirmedChange, type InstallStart, type UpdateReadiness } from "./update-readiness.js";
 import { appEntryName, packageTypeOf, releaseAssetName } from "./release-assets.js";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { versionedLayout } from "./app-folders.js";
+import { readSwitchFailure } from "./shell-switch.js";
+import { UpdateLoop, type LoopFacts, type LoopPlan } from "./update-loop.js";
+import { portableMarker } from "../install/layout.js";
 import { installedAppRoot } from "./install-root.js";
 import { openableSettingsPages } from "../os-permissions.js";
 import { isOfferUrl } from "../usage-offers.js";
 import { UpdateInstallClaim } from "./update-install-claim.js";
 import { primaryRepo } from "./repo-pair.js";
-import { watchForOwner } from "./quiet-build.js";
+import { watchForOwner, type OwnerWindow } from "./quiet-build.js";
 import { newestGreen } from "./dev-build.js";
 
 /** Where an update is downloaded, built and handed over; the new version says it is up there too (selfdev). */
@@ -41,6 +46,8 @@ const settingsPages = openableSettingsPages(process.platform);
  * joined one that was already working, so an update behaves the same either way.
  */
 export interface UpdateHooks {
+  /** The saved work's folder (a versioned switch checks its format before going back, version-switch.ts). */
+  dataDir?: string;
   /** Authenticated current channel and full task count from the local or joined engine. */
   readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "workingTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
   backup: () => Promise<void>;
@@ -61,6 +68,10 @@ export interface UpdateHooks {
   currentCommit?: string | null;
   /** hot-update: Beta changes main does not load are applied live (src/desktop/hot-apply.ts). */
   live?: LiveHooks;
+  /** Versioned app folders: the moment and the window's state for a shell switch (main.ts, shell-switch.ts). */
+  handOver?: (target: { version: string; stillWanted: () => boolean }) => Promise<{ minimized: boolean }>;
+  /** The engine's plan for update by itself (update-readiness.ts updatePlanFrom), for the app's own update loop. */
+  plan?: (facts: LoopFacts) => Promise<LoopPlan>;
 }
 
 /**
@@ -83,10 +94,19 @@ export function statusSender(send: (status: UpdateStatus) => void, everyMs = 250
 }
 
 
+/** Stands in for the window while none is open (a start in the tray): no keys to hear, so only tasks hold an install. */
+const noWindow: OwnerWindow = { isDestroyed: () => true, webContents: { on: () => undefined, off: () => undefined } };
+
+/**
+ * `window` answers the window open right now, or null: the updater and update by itself run for the life of the app,
+ * with a window or without one (a start in the tray opens none until the owner does), and pick up whichever is open.
+ * Called once per app run.
+ */
 export function registerUpdaterIpc(
-  window: BrowserWindow, origin: string, version: string, requestQuit: () => void,
+  window: () => BrowserWindow | null, origin: string, version: string, requestQuit: () => void,
   hooks?: UpdateHooks,
 ): Updater {
+  const open = (): BrowserWindow | null => { const now = window(); return now && !now.isDestroyed() ? now : null; };
   // Dogfood F1 (NAS): what the owner had chosen when the install under way began; the last gate reads it again.
   let started: InstallStart | null = null;
   // hot-update: a live update needs no quiet moment (work is handed over, not stopped); the packaged swap still does (beforeStop).
@@ -100,6 +120,9 @@ export function registerUpdaterIpc(
     if (why) throw new UpdateDeferredError(why);
   };
   const installDir = installedAppRoot(app.isPackaged, process.platform, process.execPath);
+  // Windows: each version in a folder of its own beside the others, switched to without touching the one in use
+  // (app-folders.ts). A portable copy keeps its data beside the program, so it keeps the flat swap.
+  const appFolders = installDir ? versionedLayout(process.execPath, process.platform, existsSync(join(dirname(process.execPath), portableMarker))) : null;
   const updater = new Updater({
     ...(process.platform === "win32" ? updateSource : platformSource),
     currentVersion: version,
@@ -117,89 +140,109 @@ export function registerUpdaterIpc(
     ...(hooks?.tryOut ? { tryOut: hooks.tryOut } : {}),
     beforeStop: () => ensureIdle(),
     ...(hooks?.live ? { live: hooks.live } : {}),
+    ...(appFolders ? { appFolders } : {}),
+    ...(hooks?.dataDir ? { dataDir: hooks.dataDir } : {}),
+    ...(hooks?.handOver ? { handOver: hooks.handOver } : {}),
     devBuildDir: hooks?.buildDir ?? null,
     onChange: statusSender((status) => {
-      if (window.isDestroyed()) return;
+      const shown = open();
+      if (!shown) return;
       // Only the page this window was opened on, as every handler here checks for the other direction.
-      const at = (() => { try { return new URL(window.webContents.getURL()).origin; } catch { return null; } })();
-      if (at === origin) window.webContents.send("branch:update-changed", status);
+      const at = (() => { try { return new URL(shown.webContents.getURL()).origin; } catch { return null; } })();
+      if (at === origin) shown.webContents.send("branch:update-changed", status);
     }),
   });
   const authorized = (event: IpcMainInvokeEvent) => {
-    if (event.sender !== window.webContents ||
-      event.senderFrame !== window.webContents.mainFrame ||
+    const shown = open();
+    if (!shown || event.sender !== shown.webContents ||
+      event.senderFrame !== shown.webContents.mainFrame ||
       new URL(event.senderFrame.url).origin !== origin)
       throw new Error("Desktop update access denied");
   };
   const installClaim = new UpdateInstallClaim();
+  // A new version that did not come up sent the switch back to this one: said now, once (shell-switch.ts).
+  if (appFolders) void readSwitchFailure(updateScratchDir(), version).then((failure) => {
+    if (!failure) return;
+    updater.switchFailed(failure);
+    diagnose("updater", "error", failure.message, { fields: { kept: failure.kept, tried: failure.tried } });
+  }).catch(() => undefined);
   ipcMain.handle("branch:update-status", (event) => { authorized(event); return updater.status; });
   ipcMain.handle("branch:update-check", async (event) => {
     authorized(event);
     if (installClaim.active) return updater.status;
-    // mac7/diagnostics: each check, and any failure, is a line in the activity log.
-    if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
-    updater.setChannel((await hooks.readiness()).channel);
-    return updater.check().then((status) => {
-      diagnose("updater", "info", "Checked for updates", { fields: { current: version, latest: updater.status.release?.latestVersion ?? "" } });
-      return status;
-    }, (error: unknown) => {
+    // mac7/diagnostics: each look writes what it found (updater.ts, lookUp); one that cannot start says why here.
+    try {
+      if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
+      updater.setChannel((await hooks.readiness()).channel);
+    } catch (error) {
       diagnose("updater", "warn", `Checking for updates failed: ${error instanceof Error ? error.message : String(error)}`);
       throw error;
-    });
+    }
+    return updater.check();
   });
-  ipcMain.handle("branch:update-install", async (event, automatic: unknown, confirm: unknown) => {
-    authorized(event);
-    // A Beta change that does not contain this copy's goes in only on the owner's confirmation of that exact change,
-    // pressed in the window; update by itself never confirms anything.
-    const confirmed = confirmedChange(automatic, confirm);
-    // #215: one install at a time for this window, claimed before anything is awaited.
-    return installClaim.run(() => updater.status, () => updater.inProgress, async () => {
-      if (!hooks?.readiness) throw new Error("Branch cannot read its update channel.");
-      const readiness = await hooks.readiness();
-      const moved = updater.selectedChannel !== readiness.channel;
-      updater.setChannel(readiness.channel);
-      // NAS 2e3ead6: an automatic install that finds the channel just changed only switches it. The release it
-      // would take was never looked at on this channel (a Dev change that failed here, say), so the next turn looks
-      // first, and the plan weighs what that look finds. The Update button, pressed by the owner, goes on.
-      // Thrown, not returned: the install claim is only given back on a throw (NAS 1f61d43), and the window's
-      // automatic look ignores a deferral.
-      if (automatic === true && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
-      started = { channel: readiness.channel, automatic: automatic === true };
-      await ensureIdle(!(hooks?.live && readiness.channel === "beta"));
+  /**
+   * One install, the Update button's and the app's own update loop's alike (update-loop.ts): `automatic` for update by
+   * itself, which never confirms another line's change. #215: one install at a time, claimed before anything is awaited.
+   */
+  const installNow = (automatic: boolean, confirmed: string | null) =>
+    installClaim.run(() => updater.status, () => updater.inProgress, async () => {
+      diagnose("updater", "info", automatic === true ? "Update by itself asked to install an update" : "The owner asked to install an update",
+        { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
+      const read = hooks?.readiness;
+      // Update by itself ignores a wait, so a wait before the install starts is written down here (the updater writes
+      // its own from there on): without it, an update that never went in left no reason anywhere.
+      await beforeInstall(async () => {
+        if (!read) throw new Error("Branch cannot read its update channel.");
+        const readiness = await read();
+        const moved = updater.selectedChannel !== readiness.channel;
+        updater.setChannel(readiness.channel);
+        // NAS 2e3ead6: an automatic install that finds the channel just changed only switches it. The release it
+        // would take was never looked at on this channel (a Dev change that failed here, say), so the next turn looks
+        // first, and the plan weighs what that look finds. The Update button, pressed by the owner, goes on.
+        // Thrown, not returned: the install claim is only given back on a throw (NAS 1f61d43), and the automatic
+        // look ignores a deferral.
+        if (automatic === true && moved) throw new UpdateDeferredError("The update channel was just changed, so Branch looks again before installing.");
+        started = { channel: readiness.channel, automatic: automatic === true };
+        await ensureIdle(!(hooks?.live && readiness.channel === "beta"));
+      });
       // From here the install waits for the owner's typing and for tasks at work, until it ends either way.
-      const stopWatching = watchForOwner(window, updater, async () => {
-        const state = await hooks.readiness!();
+      const stopWatching = watchForOwner(open() ?? noWindow, updater, async () => {
+        const state = await read!();
         // Dogfood F1 while it builds or waits: a changed channel, or update by itself switched off, calls it off now.
         const why = changedMind(state, started);
         if (why) updater.callOff(why);
         return state.workingTasks ?? state.busyTasks;
       });
-      diagnose("updater", "info", "Installing an update", { fields: { from: version, to: updater.status.release?.latestVersion ?? "" } });
       // CBQ-001: the updater's own claim is also held past install() until the hand-over is running, so
       // anything asking the updater whether it is busy hears yes (src/desktop/updater.ts, install).
-      const installed = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) }).catch((error: unknown) => {
-        diagnose("updater", "error", `The update could not be installed: ${error instanceof Error ? error.message : String(error)}`);
-        throw error;
-      }).finally(stopWatching);
+      // Every way install() ends is written to the activity log by the updater itself.
+      const installed = await updater.install({ hold: true, automatic: automatic === true, ...(confirmed ? { confirm: confirmed } : {}) })
+        .finally(stopWatching);
       // hot-update: applied live; nothing to hand over, nothing restarts.
       if ("live" in installed) {
         diagnose("updater", "info", "Updated live", { fields: { tier: installed.live.tier, ms: String(installed.live.ms), to: installed.live.version } });
+        // The app keeps running, so the next change must find the install free again (it was left claimed for good).
+        installClaim.release();
         return updater.status;
       }
       const { script, stagedDir } = installed;
       try {
         // mac7/safe-rollback: recorded here, marked as landed by the next start (`settleActivation`),
         // because this process quits into the hand-over and never sees how it went.
-        if (hooks?.record) await hooks.record(stagedDir, updater.status.release?.latestVersion ?? "");
+        // Versioned app folders need no record to undo: the version before stays whole and the switch goes back by itself.
+        if (hooks?.record && !appFolders) await hooks.record(stagedDir, updater.status.release?.latestVersion ?? "");
         // The background engine is already closed by this point, so say so if the hand-over cannot start.
+        diagnose("updater", "info", "Starting the hand-over", { fields: { to: updater.status.release?.latestVersion ?? "" } });
         await launchHandOver(script, process.pid).catch((error: unknown) => {
           const why = error instanceof Error ? error.message : String(error);
           throw new Error(updater.backgroundStopped
             ? `The update could not be started: ${why}. Branch has stopped working in the background; it starts again next time you sign in to ${signInPlace}.`
             : `The update could not be started: ${why}.`);
         });
+        diagnose("updater", "info", "The hand-over started; this window closes for it");
       } catch (error) {
         // Q55: nothing was swapped, so the status says what is still installed instead of "Restarting…".
+        // (`failed` writes the reason to the activity log.)
         updater.failed(error instanceof Error ? error.message : String(error));
         throw error;
       }
@@ -209,7 +252,23 @@ export function registerUpdaterIpc(
       setTimeout(() => app.exit(0), 20000).unref();
       return status;
     });
+  ipcMain.handle("branch:update-install", async (event, automatic: unknown, confirm: unknown) => {
+    authorized(event);
+    // A Beta change that does not contain this copy's goes in only on the owner's confirmation of that exact change,
+    // pressed in the window; update by itself never confirms anything.
+    return installNow(automatic === true, confirmedChange(automatic, confirm));
   });
+  // Update by itself runs here, in the app, not in the window's page: it goes on whether the page is loaded, closed to
+  // the tray or gone (update-loop.ts). The page only shows what it says.
+  // Only an installed copy updates itself; one run from its source is updated with `branch update`.
+  const loop = app.isPackaged && hooks?.readiness && hooks.plan ? new UpdateLoop({
+    readiness: async () => { const state = await hooks.readiness!(); return { channel: state.channel, autoUpdate: state.autoUpdate ?? "off" }; },
+    plan: hooks.plan, updater, install: async () => { await installNow(true, null); },
+    tell: (words) => { open()?.webContents.send("branch:update-said", words); diagnose("updater", "warn", words); },
+  }) : null;
+  // The first look waits a minute: the window and its engine settle first, and nothing is built during start-up.
+  loop?.start(60_000);
+  ipcMain.handle("branch:update-loop", (event) => { authorized(event); return loop ? { inMain: true, ...loop.last } : { inMain: false }; });
   ipcMain.handle("branch:open-external", async (event, url: unknown) => {
     authorized(event);
     // The usage bar's "more usage" pages (src/usage-offers.ts) are matched on their origin and path exactly.
@@ -218,9 +277,7 @@ export function registerUpdaterIpc(
     await shell.openExternal(url);
     return true;
   });
-  window.on("closed", () => {
-    for (const channel of ["branch:update-status", "branch:update-check", "branch:update-install", "branch:open-external"])
-      ipcMain.removeHandler(channel);
-  });
+  // Nothing is torn down when a window closes: the app, closed to the tray or with no window yet, keeps itself up to date.
+  app.once("will-quit", () => loop?.stop());
   return updater;
 }

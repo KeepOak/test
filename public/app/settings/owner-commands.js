@@ -8,7 +8,7 @@ import { t } from "../../i18n.js";
 export function ownerCommandCard(state) {
   const saved = state.ownerCommands;
   if (!saved) return "";
-  return `<div class="rows"><div class="ctl"><b>${esc(t("window.chat-command.title"))}</b><span class="right"><button class="btn sm" type="button" data-act="chat-command-edit">${esc(t("ov.open"))}</button></span><small>${esc(t(saved.on ? "window.chat-command.on" : "window.chat-command.off"))}</small></div></div>`;
+  return `<div class="rows"><div class="ctl"><b>${esc(t("window.chat-command.title"))}</b><span class="right"><button class="btn sm" type="button" data-act="chat-command-edit">${esc(t("ov.open"))}</button></span><small>${esc(t(saved.on ? "window.chat-command.on" : "window.chat-command.off"))}</small>${state.ownerNamed === false && (state.approved ?? []).length ? `<small>${esc(t("window.chat-command.none-yet"))}</small>` : ""}</div></div>`;
 }
 export function initOwnerCommands(state, reload) {
   markLive(["chat-command-edit", "chat-command-save", "sw:chat-command-on", "sw:chat-command-pin", "sw:chatCommandAccount"]);

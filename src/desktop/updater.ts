@@ -10,10 +10,19 @@ import { checksumAssetName, type PackageType } from "./release-assets.js";
 import type { LiveOutcome } from "../hot-update/live-build.js";
 import { buildDev, devStanding, devToolsMissing, prepareBuildFolder, realRun, remoteHead, type DevBuildPlan, type DevBuilt, type DevStage, type DevStanding, type Run } from "./dev-build.js";
 import { removeTree } from "./remove-tree.js";
+import { folderPath, partFolder, pointerFiles, readPointer, sealAppFolder, type Layout } from "./app-folders.js";
+import { failureName, invisibleWaitWords, shellUpMarker, type SwitchFailure } from "./shell-switch.js";
+import { SwitchPlanSchema } from "./version-switch.js";
+import { storeMigrations } from "../never-break/migrations.js";
 import { runHostedBuild, type HostedBuild } from "./build-client.js";
 import type { PauseReason } from "./quiet-build.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
 import { primaryRepo, fallbackRepo, isTrustedRepo } from "./repo-pair.js";
+import { diagnose, type Level } from "../diagnostic-log.js";
+
+/** One line in the activity log for each step an update takes (src/desktop/main-log.ts: main's lines reach the file). */
+const note = (level: Level, message: string, fields?: Record<string, unknown>): void =>
+  diagnose("updater", level, message, fields ? { fields } : {});
 
 /**
  * One-button updates from GitHub Releases. The app downloads the published archive, checks it
@@ -88,6 +97,20 @@ export interface UpdaterOptions {
    * restart (src/hot-update/). `build` answers "shell" for a change that must go the packaged way.
    */
   live?: LiveHooks;
+  /**
+   * Windows, versioned app folders (app-folders.ts): where this copy's versions sit and which one runs (folder "": a
+   * flat copy from before). A new version is made beside it and switched to (shell-switch.ts); nothing is swapped or
+   * copied over, and the background engine is never stopped for it. Left out: the flat swap, as before.
+   */
+  appFolders?: Layout | null;
+  /** The saved work's folder: a versioned switch reads its format before it goes back (version-switch.ts). */
+  dataDir?: string;
+  /**
+   * Versioned app folders: waits for the moment the switch may happen (the window out of sight, or the owner away) and
+   * keeps what the window has open for the new version; answers whether the window was hidden, so the new version
+   * starts the same way.
+   */
+  handOver?: (target: { version: string; stillWanted: () => boolean }) => Promise<{ minimized: boolean }>;
 }
 /** hot-update: how the updater builds and applies a change live (supplied by main, src/desktop/hot-apply.ts). */
 export interface LiveHooks {
@@ -211,30 +234,8 @@ const releaseSchema = z.object({
   assets: z.array(assetSchema),
 });
 
-export function compareVersions(a: string, b: string): number {
-  const parse = (value: string) => {
-    const match = /^v?(\d+)\.(\d+)(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value);
-    if (!match) throw new Error(`Invalid Branch version: ${value}`);
-    return { numbers: [Number(match[1]), Number(match[2]), Number(match[3] ?? 0)],
-      pre: match[4]?.split(".") ?? [] };
-  };
-  const left = parse(a), right = parse(b);
-  for (let index = 0; index < 3; index++) {
-    const difference = left.numbers[index]! - right.numbers[index]!;
-    if (difference) return Math.sign(difference);
-  }
-  if (!left.pre.length || !right.pre.length) return Number(right.pre.length > 0) - Number(left.pre.length > 0);
-  for (let index = 0; index < Math.max(left.pre.length, right.pre.length); index++) {
-    const one = left.pre[index], two = right.pre[index];
-    if (one === undefined || two === undefined) return one === undefined ? -1 : 1;
-    if (one === two) continue;
-    const numericOne = /^\d+$/.test(one), numericTwo = /^\d+$/.test(two);
-    if (numericOne && numericTwo) return Math.sign(Number(one) - Number(two));
-    if (numericOne !== numericTwo) return numericOne ? -1 : 1;
-    return one < two ? -1 : 1;
-  }
-  return 0;
-}
+export { compareVersions } from "./versions.js";
+import { compareVersions } from "./versions.js";
 
 /** Automatic updates accept only ordinary final SemVer tags, never aliases or prereleases. */
 export function finalReleaseVersion(tag: string): string {
@@ -252,6 +253,21 @@ export function finalReleaseVersion(tag: string): string {
 export const LAST_RELEASE_WITHOUT_PROVENANCE = "0.19.3";
 export function provenanceRequired(version: string, lastWithout = LAST_RELEASE_WITHOUT_PROVENANCE): boolean {
   return compareVersions(version, lastWithout) > 0;
+}
+
+/**
+ * The part of an install before the updater takes it over (reading the channel, waiting for work to be idle). A wait
+ * or failure here is written to the activity log with its reason, then thrown on as before.
+ */
+export async function beforeInstall<T>(steps: () => Promise<T>): Promise<T> {
+  try {
+    return await steps();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof UpdateDeferredError) note(error instanceof UpdateStuckError ? "warn" : "info", `The update waits: ${message}`);
+    else note("error", `The update could not start: ${message}`);
+    throw error;
+  }
 }
 
 export class Updater {
@@ -307,6 +323,13 @@ export class Updater {
   }
   /** The look-up itself. An install that has already claimed the updater uses this, not `check`. */
   private async lookUp(): Promise<UpdateStatus> {
+    const status = await this.lookOnce();
+    const release = status.release;
+    note(status.phase === "error" ? "warn" : "info", `Looked for an update: ${status.message}`, { channel: this.channel, phase: status.phase,
+      installed: this.installed.version, latest: release?.latestVersion ?? null, commit: release?.commit ?? null, available: release?.available ?? null });
+    return status;
+  }
+  private async lookOnce(): Promise<UpdateStatus> {
     const generation = ++this.generation;
     this.set("checking", "Checking GitHub for a newer version…");
     try {
@@ -336,24 +359,28 @@ export class Updater {
    * the claim from there; `release()` gives it back if the hand-over could not be started.
    */
   async install(options: { hold?: boolean; confirm?: string; automatic?: boolean } = {}): Promise<{ script: string; stagedDir: string } | { live: LiveApplied }> {
+    // Each refusal leaves its reason in the activity log, as every other way an update ends does.
+    const refuse = (message: string): never => { note("warn", `The update did not start: ${message}`); throw new Error(message); };
     const reason = unsupportedReason(this.options, this.platform);
-    if (reason) throw new Error(reason);
+    if (reason) refuse(reason);
     // Beta builds and runs code no release has published, so it never goes on without the safety copy and the copy of
     // the data folder (the `backup` the window hands in); checked first, so nothing is built for nothing.
     if (this.channel === "beta" && !this.options.backup)
-      throw new Error("The Beta channel keeps a copy of your data folder before every update, and this copy of Branch cannot make one, so nothing was installed.");
+      refuse("The Beta channel keeps a copy of your data folder before every update, and this copy of Branch cannot make one, so nothing was installed.");
     // selfdev: and a Beta build must start and pass its own check on a copy of the work before it replaces anything.
     if (this.channel === "beta" && !this.options.canary)
-      throw new Error("The Beta channel tries every build on a copy of your work before using it, and this copy of Branch cannot, so nothing was installed.");
+      refuse("The Beta channel tries every build on a copy of your work before using it, and this copy of Branch cannot, so nothing was installed.");
     if (this.channel === "beta" && !this.options.tryOut)
-      throw new Error("The Beta channel tries every new version before using it, and this copy of Branch cannot, so nothing was installed.");
-    if (this.busy) throw new Error("An update is already in progress.");
+      refuse("The Beta channel tries every new version before using it, and this copy of Branch cannot, so nothing was installed.");
+    if (this.busy) refuse("An update is already in progress.");
     // CBQ-001: claimed here, before anything is awaited. Looking the release up is a network round
     // trip, and `busy` used to be set only after it, so two requests arriving during that trip both
     // read `busy` as false and both went on. That is not two downloads of one file; the second one
     // empties the scratch folder the first is downloading into, and the first fails on its own
     // archive. Two hand-overs for one app is the multiplication this row forbids.
     this.busy = true;
+    // One install at a time across the whole app: a window's and the gateway's own loop never build or switch together.
+    const unlock = await installLock(`${this.options.scratchDir}.lock`).catch((error: unknown) => { this.busy = false; throw error; });
     this.stoppedBackground = false;
     this.automatic = options.automatic === true;
     this.calledOff = null;
@@ -371,14 +398,18 @@ export class Updater {
       // Nothing has been touched yet, so the claim is simply given back: no status change and no
       // files removed, exactly as when these two refusals happened before the claim existed.
       this.busy = false;
+      note("warn", `The update did not start: ${error instanceof Error ? error.message : String(error)}`);
+      await unlock();
       throw error;
     }
     let held = false;
     const beta = release.channel === "beta";
+    note("info", "An update started", { channel: release.channel, from: this.installed.version, to: release.latestVersion,
+      commit: release.commit ?? null, automatic: this.automatic });
     // hot-update: a Beta change main does not load is applied live; one it does goes the packaged way below.
     if (beta && this.options.live && release.otherLine !== true) {
-      const applied = await this.tryLive(release).catch((error: unknown) => { this.busy = false; throw error; });
-      if (applied) { this.busy = false; return { live: applied }; }
+      const applied = await this.tryLive(release).catch(async (error: unknown) => { this.busy = false; await unlock(); throw error; });
+      if (applied) { this.busy = false; await unlock(); return { live: applied }; }
     }
     this.stages = (beta ? betaStages : stableStages).map((id) => ({ id, state: "waiting", startedAt: null, endedAt: null }));
     // A Beta build's version is known once its source is here; until then the screen names the change.
@@ -406,6 +437,8 @@ export class Updater {
         await this.verify(archive, release, checked);
         stagedDir = await this.unpack(archive);
       }
+      // Versioned app folders: a downloaded version goes into a folder of its own beside this one before it is tried.
+      if (this.options.appFolders && !beta) stagedDir = await this.intoAppFolder(stagedDir, expectedVersion);
       this.stage("checking");
       await validateStagedPackage(stagedDir, expectedVersion, this.platform);
       await this.untilUnpaused();
@@ -418,18 +451,22 @@ export class Updater {
       // Only once nothing is working: a task that started during the build defers the install, and the swap never began.
       await this.options.beforeStop?.();
       this.stage("swapping");
-      const script = await this.writeScript(stagedDir, await this.stopBackground());
+      // Versioned app folders: nothing is stopped or swapped; the new version takes over from this one (shell-switch.ts).
+      const script = this.options.appFolders
+        ? await this.writeSwitchScript(stagedDir, expectedVersion, release)
+        : await this.writeScript(stagedDir, await this.stopBackground());
       this.set("ready", "Restarting to finish the update…", 1, release);
+      note("info", "The update is ready to hand over", { version: expectedVersion });
       held = options.hold === true;
       return { script, stagedDir };
     } catch (error) {
-      if (error instanceof UpdateDeferredError) { this.stages = this.target = null; this.set("available", error.message, null, release); }
+      if (error instanceof UpdateDeferredError) { this.deferred(error); this.stages = this.target = null; this.set("available", error.message, null, release); }
       else this.keptAfter(error instanceof Error ? error.message : String(error), release, error);
       // mac7/real-update: a download that went wrong is 130 MB or more of nothing; it is not kept.
       await rm(join(this.options.scratchDir, this.options.assetName!), { force: true }).catch(() => undefined);
       await removeTree(join(this.options.scratchDir, "unpacked")).catch(() => undefined);
       throw error;
-    } finally { if (!held) this.busy = false; }
+    } finally { if (!held) { this.busy = false; await unlock(); } }
   }
   /**
    * hot-update: builds the change the light way and, unless main must load it (answer null: the packaged way goes on),
@@ -451,6 +488,7 @@ export class Updater {
     } catch (error) {
       const refusal = this.calledOff ? new UpdateDeferredError(this.calledOff) : error;
       if (refusal instanceof UpdateDeferredError) {
+        this.deferred(refusal);
         this.stages = this.target = null;
         this.set("available", refusal.message, null, release);
         throw refusal;
@@ -458,6 +496,8 @@ export class Updater {
       this.keptAfter(error instanceof Error ? error.message : String(error), release, error);
       throw error;
     }
+    note("info", outcome.tier === "shell" ? "The live build needs main to load it, so the update goes the packaged way"
+      : `The live build finished: ${outcome.tier}`, { tier: outcome.tier });
     if (outcome.tier === "shell") {
       // The packaged way starts its own steps from the beginning; the source it needs is already fetched.
       this.stages = this.target = null;
@@ -481,7 +521,7 @@ export class Updater {
       this.options.onChange?.(this.status);
       return { ...applied, ms };
     } catch (error) {
-      if (error instanceof UpdateDeferredError) { this.stages = this.target = null; this.set("available", error.message, null, release); throw error; }
+      if (error instanceof UpdateDeferredError) { this.deferred(error); this.stages = this.target = null; this.set("available", error.message, null, release); throw error; }
       this.keptAfter(error instanceof Error ? error.message : String(error), release, error);
       throw error;
     }
@@ -498,6 +538,34 @@ export class Updater {
     if (!release?.otherLine || release.commit !== confirm)
       throw new Error("The change you confirmed is no longer Beta's newest one, so nothing was installed. Check again and confirm the change shown.");
     return release;
+  }
+  /**
+   * Versioned app folders: the new version did not say its window was up, so the switch went back to this one by itself
+   * (shell-switch.ts). Said as a failed install of that release, with what is still installed, so the window tells the
+   * owner once and update by itself does not try that same change again (the next one is).
+   */
+  switchFailed(failure: SwitchFailure): UpdateStatus {
+    const short = failure.commit?.slice(0, 7);
+    const release: ReleaseInfo = { currentVersion: this.options.currentVersion, latestVersion: failure.tried, available: false,
+      tag: short ? `dev-${short}` : `v${failure.tried}`, title: short ? `Beta build of change ${short}` : `Version ${failure.tried}`, notes: "",
+      publishedAt: null, assetUrl: "", checksumUrl: "", assetBytes: 0, pageUrl: "", channel: short ? "beta" : "stable",
+      ...(failure.commit ? { commit: failure.commit } : {}) };
+    return this.keptAfter(failure.message, release);
+  }
+  /** The live hooks to use from the next install (the gateway's engine can be replaced under it). */
+  useLive(hooks: LiveHooks | null): void {
+    if (hooks) this.options.live = hooks; else delete this.options.live;
+  }
+  /**
+   * Versioned app folders with no window open (gateway-updates.ts): the new version is in use from the next window, as
+   * `current.json` now says; nothing had to close. The claim is given back and the status says so.
+   */
+  switchedWithoutWindow(): UpdateStatus {
+    const release = this.status.release;
+    this.installed = { version: release?.latestVersion ?? this.installed.version, commit: release?.commit ?? this.installed.commit };
+    this.busy = false;
+    this.stages = this.target = null;
+    return this.set("current", `Version ${this.installed.version} is in place; the next time Branch's window opens, it is this version.`, null, release ? { ...release, available: false } : null);
   }
   /** Gives back a claim `install({ hold: true })` kept, when the hand-over it was kept for did not start. */
   release(): void { this.busy = false; }
@@ -532,6 +600,7 @@ export class Updater {
   callOff(why: string): void {
     if (!this.busy || this.calledOff) return;
     this.calledOff = why;
+    note("info", `The update was called off: ${why}`);
     this.hosted?.stop();
     this.options.live?.stop?.();
     for (const wake of this.resumed.splice(0)) wake();
@@ -546,10 +615,16 @@ export class Updater {
     this.busy = false;
     return this.keptAfter(message, this.status.release);
   }
+  /** An update that waits leaves its reason in the log; a wait that will not clear by itself is a warning. */
+  private deferred(error: UpdateDeferredError): void {
+    note(error instanceof UpdateStuckError ? "warn" : "info", `The update waits: ${error.message}`, { automatic: this.automatic });
+  }
   private keptAfter(message: string, release: ReleaseInfo | null | undefined, error?: unknown): UpdateStatus {
     const running = this.stages?.find((stage) => stage.state === "running") ?? null;
     if (running) Object.assign(running, { state: "failed", endedAt: new Date().toISOString() });
     const detail = error && typeof error === "object" && "detail" in error && typeof error.detail === "string" ? error.detail : null;
+    note("error", `The update stopped: ${message}`, { step: running?.id ?? null, kept: this.installed.version,
+      backgroundStopped: this.stoppedBackground, line: detail });
     this.status = { ...this.fresh("error", message), release: release ?? null,
       ...(this.provenance ? { provenance: this.provenance } : {}),
       outcome: { kept: this.installed.version, backgroundStopped: this.stoppedBackground },
@@ -565,6 +640,7 @@ export class Updater {
     const stages = this.stages, at = new Date().toISOString();
     const next = stages?.find((stage) => stage.id === id);
     if (!stages || !next || next.state === state) return;
+    note("info", `Update step: ${id}${state === "skipped" ? " (skipped)" : ""}`, { version: this.target?.version ?? null, commit: this.target?.commit ?? null });
     for (const stage of stages) if (stage.state === "running" && stage !== next) Object.assign(stage, { state: "done", endedAt: at });
     Object.assign(next, state === "running" ? { state, startedAt: at, endedAt: null } : { state, startedAt: at, endedAt: at });
     this.status = { ...this.status, stages: stages.map((stage) => ({ ...stage })), target: this.target ? { ...this.target } : null, automatic: this.automatic, paused: this.paused, updatedAt: at };
@@ -574,11 +650,13 @@ export class Updater {
   private async tryCanary(stagedDir: string, version: string): Promise<void> {
     if (!this.options.canary) return;
     this.set("verifying", "Trying the new version on a copy of your work before using it…", null, this.status.release);
+    note("info", "Trying the new version on a copy of the work", { version });
     try { await this.options.canary(stagedDir, version, { required: this.channel === "beta" }); }
     catch (error) {
       const why = (error instanceof Error ? error.message : String(error)).replace(/\.?$/, ".");
       throw new Error(`The new version did not pass its check, so nothing was changed. ${why}`);
     }
+    note("info", "The new version passed its check on a copy of the work", { version });
   }
   /**
    * Beta: the new version is started for real before anything is swapped (src/desktop/beta-smoke.ts). A failed try-out
@@ -589,6 +667,7 @@ export class Updater {
     const failure = await this.options.tryOut!(stagedDir, version).catch((error: unknown) =>
       `The new Beta version was not used: its try-out could not run (${error instanceof Error ? error.message : String(error)}). You are still on the version you had, and nothing was changed.`);
     if (failure) throw new Error(failure);
+    note("info", "The new Beta version passed its try-out", { version });
   }
   /** The safety copy taken just before the files are swapped; three are kept by the caller. */
   private async safetyCopy(): Promise<void> {
@@ -596,6 +675,7 @@ export class Updater {
     this.set("unpacking", "Making a safety copy of your work before the update…", null, this.status.release);
     try {
       await this.options.backup();
+      note("info", "The safety copy was made");
     } catch (error) {
       const why = (error instanceof Error ? error.message : String(error)).replace(/\.?$/, ".");
       throw new Error(`The safety copy could not be made, so the update was stopped: ${why} Free some space on this drive, or move Branch's data folder somewhere it can write, then try the update again.`);
@@ -608,9 +688,11 @@ export class Updater {
   private async stopBackground(): Promise<number | null> {
     if (!this.options.stopDaemon) return null;
     this.set("unpacking", "Closing the part of Branch that keeps working with the window closed…", null, this.status.release);
+    note("info", "Closing the background engine for the update");
     const pid = await this.options.stopDaemon();
     // A null answer means nothing was working in the background, so nothing was closed.
     this.stoppedBackground = pid !== null;
+    note("info", pid === null ? "No background engine was working, so none was closed" : "The background engine was closed", { pid });
     return pid;
   }
   private async latestRelease(): Promise<ReleaseInfo> {
@@ -723,6 +805,8 @@ export class Updater {
     const plan: DevBuildPlan = {
       repo: this.devRepo(), buildDir, commit: release.commit, running: this.installed.commit, assetName: this.options.assetName!,
       platform: this.platform, otherLineConfirmed: release.otherLine === true,
+      ...(this.options.appFolders ? { appFolder: { root: this.options.appFolders.root,
+        running: folderPath(this.options.appFolders.root, this.options.appFolders.folder), executableName: this.options.executableName } } : {}),
       onStage: (stage, state) => {
         this.stage(stage, state);
         if (state === "running") this.set("downloading", words[stage], null, this.status.release);
@@ -741,6 +825,8 @@ export class Updater {
       throw new Error(`The newest Beta build (${built.version}) is older than the version running now (${this.options.currentVersion}), so nothing was changed. It is offered again once it catches up.`);
     this.stage("checking");
     this.set("verifying", "Checking the build is whole…", null, this.status.release);
+    // Versioned app folders: already in place beside the running version, whole (it was renamed in only once it was).
+    if ("appFolder" in built) return { version: built.version, stagedDir: built.appFolder };
     if ("folder" in built) {
       const app = await findExecutableDir(built.folder, this.options.executableName);
       const into = join(this.options.scratchDir, "unpacked"), stagedDir = join(into, basename(app));
@@ -953,6 +1039,43 @@ export class Updater {
     ].join("\r\n"), "utf8");
     return script;
   }
+  /** Versioned app folders: a downloaded version, unpacked in the scratch folder, moved into its own folder beside this one. */
+  private async intoAppFolder(stagedDir: string, version: string): Promise<string> {
+    const { root } = this.options.appFolders!;
+    const part = partFolder(root, version);
+    await removeTree(part);
+    await rename(stagedDir, part).catch(async () => { await cp(stagedDir, part, { recursive: true, verbatimSymlinks: true }); await removeTree(stagedDir); });
+    return sealAppFolder(root, version, await readPointer(root));
+  }
+  /**
+   * Versioned app folders: the pointers the switch renames, the note the old version reads if the new one does not come
+   * up, and the plan the hand-over runner follows to switch and watch it (version-switch.ts). Written only after the window has
+   * reached its moment (`handOver`), so the new version starts shown or in the tray exactly as this one was.
+   */
+  private async writeSwitchScript(stagedDir: string, version: string, release: ReleaseInfo): Promise<string> {
+    const { root, folder } = this.options.appFolders!;
+    const running = { folder, version: this.options.currentVersion };
+    const next = { folder: basename(stagedDir), version };
+    this.set("ready", invisibleWaitWords, 1, release);
+    const { minimized } = this.options.handOver ? await this.options.handOver({ version, stillWanted: () => !this.calledOff }) : { minimized: false };
+    await this.untilUnpaused();
+    const files = await pointerFiles(root, running, next);
+    const scratch = this.options.scratchDir, exe = this.options.executableName;
+    const failure: SwitchFailure = { kept: this.options.currentVersion, tried: version, commit: release.commit ?? null, at: new Date().toISOString(),
+      message: `Version ${version} did not open its window within two minutes, so Branch went back to ${this.options.currentVersion} by itself. Your conversations and chat apps kept running. The next change is tried as soon as it lands.` };
+    await writeFile(join(scratch, `${failureName}.draft`), JSON.stringify(failure));
+    await rm(join(scratch, failureName), { force: true });
+    // Read by the hand-over runner (hand-over.ts), which switches from this version's own folder (version-switch.ts).
+    const script = join(scratch, "switch-version.json");
+    const plan = SwitchPlanSchema.parse({ root, next: files.next, rollback: folder ? files.rollback : null,
+      newExe: join(stagedDir, exe), oldExe: join(folderPath(root, folder), exe), pid: process.pid, marker: shellUpMarker(scratch, version),
+      failureDraft: join(scratch, `${failureName}.draft`), failure: join(scratch, failureName), log: join(scratch, "apply-update.log"), minimized,
+      version, kept: this.options.currentVersion, commit: release.commit ?? null,
+      // Going back is refused when the new version has moved the saved work past what this version can read.
+      dataDir: this.options.dataDir ?? null, understood: storeMigrations.at(-1)?.version ?? null });
+    await writeFile(script, JSON.stringify(plan, null, 2), "utf8");
+    return script;
+  }
   /** macOS and Linux: the shell hand-over from hand-over.ts, written beside the download. */
   private async writePosixScript(stagedDir: string, daemonPid: number | null): Promise<string> {
     const script = join(this.options.scratchDir, "apply-update.sh");
@@ -980,6 +1103,7 @@ export class Updater {
   /** Marks the hand-over as running once the script has been launched; the app is about to close and restart. */
   applying(): UpdateStatus {
     this.busy = true;
+    note("info", "Handing over: closing to finish the update");
     this.stage("restarting");
     return this.set("applying", "Closing to finish the update. The app opens again by itself in a moment.", 1, this.status.release);
   }
@@ -1102,6 +1226,30 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
     `if exist "%~1\\${folder}\\" ( ${note("kept %~1 because it holds " + folder)} & exit /b 1 )`,
     `rmdir /s /q "%~1" 2>NUL`, "exit /b 0", "",
   ];
+}
+
+/**
+ * The app-wide install lock: a file naming the process installing. One whose process has ended is stale and taken
+ * over; one whose process runs means another part of Branch is installing, and this install waits (said, not failed).
+ * Answers how to give it back.
+ */
+export async function installLock(path: string, pid = process.pid): Promise<() => Promise<void>> {
+  const { open, readFile: read, rm: remove } = await import("node:fs/promises");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const file = await open(path, "wx");
+      await file.writeFile(String(pid)); await file.close();
+      return async () => { const owner = Number(await read(path, "utf8").catch(() => "")); if (owner === pid) await remove(path, { force: true }); };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const owner = Number(await read(path, "utf8").catch(() => ""));
+      let alive = false;
+      try { if (owner > 0 && owner !== pid) { process.kill(owner, 0); alive = true; } } catch (probe) { alive = (probe as NodeJS.ErrnoException).code === "EPERM"; }
+      if (alive) throw new UpdateDeferredError("Another part of Branch is installing an update right now, so this one waits for it.");
+      await remove(path, { force: true });
+    }
+  }
+  throw new UpdateDeferredError("Branch could not take the update lock, so the update waits.");
 }
 
 /** hot-update: how long a live update took, as the status says it ("1.4 s", "38 s"). */

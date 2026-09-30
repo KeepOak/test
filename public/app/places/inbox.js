@@ -40,6 +40,7 @@ import { revokedPrompts } from "../settings/pages/chatapps.js"; // pass 17 part 
 import { workSection, readWork, pausedIds } from "./inboxwork.js"; // long-work: what is working or paused, with Pause, Resume, Stop
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { readSourceMerges, sourceMergeCards } from "./self-development-merge.js";
+import { readSourcePublications, sourcePublicationCards } from "./self-development-publication.js";
 import { readUrgency, byUrgency } from "./inbox-urgency.js"; // Sort the Inbox by urgency (decision models)
 import { autonomyRows, autonomyCount, readAutonomy, initAutonomyInbox } from "./inbox-autonomy.js";
 import { initPages19 } from "./pages19.js"; // SELF-309
@@ -111,14 +112,14 @@ function needsTab() {
   html += byUrgency(needRows().map(({ key, row }) => [key, row()])).join("");
   html += autonomyRows();
   html += `</div>`;
-  return html + waitingChanges().map(selfCard).join("") + sourceMergeCards();
+  return html + waitingChanges().map(selfCard).join("") + sourceMergeCards() + sourcePublicationCards();
 }
 
 /* Needs you, and the prototype's line when nothing at all waits (a p.empty: the Branch-in-person pose, setup-delight-033,
    is drawn above it by the shell). */
 function needsBody() {
   const lead = cutCards() + revokedPrompts() + adaptCards();
-  const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length && !sourceMergeCards();
+  const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length && !sourceMergeCards() && !sourcePublicationCards();
   return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
 
@@ -225,6 +226,7 @@ export async function after() {
   const tab = S.tabs.inbox || "needs";
   let changed = false;
   if (tab === "needs" && await readSourceMerges()) changed = true;
+  if (tab === "needs" && await readSourcePublications()) changed = true;
   // A helper's question (parentRunId) is answered in its task's Activity › Helpers, not here (FEATURES17C §4).
   const policy = await api("policy").catch((error) => { sayOnce(error); return null; });
   const fresh = (policy?.waiting ?? []).filter((q) => !q.parentRunId);

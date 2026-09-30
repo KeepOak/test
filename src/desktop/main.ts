@@ -11,7 +11,9 @@ import {
   type MenuItemConstructorOptions,
   type NativeImage,
 } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { execFile, spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // Wave 5 (deployment): portable folders, joining a background engine, opening straight to the tray.
@@ -25,10 +27,11 @@ import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
 import { markStarted, UpdateDeferredError, UpdateStuckError, type Updater } from "./updater.js";
-import { updateReadiness } from "./update-readiness.js";
+import { updatePlanFrom, updateReadiness } from "./update-readiness.js";
 import { logoShare, readTrayUsage, trayBitmap, trayTip, type TrayUsage } from "./tray-ring.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
-import { crashReporterPlan } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
+import { crashReporterPlan, diagnose } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
+import { openMainLog } from "./main-log.js";
 import type { DesktopSettings } from "./settings.js";
 import { registerConversationExportIpc } from "./conversation-export-ipc.js";
 // 0.18.1: "Branch stopped responding — Restart" relaunches the app, and with it the local server.
@@ -89,6 +92,12 @@ import { desktopGatewayConfig } from "./gateway-mode.js";
 import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesktopGateway } from "./gateway-launch.js";
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
+import { rollBackPointer, versionedLayout } from "./app-folders.js";
+import { goingBackIsSafe, systemDeps } from "./version-switch.js";
+import { failureName, shellUpMarker } from "./shell-switch.js";
+import { storeMigrations } from "../never-break/migrations.js";
+import { forwardedVariable, forwardTarget, guardedForward, handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
+import { portableMarker } from "../install/layout.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
@@ -105,6 +114,14 @@ let engine: EngineHost | undefined;
 let liveWindowNow: InUse | null = null;
 let tellWindow: (update: WindowUpdate) => Promise<void> = () => Promise.reject(new UpdateDeferredError("The window is not open yet."));
 let recoverWindow: () => Promise<void> = () => Promise.resolve();
+/**
+ * hot-update: with no window open (none yet, as after a start in the tray, or closed for good) there is no page to tell
+ * or restore, so a live update goes ahead: the next window opens on the files served then. A window that is open but
+ * cannot take the update still holds it (tellWindow defers).
+ */
+const noWindowOpen = (): boolean => !window || window.isDestroyed();
+const tellOpenWindow = (update: WindowUpdate): Promise<void> => noWindowOpen() ? Promise.resolve() : tellWindow(update);
+const recoverOpenWindow = (): Promise<void> => noWindowOpen() ? Promise.resolve() : recoverWindow();
 let closeCapture: () => void = () => undefined;
 /** Tells the engine whether the window is shown, so a chat's answer can say where Branch is (src/environment.ts). */
 function tellWindowShown(): void {
@@ -124,6 +141,8 @@ let countingToQuit = false;
 /** Whether the app's own engine has proved itself at the window's address (src/desktop/engine-gate.ts). */
 let engineGate: EngineGate | undefined;
 /** Test builds only: an unpackaged copy started with BRANCH_TEST_ENGINE_HOOKS=1 lets a test see the engine and its gate. */
+/** Windows: where this copy's versions sit (app-folders.ts); null for a portable copy, other systems, or source. */
+const appLayout = () => (app.isPackaged ? versionedLayout(process.execPath, process.platform, existsSync(join(dirname(process.execPath), portableMarker))) : null);
 const testHooksOn = (): boolean => !app.isPackaged && process.env.BRANCH_TEST_ENGINE_HOOKS === "1";
 /**
  * hot-update: the program's own folder, which holds its live builds. A test copy (never a packaged app) may name a folder
@@ -380,8 +399,14 @@ async function createWindow(
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate, client.fetch);
   registerShowInFolderIpc(window, url, key, undefined, client.fetch);
-  updater = registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
-    { ...update, readiness: async () => updateReadiness(url, key(), client.fetch) });
+  // The window as it is at each moment (none while closed for good or not yet opened): updates go on without one.
+  const openWindow = () => window ?? null;
+  updater = registerUpdaterIpc(openWindow, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
+    { ...update, readiness: async () => updateReadiness(url, key(), client.fetch),
+      // Update by itself runs in this process, whatever the page is doing (update-loop.ts).
+      plan: (facts) => updatePlanFrom(url, key(), facts, client.fetch),
+      // Versioned app folders: the switch waits for the window's invisible moment and hands its state over (shell-window.ts).
+      handOver: handOverHook({ window: openWindow, userData: app.getPath("userData"), power: powerMonitor }) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.
   // hot-update: the window takes a live update in place, under a picture of itself while it reloads (no blank frame).
   const liveWindow = registerLiveWindowIpc({ ipc: ipcMain, window, origin: url, cover: () => pictureCover(main) });
@@ -405,6 +430,10 @@ async function createWindow(
   });
   // "Start quietly in the corner of the taskbar" keeps the window hidden until the tray icon is used.
   window.once("ready-to-show", () => { if (!startsMinimized(process.argv)) window?.show(); });
+  // After a shell switch (shell-switch.ts): what the old version's window had open comes back in this one's first page,
+  // and only once it has, this version says its window is up (the switch script goes back to the old one otherwise).
+  const windowUp = await resumeWindow({ ipc: ipcMain, window, origin: url, userData: app.getPath("userData"), version: app.getVersion(),
+    scratchDir: updateScratchDir(), expectRestore: liveWindow.expectRestore });
   // Q249 (R21's Windows runs): on a second start the page can move on by itself while it first loads (a reload for the
   // saved look), and Electron then rejects this load with ERR_ABORTED although the window is up and working. That was
   // taken as "could not start": the app quit mid-start and the quit question froze it. Only a real failure stops it now.
@@ -415,6 +444,32 @@ async function createWindow(
   });
   createTray();
   watchTrayUsage(url, key, () => access.ready());
+  void windowUp().then(() => settleVersions(), (error: Error) => {
+    console.error("Window up:", error.message);
+    diagnose("updater", "warn", `This version's window could not say it is up: ${error.message}`);
+  });
+}
+
+/**
+ * Versioned app folders: once this version's window is up, "start with Windows" and the background engine's launcher
+ * name it, and versions nothing runs from any more are removed (two minutes on, when a switch has long settled).
+ */
+function settleVersions(): void {
+  const layout = appLayout();
+  if (!layout?.folder) return;
+  setTimeout(() => {
+    void folders(app.getPath("userData")).then(({ dataDir }) => settleLayout(layout, appEntryName(process.platform), dataDir))
+      .then((done) => {
+        if (done.retired) diagnose("updater", "info", "The copy installed before versioned folders is now the stable launcher");
+        if (!done.pruned.length) return;
+        console.log(`Removed older versions: ${done.pruned.join(", ")}`);
+        diagnose("updater", "info", "Removed versions nothing runs from any more", { fields: { versions: done.pruned.join(", ") } });
+      })
+      .catch((error: Error) => {
+        console.error("Versions:", error.message);
+        diagnose("updater", "warn", `Settling the version folders failed: ${error.message}`);
+      });
+  }, 120_000).unref();
 }
 
 /**
@@ -468,16 +523,18 @@ async function folders(base: string): Promise<{ dataDir: string; workspace: stri
  * taken before each update leaves out (src/install/data-copy.ts).
  */
 const betaBuildDir = (dataDir: string): string => join(dataDir, "updates", "beta-build");
+/** A live update's own notes (the engine handed over, a live build not used): on the console and in the activity log. */
+const liveNote = (line: string): void => { console.error(line); diagnose("updater", "info", line); };
 /**
  * mac7/safe-rollback: the app's Update button writes the same record `branch update --yes` does, so
  * a person who updates from the window can go back afterwards. It stays `staged` until the next
  * start says the swap landed, because this process quits into the hand-over script.
  */
-function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
+function desktopRecord(dataDir: string): Pick<UpdateHooks, "record" | "dataDir"> {
   const installRoot = installedAppRoot(app.isPackaged, process.platform, process.execPath);
   // A copy that cannot update itself never hands over, so there is nothing to write down.
-  if (!installRoot) return {};
-  return { record: async (stagedDir, toVersion) => {
+  if (!installRoot) return { dataDir };
+  return { dataDir, record: async (stagedDir, toVersion) => {
     const { recordActivation } = await import("../install/headless-update.js");
     const recorded = await recordActivation({ dataDir, installRoot, stagedDir, fromVersion: app.getVersion(),
       toVersion, executableName: appEntryName(process.platform) });
@@ -493,7 +550,10 @@ function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
 async function refreshWindowsShortcuts(): Promise<void> {
   const installRoot = installedAppRoot(app.isPackaged, process.platform, process.execPath);
   if (process.platform !== "win32" || !installRoot) return;
-  await refreshWindowsIdentity({ installRoot, executableName: appEntryName(process.platform), env: process.env }, {
+  const layout = appLayout();
+  await refreshWindowsIdentity({ installRoot, executableName: appEntryName(process.platform), env: process.env,
+    // Versioned app folders: a shortcut to another version of this install moves to this one, the version in use.
+    ...(layout ? { sameInstall: (path: string) => sameInstall(layout.root, path) } : {}) }, {
     readShortcut: (path) => shell.readShortcutLink(path),
     updateShortcut: (path, fields) => shell.writeShortcutLink(path, "update", fields),
     exists: existsSync,
@@ -514,6 +574,9 @@ async function start(): Promise<void> {
   }
   app.once("will-quit", () => { void lock.release(); });
   startCrashReporter(dataDir);
+  // Main's own lines (the updater's steps among them) go into the engine's activity log, engine running or not.
+  openMainLog(dataDir);
+  diagnose("desktop", "info", "The window's main process started", { fields: { version: app.getVersion() } });
   // An engine already working in the background is joined rather than started a second time; one from a version
   // before the engine's proof is moved to this version first.
   // The desktop's gateway preference is written ON before anything can save the file's other fields, so no later
@@ -538,8 +601,8 @@ async function start(): Promise<void> {
       host: () => undefined, forkLive: forkEngine, runtime: process.execPath,
       snapshot: async () => engineSnapshot(running.url, key(), client.fetch),
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
-      tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(),
-    }).catch((error: Error) => { console.error("Background engine's update channel:", error.message); return null; }) : null;
+      tellWindow: tellOpenWindow, recoverWindow: recoverOpenWindow, log: liveNote,
+    }).catch((error: Error) => { liveNote(`Background engine's update channel: ${error.message}`); return null; }) : null;
     if (testHooksOn() && brokerLive) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: brokerLive.hooks, engineState: brokerLive.inspect };
     await createWindow(running.url, key, settings, {
       backup: async () => requestUpdateBackup(running.url, key(), { fetch: client.fetch }),
@@ -565,7 +628,7 @@ async function start(): Promise<void> {
     return;
   }
   // hot-update: the live builds in use, checked now; the engine starts from its live build when there is one.
-  const live = await liveAtStart(liveAppRoot(), (line) => console.error(line));
+  const live = await liveAtStart(liveAppRoot(), liveNote);
   liveWindowNow = live.window;
   const url = await startEngine(base, settings, { dataDir, workspace }, live.engineFile);
   // The key, and anything main sends, go only to the app's own engine serving at the window's address that has proved
@@ -581,9 +644,9 @@ async function start(): Promise<void> {
   const hot = liveHooks({ appRoot: liveAppRoot(), dataDir, repo: fallbackRepo, buildDir: betaBuildDir(dataDir), packaged: commit,
     host: () => engine, forkLive: forkEngine,
     snapshot: async () => engineSnapshot(url, key(), client.fetch), backup: async () => requestUpdateBackup(url, key(), { fetch: client.fetch }),
-    tellWindow: (update) => tellWindow(update), recoverWindow: () => recoverWindow(), runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
+    tellWindow: tellOpenWindow, recoverWindow: recoverOpenWindow, runtime: process.execPath, onApplied: (state) => { liveWindowNow = state.window; },
     onEngineDeparture: () => closeCapture(),
-    log: (line) => console.error(line) });
+    log: liveNote });
   if (testHooksOn()) (globalThis as { branchLiveForTests?: unknown }).branchLiveForTests = { hooks: hot, tell: (update: WindowUpdate) => tellWindow(update) };
   await createWindow(url, key, settings, {
     // The rows' safety copy, then the whole data folder, both made by the engine that holds the database.
@@ -803,6 +866,8 @@ function joinedGate(dataDir: string, url: string, key: () => string): EngineGate
  */
 function shutDown(): void {
   quitting = true;
+  const forUpdate = quitReason === "update";
+  if (forUpdate) diagnose("updater", "info", "Stopping the engine so the update can be handed over");
   const deadline = new Promise<void>((resolve) => setTimeout(resolve, 8000).unref());
   void Promise.race([(stop?.() ?? Promise.resolve()), deadline])
     .catch((error) => console.error("Shutdown:", error.message))
@@ -810,6 +875,7 @@ function shutDown(): void {
     // ended first and this waits (briefly) until it has really gone.
     .finally(() => (engine?.end(2000) ?? Promise.resolve()))
     .finally(() => {
+      if (forUpdate) diagnose("updater", "info", "The engine has stopped; the hand-over takes it from here");
       if (trayTimer) clearInterval(trayTimer);
       tray?.destroy();
       app.exit(0);
@@ -922,8 +988,19 @@ else if (process.argv.includes(refreshShortcutsFlag)) {
   const trial = new URL("./beta-smoke-window.js", import.meta.url).href;
   void app.whenReady().then(async () => (await import(trial) as typeof import("./beta-smoke-window.js")).smokeMode(report, app.getVersion()))
     .then((code) => app.exit(code), () => app.exit(1));
-} else if (!app.requestSingleInstanceLock()) app.quit();
-else {
+} else {
+  // Versioned app folders: a start of another version of this install goes to the version in use (guarded).
+  const forward = app.isPackaged ? forwardTarget(appLayout(), appEntryName(process.platform), process.env, {
+    readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, exists: existsSync }) : null;
+  // Said once, to this start only: nothing this one starts later (the gateway, a relaunch) inherits it.
+  delete process.env[forwardedVariable];
+  if (!forward) startAsThis();
+  else void forwardToVersionInUse(forward).then((outcome) => (outcome === "went-back" ? startAsThis() : app.exit(0)), () => startAsThis());
+}
+
+/** The window's own start: one copy at a time, then the app. */
+function startAsThis(): void {
+  if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   app.on("second-instance", () => {
     window?.show();
     window?.focus();
@@ -960,6 +1037,37 @@ else {
     });
 }
 
+/**
+ * Versioned app folders: a start of a version that is not the one in use (a shortcut, the taskbar or "start with Windows"
+ * still naming an older folder, or the version before after a switch made with no window open) starts the version in
+ * use instead, with the same arguments. A version never seen up is watched first (shell-window.ts, guardedForward).
+ */
+async function forwardToVersionInUse(target: { program: string; version: string }): Promise<"forwarded" | "went-back"> {
+  const layout = appLayout()!, exe = appEntryName(process.platform), scratch = updateScratchDir();
+  const env: NodeJS.ProcessEnv = { ...process.env, [forwardedVariable]: process.execPath };
+  delete env.ELECTRON_RUN_AS_NODE;
+  return guardedForward(target, {
+    start: (program) => {
+      const child = spawn(program, process.argv.slice(1), { detached: true, stdio: "ignore", env });
+      child.on("error", () => undefined);
+      child.unref();
+      return child.pid ?? null;
+    },
+    up: (version) => existsSync(shellUpMarker(scratch, version)),
+    end: (pid) => new Promise((done) => execFile(join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe"),
+      ["/PID", String(pid), "/T", "/F"], { windowsHide: true, timeout: 20_000 }, () => done())),
+    safe: async () => (await goingBackIsSafe({ dataDir: (await folders(app.getPath("userData"))).dataDir, understood: storeMigrations.at(-1)?.version ?? null },
+      { format: systemDeps("").format, note: async (line) => diagnose("updater", "warn", line) })).ok,
+    rollBack: async () => (await rollBackPointer(layout.root, exe)) !== null,
+    tell: async (tried) => {
+      await mkdir(scratch, { recursive: true });
+      await writeFile(join(scratch, failureName), JSON.stringify({ kept: app.getVersion(), tried, commit: null, at: new Date().toISOString(),
+        message: `Version ${tried} did not open its window, so Branch went back to ${app.getVersion()} by itself. Your conversations are kept. The next change is tried as soon as it lands.` }));
+    },
+    sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+  });
+}
+
 /** The broker's lock is separate from its windows; closing or updating a shell leaves this owner running. */
 function startDetachedGateway(): void {
   const base = app.getPath("userData");
@@ -978,6 +1086,8 @@ function startDetachedGateway(): void {
   });
   void app.whenReady().then(async () => {
     const where = await folders(base);
+    // The windowless gateway is a main process too: its lines (updates with no window open among them) go to the same log.
+    openMainLog(where.dataDir);
     gateway = await runDesktopGateway({ base, ...where, appRoot: liveAppRoot(),
       providerEnv: async () => desktopProviderEnv(await loadDesktopSettings(join(base, "model-settings.json"))) });
     if (testHooksOn()) (globalThis as { branchGatewayForTests?: unknown }).branchGatewayForTests = gateway;

@@ -35,6 +35,15 @@ export function ownerDmHere(store: Pick<Store, "get">, owner: string, kind: stri
   return platformSettings(store, owner).owners.some(named) || ownerCommands(store, owner).accounts.some(named);
 }
 
+/**
+ * owner-dm-signin: whether the owner has named any chat account as their own yet (Commands from your own chat, or
+ * /platform's owners). Until then a pairing the owner approves in the window may also name that sender as theirs, once
+ * (ChannelRouter.approve); after that, approving a pairing only lets the person talk to Branch.
+ */
+export function ownerAccountNamed(store: Pick<Store, "get">, owner: string): boolean {
+  return ownerCommands(store, owner).accounts.length > 0 || platformSettings(store, owner).owners.length > 0;
+}
+
 /** The owner-DM command a line is, with what follows it, or null. */
 export function ownerDmCommand(text: string): { name: string; argument: string } | null {
   const match = /^\/([a-z?][\w?-]*)(?:@[\w.-]+)?(?:\s+([\s\S]*))?$/i.exec(text.trim());

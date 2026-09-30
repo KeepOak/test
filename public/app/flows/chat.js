@@ -15,6 +15,11 @@ import { t } from "../../i18n.js";
 import { manage17d, fixNote17d } from "./chatapps17d.js"; // pass 17 part D §8
 
 let vals = {};
+/* owner-dm-signin: the App lock PIN typed to name the sender as the owner's own; sent once with the approval, then cleared. */
+let pin = "";
+/* Apps whose servers vouch for who sent each message (src/channels/owner-commands.ts vouchedSenderKinds), as far as the
+   "Commands from your own chat" dialog lists them: a Matrix owner named here would be dropped by that dialog's next Save. */
+const VOUCHED = ["telegram", "discord", "slack"];
 const FAMILY = { core: "window.flows.chw.popular", chat: "window.flows.chw.work-chat" };
 /* The steps are named in English in the code (BODIES, the checks below); these are the words each one shows. */
 const STEP_WORD = { Create: "action.create", Paste: "window.flows.chw.paste", Check: "safety.scan.run", Pair: "pair.step.pair", Save: "action.save" };
@@ -58,7 +63,15 @@ function liveLine(c, r) {
 }
 
 function pair(c, w) {
-  return `<p data-css="margin:0 0 10px">${esc(c.pairing)}</p><div class="code12">${[0, 1, 2, 3, 4, 5].map((i) => `<input inputmode="numeric" maxlength="1" data-sw="code" data-code="${i}" value="${esc(w.code[i] ?? "")}" aria-label="${t("window.flows.chw.digit", { n: i + 1 })}">`).join("")}</div>${w.error ? `<p class="hint" role="alert">${esc(w.error)}</p>` : `<p class="hint">${t("window.flows.chw.code-once")}</p>`}`;
+  return `<p data-css="margin:0 0 10px">${esc(c.pairing)}</p><div class="code12">${[0, 1, 2, 3, 4, 5].map((i) => `<input inputmode="numeric" maxlength="1" data-sw="code" data-code="${i}" value="${esc(w.code[i] ?? "")}" aria-label="${t("window.flows.chw.digit", { n: i + 1 })}">`).join("")}</div>${w.error ? `<p class="hint" role="alert">${esc(w.error)}</p>` : `<p class="hint">${t("window.flows.chw.code-once")}</p>`}${mine(w)}`;
+}
+/* owner-dm-signin: "This is my own account", offered only while no chat account is named as the owner's yet, on an app
+   that vouches for its senders (after OpenClaw's "Also make this sender the first command owner", MIT). The engine
+   checks both again, and asks for the App lock PIN where one is set. */
+function mine(w) {
+  if (w.ownerNamed !== false || !VOUCHED.includes(w.id)) return "";
+  const box = `<label class="ctl"><input type="checkbox" data-sw="chw-mine" ${w.mine ? "checked" : ""}><span>${t("window.flows.chw.mine")}</span><small>${t("window.flows.chw.mine-hint")}</small></label>`;
+  return box + (w.mine && w.pinSet ? `<label>${t("window.chat-command.pin")}<input class="inp" data-sw="chw-pin" type="password" inputmode="numeric" autocomplete="off" maxlength="8"></label>` : "");
 }
 
 /* Who answers: the owner's Trunks, the default one chosen, never a brand-voiced "Branch" (owner rule). Routing a chat,
@@ -103,9 +116,10 @@ export async function openChatWizard(id, at = null) {
     [recipe, live] = await Promise.all([api(`channel-setup/${encodeURIComponent(id)}`), api("channels").catch(() => ({}))]);
   } catch (error) { toast(error.message); return; }
   const here = (live.channels ?? []).find((c) => c.id === id || c.kind === id), connected = !!here;
+  const ownerNamed = live.ownerNamed !== false, pinSet = !ownerNamed && (await api("lock").catch(() => ({}))).pinSet === true;
   // pass 17 part D §8: "Paste a new token" opens a connected app at Paste, saying why.
   const step = at ? Math.max(0, stepsOf(recipe).indexOf(at)) : connected ? stepsOf(recipe).length - 1 : 0;
-  S.chw = { id, recipe, connected, health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "" };
+  S.chw = { id, recipe, connected, health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
   draw();
 }
 
@@ -130,7 +144,11 @@ async function runCheck(w) {
 
 async function approve(w) {
   try {
-    await api("channels/pairings/approve", { code: w.code });
+    const own = w.mine ? { firstOwner: true, ...(w.pinSet ? { pin } : {}) } : {};
+    pin = "";
+    const done = await api("channels/pairings/approve", { code: w.code, ...own });
+    if (w.mine && !done.madeOwner) toast(t("window.flows.chw.mine-kept"));
+    if (done.madeOwner) w.ownerNamed = true;
     w.error = "";
     return true;
   } catch (error) { w.error = error.message; w.code = ""; draw(); return false; }
@@ -176,6 +194,8 @@ function onInput(e) {
     const btn = $('.dlg [data-act="chw-next"]');
     if (btn) btn.disabled = !filled(w.recipe);
   }
+  if (el.dataset.sw === "chw-mine") { w.mine = el.checked; pin = ""; draw(); return; }
+  if (el.dataset.sw === "chw-pin") { pin = el.value; return; }
   if (el.dataset.code != null) {
     const boxes = [...document.querySelectorAll(".code12 input")];
     el.value = el.value.replace(/\D/g, "").slice(-1);
@@ -187,7 +207,7 @@ function onInput(e) {
 }
 
 export function init() {
-  markLive(["sw:chf", "sw:code", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
+  markLive(["sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
   on("ch-open", (el) => openChatWizard(el.dataset.v));
   on("revfix17d", () => openChatWizard(S.chw?.id ?? "telegram", "Paste")); // pass 17 part D §8: the app whose page this is
   on("chw-remove", () => remove());
@@ -204,5 +224,5 @@ export function init() {
     S.chw.code = digits;
     draw();
   });
-  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) { vals = {}; S.chw = null; } }, true);
+  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) { vals = {}; pin = ""; S.chw = null; } }, true);
 }

@@ -342,6 +342,8 @@ export function runCost(store: Store, run: Run, used: Record<string, number>): s
   const estimate = estimateCost(model, {
     input: used.reportedInput ?? used.estimatedInput ?? 0,
     output: used.reportedOutput ?? used.estimatedOutput ?? 0,
+    // Cache reads and writes, parts of the reported input, are priced at their own rates.
+    cached: used.reportedCachedInput ?? 0, cacheWrite: used.reportedCacheWrite ?? 0, cacheWrite1h: used.reportedCacheWrite1h ?? 0,
   }, overrides);
   return estimate.amount === null ? null : `${model} · ${formatCost(estimate)}`;
 }

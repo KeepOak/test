@@ -101,7 +101,7 @@ export interface CapabilityPlan extends ModelPlan {
 }
 
 /** mac5/providers: true for a saved connection whose service has ended the route it used. */
-function isRetiredConnection(preset: ModelPreset | undefined): boolean {
+export function isRetiredConnection(preset: ModelPreset | undefined): boolean {
   return (preset?.provider as { retired?: unknown } | undefined)?.retired === true;
 }
 
@@ -314,6 +314,7 @@ export class ModelRouter {
   summary(owner: string) {
     const settings = this.settings(owner);
     // trunks-use-subscriptions: whoever is asking may put a Trunk on a sign-in only when it is the owner (Runtime.trunkSignIns).
+    // Only the window and its keys ask this; a chat's task is judged in Runtime.trunkSignIns (owner-dm-signin), never here.
     const ownerAsking = this.store.profiles.isOwner() && !currentPerson() && !startedWithShortLivedKey();
     return {
       ...settings,

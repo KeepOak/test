@@ -165,6 +165,7 @@ class TerminalConversation {
       while (this.queue.length) {
         const prompt = this.queue.shift()!;
         if (prompt === "/new") {
+          if (this.sessionId) this.runtime.stopHelpers(this.sessionId); // helper-lifecycle
           this.sessionId = undefined;
           this.write("[new conversation; a session will be created on your next task]\n");
         } else await this.execute(prompt);
