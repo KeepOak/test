@@ -8,6 +8,7 @@ import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast, faceOf } from "../core/ui.js";
 import { markLive } from "../core/features.js";
+import { taskSettingsButton, initTaskSettings } from "./task-settings.js";
 import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
@@ -316,7 +317,7 @@ function composer() {
   return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" aria-expanded="false" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
     ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${practiceFlag()}${costLine(C.sessionId)}</span>`}
-    ${chips()}
+    ${chips()}${taskSettingsButton()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
       : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}"${C.sessionId ? "" : ` data-tip="${esc(t("window.chat.bgsend.tip", { keys: spoken("Ctrl+Enter") }))}"`}>${ic("up")}</button>`}</form></div>`;
@@ -924,6 +925,7 @@ function putAway(id) {
 }
 
 export function init() {
+  initTaskSettings();
   initAgent17();
   initTrunkLine();
   document.addEventListener("conv-put-away", (e) => putAway(e.detail));

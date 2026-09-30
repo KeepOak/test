@@ -1258,6 +1258,8 @@ async function api(
     throw new HttpError(405, "Use GET or POST here.");
   }
   // ── R17-S-A (understandable settings): presets, putting settings back, one settings file, and the files you write. ──
+  if (["/api/settings-kit/task-preview", "/api/settings-kit/task-apply"].includes(path)
+    && (throughADoor(request) || app.sessionLock.locked())) throw new HttpError(403, "Review task settings in the owner's unlocked local app window.");
   if (handlesSettingsKitPath(path))
     return settingsKitApi({
       store: app.store, owner: app.runtime.owner, workspace: app.runtime.workspace, appVersion: app.version,
