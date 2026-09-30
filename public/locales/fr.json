@@ -1339,6 +1339,7 @@
   "commands.tokens": "ce que contient la prochaine requête : consignes, outils, conversation, et son coût",
   "commands.trunk": "vos Troncs ; avec un nom et un message, parlez à l'un d'eux",
   "commands.usage": "jetons et coût jusqu'ici ; dans une messagerie, on ou off ajoute une ligne à chaque réponse",
+  "commands.verbose": "le niveau de détail des étapes pour cette discussion privée ; seul, passe au niveau suivant",
   "commands.verify": "activer ou désactiver la relecture de la réponse",
   "commands.version": "de quelle version de Branch il s'agit",
   "commands.voice": "réponses parlées dans cette discussion : aux messages vocaux (on), à chaque message (always) ou jamais (off)",

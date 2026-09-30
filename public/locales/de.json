@@ -1338,6 +1338,7 @@
   "commands.tokens": "was die nächste Anfrage füllt: Anweisungen, Werkzeuge, die Unterhaltung, und was das kostet",
   "commands.trunk": "deine Trunks; mit einem Namen und einer Nachricht mit einem sprechen",
   "commands.usage": "Tokens und Kosten bisher; in einer Chat-App fügt on oder off jeder Antwort eine Zeile hinzu",
+  "commands.verbose": "die Detailstufe der Schritte für diesen Direktchat; allein wechselt es zur nächsten Stufe",
   "commands.verify": "die Prüfung der Antwort durch einen Prüfer ein- oder ausschalten",
   "commands.version": "welches Branch das ist",
   "commands.voice": "gesprochene Antworten in diesem Chat: auf Sprachnachrichten (on), auf jede Nachricht (always) oder nie (off)",

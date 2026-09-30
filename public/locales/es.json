@@ -1338,6 +1338,7 @@
   "commands.tokens": "qué llena la próxima petición: instrucciones, herramientas, la conversación, y cuánto cuesta",
   "commands.trunk": "tus Trunks; con un nombre y un mensaje, habla con uno",
   "commands.usage": "tokens y coste hasta ahora; en una app de chat, on u off añade una línea a cada respuesta",
+  "commands.verbose": "el nivel de detalle de los pasos en este chat directo; solo, pasa al siguiente nivel",
   "commands.verify": "activar o desactivar la revisión de la respuesta por un revisor",
   "commands.version": "qué versión de Branch es esta",
   "commands.voice": "respuestas habladas en este chat: a las notas de voz (on), a cada mensaje (always) o nunca (off)",

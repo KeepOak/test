@@ -70,6 +70,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("preset", ["permissions", "approvals"], "[name]", "when Branch checks with you before doing something", [...W, "terminal"], "owner", { ...was("terminal"), bareLooks: true, route: { method: "POST", path: "/api/policy" }, newAliases: added(["approvals"], "terminal") }),
   entry("memory", [], "[words]", "facts it has saved", [...W, "terminal"], "look", was("terminal")),
   entry("skills", [], "", "skills installed here", [...W, "terminal"], "look", was("terminal")),
+  entry("verbose", [], "[off|new|all|full|default]", "the steps level for this direct chat; on its own, cycle the level", ["chat"], "look", { whileWorking: true }),
   // CHAT-205: pin one skill to this conversation (src/commands/steer-skill.ts); /skill off unpins it.
   entry("skill", [], "[name|off]", "pin a skill to this conversation so it applies to every turn; on its own, which one is pinned", ["window", "phone", "terminal", "chat"], "run", { bareLooks: true }),
   entry("plan", [], "[on|off]", "turn a short plan first on or off", [...W, "terminal"], "look", was("terminal")),

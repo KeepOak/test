@@ -1338,6 +1338,7 @@
   "commands.tokens": "what fills the next request: instructions, tools, the conversation, and what it costs",
   "commands.trunk": "your Trunks; with a name and a message, talk to one",
   "commands.usage": "tokens and cost so far; in a chat app, on or off adds a line to each reply",
+  "commands.verbose": "the steps level for this direct chat; on its own, cycle the level",
   "commands.verify": "turn a reviewer's check of the answer on or off",
   "commands.version": "which Branch this is",
   "commands.voice": "spoken replies in this chat: to voice notes (on), to every message (always), or never (off)",
