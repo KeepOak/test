@@ -108,9 +108,11 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     id = previous.size ? [...previous][0]! : null;
   }
   if (requiresCopy && copy === null) refused("the helper's own retained working-copy assignment is unknown");
-  const originalContext = deps.runtime.context({ permissions: [] });
+  const taskSignal = deps.runtime.activeRunSignal(runId);
+  if (!taskSignal) refused("there is no registered live recovery signal; stopped or paused authority cannot be replaced");
+  taskSignal.throwIfAborted();
+  const originalContext = deps.runtime.context({ permissions: [], signal: taskSignal });
   const root = originalContext.workspace;
-  const taskSignal = deps.runtime.activeRunSignal(runId) ?? originalContext.signal;
   let workspace = root;
   if (copy !== null) {
     if (isAbsolute(copy) || /[\\:\0]/.test(copy) || copy.split("/").some((part) => !part || part === "." || part === ".."))
@@ -139,7 +141,12 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     const signal = AbortSignal.any([taskSignal, AbortSignal.timeout(15_000)]);
     const git = deps.git ?? ((input: GitRunOptions, stop: AbortSignal) => identityGit.run(input, stop));
     const read = async (args: string[]) => {
-      try { return await git({ cwd: copyReal, args, timeoutMs: 10_000, maxOutputBytes: 8192 }, signal); }
+      try {
+        signal.throwIfAborted();
+        const result = await git({ cwd: copyReal, args, timeoutMs: 10_000, maxOutputBytes: 8192 }, signal);
+        signal.throwIfAborted();
+        return result;
+      }
       catch { return refused("the retained copy's local identity could not be read"); }
     };
     const top = await read(["rev-parse", "--show-toplevel"]);
@@ -154,7 +161,9 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
       const source = managedSource;
       let sourceTop: GitOutcome, sourceCommon: GitOutcome;
       try {
+        signal.throwIfAborted();
         sourceTop = await git({ cwd: source, args: ["rev-parse", "--show-toplevel"], timeoutMs: 10_000, maxOutputBytes: 8192 }, signal);
+        signal.throwIfAborted();
         sourceCommon = await git({ cwd: source, args: ["rev-parse", "--git-common-dir"], timeoutMs: 10_000, maxOutputBytes: 8192 }, signal);
       } catch { return refused("the retained copy's source repository could not be read"); }
       const copyCommon = await read(["rev-parse", "--git-common-dir"]);
@@ -170,7 +179,9 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
   }
   const origin = runOrigin(deps.store, runId), outside = outsideSourceOf(deps.store, runId);
   const scope = copy;
+  taskSignal.throwIfAborted();
   return underProject(project, () => {
+    taskSignal.throwIfAborted();
     const context = { ...deps.runtime.context({ runId, signal: taskSignal, permissions: [...permissions], depth: Number(depth),
       ...(outside ? { source: outside } : {}), ...(typeof own.agent === "string" ? { agent: own.agent } : {}),
       ...(own.delegates === true ? { delegates: true } : {}), ...(own.dryRun === true ? { dryRun: true } : {}) }), workspace };

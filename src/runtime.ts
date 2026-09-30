@@ -950,6 +950,45 @@ export class Runtime {
     const controller = this.controllers.get(id);
     return controller && !controller.signal.aborted && !this.pausing.get(id)?.signal.aborted ? controller.signal : null;
   }
+  /** Register interrupted journal recovery with the same Stop, Pause and shutdown controls as live work. */
+  beginInterruptedRecovery(id: string): { signal: AbortSignal; cancelled(): boolean; release(): void } {
+    const run = this.store.run(id);
+    if (!this.accepting || !run || run.status !== "interrupted" || run.owner !== this.owner
+      || this.controllers.has(id) || this.pausing.get(id)?.signal.aborted || this.activeSessions.has(run.sessionId))
+      throw new Error("This interrupted task cannot start automatic recovery while stopped, paused or already active.");
+    const events = this.store.events(id);
+    if (events.some((event) => event.kind === "run.recovery_stopped" || event.kind === "run.pause_asked"))
+      throw new Error("This task was stopped or paused. Continue it explicitly when ready.");
+    const deadline = Number(events.find((event) => event.kind === "run.started")?.data.deadlineMs);
+    if (!Number.isFinite(deadline) || deadline <= 0) throw new Error("The interrupted task has no recorded recovery deadline.");
+    const controller = new AbortController(), pausing = new AbortController();
+    const paused = () => controller.abort(pausing.signal.reason);
+    pausing.signal.addEventListener("abort", paused, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(new Error("Interrupted recovery reached its deadline")); }, Math.min(deadline, 120_000));
+    this.controllers.set(id, controller);
+    this.pausing.set(id, pausing);
+    this.activeSessions.add(run.sessionId);
+    let finished!: () => void;
+    const pending = new Promise<void>((resolve) => { finished = resolve; });
+    this.pending.add(pending);
+    let released = false;
+    return { signal: controller.signal,
+      cancelled: () => controller.signal.aborted && !pausing.signal.aborted && !timedOut && this.accepting,
+      release: () => {
+        if (released) return;
+        released = true;
+        clearTimeout(timer);
+        pausing.signal.removeEventListener("abort", paused);
+        if (this.controllers.get(id) === controller) {
+          this.controllers.delete(id);
+          if (this.pausing.get(id) === pausing) this.pausing.delete(id);
+          this.activeSessions.delete(run.sessionId);
+        }
+        this.pending.delete(pending);
+        finished();
+    } };
+  }
   cancel(id: string): boolean {
     const controller = this.controllers.get(id);
     controller?.abort(new Error("Cancelled by user"));
