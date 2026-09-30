@@ -3,7 +3,7 @@ import { runOrigin, startedFromChat, startedWithShortLivedKey } from "../key-con
 import type { RunSource } from "../policy.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
-import { personalParts, personalTools } from "./settings.js";
+import { listedPersonalTools, personalParts, personalTools } from "./settings.js";
 import { calendarWriteTools } from "./calendar-write.js";
 import { mailSendTools } from "./mail-send.js";
 
@@ -19,7 +19,7 @@ import { mailSendTools } from "./mail-send.js";
  *   - A lock, a door, a garage door or an alarm is asked about every time, just this once, for the
  *     owner's own work too.
  */
-const personalToolNames = new Set(personalParts.flatMap((part) => personalTools[part]));
+const personalToolNames = new Set(listedPersonalTools(() => true));
 export const isPersonalTool = (tool: string): boolean => personalToolNames.has(tool);
 
 /** Kinds of Home Assistant device that open the house or stop it being watched. */
