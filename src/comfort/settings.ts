@@ -29,6 +29,8 @@ export const shortcutDefaults = {
   /** UI-106: the message box, and the list's own search (Telegram-style), each one key away. */
   focusPrompt: "Ctrl+L",
   stopTask: "Ctrl+Shift+S",
+  /** Turn Lockdown on; turning it off remains an explicit banner/Settings choice. */
+  lockdownOn: "Ctrl+Shift+L",
   searchHistory: "Ctrl+Shift+F",
   lookInside: "",
   /** Pass 17: the small ask box from any app. The desktop app registers it system-wide; ⌥ Space on a Mac. */
@@ -70,6 +72,7 @@ export const ComfortKeysSchema = z.preprocess(defaultsGiveWay, z.object({
   newTrunk: keyCombo.default(shortcutDefaults.newTrunk),
   focusPrompt: keyCombo.default(shortcutDefaults.focusPrompt),
   stopTask: keyCombo.default(shortcutDefaults.stopTask),
+  lockdownOn: keyCombo.default(shortcutDefaults.lockdownOn),
   searchHistory: keyCombo.default(shortcutDefaults.searchHistory),
   lookInside: keyCombo.default(shortcutDefaults.lookInside),
   quickAsk: keyCombo.default(shortcutDefaults.quickAsk),
