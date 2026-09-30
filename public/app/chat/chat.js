@@ -15,7 +15,7 @@ import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, load
 import { practiceFlag, practiceSent, refusePracticeRoute } from "./practice-next.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
-import { binding, spoken } from "../shell/keys.js";
+import { binding, spoken, actionAria } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
 import { selfCard, loadSelfChange, initSelfChange } from "./selfchange.js";
 import { mkCard, initMkTrunk } from "./mktrunk.js";
@@ -98,7 +98,7 @@ export function head() {
   return `<div class="head"${tint()}><button class="icon-btn menu-only" type="button" aria-label="${t("window.chat.head.show-conversations")}" data-act="side">${ic("menu")}</button>
     ${helperWho() || `<div class="who sr-only17" role="heading" aria-level="1"><b>${esc(title())}</b></div>`}
     <span class="tb-grow"></span>${projectChip()}${status}${stageButtons(working)}
-    <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
+    <button class="icon-btn" type="button" aria-label="${t("window.chat.head.side-panel")}${binding("sidePane") ? ` (${esc(binding("sidePane"))})` : ""}" aria-keyshortcuts="${esc(actionAria("sidePane"))}" aria-pressed="${!!S.pane && S.pane !== "browser"}" data-act="pane" data-p="activity">${ic("sidebar")}</button>
     ${rosterButton()}<button class="icon-btn" type="button" aria-label="${t("window.chat.head.find-label")}" data-tip="${t("window.chat.head.find")}" data-act="find-open">${ic("search")}</button>
     <button class="icon-btn" type="button" aria-label="${t("window.chat.head.more")}" aria-expanded="false" data-act="chatmenu">${ic("more")}</button></div>`;
 }

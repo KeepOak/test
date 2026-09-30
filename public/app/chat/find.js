@@ -4,6 +4,7 @@
 import { $, esc, render } from "../core/dom.js";
 import { ic } from "../core/ui.js";
 import { S } from "../core/state.js";
+import { pressed } from "../shell/keys.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
@@ -72,9 +73,8 @@ export function initFind() {
   on("find-step", (el) => step(+el.dataset.v));
   document.addEventListener("input", (e) => { if (e.target.id === "find9-q") { FIND.q = e.target.value; FIND.i = 0; render(); } });
   document.addEventListener("keydown", (e) => {
-    const mod = e.ctrlKey || e.metaKey;
     /* Ctrl+Shift+F is the list's own search (shell/extras.js searchHistory); Ctrl+F alone is Find. */
-    if (mod && !e.shiftKey && e.key.toLowerCase() === "f" && S.view === "chat") { e.preventDefault(); if (!FIND.on) open(); else $("#find9-q")?.focus(); }
+    if (pressed(e, "findConversation") && S.view === "chat") { e.preventDefault(); if (!FIND.on) open(); else $("#find9-q")?.focus(); }
     else if (e.target.id === "find9-q" && e.key === "Enter") { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
     else if (e.target.id === "find9-q" && e.key === "Escape") { e.stopPropagation(); FIND.on = false; render(); }
   });
