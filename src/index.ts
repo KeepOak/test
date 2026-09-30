@@ -143,6 +143,9 @@ import type { LocalWhisper } from "./voice-whisper.js"; // RES-709
 import { wakeCaptureRunner, wakeRunner } from "./voice-wake-host.js"; // mac7/wake-mic
 // Bucket 17.
 import { MediaUnderstanding, registerMediaUnderstanding } from "./media-understand.js";
+import { locateProgram, mediaProgramsSettings } from "./media-programs.js";
+import { runProgram } from "./voice-stt.js";
+import { isOggOpus, spokenText, toOggOpus } from "./voice-note.js";
 import { SpeechEngineService } from "./speech-engine-service.js";
 import { registerTroubleshoot } from "./troubleshoot.js"; // w911 (A0374) hook.
 import { builtInSpeech } from "./speech-engines.js";
@@ -948,14 +951,23 @@ export async function createBranch(options: {
     return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.writesConfinedTo ?? context.workspace };
   };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
-  channels.speakReply = async (text) => {
+  channels.speakReply = async (text, voiceNoteType) => {
     const settings = voice.settings(runtime.owner);
     // "Keep audio on this computer" wins over every other voice choice, including this one: a
     // spoken reply made here would still be uploaded to the chat app, and the Voice screen tells
     // the owner nothing containing sound leaves. The words are sent instead, as they always are.
     if (!settings.replyWithVoiceOnChannels || settings.keepAudioOnThisComputer) return null;
-    const spoken = await voice.speak(runtime.owner, { text: text.slice(0, 1500), voice: "", speed: 1 });
-    return { bytes: spoken.bytes, mediaType: spoken.mediaType };
+    // UP-CHAT-005: read as sentences (no Markdown), cut at the last whole sentence, and made into the app's voice-bubble
+    // sound with this computer's ffmpeg (the place set under Pictures and sound, or the search path). Without ffmpeg the
+    // sound goes as it is, and the app sends it as an audio file.
+    const words = spokenText(text, 1500);
+    if (!words) return null;
+    const note = voiceNoteType === "audio/ogg";
+    const spoken = await voice.speak(runtime.owner, { text: words, voice: "", speed: 1 }, { voiceNote: note });
+    if (!note) return { bytes: spoken.bytes, mediaType: spoken.mediaType };
+    const ffmpeg = isOggOpus(spoken.mediaType) ? null
+      : await locateProgram("ffmpeg", mediaProgramsSettings(store, runtime.owner)).catch(() => null);
+    return toOggOpus({ bytes: spoken.bytes, mediaType: spoken.mediaType }, ffmpeg, runProgram);
   };
   // Personal details and, when the owner switches it on, a content check, either side of the model.
   const moderation = new Moderation({}, web.policy, web.policy.guard(globalThis.fetch),

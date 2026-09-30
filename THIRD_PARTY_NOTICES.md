@@ -3406,6 +3406,10 @@ Two parts of Branch are adapted from Aider (https://github.com/Aider-AI/aider, c
 
 Changes: rewritten in TypeScript for Branch; file access goes through Branch's workspace checks.
 
+### Hermes Agent and OpenClaw: spoken replies as voice notes (UP-CHAT-005), MIT
+
+`src/voice-note.ts` adapts Hermes Agent's `tools/tts_text_normalize.py` (`strip_nonspoken_blocks`, `strip_markdown_for_tts`, `smooth_whitespace_for_tts`) and `_wrap_pcm_as_wav` in `tools/tts_tool_delivery.py`, and the OpenAI `response_format: "opus"` request follows `tools/tts_tool.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). The Telegram `sendVoice` / `sendAudio` choice in `src/channels/telegram.ts` follows OpenClaw's `extensions/telegram/src/voice.ts` and `src/media/audio.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch in TypeScript. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### Understand Anything (ideas only), MIT
 
 `src/learn/` -- the map and the guided tour ("Understanding something") -- takes three ideas from Understand Anything (https://github.com/Egonex-AI/Understand-Anything, commit 6df3065), Copyright (c) 2026 Yuxiang Lin and Copyright (c) 2026 Infinite Universe, Inc., licensed under the MIT licence, whose text is given under IronClaw above. **No code was copied, and no file of theirs was used**; the three ideas were written afresh for Branch:
