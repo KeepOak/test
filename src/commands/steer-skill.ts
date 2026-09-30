@@ -23,8 +23,12 @@ export function steer(call: Call): Reply {
   const { runtime } = call.host;
   const run = runtime.store.runs(runtime.owner).find((one) => one.sessionId === call.sessionId && one.status === "running");
   if (!run) return say("Nothing is working in this conversation right now; send it as an ordinary message instead.");
-  const { queued } = runtime.steer(run.id, words);
-  return say(`Passed on${queued > 1 ? ` (${queued} notes waiting)` : ""}. It reads it before its next step; if it is already writing its answer, send it again afterwards.`);
+  // From the window, the phone or the terminal, a note too late to read runs as its own next turn. A chat app's late
+  // notes are its router's (src/channels/router.ts unreadNotes), so a chat's /steer keeps asking to send it again.
+  const late = call.surface !== "chat";
+  const { queued } = runtime.steer(run.id, words, undefined, { lateTurn: late });
+  return say(`Passed on${queued > 1 ? ` (${queued} notes waiting)` : ""}. It reads it before its next step; ${late
+    ? "if it has already finished, it runs as your next message." : "if it is already writing its answer, send it again afterwards."}`);
 }
 
 export function skill(call: Call): Reply {
