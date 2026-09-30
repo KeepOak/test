@@ -289,7 +289,7 @@ export class AccountsService {
     // The program's first account is the connection itself: what it prints about its plan is that account's.
     if (claude && (original instanceof CliAgentProvider || original instanceof ClaudeSubscriptionProvider) && !original.onOutput)
       original.onOutput = (stdout) => this.notePlanWindows(claudeCodePool, primaryAccount, claudePlanWindows(stdout, this.now()));
-    const realtimeOnly = !this.on() && original.realtimeTransport === "chatgpt-webrtc";
+    const realtimeOnly = !this.on() && "realtimeTransport" in original && original.realtimeTransport === "chatgpt-webrtc";
     const found = this.on() || realtimeOnly ? this.poolFor(preset) : null;
     if (!found) return original === preset.provider ? preset : { ...preset, provider: original };
     return { ...preset, provider: pooled(original, this.hooksFor(found.pool, found.kind, preset, realtimeOnly), realtimeOnly) };
