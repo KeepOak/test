@@ -10448,9 +10448,18 @@
   "gateway.settings.unavailable": "Not available",
   "gateway.settings.crashes": "Crashes recorded by the engine",
   "gateway.settings.breaker-note": "The live slowdown state comes from the running gateway. If it is not reachable, this page does not infer a healthy state from the saved settings.",
-  "gateway.settings.accepted": "Last accepted timing change",
+  "gateway.settings.accepted": "Accepted timing change",
   "gateway.settings.undo": "Undo this timing change",
-  "gateway.settings.undo-note": "Restores the timings from before this accepted change. Mode, keep-awake and worker environment stay as they are. Refused if another change was accepted or the timings changed. Takes effect the next time Branch starts.",
+  "gateway.settings.undo-note": "Only the latest accepted timing change can be undone here. It restores that entry’s before values; mode, keep-awake and worker environment stay as they are. Refused if timings changed. Takes effect on the next start.",
   "gateway.settings.undone": "Undone at",
-  "gateway.settings.changed": "The active profile or Lockdown changed. Open Gateway again in the owner’s profile before undoing."
+  "gateway.settings.changed": "The active profile or Lockdown changed. Open Gateway again in the owner’s profile before undoing.",
+  "gateway.timings.title": "Gateway timing proposal",
+  "gateway.timings.edit": "Edit timings",
+  "gateway.timings.about": "These five timing values are checked on a throwaway gateway before being proposed. Trying them does not apply them. Accept a passing proposal separately; it takes effect on the next start.",
+  "gateway.timings.range": "Whole number from {min} to {max}.",
+  "gateway.timings.why": "Why change these timings?",
+  "gateway.timings.try": "Try on a throwaway copy",
+  "gateway.timings.invalid": "Enter whole numbers within the displayed ranges.",
+  "gateway.timings.reason": "Write why these timing changes are needed.",
+  "gateway.timings.waiting": "The proposal waits for separate acceptance in Gateway Settings."
 }

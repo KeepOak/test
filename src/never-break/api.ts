@@ -24,6 +24,7 @@ export class NeverBreakApiError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 export const handlesNeverBreakPath = (path: string): boolean => path === "/api/never-break" || path.startsWith("/api/never-break/");
+const proposalChecks = new Set<string>();
 
 type Read = (request: IncomingMessage) => Promise<unknown>;
 export interface GatewayPowerView { requested: boolean; active: boolean; suspended: boolean; error: string | null }
@@ -32,6 +33,7 @@ type GatewayPowerReader = () => Promise<GatewayPowerView>;
 export async function neverBreakView(dataDir: string, gatewayPower?: GatewayPowerReader): Promise<Record<string, unknown>> {
   const loaded = await loadGatewayConfig(dataDir);
   const state = await readState(dataDir);
+  const acceptedChanges = await readChanges(dataDir);
   return {
     mode: loaded.config.mode, config: loaded.config, problem: loaded.problem,
     underGateway: process.env.BRANCH_GATEWAY_CHILD === "1",
@@ -42,7 +44,7 @@ export async function neverBreakView(dataDir: string, gatewayPower?: GatewayPowe
     recentCrashes: state?.crashes.length ?? 0,
     proposal: await readProposal(dataDir),
     /** The last change the owner accepted, with the timings before and after it, while it can still be rolled back. */
-    accepted: (await readChanges(dataDir)).at(-1) ?? null,
+    accepted: acceptedChanges.at(-1) ?? null, acceptedChanges,
   };
 }
 
@@ -50,6 +52,9 @@ export async function neverBreakView(dataDir: string, gatewayPower?: GatewayPowe
 const thisStart = new Date(Date.now() - process.uptime() * 1000);
 
 export interface NeverBreakExtras {
+  /** The same isolated throwaway check used by gateway.propose; never applies a proposal. */
+  dryRun?: DryRun;
+  requireProposalOwner?: () => void;
   /** Trusted desktop broker status; a saved preference does not establish an active blocker. */
   gatewayPower?: GatewayPowerReader;
   /** Takes a copy of the saved work for an update's check (the process that holds the database). */
@@ -71,6 +76,21 @@ export async function neverBreakApi(dataDir: string, request: IncomingMessage, p
   // like last-update: a short-lived key and a household person are refused it before this is reached.
   if (request.method === "GET" && path === "/api/never-break/journal") return { entries: recentActivations(dataDir) };
   if (request.method !== "POST") throw new NeverBreakApiError(405, "Use GET or POST here.");
+  if (path === "/api/never-break/proposal/create") {
+    if (!extras.dryRun || !extras.requireProposalOwner) throw new NeverBreakApiError(409, "The gateway's isolated check is not available here.");
+    extras.requireProposalOwner();
+    const schema = z.object({ change: GatewayConfigSchema.pick({ startSeconds: true, holdSeconds: true,
+      maxQuickCrashes: true, gapSeconds: true, watchSeconds: true }).partial().strict()
+      .refine((change) => Object.keys(change).length > 0), why: z.string().trim().min(1).max(500) }).strict();
+    const body = schema.safeParse(await readBody(request));
+    if (!body.success) throw new NeverBreakApiError(400, validationText(body.error));
+    if (proposalChecks.has(dataDir)) throw new NeverBreakApiError(409, "A gateway timing check is already running. Wait for its result.");
+    proposalChecks.add(dataDir);
+    try {
+      const proposal = await proposeConfig(dataDir, body.data.change, body.data.why, extras.dryRun);
+      return { proposal, waitingForOwner: true };
+    } finally { proposalChecks.delete(dataDir); }
+  }
   if (path === "/api/never-break") {
     const body = z.object({ mode: FeatureModeSchema.optional(), keepAwake: z.boolean().optional() }).strict()
       .refine((value) => value.mode !== undefined || value.keepAwake !== undefined).safeParse(await readBody(request));

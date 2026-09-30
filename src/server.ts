@@ -314,7 +314,7 @@ import { appAskSettings, saveAppAskSettings } from "./desktop-app-ask.js"; // un
 // R17-S-C: the comfort settings (src/comfort/); every change is the owner's.
 import { ComfortApiError, comfortApi, handlesComfortPath } from "./comfort/api.js";
 // mac3/never-break: the gateway switch and suggested changes (src/never-break/api.ts).
-import { handlesNeverBreakPath, NeverBreakApiError, neverBreakApi, type NeverBreakExtras } from "./never-break/api.js";
+import { gatewayDryRun, handlesNeverBreakPath, NeverBreakApiError, neverBreakApi, type NeverBreakExtras } from "./never-break/api.js";
 import { channelSetupApi, handlesChannelSetupPath } from "./channel-setup/api.js"; // mac7/connect
 import { SetupRefusal } from "./channel-setup/check.js"; // mac7/connect
 // mac6/accounts: several accounts per connection (src/accounts/api.ts).
@@ -1165,6 +1165,11 @@ async function api(
   // mac3/never-break: the gateway switch and the changes the assistant suggested for it.
   if (handlesNeverBreakPath(path))
     return neverBreakApi(dataDir, request, path, readBody, {
+      dryRun: gatewayDryRun(fileURLToPath(new URL("./cli.js", import.meta.url))),
+      requireProposalOwner: () => {
+        app.store.profiles.requireOwner("Trying gateway timings");
+        if (app.sessionLock.shut() || lockdownActive(app.store, app.runtime.owner)) throw new HttpError(403, "Unlock Branch and turn Lockdown off before trying gateway timings.");
+      },
       snapshot: () => snapshotData({ dataDir, database: app.store.sqlite, journal: app.neverBreak.journal.database }),
       telegram: app.neverBreak.telegram,
       ...(gatewayPower ? { gatewayPower } : {}),

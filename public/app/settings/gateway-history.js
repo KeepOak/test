@@ -20,11 +20,12 @@ export function gatewayDiagnostics(gw, health) {
 }
 
 export function gatewayAcceptedChange(gw) {
-  const change = gw?.accepted;
-  if (!change) return "";
+  const changes = gw?.acceptedChanges ?? (gw?.accepted ? [gw.accepted] : []);
+  return [...changes].reverse().map((change, index) => {
   const rows = timings.map(key => `<dt>${esc(key)}</dt><dd>${esc(change.before?.[key])} → ${esc(change.after?.[key])}</dd>`).join("");
-  const off = change.rolledBackAt || E.profiles?.isOwner !== true || locked();
+  const off = index !== 0 || change.rolledBackAt || E.profiles?.isOwner !== true || locked();
   return `<div class="sec"><h2>${esc(t("gateway.settings.accepted"))}</h2><p>${esc(change.why)}</p><time>${esc(change.acceptedAt)}</time><dl class="kv">${rows}</dl>${change.rolledBackAt ? `<p>${esc(t("gateway.settings.undone"))} ${esc(change.rolledBackAt)}</p>` : controlRow(`<b>${esc(t("gateway.settings.undo"))}</b><span class="right"><button class="btn sm" type="button" data-act="gateway-settings-undo" data-at="${esc(change.acceptedAt)}" ${off ? "disabled" : ""}>${esc(t("gateway.settings.undo"))}</button></span><small>${esc(t("gateway.settings.undo-note"))}</small>`)}</div>`;
+  }).join("");
 }
 
 async function undo() {

@@ -1,5 +1,6 @@
 import { controlRow } from "../row-kit.js";
 import { gatewayDiagnostics, gatewayAcceptedChange, initGatewayHistory } from "../gateway-history.js";
+import { timingsLink, initGatewayTimings } from "../gateway-timings.js";
 /* Settings › Gateway, 1:1 with the prototype at each level, from GET /api/never-break. "Carry on interrupted work by
    itself" is the gateway's own mode (POST /api/never-break): "on" carries interrupted work on after a restart, "when-needed"
    only offers it (src/never-break/resume.ts), so the switch saves "on" or "when-needed"; turned on while the gateway is off
@@ -62,6 +63,7 @@ async function answerProposal(use) {
 }
 
 export function init() {
+  initGatewayTimings(loadGateway);
   initGatewayHistory(loadGateway);
   initMore17();
   const reading = loadGateway();
@@ -153,7 +155,7 @@ function proposalTile(gw) {
   const p = gw?.proposal;
   if (!p || (gw.mode ?? "off") === "off") return "";
   const passed = p.check?.ok ? `<span class="pill ok ml">${t("window.settings.gateway.tried-on-a-test-gateway-passed")}</span>` : "";
-  return `<div class="tile" data-css="margin-top:22px"><div class="th"><b>${t("window.settings.gateway.a-change-branch-suggested")}</b>${passed}</div><p>${esc(p.why)}</p><div class="acts"><button class="btn pri sm" type="button" data-act="gw-prop" data-v="use">${t("lmore.switch.label")}</button><button class="btn ghost sm" type="button" data-act="gw-prop" data-v="no">${t("window.settings.gateway.discard")}</button></div></div>`;
+  return `<div class="tile" data-css="margin-top:22px"><div class="th"><b>${t("window.settings.gateway.a-change-branch-suggested")}</b>${passed}</div><p>${esc(p.why)}</p><p>${esc(p.check?.detail ?? "")}</p><div class="acts"><button class="btn pri sm" type="button" data-act="gw-prop" data-v="use" ${p.check?.ok ? "" : "disabled"}>${t("lmore.switch.label")}</button><button class="btn ghost sm" type="button" data-act="gw-prop" data-v="no">${t("window.settings.gateway.discard")}</button></div></div>`;
 }
 
 const ACTIONS = () => `<div class="acts" data-css="margin-top:16px"><button class="btn" type="button" data-act="gw-restart">${ic("retry", "s")}${t("window.settings.gateway.restart-the-engine")}</button></div>`;
@@ -178,7 +180,7 @@ const chatEvenMore = () => sec15(t("window.settings.gateway.chat-apps-even-more"
 export function draw() {
   const gw = gwData;
   const lev = level();
-  let html = BASE() + statusSection(gw) + modeSection(gw) + gatewayDiagnostics(gw, D.health) + doing(gw) + proposalTile(gw) + gatewayAcceptedChange(gw) + ACTIONS();
+  let html = BASE() + statusSection(gw) + modeSection(gw) + gatewayDiagnostics(gw, D.health) + doing(gw) + timingsLink() + proposalTile(gw) + gatewayAcceptedChange(gw) + ACTIONS();
   if (lev < 2) html += `<p class="hint">${t("window.settings.computer.switch-to-technical-bottom-left-to")}</p>`;
   else html += technical(gw);
   if (lev >= 1) html += chatMore();
