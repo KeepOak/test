@@ -2,6 +2,8 @@ import { createHash, createPublicKey, sign as signBytes, verify as verifyBytes, 
 import { z } from "zod";
 import type { Store } from "./store.js";
 import type { NetworkPolicy } from "./network-policy.js";
+import { scanSkill } from "./skill-scan.js";
+import { parseSkillDocument } from "./skill-document.js";
 
 /**
  * A skill registry is a plain JSON index the owner points at (their own, a team's, or a public one).
@@ -117,11 +119,12 @@ export class SkillRegistry {
    * The owner's yes to a registry's key, by the fingerprint they were shown. It is pinned only if the registry
    * publishes exactly that key right now; approving a different fingerprint later is how a key change is accepted.
    */
-  async trustKey(url: string, fingerprint: string): Promise<RegistryKeyState> {
+  async trustKey(url: string, fingerprint: string, guard: () => void = () => undefined): Promise<RegistryKeyState> {
     const index = RegistryIndexSchema.parse(JSON.parse(await this.read(url, maxIndexBytes)));
     const published = index.publicKey ? registryKeyFingerprint(index.publicKey) : null;
     if (!published) throw new Error("This registry publishes no signing key, so there is nothing to trust.");
     if (published !== fingerprint.toLowerCase()) throw new Error("The registry's key is not the one you approved, so it was not trusted. Look at the registry again.");
+    guard();
     this.store.save("settings", this.owner, pinKey(url), { url, name: index.name, fingerprint: published, approvedAt: new Date().toISOString() });
     return this.keyState(url, index);
   }
@@ -135,6 +138,34 @@ export class SkillRegistry {
     return { ...index, skills, key: this.keyState(url, index) };
   }
   /** Fetches one listed skill, checks its fingerprint and signature, scans it and installs it disabled. */
+  async inspect(url: string, skillId: string) {
+    const index = await this.browse(url), entry = index.skills.find(s => s.id === skillId);
+    if (!entry) throw new Error("This source does not list that skill.");
+    if (entry.signed === "invalid") throw new Error(invalidWords(index.key, "it cannot be inspected for installation"));
+    const target = new URL(entry.url);
+    if (target.protocol !== "https:" || target.username || target.password || target.hash)
+      throw new Error("Marketplace skill documents must use HTTPS without credentials or fragments.");
+    const document = await this.fetchDocument(entry), metadata = parseSkillDocument(document);
+    return { registry: url, registryName: index.name, entry, key: index.key, document, metadata,
+      findings: scanSkill(document), fingerprintMatches: true,
+      note: "Static document scan only. A matching hash or pinned signature does not prove a skill safe. No code was executed." };
+  }
+  /** Recheck the exact reviewed identity/bytes/trust immediately before the inactive install. */
+  async installReviewed(review: Awaited<ReturnType<SkillRegistry["inspect"]>>, guard: () => void) {
+    const current = await this.inspect(review.registry, review.entry.id);
+    if (JSON.stringify(current) !== JSON.stringify(review)) throw new Error("The skill or signing trust changed. Inspect it again before approving.");
+    guard();
+    const trusted = this.trusted(review.registry);
+    if (trusted.length ? !current.key.published || !trusted.includes(current.key.published) || current.entry.signed !== "checked" : current.key.pinned !== null)
+      throw new Error("Publisher trust changed during inspection. Inspect again before approving.");
+    const installed = this.store.skills.install(this.owner, { document: current.document });
+    if (installed.activeVersion !== null) this.store.skills.disable(this.owner, installed.id, { expectedRevision: installed.revision });
+    const origin: SkillOrigin = { registry: review.registry, registryName: review.registryName, skillId: review.entry.id,
+      sha256: review.entry.sha256, version: review.entry.version ?? null, signed: review.entry.signed,
+      installedAt: new Date().toISOString(), previousSkillVersion: null };
+    this.store.save("settings", this.owner, `skill-origin:${installed.id}`, { ...origin });
+    return { ...this.store.skills.view(this.owner, installed.id), origin };
+  }
   async install(url: string, skillId: string) {
     const index = await this.browse(url);
     const entry = index.skills.find((s) => s.id === skillId);
