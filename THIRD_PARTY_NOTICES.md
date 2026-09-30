@@ -3568,6 +3568,16 @@ The MIT licence text is given under IronClaw above. For the Apache-2.0 projects:
 
 The MCP server's version handshake (`negotiatedProtocolVersion` and `supportedProtocolVersions` in `src/mcp-server.ts`) follows `_oninitialize` in `@modelcontextprotocol/sdk` 1.30.0 (upstream `packages/server/src/server/server.ts`, https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/server.ts#L898-L922): a version it speaks is echoed, any other is answered with the newest, and the version list is the SDK's `SUPPORTED_PROTOCOL_VERSIONS`. The 202 answer to a notification on `/mcp` (`src/server.ts`) follows the SDK's Streamable HTTP server (https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/streamableHttp.ts#L893-L900). Used under the MIT licence of `@modelcontextprotocol/sdk` 1.30.0, whose text is given above.
 
+### Helper lifecycle (ideas only), MIT and Apache-2.0
+
+`src/helper-tree.ts` and the helper start, stop and limit in `src/runtime.ts` (`delegateBackground`, `cancel`, `stopHelpers`) were written for Branch after reading these projects; no code was copied.
+
+- Hermes Agent (https://github.com/NousResearch/hermes-agent, commit a9a5424, Copyright (c) 2025 Nous Research, MIT): a child registered with its parent before it runs, and one attached after the parent's stop landed stopped at once (`tools/delegate_tool_child_run.py`); background hand-offs refused at capacity rather than queued (`tools/delegate_tool_config.py`); the tools a child never has (`tools/delegate_tool_toolsets.py`).
+- OpenClaw (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation, MIT): a stop that walks a child's descendants (`src/agents/subagents/registry/subagent-control-kill.ts`), children at once per requester (`src/agents/spawn-plan.ts`, `src/config/agent-limits.ts`) and a reset that stops the session's children (`src/auto-reply/reply/session-reset-cleanup.ts`).
+- Codex (https://github.com/openai/codex, commit bd4204efc2, Apache-2.0): a spawn slot reserved before the child starts and given back when it ends (`codex-rs/core/src/agent/registry.rs`).
+
+The MIT licence text is given under IronClaw above. Codex is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); only its design was followed.
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
