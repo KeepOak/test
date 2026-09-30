@@ -104,6 +104,7 @@ const pairingCodeMs = 60 * 60_000;
 /** owner-dm-signin: the task sources a chat's chain may hold and still be the owner's own (never MCP, ACP or A2A). */
 const ownersOrChat = new Set(["owner", "channel", "schedule", "trigger"]);
 const pairingCodeFresh = (pair: { requestedAt?: string }): boolean => Date.now() - Date.parse(pair.requestedAt ?? "") <= pairingCodeMs;
+interface WatchdogLogEntry { at: string; kind: string; outcome: "stalled" | "restarted" | "failed" }
 export interface ChannelAdapter {
   readonly id: string;
   readonly kind: string;
@@ -554,7 +555,7 @@ export class ChannelRouter {
   async wake(): Promise<void> {
     await Promise.allSettled([...this.adapters].map(async ([id, { adapter }]) => {
       if (!adapter.restart) return;
-      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null, log: undefined };
       this.watch.set(id, state);
       try { await adapter.restart(this.handlerFor()); state.lastRestartAt = Date.now(); state.problem = null; }
       catch (error) { state.problem = `${adapter.kind} could not reconnect after this computer woke: ${error instanceof Error ? error.message : String(error)}`; }
@@ -566,10 +567,12 @@ export class ChannelRouter {
     for (const [id, { adapter }] of this.adapters) {
       const last = adapter.lastContact?.();
       if (last === undefined || !adapter.restart) continue;
-      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null, log: undefined };
       this.watch.set(id, state);
       const stalledMs = intake.stalledAfterSeconds * 1000, quiet = now - last, stalled = quiet >= stalledMs;
-      if (!intake.watchdog || !stalled) { state.problem = null; continue; }
+      if (!intake.watchdog || !stalled) { state.problem = null; state.log = undefined; continue; }
+      // One retained line per stall episode; later attempts update its outcome instead of adding a line every beat.
+      const log = state.log ??= this.recordStall(adapter.kind);
       // "Reconnect after" counts from when it became stalled, not from its last contact.
       const wait = intake.reconnectMinutes * 60_000;
       if (quiet < stalledMs + wait || now - state.lastRestartAt < wait) continue;
@@ -578,8 +581,9 @@ export class ChannelRouter {
       state.lastRestartAt = now;
       const today = Date.now(); // the count on the card is by the wall clock
       state.restarts = [...state.restarts.filter((at) => today - at < 86_400_000), today];
-      try { await adapter.restart(this.handlerFor()); }
+      try { await adapter.restart(this.handlerFor()); log.outcome = "restarted"; }
       catch (error) {
+        log.outcome = "failed";
         state.problem = `${adapter.kind === "telegram" ? "Telegram" : adapter.kind} stopped receiving, and Branch could not start it again: ${error instanceof Error ? error.message : String(error)}`;
       }
       // Taken out (its token replaced, or Branch stopping) while it was being started again: stop what the restart
@@ -590,7 +594,15 @@ export class ChannelRouter {
   /** How often the watchdog looks. */
   watchdogMs = 15_000;
   private watchdog: ReturnType<typeof setInterval> | undefined;
-  private readonly watch = new Map<string, { restarts: number[]; lastRestartAt: number; problem: string | null }>();
+  private readonly watchdogLog: WatchdogLogEntry[] = [];
+  private readonly watch = new Map<string, { restarts: number[]; lastRestartAt: number; problem: string | null;
+    log?: WatchdogLogEntry | undefined }>();
+  private recordStall(kind: string): WatchdogLogEntry {
+    const row: WatchdogLogEntry = { at: new Date().toISOString(), kind, outcome: "stalled" };
+    this.watchdogLog.push(row);
+    if (this.watchdogLog.length > 100) this.watchdogLog.shift();
+    return row;
+  }
   /** The connected channel with this id, for routes that must hand a request to one. */
   adapter(id: string): ChannelAdapter | undefined { return this.adapters.get(id)?.adapter; }
   /** Stops one channel and takes it out, so it can be connected again (a Telegram bot token replaced on its card). */
@@ -644,6 +656,7 @@ export class ChannelRouter {
       chats: this.chats(owner),
       live: this.switches(),
       intake: this.intake(), // Settings › Chat apps: what the Trunk sees, staying connected
+      watchdogLog: this.watchdogLog.map((row) => ({ ...row })),
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
       ownerCommands: ownerCommands(this.store, owner),
