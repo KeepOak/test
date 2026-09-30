@@ -88,6 +88,8 @@ export interface PullRequestDeps {
   openWithComputerGh?: ((opening: ComputerPullRequest, signal: AbortSignal) => Promise<unknown>) | undefined;
   /** Read-only reconciliation, using the same identity as the saved publication. */
   findPublication?: ((entry: PublicationEntry, signal: AbortSignal) => Promise<unknown | null>) | undefined;
+  /** Fresh owner/request approval checks at every durable publication boundary. */
+  authorizePublication?: ((entry: PublicationEntry) => void) | undefined;
 }
 export interface ComputerPullRequest { repo: string; title: string; body: string; base: string; head: string }
 export interface OpenedPullRequest { repository: string; branch: string; base: string; files: string[]; pullRequest: unknown; publication?: PublicationEntry }
@@ -275,7 +277,7 @@ const issueArgument = (text: string): { issue?: string } => {
  * assistant's own file tools (inside the workspace, no secret-looking name, no link, nothing
  * `.branchignore` hides) and Branch's own guard; a folder is never sent whole.
  */
-async function sendablePaths(deps: PullRequestDeps, cwd: string, paths: readonly string[]): Promise<string[]> {
+export async function sendablePaths(deps: PullRequestDeps, cwd: string, paths: readonly string[]): Promise<string[]> {
   const kept: string[] = [];
   // mac7/walk-rules: nothing the owner's rules keep the assistant out of leaves this computer.
   const rules = new WalkRules(deps.files.walkRules({ source: "owner" }));

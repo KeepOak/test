@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { stat } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { audit, auditSources, type AuditSource } from "./audit.js";
@@ -11,6 +12,7 @@ import { PrepareSourceChangeSchema, prepareBranchSourceChange, ownerOnly, type S
 import { boundedDiff, nothingPreparedYet, type BoundedDiff } from "./self-development-diff.js";
 import { HttpError } from "./server-http.js";
 import { currentTaskRun } from "./task-scope.js";
+import { currentPerson } from "./people/context.js";
 import { typedBy } from "./seasons/evidence.js";
 import { sourceArrived } from "./self-development-arrival.js";
 import { ownBuild, ownBuildHistory } from "./hot-update/window-files.js";
@@ -83,7 +85,7 @@ const sourceOf = (channel: string): AuditSource =>
 export class SourceChangeRequests {
   private readonly db: DatabaseSync;
 
-  constructor(private readonly deps: SelfDevelopmentDeps) {
+  constructor(private readonly deps: SelfDevelopmentDeps, private readonly locked: () => boolean = () => false) {
     this.db = deps.store.sqlite;
     ensureRequestTable(this.db);
     // A yes Branch was still preparing when it stopped waits for the owner again.
@@ -141,6 +143,18 @@ export class SourceChangeRequests {
       .all(this.deps.owner).map((row) => fromRow(row as Record<string, unknown>));
   }
 
+  /** The owner can review the immutable preparation identity without choosing an arbitrary folder. */
+  prepared(id: string): { request: SourceChangeRequest; contract: SelfDevelopmentContract } {
+    this.ownerHere("Reviewing a prepared change to Branch itself");
+    const request = this.get(id);
+    if (!request || request.status !== "approved" || !request.worktree)
+      throw new Error("Approve this request with your own contract terms before publishing it.");
+    const contract = this.deps.contracts.current(this.deps.owner, request.worktree);
+    if (!contract || request.sourceSha !== contract.sourceSha || request.revision !== contract.revision)
+      throw new Error("The prepared contract changed. Review its current terms before publishing.");
+    return { request, contract };
+  }
+
   /**
    * The owner's yes, with the terms the owner wrote: checked with the tool's own parameters, then
    * prepared exactly as the tool prepares them. The request is taken before any Git runs, so two yeses
@@ -154,7 +168,8 @@ export class SourceChangeRequests {
       throw new Error("Sending Git work to a remote is switched off, so Branch's own source cannot be prepared. The request is still waiting.");
     this.take(id);
     try {
-      const prepared = await prepareBranchSourceChange(this.deps, ask, signal);
+      const prepared = await prepareBranchSourceChange(this.prepareDeps(), ask, signal);
+      this.preparingOwner();
       const contract = prepared.contract as SelfDevelopmentContract;
       this.settle(id, "approved", { at: new Date().toISOString(), worktree: contract.worktreePath, revision: contract.revision, sourceSha: contract.sourceSha });
       this.record(id, `${contract.worktreePath} revision ${contract.revision}`, "approved");
@@ -191,8 +206,24 @@ export class SourceChangeRequests {
   /** Only the owner, in the Branch app: never a household person, a short-lived key, or anything inside a task. */
   private ownerHere(what: string): void {
     this.deps.store.profiles.requireOwner(what);
+    if (this.locked() || currentPerson()) throw new Error(`${what} requires the unlocked owner's window.`);
     if (startedWithShortLivedKey()) throw new Error(`${what} is the owner's own, in the Branch app; a short-lived key cannot do it.`);
     if (currentTaskRun()) throw new Error(`${what} is the owner's own, in the Branch app; a task cannot do it, whoever started it.`);
+  }
+  private preparingOwner(): void {
+    this.ownerHere(answering);
+    if (lockdownActive(this.deps.store, this.deps.owner) || !this.deps.registry.names().includes(prepareToolName))
+      throw new Error("Source preparation approval was revoked. Review the request again.");
+  }
+  private prepareDeps(): SelfDevelopmentDeps {
+    const check = () => this.preparingOwner();
+    return { ...this.deps, recheckApproval: check,
+      git: async (options, signal) => { check(); const result = await this.deps.git(options, signal); check(); return result; },
+      exists: async (path) => {
+        check();
+        const result = await (this.deps.exists?.(path) ?? stat(path).then(() => true, () => false));
+        check(); return result;
+      } };
   }
   private get(id: string): SourceChangeRequest | undefined {
     const row = this.db.prepare("SELECT * FROM self_development_requests WHERE id=? AND owner=?").get(id, this.deps.owner);
