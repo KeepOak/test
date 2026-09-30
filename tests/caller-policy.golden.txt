@@ -1944,6 +1944,10 @@ owner GET /api/self-development/requests/:id/decline | here=ok remote=ok phone=o
 owner POST /api/self-development/requests/:id/decline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/requests/:id/draft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/self-development/requests/:id/draft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/self-development/requests/:id/publish | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/self-development/requests/:id/publish | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4205,6 +4209,10 @@ owner+lockdown GET /api/self-development/requests/:id/decline | here=ok remote=o
 owner+lockdown POST /api/self-development/requests/:id/decline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/requests/:id/draft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/self-development/requests/:id/draft | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/self-development/requests/:id/publish | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/self-development/requests/:id/publish | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6466,6 +6474,10 @@ household GET /api/self-development/requests/:id/decline | here=400/f6e21c remot
 household POST /api/self-development/requests/:id/decline | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/self-development/requests/:id/diff | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/self-development/requests/:id/diff | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/self-development/requests/:id/draft | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/self-development/requests/:id/draft | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/self-development/requests/:id/publish | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/self-development/requests/:id/publish | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions | here=ok remote=ok read=ok run=ok
 household POST /api/sessions | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id | here=ok remote=ok read=ok run=ok
@@ -8727,6 +8739,10 @@ household+lockdown GET /api/self-development/requests/:id/decline | here=400/f6e
 household+lockdown POST /api/self-development/requests/:id/decline | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/self-development/requests/:id/diff | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/self-development/requests/:id/diff | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/requests/:id/draft | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/self-development/requests/:id/draft | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/self-development/requests/:id/publish | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/self-development/requests/:id/publish | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/sessions | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id | here=ok remote=ok read=ok run=ok
@@ -10988,6 +11004,10 @@ applock GET /api/self-development/requests/:id/decline | here=423/a8f863
 applock POST /api/self-development/requests/:id/decline | here=423/a8f863
 applock GET /api/self-development/requests/:id/diff | here=423/a8f863
 applock POST /api/self-development/requests/:id/diff | here=423/a8f863
+applock GET /api/self-development/requests/:id/draft | here=423/a8f863
+applock POST /api/self-development/requests/:id/draft | here=423/a8f863
+applock GET /api/self-development/requests/:id/publish | here=423/a8f863
+applock POST /api/self-development/requests/:id/publish | here=423/a8f863
 applock GET /api/sessions | here=423/a8f863
 applock POST /api/sessions | here=423/a8f863
 applock GET /api/sessions/:id | here=423/a8f863

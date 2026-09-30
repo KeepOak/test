@@ -1136,6 +1136,8 @@ export const ROUTES = {
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
+  "/api/self-development/requests/:id/draft": "secret-read", // the committed draft, for the owner to review before publishing
+  "/api/self-development/requests/:id/publish": "owner POST",
   "/api/sessions": "look",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
