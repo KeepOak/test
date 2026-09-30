@@ -85,7 +85,7 @@ export async function sendApns(policy: NetworkPolicy, options: ApnsOptions, key:
 function apnsRequest(origin: string, topic: string, jwt: string, token: string, notice: PushNotice,
   signal: AbortSignal, guard: () => void, lookup?: LookupFunction): Promise<PushResult> {
   return new Promise((resolve, reject) => {
-    const session = connect(origin, { minVersion: "TLSv1.2", servername: new URL(origin).hostname, lookup });
+    const session = connect(origin, { minVersion: "TLSv1.2", servername: new URL(origin).hostname, ...(lookup ? { lookup } : {}) });
     let settled = false, status = 0, body = "";
     const finish = (error?: Error, result?: PushResult) => {
       if (settled) return;
