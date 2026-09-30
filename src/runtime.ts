@@ -74,7 +74,9 @@ import { supportsImages, unofferedMark, unnamedModels, wireName } from "./provid
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
-import { keepOnThisComputer, nothingHere, presetRunsLocally } from "./models.js"; // mac7/coding-next
+import { isRetiredConnection, keepOnThisComputer, nothingHere, presetRunsLocally } from "./models.js"; // mac7/coding-next
+import { chatgptPresetPrefix } from "./chatgpt-presets.js";
+import { claudeCodePool } from "./providers/claude-models.js";
 import { ownerTidyRemainder } from "./owner-folders.js";
 import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
 import { boundSummaryInput, ownerWordsMaxTokens, ownerWordsSection, transcriptLine } from "./compaction-input.js"; // P0 (self-build)
@@ -129,6 +131,7 @@ import { Tracer } from "./tracing.js";
 import { audit, auditSources, type AuditSource } from "./audit.js";
 import {
   outOfCredit,
+  planLimitReached,
   parseRetryPolicy,
   planRetry,
   waitForRetry,
@@ -565,6 +568,10 @@ interface ModelRoute {
   reasoning: ReasoningEffort | null;
   candidates: ModelPreset[];
 }
+/** The plan a sign-in draws on: ChatGPT's models and Codex share the ChatGPT plan, Claude's models the Claude one. */
+const planOf = (preset: ModelPreset): string =>
+  preset.id.startsWith(chatgptPresetPrefix) || preset.id === "cli-codex" ? "chatgpt"
+    : preset.id.startsWith(claudeCodePool) ? "claude" : preset.id;
 export interface RunOptions {
   prompt: string;
   sessionId?: string;
@@ -2513,9 +2520,12 @@ ${run.output.slice(0, 6000)}`;
     // back (the stall watch still runs) while an outlet filter applies to any connection this round may
     // fall back to, so filtered words never reach the page before the whole answer is filtered. ──
     const namesOf = (preset: ModelPreset | undefined): string[] => preset ? [preset.name, preset.id, preset.model, preset.provider.name] : [];
-    // mac7/speed: the owner's figure, or the launch one (12; 40 for work on the project's files). A planned task gets more on top.
-    const ceiling = knobs.maxModelRounds(this.store, this.owner, this.reliability, coding);
-    for (let round = 0; round < conductor.maxRounds(ceiling); round++) {
+    // mac7/speed: the owner's figure, or on auto no limit while a sign-in or a model here answers and the launch one (12; 40
+    // for work on the project's files) while a key billed per token does. Asked each round: a route may fall back. A
+    // planned task gets more on top.
+    const ceiling = (): number => knobs.maxModelRounds(this.store, this.owner, this.reliability, coding,
+      this.billedPerToken(this.helperModels.get(run.id) ?? route.candidates[route.index]));
+    for (let round = 0; round < conductor.maxRounds(ceiling()); round++) {
       // With no step left for the next question to the model, the task ends with the step limit's sentences, unasked.
       if (context.budget.steps >= context.budget.limits.maxSteps) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
       this.checkPaused(run.id); // long-work: the owner's Pause takes effect between steps
@@ -2696,7 +2706,7 @@ ${run.output.slice(0, 6000)}`;
       this.orchestration.milestone(run, round + 1);
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
-    return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling));
+    return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /**
    * mac7/speed: one tool call, from the journal entry to the result. This is exactly the path a
@@ -3469,6 +3479,10 @@ ${run.output.slice(0, 6000)}`;
    * window, up to 12,000 tokens): a coding task then sees its command, Git and GitHub tools together. A connection
    * billed per token, and a model on this computer, keep the launch figure.
    */
+  /** True for a connection billed per token (an API key): not a sign-in and not a model on this computer. */
+  private billedPerToken(preset: ModelPreset | undefined): boolean {
+    return !!preset && !presetRunsLocally(preset) && !isSignInConnection(preset);
+  }
   /** selfdev: where a reply's token ceiling starts and how far it may grow, by the kind of connection. */
   private replyCeiling(preset: ModelPreset): { base: number; max: number } {
     return !presetRunsLocally(preset) && isSignInConnection(preset) ? { base: signInReplyCeiling, max: signInMaxReplyCeiling }
@@ -3841,12 +3855,14 @@ ${run.output.slice(0, 6000)}`;
    * Moves to the next configured preset after an eligible failure; records the cooldown and switch. An account out of
    * credit or at its plan limit (outOfCredit) is not a passing failure: it moves only to the first model on this computer
    * in the owner's fallback order (Settings › Accounts › Fall back to this computer), never to another paid connection.
+   * A sign-in whose plan ran out may also move to another sign-in on a different plan (afterPlanLimit).
    */
   private fallBack(run: Run, context: ToolContext, route: ModelRoute, error: unknown): boolean {
     const failed = route.candidates[route.index]!;
     const cooldownUntil = this.models.markFailure(context.owner, failed.id, error);
     const to = cooldownUntil ? route.index + 1
-      : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
+      : planLimitReached(error) && isSignInConnection(failed) ? this.afterPlanLimit(run, context, route, failed)
+        : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
     const next = to > route.index ? route.candidates[to] : undefined;
     if (!next) return false;
     route.index = to;
@@ -3855,6 +3871,25 @@ ${run.output.slice(0, 6000)}`;
       reason: errorText(error), cooldownUntil,
     });
     return true;
+  }
+  /**
+   * A sign-in whose plan ran out (the owner's ChatGPT plan at 0% left, 2026-09-29): the work goes on with a model on this
+   * computer or a sign-in on a different plan (the Claude subscription), which cost nothing more per token, rather than
+   * stopping. The route's own order comes first, then the owner's other sign-ins; a key billed per token is never
+   * chosen, nor a model on the same spent plan (ChatGPT's other models, Codex). A Trunk keeps its sign-in rule.
+   * The index to move to, or -1.
+   */
+  private afterPlanLimit(run: Run, context: ToolContext, route: ModelRoute, failed: ModelPreset): number {
+    const spent = planOf(failed), signIns = !context.trunkKeys || this.trunkSignIns(run.id);
+    const otherPlan = (preset: ModelPreset): boolean => signIns && isSignInConnection(preset) && planOf(preset) !== spent;
+    const inRoute = route.candidates.findIndex((candidate, at) => at > route.index && (presetRunsLocally(candidate) || otherPlan(candidate)));
+    if (inRoute >= 0) return inRoute;
+    const tried = new Set(route.candidates.map((candidate) => candidate.id));
+    const other = [...this.models.presets.values()].find((preset) => !tried.has(preset.id) && !presetRunsLocally(preset) && otherPlan(preset)
+      && !this.models.coolingDown(preset.id) && !isRetiredConnection(preset));
+    if (!other) return -1;
+    route.candidates.push(other);
+    return route.candidates.length - 1;
   }
   /** The connection here that answers instead of `wanted` for a task that must stay on this computer. */
   private keptHere(run: Run, wanted: ModelPreset): ModelPreset {
@@ -3887,6 +3922,14 @@ ${run.output.slice(0, 6000)}`;
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
+    // The owner's "auto" limits are no limit on a sign-in or a model here, and finite on a key billed per token; a key's
+    // request also stops at this month's budget, so a task on no limit cannot run past it (src/knobs/apply.ts taskBudget).
+    const billed = this.billedPerToken(preset);
+    context.budget.answeredBy(billed);
+    if (billed) {
+      const monthly = this.monthlyBudgetRefusal();
+      if (monthly) throw new BudgetError(monthly);
+    }
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
