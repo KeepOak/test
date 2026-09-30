@@ -3127,10 +3127,17 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     return parityApi(app.store, owner, app.channels, request.method ?? "GET", request.method === "POST" ? await readBody(request) : undefined);
   if (request.method === "GET" && path === "/api/channels") return { ...app.channels.summary(), outstanding: app.channels.outstanding() };
   // mac6/bucket-16: automations started by Slack's own events, and starting one that is waiting.
-  if (path === "/api/channels/slack-automations") return request.method === "POST"
-    ? saveSlackAutomations(app.store, owner, await readBody(request), (id) => !!app.triggers.get(owner, id))
-    : app.slackAutomations.list();
-  if (request.method === "POST" && path === "/api/channels/slack-automations/run") return app.slackAutomations.run(await readBody(request));
+  if (path.startsWith("/api/channels/slack-automations")) {
+    if (startedWithShortLivedKey() || throughDoor(request)) throw new Error("Slack subscriptions require the local owner window.");
+    if (path === "/api/channels/slack-automations" && request.method === "GET") return app.slackAutomations.list();
+    const body = await readBody(request);
+    app.store.profiles.requireOwner("Slack subscriptions");
+    if (path === "/api/channels/slack-automations" && request.method === "POST")
+      return saveSlackAutomations(app.store, owner, body, (id) => !!app.triggers.get(owner, id),
+        (id) => app.channels.summary().channels.some((channel) => channel.id === id && channel.kind === "slack"));
+    if (path === "/api/channels/slack-automations/run" && request.method === "POST") return app.slackAutomations.run(body);
+    throw new HttpError(405, "Use GET or POST here.");
+  }
   // The chat services this copy knows how to talk to, so the Connections card lists them from data
   // rather than from a piece of hand-written page per service. No secret is involved either way.
   if (request.method === "GET" && path === "/api/channels/catalog")

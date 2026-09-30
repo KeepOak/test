@@ -21,6 +21,8 @@ import { FeatureModeSchema, type FeatureMode } from "../feature-switches.js";
 const slackId = z.string().regex(/^[A-Z0-9]{2,30}$/);
 export const SlackRuleSchema = z.object({
   id: z.string().uuid().optional(),
+  /** Explicit configured Slack connection; legacy unbound rules stay inert until reviewed. */
+  connection: z.string().min(1).max(100).optional(),
   /** A Slack event type, such as `reaction_added`, `message`, `app_mention` or `channel_created`. */
   event: z.string().regex(/^[a-z_.]{3,60}$/),
   channel: slackId.optional(),
@@ -46,11 +48,12 @@ export function slackAutomationSettings(store: Pick<Store, "get">, owner: string
 
 /** Saves the switch and the rules; a rule must name an automation that exists. */
 export function saveSlackAutomations(store: Pick<Store, "get" | "save">, owner: string, input: unknown,
-  triggerExists: (id: string) => boolean): SlackAutomationSettings {
+  triggerExists: (id: string) => boolean, connectionExists: (id: string) => boolean = () => true): SlackAutomationSettings {
   const current = slackAutomationSettings(store, owner);
   const sent = z.object({ mode: FeatureModeSchema.optional(), rules: z.array(SlackRuleSchema).max(50).optional() }).strict().parse(input);
   const rules = (sent.rules ?? current.rules).map((rule) => ({ ...rule, id: rule.id ?? randomUUID() }));
   const unknown = rules.find((rule) => !triggerExists(rule.trigger));
+  if (rules.some((rule) => rule.connection && !connectionExists(rule.connection))) throw new Error("A subscription names a Slack connection that is not configured");
   if (unknown) throw new Error(`There is no automation ${unknown.trigger}; make the inbound trigger first`);
   const next = { mode: sent.mode ?? current.mode, rules };
   store.save("settings", owner, settingsKey, next);
@@ -94,12 +97,13 @@ export class SlackAutomations {
     if (settings.mode === "off" || !settings.rules.length) return 0;
     const parsed = EventSchema.safeParse(raw);
     if (!parsed.success || parsed.data.bot_id || (botUserId && parsed.data.user === botUserId)) return 0;
+    if (!this.admit(channelId, parsed.data)) return 0;
     const event = trimEvent(parsed.data);
     const user = String(event.user ?? "");
     if (!user) return 0; // an event nobody can be named for starts nothing
     let started = 0;
     const allowed = (rule: SlackRule) => rule.users.length > 0 || this.senderAllowed(channelId, user);
-    for (const rule of settings.rules.filter((candidate) => matches(candidate, event) && allowed(candidate))) {
+    for (const rule of settings.rules.filter((candidate) => candidate.connection === channelId && matches(candidate, event) && allowed(candidate))) {
       const seen = { id: randomUUID(), channelId, rule: rule.id, trigger: rule.trigger, at: new Date().toISOString(), event };
       if (settings.mode === "when-needed") { this.remember(seen); continue; }
       started += await this.start(seen) ? 1 : 0;
@@ -113,14 +117,31 @@ export class SlackAutomations {
     const at = this.waiting.findIndex((seen) => seen.id === event);
     if (at < 0) throw new Error("That Slack event is no longer waiting");
     const [seen] = this.waiting.splice(at, 1);
+    if (Date.now() - Date.parse(seen!.at) > 300_000) throw new Error("That Slack event expired; it was not started");
     // mac6/bucket-16 integration: a rule changed or removed since the event arrived starts nothing.
-    if (!this.settings().rules.some((rule) => rule.id === seen!.rule && rule.trigger === seen!.trigger))
+    if (!this.settings().rules.some((rule) => rule.id === seen!.rule && rule.trigger === seen!.trigger && rule.connection === seen!.channelId && matches(rule, seen!.event)
+      && (rule.users.length > 0 || this.senderAllowed(seen!.channelId, String(seen!.event.user ?? "")))))
       throw new Error("The rule that event matched has changed; it was not started");
     return this.fire(seen!.trigger, payloadOf(seen!));
   }
   private remember(seen: SlackEventSeen): void {
     this.waiting.push(seen);
     if (this.waiting.length > 50) this.waiting.shift();
+  }
+  /** Claim before any await. Reconnect/restart retries cannot dispatch the same event again. */
+  private admit(connection: string, event: Record<string, unknown>): boolean {
+    const id = event.__eventId, time = event.__eventTime;
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(id) || typeof time !== "number"
+      || !Number.isSafeInteger(time) || Math.abs(Date.now() / 1000 - time) > 300) return false;
+    const key = "slack-event-replay", now = Date.now();
+    const schema = z.array(z.object({ id: z.string(), at: z.number() })).max(1000);
+    const parsed = schema.safeParse(this.store.get("settings", this.owner(), key)?.data ?? []);
+    if (!parsed.success) return false;
+    const entries = parsed.data.filter((entry) => now - entry.at < 600_000);
+    const identity = `${connection}:${id}`;
+    if (entries.some((entry) => entry.id === identity) || entries.length >= 1000) return false;
+    this.store.save("settings", this.owner(), key, [...entries, { id: identity, at: now }]);
+    return true;
   }
   private async start(seen: SlackEventSeen): Promise<boolean> {
     try { await this.fire(seen.trigger, payloadOf(seen)); return true; }

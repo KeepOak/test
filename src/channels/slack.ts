@@ -165,6 +165,7 @@ export class SlackAdapter implements ChannelAdapter {
   }
   /** Acknowledges the envelope first, then decides whether the event is one to answer. */
   private receive(text: string, onMessage: (message: InboundMessage) => Promise<void>): void {
+    if (Buffer.byteLength(text, "utf8") > 1024 * 1024) return;
     this.contactAt = Date.now();
     const envelope = envelopeSchema.safeParse(JSON.parse(text));
     if (!envelope.success) return;
@@ -174,9 +175,9 @@ export class SlackAdapter implements ChannelAdapter {
     if (type === "interactive") { const pressed = this.fromButton(payload); if (pressed) void onMessage(pressed).catch(() => undefined); return; }
     if (type === "slash_commands") { const typed = this.fromSlash(payload); if (typed) void onMessage(typed).catch(() => undefined); return; }
     const eventId = payload?.event_id;
-    if (!payload?.event || (eventId && this.seen.has(eventId))) return;
+    if (type !== "events_api" || !payload?.event || !eventId || eventId.length > 100 || this.seen.has(eventId)) return;
     if (eventId) { this.seen.add(eventId); if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!); }
-    try { this.options.onEvent?.(payload.event, this.user?.id ?? null); } catch { /* an automation never stops a reply */ } // mac6/bucket-16
+    try { this.options.onEvent?.({ ...payload.event, __eventId: eventId, __eventTime: payload.event_time }, this.user?.id ?? null); } catch { /* an automation never stops a reply */ }
     const changed = payload.event.type === "message" && payload.event.subtype === "message_changed" ? this.changed(payload.event) : undefined;
     if (changed !== undefined) { if (changed) void onMessage(changed).catch(() => undefined); return; }
     const inbound = this.inbound(payload.event);
