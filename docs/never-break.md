@@ -48,6 +48,19 @@ engine shutdown. These unattended checks never bind another port, call a model, 
 package installer. A missing browser remains an explicit manual `branch doctor --fix` step.
 Config-specific migration repairs and automatic package installation remain separate work.
 
+When the owner presses Update now while tasks are busy, the desktop asks **Let them finish
+first**, **Install now**, or **Cancel update** using the authenticated engine's task count.
+Waiting pins the request to that release and channel for the current desktop session. It keeps
+working after the window closes to the tray, checks every ten seconds without overlapping reads,
+and cancels when the release/channel changes or the app quits. Update now opens the choice again
+so the owner can cancel it. A task that starts again before adoption defers the queued install.
+
+Install now bypasses task-based build pauses only for that explicit owner request; typing still
+pauses it. The final busy-work gate permits versioned shell updates, which retain the engine, and
+checked live engine handover carries work forward. A live build that falls back to a flat packaged
+swap still refuses to stop busy work. Automatic updates keep their existing idle policy.
+Waiting questions remain in the task store; installed handover/resumption acceptance is pending.
+
 The desktop candidate starts a windowless stock Electron broker with `--branch-gateway` and a
 separate single-instance lock. It retains the encrypted device vault, Stop notices and Mac login
 service. Its worker owns the database; its shell windows join the proved public gateway. An absent
