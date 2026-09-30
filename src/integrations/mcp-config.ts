@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { mcpHttp, mcpStdio } from './mcp-sdk.js';
+import { mcpHttp, mcpSse, mcpStdio } from './mcp-sdk.js';
 import { boundedFetch } from './bounded-fetch.js';
 import { runAsNode } from '../child-env.js';
 import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
@@ -80,7 +80,7 @@ export async function withLockerSecrets(
   return Object.keys(found).length ? { ...env, ...found } : env;
 }
 
-export async function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv, policy?: McpReach) {
+export async function makeTransport(config: McpTransportConfig, env: NodeJS.ProcessEnv, policy?: McpReach, legacy = false, signal?: AbortSignal) {
   if (config.transport === 'stdio') {
     const selected = Object.fromEntries(config.envKeys.map(key => [key, credential(env, key)]));
     const { getDefaultEnvironment, StdioClientTransport } = await mcpStdio();
@@ -89,7 +89,7 @@ export async function makeTransport(config: McpTransportConfig, env: NodeJS.Proc
       env: { ...getDefaultEnvironment(), ...selected, ...runAsNode(config.command) }, stderr: 'pipe', maxBufferSize: 1048576,
       ...(config.cwd ? { cwd: config.cwd } : {}) });
     transport.stderr?.on('data', () => undefined);
-    return { transport, secrets: Object.values(selected) };
+    return { transport, secrets: Object.values(selected), authenticationChallenged: () => false };
   }
   const url = new URL(config.url);
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
@@ -98,12 +98,19 @@ export async function makeTransport(config: McpTransportConfig, env: NodeJS.Proc
   if (url.username || url.password || url.search || url.hash)
     throw new Error('MCP URL must not contain credentials, query, or fragment');
   const secret = config.bearerEnv ? credential(env, config.bearerEnv) : undefined;
-  const StreamableHTTPClientTransport = await mcpHttp();
-  const transport = new StreamableHTTPClientTransport(url, {
-    fetch: policy ? policy.guard(boundedFetch) : boundedFetch,
+  const HttpTransport = legacy ? await mcpSse() : await mcpHttp();
+  let challenged = false;
+  const guarded = policy ? policy.guard(boundedFetch) : boundedFetch;
+  const transport = new HttpTransport(url, {
+    fetch: async (input, init) => {
+      const signals = [signal, init?.signal].filter((item): item is AbortSignal => !!item);
+      const response = await guarded(input, { ...init, ...(signals.length ? { signal: AbortSignal.any(signals) } : {}) });
+      if (response.status === 401) challenged = true;
+      return response;
+    },
     requestInit: { redirect: 'error', ...(secret ? { headers: { authorization: `Bearer ${secret}` } } : {}) },
     // A key given by hand wins; otherwise a saved sign-in is sent, and renewed by the SDK when the server says 401.
     ...(!secret && policy?.auth ? { authProvider: policy.auth } : {}),
   });
-  return { transport, secrets: secret ? [secret] : [] };
+  return { transport, secrets: secret ? [secret] : [], authenticationChallenged: () => challenged };
 }
