@@ -3504,7 +3504,16 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   const owner = app.runtime.owner;
   if (request.method === "GET" && path === "/api/research") return { reports: app.research.list(owner) };
   if (request.method === "GET" && path === "/api/monitors") return { monitors: app.monitors.list(owner) };
-  if (request.method === "POST" && path === "/api/monitors") return app.monitors.create(owner, await readBody(request));
+  if (request.method === "POST" && path === "/api/monitors") return app.monitors.create(owner, await readBody(request), undefined, undefined, () => {
+    app.store.profiles.requireOwner("Creating a watch");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a watch.");
+  });
+  const prices = /^\/api\/monitors\/([a-f0-9-]{36})\/prices$/.exec(path);
+  if (prices && request.method === "GET") {
+    app.store.profiles.requireOwner("Your watched prices");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Watched price history belongs to the owner at the app.");
+    return app.monitors.history(owner, prices[1]!);
+  }
   const watch = /^\/api\/monitors\/([a-f0-9-]{36})(?:\/(check))?$/.exec(path);
   if (watch && request.method === "DELETE" && !watch[2]) return app.monitors.remove(owner, watch[1]!);
   if (watch && request.method === "POST" && watch[2] === "check") return app.monitors.check(owner, watch[1]!);

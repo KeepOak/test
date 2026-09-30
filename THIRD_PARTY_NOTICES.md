@@ -3740,6 +3740,12 @@ The Codex parts are used under the Apache License, Version 2.0 (http://www.apach
 
 Source: https://github.com/NousResearch/hermes-agent/blob/16b214e1a1f0544218b1cf8c21b923b4e1c62768/agent/insights.py
 
+## Price-watch condition recipe
+
+The listed Hermes `product-price-monitor` skill was read at commit `7327624d3500d4bbc9ad58b0a75c324a306d882a` (MIT). Its threshold/drop, successful-baseline, retained-good-observation and duplicate-alert shape informed the implementation. It is a recipe, not an executable price parser: `src/monitor-price.ts` and the Branch integration are original code, not a claimed source-code port.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/7327624d3500d4bbc9ad58b0a75c324a306d882a/skills/productivity/product-price-monitor/SKILL.md
+
 MIT License
 
 Copyright (c) 2025 Nous Research

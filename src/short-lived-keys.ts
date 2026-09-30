@@ -110,6 +110,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   /^\/api\/reach\/continuity(\/|$)/,
   /^\/api\/taste(\/|$)/,
   /^\/api\/self-development\/publications(\/|$)/,
+  new RegExp(`^/api/monitors/${id}/prices$`),
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
   /^\/api\/chatgpt\/status$/,

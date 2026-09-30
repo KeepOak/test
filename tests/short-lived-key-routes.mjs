@@ -41,6 +41,7 @@ export const ROUTES = {
   "/api/taste/feedback": "owner POST",
   "/api/taste/correct": "owner POST",
   "/api/taste/forget": "owner POST",
+  "/api/monitors/:id/prices": "owner GET", // owner price history; Trunk tool reads stay creator-bound
   "/a2a": "task POST",
   "/ap/": "prefix",
   "/ap/v1/agent/tasks": "task POST",

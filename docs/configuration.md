@@ -10650,3 +10650,12 @@ The Gardener extends this record with the following settings when its feature is
 | `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
+
+
+### Price-drop watches
+
+Automations > Running on its own > Watches can add a price watch and show its retained price history. Choose the exact item/variant, page, one unique literal label, source currency marker/code, decimal format and threshold. A supported field looks like `Total: $199.95`; the label is `Total:` and the marker is `$`. Multiple copies of the label, a missing marker or an invalid amount fail closed. This deterministic field reader does not infer a variant, taxes, shipping, stock, discounts, exchange rates, or browser login state. Choose a label that identifies the intended price. Dynamic/login-only pages without that text remain unsupported.
+
+The first successful fetch establishes a baseline before the watch is saved. The watch is quiet unless the numeric price drops from the last good observation and is strictly below the threshold. Equal prices, rises and unrelated page changes do not alert. The UI sends to Activity; `monitor.create` may specify an existing approved chat destination under the existing channels-send and Trunk rules. A failed fetch, parse or delivery preserves the prior baseline and price history for retry. A stable delivery key suppresses duplicate chat delivery on a retry of the same transition. History keeps the latest 100 successfully committed observations; removing the watch deletes it.
+
+Example tool input: `{ "url": "https://example.com/item", "every": "6h", "price": { "item": "Specific item and variant", "currency": "USD", "currencyMarker": "$", "label": "Total:", "below": 200, "decimals": 2, "decimalSeparator": "." } }`. Decimal commas use `decimalSeparator: ","`. `monitor.prices` reads creator-scoped retained observations; the owner-only window route is `GET /api/monitors/<id>/prices`. No watch is started until explicitly created.
