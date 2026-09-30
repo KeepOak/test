@@ -4,14 +4,15 @@ import { z } from "zod";
 import { estimateTokens } from "./contracts.js";
 import { EmbeddingClient, defaultEmbeddingModel, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
 import { OllamaClient, defaultLocalEmbeddingModel, ollamaHome } from "./local-models.js";
-import type { ModelRouter } from "./models.js";
+import { keptOnThisComputer, type ModelRouter } from "./models.js";
+import type { Store } from "./store.js";
 import { assertProviderEndpoint, providerEmbeddings } from "./providers.js";
 import { parseRetryPolicy, planRetry, waitForRetry, type RetryPolicy } from "./provider-retry.js";
 
 /**
  * Turning passages into the lists of numbers that let two pieces of writing be compared by what
- * they mean rather than the words they use. Nothing new is connected here: whichever model the
- * owner already chose does the reading, through whichever shape it speaks. Every answer is kept
+ * they mean rather than the words they use. The independent embedding source does the reading,
+ * through whichever shape it speaks. Every answer is kept
  * on this computer under a fingerprint of the passage, so reading the same library again costs
  * nothing, and a model that runs on this computer never sends a word anywhere.
  */
@@ -27,6 +28,7 @@ export interface Embeddings extends Embedder {
 export type EmbeddingShape = "openai" | "gemini" | "ollama";
 export interface EmbeddingConnection {
   shape: EmbeddingShape; endpoint: string; apiKey: string; model: string; local: boolean; fetchImpl?: typeof fetch;
+  version?: string;
 }
 /** Gemini's own default reader, used when the owner has not named one of their own. */
 export const defaultGeminiEmbeddingModel = "text-embedding-004";
@@ -41,14 +43,14 @@ export function onThisComputer(endpoint: string): boolean {
 }
 
 /**
- * Which connection would read passages, and how it has to be asked. The owner's model plan decides:
- * a model on this computer is preferred exactly as it already is for answering, and nothing else is
- * contacted. Null means no connected model can read passages at all.
+ * Which connection would read passages. Without an explicit preset the local Ollama route is used;
+ * a preset is looked up directly, so chat selection, cooldown and fallback order cannot change it.
  */
 export function embeddingConnection(
-  models: ModelRouter | undefined, owner: string, model: string = defaultEmbeddingModel,
+  models: ModelRouter | undefined, _owner: string, model: string = defaultLocalEmbeddingModel, presetId?: string,
 ): EmbeddingConnection | null {
-  const provider = models?.plan(owner, "").candidates[0]?.provider;
+  if (!presetId) return { shape: "ollama", endpoint: ollamaHome, apiKey: "", model, local: true };
+  const provider = models?.find(presetId)?.provider;
   if (!provider) return null;
   const route = providerEmbeddings(provider);
   if (route) {
@@ -62,6 +64,105 @@ export function embeddingConnection(
   if (pictures?.kind !== "gemini") return null;
   const chosen = model === defaultEmbeddingModel ? defaultGeminiEmbeddingModel : model;
   return { shape: "gemini", endpoint: pictures.endpoint, apiKey: pictures.apiKey, model: chosen, local: onThisComputer(pictures.endpoint) };
+}
+
+/** Independent of chat selection, following Open WebUI's separate embedding-engine configuration.
+ * No Open WebUI code is copied: its pinned license has additional branding conditions.
+ */
+export const EmbeddingSourceSchema = z.object({
+  source: z.enum(["ollama", "provider", "off"]).default("ollama"),
+  preset: z.string().trim().min(1).max(64).nullable().default(null),
+  model: z.string().trim().min(1).max(120).default(defaultLocalEmbeddingModel),
+  /** Bump when a remote service changes weights behind the same model name. */
+  version: z.string().trim().max(120).default(""),
+}).strict();
+export type EmbeddingSourceSettings = z.infer<typeof EmbeddingSourceSchema>;
+
+export class EmbeddingSources {
+  /** Installed at startup: enforces owner host/path rules while allowing this one local runtime. */
+  localFetch: ((endpoint: string) => typeof fetch) | undefined;
+  constructor(private readonly store: Store, private readonly models?: ModelRouter) {}
+  requireOwner(): void { this.store.profiles.requireOwner("Where passages are compared by meaning"); }
+  settings(owner: string): EmbeddingSourceSettings {
+    const parsed = EmbeddingSourceSchema.safeParse(this.store.get("settings", owner, "embedding-source")?.data ?? {});
+    return parsed.success ? parsed.data : EmbeddingSourceSchema.parse({});
+  }
+  configure(owner: string, input: unknown): EmbeddingSourceSettings {
+    this.requireOwner();
+    const settings = EmbeddingSourceSchema.parse({ ...this.settings(owner), ...(input as object) });
+    if (settings.source === "provider" && (!settings.preset || !embeddingConnection(this.models, owner, settings.model, settings.preset)))
+      throw new Error("Choose a connected provider that supports embeddings");
+    this.store.save("settings", owner, "embedding-source", settings);
+    return settings;
+  }
+  connection(owner: string): EmbeddingConnection | null {
+    const settings = this.settings(owner);
+    if (settings.source === "off" || (settings.source === "provider" && !settings.preset)) return null;
+    const connection = embeddingConnection(this.models, owner, settings.model, settings.source === "provider" ? settings.preset! : undefined);
+    if (!connection || (keptOnThisComputer() && !connection.local)) return null;
+    return { ...connection, version: settings.version };
+  }
+  reader(owner: string, call: typeof fetch): Embeddings | null {
+    const connection = this.connection(owner);
+    if (connection?.local && !connection.fetchImpl && this.localFetch)
+      connection.fetchImpl = this.localFetch(connection.endpoint);
+    return connection ? embeddingsFor(connection, call) : null;
+  }
+  view(owner: string) {
+    return { settings: this.settings(owner), providers: [...(this.models?.presets.values() ?? [])]
+      .filter((preset) => embeddingConnection(this.models, owner, defaultEmbeddingModel, preset.id))
+      .map((preset) => ({ id: preset.id, name: preset.name })) };
+  }
+}
+
+/** No credentials enter a vector identity or its persisted cache key. */
+export function embeddingVectorKey(connection: EmbeddingConnection, version = connection.version ?? ""): string {
+  const endpoint = new URL(connection.endpoint);
+  const apiVersion = endpoint.searchParams.get("api-version");
+  endpoint.username = ""; endpoint.password = ""; endpoint.search = ""; endpoint.hash = "";
+  if (apiVersion) endpoint.searchParams.set("api-version", apiVersion);
+  return createHash("sha256").update(JSON.stringify([connection.shape, endpoint.href, connection.model, version])).digest("hex");
+}
+
+const installedEmbeddingsSchema = z.object({ models: z.array(z.object({ name: z.string(), digest: z.string().min(1) })) });
+/** Adds route identity and checks Ollama's installed model before any passage is sent.
+ * The /api/tags GET and response.json flow adapts ollama-js list() (MIT), pinned in third-party notices.
+ */
+class IdentifiedEmbeddings implements Embeddings {
+  private identity: string;
+  private prepared = false;
+  constructor(private readonly inner: Embeddings, private readonly connection: EmbeddingConnection, private readonly call: typeof fetch) {
+    this.identity = embeddingVectorKey(connection);
+  }
+  get model(): string { return this.inner.model; }
+  get dimensions(): number { return this.inner.dimensions; }
+  get local(): boolean { return this.inner.local; }
+  get vectorKey(): string { return this.identity; }
+  async prepare(signal: AbortSignal): Promise<void> {
+    if (this.prepared) return;
+    if (this.connection.shape === "ollama") {
+      const response = await this.call(`${new URL(this.connection.endpoint).origin}/api/tags`, {
+        redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(4000)]),
+      });
+      if (!response.ok) throw new Error("Ollama is not available; word search still works");
+      const text = await response.text();
+      if (text.length > 1_048_576) throw new Error("Ollama returned too many installed models");
+      const body = installedEmbeddingsSchema.parse(JSON.parse(text) as unknown);
+      const wanted = this.model.includes(":") ? this.model : `${this.model}:latest`;
+      const installed = body.models.find((entry) => entry.name === wanted || entry.name === this.model);
+      if (!installed) throw new Error(`Install ${this.model} in Ollama to compare passages by meaning; word search still works`);
+      this.identity = embeddingVectorKey(this.connection, `${installed.digest}:${this.connection.version ?? ""}`);
+    }
+    this.prepared = true;
+  }
+  async embed(texts: string[], signal: AbortSignal): Promise<Float32Array[]> {
+    await this.prepare(signal);
+    const vectors = await this.inner.embed(texts, signal);
+    const dims = vectors[0]?.length;
+    if (vectors.length !== texts.length || vectors.some((vector) => !vector.length || vector.length !== dims || vector.some((value) => !Number.isFinite(value))))
+      throw new Error("The embedding service returned incompatible vectors");
+    return vectors;
+  }
 }
 
 /** The provider's own `/embeddings` route, which every OpenAI-shaped connection offers. */
@@ -150,18 +251,22 @@ export const embeddingFetch = (endpoint: string, call: typeof fetch): typeof fet
 export function embeddingsFor(connection: EmbeddingConnection, call: typeof fetch = globalThis.fetch): Embeddings | null {
   const reach = connection.fetchImpl ?? embeddingFetch(connection.endpoint, call);
   try {
-    if (connection.shape === "gemini") return new GeminiEmbeddings(connection, connection.local, reach);
-    if (connection.shape === "ollama") return new OllamaEmbeddings(connection, connection.model, reach);
-    return new OpenAIEmbeddings(connection, connection.local, reach);
+    assertProviderEndpoint(connection.endpoint);
+    const adapter = connection.shape === "gemini" ? new GeminiEmbeddings(connection, connection.local, reach)
+      : connection.shape === "ollama" ? new OllamaEmbeddings(connection, connection.model, reach)
+      : new OpenAIEmbeddings(connection, connection.local, reach);
+    return new IdentifiedEmbeddings(adapter, connection, reach);
   } catch { return null; }
 }
 /** An older-style passage reader seen through the fuller interface, for wrapping it in the cache. */
 export const asEmbeddings = (embedder: Embedder, local = false): Embeddings => ({
   model: embedder.model, dimensions: 0, local, embed: (texts, signal) => embedder.embed(texts, signal),
+  get vectorKey() { return embedder.vectorKey ?? embedder.model; },
+  prepare: async (signal) => { await embedder.prepare?.(signal); },
 });
 /** What to say when nothing connected can read passages. One sentence, no jargon. */
 export const noEmbeddingsMessage =
-  "None of your connected models can compare writing by meaning yet. Connect one that offers it, or run a model on this computer, and try again.";
+  "Meaning search is unavailable for this task. Choose an embedding source in Library, or use word search.";
 
 /** A fingerprint of one passage read by one model: the same passage never costs twice. */
 export const textFingerprint = (text: string, model: string): string =>
@@ -209,6 +314,8 @@ export class CachedEmbeddings implements Embeddings {
     private readonly policy: RetryPolicy = parseRetryPolicy({}),
   ) {}
   get model(): string { return this.inner.model; }
+  get vectorKey(): string { return this.inner.vectorKey ?? this.inner.model; }
+  async prepare(signal: AbortSignal): Promise<void> { await this.inner.prepare?.(signal); }
   get local(): boolean { return this.inner.local; }
   get dimensions(): number { return this.inner.dimensions; }
   embed(texts: string[], signal: AbortSignal): Promise<Float32Array[]> { return this.embedFor(undefined, texts, signal); }
@@ -218,19 +325,23 @@ export class CachedEmbeddings implements Embeddings {
    * however big it is, so only these passages should ever count against a limit.
    */
   missing(texts: string[]): string[] {
-    return texts.filter((text) => !this.cache.get(textFingerprint(text, this.inner.model), this.inner.model));
+    return texts.filter((text) => !this.cache.get(textFingerprint(text, this.vectorKey), this.vectorKey));
   }
   /** The same, charged to a task when there is one; background indexing has no task to charge. */
   async embedFor(runId: string | undefined, texts: string[], signal: AbortSignal): Promise<Float32Array[]> {
+    await this.prepare(signal);
     const answers = new Array<Float32Array | undefined>(texts.length);
     const missing: { at: number; text: string; hash: string }[] = [];
     texts.forEach((text, at) => {
-      const hash = textFingerprint(text, this.inner.model);
-      const known = this.cache.get(hash, this.inner.model);
+      const hash = textFingerprint(text, this.vectorKey);
+      const known = this.cache.get(hash, this.vectorKey);
       if (known) { answers[at] = known; this.stats.fromCache++; } else missing.push({ at, text, hash });
     });
     if (missing.length) await this.fetchMissing(runId, missing, answers, signal);
-    return answers.map((vector) => vector ?? new Float32Array());
+    const vectors = answers.map((vector) => vector ?? new Float32Array());
+    if (vectors.some((vector) => !vector.length || vector.length !== vectors[0]?.length))
+      throw new Error("The embedding model changed dimensions; change its version and rebuild the meaning index");
+    return vectors;
   }
   private async fetchMissing(
     runId: string | undefined, missing: { at: number; text: string; hash: string }[],
@@ -240,7 +351,7 @@ export class CachedEmbeddings implements Embeddings {
     missing.forEach((entry, index) => {
       const vector = vectors[index];
       if (!vector?.length) return;
-      this.cache.put(entry.hash, this.inner.model, vector);
+      this.cache.put(entry.hash, this.vectorKey, vector);
       answers[entry.at] = vector;
     });
     this.stats.fromProvider += missing.length;

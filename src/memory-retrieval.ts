@@ -2,12 +2,10 @@ import type { DatabaseSync } from "node:sqlite";
 import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import { z } from "zod";
 import { errorText } from "./contracts.js";
-import { EmbeddingClient, cosine, defaultEmbeddingModel, fuseRanks, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
-import { embeddingFetch } from "./embeddings.js";
-import { localEmbedder } from "./local-models.js";
+import { cosine, defaultEmbeddingModel, fuseRanks, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
+import { EmbeddingSources } from "./embeddings.js";
 import { visibleTo, type MemoryRecord } from "./memory.js";
 import type { ModelRouter } from "./models.js";
-import { providerEmbeddings } from "./providers.js";
 import type { Store } from "./store.js";
 
 /**
@@ -62,6 +60,7 @@ export class MemoryRetrieval {
    * through the owner's network rules first; a reader on this computer is reached directly.
    */
   embeddingFetch: typeof fetch = globalThis.fetch;
+  embeddingLocalFetch: ((endpoint: string) => typeof fetch) | undefined;
   constructor(private readonly store: Store, private readonly models?: ModelRouter) {
     this.db = store.sqlite;
     this.db.exec(`CREATE TABLE IF NOT EXISTS memory_terms(row_id INTEGER PRIMARY KEY AUTOINCREMENT, owner TEXT NOT NULL,
@@ -86,10 +85,13 @@ export class MemoryRetrieval {
   }
   settings(owner: string): MemoryRetrievalSettings {
     const saved = MemoryRetrievalSettingsSchema.safeParse(this.store.get("settings", owner, "memory-retrieval")?.data ?? {});
-    return saved.success ? saved.data : MemoryRetrievalSettingsSchema.parse({});
+    const settings = saved.success ? saved.data : MemoryRetrievalSettingsSchema.parse({});
+    return { ...settings, embeddingModel: new EmbeddingSources(this.store, this.models).settings(owner).model };
   }
   configure(owner: string, input: unknown): MemoryRetrievalSettings {
     const value = MemoryRetrievalSettingsSchema.parse({ ...this.settings(owner), ...(input as object) });
+    if (input && typeof input === "object" && "embeddingModel" in input)
+      new EmbeddingSources(this.store, this.models).configure(owner, { model: value.embeddingModel });
     this.store.save("settings", owner, "memory-retrieval", value);
     return value;
   }
@@ -106,13 +108,9 @@ export class MemoryRetrieval {
   private baseClient(owner: string): Embedder | null {
     const settings = this.settings(owner);
     if (!settings.useEmbeddings) return null;
-    const route = this.models ? providerEmbeddings(this.models.plan(owner, "").candidates[0]!.provider) : null;
-    if (!route) return null;
-    // A model on this computer reads facts through Ollama's own route, not the OpenAI one.
-    const here = localEmbedder(route, settings.embeddingModel);
-    if (here) return here;
-    try { return new EmbeddingClient(route.endpoint, route.apiKey, settings.embeddingModel, embeddingFetch(route.endpoint, this.embeddingFetch)); }
-    catch { return null; }
+    const sources = new EmbeddingSources(this.store, this.models);
+    sources.localFetch = this.embeddingLocalFetch;
+    return sources.reader(owner, this.embeddingFetch);
   }
   meaningSearchReady(owner: string): boolean { return this.client(owner) !== null; }
   view(owner: string) {
@@ -149,16 +147,18 @@ export class MemoryRetrieval {
     this.syncIndex(owner);
     const client = this.client(owner);
     if (!client) return { embedded: 0, reason: "meaning search is not available" };
+    try { await client.prepare?.(signal); } catch (error) { return { embedded: 0, reason: errorText(error).slice(0, 200) }; }
     const current = new Map(this.db.prepare("SELECT memory_id, revision, model FROM memory_vectors WHERE owner=?").all(owner)
       .map((row) => [String(row.memory_id), `${row.revision}:${row.model}`]));
-    const pending = this.facts(owner).filter((r) => current.get(r.id) !== `${r.revision}:${client.model}`);
+    const key = client.vectorKey ?? client.model;
+    const pending = this.facts(owner).filter((r) => current.get(r.id) !== `${r.revision}:${key}`);
     if (!pending.length) return { embedded: 0, reason: "every fact is already compared by meaning" };
     try {
       const vectors = await client.embed(pending.map(indexText), signal);
       for (const [at, record] of pending.entries()) {
         const vector = vectors[at];
         if (vector) this.db.prepare("INSERT OR REPLACE INTO memory_vectors VALUES(?,?,?,?,?)")
-          .run(owner, record.id, record.revision, client.model, packVector(vector));
+          .run(owner, record.id, record.revision, key, packVector(vector));
       }
       return { embedded: pending.length, reason: "" };
     } catch (error) { return { embedded: 0, reason: errorText(error).slice(0, 200) }; }
@@ -202,7 +202,9 @@ export class MemoryRetrieval {
   private async meaningMatches(owner: string, query: string, signal: AbortSignal): Promise<string[]> {
     const client = this.client(owner);
     if (!client) return [];
-    const rows = this.db.prepare("SELECT memory_id, vector FROM memory_vectors WHERE owner=? LIMIT 1000").all(owner);
+    try { await client.prepare?.(signal); } catch { return []; }
+    const rows = this.db.prepare("SELECT memory_id, vector FROM memory_vectors WHERE owner=? AND model=? LIMIT 1000")
+      .all(owner, client.vectorKey ?? client.model);
     if (!rows.length) return [];
     const asked = await client.embed([query], signal).catch(() => null);
     if (!asked?.[0]) return [];
@@ -211,7 +213,10 @@ export class MemoryRetrieval {
   }
   /** The meaning vectors held for this owner's facts, for comparing facts with each other. */
   vectors(owner: string): Map<string, Float32Array> {
-    return new Map(this.db.prepare("SELECT memory_id, vector FROM memory_vectors WHERE owner=? LIMIT 1000").all(owner)
+    // Consolidation must not compare vectors from different embedding generations either.
+    const key = this.db.prepare("SELECT model FROM memory_vectors WHERE owner=? LIMIT 1").get(owner)?.model;
+    if (!key) return new Map();
+    return new Map(this.db.prepare("SELECT memory_id, vector FROM memory_vectors WHERE owner=? AND model=? LIMIT 1000").all(owner, key as string)
       .map((row) => [String(row.memory_id), unpackVector(row.vector as Uint8Array)]));
   }
   useCounts(owner: string): Map<string, number> {

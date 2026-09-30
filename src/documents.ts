@@ -9,10 +9,8 @@ import type { WorkspaceFiles } from "./files.js";
 import type { ModelRouter } from "./models.js";
 import { documentType } from "./document-text.js";
 import { picturesMessage, readDocument, tryReadDocument } from "./document-readers.js";
-import { EmbeddingClient, cosine, defaultEmbeddingModel, fuseRanks, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
-import { localEmbedder } from "./local-models.js";
-import { embeddingFetch } from "./embeddings.js";
-import { providerEmbeddings } from "./providers.js";
+import { cosine, defaultEmbeddingModel, fuseRanks, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
+import { EmbeddingSources } from "./embeddings.js";
 import { errorText } from "./contracts.js";
 import { allowAll, WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import type { RunSource } from "./policy.js";
@@ -108,6 +106,7 @@ export class DocumentLibrary {
    * does; a reader on this computer is reached directly.
    */
   embeddingFetch: typeof fetch = globalThis.fetch;
+  embeddingLocalFetch: ((endpoint: string) => typeof fetch) | undefined;
   /** False only where this build of SQLite has no full-text search; word search then falls back. */
   readonly ranked: boolean;
   constructor(private readonly store: Store, private readonly models?: ModelRouter, private readonly files?: WorkspaceFiles) {
@@ -134,6 +133,8 @@ export class DocumentLibrary {
       owner TEXT NOT NULL, chunk_index INTEGER NOT NULL, chunk_text TEXT NOT NULL, embedding BLOB);
       CREATE INDEX IF NOT EXISTS document_chunks_document ON document_chunks(document_id);
       CREATE INDEX IF NOT EXISTS document_chunks_owner ON document_chunks(owner);`);
+    if (!this.db.prepare("PRAGMA table_info(document_chunks)").all().some((row) => row.name === "embedding_key"))
+      this.db.exec("ALTER TABLE document_chunks ADD COLUMN embedding_key TEXT NOT NULL DEFAULT ''");
   }
   private createIndex(): boolean {
     const available = this.db.prepare("PRAGMA compile_options").all()
@@ -153,10 +154,13 @@ export class DocumentLibrary {
 
   settings(owner: string): DocumentSettings {
     const saved = DocumentSettingsSchema.safeParse(this.store.get("settings", owner, "documents")?.data ?? {});
-    return saved.success ? saved.data : DocumentSettingsSchema.parse({});
+    const settings = saved.success ? saved.data : DocumentSettingsSchema.parse({});
+    return { ...settings, embeddingModel: new EmbeddingSources(this.store, this.models).settings(owner).model };
   }
   configure(owner: string, input: unknown): DocumentSettings {
     const value = DocumentSettingsSchema.parse({ ...this.settings(owner), ...(input as object) });
+    if (input && typeof input === "object" && "embeddingModel" in input)
+      new EmbeddingSources(this.store, this.models).configure(owner, { model: value.embeddingModel });
     this.store.save("settings", owner, "documents", value);
     return value;
   }
@@ -168,17 +172,11 @@ export class DocumentLibrary {
   private count(owner: string): number {
     return Number(this.db.prepare("SELECT COUNT(*) AS n FROM documents WHERE owner=? AND status='indexed'").get(owner)?.n ?? 0);
   }
-  /** The address and key of the provider's embeddings route, when the active model has one. */
+  /** Uses the same independent embedding source as memory and knowledge bases. */
   private client(owner: string): Embedder | null {
-    const preset = this.models?.plan(owner, "").candidates[0];
-    const route = preset ? providerEmbeddings(preset.provider) : null;
-    if (!route) return null;
-    const model = this.settings(owner).embeddingModel;
-    // A model on this computer reads passages through Ollama's own route, not the OpenAI one.
-    const here = localEmbedder(route, model, route.fetchImpl);
-    if (here) return here;
-    try { return new EmbeddingClient(route.endpoint, route.apiKey, model, route.fetchImpl ?? embeddingFetch(route.endpoint, this.embeddingFetch)); }
-    catch { return null; }
+    const sources = new EmbeddingSources(this.store, this.models);
+    sources.localFetch = this.embeddingLocalFetch;
+    return sources.reader(owner, this.embeddingFetch);
   }
   meaningSearchReady(owner: string): boolean { return this.client(owner) !== null; }
 
@@ -290,7 +288,8 @@ export class DocumentLibrary {
       const rows = this.db.prepare("SELECT chunk_id FROM document_chunks WHERE document_id=? ORDER BY chunk_index").all(id);
       for (const [index, row] of rows.entries()) {
         const vector = vectors[index];
-        if (vector) this.db.prepare("UPDATE document_chunks SET embedding=? WHERE chunk_id=?").run(packVector(vector), Number(row.chunk_id));
+        if (vector) this.db.prepare("UPDATE document_chunks SET embedding=?, embedding_key=? WHERE chunk_id=?")
+          .run(packVector(vector), client.vectorKey ?? client.model, Number(row.chunk_id));
       }
     } catch (error) {
       this.db.prepare("UPDATE documents SET note=? WHERE id=?")
@@ -436,9 +435,11 @@ export class DocumentLibrary {
   private async meaningMatches(owner: string, query: string, signal: AbortSignal): Promise<Match[]> {
     const client = this.client(owner);
     if (!client) return [];
+    try { await client.prepare?.(signal); } catch { return []; }
     const rows = this.db.prepare(`SELECT c.chunk_id, c.document_id, c.chunk_index, c.chunk_text, d.name,
       substr(c.chunk_text,1,300) AS highlight, c.embedding FROM document_chunks c JOIN documents d ON d.id=c.document_id
-      WHERE c.owner=? AND c.embedding IS NOT NULL LIMIT ?`).all(owner, scanLimit);
+      WHERE c.owner=? AND c.embedding IS NOT NULL AND c.embedding_key=? LIMIT ?`)
+      .all(owner, client.vectorKey ?? client.model, scanLimit);
     if (!rows.length) return [];
     const asked = await client.embed([query], signal).catch(() => null);
     if (!asked?.[0]) return [];

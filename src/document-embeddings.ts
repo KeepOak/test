@@ -18,6 +18,9 @@ const responseSchema = z.object({
  */
 export interface Embedder {
   readonly model: string;
+  /** Route, model and version identity, kept separately from the model's display name. */
+  readonly vectorKey?: string;
+  prepare?(signal: AbortSignal): Promise<void>;
   embed(texts: string[], signal: AbortSignal): Promise<Float32Array[]>;
 }
 

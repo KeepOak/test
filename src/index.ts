@@ -217,6 +217,7 @@ import { MemoryMirror, readOnlyRefusal, registerMemoryMirror } from "./memory-mi
 import { MemoryHistory, registerMemoryHistory } from "./memory-git.js";
 import { EphemeralDocuments, EphemeralRetriever, registerEphemeralDocuments } from "./memory-ephemeral.js";
 import { CachedEmbeddings, asEmbeddings } from "./embeddings.js";
+import { localRuntimeFetch } from "./local-policy.js";
 import { MemoryConsolidation } from "./memory-consolidate.js";
 import { PracticeWorkspace } from "./practice-workspace.js";
 import { ProviderPlugins } from "./provider-plugins.js";
@@ -1269,8 +1270,12 @@ ${result.output || "(it said nothing)"}`;
   const guardedFetch = web.policy.guard(globalThis.fetch);
   documents.embeddingFetch = guardedFetch;
   memory.retrieval.embeddingFetch = guardedFetch;
+  const embeddingLocalFetch = (endpoint: string) => localRuntimeFetch(web.policy, globalThis.fetch, endpoint);
+  documents.embeddingLocalFetch = embeddingLocalFetch;
+  memory.retrieval.embeddingLocalFetch = embeddingLocalFetch;
   const knowledgeBases = new KnowledgeBases(store, files, runtime.models,
     { charge: (runId, tokens) => store.addUsage(runId, tokens, 0, undefined, false) }, undefined, guardedFetch);
+  knowledgeBases.embeddingSources.localFetch = embeddingLocalFetch;
   knowledgeBases.reranker = (owner, query, passages, signal) => retrieval.order(owner, query, passages, signal);
   // Wave 9: the vectors go wherever the owner asked. A file that cannot be opened is one sentence on
   // the Documents panel and Branch's own database carries on holding them, so nothing is ever lost.

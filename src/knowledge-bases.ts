@@ -9,7 +9,7 @@ import { errorText, estimateTokens } from "./contracts.js";
 import { documentType, knownExtension } from "./document-text.js";
 import { readableTypes, tryReadDocument } from "./document-readers.js";
 import { fuseRanks } from "./document-embeddings.js";
-import { CachedEmbeddings, EmbeddingCache, embeddingConnection, embeddingsFor, noEmbeddingsMessage,
+import { CachedEmbeddings, EmbeddingCache, EmbeddingSources, noEmbeddingsMessage,
   textFingerprint, type EmbeddingLedger } from "./embeddings.js";
 import type { WorkspaceFiles } from "./files.js";
 import { allowAll, passageVisible, WalkRules } from "./walk-rules.js"; // mac7/walk-rules
@@ -94,6 +94,7 @@ export class KnowledgeBases {
   /** The sentence to show when the file the owner chose could not be opened; empty when all is well. */
   backendNote = "";
   readonly cache: EmbeddingCache;
+  readonly embeddingSources: EmbeddingSources;
   /** False only where this build of SQLite has no full-text search; every collection is then read whole. */
   readonly ranked: boolean;
   /** Set at start-up: puts the passages a search found into the best order. See src/retrieval.ts. */
@@ -112,6 +113,7 @@ export class KnowledgeBases {
     readonly embeddingCall: typeof fetch = globalThis.fetch,
   ) {
     this.db = store.sqlite;
+    this.embeddingSources = new EmbeddingSources(store, models);
     this.cache = new EmbeddingCache(this.db);
     this.vectors = backend ?? new SqliteVectors(this.db);
     this.createTables();
@@ -175,9 +177,7 @@ export class KnowledgeBases {
 
   /** The reader for this owner's passages, or nothing when no connected model can read them. */
   embeddings(owner: string): CachedEmbeddings | null {
-    const connection = embeddingConnection(this.models, owner);
-    if (!connection) return null;
-    const adapter = embeddingsFor(connection, this.embeddingCall);
+    const adapter = this.embeddingSources.reader(owner, this.embeddingCall);
     return adapter ? new CachedEmbeddings(adapter, this.cache, this.ledger) : null;
   }
   meaningSearchReady(owner: string): boolean { return this.embeddings(owner) !== null; }
@@ -209,10 +209,12 @@ export class KnowledgeBases {
     return this.describe(owner, row);
   }
   view(owner: string) {
+    const sources = this.embeddingSources;
+    const connection = sources.connection(owner);
     return {
       collections: this.list(owner), meaningSearch: this.meaningSearchReady(owner),
-      model: embeddingConnection(this.models, owner)?.model ?? "",
-      onThisComputer: embeddingConnection(this.models, owner)?.local ?? false,
+      model: connection?.model ?? "",
+      onThisComputer: connection?.local ?? false,
       ranked: this.ranked, backend: this.vectors.name, backendNote: this.backendNote,
       vectorStore: this.vectorStoreSettings(owner), limits: this.settings(owner),
       readingNow: [...this.latest.values()].filter((entry) => !entry.finished),
@@ -474,6 +476,9 @@ export class KnowledgeBases {
   private async embedCollection(owner: string, collection: string, signal: AbortSignal, runId?: string) {
     const reader = this.embeddings(owner);
     if (!reader) return { embedded: 0, model: "", tokens: 0, note: noEmbeddingsMessage, error: "" };
+    try { await reader.prepare(signal); } catch (error) {
+      return { embedded: 0, model: reader.model, tokens: 0, note: `Word search works. ${errorText(error).slice(0, 200)}`, error: "unavailable" };
+    }
     const rows = this.db.prepare("SELECT chunk_id, doc_id, chunk_text, text_hash FROM kb_chunks WHERE owner=? AND collection=? LIMIT ?")
       .all(owner, collection, comfortableChunkCount);
     if (!rows.length) return { embedded: 0, model: reader.model, tokens: 0, note: "Nothing readable was found in those files", error: "" };
@@ -483,7 +488,7 @@ export class KnowledgeBases {
     try {
       const vectors = await reader.embedFor(runId, texts, signal);
       const written = await this.vectors.upsert(owner, rows.map((row, at) => ({
-        collection, docId: String(row.doc_id), chunkId: String(row.chunk_id), model: reader.model,
+        collection, docId: String(row.doc_id), chunkId: String(row.chunk_id), model: reader.vectorKey,
         vector: vectors[at] ?? new Float32Array(), textHash: String(row.text_hash),
       })));
       return { embedded: written, model: reader.model, tokens: reader.stats.tokens, note: "", error: "" };
@@ -617,7 +622,7 @@ export class KnowledgeBases {
     if (!asked?.[0]?.length) return [];
     const collections = collection ? [collection] : this.list(owner).map((entry) => entry.id);
     const scanAtMost = this.settings(owner).compareAtMost;
-    const found = await Promise.all(collections.map((id) => this.vectors.search(owner, id, asked[0]!, candidates, scanAtMost)));
+    const found = await Promise.all(collections.map((id) => this.vectors.search(owner, id, asked[0]!, candidates, scanAtMost, reader.vectorKey)));
     return found.flat().filter((match) => match.score > 0.15).sort((a, b) => b.score - a.score)
       .slice(0, candidates).map((match) => match.chunkId);
   }
