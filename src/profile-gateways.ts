@@ -134,6 +134,7 @@ export class ProfileGateways {
       : route.operation === "connect-model" ? await call("/api/connections/from-preset", route.settings)
       : route.operation === "read" ? await call(`/api/sessions/${route.sessionId}`)
       : await call("/api/run", { prompt: route.prompt, ...(route.sessionId ? { sessionId: route.sessionId } : {}) });
+    authorize(configure);
     return { profileId, isolated: true, result };
   }
 

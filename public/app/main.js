@@ -110,6 +110,7 @@ function tabInView(main) {
 }
 
 function drawMain() {
+  if (isolatedWindow.profileId) S.view = "chat";
   const main = $("#main");
   const draw = VIEWS[S.view] ?? VIEWS.chat;
   const html = draw(), key = `${S.view}\n${wide()}\n${html}`;
@@ -151,7 +152,7 @@ function drawWidth() {
 }
 
 on("dlg-close", () => closeDlg());
-on("view", (el) => { S.view = el.dataset.v; if (el.dataset.tab) S.tabs[el.dataset.v] = el.dataset.tab; $("#app")?.classList.remove("side-open"); closePop(); renderNow(); });
+on("view", (el) => { if (isolatedWindow.profileId) return; S.view = el.dataset.v; if (el.dataset.tab) S.tabs[el.dataset.v] = el.dataset.tab; $("#app")?.classList.remove("side-open"); closePop(); renderNow(); });
 on("ptab", (el) => { S.view = el.dataset.place; S.tabs[el.dataset.place] = el.dataset.v; closePop(); renderNow(); });
 
 /* Scrollbars show while a box scrolls and hide a second after it stops (pass 14: app.css .sb-on14). */
@@ -315,3 +316,4 @@ function watchPerson() {
 }
 
 boot();
+import { isolatedWindow } from "./core/isolated-context.js";

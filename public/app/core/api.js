@@ -2,6 +2,7 @@
    the header); in a browser the window uses the session token it was given at sign-in. */
 
 import { t } from "../../i18n.js";
+import { isolatedWindow } from "./isolated-context.js";
 
 const TOKEN_KEY = "branch-token";
 export const token = {
@@ -56,6 +57,8 @@ export const comfortSaved = new Set();
 
 /* GET when there is no body, POST when there is, unless a method is given. Throws the engine's own error words. */
 export async function api(path, body, method, signal) {
+  if (isolatedWindow.profileId && path !== "profiles" && !path.startsWith(`profile-gateways/${isolatedWindow.profileId}`))
+    throw new Error("This service is unavailable in the isolated gateway context. Return to the logical profile first.");
   return ask(path, body, method, signal, true);
 }
 async function ask(path, body, method, signal, again) {
@@ -88,6 +91,7 @@ async function ask(path, body, method, signal, again) {
 
 /* POST raw bytes (a recording, a file) with their own content type; answers the engine's JSON or throws its words. */
 export async function apiBytes(path, blob) {
+  if (isolatedWindow.profileId) throw new Error("Uploads are unavailable in this isolated gateway context.");
   const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: { ...headers(false), "content-type": blob.type || "application/octet-stream" }, body: blob })
     .catch((error) => { setLink(false); throw notDone(error); });
   const data = await response.json().catch(() => ({}));
@@ -175,6 +179,7 @@ export function stream(prefixes, onEvent, onEnd) {
    event, the engine's "end" included. Throws the answer's status when it is refused; the caller decides whether to open
    it again. */
 export async function streamOnce(path, onEvent, signal) {
+  if (isolatedWindow.profileId) throw new Error("Global task streams are unavailable in this isolated gateway context.");
   const response = await fetch("/api/" + path, { headers: headers(false), signal });
   if (!response.ok || !response.body) throw Object.assign(new Error(String(response.status)), { status: response.status });
   const reader = response.body.getReader();
