@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { describesScreen } from '../screen-guard.js'; // dogfood follow-up
 import { z } from 'zod';
+import { officialClickup, clickupCallPreview, clickupWriteSource } from "../personal/clickup-write.js";
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { mcpClient, mcpValidator } from './mcp-sdk.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -67,6 +68,7 @@ function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: s
   // Dogfood follow-up: a server's computer-use or screen tool, by its annotations' title, name, description or inputs.
   const screen = describesScreen({ name: tool.name, title: tool.annotations?.title ?? tool.title, description: tool.description, inputSchema: tool.inputSchema });
   return { name, description: tool.description?.slice(0, 2000) ?? tool.name, external: true, ...(screen ? { screen: true } : {}),
+    ...(officialClickup(config) ? { source: clickupWriteSource, target: (args: unknown) => clickupCallPreview(tool.name, args) } : {}),
     permission: name, parameters: z.record(z.string(), z.unknown()), inputSchema: tool.inputSchema,
     execute: async (args: unknown, context: ToolContext) => {
       validate ??= new (await mcpValidator())().getValidator(tool.inputSchema as JsonSchemaType);

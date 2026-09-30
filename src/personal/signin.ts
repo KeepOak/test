@@ -32,16 +32,18 @@ export const SignInSettingsSchema = z.object({
   mailSend: z.boolean().default(false),
   /** Read shared free/busy data only after a separate owner opt-in and new consent. */
   availability: z.boolean().default(false),
+  docsWrite: z.boolean().default(false),
 }).strict();
 export type SignInSettings = z.infer<typeof SignInSettingsSchema>;
 
 
 /** The scopes each service is asked for. Read-only unless the owner turned drafts on. */
-export function scopesFor(service: SignInService, drafts: boolean, calendarWrite = false, mailSend = false, availability = false): string[] {
+export function scopesFor(service: SignInService, drafts: boolean, calendarWrite = false, mailSend = false, availability = false, docsWrite = false): string[] {
   if (service === "google") return [
     "https://www.googleapis.com/auth/gmail.readonly",
     calendarWrite ? "https://www.googleapis.com/auth/calendar.events" : "https://www.googleapis.com/auth/calendar.events.readonly",
     "https://www.googleapis.com/auth/drive.readonly",
+    ...(docsWrite ? ["https://www.googleapis.com/auth/documents"] : []),
     // Gmail has no drafts-only scope; this one could also send, which Branch never does.
     ...(drafts ? ["https://www.googleapis.com/auth/gmail.compose"] : []),
     ...(mailSend ? ["https://www.googleapis.com/auth/gmail.send"] : []),
@@ -60,7 +62,7 @@ const labels: Record<SignInService, string> = { google: "Google", microsoft: "Mi
 /** The service described for the existing connection flow, without its client secret. */
 export function describeSignIn(service: SignInService, settings: SignInSettings, account = "default"): OAuthProvider {
   const base = { id: personalProviderId(service, account), label: labels[service], clientId: settings.clientId,
-    scopes: scopesFor(service, settings.drafts, settings.calendarWrite, settings.mailSend, settings.availability), extra: {} as Record<string, string> };
+    scopes: scopesFor(service, settings.drafts, settings.calendarWrite, settings.mailSend, settings.availability, settings.docsWrite), extra: {} as Record<string, string> };
   if (service === "google") return { ...base, authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token", extra: { access_type: "offline", prompt: account === "default" ? "consent" : "consent select_account" } };
   if (service === "microsoft") {
@@ -133,6 +135,12 @@ export class SignIn {
       throw new Error("Sign in again and consent to calendar changes. Your saved read-only grant cannot write events.");
   }
   mailPreviewIdentity(): string { return JSON.stringify([this.service, this.accountId(), this.settings(), this.revisions.get(this.accountId()) ?? 0]); }
+  async requireDocsWrite(): Promise<void> {
+    if (this.service !== "google" || !this.settings().docsWrite) throw new Error("Allow Docs changes on this Google account, then sign in again.");
+    const tokens = await this.deps.oauth.saved(personalProviderId(this.service, this.accountId()));
+    if (!tokens?.scope?.split(/\s+/).includes("https://www.googleapis.com/auth/documents"))
+      throw new Error("Sign in again and consent to Docs changes. Saved read-only grants cannot edit documents.");
+  }
   async requireMailSend(): Promise<void> {
     if (!this.settings().mailSend) throw new Error("Allow sending mail on your account card, then sign in again.");
     const tokens = await this.deps.oauth.saved(personalProviderId(this.service, this.accountId()));

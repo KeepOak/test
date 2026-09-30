@@ -53,6 +53,7 @@ function service([id, name]) {
     + `<label class="fld"><span>New account label</span><input class="inp" id="more18-${id}-new-account" autocomplete="off" maxlength="60"></label><button class="btn sm" data-act="more18-account-add" data-v="${id}">Add account</button>`
     + `<label class="fld"><span>${t("personal.signin.client")}</span><input class="inp" id="more18-${id}-client" value="${typed(`more18-${id}-client`, s.clientId)}" autocomplete="off"></label>`
     + `<label class="fld"><span>${t("personal.signin.secret-value")}</span><input class="inp" type="password" id="more18-${id}-secret" value="" autocomplete="new-password" spellcheck="false"></label>`
+    + (id === "google" ? `<label class="fld"><span>Allow Google Docs changes after confirmation</span><input type="checkbox" id="more18-${id}-docs" ${s.docsWrite ? "checked" : ""}></label><p class="hint">Save, then sign in again. Edits require a chosen tab, current revision and exact text preview.</p>` : "")
     + (id === "google" || id === "microsoft" ? `<label class="fld"><span>Allow calendar changes after confirmation</span><input type="checkbox" id="more18-${id}-calendar" ${s.calendarWrite ? "checked" : ""}></label><p class="hint">Save, then sign in again to allow event changes. Each change asks once. Calendar reminders are set for 24 hours before.</p>` : "")
     + (id === "google" || id === "microsoft" ? `<label class="fld"><span>Allow sending mail after preview and confirmation</span><input type="checkbox" id="more18-${id}-send" ${s.mailSend ? "checked" : ""}></label><p class="hint">Save, then sign in again to allow sending. Branch shows a local draft preview and asks Send? for each message.</p>` : "")
     + (id === "google" ? `<label class="fld"><span>Allow shared calendar availability</span><input type="checkbox" id="more18-${id}-availability" ${s.availability ? "checked" : ""}></label><p class="hint">Save and sign in again to compare accessible calendars. Outlook shared availability uses work or school accounts. Ask Branch to find a common slot; nothing is booked.</p>` : "")
@@ -81,7 +82,8 @@ async function save(id, account = M.signin[id]?.accountId ?? "default") {
     const send = document.getElementById(`more18-${id}-send`);
     const endpoint = accountPath(id, account);
     const availability = document.getElementById(`more18-${id}-availability`);
-    await api(endpoint, { clientId: client.value.trim(), ...(calendar ? { calendarWrite: calendar.checked } : {}), ...(send ? { mailSend: send.checked } : {}), ...(availability ? { availability: availability.checked } : {}) });
+    const docs = document.getElementById(`more18-${id}-docs`);
+    await api(endpoint, { clientId: client.value.trim(), ...(calendar ? { calendarWrite: calendar.checked } : {}), ...(send ? { mailSend: send.checked } : {}), ...(availability ? { availability: availability.checked } : {}), ...(docs ? { docsWrite: docs.checked } : {}) });
     delete M.typed[client.id];
     if (value) await api(`${endpoint}/secret`, { value });
     secret.value = "";
