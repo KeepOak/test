@@ -51,6 +51,7 @@ import { runToolChecksSafely, toolEvaluationLine } from "./tool-evaluations.js";
 import { readFile, writeFile } from "node:fs/promises";
 // Wave 5 (deployment): background running and setting-up repairs.
 import { daemonCommand, daemonLauncherName, type DaemonAction } from "./install/daemon.js";
+import { markStoppedOnPurpose } from "./install/systemd.js";
 import { doctorFix, doctorText } from "./doctor-fix.js";
 import { activityCommand } from "./safety-extras/cli.js"; // mac7/r17-g
 // mac3/security-check: the security self-check on the command line.
@@ -86,6 +87,8 @@ async function configuredApp(options: Parameters<typeof createBranch>[0]) {
       app.channelHost,
     );
     app.browser = integrations.hosted.browser ?? null;
+    // UP-SCREEN-004: a check a browser step met reaches the owner's webhooks and chats as a question does.
+    if (app.browser) app.browser.notify = (kind, data) => app.runtime.notifyEvent(kind, data);
     app.studies.browser = integrations.hosted.browser; // w911 (A1726) hook: MiniWoB studies open their page in this browser
     app.reach = { browserOrigins: integrations.hosted.browserOrigins ?? [], browserAnyWebsite: integrations.hosted.browserAnyWebsite === true,
       commandsMayReachInternet: integrations.hosted.commandsNetless !== true };
@@ -136,10 +139,11 @@ async function serve(
       );
     return closing;
   };
-  process.once("SIGINT", () => void stop());
-  process.once("SIGTERM", () => void stop());
+  // UP-PLATFORM-002: each of these is a stop on purpose, which systemd then leaves stopped (src/install/systemd.ts).
+  process.once("SIGINT", () => { markStoppedOnPurpose(); void stop(); });
+  process.once("SIGTERM", () => { markStoppedOnPurpose(); void stop(); });
   // bucket 22: after a `branch quit`, leave even if something still holds the process open.
-  stopEngine = () => stop().finally(() => { setTimeout(() => process.exit(0), 1000).unref(); });
+  stopEngine = () => { markStoppedOnPurpose(); return stop().finally(() => { setTimeout(() => process.exit(), 1000).unref(); }); };
   // mac3/never-break: tell the gateway where the engine is, and close when it asks or goes away.
   link?.onStop(stop);
   link?.ready(Number(new URL(server.url).port), app.version);

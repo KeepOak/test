@@ -27,6 +27,10 @@ export interface AccountState {
   resetAt?: string | null;
   /** long-work: true when `limitedUntil` is what the service or the plan meter said, not the hour assumed. */
   limitKnown?: boolean;
+  /** Plain rate limits (429s that are not a plan limit) in a row with no answer between, for the growing rest. */
+  rateFailures?: number;
+  /** When the last of them came (ms); a run of them older than a day is forgotten (openclaw's FAILURE_WINDOW_MS). */
+  lastRateAt?: number;
 }
 export const freshState = (): AccountState =>
   ({ restUntil: 0, models: new Map(), limitedUntil: 0, lastUsedAt: 0, uses: 0, lastError: null, remaining: null });
@@ -51,6 +55,23 @@ const billingCodes = new Set(["insufficient_quota", "billing_not_active", "billi
   "project_spend_limit_exceeded", "organization_usage_limit_exceeded"]);
 const planLimitCodes = new Set(["usage_limit_reached", "plan_limit_reached"]);
 const modelCodes = new Set(["model_not_found", "model_not_available", "unsupported_model"]);
+/**
+ * ChatGPT's "your plan does not include this" (openai/codex codex-rs/codex-api/src/api_bridge.rs, Apache-2.0): sent
+ * with a 429, it is about the model on this account, not about time, so the account is benched for that model only.
+ */
+const notIncludedCodes = new Set(["usage_not_included"]);
+
+/**
+ * The rest after a plain rate limit that did not say how long: 30 seconds, doubling with each one in a row, at most a
+ * day. Adapted from openclaw src/agents/auth-profiles/usage-failure-state.ts (MIT, Copyright (c) 2026 OpenClaw
+ * Foundation; see THIRD_PARTY_NOTICES.md): RATE_LIMIT_BACKOFF_BASE_MS, RATE_LIMIT_BACKOFF_MAX_MS and
+ * calculateCappedExponentialBackoffMs.
+ */
+export const rateBackoff = { baseMs: 30_000, maxMs: 24 * 60 * 60_000 } as const;
+export function rateBackoffMs(inARow: number): number {
+  const exponent = Math.min(Math.max(1, inARow) - 1, Math.ceil(Math.log2(rateBackoff.maxMs / rateBackoff.baseMs)));
+  return Math.min(rateBackoff.maxMs, rateBackoff.baseMs * 2 ** exponent);
+}
 
 /** The HTTP refusal inside an error, unless part of an answer had already arrived. */
 export function httpFailure(error: unknown): ProviderHttpError | null {
@@ -70,20 +91,32 @@ export function failureFor(error: unknown, now: number): Failure | null {
   const wait = failure.retryAfterMs;
   if (failure.code && modelCodes.has(failure.code) && [400, 403, 404].includes(failure.status))
     return { kind: "model", scope: "model", untilMs: now + restMs.model, reason: "model" };
+  if (failure.code && notIncludedCodes.has(failure.code))
+    return { kind: "model", scope: "model", untilMs: now + restMs.model, reason: "model" };
   if (failure.status === 401) return { kind: "auth", scope: "account", untilMs: now + restMs.refused, reason: "refused" };
   if (failure.status === 403) return { kind: "refused", scope: "account", untilMs: now + restMs.refused, reason: "refused" };
   if (failure.status === 402 || (failure.code && billingCodes.has(failure.code)))
     return { kind: "billing", scope: "account", untilMs: now + Math.max(restMs.billing, wait ?? 0), reason: "billing" };
+  // A plan limit says when it ends in its body (resets_at, openai/codex api_bridge.rs), else in Retry-After.
   if (failure.status === 429 && failure.code && planLimitCodes.has(failure.code))
-    return { kind: "limit", scope: "account", untilMs: now + (wait ?? restMs.limit), reason: "limit" };
+    return { kind: "limit", scope: "account", untilMs: failure.resetsAtMs ?? now + (wait ?? restMs.limit), reason: "limit" };
   if (failure.status === 429) return { kind: "rate", scope: "model", untilMs: now + (wait ?? restMs.rate), reason: "rate" };
   return null;
 }
 
-export function rest(state: AccountState, failure: Failure, model: string): void {
+/**
+ * Rests an account (or one model on it) after a failure. With `now`, a plain rate limit never moves a rest that is
+ * already running further out (openclaw's keepActiveWindowOrRecompute, see rateBackoffMs), so a burst of 429s cannot
+ * push an account's return later and later.
+ */
+export function rest(state: AccountState, failure: Failure, model: string, now?: number): void {
   if (failure.kind === "limit") state.limitedUntil = Math.max(state.limitedUntil, failure.untilMs);
   else if (failure.scope === "account") state.restUntil = Math.max(state.restUntil, failure.untilMs);
-  else state.models.set(model, Math.max(state.models.get(model) ?? 0, failure.untilMs));
+  else {
+    const running = state.models.get(model) ?? 0;
+    const keep = failure.kind === "rate" && now !== undefined && running > now;
+    state.models.set(model, keep ? running : Math.max(running, failure.untilMs));
+  }
 }
 
 /** Why an account cannot take this request now, or null when it can. */

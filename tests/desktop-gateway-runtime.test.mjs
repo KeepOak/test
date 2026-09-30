@@ -38,7 +38,8 @@ test("retained desktop gateway keeps its public proof and presence while replaci
   };
   await assert.rejects(daemonCommand("install", { platform: "win32", executable: process.execPath, script: entry,
     dataDir, workspace: join(home, "work"), port: 0, launcherPath: join(home, "daemon.vbs") },
-  { write: async () => {}, run: async () => { throw new Error("Access is denied"); } }), /Access is denied/);
+  { write: async () => {}, run: async () => { throw new Error("Access is denied"); }, writeShortcut: async () => { throw new Error("never here"); },
+    env: { APPDATA: join(home, "appdata") } }), /Only the installed Branch Agent app/);
   gateway = await startDesktopGateway({ dataDir, engineFile: entry, port: 0, version: "0.0.0",
     worker: () => ({ create: async (gone) => engine(home, dataDir, gone, children), version: "0.0.0", closeBroker: () => closed++ }),
     onWorker: (event) => { if (event.kind === "ready") ready.push(event.ready); } });

@@ -2,9 +2,15 @@ export interface EnginePowerWork {
   checkpoint(): void;
   due(): Promise<unknown>;
   flush(): Promise<void>;
+  /** The chat apps' look after waking (src/channels/router.ts `wake`): stale connections are started again. */
+  reconnect?(): Promise<void>;
+  log?(line: string): void;
 }
 
-/** Saved receipts remain authoritative; resume wakes due schedules and queued delivery without reattaching adapters. */
+/**
+ * Saved receipts remain authoritative; resume wakes due schedules and queued delivery, and has every chat app looked at
+ * so a connection that died in the sleep is started again (UP-PLATFORM-003).
+ */
 export class EnginePowerRecovery {
   private closed = false;
   private waking: Promise<boolean> | null = null;
@@ -20,6 +26,10 @@ export class EnginePowerRecovery {
   }
   private async wake(): Promise<boolean> {
     this.work.checkpoint();
+    // Never awaited here: the look waits up to a minute for each app's service, while the caller's resume call has ten
+    // seconds and due work must not wait on it. The router merges this with the watchdog's own late-beat wake.
+    void this.work.reconnect?.().catch((error: unknown) =>
+      this.work.log?.(`Chat apps after waking: ${error instanceof Error ? error.message : String(error)}`));
     await this.work.due();
     if (this.closed) return false;
     await this.work.flush();

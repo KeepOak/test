@@ -111,9 +111,23 @@ async function writeChecksum(archive) {
  * The commit this build is made from, written into the app (dist/build-info.json) so the Dev update channel can
  * tell whether the newest change is already the one running. CI gives it as GITHUB_SHA; a local build asks git.
  */
-export function buildInfo(env = process.env, askGit = () => spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).stdout) {
+export function buildInfo(env = process.env, askGit = () => spawnSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", windowsHide: true }).stdout,
+  history = commit => spawnSync("git", ["rev-list", "--max-count=2000", commit], { encoding: "utf8", windowsHide: true, timeout: 10000 }).stdout) {
   const commit = (env.GITHUB_SHA || askGit() || "").trim();
-  return { commit: /^[0-9a-f]{40}$/.test(commit) ? commit : null, builtAt: new Date().toISOString() };
+  const valid = /^[0-9a-f]{40}$/.test(commit);
+  const ancestors = valid ? (history(commit) || "").trim().split(/\s+/).filter(sha => /^[0-9a-f]{40}$/.test(sha)).slice(0, 2000) : [];
+  return { commit: valid ? commit : null, ancestors, builtAt: new Date().toISOString() };
+}
+
+/** Beta CI may check out one commit. Fetch bounded history so its stamp can prove included merges. */
+export function prepareBuildHistory(run = spawnSync) {
+  const options = { encoding: "utf8", windowsHide: true, timeout: 60000, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } };
+  const shallow = run("git", ["rev-parse", "--is-shallow-repository"], options);
+  if (shallow.status !== 0) return false;
+  if (shallow.stdout.trim() !== "true") return true;
+  const head = run("git", ["rev-parse", "HEAD"], options).stdout?.trim() ?? "";
+  if (!/^[0-9a-f]{40}$/.test(head)) return false;
+  return run("git", ["-c", "fetch.recurseSubmodules=false", "fetch", "--no-tags", "--filter=tree:0", "--deepen=2000", "origin", head], options).status === 0;
 }
 
 async function runPackager(options) {
@@ -336,6 +350,7 @@ async function main() {
     return packageWindows(options);
   }
   await stagePhoneApp();
+  if (!prepareBuildHistory()) warn("Build history is incomplete; source changes without inclusion proof will keep waiting.");
   await writeFile(join("dist", "build-info.json"), `${JSON.stringify(buildInfo())}\n`, "utf8");
   if (process.platform === "win32") return packageWindows(options);
   if (process.platform === "darwin") return packageMac(options);

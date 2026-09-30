@@ -119,7 +119,7 @@ test("Telegram forum topics keep separate sessions and route replies to the orig
   const { state, apiBase } = await fakeTelegram(t);
   const adapter = new TelegramAdapter({ id: "telegram", token: "123:abc", apiBase, pollTimeoutSeconds: 1 });
   await app.channels.attach(adapter, { activation: "mention", pairing: true, allowlist: [String(alice.id)] });
-  const addressed = (text, thread) => update(group, alice, `@BranchTestBot ${text}`, {
+  const addressed = (text, thread) => update({ ...group, is_forum: true }, alice, `@BranchTestBot ${text}`, {
     ...(thread === undefined ? {} : { message_thread_id: thread }),
     entities: [{ type: "mention", offset: 0, length: 14 }],
   });
