@@ -1,6 +1,7 @@
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import { historyIdeas } from "./history-ideas.js";
 import { todayActivity } from "./today-activity.js";
+import { homeConversation, changeHomeConversation } from "./home-conversation.js";
 import { currentTaskRun } from "./task-scope.js";
 import {
   createServer,
@@ -4188,6 +4189,27 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           || !app.store.profiles.isOwner() || app.sessionLock.locked())
           throw new HttpError(403, "Ideas requires the owner's unlocked local window.");
         send(response, 200, historyIdeas(app.store, app.runtime.owner, (text) => app.runtime.hideSecrets(text)));
+        return;
+      }
+      if (path === "/api/home-conversation" && ["GET", "POST"].includes(request.method ?? "")) {
+        const requireLocalOwner = () => {
+          if (throughDoor(request) || currentPerson() || currentTaskRun() || startedWithShortLivedKey()
+            || !app.store.profiles.isOwner() || app.sessionLock.locked())
+            throw new HttpError(403, "Home conversation requires the owner's unlocked local window.");
+        };
+        requireLocalOwner();
+        const profileRevision = app.store.profiles.authorityRevision, lockRevision = app.sessionLock.authorityRevision;
+        const actorKey = ownerKeyFor(request);
+        if (request.method === "POST") {
+          const body = await readBody(request, 2048);
+          requireLocalOwner();
+          if (profileRevision !== app.store.profiles.authorityRevision || lockRevision !== app.sessionLock.authorityRevision
+            || actorKey !== token || ownerKeyFor(request) !== token)
+            throw new HttpError(403, "Your sign-in, profile or lock changed. Review Home again.");
+          try { changeHomeConversation(app.store, app.runtime.owner, body); }
+          catch (error) { throw new HttpError(400, error instanceof Error ? error.message : "Invalid Home conversation change."); }
+        }
+        send(response, 200, homeConversation(app.store, app.runtime.owner, (text) => app.runtime.hideSecrets(text)));
         return;
       }
       // ---- Wave mac3: the owner's dashboard (src/dashboard-api.ts). What this key may do is worked
