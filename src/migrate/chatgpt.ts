@@ -15,6 +15,7 @@ export async function scanChatGPT({ tree }: ScanInput): Promise<ScanResult> {
     "Only visible user and assistant text comes over as imported history. System instructions, hidden reasoning, tool messages, files, pictures and other non-text parts are left out. Nothing becomes saved memory or an instruction.",
   ];
   const seen = new Set<string>();
+  let retainedBytes = 0, retainedNodes = 0;
   for (const raw of exported) {
     const conversation = asRecord(raw), id = asString(conversation.id) || asString(conversation.conversation_id);
     if (!id || id.length > 200 || seen.has(id)) throw new Error("The export has missing, repeated or oversized conversation IDs");
@@ -25,7 +26,7 @@ export async function scanChatGPT({ tree }: ScanInput): Promise<ScanResult> {
     const parents = new Set<string>();
     for (const nodeId of ids) {
       const parent = asRecord(mapping[nodeId]).parent;
-      if (parent !== null && parent !== undefined && (typeof parent !== "string" || !(parent in mapping)))
+      if (parent !== null && parent !== undefined && (typeof parent !== "string" || !Object.hasOwn(mapping, parent)))
         throw new Error("A ChatGPT conversation has an incomplete parent mapping");
       if (typeof parent === "string") parents.add(parent);
     }
@@ -62,6 +63,10 @@ export async function scanChatGPT({ tree }: ScanInput): Promise<ScanResult> {
         if (words.length) messages.push({ role, content: words.join("\n\n") });
       }
       const clean = tidyMessages(messages), refusal = chatRefusal(clean);
+      retainedBytes += Buffer.byteLength(JSON.stringify(clean));
+      retainedNodes += path.length;
+      if (retainedBytes > 32 * 1024 * 1024 || retainedNodes > 100000)
+        throw new Error("The repeated branch history is too large; choose a smaller ChatGPT export");
       const provenance = ChatProvenanceSchema.parse({ conversationId: id, leafId: leaf, nodePath: path,
         current: conversation.current_node === leaf, omittedParts });
       const title = clip(asString(conversation.title) || "A ChatGPT conversation", 100);
