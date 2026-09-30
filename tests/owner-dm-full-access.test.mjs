@@ -22,38 +22,41 @@ import { setLockdown } from "../dist/lockdown.js";
 const OWNER = "5660235788", FRIEND = "friend-2";
 const powers = ["files.write", "shell.execute", "settings.write"];
 
-async function fixture(t) {
+async function fixture(t, tool = "shell.execute", mode = "full") {
   const root = await mkdtemp(join(tmpdir(), "branch-owner-dm-full-"));
-  const ran = [];
+  const ran = [], sent = [];
   // Calls the stand-in command tool once, then answers.
   const provider = { name: "scripted", complete: async (request) =>
     request.messages.at(-1)?.role === "tool" ? { content: "Done.", toolCalls: [] }
-      : { content: "", toolCalls: [{ id: `t${ran.length}-${Date.now()}`, name: "shell.execute", arguments: "{}" }] } };
+      : { content: "", toolCalls: [{ id: `t${ran.length}-${Date.now()}`, name: tool,
+        arguments: tool === "shell.execute" ? JSON.stringify({ executable: "node", args: ["-p", "1+1"] }) : "{}" }] } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   t.after(async () => { await app.close(); await discardTemp(root); });
   if (!app.registry.names().includes("shell.execute"))
     app.registry.register({ name: "shell.execute", permission: "shell.execute", description: "stand-in", group: "core",
-      parameters: z.object({}).strict(), execute: async () => { ran.push(1); return { ran: true }; } });
+      parameters: z.object({ executable: z.string(), args: z.array(z.string()) }).strict(), execute: async () => { ran.push(1); return { ran: true }; } });
   app.channels.mergeWindowMs = 0;
   app.channels.liveTiming = { ...app.channels.liveTiming, progressAfterMs: 60_000 };
   await app.channels.attach({ id: "tg", kind: "telegram", botName: () => "bot", async start() {}, async stop() {},
-    async send() { return "1"; } }, { activation: "always", pairing: true, allowlist: [OWNER, FRIEND] });
+    async send(chatId, text) { sent.push({ chatId, text }); return String(sent.length); },
+    async sendButtons(chatId, text, buttons) { sent.push({ chatId, text, buttons }); return String(sent.length); } },
+  { activation: "always", pairing: true, allowlist: [OWNER, FRIEND] });
   t.after(() => app.channels.detachAll());
   saveOwnerCommands(app.store, app.runtime.owner, { on: false, accounts: [{ channel: "tg", sender: OWNER }] });
-  // The window's Access level for a new conversation: Full access.
-  saveConversationModeSettings(app.store, app.runtime.owner, { newConversation: "full" });
+  // The window's Access level for a new conversation (Full access unless a test says otherwise).
+  saveConversationModeSettings(app.store, app.runtime.owner, { newConversation: mode });
   let n = 0;
-  const say = async (senderId, chatKind = "direct") => {
+  const say = async (senderId, chatKind = "direct", text = "run it") => {
     const before = new Set(app.store.runs(app.runtime.owner).map((r) => r.id));
     await app.channels.handle({ channel: "tg", chatId: chatKind === "direct" ? senderId : "group-1", chatKind, senderId,
-      senderName: senderId, chatTitle: "Group", text: "run it", addressed: true, messageId: `m${++n}` });
+      senderName: senderId, chatTitle: "Group", text, addressed: true, messageId: `m${++n}` });
     const run = app.store.runs(app.runtime.owner).find((r) => !before.has(r.id));
     assert.ok(run, "the message started a task");
     const given = app.store.events(run.id).find((e) => e.kind === "run.started").data.permissions;
     return { run: app.store.run(run.id), given, origin: runOrigin(app.store, run.id).source,
       fromChat: startedFromChat({ runId: run.id }, app.store) };
   };
-  return { app, say, ran };
+  return { app, say, ran, sent };
 }
 
 const shortList = (given) => given.every((p) => chatSafePermissions.includes(p));
@@ -100,4 +103,24 @@ test("turning the switch off returns the short list, and an earlier task is no l
   assert.ok(shortList(given), `switch off: ${given}`);
   assert.equal(origin, "channel");
   assert.equal(runOrigin(app.store, first.run.id).source, "channel", "checked afresh, not remembered");
+});
+
+test("a real owner-only tool (Branch's own settings) answers the owner's DM and refuses the owner's group", async (t) => {
+  const { app, say } = await fixture(t, "settings.list");
+  const outcome = (run) => app.store.events(run.id).find((e) => e.kind === "tool.completed" || e.kind === "tool.failed");
+  const own = await say(OWNER);
+  assert.equal(outcome(own.run)?.kind, "tool.completed", JSON.stringify(outcome(own.run)?.data));
+  const group = await say(OWNER, "group");
+  assert.equal(outcome(group.run)?.kind, "tool.failed", "a group is not the owner");
+});
+
+test("on Ask first, the owner answers the command's own Yes from that DM", async (t) => {
+  const { app, say, ran, sent } = await fixture(t, "shell.execute", "ask");
+  const { run } = await say(OWNER);
+  assert.equal(run.status, "needs_input", "Ask first waits for a yes, as the window does");
+  const yes = sent.flatMap((one) => one.buttons ?? []).find((button) => button.value.startsWith("y:"));
+  assert.ok(yes, "the DM is offered the Yes (owner commands are off)");
+  await app.channels.handle({ channel: "tg", chatId: OWNER, chatKind: "direct", senderId: OWNER, senderName: OWNER,
+    text: yes.value, addressed: true, messageId: "yes-1" });
+  assert.equal(ran.length, 1, "the owner's Yes from the DM ran it");
 });

@@ -41,7 +41,8 @@ import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
 import { setOwnerChatCheck } from "../key-context.js"; // owner-dm-full
-import { conversationModeSettings, readConversationMode, type ConversationMode } from "../conversation-mode.js"; // owner-dm-full
+import { conversationModeSettings, looserThan, readConversationMode, type ConversationMode } from "../conversation-mode.js"; // owner-dm-full
+import { readPolicy } from "../policy.js"; // owner-dm-full
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
@@ -894,7 +895,7 @@ export class ChannelRouter {
     if (!adapter) return;
     // A command from the owner's own chat is shown whole, as a code block, before its Yes (src/channels/owner-commands.ts).
     const permission = this.runtime.registry.permissionOf(waiting.tool);
-    const command = permission === commandPermission && this.ownerCommandsFrom(message)
+    const command = permission === commandPermission && (this.ownerCommandsFrom(message) || this.ownerFullFrom(message))
       && commandBytesExact(waiting.tool, waiting.bytes, waiting.fingerprint) ? commandShown(waiting.bytes) : null;
     const asked = command ? `${lead}${waiting.question}\n\n` : lead + waiting.question;
     const checked = await this.outboundGuard(this.hideLeaks(command ? asked + command : asked));
@@ -1094,15 +1095,17 @@ export class ChannelRouter {
   }
   /**
    * owner-dm-full: the owner's own chat's conversation starts on what a new conversation in the window starts on
-   * (Settings › Permissions › New conversations, e.g. Full access), once, when it has no mode of its own; one the owner
-   * picked is never changed. Null when it follows the owner's setting, or the conversation is new (then returned for
-   * the task to start it with).
+   * (Settings › Permissions › New conversations, e.g. Full access). A conversation that already exists is given it once,
+   * only when it has no mode of its own and the start is looser than the owner's setting (so it never freezes one on
+   * something stricter); one the owner picked is never changed. Null when it follows the owner's setting, or the
+   * conversation is new (then returned for the task to start it with).
    */
   private ownerChatMode(sessionId: string | undefined): ConversationMode | null {
     const wanted = conversationModeSettings(this.store, this.runtime.owner).newConversation;
     if (wanted === "follow") return null;
     if (!sessionId) return wanted;
-    if (!readConversationMode(this.store, this.runtime.owner, sessionId)) this.runtime.startMode(sessionId, wanted);
+    if (!readConversationMode(this.store, this.runtime.owner, sessionId) && looserThan(wanted, readPolicy(this.store, this.runtime.owner).preset))
+      this.runtime.startMode(sessionId, wanted);
     return null;
   }
   /** owner-dm-full: the switch is on and nothing holds the app (Lockdown, the App lock). */
@@ -1176,7 +1179,9 @@ export class ChannelRouter {
   private commandYesHere(channel: string, chatId: string, runId: string, fingerprint: string,
     from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined }): boolean {
     if (!fingerprint || !from?.senderId || from.chatKind !== "direct") return false;
-    if (!this.ownerCommandsFrom({ channel, senderId: from.senderId, chatKind: from.chatKind, ...(from.caughtUp ? { caughtUp: true } : {}) })) return false;
+    // owner-dm-full: the owner's own verified direct chat with full access may press it too, still for these exact bytes.
+    if (!this.ownerCommandsFrom({ channel, senderId: from.senderId, chatKind: from.chatKind, ...(from.caughtUp ? { caughtUp: true } : {}) })
+      && !this.ownerFullFrom({ channel, senderId: from.senderId, chatKind: from.chatKind })) return false;
     const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
     return came?.channel === channel && came?.chatId === chatId;
   }
