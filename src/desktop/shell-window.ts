@@ -5,9 +5,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { UpdateDeferredError } from "./updater.js";
 import { invisibleMoment, markShellUp, takeHandOver, writeHandOver } from "./shell-switch.js";
-import { folderPath, pruneAppFolders, readPointer, type Layout } from "./app-folders.js";
+import { folderPath, PointerSchema, pruneAppFolders, readPointer, retireFlatCopy, tidyRetirement, type Layout, type Pointer } from "./app-folders.js";
+import { programInUse } from "./program-in-use.js";
 import { daemonLauncherName } from "../install/daemon.js";
-import { runKey, runValueName } from "../install/installer.js";
+import { runKey, runValueName, shippedIconPath } from "../install/installer.js";
 import { readRegistryValue, writeRegistryValues } from "../install/windows.js";
 
 /**
@@ -105,6 +106,8 @@ export interface SettleDeps {
   readText?: (path: string) => Promise<string | null>;
   writeText?: (path: string, text: string) => Promise<void>;
   prune?: typeof pruneAppFolders;
+  retire?: typeof retireFlatCopy;
+  inUse?: (program: string) => Promise<boolean>;
 }
 
 /**
@@ -112,7 +115,7 @@ export interface SettleDeps {
  * instead of an older one of the same install (shortcuts are refreshed at every start, windows-identity.ts). Older
  * versions go once nothing runs from them. Paths of any other program are never touched.
  */
-export async function settleLayout(layout: Layout, executableName: string, dataDir: string, deps: SettleDeps = {}): Promise<{ runKey: boolean; launcher: boolean; pruned: string[] }> {
+export async function settleLayout(layout: Layout, executableName: string, dataDir: string, deps: SettleDeps = {}): Promise<{ runKey: boolean; launcher: boolean; pruned: string[]; retired: boolean }> {
   const program = join(folderPath(layout.root, layout.folder), executableName);
   const readRegistry = deps.readRegistry ?? readRegistryValue, writeRegistry = deps.writeRegistry ?? writeRegistryValues;
   let runKeyMoved = false, launcherMoved = false;
@@ -132,12 +135,80 @@ export async function settleLayout(layout: Layout, executableName: string, dataD
     launcherMoved = true;
   }
   const pointer = await readPointer(layout.root);
-  const pruned = pointer && pointer.folder === layout.folder ? await (deps.prune ?? pruneAppFolders)(layout.root, pointer) : [];
-  return { runKey: runKeyMoved, launcher: launcherMoved, pruned };
+  const settled = pointer !== null && pointer.folder === layout.folder;
+  const pruned = settled ? await (deps.prune ?? pruneAppFolders)(layout.root, pointer) : [];
+  // The one-time move off the flat layout: once the flat copy is not needed to go back, its app becomes the stable
+  // launcher (app-folders.ts, retireFlatCopy). Only after the shortcuts, the Run key and the engine's launcher above
+  // name this version, so nothing still starts the flat app itself.
+  let retired = false;
+  if (settled) {
+    await tidyRetirement(layout.root);
+    retired = await (deps.retire ?? retireFlatCopy)(layout.root, pointer, { executableName,
+      icon: join(folderPath(layout.root, layout.folder), shippedIconPath), inUse: deps.inUse ?? ((program) => programInUse(program)) });
+  }
+  return { runKey: runKeyMoved, launcher: launcherMoved, pruned, retired };
 }
 
 /** Whether this start follows a switch to this very version (its pointer names this folder). */
 export function switchedHere(layout: Layout | null): boolean {
   if (!layout?.folder) return false;
   try { return JSON.parse(readFileSync(join(layout.root, "current.json"), "utf8"))?.folder === layout.folder; } catch { return false; }
+}
+
+/** Set on a start forwarded to the version in use, so that one never forwards again (no loop, whatever the disk says). */
+export const forwardedVariable = "BRANCH_FORWARDED_FROM";
+
+/**
+ * A start of a version that is not the one `current.json` names (a shortcut, the taskbar or "start with Windows" still
+ * naming an older folder, or the version before after a switch with no window open): the program of the version in use,
+ * to start in its place, or null to start this one. Only another version of this same install is ever named.
+ */
+export function forwardTarget(layout: Layout | null, executableName: string, env: NodeJS.ProcessEnv,
+  deps: { readText: (path: string) => string | null; exists: (path: string) => boolean }): { program: string; version: string } | null {
+  if (!layout || env[forwardedVariable]) return null;
+  let pointer: Pointer | null = null;
+  try { pointer = PointerSchema.parse(JSON.parse(deps.readText(join(layout.root, "current.json")) ?? "null")); } catch { pointer = null; }
+  if (!pointer || pointer.folder === layout.folder) return null;
+  const program = join(layout.root, pointer.folder, executableName);
+  return deps.exists(program) ? { program, version: pointer.version } : null;
+}
+
+export interface ForwardDeps {
+  /** Starts the program with this start's own arguments; answers its process id. */
+  start: (program: string) => number | null;
+  /** Whether that version has said its window is up, now or ever before (`shellUpMarker`, written at every window start). */
+  up: (version: string) => boolean;
+  /** Ends one process, with what it started, by its id. */
+  end: (pid: number) => Promise<void>;
+  /** Whether the version doing the forwarding can still read the saved work (version-switch.ts, goingBackIsSafe). */
+  safe: () => Promise<boolean>;
+  /** One rename of `current.json` back to the version before (app-folders.ts, rollBackPointer); false when there is none. */
+  rollBack: () => Promise<boolean>;
+  /** Leaves the note this version reads once it is up (shell-switch.ts, SwitchFailure). */
+  tell: (tried: string) => Promise<void>;
+  sleep: (ms: number) => Promise<void>;
+  upSeconds?: number;
+}
+
+/**
+ * Forwarding a start to the version in use, guarded. A version that has had a window up before is simply started. One
+ * that never has (put in use by the gateway with no window open, so nothing watched it) is watched here the way the
+ * switch watches it: if its window does not come up in time, that process is ended and, when the saved work allows it,
+ * the pointer goes back and this version starts as itself ("went-back"), so a broken update can never leave Branch
+ * unable to open. Answers "forwarded" (this start ends) or "went-back" (this start goes on as itself).
+ */
+export async function guardedForward(target: { program: string; version: string }, deps: ForwardDeps): Promise<"forwarded" | "went-back"> {
+  const confirmed = deps.up(target.version);
+  const pid = deps.start(target.program);
+  if (confirmed) return "forwarded";
+  for (let waited = 0; waited < (deps.upSeconds ?? 120); waited++) {
+    if (deps.up(target.version)) return "forwarded";
+    await deps.sleep(1000);
+  }
+  if (deps.up(target.version)) return "forwarded";
+  if (pid) await deps.end(pid).catch(() => undefined);
+  // Not safe for the saved work, or no version before: the version in use is started once more rather than this one.
+  if (!(await deps.safe()) || !(await deps.rollBack())) { deps.start(target.program); return "forwarded"; }
+  await deps.tell(target.version).catch(() => undefined);
+  return "went-back";
 }
