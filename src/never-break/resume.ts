@@ -2,6 +2,7 @@ import { describeToolCall } from "../activity.js";
 import type { FeatureMode } from "../feature-switches.js";
 import type { Runtime } from "../runtime.js";
 import type { Run } from "../contracts.js";
+import { outsideSourceOf } from "../outside-origin.js";
 import { runOrigin } from "../key-context.js"; // bucket 19 (integration review)
 import { withRecoveryContext } from "./recovery-context.js";
 import { underProject } from "../project-scope.js";
@@ -276,6 +277,22 @@ async function recoverRun(input: RecoveryInput, runId: string, steps: OpenStep[]
       input.store.event(runId, "run.can_continue", { note: "Branch was restarted while this task was working. Continue it when you are ready." });
       return { runId, outcome: "offered", steps: decided };
     }
+    recovery?.signal.throwIfAborted();
+    checkProject();
+    // Journal reconciliation has a saved context; normal resume must independently preserve that authority.
+    await withRecoveryContext(input, runId, (context) => {
+      const events = input.store.events(runId);
+      const started = events.find((event) => event.kind === "run.started")?.data;
+      const helperCopy = events.some((event) => event.kind === "worktree.used"
+        && typeof event.data.branch === "string" && event.data.branch.startsWith("branch/helper-"));
+      if (context.depth > 0 || context.agent || started?.ownCopy === true || helperCopy)
+        throw new Error("The interrupted helper's saved authority and copy cannot yet be restored by normal continuation. Its journal was reconciled within the saved limits; automatic model continuation was held.");
+      const candidate = outsideSourceOf(input.store, runId)
+        ? runOrigin(input.store, runId).permissions
+        : [...input.runtime.context({ signal: context.signal }).permissions];
+      if (!candidate || candidate.some((permission) => !context.permissions.has(permission)))
+        throw new Error("Normal continuation would exceed this task's recorded tool permissions. Its journal was reconciled within the saved limits; automatic model continuation was held.");
+    });
     recovery?.signal.throwIfAborted();
     checkProject();
     // Each step keeps its call id, so a team task can tell which of them it has a record of (src/team-reconcile.ts).
