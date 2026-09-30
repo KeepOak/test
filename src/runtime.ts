@@ -174,6 +174,7 @@ import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
 import * as savings from "./model-savings/hook.js";
 import { KeepAlive } from "./model-savings/keep-alive.js";
+import { thresholdPreset } from "./model-savings/cost-thresholds.js";
 // --- end R17-E ---
 import { Orchestration, PlanOnlyAnswer, orchestrationSettings, type ConductOptions, type PlanAnswer, type StoredPlan } from "./orchestration.js";
 import { patternNote, patternOfTool, patternQuestion, type TeamPattern } from "./team-pattern.js"; // eng-trunk-controls
@@ -1262,18 +1263,28 @@ export class Runtime {
   /** Exact recorded key ceilings only; legacy or changed Trunk scope remains held. */
   recoveryTrunkContext(runId: string, context: ToolContext): ToolContext {
     const saved = resumeAuthority(this.store, runId, this.owner, this.registry.permissions());
-    if (!saved.trunkId) return context;
+    const ambient = currentAccountCall()?.trunk;
+    if (ambient && (!saved.trunkScope || (ambient.id !== undefined && ambient.id !== saved.trunkScope.id)
+      || JSON.stringify(ambient.keys) !== JSON.stringify(saved.trunkScope.keys)))
+      throw new Error("An existing account scope conflicts with the task's recorded recovery authority. Reconcile it before continuing.");
+    const { trunk: _ambientTrunk, trunkKeys: _ambientKeys, ...unmarked } = context;
+    if (!saved.trunkId) return unmarked;
     const run = this.store.run(runId)!;
     const shape = this.trunkShape({ prompt: "", sessionId: run.sessionId, source: saved.source });
     const scope = saved.trunkScope;
     if (!shape || !scope || shape.trunkId !== scope.id || shape.agent !== scope.agent || (shape.owners === true) !== scope.owners
       || JSON.stringify(shape.keys) !== JSON.stringify(scope.keys))
       throw new Error("The task's recorded Trunk identity or credential-key ceiling changed. Reconcile it before continuing.");
-    return { ...context, trunkKeys: scope.keys, ...(scope.owners ? {} : { trunk: scope.id }) };
+    return { ...unmarked, trunkKeys: scope.keys, ...(scope.owners ? {} : { trunk: scope.id }) };
   }
 
   inRecoveryAccountScope<T>(context: ToolContext, work: () => Promise<T>): Promise<T> {
-    return this.asTrunk(context, work);
+    // Recovery never reuses an ambient mark, even for the same Trunk id: only
+    // the independently validated immutable credential ceiling applies.
+    const ambient = currentAccountCall()?.trunk;
+    return withAccountCall({ owner: this.owner, sessionId: this.modelAccountSession(context.runId), runId: context.runId,
+      ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: this.trunkSignIns(context.runId) && (!ambient || ambient.signIns === true),
+        ...(context.trunk ? { id: context.trunk } : {}) } } : {}) }, work);
   }
 
   async resume(runId: string, restriction?: ReturnType<Runtime["recoveryHandoff"]>, onAdmitted?: (run: Run) => void): Promise<Run> {
@@ -1294,7 +1305,9 @@ export class Runtime {
     // A room turn or a Trunk's routine keeps its plain title (run.titled) when it carries on.
     const titled = this.store.events(runId).find((event) => event.kind === "run.titled")?.data.title;
     const again = { prompt: previous.prompt, sessionId: previous.sessionId, resumeFrom: previous.id,
-      ...(onAdmitted ? { onCreated: onAdmitted } : {}),
+      // Creation names a child before potentially slow copy allocation. Admission
+      // is later: only a task whose placement guards passed can be called resumed.
+      ...(onAdmitted ? { onStarted: onAdmitted } : {}),
       ...(Number.isFinite(deadline) && deadline > 0 ? { timeoutMs: deadline } : {}),
       ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {
@@ -2664,7 +2677,8 @@ ${run.output.slice(0, 6000)}`;
     // mac7/smoke-fixes (B5): nobody can be asked about the plan. A chat app is a person who can
     // answer, so it is not one of them (nobodyToAskAboutPlan in src/coding/project-tests.ts).
     const conductor = this.orchestration.conductor(run,
-      { ...conduct, ...planned, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
+      { ...conduct, ...planned, signal: context.signal, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
+        checkLifecycle: () => this.checkPaused(run.id),
         memory: { scope: memoryScope(this.store, context), agent: memoryAgent(context) } },
       (aside) => this.aside(run, context, route, aside));
     const opening = await this.openConductor(run, conductor);
@@ -4141,6 +4155,14 @@ ${run.output.slice(0, 6000)}`;
     // A task that must stay on this computer never reaches a connection elsewhere, whichever part of it asks:
     // a side job that names its own connection is answered by the one here instead, and with none here it stops.
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
+    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
+    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
+    preset = thresholdPreset(this.store, this.models, this.owner, preset, { runId: run.id,
+      allowFallback: !pinnedHelper && !this.helperModels.has(run.id),
+      mayUse: (next) => (!this.staysHere.has(run.id) || presetRunsLocally(next))
+        && (!context.trunkKeys || trunkSignIns || !isSignInConnection(next))
+        && this.models.canDo(next, "tools") && (!shape || this.models.canDo(next, "json-mode"))
+        && (!messages.some((message) => message.images?.length) || this.models.canDo(next, "vision")) });
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
     // The owner's "auto" limits are no limit on a sign-in or a model here, and finite on a key billed per token; a key's
@@ -4155,7 +4177,6 @@ ${run.output.slice(0, 6000)}`;
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
-    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
@@ -4170,7 +4191,6 @@ ${run.output.slice(0, 6000)}`;
       messages, tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
       shape: shape?.name ?? null,
     };
-    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
     const kept = pinnedHelper ? null : this.requestCache.look(cacheKey);
     if (kept) return this.shownThinking(this.answeredFromCache(run, preset, kept, input));
     context.budget.charge(input);
@@ -4246,6 +4266,7 @@ ${run.output.slice(0, 6000)}`;
         preset: preset.id,
         provider: preset.provider.name,
         model: preset.model,
+        ...(preset.catalogId ? { catalogId: preset.catalogId } : {}),
       });
       // Dogfood B7: a real model has answered, so the first-run card is done with (src/onboarding.ts). An empty
       // reply is no answer (NAS ca8db88): only words, or a tool call, count.
@@ -4707,7 +4728,7 @@ ${run.output.slice(0, 6000)}`;
     // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
     const loosening = fullAccess ? settingsHold(tool, args) : null;
-    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;

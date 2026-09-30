@@ -48,12 +48,13 @@ export const builtInImagePrices: Record<string, number> = {
 };
 /**
  * models-ui: the picture models Branch knows by kind of picture route (src/media-images.ts ImageEndpoint.kind), read off
- * the price table so a model is offered only where its price is on file. Settings › Models › Media offers the ones that
- * fit the connection making pictures now; anything else the owner typed stays theirs.
+ * the price table for key-based routes. Codex's plan route uses its fixed model with unknown cost.
+ * Settings › Models › Media offers models for the current route; other typed names stay the owner's.
  */
-export const knownPictureModels: Record<"openai" | "gemini", string[]> = {
+export const knownPictureModels: Record<"openai" | "gemini" | "codex", string[]> = {
   openai: Object.keys(builtInImagePrices).filter((model) => !model.startsWith("gemini")),
   gemini: Object.keys(builtInImagePrices).filter((model) => model.startsWith("gemini")),
+  codex: ["gpt-image-2"],
 };
 export interface ImageCostEstimate {
   amount: number | null;

@@ -36,6 +36,7 @@ const BASE_SWITCHES = () => `@@STATUS@@
       <div class="ctl"><b>${t("window.settings.permissions.read-files-in-documents-and-downloads")}</b><input class="sw" type="checkbox" id="p-read" @@read@@ aria-label="${t("window.settings.permissions.read-files-in-documents-and-downloads")}" data-sw="set"><small>${t("window.settings.permissions.reading-never-changes-a-file")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.use-the-browser-on-this-computer")}</b><input class="sw" type="checkbox" id="p-browse" @@browse@@ aria-label="${t("window.settings.permissions.use-the-browser-on-this-computer")}" data-sw="set"><small>${t("window.settings.permissions.signs-in-with-your-saved-sign")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.send-email-and-messages")}</b><input class="sw" type="checkbox" id="p-send" @@message@@ aria-label="${t("window.settings.permissions.send-email-and-messages")}" data-sw="set"><small>${t("window.settings.permissions.off-means-every-message-waits-for")}</small></div>
+      <div class="ctl"><b>${t("window.settings.permissions.ordinary-settings-without-asking")}</b><input class="sw" type="checkbox" id="p-ordinary-settings" @@ordinary@@ aria-label="${t("window.settings.permissions.ordinary-settings-without-asking")}" data-sw="set"><small>${t("window.settings.permissions.ordinary-settings-scope")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.install-tools-and-packages")}</b><input class="sw" type="checkbox" id="p-install" @@install@@ aria-label="${t("window.settings.permissions.install-tools-and-packages")}" data-sw="set"><small>${t("window.settings.permissions.off-means-a-request-shows-up")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.record-tasks-so-you-can-watch")}</b><input class="sw" type="checkbox" id="p-record" @@record@@ aria-label="${t("window.settings.permissions.record-tasks-so-you-can-watch")}" data-sw="set"><small>${t("window.settings.permissions.recordings-stay-on-this-computer")}</small></div>
     </div>
@@ -67,8 +68,8 @@ async function load() {
   const quiet = (path) => api(path).catch((error) => { toast(error.message); return null; });
   const [pol, cats, lock, kit, rules, privacy, safety, wall, comfort] = await Promise.all([api("policy").catch(() => null), api("approvals/categories").catch(() => null), api("lockdown").catch(() => null),
     quiet("settings-kit"), quiet("rules"), quiet("privacy"), quiet("safety-extras"), quiet("os-sandbox"), E.profiles?.isOwner === false ? null : quiet("comfort"), loadOs17(), loadKit(), loadPracticeRuns()]);
-  // Messages per conversation per hour is the owner's own limit (GET /api/knobs limits), which a household person may not read.
-  P.knobs = E.profiles?.isOwner === false ? null : await quiet("knobs");
+  // Both the owner's limits and own-settings rule are unavailable to household profiles.
+  [P.knobs, P.selfRules] = E.profiles?.isOwner === false ? [null, null] : await Promise.all([quiet("knobs"), quiet("self-rules")]);
   Object.assign(P, { policy: pol?.policy ?? null, presets: pol?.presets ?? [], categories: cats?.categories ?? [], locked: !!lock?.on, loaded: true,
     pins: kit?.pins ?? [], kit: kit?.settings ?? [], rules: rules?.rules ?? [], privacy, safety, wall, care: comfort?.values?.browser ?? null });
   render();
@@ -174,6 +175,7 @@ function fill(html) {
   const status = preset ? `<div class="status"><span class="sdot ${P.policy.preset === "off" ? "warn" : ""}"></span><div><b>${esc(say(preset.label))}</b><p>${esc(say(preset.description))}</p></div></div>` : "";
   return html.replace("@@STATUS@@", status).replace("@@PINS@@", pinRows()).replace("@@RULES@@", ruleRows()).replace("@@LOCK@@", P.locked ? t("dashboard.controls.lockdownOff") : t("dashboard.controls.lockdownOn"))
     .replace(/@@(read|browse|message)@@/g, (_, id) => (allowed(id) ? "checked" : ""))
+    .replace("@@ordinary@@", P.selfRules ? onIf(P.selfRules.ownSettings === "allowed") : "disabled")
     .replace("@@record@@", onIf(kitOn("run-recording"))).replace("@@loop@@", onIf(kitOn("loop_guard"))).replace("@@scan@@", onIf(kitOn("safety-command-scan")))
     .replace("@@pii@@", onIf(piiOn(P))).replace("@@code@@", onIf(codesOn(P))).replace("@@install@@", onIf(allowed("commands") && allowed("settings")))
     .replace("@@PRACTICE@@", practiceAttrs()).replace("@@WALL@@", wall()).replace("@@DOWNLOADS@@", DOWNLOADS()).replace("@@ADVOPEN@@", advOpen ? "open" : "").replace("@@RATE@@", rateAttrs());
@@ -208,6 +210,14 @@ function askLoosen(error, body, path = "approvals/categories") {
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="perm-loosen8">${t("settings-kit.confirm")}</button>` });
 }
 
+/* An explicit settings.change rule, independent of the broader settings category.
+   The existing confirmation path presents the engine's exact loosening decision. */
+async function saveOrdinarySettings(checked) {
+  const body = { control: "ownSettings", value: checked ? "allowed" : "ask" };
+  try { await api("self-rules", body); } catch (error) { askLoosen(error, body, "self-rules"); }
+  await load();
+}
+
 /* Messages per conversation per hour: the engine's own limit (knobs limits.messagesPerConversationHour), saved alone with
    POST /api/knobs { card: "limits", values: { messagesPerConversationHour } }, which keeps the card's other values. A
    household person's box is drawn without its id, greyed with the owner-only reason. */
@@ -229,8 +239,14 @@ const KIT = {
   "f15-scan-commands-for-hidden-characters": { key: "safety-command-scan", field: "mode" },
 };
 
+function settingChanged(e) {
+  if (KIT[e.target?.id]) changed(e.target, KIT);
+  else if (e.target?.id === "p-rate") saveRate(e.target);
+  else if (e.target?.id === "p-ordinary-settings") saveOrdinarySettings(e.target.checked);
+}
+
 export function init() {
-  markLive(["sw:p-read", "sw:p-browse", "sw:p-send", "perm-lock", "pin-add8", "pin-do8", "pin-rm8",
+  markLive(["sw:p-read", "sw:p-browse", "sw:p-send", "sw:p-ordinary-settings", "perm-lock", "pin-add8", "pin-do8", "pin-rm8",
     "rule-add8", "rule-dec8", "rule-save8", "rule-rm8", "sw:rule-new8", "perm-loosen8",
     "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17", "sw:p-rate", "p-dl", ...guardsLive]);
   on("p-dl", async (el) => {
@@ -241,7 +257,7 @@ export function init() {
   initGuards({ P, load, askLoosen });
   initOs17();
   initPracticeRuns(load);
-  document.addEventListener("change", (e) => { if (KIT[e.target?.id]) changed(e.target, KIT); else if (e.target?.id === "p-rate") saveRate(e.target); });
+  document.addEventListener("change", settingChanged);
   document.addEventListener("toggle", (e) => { if (e.target?.matches?.(".set-col details.adv") && e.target.querySelector("#p-loop")) advOpen = e.target.open; }, true);
   on("pin-add8", (el) => pinMenu(el));
   on("pin-do8", (el) => setPinned(el, true));

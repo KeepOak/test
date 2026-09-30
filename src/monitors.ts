@@ -8,6 +8,7 @@ import type { WebAccess } from "./integrations/web.js";
 import { applyContentPolicy, detectInjection } from "./content-guard.js";
 import type { DeliveryHandler } from "./scheduler.js";
 import { automationHealth, type Health, type HealthEntry } from "./heartbeat.js";
+import { PriceConditionSchema, priceCondition, priceHistory, observePrice, priceSummary, type PriceCondition, type PricePoint } from "./monitor-price.js";
 
 /**
  * Keeping an eye on a page or a search for the person. Each watch remembers what it saw last time;
@@ -26,6 +27,7 @@ export const MonitorSchema = z.object({
   every: z.union([z.number().int().min(5).max(43200), z.string().trim().regex(/^\d+\s*(m|h|d|min|mins|minutes?|hours?|days?)?$/i)]),
   notifyVia: notifySchema.default("activity"),
   label: z.string().trim().max(120).optional(),
+  price: PriceConditionSchema.optional(),
 }).strict().refine((value) => !!value.url !== !!value.query, "Watch either an address or a search, not both");
 export type MonitorInput = z.infer<typeof MonitorSchema>;
 export interface MonitorRecord {
@@ -34,6 +36,7 @@ export interface MonitorRecord {
   lastCheckedAt: string | null; nextAt: string; changes: number;
   /** Healthy, failing or never run, from the last few looks. */
   health: Health; lastError: string | null;
+  price?: PriceCondition | null; lastPrice?: PricePoint | null;
 }
 export interface MonitorCheck {
   id: string; changed: boolean; summary: string; delivered: string | null;
@@ -108,6 +111,8 @@ export class Monitors {
     if (!columns.has("last_error")) this.db.exec("ALTER TABLE monitors ADD COLUMN last_error TEXT");
     // Q141: the Trunk that made the watch, if one did.
     if (!columns.has("made_by")) this.db.exec("ALTER TABLE monitors ADD COLUMN made_by TEXT");
+    if (!columns.has("price_rule")) this.db.exec("ALTER TABLE monitors ADD COLUMN price_rule TEXT");
+    if (!columns.has("prices")) this.db.exec("ALTER TABLE monitors ADD COLUMN prices TEXT NOT NULL DEFAULT '[]'");
   }
   /** Writes one look into the short record the health badge reads. */
   private remember(id: string, entry: HealthEntry, error: string | null): void {
@@ -134,17 +139,25 @@ export class Monitors {
    * Starts a watch and takes the first look right away, so the next change is a real change. `context` is the tool
    * call behind it; the app's own watch route has none.
    */
-  async create(owner: string, input: unknown, signal?: AbortSignal, context?: ToolContext): Promise<MonitorRecord> {
+  async create(owner: string, input: unknown, signal?: AbortSignal, context?: ToolContext, beforeSave?: () => void): Promise<MonitorRecord> {
     const value = MonitorSchema.parse(input);
+    if (value.price && !value.url) throw new Error("A price watch needs a page address, not search results");
+    if (value.price) this.store.profiles.requireOwner("Creating a price watch");
     if (value.notifyVia !== "activity") requireMaySendToChats(this.store, context);
     const minutes = everyMinutes(value.every), id = randomUUID(), now = new Date();
     const kind = value.url ? "page" : "search", target = value.url ?? value.query!;
+    const baseline = value.price ? await this.observe(kind, target, signal) : null;
+    signal?.throwIfAborted();
+    const prices = value.price ? observePrice(value.price, [], baseline!, new Date().toISOString()).history : [];
+    if (value.price) this.store.profiles.requireOwner("Creating a price watch");
+    if (value.price && value.notifyVia !== "activity") requireMaySendToChats(this.store, context);
+    beforeSave?.();
     this.db.prepare(`INSERT INTO monitors(id, owner, kind, target, label, every_minutes, notify, hash, snapshot,
-      checked_at, next_at, changes, created_at, made_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      checked_at, next_at, changes, created_at, made_by, price_rule, prices) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
       id, owner, kind, target, value.label ?? target.slice(0, 120), minutes, JSON.stringify(value.notifyVia),
       null, null, null, new Date(now.getTime() + minutes * 60000).toISOString(), 0, now.toISOString(),
-      watchMadeBy(context, this.trunks));
-    const text = await this.observe(kind, target, signal).catch((error) => `Could not be read: ${errorText(error)}`);
+      watchMadeBy(context, this.trunks), value.price ? JSON.stringify(value.price) : null, JSON.stringify(prices));
+    const text = baseline ?? await this.observe(kind, target, signal).catch((error) => `Could not be read: ${errorText(error)}`);
     this.db.prepare("UPDATE monitors SET hash=?, snapshot=?, checked_at=? WHERE id=?")
       .run(digest(text), text.slice(0, snapshotChars), now.toISOString(), id);
     return this.one(owner, id);
@@ -153,6 +166,13 @@ export class Monitors {
     const row = this.db.prepare("SELECT * FROM monitors WHERE owner=? AND id=?").get(owner, id);
     if (!row) throw new Error("There is no watch with that number");
     return toRecord(row);
+  }
+  history(owner: string, id: string, context?: ToolContext): { currency: string; prices: PricePoint[] } {
+    const row = this.db.prepare("SELECT * FROM monitors WHERE owner=? AND id=?").get(owner, id);
+    if (!row || !watchVisibleTo(context, this.trunks, row.made_by)) throw new Error("There is no watch with that number");
+    const rule = priceCondition(row.price_rule);
+    if (!rule) throw new Error("This is not a price watch");
+    return { currency: rule.currency, prices: priceHistory(row.prices) };
   }
   /** What the watch is looking at right now, as plain text. */
   private async observe(kind: string, target: string, signal?: AbortSignal): Promise<string> {
@@ -171,24 +191,30 @@ export class Monitors {
     const row = this.db.prepare("SELECT * FROM monitors WHERE owner=? AND id=?").get(owner, id);
     if (!row || !watchVisibleTo(context, this.trunks, row.made_by)) throw new Error("There is no watch with that number"); // A2
     const record = toRecord(row);
+    if (this.inFlight.has(id)) throw new Error("That watch is already being checked");
     const next = new Date(now.getTime() + record.everyMinutes * 60000).toISOString();
     this.inFlight.add(id);
     try {
       const started = new Date().toISOString();
       const text = await this.observe(record.kind, record.target, signal);
+      signal?.throwIfAborted();
+      if (!this.db.prepare("SELECT 1 FROM monitors WHERE owner=? AND id=?").get(owner, id)) throw new Error("That watch was stopped while being checked");
       const before = String(row.snapshot ?? "");
       // A different fingerprint with the same lines (spacing, order) is not news: it is kept, not sent.
-      const changed = digest(text) !== String(row.hash ?? "") && linesDiffer(before, text);
-      const summary = changed ? describeChange(record, before, text) : `No change at ${record.label}.`;
+      const price = record.price ? observePrice(record.price, priceHistory(row.prices), text, now.toISOString()) : null;
+      const changed = price ? price.changed : digest(text) !== String(row.hash ?? "") && linesDiffer(before, text);
+      const summary = changed ? price && record.price ? priceSummary(record.price, price.amount, price.previous, record.target, now.toISOString())
+        : describeChange(record, before, text) : `No ${price ? "qualifying " : ""}change at ${record.label}.`;
       // Q141: a watch a Trunk made sends to its chat only while that Trunk may still send to chats.
       const madeBy = row.made_by ? String(row.made_by) : null;
       const held = changed && record.notifyVia !== "activity" && madeBy && !this.trunks.maySend(madeBy)
         ? (this.trunks.offReason() ?? trunkMayNotSend) : null;
       // The news goes out before the new copy is kept: a delivery that fails leaves the old copy in
       // place, so the same change is noticed again next time instead of being lost silently.
-      const delivered = changed ? await this.announce(owner, record, summary, held) : null;
-      this.db.prepare("UPDATE monitors SET hash=?, snapshot=?, checked_at=?, next_at=?, changes=? WHERE id=?")
-        .run(digest(text), text.slice(0, snapshotChars), now.toISOString(), next, record.changes + (changed ? 1 : 0), id);
+      const delivered = changed ? await this.announce(owner, record, summary, held, price ? `${row.checked_at}:${price.amount}` : undefined) : null;
+      this.db.prepare("UPDATE monitors SET hash=?, snapshot=?, checked_at=?, next_at=?, changes=?, prices=? WHERE id=?")
+        .run(digest(text), text.slice(0, snapshotChars), now.toISOString(), next, record.changes + (changed ? 1 : 0),
+          price ? JSON.stringify(price.history) : String(row.prices ?? "[]"), id);
       this.remember(id, { status: "completed", startedAt: started, finishedAt: new Date().toISOString() }, null);
       return { id, changed, summary, delivered, ...(held ? { held } : {}) };
     } finally { this.inFlight.delete(id); }
@@ -216,7 +242,7 @@ export class Monitors {
    * Sends the summary to the chosen chat, or puts it in the activity list when none was chosen, or when it is
    * `held` from its chat: then the activity list says why, and the hold is recorded.
    */
-  private async announce(owner: string, record: MonitorRecord, summary: string, held: string | null = null): Promise<string | null> {
+  private async announce(owner: string, record: MonitorRecord, summary: string, held: string | null = null, priceKey?: string): Promise<string | null> {
     if (record.notifyVia === "activity" || !this.deliver || held) {
       const run = this.store.createRun(owner, `Watch: ${record.label}`);
       this.store.message(run.sessionId, { role: "assistant", content: held ? `${summary}\n\n${held}` : summary });
@@ -226,7 +252,7 @@ export class Monitors {
       return "activity";
     }
     const { channel, chatId } = record.notifyVia;
-    await this.deliver(channel, chatId, summary, `monitor:${record.id}:${Date.now()}`);
+    await this.deliver(channel, chatId, summary, `monitor:${record.id}:${priceKey ?? Date.now()}`);
     return `${channel}:${chatId}`;
   }
 }
@@ -250,6 +276,7 @@ function toRecord(row: Record<string, unknown>): MonitorRecord {
     lastCheckedAt: row.checked_at === null ? null : String(row.checked_at),
     nextAt: String(row.next_at), changes: Number(row.changes ?? 0),
     health: automationHealth(recent), lastError: row.last_error ? String(row.last_error) : null,
+    price: priceCondition(row.price_rule), lastPrice: priceHistory(row.prices).at(-1) ?? null,
   };
 }
 /** What changed, in sentences: how many lines came and went, with a few of each. */
@@ -269,7 +296,7 @@ export function describeChange(record: MonitorRecord, before: string, after: str
 export function registerMonitors(registry: ToolRegistry, monitors: Monitors): void {
   registry.register({
     name: "monitor.create", reach: "outbound", permission: "monitors.manage",
-    description: "Watch a web page or a web search and say what changed. Give an address or a search, how often to look (for example \"6h\"), and where to send the news — a chat, or the activity list.",
+    description: "Watch a web page or search and say what changed. Optional price rule watches one unique literal label followed by its currency marker and amount; alerts only on a lower price below the threshold. Give the exact item, currency and number format. The first price must be readable before scheduling. History keeps 100 valid observations.",
     parameters: MonitorSchema,
     execute: async (input, context) => monitors.create(context.owner, input, context.signal, context),
   });
@@ -284,6 +311,12 @@ export function registerMonitors(registry: ToolRegistry, monitors: Monitors): vo
     description: "Look at one watch right now instead of waiting for its next turn, and report what changed.",
     parameters: z.object({ id: z.string().uuid() }).strict(),
     execute: async ({ id }, context) => monitors.check(context.owner, id, new Date(), context.signal, context),
+  });
+  registry.register({
+    name: "monitor.prices", permission: "monitors.read",
+    description: "Read up to 100 retained valid price observations for a price watch; includes their timestamps and currency.",
+    parameters: z.object({ id: z.string().uuid() }).strict(),
+    execute: async ({ id }, context) => monitors.history(context.owner, id, context),
   });
   registry.register({
     name: "monitor.remove", permission: "monitors.manage",

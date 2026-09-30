@@ -38,7 +38,7 @@ import { HookSchema, type Hooks, type HookRunner, type HookConfig } from '../hoo
 import type { ToolContext } from '../contracts.js';
 import type { NetworkPolicy } from '../network-policy.js';
 import type { GitTools } from './git.js';
-import { GitHubAccess, GitHubConfigSchema, type TokenSource } from './github.js';
+import { GitHubAccess, GitHubConfigSchema, type TokenSource, type GitHubConfig } from './github.js';
 import { GitHubAppSettingsSchema, chooseGitHubTokenSource } from './github-app.js';
 import { registerGitHub, registerGitRemote } from './git-tools.js';
 import { GitLabAccess, GitLabConfigSchema } from './gitlab.js';
@@ -172,6 +172,8 @@ export interface ChannelHost { router: ChannelRouter; secret: (name: string) => 
   slackEvents?: (channelId: string, event: unknown, botUserId: string | null) => void;
   /** Version control on this computer, so the remote and GitHub tools can be switched on here. */
   git?: GitTools; activeSecret?: (name: string) => Promise<string>;
+  /** Owner's public GitHub device connection, used only after a configured token is absent. */
+  githubToken?: (config: GitHubConfig) => Promise<string | null>;
   /** RES-719: GitLab named in the launch file, handed to the engine's own GitLab connection (src/gitlab-connection.ts). */
   gitlab?: (settings: unknown) => void;
   /** The workspace, so the browser can send a file to a website and keep one it sends back. */
@@ -609,13 +611,19 @@ function enableGit(registry: ToolRegistry, config: z.infer<typeof GitConfigSchem
 
   // bucket-18: GitHub App (A2227): the owner's own app when switched on, the personal token otherwise.
   const github = GitHubConfigSchema.parse(config.github);
-  const personal: TokenSource = async () => {
-    const value = await secret(github.tokenSecret).catch(() => '');
-    if (!value) throw new Error(`Connect GitHub first: save a secret called ${github.tokenSecret} in the active project holding a GitHub personal access token.`);
-    return value;
-  };
+  const personal = githubPersonalToken(github, host);
   const tokenSource = chooseGitHubTokenSource(config.githubApp, personal, policy, secret, { apiBase: github.apiBase });
   registerGitHub(registry, new GitHubAccess(config.github, policy, tokenSource), host.git);
+}
+
+function githubPersonalToken(config: GitHubConfig, host: ChannelHost): TokenSource {
+  return async () => {
+    const configured = await host.activeSecret!(config.tokenSecret).catch(() => '');
+    if (configured) return configured;
+    const connected = await host.githubToken?.(config);
+    if (connected) return connected;
+    throw new Error(`Connect GitHub first: save ${config.tokenSecret} in the active project, or connect your Branch OAuth app in Settings › Developer.`);
+  };
 }
 
 /**
@@ -646,7 +654,8 @@ function enableIssues(
   const trackers: IssueTrackers = {};
   if (config.github) {
     const settings = GitHubConfigSchema.parse(git?.github ?? {});
-    trackers.github = new GitHubAccess(settings, policy, held(settings.tokenSecret, 'GitHub', 'a GitHub personal access token'));
+    const personal = githubPersonalToken(settings, host);
+    trackers.github = new GitHubAccess(settings, policy, chooseGitHubTokenSource(git?.githubApp, personal, policy, secret, { apiBase: settings.apiBase }));
   }
   if (config.linear) {
     const settings = LinearConfigSchema.parse(config.linear);
