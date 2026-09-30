@@ -11,6 +11,7 @@ import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { initPause } from "./pause.js";
 import { init as initShare } from "./share.js";
+import { initTrunkImport } from "./trunk-import.js";
 import { looks17, look17, NEW17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
@@ -573,6 +574,7 @@ async function setRule(el, field) {
 export function init() {
   initPause();
   initShare();
+  initTrunkImport();
   markLive(["room-rules", "room-rule", "room-pat", "grp-rule"]);
   on("room-rules", (el) => openRules(el.dataset.id));
   on("room-rule", (el) => setRule(el, "rule"));

@@ -8,7 +8,7 @@
 
 import { setupNeeds } from "../core/setup-needs.js";
 import { esc, renderNow, paint } from "../core/dom.js";
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, ownerHere } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg } from "../core/ui.js";
 import { markLive, greyOut } from "../core/features.js";
 import { api } from "../core/api.js";
@@ -88,7 +88,8 @@ function trunksTab() {
   /* Pass 18: with no Trunks yet, the list is a welcome with one button that makes the first. */
   const top = E.trunks.length ? `<div class="acts" data-css="margin:6px 0 4px"><button class="btn pri" type="button" data-act="chat" data-id="new">${ic('plus', 's')}${t("studio.tab.trunk")}</button>
     <button class="btn" type="button" data-act="grp-new">${ic('room', 's')}${t("window.places.customize.a-new-room")}</button></div>${rows}` : E.trunksRead ? empty18("customize:trunks") : "";
-  return `<div class="rows">${top}
+  const importFile = ownerHere() ? `<div class="acts"><button class="btn" type="button" data-act="trunk-import">${ic("doc", "s")}${esc(say("Import a Trunk file"))}</button></div>` : "";
+  return `<div class="rows">${top}${importFile}
     <div class="sec"><h2>${t("window.places.customize.start-from-a-job")}</h2><div class="grid2">${jobs}</div></div></div>`;
 }
 
