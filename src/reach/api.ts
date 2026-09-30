@@ -61,6 +61,7 @@ function overview({ reach }: ReachHttpDeps) {
 const reads: Record<string, Handler> = {
   "/api/reach": overview,
   "/api/reach/machines": ({ reach }) => ({ machines: reach.machines.list() }),
+  "/api/reach/continuity": ({ reach }) => ({ transfers: reach.continuity.list() }),
   "/api/reach/trunks/roster": ({ reach }) => reach.remoteTrunks.shared(),
   "/api/reach/trunks/keys": ({ reach }) => ({ keys: reach.remoteTrunks.keys() }),
   "/api/reach/notes": ({ reach }) => ({ notes: reach.notes.list() }),
@@ -72,6 +73,15 @@ const reads: Record<string, Handler> = {
  * or run a program on this one, so they are the owner's, not a short-lived key's.
  */
 const changes: Record<string, Handler> = {
+  "/api/reach/continuity/start": async (d) => d.reach.continuity.start(await d.readBody()),
+  "/api/reach/continuity/prepare": async (d) => d.reach.continuity.prepare(await d.readBody()),
+  "/api/reach/continuity/preview": async (d) => d.reach.continuity.preview(await d.readBody()),
+  "/api/reach/continuity/retry": async (d) => d.reach.continuity.dispatch(await d.readBody()),
+  "/api/reach/continuity/inspect": async (d) => d.reach.continuity.status(await d.readBody()),
+  "/api/reach/continuity/reclaim": async (d) => d.reach.continuity.reclaim(await d.readBody()),
+  "/api/reach/continuity/receive": async (d) => d.reach.continuity.receive(await d.readBody(), d.keyId),
+  "/api/reach/continuity/status": async (d) => d.reach.continuity.remoteStatus(await d.readBody(), d.keyId),
+  "/api/reach/continuity/release": async (d) => d.reach.continuity.release(await d.readBody(), d.keyId),
   "/api/reach/machines/all": async (d) => d.reach.machines.lookAll((await body(d, z.object({ view: z.enum(["health", "working", "conversations"]).default("health") }).strict())).view),
   "/api/reach/trunks/remote": async ({ reach }) => ({ computers: await reach.remoteTrunks.roster() }),
   "/api/reach/usb/devices": async ({ reach }) => ({ devices: await reach.usb.devices() }),
@@ -124,6 +134,7 @@ export const reachLockdownRefusal = "Lockdown is on, so nothing here changes or 
 /** Integration review: under Lockdown every change is refused, except switching a part off. */
 async function lockdownGate(deps: ReachHttpDeps, path: string): Promise<void> {
   if (deps.method !== "POST" || !lockedDown(deps.reach.store, deps.reach.owner)) return;
+  if (["/api/reach/continuity/status", "/api/reach/continuity/release", "/api/reach/continuity/reclaim"].includes(path)) return;
   if (path === "/api/reach/switch") {
     const body = await deps.readBody();
     deps.readBody = async () => body;
