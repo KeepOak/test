@@ -155,7 +155,7 @@ function allowed(id) {
 function wall() {
   const title = t("window.settings.permissions.system-sandbox-for-commands");
   const opts = [["off", t("accounts.switch.off")], ["when-needed", t("accounts.switch.when-needed")], ["on", t("window.places.automations.always")]];
-  if (P.wall?.computer?.available && K.kit) return kitSeg(title, "", "os-sandbox", "mode", opts);
+  if (P.wall?.computer?.available && K.kit) return kitSeg(title, t("describe.os-sandbox"), "os-sandbox", "mode", opts);
   return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([, l]) => `<button type="button" aria-pressed="false" data-act="seg" data-why="p-wall">${esc(l)}</button>`).join("")}</span></span><small>${esc(P.wall?.computer?.reason ?? "")}</small></div>`;
 }
 const onIf = (yes) => (yes ? "checked" : "");
