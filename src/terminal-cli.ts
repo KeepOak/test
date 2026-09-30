@@ -9,6 +9,7 @@ import { policyPresets } from "./policy.js";
 import { pricingSettings } from "./pricing.js";
 import { limitLines } from "./usage-limits.js"; // mac7/usage-bar
 import { usageLimits } from "./usage-limits-api.js"; // mac7/usage-bar
+import { analyticsLines, usageAnalytics } from "./accounts/usage-analytics.js";
 import { choosePreset, historyLines, presetLines, presetWords } from "./terminal-commands.js";
 import { PLACE_ROWS, connectionRows, skillRows, type Row } from "./terminal-place-data.js";
 import { TERMINAL_ALIASES, TERMINAL_CLI_COMMANDS } from "./terminal-parity.js";
@@ -242,10 +243,12 @@ async function usageCommand(app: Branch, io: Io): Promise<void> {
   // mac7/usage-bar: the same rows the Usage screen draws, in the same words, as plain lines.
   // It is the owner's figure, so a household profile is refused and simply gets nothing here.
   const limits = await usageLimits(app).catch(() => null);
-  if (io.json) return io.write(JSON.stringify({ ...stats, ...(limits ? { limits } : {}) }, null, 2));
+  const analytics = usageAnalytics(app.store, app.runtime.owner, stats.monthStart.slice(0, 7));
+  if (io.json) return io.write(JSON.stringify({ ...stats, ...(limits ? { limits } : {}), analytics }, null, 2));
   const words = wordsFor(app, io.env);
   io.write(usageLine(stats, words));
   if (stats.unpricedRuns) io.write(words.t("dashboard.spend.unpriced", "Tasks on a model with no price on file, not in this figure: {count}", { count: stats.unpricedRuns }));
+  for (const line of analyticsLines(analytics)) io.write(line);
   if (!limits) return;
   io.write("");
   io.write(`${words.t("glance.title", "What each connection has left")}:`);
