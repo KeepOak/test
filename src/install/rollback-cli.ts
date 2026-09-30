@@ -118,10 +118,12 @@ const observer = (input: RollbackCliInput) => (entry: ActivationEntry) =>
 
 /** Answers with an exit code: 0 only when it did what it says, or when a check found nothing wrong. */
 export async function rollbackCommand(input: RollbackCliInput): Promise<number> {
-  // The Windows swap is a mirror run by a batch file, not the moves this does; going back there is
-  // the app's Updates screen, as installing is. Said plainly rather than half-attempted.
+  // Windows keeps each version in its own folder (src/desktop/app-folders.ts), and going back is the pointer flip the
+  // switch and the gateway's watch make by themselves when a new version does not open. A by-hand undo from here is not
+  // built for Windows, and Settings › Updates' undo is greyed too, so this says what really happens rather than pointing
+  // at a button that is not there.
   if ((input.platform ?? process.platform) === "win32") {
-    input.print("On Windows, go back to the previous version from the app: Settings, Updates. `branch rollback` works on macOS and Linux.");
+    input.print("On Windows, Branch goes back to the version before by itself when a new version does not open, and keeps your work while it does. Going back by hand is not built for Windows yet; `branch rollback` works on macOS and Linux.");
     return 1;
   }
   const { journal, reset } = openActivationJournal(join(input.dataDir, activationJournalName));
