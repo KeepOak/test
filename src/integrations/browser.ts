@@ -713,7 +713,7 @@ export class BranchBrowser {
     const run = scoped();
     if (!observed) return { changed: false, handedOff: false, alreadyMatched: true };
     if (entry.control && entry.control.view().epoch !== beforeEpoch) throw new Error('Browser control changed during the watch.');
-    const control = entry.control ?? this.adoptRun(context.owner, run.sessionId, context.runId, '');
+    const control = entry.control ?? await this.adoptRun(context.owner, run.sessionId, context.runId, '');
     await control.offerToOwner(control.view().epoch, context.runId, () => { scoped(); });
     return { changed: true, handedOff: true, browserId: control.id, conversation: run.sessionId,
       note: 'The recorded text condition changed. This page is kept for your Take over; no owner input grant was issued.' };
