@@ -9,9 +9,11 @@ import type { Message } from './contracts.js';
 import { estimateTokens, ProviderStreamError } from './contracts.js';
 import { lockdownActive } from './lockdown.js';
 import { mcpValidator } from './integrations/mcp-sdk.js';
+import { ElicitationOrigin, McpUrlElicitation } from './mcp-url-elicitation.js';
 
 export const McpOwnerRequestSettings = z.object({
   sampling: z.boolean().default(false), elicitation: z.boolean().default(false),
+  urlElicitation: z.boolean().default(false), urlOrigins: z.array(ElicitationOrigin).max(10).default([]),
   requestsPerMinute: z.number().int().min(1).max(20).default(3),
   tokenCap: z.number().int().min(128).max(8192).default(2048),
   models: z.array(z.string().min(1).max(64)).max(16).default([]),
@@ -33,48 +35,60 @@ interface Pending {
 export class McpOwnerRequests {
   private windowUntil = 0;
   private windowOwner = '';
+  private nativeOpener = false;
+  readonly urls: McpUrlElicitation;
   private readonly pending = new Map<string, Pending>();
   private readonly rates = new Map<string, number[]>();
   constructor(private readonly store: Store, private readonly owner: () => string,
-    private readonly models: ModelRouter) {}
+    private readonly models: ModelRouter, private readonly locked: () => boolean = () => false,
+    vetUrl: (url: URL) => Promise<void> = async () => { throw new Error('Browser questions are unavailable.'); }) {
+    this.urls = new McpUrlElicitation(owner, () => this.ready() && this.nativeOpener, vetUrl);
+  }
 
   settings(server: string): Settings {
     const saved = McpOwnerRequestSettings.safeParse(this.store.get('settings', this.owner(), `mcp-owner-requests:${server}`)?.data ?? {});
     return saved.success ? saved.data : McpOwnerRequestSettings.parse({});
   }
   save(input: unknown): void {
-    if (!this.store.profiles.isOwner() || lockdownActive(this.store, this.owner())) throw new Error('Change server choices in the unlocked owner window.');
+    if (!this.store.profiles.isOwner() || this.locked() || lockdownActive(this.store, this.owner())) throw new Error('Change server choices in the unlocked owner window.');
     const value = z.object({ server: ServerId, settings: McpOwnerRequestSettings }).strict().parse(input);
     if (value.settings.sampling && !value.settings.models.length) throw new Error('Choose at least one allowed model.');
+    if (value.settings.urlElicitation && !value.settings.urlOrigins.length) throw new Error('Approve at least one exact HTTPS origin.');
     for (const id of value.settings.models) {
       const preset = this.models.presets.get(id);
       if (!preset || !bounded(preset)) throw new Error('Choose an available model connection that enforces a token limit without program tools.');
     }
     this.store.save('settings', this.owner(), `mcp-owner-requests:${value.server}`, value.settings);
+    this.urls.cancel(value.server);
     for (const item of this.pending.values()) if (item.server === value.server) item.finish({ action: 'cancel' });
   }
   /** A visible form polls every five seconds; no window heartbeat means no capability or spending. */
-  window(): unknown {
+  window(input: unknown = {}): unknown {
+    const value = z.object({ nativeUrlOpener: z.boolean().optional() }).strict().parse(input);
+    this.nativeOpener = value.nativeUrlOpener === true;
     this.windowOwner = this.owner(); this.windowUntil = Date.now() + 15_000;
     return { requests: [...this.pending.values()].filter(p => p.owner === this.owner())
       .map(({ id, server, kind, details }) => ({ id, server, kind, details })),
-      models: [...this.models.presets.values()].filter(bounded).map(p => ({ id: p.id, name: p.name })) };
+      urls: this.urls.list(), models: [...this.models.presets.values()].filter(bounded).map(p => ({ id: p.id, name: p.name })) };
   }
   closeWindow(): void {
     this.windowUntil = 0;
+    this.nativeOpener = false; this.urls.cancel();
     for (const item of this.pending.values()) item.finish({ action: 'cancel' });
   }
   private ready(): boolean {
     return Date.now() < this.windowUntil && this.windowOwner === this.owner()
-      && this.store.profiles.isOwner() && !lockdownActive(this.store, this.owner());
+      && this.store.profiles.isOwner() && !this.locked() && !lockdownActive(this.store, this.owner());
   }
-  capabilities(server: string): ClientCapabilities {
+  capabilities(server: string, _modern = false, urlReady = false): ClientCapabilities {
     if (!this.ready()) return {};
     const settings = this.settings(server);
     return { ...(settings.sampling && settings.models.length ? { sampling: {} } : {}),
-      ...(settings.elicitation ? { elicitation: { form: {} } } : {}) };
+      ...(settings.elicitation || (urlReady && this.nativeOpener && settings.urlElicitation)
+        ? { elicitation: { ...(settings.elicitation ? { form: {} } : {}),
+          ...(urlReady && this.nativeOpener && settings.urlElicitation ? { url: {} } : {}) } } : {}) };
   }
-  private guard(server: string, kind: Pending['kind'], spend = true): Settings {
+  private guard(server: string, kind: Pending['kind'] | 'urlElicitation', spend = true): Settings {
     const settings = this.settings(server);
     if (!this.ready() || !settings[kind]) throw new Error('The owner window is unavailable or this server feature is off.');
     if (!spend) return settings;
@@ -112,11 +126,21 @@ export class McpOwnerRequests {
       this.pending.set(id, { id, server, kind, details, owner: this.owner(), settings: JSON.stringify(settings), finish });
     });
   }
-  async install(client: Client, server: string): Promise<void> {
-    const { CreateMessageRequestSchema, ElicitRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
-    const capabilities = this.capabilities(server);
+  async install(client: Client, server: string, negotiated?: ClientCapabilities): Promise<() => void> {
+    const { CreateMessageRequestSchema, ElicitRequestSchema, ElicitationCompleteNotificationSchema } = await import('@modelcontextprotocol/sdk/types.js');
+    const capabilities = negotiated ?? this.capabilities(server), connection = randomUUID(), closed = new AbortController();
+    if (capabilities.elicitation?.url) client.setNotificationHandler(ElicitationCompleteNotificationSchema,
+      notification => this.urls.complete(connection, notification.params.elicitationId));
     if (capabilities.sampling) client.setRequestHandler(CreateMessageRequestSchema, (request, extra) => this.sample(server, request.params, extra.signal));
-    if (capabilities.elicitation) client.setRequestHandler(ElicitRequestSchema, (request, extra) => this.elicit(server, request.params, extra.signal));
+    if (capabilities.elicitation) client.setRequestHandler(ElicitRequestSchema, (request, extra) => {
+      if (request.params.mode !== 'url') return this.elicit(server, request.params, extra.signal);
+      if (!capabilities.elicitation?.url) throw new Error('Browser questions were not negotiated.');
+      const settings = this.guard(server, 'urlElicitation'), saved = JSON.stringify(settings), owner = this.owner();
+      return this.urls.ask(server, connection, request.params, settings.urlOrigins,
+        () => this.ready() && this.owner() === owner && JSON.stringify(this.settings(server)) === saved,
+        AbortSignal.any([extra.signal, closed.signal]));
+    });
+    return () => { closed.abort(); this.urls.cancel(server, connection); };
   }
   private async sample(server: string, input: unknown, signal: AbortSignal) {
     const settings = this.guard(server, 'sampling');

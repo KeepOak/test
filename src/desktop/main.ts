@@ -57,6 +57,7 @@ import { sameAppOrigin, signedHeaders, windowKeyReader } from "./signed-headers.
 import { ownDownload } from "./own-download.js";
 import { registerClipboardFilesIpc } from "./clipboard-files-ipc.js";
 import { registerShowInFolderIpc } from "./show-in-folder-ipc.js"; // dogfood-ux-3
+import { registerMcpElicitationIpc } from './mcp-elicitation-ipc.js';
 import { isPasteKeys, PasteGate } from "./clipboard-paths.js";
 // Talk live: the microphone, only for a call the owner started (src/desktop/talk-live-mic.ts).
 import { registerTalkLiveMicIpc, TalkLiveMic } from "./talk-live-mic.js";
@@ -381,6 +382,7 @@ async function createWindow(
   registerConversationExportIpc(window, url);
   registerClipboardFilesIpc(window, url, key, pasteGate, client.fetch);
   registerShowInFolderIpc(window, url, key, undefined, client.fetch);
+  registerMcpElicitationIpc(window, url, key, client.fetch);
   updater = registerUpdaterIpc(window, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: async () => updateReadiness(url, key(), client.fetch) });
   // Asked for from an open window, so the new copy opens its window too, even after a quiet start.

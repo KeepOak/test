@@ -3487,7 +3487,15 @@ async function mcpApi(app: Branch, request: IncomingMessage, path: string): Prom
     app.store.profiles.requireOwner('Server questions');
     if (startedWithShortLivedKey() || throughDoor(request))
       throw new HttpError(403, 'Answer server questions in the local owner window.');
-    if (path === '/api/mcp/owner-requests/window' && request.method === 'POST') return app.mcpOwnerRequests.window();
+    if (path === '/api/mcp/owner-requests/window' && request.method === 'POST') return app.mcpOwnerRequests.window(await readBody(request));
+    if (request.method === 'POST' && path.startsWith('/api/mcp/owner-requests/url-')) {
+      const input = await readBody(request), urls = app.mcpOwnerRequests.urls;
+      if (path.endsWith('/url-prepare')) return urls.prepare(input);
+      if (path.endsWith('/url-open')) return urls.consume(input);
+      if (path.endsWith('/url-opened')) { urls.opened(input); return { recorded: true }; }
+      if (path.endsWith('/url-cancel')) { urls.decline(input); return { cancelled: true }; }
+      throw new HttpError(405, 'Unsupported browser question request.');
+    }
     if (path === '/api/mcp/owner-requests/close' && request.method === 'POST') { app.mcpOwnerRequests.closeWindow(); return { closed: true }; }
     if (path === '/api/mcp/owner-requests/answer' && request.method === 'POST') {
       await app.mcpOwnerRequests.answer(await readBody(request)); return { answered: true };

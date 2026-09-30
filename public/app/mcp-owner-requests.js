@@ -17,19 +17,26 @@ async function open() {
   const close = document.createElement('button'); close.type = 'button'; close.textContent = 'Close';
   close.addEventListener('click', () => panel.close());
   panel.append(heading, notice, settings, requests, close); document.body.append(panel); panel.showModal();
-  let seen = '', busy = false;
+  let seen = '', busy = false, browserWaiting = false;
   const poll = async () => {
-    if (!panel.open || busy || document.visibilityState !== 'visible') return;
+    if (!panel.open || busy || (document.visibilityState !== 'visible' && !browserWaiting)) return;
     busy = true;
     try {
-      const state = await api('mcp/owner-requests/window', {});
+      const state = await api('mcp/owner-requests/window', { nativeUrlOpener: typeof window.branchDesktop?.openMcpElicitation === 'function' });
       if (!settings.childNodes.length) drawSettings(settings, state.models);
-      const ids = state.requests.map(r => r.id).join(',');
+      const urls = state.urls || [];
+      browserWaiting = urls.length > 0;
+      const ids = state.requests.map(r => r.id).concat(urls.map(r => `${r.id}:${r.stage}`)).join(',');
       if (ids !== seen) {
         seen = ids;
-        const wanted = new Set(state.requests.map(r => r.id));
+        const wanted = new Set([...state.requests, ...urls].map(r => r.id));
         for (const card of requests.children) if (!wanted.has(card.dataset.request)) card.remove();
         for (const request of state.requests) if (![...requests.children].some(card => card.dataset.request === request.id)) requests.append(question(request));
+        for (const request of urls) {
+          const old = [...requests.children].find(card => card.dataset.request === request.id);
+          if (old?.dataset.stage === request.stage) continue;
+          if (old) old.replaceWith(browserQuestion(request)); else requests.append(browserQuestion(request));
+        }
       }
     } catch (error) { toast(error.message); panel.close(); }
     finally { busy = false; }
@@ -46,6 +53,9 @@ function drawSettings(form, models) {
   const server = field(form, 'Server ID'); server.required = true; server.pattern = '[a-z][a-z0-9-]{0,29}';
   const sampling = field(form, 'Allow requests to a model', 'checkbox');
   const elicitation = field(form, 'Allow questions for you', 'checkbox');
+  const urlElicitation = field(form, 'Allow browser questions in the desktop app', 'checkbox');
+  const origins = field(form, 'Approved HTTPS origins, separated by commas');
+  origins.placeholder = 'https://accounts.example.com';
   const rpm = field(form, 'Requests per minute', 'number'); rpm.value = '3'; rpm.min = '1'; rpm.max = '20';
   const cap = field(form, 'Maximum output tokens per request', 'number'); cap.value = '2048'; cap.min = '128'; cap.max = '8192';
   const allowed = document.createElement('select'); allowed.multiple = true;
@@ -57,6 +67,7 @@ function drawSettings(form, models) {
     try {
       const value = await api(`mcp/owner-requests/settings?server=${encodeURIComponent(server.value)}`);
       sampling.checked = value.sampling; elicitation.checked = value.elicitation;
+      urlElicitation.checked = value.urlElicitation === true; origins.value = (value.urlOrigins || []).join(', ');
       rpm.value = String(value.requestsPerMinute); cap.value = String(value.tokenCap);
       for (const option of allowed.options) option.selected = value.models.includes(option.value);
     } catch (error) { toast(error.message); }
@@ -66,9 +77,43 @@ function drawSettings(form, models) {
     event.preventDefault();
     try { await api('mcp/owner-requests/settings', { server: server.value, settings: {
       sampling: sampling.checked, elicitation: elicitation.checked, requestsPerMinute: Number(rpm.value),
+      urlElicitation: urlElicitation.checked, urlOrigins: origins.value.split(',').map(s => s.trim()).filter(Boolean),
       tokenCap: Number(cap.value), models: [...allowed.selectedOptions].map(o => o.value) } }); toast('Saved. Reconnect this server to advertise the enabled features.'); }
     catch (error) { toast(error.message); }
   };
+}
+function browserQuestion(request) {
+  const card = document.createElement('section'), title = document.createElement('h3'), message = document.createElement('p');
+  card.dataset.request = request.id; card.dataset.stage = request.stage;
+  title.textContent = `${request.server}: A browser step for you`;
+  message.textContent = `${request.message}\nApproved origin: ${request.origin}\n${request.stage === 'approval'
+    ? 'Opening this page uses your external browser. The server must confirm completion; login details stay outside the conversation.'
+    : request.stage === 'completed' ? 'You may retry the original request when needed; normal tool approval still applies.'
+      : 'Waiting for this server to confirm completion. You can stop waiting at any time.'}`;
+  card.append(title, message);
+  if (request.stage === 'completed') return card;
+  if (request.stage === 'approval') {
+    const open = document.createElement('button'); open.type = 'button'; open.textContent = `Open ${request.origin}`;
+    open.onclick = async () => {
+      open.disabled = true;
+      try {
+        if (!window.branchDesktop?.openMcpElicitation) throw new Error('Use the local desktop app to open this page.');
+        const { ticket } = await api('mcp/owner-requests/url-prepare', { id: request.id });
+        await window.branchDesktop.openMcpElicitation(ticket);
+        message.textContent = `Waiting for ${request.server} to confirm completion at ${request.origin}.`;
+      } catch (error) { toast(error.message); }
+    };
+    card.append(open);
+  }
+  for (const action of ['decline', 'cancel']) {
+    const button = document.createElement('button'); button.type = 'button'; button.textContent = action === 'decline' ? 'Decline' : 'Cancel';
+    button.onclick = async () => {
+      try { await api('mcp/owner-requests/url-cancel', { id: request.id, action }); card.remove(); }
+      catch (error) { toast(error.message); }
+    };
+    card.append(button);
+  }
+  return card;
 }
 function question(request) {
   const form = document.createElement('form'), title = document.createElement('h3'), body = document.createElement('pre');

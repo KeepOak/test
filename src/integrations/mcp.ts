@@ -183,10 +183,11 @@ export async function openMcp(
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
   const { transport, secrets } = await makeTransport(config, env, policy);
-  const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' },
-    { capabilities: ownerRequests?.capabilities(config.id) ?? {} });
+  const capabilities = ownerRequests?.capabilities(config.id, false, true) ?? {};
+  const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' }, { capabilities });
+  let revokeOwnerRequests: (() => void) | undefined;
   try {
-    await ownerRequests?.install(client, config.id);
+    revokeOwnerRequests = await ownerRequests?.install(client, config.id, capabilities);
     // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
     await client.connect(transport as Transport, { timeout: startupTimeoutMs });
     if (client.getServerVersion()?.version !== config.expectedVersion)
@@ -196,9 +197,10 @@ export async function openMcp(
     cache?.write(config.id, cacheable(found));
     // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
     let alive = true;
-    client.onclose = () => { alive = false; };
-    return { config, found, secrets, call: through(client), close: () => client.close(), alive: () => alive };
+    client.onclose = () => { alive = false; revokeOwnerRequests?.(); };
+    return { config, found, secrets, call: through(client), close: () => { revokeOwnerRequests?.(); return client.close(); }, alive: () => alive };
   } catch {
+    revokeOwnerRequests?.();
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');
   }
