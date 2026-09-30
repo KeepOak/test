@@ -42,6 +42,7 @@ let turn = 0;
 export async function readNewReply(before, messages, words = (m) => m.content, voiceOf = () => "") {
   if (replyMark(messages) === before || !replies(messages).length) return;
   const mine = ++turn;
+  stop();
   const reply = replies(messages).at(-1);
   const text = String(words(reply) ?? "").trim();
   const voice = String(voiceOf(reply) ?? "");

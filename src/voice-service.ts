@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { prepareSpokenText, spokenSentences } from "./voice-spoken-text.js";
 import type { Provider, ToolContext } from "./contracts.js";
 import type { ModelRouter } from "./models.js";
 import type { SpeechEngineService } from "./speech-engine-service.js";
@@ -214,4 +215,3 @@ export function registerVoice(registry: ToolRegistry, voice: VoiceService, store
     },
   });
 }
-import { prepareSpokenText, spokenSentences } from "./voice-spoken-text.js";
