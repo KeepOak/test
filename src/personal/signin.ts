@@ -78,11 +78,14 @@ export interface SignInDeps {
 /** One service's sign-in: its settings, starting it, whether it is done, and a usable access key. */
 export class SignIn {
   private mailRevision = 0;
+  private calendarRevision = 0;
+  private calendarSignIns = 0;
   constructor(private readonly deps: SignInDeps, readonly service: SignInService, readonly part: PersonalPart) {}
   settings(): SignInSettings { return partSettings(this.deps.store, this.deps.owner, settingsKey(this.service), SignInSettingsSchema); }
   save(input: unknown): SignInSettings {
     const settings = savePartSettings(this.deps.store, this.deps.owner, settingsKey(this.service), SignInSettingsSchema, input);
     this.mailRevision++;
+    this.calendarRevision++;
     return settings;
   }
   /** The full description, with the client secret filled in from the locker when one is named. */
@@ -97,9 +100,18 @@ export class SignIn {
   /** Starts the sign-in through the existing flow; the owner opens the address it hands back. */
   async start(): Promise<OAuthStart> {
     this.mailRevision++;
-    const started = await this.deps.oauth.start(await this.provider());
-    this.deps.oauth.waitFor(started.id).catch(() => undefined);
-    return started;
+    this.calendarRevision++;
+    this.calendarSignIns++;
+    try {
+      const started = await this.deps.oauth.start(await this.provider());
+      const finished = () => { this.calendarSignIns--; this.calendarRevision++; };
+      this.deps.oauth.waitFor(started.id).then(finished, finished);
+      return started;
+    } catch (error) {
+      this.calendarSignIns--;
+      this.calendarRevision++;
+      throw error;
+    }
   }
   async status(): Promise<{ signedIn: boolean; expiresAt: string | null; scope: string | null }> {
     const tokens = await this.deps.oauth.saved(`personal-${this.service}`);
@@ -115,6 +127,13 @@ export class SignIn {
     const scope = this.service === "google" ? "https://www.googleapis.com/auth/calendar.events" : "Calendars.ReadWrite";
     if (!tokens?.scope?.split(/\s+/).includes(scope))
       throw new Error("Sign in again and consent to calendar changes. Your saved read-only grant cannot write events.");
+  }
+  calendarWriteIdentity(): string { return JSON.stringify([this.service, this.settings(), this.calendarRevision]); }
+  assertCalendarWrite(identity: string, signal: AbortSignal): void {
+    signal.throwIfAborted();
+    if (this.calendarSignIns || identity !== this.calendarWriteIdentity())
+      throw new Error("Your sign-in changed. Confirm the calendar change again after signing in.");
+    if (!this.settings().calendarWrite) throw new Error("Calendar changes are no longer allowed.");
   }
   mailPreviewIdentity(): string { return JSON.stringify([this.service, this.settings(), this.mailRevision]); }
   async requireMailSend(): Promise<void> {
@@ -134,6 +153,21 @@ export async function signedCall(fetchImpl: typeof fetch, signIn: Pick<SignIn, "
   init: RequestInit & { json?: unknown } = {}): Promise<unknown> {
   const token = await signIn.token();
   return callJson(fetchImpl, service, url, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), authorization: `Bearer ${token}` } });
+}
+
+/** Revalidate a calendar mutation at fetch entry after every permission, preflight and token await. */
+export async function signedCalendarCall(fetchImpl: typeof fetch, signIn: SignIn, service: string, url: string,
+  identity: string, signal: AbortSignal, allowed: () => void, init: RequestInit & { json?: unknown }): Promise<unknown> {
+  signIn.assertCalendarWrite(identity, signal);
+  await signIn.requireCalendarWrite();
+  const token = await signIn.token();
+  const guarded: typeof fetch = (input, options) => {
+    signIn.assertCalendarWrite(identity, signal);
+    allowed();
+    return fetchImpl(input, options);
+  };
+  return callJson(guarded, service, url, { ...init, signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+    headers: { ...(init.headers as Record<string, string> | undefined), authorization: `Bearer ${token}` } });
 }
 
 /** The same call, for an answer that is text rather than JSON (a Drive file, a meeting transcript). */

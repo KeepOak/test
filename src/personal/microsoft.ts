@@ -5,7 +5,7 @@ import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
 import { stripTags } from "./mime.js";
 import { clip, outsideTextNote, requirePersonal } from "./settings.js";
-import { signedCall, signedText, type SignIn } from "./signin.js";
+import { signedCall, signedCalendarCall, signedText, type SignIn } from "./signin.js";
 
 /**
  * R17-030: the owner's Outlook mail (read, search, and drafts when allowed), Outlook calendar (read)
@@ -144,14 +144,19 @@ export class MicrosoftConnector {
       teamsJoinUrl: e.onlineMeeting?.joinUrl ?? null })) };
   }
 
-  async writeCalendar(action: "create" | "move" | "delete", input: unknown) {
+  async writeCalendar(action: "create" | "move" | "delete", input: unknown, signal: AbortSignal = new AbortController().signal) {
     requirePersonal(this.store, this.owner, "microsoft");
+    const identity = this.signIn.calendarWriteIdentity();
+    this.signIn.assertCalendarWrite(identity, signal);
     await this.signIn.requireCalendarWrite();
+    const write = (url: string, init: RequestInit & { json?: unknown }) => signedCalendarCall(this.fetcher,
+      this.signIn, "Microsoft", url, identity, signal,
+      () => requirePersonal(this.store, this.owner, "microsoft"), init);
     // Graph expects local dateTime plus zone; normalise explicit offsets to UTC.
     const at = (value: string) => ({ dateTime: new Date(value).toISOString().replace(/Z$/, ""), timeZone: "UTC" });
     if (action === "create") {
       const v = CalendarCreateSchema.parse(input);
-      return this.call("/events", { method: "POST", json: { subject: v.title,
+      return write(`${graph}/events`, { method: "POST", json: { subject: v.title,
         location: { displayName: v.location }, start: at(v.starts), end: at(v.ends), ...microsoftDayBefore } });
     }
     const v = action === "move" ? CalendarMoveSchema.parse(input) : CalendarDeleteSchema.parse(input);
@@ -162,7 +167,7 @@ export class MicrosoftConnector {
     if (event.type !== "singleInstance") throw new Error("Recurring events must be changed in Outlook Calendar.");
     const moved = action === "move" ? CalendarMoveSchema.parse(input) : null;
     const json = moved ? { start: at(moved.starts), end: at(moved.ends), ...microsoftDayBefore } : undefined;
-    const result = await this.call(path, { method: action === "delete" ? "DELETE" : "PATCH",
+    const result = await write(`${graph}${path}`, { method: action === "delete" ? "DELETE" : "PATCH",
       headers: { "if-match": v.etag }, ...(json ? { json } : {}) });
     return { action, id: v.id, result };
   }
@@ -188,7 +193,7 @@ export class MicrosoftConnector {
 
 export function registerMicrosoft(registry: Pick<ToolRegistry, "register">, microsoft: MicrosoftConnector): void {
   microsoft.registerSending(registry);
-  registerCalendarWrites(registry, "outlook", (action, input) => microsoft.writeCalendar(action, input));
+  registerCalendarWrites(registry, "outlook", (action, input, signal) => microsoft.writeCalendar(action, input, signal));
   const tool = (name: string, permission: string, description: string, parameters: z.ZodType, run: (input: unknown) => Promise<unknown>) =>
     registry.register({ name, permission, description, parameters, execute: async (input) => run(input) });
   tool("outlook.search", "personal.read", "Search the owner's Outlook mail, or list the newest in the inbox when no words are given.",

@@ -1,5 +1,6 @@
 import { sign } from "node:crypto";
 import { connect } from "node:http2";
+import { isIP, type LookupFunction } from "node:net";
 import type { NetworkPolicy } from "./network-policy.js";
 
 export interface PushNotice { kind: "finished" | "needs-you"; runId: string }
@@ -63,15 +64,28 @@ export async function sendApns(policy: NetworkPolicy, options: ApnsOptions, key:
   const header = encode({ alg: "ES256", kid: options.keyId }), claims = encode({ iss: options.teamId, iat: Math.floor(Date.now() / 1000) });
   const input = `${header}.${claims}`, jwt = `${input}.${sign("sha256", Buffer.from(input), { key, dsaEncoding: "ieee-p1363" }).toString("base64url")}`;
   const origin = options.sandbox ? "https://api.sandbox.push.apple.com" : "https://api.push.apple.com";
-  await policy.assertAllowed(new URL(`${origin}/3/device/${token}`), "mobile push");
+  const target = new URL(`${origin}/3/device/${token}`);
+  const addresses = await policy.allowedAddresses(target, "mobile push");
+  // Keep the TLS hostname, but answer the transport lookup only with the policy's judged addresses.
+  const lookup: LookupFunction | undefined = addresses === null ? undefined : (hostname, options, callback) => {
+    try {
+      if (hostname.toLowerCase() !== target.hostname) throw new Error("Unexpected APNs connection hostname");
+      const answers = addresses.map((judged) => {
+        const address = policy.dialAddress(judged);
+        return { address, family: isIP(address) };
+      });
+      if (options.all) callback(null, answers);
+      else callback(null, answers[0]!.address, answers[0]!.family);
+    } catch (error) { callback(error as NodeJS.ErrnoException, ""); }
+  };
   guard();
-  return apnsRequest(origin, options.topic, jwt, token, notice, signal, guard);
+  return apnsRequest(origin, options.topic, jwt, token, notice, signal, guard, lookup);
 }
 
 function apnsRequest(origin: string, topic: string, jwt: string, token: string, notice: PushNotice,
-  signal: AbortSignal, guard: () => void): Promise<PushResult> {
+  signal: AbortSignal, guard: () => void, lookup?: LookupFunction): Promise<PushResult> {
   return new Promise((resolve, reject) => {
-    const session = connect(origin, { minVersion: "TLSv1.2" });
+    const session = connect(origin, { minVersion: "TLSv1.2", servername: new URL(origin).hostname, ...(lookup ? { lookup } : {}) });
     let settled = false, status = 0, body = "";
     const finish = (error?: Error, result?: PushResult) => {
       if (settled) return;
