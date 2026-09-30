@@ -83,6 +83,8 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
       || events.length >= 2000) refused("the task's copy lineage changed scope");
     const start = events.find((event) => event.kind === "run.started")?.data;
     if (!start) refused("the task's copy assignment was not recorded");
+    if (events.some((event) => event.kind === "worktree.inherited"))
+      refused("the borrowed working copy needs explicit reconciliation before recovery");
     requiresCopy ||= start.ownCopy === true;
     if (events.some((event) => ["worktree.removed", "worktree.missing", "worktree.skipped"].includes(event.kind)))
       refused("the task's original working copy is unavailable or was not established");

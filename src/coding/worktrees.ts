@@ -175,10 +175,13 @@ export class WorktreePlaces {
     if (!scope) return null;
     this.requireAvailableSource(scope);
     this.helperSources.set(run.id, scope);
-    // No new worktree.used event or identity: this is an existing placement lease,
-    // not proof that the child created or owns its lead's retained recovery copy.
-    return { scope, workspace: join(this.deps.root, scope),
-      release: async () => { this.helperSources.delete(run.id); } };
+    try {
+      // Durable constraint, not a claim that this task owns its lead's recovery copy.
+      // Until that borrowed identity is reconciled, continuation must not use the root.
+      this.deps.note(run.id, "worktree.inherited", { path: scope, borrowed: true });
+      return { scope, workspace: join(this.deps.root, scope),
+        release: async () => { this.helperSources.delete(run.id); } };
+    } catch (error) { this.helperSources.delete(run.id); throw error; }
   }
 
   /** Reattaches only a copy recorded by this conversation's exact continuation lineage. */
@@ -200,6 +203,8 @@ export class WorktreePlaces {
       if (!saved || saved.owner !== current.owner || saved.sessionId !== current.sessionId || saved.project !== current.project) throw unavailable();
       const events = this.deps.store.events(id);
       if (events.length >= 2000) throw unavailable();
+      if (events.some((event) => event.kind === "worktree.inherited"))
+        throw new Error("This task used a borrowed project copy. Reconcile that exact retained copy before continuing; the shared workspace was not used.");
       const starts = events.filter((event) => event.kind === "run.started");
       if (starts.length !== 1) throw unavailable();
       const start = starts[0]!.data;

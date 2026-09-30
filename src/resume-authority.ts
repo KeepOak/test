@@ -14,7 +14,7 @@ function unavailable(): never { throw new Error("The task's complete saved autho
 export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, runId: string, owner: string, registered: readonly string[]): ResumeAuthority {
   const root = store.run(runId);
   if (!root || !root.project) unavailable();
-  const records = new Map<string, { run: Run; start: Record<string, unknown>; requiredCopy: boolean }>();
+  const records = new Map<string, { run: Run; start: Record<string, unknown>; requiredCopy: boolean; borrowedCopy: boolean }>();
   const visiting = new Set<string>();
   let permissions = new Set(registered);
   const visit = (id: string): void => {
@@ -41,7 +41,8 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
       visit(link);
     }
     visiting.delete(id);
-    records.set(id, { run, start, requiredCopy: events.some((event) => event.kind === "worktree.used"
+    records.set(id, { run, start, borrowedCopy: events.some((event) => event.kind === "worktree.inherited"),
+      requiredCopy: events.some((event) => event.kind === "worktree.used"
       && typeof event.data.branch === "string" && (event.data.branch.startsWith("branch/helper-") || event.data.branch.startsWith("branch/fork-"))) });
   };
   visit(runId);
@@ -75,6 +76,12 @@ export function resumeAuthority(store: Pick<Store, "run" | "events" | "get">, ru
     return typeof parent === "string" ? parentDepth(records.get(parent)!, seen) + 1 : 0;
   };
   const depth = typeof savedDepth === "number" ? savedDepth : Math.max(...lineage.map((record) => parentDepth(record)));
+  // Borrowing a lead's copy does not establish ownership or a safe replacement workspace.
+  // Also hold legacy children whose parent had a copy but recorded no child placement.
+  if (lineage.some((record) => record.borrowedCopy)
+    || (depth > 0 && !lineage.some((record) => record.requiredCopy)
+      && [...records.values()].some((record) => record.requiredCopy || record.borrowedCopy)))
+    throw new Error("The task's borrowed project-copy placement needs reconciliation before continuation. The shared workspace was not used.");
   if (depth > 3 || lineage.some((record) => typeof record.start.parentRunId === "string"
     && parentDepth(records.get(record.start.parentRunId)!) >= depth)) unavailable();
   const agent = consistent("agent"), source = consistent("source");
