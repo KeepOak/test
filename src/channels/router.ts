@@ -31,7 +31,7 @@ import { commandMode } from "../commands/settings.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
-import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { platformGate, platformSettings, isPaused } from "../reach/platform.js"; // r17-i
 import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
 import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
@@ -45,6 +45,7 @@ import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
 import { ModelPicker, staleModelMenu } from "./model-picker.js";
 import { DevicePairProposals } from "./device-pair-proposals.js";
+import { installSendPolicy, sendEnabled, setSend, OwnerAllowlistProposals } from "./owner-policy-commands.js";
 import { listModels } from "../model-switch.js";
 
 /**
@@ -483,6 +484,7 @@ export class ChannelRouter {
   async attach(adapter: ChannelAdapter, policy: ChannelPolicy): Promise<void> {
     if (this.adapters.has(adapter.id)) throw new Error(`Channel ${adapter.id} is already attached`);
     installChannelFormatting(adapter, () => channelFormatting(this.store, this.runtime.owner, adapter.kind));
+    installSendPolicy(adapter, (chat) => sendEnabled(this.store, this.runtime.owner, adapter.id, chat));
     this.adapters.set(adapter.id, { adapter, policy: ChannelPolicySchema.parse(policy) });
     // This resolves once the message has been dealt with. An adapter that reads messages one by one
     // must not wait for it, or a note sent to a running task could never get through (see telegram.ts).
@@ -606,7 +608,7 @@ export class ChannelRouter {
   flush(): Promise<void> {
     return (this.flushing = this.flushing.then(async () => {
       for (const [id, { adapter }] of this.adapters)
-        await this.deliveries.flush(id, (chatId, text, replyTo) => adapter.send(chatId, text, replyTo))
+        await this.deliveries.flush(id, (chatId, text, replyTo) => adapter.send(chatId, text, replyTo), (chat) => sendEnabled(this.store, this.runtime.owner, id, chat))
           .catch((error: unknown) => diagnose("channels", "warn", `Messages waiting for ${adapter.kind} could not be sent: ${error instanceof Error ? error.message : String(error)}`)); // mac7/diagnostics
     }));
   }
@@ -724,6 +726,8 @@ export class ChannelRouter {
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
+    if (!sendEnabled(this.store, this.runtime.owner, message.channel, message.chatId)
+      && (!/^\/send(?:@[\w.-]+)?\s+on\s*$/i.test(message.text.trim()) || !this.policyCommandAllowed(message))) return "ignored";
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
     const held = platformGate(this.store, this.runtime.owner, message);
@@ -742,6 +746,9 @@ export class ChannelRouter {
       return access;
     }
     this.latest.set(chatKey(message), message.messageId);
+    const controlled = await this.ownerPolicyLine(message);
+    if (controlled) return controlled;
+    if (!sendEnabled(this.store, this.runtime.owner, message.channel, message.chatId)) return "ignored";
     // Checked without waiting, so messages from one chat still reach `answer` in the order they came.
     if (this.overCeiling(message)) return "rejected";
     return this.answer(message);
@@ -1040,6 +1047,63 @@ export class ChannelRouter {
     const attached = this.adapters.get(proposal.channel);
     return !!attached && ownerDmHere(this.store, this.runtime.owner, attached.adapter.kind, { ...proposal, chatKind: "direct" })
       && this.access(proposal, attached.policy) === "allowed";
+  }
+  readonly ownerAllowlistProposals = new OwnerAllowlistProposals(this.store, this.runtime.owner, (from) =>
+    !lockedDown(this.store, this.runtime.owner) && !this.appLocked() && !isPaused(this.store, this.runtime.owner, from.channel) && this.pairProposalAccess(from));
+  private readonly policyCommandsSeen = new Set<string>();
+  private readonly sendRevisions = new Map<string, number>();
+  private policyCommandAllowed(message: InboundMessage): boolean {
+    return message.chatKind === "direct" && !message.caughtUp && !message.voice && !message.edited
+      && !message.attachments?.length && !lockedDown(this.store, this.runtime.owner) && !this.appLocked()
+      && !isPaused(this.store, this.runtime.owner, message.channel) && this.pairProposalAccess(message);
+  }
+  private exportCurrentChat(message: InboundMessage): string {
+    const session = this.sessionFor(message.channel, message.chatId);
+    if (!session) return "This chat has no conversation to export.";
+    const rows = this.store.sqlite.prepare("SELECT body FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 41").all(session);
+    if (rows.length > 40) return "This conversation is too long for a chat export. Use /export in the local Branch window for the complete Markdown file.";
+    const turns = rows.reverse().flatMap((row) => {
+      const m: unknown = JSON.parse(String(row.body));
+      if (!m || typeof m !== "object" || !("role" in m) || !("content" in m) || typeof m.content !== "string"
+        || (m.role !== "user" && m.role !== "assistant") || ("from" in m && m.from === "branch")) return [];
+      return [`## ${m.role === "user" ? "You" : "Branch"}\n\n${m.content}`];
+    });
+    const text = this.runtime.hideSecrets(`# This chat conversation\n\n${turns.join("\n\n")}\n\n_End of retained user/assistant messages; system and tool messages excluded._`);
+    const max = Math.min(3000, this.adapters.get(message.channel)?.adapter.maxTextLength ?? 3000);
+    return text.length > max ? "This conversation is too long for a chat export. Use /export in the local Branch window for the complete Markdown file." : text;
+  }
+  private async ownerPolicyLine(message: InboundMessage): Promise<Outcome | null> {
+    const match = /^\/(allowlist|send|export-session)(?:@[\w.-]+)?(?:\s+([^\r\n]*))?\s*$/i.exec(message.text.trim());
+    if (!match) return null;
+    if (message.caughtUp) return "ignored";
+    if (!this.policyCommandAllowed(message)) {
+      await this.deliver(message.channel, message.chatId, "This command needs the live, exactly named owner's approved direct chat, while Branch is unlocked and outside Lockdown.").catch(() => undefined);
+      return "rejected";
+    }
+    const identity = JSON.stringify([message.channel, message.chatId, message.messageId]);
+    if (this.policyCommandsSeen.has(identity)) return "ignored";
+    this.policyCommandsSeen.add(identity);
+    if (this.policyCommandsSeen.size > 1000) this.policyCommandsSeen.delete(this.policyCommandsSeen.values().next().value!);
+    const name = match[1]!.toLowerCase(), argument = (match[2] ?? "").trim();
+    const on = argument.toLowerCase() === "on", off = argument.toLowerCase() === "off";
+    const revisionKey = chatKey(message), revision = (this.sendRevisions.get(revisionKey) ?? 0) + 1;
+    if (name === "send" && (on || off)) {
+      this.sendRevisions.set(revisionKey, revision);
+      if (this.sendRevisions.size > 1000) this.sendRevisions.delete(this.sendRevisions.keys().next().value!);
+    }
+    if (name === "send" && on) setSend(this.store, this.runtime.owner, message, true);
+    const text = name === "allowlist" ? this.ownerAllowlistProposals.request(message, argument)
+      : name === "export-session" ? (argument ? "Use /export-session with no arguments, in the current owner direct chat." : this.exportCurrentChat(message))
+      : on ? "Outgoing messages are on for this exact chat. Previously queued messages may now be delivered."
+      : off ? "Outgoing messages will be off for this exact chat after this acknowledgement. New ordinary messages are ignored; queued messages wait. Send /send on here to resume."
+      : "Use /send on or /send off, for this exact direct chat only.";
+    const limit = Math.min(3000, this.adapters.get(message.channel)?.adapter.maxTextLength ?? 3000);
+    const bounded = text.length > limit ? text.slice(0, Math.max(0, limit - 55)) + "\n[More sender rules in Settings → Chat apps.]" : text;
+    const session = this.sessionFor(message.channel, message.chatId), checked = await this.outboundGuard(bounded);
+    if (!checked.blocked && this.policyCommandAllowed(message) && this.sessionFor(message.channel, message.chatId) === session)
+      await this.adapters.get(message.channel)!.adapter.send(message.chatId, checked.text, this.quoteFor(message));
+    if (name === "send" && off && this.sendRevisions.get(revisionKey) === revision && this.policyCommandAllowed(message)) setSend(this.store, this.runtime.owner, message, false);
+    return "replied";
   }
   /** The command a message is, if commands are switched on for this moment. */
   private commandIn(message: InboundMessage): ChatCommand | null {

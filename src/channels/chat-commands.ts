@@ -45,6 +45,7 @@ const RUNNERS: Record<string, ChatCommandSpec["run"]> = {
   new: (_, c) => fresh(c),
   compact: (_, c) => compact(c),
   usage: (a, c) => usage(a, c),
+  footer: (a, c) => usage(a, c),
   btw: (a, c) => aside(a, c),
   help: (a, c) => (a && modeHere(c) !== "off" ? shared("help")(a, c) : chatCommandHelp(modeHere(c))),
   improve: (a, c) => improveCommand(a, c),

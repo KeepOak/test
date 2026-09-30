@@ -158,7 +158,7 @@ export class Deliveries {
    * Sends what is due on one channel, chat by chat and in order. A failure stops that chat for
    * now so later chunks never overtake earlier ones; the fifth failure parks the chunk as dead.
    */
-  async flush(channel: string, send: Sender): Promise<{ sent: number; failed: number; dead: number }> {
+  async flush(channel: string, send: Sender, allowed: (chatId: string) => boolean = () => true): Promise<{ sent: number; failed: number; dead: number }> {
     const due = this.now().toISOString();
     const totals = { sent: 0, failed: 0, dead: 0 };
     const byChat = new Map<string, Delivery[]>();
@@ -168,6 +168,7 @@ export class Deliveries {
       rows.sort((a, b) => a.order - b.order);
       if (rows[0]!.nextAt > due) continue;
       for (const row of rows) {
+        if (!allowed(row.chatId)) break;
         const outcome = await this.attempt(row, send);
         totals[outcome]++;
         if (outcome !== "sent") break;
