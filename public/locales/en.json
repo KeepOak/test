@@ -4970,6 +4970,8 @@
   "settings-kit.everything": "Everything on this list",
   "settings-kit.field.audit": "Check by itself",
   "settings-kit.field.chat-extras": "Use my list of what chats may also do",
+  "settings-kit.field.chat-owner-chats": "Your own chats have your full access",
+  "settings-kit.field.chat-owner-chats-hint": "Your own account, one to one, on an app that vouches for its senders, can do what you can in the window. Groups and other people keep the short list. Lockdown turns it off.",
   "settings-kit.field.dictation-silence": "How long a quiet room ends it",
   "settings-kit.field.file-agents": "AGENTS.md",
   "settings-kit.field.file-heartbeat": "HEARTBEAT.md",
