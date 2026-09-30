@@ -249,7 +249,9 @@ function readRows(rec) {
   const files = rec.readFirst?.files ?? [], n = rec.readFirst?.remembered;
   const read = [...files, n ? plural(n, { one: "window.chat.msg.remembers.one", other: "window.chat.msg.remembers" }) : ""].filter(Boolean).join(", ");
   const tools = rec.toolsOffered ? t("window.chat.msg.tools-offered", { shown: rec.toolsOffered.shown, more: rec.toolsOffered.oneStepAway }) : "";
-  return [[t("window.chat.msg.read-first"), read], [t("window.chat.msg.tools"), tools]].filter(([, v]) => v);
+  /* models-ui: a long list the decision model filtered before the task read it; the steps still show every line. */
+  const lists = (rec.lists ?? []).map((l) => t("window.chat.msg.list-kept", { tool: l.tool, kept: l.kept, total: l.total, model: l.model })).join("; ");
+  return [[t("window.chat.msg.read-first"), read], [t("window.chat.msg.tools"), tools], [t("window.chat.msg.lists"), lists]].filter(([, v]) => v);
 }
 /* Copy the record: the engine's own record of the task, as Look inside read it. */
 async function copyRecord() {
