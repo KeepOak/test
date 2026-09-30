@@ -21,7 +21,7 @@ export function recapTile() {
   return `<section class="tile" data-recap><h2>${t("recap.title")}</h2><p>${t("recap.completed", { count: recap.trunkTasks })}</p>
     <p>${esc(estimate)}</p>${rows}${recap.capped ? `<p>${t("recap.capped", { count: recap.scanned })}</p>` : ""}
     <small>${t("recap.retained")}</small><details class="ovs-details"><summary>${t("recap.configure")}</summary>
-    <label>${t("recap.minutes")} <input data-recap-minutes type="number" min="0" max="1440" step="0.1" value="${esc(value)}"></label>
+    <label>${t("recap.minutes")} <input id="recap-minutes" data-recap-minutes type="number" min="0" max="1440" step="0.1" value="${esc(value)}"></label>
     <p>${t("recap.basis")}</p><button class="btn sm" type="button" data-act="recap-save"${saving ? " disabled" : ""}>${t("action.save")}</button>
     <button class="btn ghost sm" type="button" data-act="recap-clear"${saving ? " disabled" : ""}>${t("recap.clear")}</button></details></section>`;
 }
@@ -63,7 +63,7 @@ async function saveRecap(el, reset) {
 }
 
 export function initRecap() {
-  markLive(["recap-save", "recap-clear"]);
+  markLive(["sw:recap-minutes", "recap-save", "recap-clear"]);
   on("recap-save", (el) => saveRecap(el, false));
   on("recap-clear", (el) => saveRecap(el, true));
 }
