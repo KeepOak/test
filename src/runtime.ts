@@ -2716,7 +2716,7 @@ ${run.output.slice(0, 6000)}`;
             if (outOfSteps(context, outcome.reason)) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
             throw outcome.reason;
           }
-          const call = group[at]!, result = outcome.value;
+          const call = group[at]!, result = await this.filteredList(run, call, outcome.value);
           const message: Message = { role: "tool", toolCallId: call.id, content: this.clipped(run, call, JSON.stringify(result)) };
           messages.push(message); ids.push(null);
           this.store.message(run.sessionId, message);
@@ -2728,6 +2728,38 @@ ${run.output.slice(0, 6000)}`;
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
+  }
+  /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
+  listFilter: ((rule: string, lines: string[]) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  /**
+   * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
+   * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
+   * so the owner still sees every line, and Look inside says what was kept (list.filtered). Anything that goes wrong,
+   * or a model that is not sure, leaves the list whole.
+   */
+  private async filteredList(run: Run, call: ToolCall, result: unknown): Promise<unknown> {
+    if (!this.listFilter || !/(^|\.|_)(search|list|glob|grep|find|inbox|messages|results)/i.test(call.name)) return result;
+    // A tool's answer reaches the task wrapped ({ ok, result }); the list is inside it, and the wrapper is kept.
+    const wrapped = !!result && typeof result === "object" && "ok" in result && "result" in result;
+    const inner = wrapped ? (result as { result: unknown }).result : result;
+    const found = longestList(inner);
+    if (!found || found.items.length < 2) return result;
+    const lines = found.items.map((item) => (typeof item === "string" ? item : JSON.stringify(item) ?? ""));
+    try {
+      const said = await this.listFilter(run.prompt, lines);
+      if (!said) return result;
+      if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
+      const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);
+      if (keep.length === lines.length) return result;
+      const dropped = lines.length - keep.length, kept = keep.map((i) => found.items[i]);
+      this.store.event(run.id, "list.filtered", { tool: call.name, kept: keep.length, dropped, total: lines.length, model: said.model.name, local: said.model.local });
+      const setAside = { lines: dropped, note: `${dropped} of ${lines.length} lines were set aside as not needed for this task by ${said.model.name}. The owner still sees them all; ask the tool again, more narrowly, if one is missing.` };
+      const shown = found.key === null ? { items: kept, setAside } : { ...(inner as Record<string, unknown>), [found.key]: kept, setAside };
+      return wrapped ? { ...(result as Record<string, unknown>), result: shown } : shown;
+    } catch (error) {
+      this.store.event(run.id, "list.filter_failed", { tool: call.name, total: lines.length, reason: errorText(error) });
+      return result;
+    }
   }
   /**
    * mac7/speed: one tool call, from the journal entry to the result. This is exactly the path a
@@ -5480,4 +5512,14 @@ export { argumentFingerprint };
 function stepFingerprint(tool: string, index: number, target: string | undefined, argumentBytes: string): string {
   const parts = ["browser.flow step", index, tool, target ?? "", canonicalArguments(argumentBytes)];
   return argumentFingerprint(tool, parts.join("\u0000"));
+}
+
+/** models-ui: the list a tool's answer holds: the answer itself, or its longest list-valued field. */
+function longestList(result: unknown): { key: string | null; items: unknown[] } | null {
+  if (Array.isArray(result)) return { key: null, items: result };
+  if (!result || typeof result !== "object") return null;
+  let best: { key: string; items: unknown[] } | null = null;
+  for (const [key, value] of Object.entries(result as Record<string, unknown>))
+    if (Array.isArray(value) && (!best || value.length > best.items.length)) best = { key, items: value };
+  return best;
 }
