@@ -270,15 +270,19 @@ async function remove() {
   if (still()) toast(t("window.flows.chw.removed", { name: w.recipe.name }));
 }
 
+/* The switch saves at once. Its answer is drawn, or its error shown, only on the wizard that asked: the same person on the
+   same page, unlocked, with the same dialog still open. */
 async function saveMedia(el, w) {
-  const before = w.intake?.telegramMedia !== false;
+  const before = w.intake?.telegramMedia !== false, profile = activeId(), view = S.view, opened = dialog();
+  const still = () => S.chw === w && ownerHere() && activeId() === profile && S.view === view && dialog() === opened
+    && !document.getElementById("app")?.classList.contains("locked-b17");
   el.disabled = true;
   try {
     const saved = await api("channels/intake", { telegramMedia: el.checked });
     w.intake = saved.intake ?? w.intake;
-  } catch (error) { el.checked = before; toast(error.message); }
+  } catch (error) { el.checked = before; if (still()) toast(error.message); }
   finally { el.disabled = false; }
-  if (S.chw === w) draw();
+  if (still()) draw();
 }
 
 function onInput(e) {
