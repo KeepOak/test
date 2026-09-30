@@ -2,6 +2,7 @@
    Settings row's own words, [title, row text, button], from the prototype with its example data taken out (a count
    written into a button, a made-up project or Trunk name): those parts are left empty or come from the engine. */
 import { esc } from "../core/dom.js";
+import { t } from "../../i18n.js";
 import { demoRow17 } from "../places/demo17.js";
 
 export const WORDS = {
@@ -14,7 +15,7 @@ export const WORDS = {
   jev: ["Sure-or-not checks", "Small yes-or-no checks inside a task come with a confidence; a low one asks a better model.", "Show one"],
   debate: ["Stress-test the answer", "A second model argues against the first answer before you see it.", "Show an example"],
   provplug: ["Model services from plugins", "A plugin can bring a way to reach a model service Branch doesn’t know yet.", "See installed"],
-  retired: ["Retired models and hiccups", "Automatic: a retired model moves to its named successor, and a brief failure is tried again.", "Last 7 days"],
+  get retired() { return [t("window.settings.retired.title"), t("window.settings.retired.summary"), t("window.settings.retired.open")]; },
   mediapaths: ["Programs for sound and video", "Where Branch finds ffmpeg and yt-dlp. Found by itself.", "Check"],
   terms: ["Each service’s terms", "Branch only signs in to a plan the way its service allows, and says so.", "Read the lines"],
   trust: ["Trusted folders", "Folders a Trunk may change without asking. A new project folder asks the first time.", "See"],
