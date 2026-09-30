@@ -18,8 +18,10 @@ import type { ToolLister } from "../preset-moves.js";
  * change and does it only on the owner's yes.
  *
  *   - `settings.find` takes the owner's own words ("turn the wake word on") and, before anything is
- *     planned, either asks one question — when the words fit several settings or none — or gives the
- *     exact before and after for the one setting they fit, leaving out what is already as asked (Q50).
+ *     planned, either asks one question — when the words fit several settings — or gives the exact
+ *     before and after for the one setting they fit, leaving out what is already as asked (Q50). Words
+ *     that fit none are not a settings request, and come back as "no-match": the model answers the owner
+ *     itself, never with a canned "Which setting do you mean?" (the owner's glued-message report).
  *   - `settings.list` reads the catalogue (src/settings-kit/catalogue.ts): every switch, choice and
  *     number the owner can change, with what it is set to now. Nothing else in the settings table —
  *     connections, keys, people, Lockdown — is ever listed or changed here.
@@ -282,7 +284,7 @@ function undoTool(store: Store, writers: () => Record<string, Writer>, tools: To
 export function registerSettingsTools(registry: ToolRegistry, store: Store, writers: () => Record<string, Writer>): void {
   registry.register({
     name: "settings.find", permission: "settings.read",
-    description: "Before changing a setting the owner described in their own words, pass those words as request (and the value, if they said one). If it returns status \"ask\", ask the owner exactly that one question and change nothing until they answer. If it returns \"ready\", show the owner the preview (each setting from → to) and then call the tool it names. If it returns \"unchanged\", say so and change nothing.",
+    description: "Match a setting the owner named in their own words (\"turn the wake word on\") when you do not know its id. Pass only the few words that name the setting, from one message, as request (and the value, if they said one); never a whole message, a question, or several messages joined. If you already have the setting's id from settings.list, skip this and call settings.change or settings.loosen. If it returns status \"ask\", ask the owner exactly that one question and change nothing until they answer. If it returns \"ready\", show the owner the preview (each setting from → to) and then call the tool it names. If it returns \"unchanged\", say so and change nothing. If it returns \"no-match\", the words were not a settings request: answer the owner's message yourself and never ask them which setting they mean because of it.",
     parameters: FindSchema,
     target: () => "Branch's own settings",
     execute: async (input: FindInput, context: ToolContext) => { ownerHere(store, context); return clarifyRequest(store, context.owner, input, registry); },
@@ -296,7 +298,7 @@ export function registerSettingsTools(registry: ToolRegistry, store: Store, writ
   });
   registry.register({
     name: "settings.change", permission: "settings.write",
-    description: "Change some of Branch's own settings, by the names settings.list gives (for example wake-word.mode to \"on\"). When the owner described the setting in their own words, call settings.find first and ask its question if it has one. The owner is asked first; a change that makes Branch less careful is asked about every time, and the owner's yes makes it.",
+    description: "Change some of Branch's own settings, by the names settings.list gives (for example wake-word.mode to \"on\"). Use the id when you have it (from settings.list); only when the owner described a setting in their own words and you do not know which id they mean, call settings.find first and ask its question if it has one. The owner is asked first; a change that makes Branch less careful is asked about every time, and the owner's yes makes it.",
     parameters: ChangeSchema,
     target: (input: ChangeInput) => describe(input),
     execute: changeTool(false, store, writers, registry),
