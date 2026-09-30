@@ -12,12 +12,12 @@ import type { PolicyRemember } from "../policy.js";
 import { Deliveries } from "./deliveries.js";
 import { audit } from "../audit.js";
 import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifacts.js";
-import { decide, readSenderAllowlist } from "./allowlist.js";
+import { decide, groupAllowed, readSenderAllowlist } from "./allowlist.js";
 import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
 import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
 import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
-import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
+import { saveStepsSettings, stepsDisplayFor, stepsInChat, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
@@ -32,6 +32,8 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { homeGate, noHome, resolveHome } from "./home-chat.js"; // CHAT-190
+import { chatVoiceMode, speaksHere } from "./chat-voice.js"; // CHAT-096
 import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
 import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
@@ -40,6 +42,11 @@ import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { lockedDown } from "../lockdown.js";
+import { requestInstallNow } from "../comfort/update-now.js";
+import { updateStatus, type UpdateFacts } from "../comfort/update-tool.js";
+import { ownerChatMark, setOwnerChatCheck } from "../key-context.js"; // owner-dm-full
+import { conversationModeSettings, looserThan, readConversationMode, type ConversationMode } from "../conversation-mode.js"; // owner-dm-full
+import { readPolicy } from "../policy.js"; // owner-dm-full
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
@@ -309,6 +316,8 @@ export const ChannelPolicySchema = z.object({
   activation: z.enum(["mention", "always"]).default("mention"),
   pairing: z.boolean().default(true),
   allowlist: z.array(z.string().min(1).max(64)).max(64).default([]),
+  /** Which groups may use this connection: absent preserves existing behavior; [] refuses all. */
+  groupAllowlist: z.array(z.string().trim().min(1).max(64)).max(200).optional(),
 }).strict();
 export type ChannelPolicy = z.infer<typeof ChannelPolicySchema>;
 export type Outcome = "replied" | "ignored" | "pairing" | "rejected" | "failed";
@@ -478,6 +487,8 @@ export class ChannelRouter {
   constructor(private readonly store: Store, private readonly runtime: Runtime, public pumpMs = 10000) {
     this.deliveries = new Deliveries(store, runtime.owner);
     this.deliveries.splitting = () => this.switches().splitting;
+    // owner-dm-full: the owner's own verified direct chat is the owner along its whole task (src/key-context.ts).
+    setOwnerChatCheck(store, (runId) => this.ownerFullRun(runId));
   }
   async attach(adapter: ChannelAdapter, policy: ChannelPolicy): Promise<void> {
     if (this.adapters.has(adapter.id)) throw new Error(`Channel ${adapter.id} is already attached`);
@@ -684,6 +695,10 @@ export class ChannelRouter {
    * so a task finished while the channel was down is delivered once, in order, after reconnect.
    */
   async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
+    // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
+    const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
+    if (!home) throw new Error(noHome);
+    ({ channel, chatId } = home);
     const target = this.adapters.get(channel);
     if (!target) throw new Error(`Channel ${channel} is not connected`);
     const checked = await this.outboundGuard(text);
@@ -723,9 +738,11 @@ export class ChannelRouter {
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
+    // Reject an unselected group before pairing codes, approval answers, platform commands or task dispatch.
+    if (message.chatKind === "group" && !groupAllowed(policy.groupAllowlist, adapter.kind, message.chatId)) return "ignored";
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
-    const held = platformGate(this.store, this.runtime.owner, message);
+    const held = platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message); // CHAT-190
     if (held) {
       if (held.reply) await adapter.send(message.chatId, held.reply, this.quoteFor(message)).catch(() => undefined);
       return "ignored";
@@ -849,7 +866,8 @@ export class ChannelRouter {
       ? this.commandYesHere(channel, chatId, asked.runId, read.fingerprint, from)
         && !!read.nonce && this.shownCommands.get(`${channel}\u0000${chatId}\u0000${asked.fingerprint}`) === read.nonce
         && commandShown(asked.bytes) !== null && commandBytesExact(asked.tool, asked.bytes, asked.fingerprint)
-      : chatMayApprove(permission, this.chatApprovals(channel, from));
+      : (!!from?.senderId && this.ownerFullFrom({ channel, senderId: from.senderId, chatKind: from.chatKind ?? "group" }))
+        || chatMayApprove(permission, this.chatApprovals(channel, from));
     if (read.decision === "allow" && !mayApprove)
       return { decision: "in-window", tool: asked.tool, refusal: approveInWindow(asked.label || asked.tool) };
     // PR #289 second review: the yes lands on exactly the question vetted above, so it still answers while another waits.
@@ -889,7 +907,7 @@ export class ChannelRouter {
     if (!adapter) return;
     // A command from the owner's own chat is shown whole, as a code block, before its Yes (src/channels/owner-commands.ts).
     const permission = this.runtime.registry.permissionOf(waiting.tool);
-    const command = permission === commandPermission && this.ownerCommandsFrom(message)
+    const command = permission === commandPermission && (this.ownerCommandsFrom(message) || this.ownerFullFrom(message))
       && commandBytesExact(waiting.tool, waiting.bytes, waiting.fingerprint) ? commandShown(waiting.bytes) : null;
     const asked = command ? `${lead}${waiting.question}\n\n` : lead + waiting.question;
     const checked = await this.outboundGuard(this.hideLeaks(command ? asked + command : asked));
@@ -911,7 +929,7 @@ export class ChannelRouter {
     // with the sentence saying where the yes belongs. mac7/chat-approvals: unless the owner switched
     // that line on for this person on this app, in which case the Yes is theirs to press.
     const mayApprove = permission === commandPermission ? faithful
-      : chatMayApprove(permission, this.chatApprovals(message.channel, message));
+      : this.ownerFullFrom(message) || chatMayApprove(permission, this.chatApprovals(message.channel, message));
     const buttons = approvalButtons(waiting.fingerprint ?? "", canAlways && mayApprove)
       .filter((button) => mayApprove || button.value.startsWith("n"));
     const nonce = permission === commandPermission && faithful ? randomBytes(6).toString("hex") : null;
@@ -1036,6 +1054,10 @@ export class ChannelRouter {
     // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
     if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
       return { name: "new", argument: "" };
+    // Branch's own updates: the router's own command, answered only in the owner's own paired chat (updateCommand),
+    // whatever the commands switch says, and not one of the shared table's (src/commands/catalog.ts).
+    const update = message.voice ? null : /^\/update(?:@[a-z0-9_]+)?(?:\s+(install))?\s*$/i.exec(message.text.trim());
+    if (update) return { name: "update", argument: (update[1] ?? "").toLowerCase() };
     const setting = this.switches().commands;
     // As shipped, the owner's own paired direct chat reads commands even with the switch off (chat-live-settings.ts).
     // Only an account the owner named as their own (Commands from your own chat, or /platform's owners) counts:
@@ -1054,10 +1076,15 @@ export class ChannelRouter {
   /**
    * What a task started from a chat may use: the short safe list (src/channels/chat-permissions.ts),
    * plus whatever the owner has allowed this chat app and this person. Everything else is refused,
-   * including any permission added to Branch later. The owner's own paired account is a chat account
-   * like any other — a chat app cannot prove who is typing — so it gets the same list.
+   * including any permission added to Branch later.
+   *
+   * owner-dm-full: the one exception is the owner's own verified direct chat with "Your own chats have your full
+   * access" on (`ownerFullFrom`): that is the owner, so it gets everything a task the owner starts in the window gets,
+   * as OpenClaw's main session does. A paired friend, a household person, a group or an app that cannot vouch for its
+   * senders keeps the short list.
    */
   private chatPermissions(from?: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): string[] {
+    if (from && this.ownerFullFrom(from)) return this.runtime.registry.permissions();
     const settings = chatPermissionSettings(this.store, this.runtime.owner);
     const extra = from ? chatExtraPermissions(settings, from.channel, from.senderId) : [];
     const allowed = chatPermissionsAllowed(this.runtime.registry.permissions(), extra);
@@ -1065,6 +1092,42 @@ export class ChannelRouter {
     // proves who sent it, with the part on (src/channels/owner-commands.ts). Every command still asks.
     return from && this.ownerCommandsFrom(from) && this.runtime.registry.permissions().includes(commandPermission)
       ? [...allowed, commandPermission] : allowed;
+  }
+  /**
+   * owner-dm-full: whether this chat message is the owner's own, with the owner's full access, now (read afresh every
+   * time): the switch on, no Lockdown and no App lock, one of the owner's own named accounts in a direct chat on an app
+   * that vouches for its senders (`ownerDmHere`), still allowed to talk to Branch. A message fetched after a restart is
+   * the same person's (the app vouched for it), so its freshness is not asked, as `ownerDmRun` does.
+   */
+  private ownerFullFrom(from: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): boolean {
+    if (!this.ownerChatsOn()) return false;
+    const kind = this.adapters.get(from.channel)?.adapter.kind ?? "";
+    return ownerDmHere(this.store, this.runtime.owner, kind, { channel: from.channel, senderId: from.senderId, chatKind: from.chatKind, caughtUp: false })
+      && this.senderAllowed(from.channel, from.senderId);
+  }
+  /** owner-dm-full: the same for a whole task, along its chain (src/key-context.ts asks this for `runOrigin`). */
+  ownerFullRun(runId: string): boolean {
+    return this.ownerChatsOn() && this.ownerDmRun(runId);
+  }
+  /**
+   * owner-dm-full: the owner's own chat's conversation starts on what a new conversation in the window starts on
+   * (Settings › Permissions › New conversations, e.g. Full access). A conversation that already exists is given it once,
+   * only when it has no mode of its own and the start is looser than the owner's setting (so it never freezes one on
+   * something stricter); one the owner picked is never changed. Null when it follows the owner's setting, or the
+   * conversation is new (then returned for the task to start it with).
+   */
+  private ownerChatMode(sessionId: string | undefined): ConversationMode | null {
+    const wanted = conversationModeSettings(this.store, this.runtime.owner).newConversation;
+    if (wanted === "follow") return null;
+    if (!sessionId) return wanted;
+    if (!readConversationMode(this.store, this.runtime.owner, sessionId) && looserThan(wanted, readPolicy(this.store, this.runtime.owner).preset))
+      this.runtime.startMode(sessionId, wanted);
+    return null;
+  }
+  /** owner-dm-full: the switch is on and nothing holds the app (Lockdown, the App lock). */
+  private ownerChatsOn(): boolean {
+    return chatPermissionSettings(this.store, this.runtime.owner).ownerChats
+      && !lockedDown(this.store, this.runtime.owner) && !this.appLocked();
   }
   /** Whether this chat message is the owner's own and may ask to run a command, now (read afresh every time). */
   private ownerCommandsFrom(from: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): boolean {
@@ -1110,7 +1173,7 @@ export class ChannelRouter {
       seen.add(id);
       const events = this.store.events(id);
       for (const event of events) {
-        if (event.kind !== "channel.inbound") continue;
+        if (event.kind !== "channel.inbound" && event.kind !== ownerChatMark) continue; // owner-dm-full: /bg, /goal
         const came = event.data;
         if (typeof came.channel !== "string" || typeof came.senderId !== "string" || came.chatKind !== "direct") return false;
         const kind = this.adapters.get(came.channel)?.adapter.kind ?? "";
@@ -1132,7 +1195,9 @@ export class ChannelRouter {
   private commandYesHere(channel: string, chatId: string, runId: string, fingerprint: string,
     from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined }): boolean {
     if (!fingerprint || !from?.senderId || from.chatKind !== "direct") return false;
-    if (!this.ownerCommandsFrom({ channel, senderId: from.senderId, chatKind: from.chatKind, ...(from.caughtUp ? { caughtUp: true } : {}) })) return false;
+    // owner-dm-full: the owner's own verified direct chat with full access may press it too, still for these exact bytes.
+    if (!this.ownerCommandsFrom({ channel, senderId: from.senderId, chatKind: from.chatKind, ...(from.caughtUp ? { caughtUp: true } : {}) })
+      && !this.ownerFullFrom({ channel, senderId: from.senderId, chatKind: from.chatKind })) return false;
     const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
     return came?.channel === channel && came?.chatId === chatId;
   }
@@ -1146,8 +1211,47 @@ export class ChannelRouter {
   }
   // ---- chat-live (wave mac2): one task per chat, notes steer it, commands control it ----------
   /** Carries out a chat command and sends its answer back. */
+  /** Branch's own version and updates, for `/update` (src/comfort/update-tool.ts); set by createBranch. */
+  updateFacts: UpdateFacts | null = null;
+  /**
+   * `/update`: which Branch runs, the newest version that passed its checks and why an update waits, with an "Install
+   * now" button; `/update install` asks for the update (src/comfort/update-now.ts). Only the owner's own paired direct
+   * chat, and never under Lockdown or while the app is locked.
+   */
+  private async updateCommand(message: InboundMessage, argument: string): Promise<Outcome> {
+    const { channel, chatId } = message, owner = this.runtime.owner;
+    const own = message.chatKind === "direct" && message.caughtUp !== true && this.pair(channel, message.senderId)?.status === "approved"
+      && this.ownAccount(channel, message.senderId) && this.senderAllowed(channel, message.senderId);
+    const key = `update:${chatId}:${message.messageId}`;
+    const say = (text: string) => this.deliver(channel, chatId, text, key, message.messageId).catch(() => undefined);
+    if (!own) { await say("Only the owner, in their own paired chat, can ask about Branch's updates here."); return "replied"; }
+    if (lockedDown(this.store, owner) || this.appLocked()) { await say("Branch's updates are not asked about from a chat while Lockdown is on."); return "replied"; }
+    if (!this.updateFacts) { await say("This copy of Branch cannot say anything about its updates."); return "replied"; }
+    if (argument.trim().toLowerCase() === "install") {
+      requestInstallNow(this.store, owner, `chat:${channel}`);
+      const now = await updateStatus(this.store, owner, this.updateFacts);
+      await say(`Asked: Branch installs the newest version at the next safe moment, checked on a copy of your work first. ${now.words}`);
+      return "replied";
+    }
+    const now = await updateStatus(this.store, owner, this.updateFacts);
+    const adapter = this.adapters.get(channel)?.adapter;
+    const checked = await this.outboundGuard(now.words);
+    if (adapter?.sendButtons && !checked.blocked && !now.installRequested) {
+      const sent = await adapter.sendButtons(chatId, checked.text, [{ label: "Install now", value: "/update install" }], message.messageId).then(() => true, () => false);
+      if (sent) return "replied";
+    }
+    await say(adapter?.sendButtons ? now.words : `${now.words} Send /update install to install it now.`);
+    return "replied";
+  }
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
+    if (command.name === "update") return this.updateCommand(message, command.argument);
+    // A chat's steps level lasts beyond the conversation and can show more (files, commands), so, as /session and
+    // /personality, only the owner's own direct chat sets it; a group or a paired friend keeps the owner's settings.
+    if (command.name === "verbose" && !ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message)) {
+      await this.deliver(channel, chatId, "Only the owner's own direct chat sets its steps; this chat keeps the owner's settings.", `verbose-refused:${message.messageId}`, this.quoteFor(message));
+      return "replied";
+    }
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
     // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
@@ -1158,9 +1262,11 @@ export class ChannelRouter {
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
     const asks = command.name === "btw" || command.name === "compact" || question;
     const work = () => runChatCommand(command, {
-      runtime: this.runtime, channel, chatId, turn,
+      runtime: this.runtime, channel, kind: this.adapters.get(channel)?.adapter.kind ?? channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
+      // As for the owner's commands from a chat (#727): only on an app whose servers vouch for who sent it.
+      ownAccount: vouchedSenderKinds.includes(this.adapters.get(channel)?.adapter.kind ?? "") && this.ownAccount(channel, message.senderId),
       dropWaiting: () => {
         if (!turn || turn.runId) return false;
         turn.dropped = true;
@@ -1190,6 +1296,8 @@ export class ChannelRouter {
     const work = async () => (await executeCommand({ ...this.ownerDmHost!(), lockdownOffRefusal: "Lockdown can only be switched off in the app on this computer." }, {
       surface: "chat", line: message.text, sessionId: this.sessionFor(message.channel, message.chatId), access: "full",
       permissions: this.chatPermissions(message), ownerDm: true,
+      // owner-dm-full: with full access on, what these commands start is the owner's own, as a plain message's task is.
+      ...(this.ownerFullFrom(message) ? { ownerChat: { channel: message.channel, senderId: message.senderId } } : {}),
     }))?.text ?? "I do not know that command.";
     const reply = ["goal", "bg", "health"].includes(dm.name) ? await this.withSlot(work) : await work();
     await this.deliver(message.channel, message.chatId, reply, key, this.quoteFor(message)).catch(() => undefined);
@@ -1443,10 +1551,13 @@ export class ChannelRouter {
           files.push(`${safe}: ${artifact.path}`);
         }
       }
+      // owner-dm-full: the owner's own verified direct chat runs as the owner, with the Access level a conversation
+      // started in the window gets; every other chat cannot prove who is typing, so its task is never the owner's own.
+      const owners = this.ownerFullFrom(message);
+      const mode = owners ? this.ownerChatMode(sessionId) : null;
       const run = await this.runtime.run({
         prompt: [heard.prompt, ...files.map((file) => `[attached file: ${file}]`)].filter(Boolean).join("\n") || "Please inspect the attached picture.", ...(images.length ? { images } : {}), ...(sessionId ? { sessionId } : trunkId ? { trunkId } : {}), permissions: this.chatPermissions(message),
-        // A chat cannot prove who is typing, so its task is never the owner's own (see RunSource).
-        source: "channel",
+        source: owners ? "owner" : "channel", ...(mode ? { conversationMode: mode } : {}),
         // Which app it came in on, for the model's line saying where it runs (src/environment.ts).
         channel: chatAppName(this.adapters.get(message.channel)?.adapter.kind ?? message.channel),
         onStarted: (started) => {
@@ -1535,8 +1646,10 @@ export class ChannelRouter {
     await live?.finish(ok ? "done" : "error");
     const delivered = await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null, turn);
     // The owner's "remove the steps message after a good answer"; a failed task keeps it as the record.
-    if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
-    if (message.voice) await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
+    if (ok && delivered && this.stepsDisplay(message.channel, message.chatId).cleanup) await live?.remove();
+    // CHAT-096: this chat's /voice choice says when a reply is spoken too (a voice note, every reply, or never).
+    if (speaksHere(chatVoiceMode(this.store, this.runtime.owner, message.channel, message.chatId), !!message.voice))
+      await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
     return ok ? "replied" : "failed";
   }
   /**
@@ -1713,12 +1826,12 @@ export class ChannelRouter {
     const adapter = this.adapters.get(message.channel)?.adapter, switches = this.switches(), setting = switches.liveStatus;
     // An app with none of typing, reactions or edits still gets a message per step when the owner chose that for it.
     const eachStep = !!adapter && !adapter.edit && !adapter.paidPerMessage && message.chatKind === "direct" && switches.steps !== "off"
-      && this.stepsDisplay(message.channel).noEdit === "each" && this.stepsDisplay(message.channel).detail !== "off";
+      && this.stepsDisplay(message.channel, message.chatId).noEdit === "each" && this.stepsDisplay(message.channel, message.chatId).detail !== "off";
     if (!adapter || setting === "off" || !this.liveOn() || (!adapter.sendTyping && !adapter.react && !adapter.edit && !eachStep)) return null;
     // A group shares one bot with other people: Telegram lets a bot post about 20 messages a minute there, edits included.
     const timing = message.chatKind === "group" ? { ...this.liveTiming, editEveryMs: Math.max(this.liveTiming.editEveryMs, this.groupEditEveryMs) } : this.liveTiming;
     // The steps name files and commands, so only a direct chat is shown them: this message already passed the sender check.
-    const display = this.stepsDisplay(message.channel);
+    const display = this.stepsDisplay(message.channel, message.chatId);
     const steps = switches.steps !== "off" && message.chatKind === "direct" && display.detail !== "off"
       && (adapter.edit || eachStep) ? this.stepsOf(runOf, display, !adapter.edit) : undefined;
     // A group gets counts of kinds of step, or (the owner's "no steps in groups") no progress message at all.
@@ -1756,7 +1869,7 @@ export class ChannelRouter {
    */
   private stepsLine(message: InboundMessage, run: Run, ok: boolean): string | null {
     const adapter = this.adapters.get(message.channel)?.adapter;
-    const display = this.stepsDisplay(message.channel);
+    const display = this.stepsDisplay(message.channel, message.chatId);
     if (!adapter || adapter.edit || adapter.paidPerMessage || message.chatKind !== "direct" || this.switches().steps === "off"
       || display.detail === "off" || display.noEdit !== "summary") return null;
     if (Date.parse(run.updatedAt) - Date.parse(run.createdAt) < this.liveTiming.progressAfterMs) return null;
@@ -1796,9 +1909,10 @@ export class ChannelRouter {
     };
   }
   /** The steps knobs for one connected app (Settings › Chat apps, src/channels/steps-display.ts). */
-  stepsDisplay(channel: string): StepsDisplay {
+  stepsDisplay(channel: string, chatId?: string): StepsDisplay {
     const adapter = this.adapters.get(channel)?.adapter;
-    return stepsDisplayFor(stepsSettings(this.store, this.runtime.owner), { id: channel, kind: adapter?.kind ?? channel });
+    const display = stepsDisplayFor(stepsSettings(this.store, this.runtime.owner), { id: channel, kind: adapter?.kind ?? channel });
+    return chatId ? stepsInChat(this.store, this.runtime.owner, channel, chatId, display) : display;
   }
   stepsSettings(): StepsSettings { return stepsSettings(this.store, this.runtime.owner); }
   setStepsSettings(input: unknown): StepsSettings { return saveStepsSettings(this.store, this.runtime.owner, input); }

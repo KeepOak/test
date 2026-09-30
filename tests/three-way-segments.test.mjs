@@ -91,12 +91,14 @@ for (const width of [1440, 860, 400]) {
 }
 
 test("DG-169 a three-way that is Coming soon is dimmed, and a press on it changes nothing (new window)", async (t) => {
-  const { settingsWindow, openSettingsPage, isSoon } = await import("./settings-window.mjs");
+  const { settingsWindow, openSettingsPage, setLevel, isSoon } = await import("./settings-window.mjs");
   const { page, errors } = await settingsWindow(t, { name: "three-way" });
   await openSettingsPage(page, "permissions");
-  await page.locator(".set-col details.adv > summary").click();
-  const group = page.locator(".set-col").getByRole("group", { name: "When tools are loaded", exact: true });
-  const option = group.getByRole("button", { name: "When needed", exact: true });
+  // "When tools are loaded" is words now (tests/not-a-setting-plain-text.test.mjs); Isolation's container per Trunk is
+  // still a Coming soon three-way.
+  await setLevel(page, "technical");
+  const group = page.locator(".set-col").getByRole("group", { name: "A container per Trunk", exact: true });
+  const option = group.getByRole("button", { name: "For code", exact: true });
   await option.waitFor();
   assert.equal(await isSoon(option), true, "greyed out, Coming soon");
   assert.equal(await option.evaluate((node) => getComputedStyle(node).opacity), "0.45");
