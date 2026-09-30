@@ -1,0 +1,13 @@
+# Sensitive tool review
+
+New workspaces use the approval reviewer's `when-needed` mode. Explicit saved `off` choices remain off. Categorized message, sharing and spending tools require an approval for the exact content and recipient, including script and workflow admission. Standing approvals and Full Access do not skip this additional hold while the reviewer is enabled. Owner-pressed manual actions retain their existing explicit owner action path.
+
+The bounded second model sees redacted, untrusted tool details and the original owner task reached through same-owner helper ancestry. A helper's brief cannot broaden that instruction. Health content needs a named authorized recipient; personal content needs an authorized recipient class or narrower scope. Missing ancestry, truncated details, unavailable review, or uncertain sensitivity/scope ask for a once-only decision. Spending always asks. Existing refusals remain refusals, and the policy is checked again after the review await. Model `readOnly` classifications are informational and cannot relax a rule.
+
+An exact once-only answer is scoped to its conversation, fingerprint and originating asker, expires at the existing session grant limit, and is consumed once. Browser step checks use that same asker binding. Verdict caches are scoped to owner, run, caller, original instruction and reviewer settings.
+
+This is a tool-admission reviewer, not a continuous independent review of every generated source diff. Categories use bounded tool-name and permission matching; an arbitrary external tool can conceal its effect behind another name. Existing command, unknown-tool, leak and policy protections remain relevant. No classifier proves that a payload is safe. Real recipient journeys, reviewer availability, changed rules and browser/workflow integration need installed acceptance.
+
+Sources reviewed: [OpenAI auto-review](https://learn.chatgpt.com/docs/sandboxing/auto-review), [OpenAI action safety design](https://openai.com/index/how-we-build-safety-security-and-privacy-into-dots/), and [Hermes smart approval](https://github.com/NousResearch/hermes-agent/blob/bddd22be7c2e5f7630c3d90507e6e7280ff092e3/tools/approval_smart.py) (MIT). The closed documentation provides requirements only. Hermes's Python shell parser and approval context do not fit Branch's structured tool/recipient and ancestry contracts; this implementation uses Branch's existing reviewer and approval gate, with original scope and admission code. No external code was copied.
+
+Tests not run at owner request. CI intentionally skipped. Rollback: revert this change; existing saved reviewer configuration remains available.

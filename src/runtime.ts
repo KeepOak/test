@@ -101,7 +101,8 @@ import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation, wit
 import { gateToolUse, type ToolGateOptions } from "./tool-gate.js";
 import * as safetyExtras from "./safety-extras/hooks.js"; // mac7/r17-g: the safety extras' hooks
 // Wave mac3 (tool-safety): the second look before an approval.
-import { reviewCall } from "./approval-reviewer.js";
+import { reviewCall, reviewerSettings } from "./approval-reviewer.js";
+import { sensitiveActionHold } from "./approval-review-scope.js";
 import { privateConversationRoute, routeForTask, routingSettings } from "./local-routing.js";
 import { routeByProfile } from "./model-profiles.js";
 import { profileScope, type Profile } from "./profiles.js"; // household-followups
@@ -1397,7 +1398,7 @@ export class Runtime {
       // A once-only question: check if the owner already gave a yes to this exact step.
       // The yes is not consumed yet; it will be consumed only after all steps pass judgment.
       const session = context.approvalKey ?? this.store.run(context.runId)?.sessionId ?? context.runId;
-      if (fingerprint && this.approvals.hasOverrule(session, fingerprint)) {
+      if (fingerprint && this.approvals.hasOverrule(session, fingerprint, askerOf(runOrigin(this.store, context.runId)))) {
         // The overrule exists; return it so judgeFlow can consume it later.
         if (this.store.run(context.runId))
           this.store.event(context.runId, "policy.ask", { name: tool, step: true, ...(target ? { target } : {}), skipped: true });
@@ -1418,7 +1419,7 @@ export class Runtime {
     const session = context.approvalKey ?? this.store.run(context.runId)?.sessionId ?? context.runId;
     let all = true;
     for (const fingerprint of fingerprints) {
-      if (!this.approvals.takeOverrule(session, fingerprint)) { all = false; continue; }
+      if (!this.approvals.takeOverrule(session, fingerprint, askerOf(runOrigin(this.store, context.runId)))) { all = false; continue; }
       if (this.store.run(context.runId))
         this.store.event(context.runId, "policy.overruled", { name: "browser.flow", label: "step", id: fingerprint });
     }
@@ -4578,14 +4579,17 @@ ${run.output.slice(0, 6000)}`;
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
     // R17-S-C integration review: with "confirm sensitive browser steps" on, those are once-only questions too.
-    const hold = personal ?? (holdsBrowserStep(this.store, this.owner, tool) ? { reason: browserConfirmationHold, onceOnly: true } : null)
+    // Synchronous workflow/script admission cannot make a model-backed sensitivity judgment.
+    // The exact owner approval also bounds normal model calls; a reviewer never relaxes it.
+    const sensitive = reviewerSettings(this.store, this.owner).mode === "off" ? null : sensitiveActionHold(tool, permission);
+    const hold = sensitive ?? personal ?? (holdsBrowserStep(this.store, this.owner, tool) ? { reason: browserConfirmationHold, onceOnly: true } : null)
       ?? this.scriptHold(tool, context.runId) // mac7/residuals (4b)
       // P17-D §3: every browser step of a learning task asks, once, never answered by a standing or earlier yes.
       ?? (learning && permission.startsWith("browser.") ? { reason: learningHold, onceOnly: true as const } : null)
       ?? (fullAccess ? null : newAppHold(this.store, this.owner, tool, args, context.trunk)) // unhold-control
       // Dogfood D4: screen use still asks outside a checked local owner's selected Full Access.
       ?? (screenHeld ? { reason: screenHoldReason, onceOnly: false as const } : null);
-    const held = (personal || screenHeld || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
+    const held = (sensitive || personal || screenHeld || hold?.reason === scriptAskFirstHold || hold?.reason === newAppHoldReason || hold?.reason === learningHold) && tightened.decision === "allow" ? "ask" : tightened.decision;
     const guarded = held === "allow" && lockdownActive(this.store, this.owner) && !lowersRiskOnly(tool) ? "ask" : held; // mac7/lockdown-fix
     if (hold?.onceOnly && guarded === "ask" && fingerprint) this.approvals.holdOnce(fingerprint, hold.reason);
     // --- end R17-C ---
@@ -4824,7 +4828,7 @@ ${run.output.slice(0, 6000)}`;
       return { refusal: { ok: false, error: screenWithheldRefusal }, sandbox: null, backend: null, paths: null };
     }
     // Wave mac3 (tool-safety): a second model may look at a risky or unknown call first; it can only
-    // make the answer stricter, or confirm that a tool which does not say only reads (src/approval-reviewer.ts).
+    // make the answer stricter; a model's readOnly classification never relaxes policy.
     const { decision: ruled, label, target, readOnly, remember, sandbox, backend, paths, reason, worded, answered } =
       await reviewCall(this, this.checkPolicy(call.name, args, context, fingerprint), { call: shown, args, context, fingerprint });
     const held = { sandbox, backend, paths };
