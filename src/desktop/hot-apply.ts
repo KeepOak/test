@@ -7,13 +7,14 @@ import { isCanaryCopy, runCanary } from "../never-break/canary.js";
 import type { EngineChild, EngineHost, HandOverOutcome } from "./engine-host.js";
 import { UpdateDeferredError, type LiveApplied, type LiveHooks, type ReleaseInfo } from "./updater.js";
 import { WindowUpdateDeferred, windowPlan, type WindowUpdate } from "./live-window-ipc.js";
+import type { PreparedGatewayCode } from "./gateway-code.js";
 
 /**
  * Live updates (hot-update), main's part: which live build the engine and the window use at start, and how a Beta
  * change is applied live (the updater's `live` hooks, src/desktop/updater.ts).
  *
  * - Window: the engine checks the live build and serves its window files; the open window takes them in place.
- * - Engine (and the gateway's own code, which the desktop's own engine does not run): the live build is checked again,
+ * - Engine (and compatible retained gateway methods): the live build is checked again,
  *   tried on a copy of the owner's work (the Beta try-out, src/never-break/canary.ts), a safety copy of the work is
  *   taken, and the new engine takes over at the window's address (EngineHost.handOver). A new engine that fails is
  *   rolled back and the update says so; nothing half-applied is kept.
@@ -41,7 +42,8 @@ export interface HotApplyOptions {
   /** Close leases owned by the departed engine, after its Link closes and before its successor begins. */
   onEngineDeparture?: () => void;
   /** The retained gateway wakes public requests only after a candidate or rollback proves its internal address. */
-  gateway?: { ready(version: string, provisional?: boolean): void; checking(): void; packagedVersion: string };
+  gateway?: { ready(version: string, provisional?: boolean): void; checking(): void; packagedVersion: string;
+    prepareCode?: (inUse: InUse) => Promise<PreparedGatewayCode> };
   /** The runtime a live engine's try-out runs under (the app's own program, as Node). */
   runtime: string;
   /** Told what is in use once a live build went into use. */
@@ -67,6 +69,15 @@ export async function liveAtStart(appRoot: string, log: (line: string) => void =
 /** The newest change running: the window's live build, else the engine's, else the packaged one. */
 export const runningChange = (state: LiveState, packaged: string | null): string | null => state.window?.commit ?? state.engine?.commit ?? packaged;
 
+/**
+ * A gateway change is live only where a retained gateway can take its checked code in place. Without one (the window's
+ * own engine), src/never-break/gateway.ts is loaded by main, so the change goes the packaged way, as it did before.
+ */
+export function residentGatewayOutcome(outcome: LiveOutcome, options: Pick<HotApplyOptions, "gateway">): LiveOutcome {
+  if (outcome.tier !== "gateway" || options.gateway?.prepareCode) return outcome;
+  return { tier: "shell", version: outcome.version, reason: "This copy has no retained gateway to take the new gateway code live." };
+}
+
 export function liveHooks(options: HotApplyOptions): LiveHooks {
   let state: LiveState | null = null;
   let hosted: HostedBuild<LiveOutcome> | null = null, paused = false;
@@ -85,7 +96,7 @@ export function liveHooks(options: HotApplyOptions): LiveHooks {
         builtOutput: { repo: options.repo },
       }, { log: join(options.buildDir, "live-build.log") });
       if (paused) hosted.pause(true);
-      try { return await hosted.done; } finally { hosted = null; }
+      try { return residentGatewayOutcome(await hosted.done, options); } finally { hosted = null; }
     },
     apply: async (outcome, hooks) => {
       const now = await current();
@@ -146,6 +157,9 @@ async function applyEngine(options: HotApplyOptions, outcome: Exclude<LiveOutcom
   if (!isCanaryCopy(options.dataDir, copy)) throw new Error("The copy of your work was not where Branch keeps update copies, so it was not used.");
   const tried = await runCanary({ engine: { executable: options.runtime, script: join(dir, "dist", "cli.js") }, dataCopy: copy, expectedVersion: inUse.version });
   if (!tried.ok) throw new Error(`The new engine did not pass its check, so nothing was changed. ${tried.detail}`);
+  if (outcome.tier === "gateway" && !options.gateway?.prepareCode)
+    throw new Error("This copy cannot replace its resident gateway code, so the update was not applied live.");
+  const gatewayCode = outcome.tier === "gateway" ? await options.gateway!.prepareCode!(inUse) : null;
   hooks.onStage("copying");
   await options.backup();
   hooks.onStage("swapping");
@@ -160,14 +174,16 @@ async function applyEngine(options: HotApplyOptions, outcome: Exclude<LiveOutcom
     config: { appRoot: options.appRoot, liveWindow: inUse },
     check: async (url) => {
       if (!(await proveOnce(url, host.token, 10_000))) throw new Error("the new engine did not prove its identity");
-      options.gateway?.ready(inUse.version, true);
-      try { if (plan) await options.tellWindow(plan); }
-      catch (error) { if (error instanceof WindowUpdateDeferred) refused = error; throw error; }
+      try {
+        gatewayCode?.apply();
+        options.gateway?.ready(inUse.version, true);
+        if (plan) await options.tellWindow(plan);
+      } catch (error) { gatewayCode?.rollback(); if (error instanceof WindowUpdateDeferred) refused = error; throw error; }
     },
   });
   if (!handed.ok) throw refused ?? new Error(`The new engine did not start properly, so the engine that was running before was started again and nothing was changed (${handed.why}).`);
   options.gateway?.ready(inUse.version);
   options.log?.(`Engine handed over in ${handed.ms} ms (${handed.handedOver.length} task(s) carried on).`);
   return { tier: outcome.tier === "gateway" ? "gateway" : "engine", ms: handed.ms,
-    words: "Updated Branch's engine live", version: inUse.version, commit: inUse.commit };
+    words: gatewayCode ? "Updated Branch's engine and resident gateway code live" : "Updated Branch's engine live", version: inUse.version, commit: inUse.commit };
 }

@@ -2,6 +2,7 @@ import { app, powerMonitor, powerSaveBlocker } from "electron";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startDesktopGateway } from "./gateway-runtime.js";
+import { prepareGatewayCode } from "./gateway-code.js";
 import { rememberedPort, rememberPort } from "./local-port.js";
 import { serveDesktopControl } from "./gateway-control.js";
 import { applyGatewayLive, gatewayApplyOwner } from "./gateway-live.js";
@@ -60,7 +61,7 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
   }).catch((error: unknown) => { power.close(); throw error; });
   const owner = gatewayApplyOwner(control);
   try {
-    gateway = await startDesktopGateway({ dataDir, engineFile: fileURLToPath(new URL("./engine-process.js", import.meta.url)),
+    gateway = await startDesktopGateway({ dataDir, appRoot, engineFile: fileURLToPath(new URL("./engine-process.js", import.meta.url)),
       port: await rememberedPort(join(dataDir, "local-port.json")), version: app.getVersion(),
       close: async () => { power.close(); await control.close(); },
       onOwnerOff: () => { void gateway?.stop().finally(() => app.exit(0)); },
@@ -71,7 +72,10 @@ export async function runDesktopGateway(options: DetachedDesktopOptions): Promis
         else diagnose("gateway", "error", event.why ?? "The engine stopped unexpectedly", { fields: { code: event.code, signal: event.signal, tripped: event.tripped } });
       },
       worker: (env, ready, checking) => retainedDesktopWorker(options, env, ready, checking, owner.control, (hooks, next) => { live = hooks; host = next; },
-        () => { void gateway?.stop().finally(() => app.exit(0)); }, power) });
+        () => { void gateway?.stop().finally(() => app.exit(0)); }, power, (inUse) => {
+          if (!gateway) throw new Error("The resident gateway is not ready to update.");
+          return prepareGatewayCode(appRoot, gateway, inUse);
+        }) });
   } catch (error) { power.close(); await control.close().catch(() => undefined); throw error; }
   if (gateway) rememberPort(join(dataDir, "local-port.json"), gateway.url);
   else { power.close(); await control.close(); }

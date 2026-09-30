@@ -14,6 +14,7 @@ import { runAsNode } from "../child-env.js";
 import { previewRequest } from "./gateway-preview.js";
 import { quitPath, quitRequest } from "../install/quit.js";
 import { EngineWatchdog, engineAnswers, watchdogDefaults } from "./engine-watchdog.js";
+import { gatewayResources } from "./gateway-resources.js";
 
 /**
  * The gateway: a small process that keeps Branch's public address open and keeps one worker — the
@@ -73,7 +74,11 @@ const defaultSpawn = (script: string, args: string[], env: NodeJS.ProcessEnv): G
 
 interface Worker { child: GatewayChild; state: WorkerState; port: number | null; ready: WorkerReady | null; startedAt: number; endedBecause?: string }
 
+/** Bump for any resident field, private-brand, or callback invariant change; such changes require a packaged restart. */
+export const gatewayCodeContract = 1;
+
 export class Gateway {
+  private codeVersion: string;
   private server: Server | null = null;
   private worker: Worker | null = null;
   private config!: GatewayConfig;
@@ -99,7 +104,14 @@ export class Gateway {
   readonly notes: GatewayNote[] = [];
   restarts = 0;
   url = "";
-  constructor(private readonly options: GatewayOptions) {}
+  constructor(private readonly options: GatewayOptions) { this.codeVersion = options.version; }
+
+  /** Only the checked resident-code adopter changes the version, without rebuilding process-owned state. */
+  useCodeVersion(version: string): string {
+    const previous = this.codeVersion;
+    this.codeVersion = version;
+    return previous;
+  }
 
   note(text: string): void {
     this.notes.push({ at: new Date().toISOString(), text });
@@ -123,7 +135,7 @@ export class Gateway {
     if (!address || typeof address === "string") throw new Error("The gateway could not open its address.");
     this.url = `http://127.0.0.1:${address.port}`;
     if (this.options.presence)
-      await writeRunning(this.options.dataDir, { port: address.port, pid: process.pid, url: this.url, mode: "daemon", version: this.options.version }).catch(() => undefined);
+      await writeRunning(this.options.dataDir, { port: address.port, pid: process.pid, url: this.url, mode: "daemon", version: this.codeVersion }).catch(() => undefined);
     this.launch();
     return this.url;
   }
@@ -131,9 +143,9 @@ export class Gateway {
   /** What the gateway can say about itself without asking the worker. */
   health(): Record<string, unknown> {
     const worker = this.worker;
-    return { ok: worker?.state === "ready", gateway: { pid: process.pid, version: this.options.version, contract: gatewayContract.speaks },
+    return { ok: worker?.state === "ready", gateway: { pid: process.pid, version: this.codeVersion, contract: gatewayContract.speaks },
       worker: { state: worker?.state ?? "stopped", pid: worker?.child.pid ?? null, version: worker?.ready?.version ?? null },
-      restarts: this.restarts, slowedDown: this.tripped, notes: this.notes.slice(-10) };
+      restarts: this.restarts, slowedDown: this.tripped, notes: this.notes.slice(-10), resources: gatewayResources() };
   }
 
   /* ---------- the worker ---------- */
@@ -436,7 +448,10 @@ export class Gateway {
 
   /* ---------- stopping ---------- */
 
-  async stop(): Promise<void> {
+  /** Stable entry used by the retained owner's release wrapper, even after implementation replacement. */
+  stop(): Promise<void> { return this.stopRetained(); }
+
+  async stopRetained(): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
     if (this.relaunch) clearTimeout(this.relaunch);
