@@ -4,8 +4,9 @@
    and off as "off". The session key is never shown, and making a new one stays greyed. Tool scripts and WebAssembly is
    the safety extras' two parts at once (POST /api/safety-extras/switch tool-scripts and wasm-add-ons, each sent and the
    page read again, so a half-done change shows as it is); tools that join over a WebSocket is the interop part
-   client-tools, off as it ships (a program on this computer with the owner's key lends tools while it is on). "Load tools only when needed" is what
-   the engine always does (src/tool-loading.ts), so it shows on and has no switch. Finding Branch on other computers
+   client-tools, off as it ships (a program on this computer with the owner's key lends tools while it is on). "Load tools
+   only when needed" (src/tool-loading.ts), portable mode and saving task trajectories are how Branch always works, so they
+   are words, not switches (settings/rows15.js fact15). Finding Branch on other computers
    happens only while "Add a computer" is open (src/devices/find.ts), so its row opens that dialog (flows/computers.js,
    "addcomp"). Every other greyed row says why (core/why.js). A row of choices or a button with a translated title
    carries its English title's id as its reason key. Turn an OpenAPI file into tools reads a chosen file and
@@ -16,12 +17,13 @@ import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
-import { id15, sw15, btn15, code15, sec15 } from "../rows15.js";
+import { id15, sw15, btn15, code15, sec15, fact15 } from "../rows15.js";
 import { developer17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { initPlayground } from "../playground.js";
 import { initOpenApiPick } from "../openapi-pick.js";
 import { say } from "../../core/words.js";
+import { reason } from "../../core/why.js";
 import { t } from "../../../i18n.js";
 
 const D = { ls: null, dbg: null, interop: null, counters: null, loop: null, comfort: null, tracing: null, safety: null };
@@ -47,14 +49,14 @@ const value = (id) => WIRES[id]?.[0]?.() ?? false;
 const sw = (title, sub) => sw15(title, sub, value(id15(title)));
 
 /* The terminal's status line (the comfort card "display", statusLine): Default is the engine's null (the line as it has
-   always been), Minimal is the model and the room used. My script stays greyed: Branch builds the line from its own
-   pieces and runs no script of yours for it (window.why.f15-status-line-script). */
+   always been), Minimal is the model and the room used. There is no third choice: Branch builds the line from its own
+   pieces and runs no script of yours for it, which the row says in words (window.why.f15-status-line-script). */
 const MINIMAL = ["model", "context"];
 function statusRow() {
   const items = D.comfort?.values?.display?.statusLine, title = t("comfort.field.statusLine");
   const cur = !D.comfort ? null : items == null ? "default" : JSON.stringify(items) === JSON.stringify(MINIMAL) ? "minimal" : null;
   const opt = (v, words) => `<button type="button" aria-pressed="${cur === v}" data-act="dv-status" data-v="${v}">${esc(words)}</button>`;
-  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("default", t("voice.default"))}${opt("minimal", t("window.settings.developer.minimal"))}<button type="button" aria-pressed="false" data-act="dv-status-script" data-why="f15-status-line-script">${esc(t("window.settings.developer.my-script"))}</button></span></span><small>${esc(t("window.settings.developer.status-line-where"))}</small></div>`;
+  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("default", t("voice.default"))}${opt("minimal", t("window.settings.developer.minimal"))}</span></span><small>${esc(t("window.settings.developer.status-line-where"))} ${esc(reason("f15-status-line-script"))}</small></div>`;
 }
 async function setStatusLine(v) {
   try { await api("comfort", { card: "display", values: { statusLine: v === "minimal" ? MINIMAL : null } }); } catch (error) { toast(error.message); }
@@ -75,18 +77,18 @@ export function draw() {
     btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), t("window.settings.openapi.row"), t("delight.bg.choose"), "openapi-pick")
     + sw("Tool scripts and WebAssembly", "Sandboxed JavaScript and .wasm add-ons.")
     + sw("Tools that join over a WebSocket", `ws://${location.host}/api/interop/client-tools/ws`)
-    + sw15("Load tools only when needed", "Thousands of tools at the cost of dozens.", true) // state: always, every round (src/tool-loading.ts)
+    + fact15("Load tools only when needed", "f15-load-tools-only-when-needed") // always, every round (src/tool-loading.ts)
     + btn15(t("window.settings.developer.playground"), t("window.settings.developer.try-any-tool-through-a-form"), t("ov.open"), "playground-open"));
   html += sec15(t("window.settings.developer.automations-technical"),
     sw("Flow search", "Tries four versions of a flow on examples and keeps the best.")
     + code15(t("window.settings.developer.loop-a-prompt"), t("window.settings.developer.or-heartbeat-for-the-check-in"), "/loop 10m check the build"));
   html += sec15(t("window.settings.developer.system"),
-    sw("Portable mode", "Data beside the program, for a USB stick.")
+    fact15("Portable mode", "f15-portable-mode")
     + sw("Send metrics with OpenTelemetry", D.tracing?.endpoint ?? "")
     + statusRow()
     + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
-    + sw("Save task trajectories", "Every step as JSON Lines, for analysis."));
+    + fact15("Save task trajectories", "f15-save-task-trajectories"));
   return html + developer17(level17());
 }
 
