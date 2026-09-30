@@ -1458,6 +1458,8 @@ owner GET /api/metrics | here=ok remote=ok phone=ok legacy=ok person=401/327290 
 owner POST /api/metrics | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/6e367a run=401/6e367a nobody=401/40daee
+owner GET /api/models/account-hello | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/models/account-hello | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/models/gemini-signin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/models/gemini-signin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/models/probe | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3716,6 +3718,8 @@ owner+lockdown GET /api/metrics | here=ok remote=ok phone=ok legacy=ok person=40
 owner+lockdown POST /api/metrics | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/models | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/6e367a run=401/6e367a nobody=401/40daee
+owner+lockdown GET /api/models/account-hello | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/models/account-hello | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/models/gemini-signin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/models/gemini-signin | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/models/probe | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5974,6 +5978,8 @@ household GET /api/metrics | here=400/f6e21c remote=400/f6e21c read=400/f6e21c r
 household POST /api/metrics | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/models | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/models | here=400/f6e21c remote=400/f6e21c read=401/6e367a run=401/6e367a
+household GET /api/models/account-hello | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/models/account-hello | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/models/gemini-signin | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/models/gemini-signin | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/models/probe | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8232,6 +8238,8 @@ household+lockdown GET /api/metrics | here=400/f6e21c remote=400/f6e21c read=400
 household+lockdown POST /api/metrics | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/models | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/models | here=400/f6e21c remote=400/f6e21c read=401/6e367a run=401/6e367a
+household+lockdown GET /api/models/account-hello | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/models/account-hello | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/models/gemini-signin | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/models/gemini-signin | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/models/probe | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10490,6 +10498,8 @@ applock GET /api/metrics | here=423/a8f863
 applock POST /api/metrics | here=423/a8f863
 applock GET /api/models | here=423/a8f863
 applock POST /api/models | here=423/a8f863
+applock GET /api/models/account-hello | here=423/a8f863
+applock POST /api/models/account-hello | here=423/a8f863
 applock GET /api/models/gemini-signin | here=423/a8f863
 applock POST /api/models/gemini-signin | here=423/a8f863
 applock GET /api/models/probe | here=423/a8f863

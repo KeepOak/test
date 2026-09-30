@@ -850,6 +850,7 @@ export const ROUTES = {
   "/api/memory/versions/restore": "other POST",
   "/api/metrics": "look",
   "/api/models": "owner POST",
+  "/api/models/account-hello": "owner POST",
   "/api/models/gemini-signin": "owner POST",
   "/api/models/probe": "other POST",
   "/api/models/profiles": "owner POST",
