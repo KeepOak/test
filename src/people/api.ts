@@ -180,7 +180,56 @@ async function personApi(app: Branch, request: IncomingMessage, path: string, bo
   if (method === "POST" && path === "/api/people/me/pin") return changePin(app, person, await body());
   if (path.startsWith("/api/people/me/passkeys")) return passkeyApi(app, request, path, body, person);
   if (path.startsWith("/api/people/conversations")) return conversationApi(app, request, path, body, person);
+  if (path.startsWith("/api/people/rooms")) return roomApi(app, request, path, body, person);
   throw new PeopleHttpError(404, "Not found");
+}
+
+/** Re-read revocation after a message body awaited; the request's old mark is not authority. */
+function roomPerson(app: Branch, person: Mark) {
+  const entry = app.people.entryFor(person.keyId);
+  const profile = app.store.profiles.list().find((one) => one.id === person.profileId);
+  if (!app.people.enabled() || !entry || entry.profileId !== person.profileId || entry.revokedAt
+    || Date.parse(entry.expiresAt) <= Date.now() || entry.method === "setup" || !profile)
+    throw new PeopleHttpError(401, "This sign-in no longer reaches rooms. Sign in again.");
+  if (app.sessionLock.shut() || lockdownActive(app.store, app.runtime.owner))
+    throw new PeopleHttpError(403, "Branch is locked, so this room is not available.");
+  app.trunks.require("rooms");
+  return profile;
+}
+
+/** Only public room turns, never owner context, member sessions, artifacts or questions. */
+function personRoomView(app: Branch, id: string, person: Mark) {
+  roomPerson(app, person);
+  const room = app.trunks.rooms.requireAccess(id, person.profileId);
+  const discussions = new Map(room.events.filter((event) => event.kind === "user").map((event) => [event.seq, event.rule]));
+  const events = room.events.filter((event) => event.kind === "user"
+    || (event.kind === "member" && (event.final || (discussions.has(event.discussion ?? -1)
+      && discussions.get(event.discussion ?? -1) !== "together"))));
+  const names = new Map(app.trunks.rooms.roster(room).map((member) => [member.id, member.name]));
+  const messages = events.slice(-100).map((event) => ({
+    role: event.kind === "user" ? "user" : "assistant",
+    who: event.kind === "user" ? event.personName ?? "Owner" : names.get(event.memberId ?? "") ?? room.agentNames[event.memberId ?? ""] ?? "A Trunk",
+    content: app.runtime.hideSecrets(event.text ?? "").slice(0, 8000), seq: event.seq,
+  }));
+  return { roomId: room.id, name: room.name, seq: room.seq, messages, limited: events.length > 100 || room.events.length >= 300 };
+}
+
+async function roomApi(app: Branch, request: IncomingMessage, path: string, body: ReadBody, person: Mark): Promise<unknown> {
+  roomPerson(app, person);
+  if (request.method === "GET" && path === "/api/people/rooms") {
+    const rooms = app.trunks.rooms.forPerson(person.profileId);
+    return { rooms: rooms.slice(0, 50).map((room) => ({ id: room.id, name: room.name, updatedAt: room.updatedAt })), capped: rooms.length > 50 };
+  }
+  const match = new RegExp(`^/api/people/rooms/(${idPattern})(/message)?$`).exec(path);
+  if (!match) throw new PeopleHttpError(404, "Not found");
+  const id = match[1]!;
+  if (request.method === "GET" && !match[2]) return personRoomView(app, id, person);
+  if (request.method !== "POST" || !match[2]) throw new PeopleHttpError(404, "Not found");
+  const { text } = z.object({ text: z.string().trim().min(1).max(8000) }).strict().parse(await body());
+  const profile = roomPerson(app, person);
+  app.trunks.rooms.requireAccess(id, person.profileId);
+  const sent = app.trunks.rooms.send(id, { text }, { id: profile.id, name: profile.name });
+  return { roomId: id, seq: sent.seq };
 }
 
 function changePin(app: Branch, person: Mark, input: unknown): unknown {

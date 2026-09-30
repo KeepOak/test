@@ -16,12 +16,15 @@ const store = {
   set: (name, value) => { try { value ? sessionStorage.setItem(name, value) : sessionStorage.removeItem(name); } catch { /* forgets */ } },
 };
 let ticket = "", left = [], openId = "", pollTimer = 0;
+let openRoomId = "", roomGeneration = 0;
 
 function say(text, bad = false) {
   $("people-status").textContent = text;
   $("people-status").className = bad ? "bad" : "";
 }
 function show(id) {
+  roomGeneration += 1;
+  openRoomId = "";
   for (const pane of ["people-signin", "people-handoff", "people-home", "people-conversation"]) $(pane).hidden = pane !== id;
   clearInterval(pollTimer);
 }
@@ -145,14 +148,22 @@ async function openHome() {
 }
 
 async function drawList() {
-  const lists = await personCall("/api/people/conversations");
+  const key = store.get(PERSON), generation = roomGeneration;
+  const [lists, rooms] = await Promise.all([
+    call("/api/people/conversations", undefined, key),
+    call("/api/people/rooms", undefined, key).catch((error) => ({ rooms: [], unavailable: error.message })),
+  ]);
+  if (key !== store.get(PERSON) || generation !== roomGeneration || $("people-home").hidden) return;
   const heading = (key, fallback) => { const h = document.createElement("h3"); h.dataset.t = key; h.textContent = words(key, fallback); return h; };
   const own = lists.own.sessions.map((s) => link(s.opening || words("people.home.untitled", "A conversation"), () => openConversation(s.id)));
   const shared = lists.shared.map((s) => link(s.relation === "driver"
     ? words("people.home.shared-join", "Shared with you — you can join in")
     : words("people.home.shared-read", "Shared with you to read"), () => openConversation(s.sessionId)));
+  const admitted = rooms.rooms.map((room) => link(room.name, () => openRoom(room.id)));
   $("people-list").replaceChildren(heading("people.home.own", "Yours"), ...(own.length ? own : [emptyLine()]),
-    ...(shared.length ? [heading("people.home.shared", "Shared with you"), ...shared] : []));
+    ...(shared.length ? [heading("people.home.shared", "Shared with you"), ...shared] : []),
+    ...(admitted.length ? [heading("people.home.rooms", "Rooms you are invited to"), ...admitted] : []),
+    ...(rooms.capped ? [heading("people.home.rooms-capped", "Showing the first 50 rooms")] : []));
 }
 function emptyLine() {
   const p = document.createElement("p");
@@ -208,8 +219,58 @@ function wireHome() {
 
 /* ---------- one conversation ---------- */
 
-function showConversation(messages, access) {
+function drawRoom(view) {
+  $("people-back").hidden = false;
+  $("people-message-form").hidden = false;
+  $("people-conversation-note").textContent = `${view.name} — ${words("people.room.member", "Only members may join this room.")}`
+    + (view.limited ? ` ${words("people.room.limited", "Only recent messages are shown.")}` : "");
+  $("people-messages").replaceChildren(...view.messages.map((message) => {
+    const item = document.createElement("li"), who = document.createElement("strong");
+    item.className = message.role;
+    who.textContent = message.who;
+    item.append(who, document.createTextNode(message.content));
+    return item;
+  }));
+}
+
+async function openRoom(id) {
   show("people-conversation");
+  openRoomId = id;
+  $("people-message-form").hidden = true;
+  $("people-messages").replaceChildren();
+  $("people-conversation-note").textContent = "";
+  const key = store.get(PERSON), generation = roomGeneration;
+  const current = () => key === store.get(PERSON) && generation === roomGeneration && openRoomId === id;
+  let busy = false, reads = 0, last = "";
+  const read = async () => {
+    if (busy || !current()) return;
+    busy = true;
+    try {
+      const view = await call(`/api/people/rooms/${encodeURIComponent(id)}`, undefined, key);
+      if (!current()) return;
+      const fingerprint = JSON.stringify(view);
+      if (fingerprint !== last) { last = fingerprint; drawRoom(view); }
+    } catch (error) {
+      if (current()) {
+        clearInterval(pollTimer); $("people-message-form").hidden = true; $("people-messages").replaceChildren();
+        say(error.message, true);
+      }
+      throw error;
+    } finally { busy = false; }
+  };
+  try { await read(); } catch { return; }
+  if (!current()) return;
+  pollTimer = setInterval(() => {
+    if (!current() || ++reads > 100) {
+      clearInterval(pollTimer);
+      if (current()) say(words("people.room.refresh", "Live updates paused. Reopen the room to refresh."));
+      return;
+    }
+    void read().catch(() => undefined);
+  }, 3000);
+}
+
+function showConversation(messages, access) {
   $("people-back").hidden = !!store.get(HANDOFF);
   $("people-message-form").hidden = access === "viewer";
   $("people-conversation-note").textContent = access === "viewer"
@@ -230,23 +291,53 @@ async function readConversation() {
   return personCall(`/api/people/conversations/${openId}`);
 }
 async function openConversation(id) {
+  show("people-conversation");
   openId = id;
+  $("people-message-form").hidden = true;
+  $("people-messages").replaceChildren();
+  const generation = roomGeneration, key = store.get(PERSON), handoff = store.get(HANDOFF);
+  const current = () => generation === roomGeneration && openId === id && key === store.get(PERSON) && handoff === store.get(HANDOFF);
   const view = await readConversation();
+  if (!current()) return;
   showConversation(view.messages, view.access || "own");
   pollTimer = setInterval(() => readConversation().then((next) => {
+    if (!current()) return;
     if (next.messages.length !== $("people-messages").children.length) showConversation(next.messages, next.access || "own");
-  }).catch(() => clearInterval(pollTimer)), 3000);
+  }).catch(() => { if (current()) clearInterval(pollTimer); }), 3000);
 }
 
 async function send(prompt) {
+  if (openRoomId) return sendRoom(prompt);
+  const generation = roomGeneration, key = store.get(PERSON), handoff = store.get(HANDOFF), id = openId;
+  const current = () => generation === roomGeneration && key === store.get(PERSON) && handoff === store.get(HANDOFF);
   say(words("people.conversation.working", "Working on it…"));
-  if (store.get(HANDOFF)) await call("/api/run", { prompt, sessionId: openId }, store.get(HANDOFF));
+  if (handoff) await call("/api/run", { prompt, sessionId: id }, handoff);
   else {
-    const done = await personCall(openId ? `/api/people/conversations/${openId}/message` : "/api/people/conversations", { prompt });
+    const done = await call(id ? `/api/people/conversations/${id}/message` : "/api/people/conversations", { prompt }, key);
+    if (!current()) return;
     openId = done.sessionId;
   }
+  if (!current()) return;
   await openConversation(openId);
   say("");
+}
+
+async function sendRoom(text) {
+  if (!openRoomId || !store.get(PERSON) || $("people-message-form").hidden) return;
+  roomGeneration += 1;
+  clearInterval(pollTimer);
+  const id = openRoomId, key = store.get(PERSON), generation = roomGeneration;
+  $("people-message-form").hidden = true;
+  try {
+    await call(`/api/people/rooms/${encodeURIComponent(id)}/message`, { text }, key);
+    if (key !== store.get(PERSON) || generation !== roomGeneration || openRoomId !== id) return;
+    await openRoom(id);
+    say("");
+  } catch (error) {
+    if (key === store.get(PERSON) && generation === roomGeneration && openRoomId === id) {
+      clearInterval(pollTimer); $("people-messages").replaceChildren(); say(error.message, true);
+    }
+  }
 }
 
 function wireConversation() {
