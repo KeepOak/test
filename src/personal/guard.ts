@@ -17,7 +17,8 @@ import { personalParts, personalTools } from "./settings.js";
  *   - A lock, a door, a garage door or an alarm is asked about every time, just this once, for the
  *     owner's own work too.
  */
-const personalToolNames = new Set(personalParts.flatMap((part) => personalTools[part]));
+const personalToolNames = new Set([...personalParts.flatMap((part) => personalTools[part]),
+  "social.facebook.posts", "social.facebook.compose", "social.facebook.publish"]);
 export const isPersonalTool = (tool: string): boolean => personalToolNames.has(tool);
 
 /** Kinds of Home Assistant device that open the house or stop it being watched. */

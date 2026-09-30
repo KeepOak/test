@@ -16,6 +16,7 @@ import { WebhookTunnel, type TunnelSpawn } from "./tunnel.js";
 import { VoiceApprovals } from "./voice-approvals.js";
 import { registerXSearch, XSearch } from "./x-search.js";
 import { opensTheHouse, ownerOnlyTools } from "./guard.js";
+import { FacebookPages, registerFacebookPages } from "./facebook-pages.js";
 import { categoryOf } from "../tool-categories.js";
 import type { MailServer } from "../channels/mail-client.js";
 
@@ -58,6 +59,7 @@ function riskyQuestion(tool: string, permission: string, target: string): boolea
 }
 
 export class Personal {
+  readonly facebook: FacebookPages;
   readonly signIns: { google: SignIn; microsoft: SignIn; spotify: SignIn };
   readonly google: GoogleConnector;
   readonly microsoft: MicrosoftConnector;
@@ -74,6 +76,8 @@ export class Personal {
   constructor(private readonly deps: PersonalDeps) {
     const { runtime, registry } = deps;
     const store = runtime.store, owner = runtime.owner;
+    this.facebook = new FacebookPages({ store, owner, fetch: deps.fetch, holdsKnownSecret: deps.holdsKnownSecret, outboundGuard: deps.channels.outboundGuard });
+    registerFacebookPages(registry, store, this.facebook, context => runtime.checkPolicy("social.facebook.posts", { limit: 1, days: 1 }, context).decision === "allow");
     const signIn = { store, owner, oauth: deps.oauth, secret: deps.secret };
     this.signIns = { google: new SignIn(signIn, "google", "google"), microsoft: new SignIn(signIn, "microsoft", "microsoft"),
       spotify: new SignIn(signIn, "spotify", "spotify") };
@@ -127,6 +131,7 @@ export class Personal {
 
   /** Stops what keeps running: the tunnel program and its door, and any spoken answers still open. */
   async close(): Promise<void> {
+    this.facebook.clear();
     this.voiceApprovals.clear();
     await this.tunnel.stop();
   }

@@ -17,6 +17,7 @@ import { markLive } from "../core/features.js";
 import { ic, toast } from "../core/ui.js";
 import { ownerHere } from "../core/state.js";
 import { t } from "../../i18n.js";
+import { facebookSection } from "./facebook-pages.js";
 
 const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"]];
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
@@ -60,7 +61,7 @@ export function moreSections() {
   return `<div class="sec more18"><h2>${t("window.flows.setup.email")}</h2><p class="hint">${t("window.flows.setup.email-hint")}</p>${SERVICES.map(service).join("")}</div>`
     + `<div class="sec more18"><h2>${t("first-run-steps.restore-title")}</h2><p class="hint">${t("first-run-steps.restore-purpose")}</p>`
     + `<div class="acts"><button class="btn" type="button" data-act="more18-restore" ${M.busy ? "disabled" : ""}>${ic("folder", "s")}${M.busy ? t("first-run-steps.restore-working") : t("window.flows.setup.backup")}</button></div>`
-    + `<input type="file" id="more18-file" accept=".json,application/json" hidden></div>`;
+    + `<input type="file" id="more18-file" accept=".json,application/json" hidden></div>` + facebookSection();
 }
 
 /* The client id is saved; a client secret typed is sent once into the locker and the field emptied, and one left empty

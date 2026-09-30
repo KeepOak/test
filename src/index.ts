@@ -1527,7 +1527,8 @@ ${result.output || "(it said nothing)"}`;
     built.tunnel.localAddress = localAddress;
     return built;
   };
-  listFromCards(registry, personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
+  listFromCards(registry, [...personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
+    "social.facebook.posts", "social.facebook.compose", "social.facebook.publish"],
     () => void personal());
   releaseOnLock.push(async () => { await personalBuilt?.close(); }); // locking Branch stops the tunnel and forgets spoken answers
   // ── end R17-C ──

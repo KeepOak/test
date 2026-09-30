@@ -139,6 +139,7 @@ import { handlesTrunksPath, trunksApi, TrunksHttpError } from "./trunks/api.js";
 import { handlesShellLookPath, shellLookApi, ShellLookError } from "./shell-look.js"; // phase2/shell
 import { codingApi, CodingHttpError, handlesCodingPath } from "./coding/api.js"; // mac7/r17-d: coding polish
 import { handlesPersonalPath, personalApi, PersonalHttpError } from "./personal/api.js"; // R17-C
+import { facebookApi } from "./personal/facebook-api.js";
 import { handlesReachPath, reachApi, ReachHttpError } from "./reach/api.js"; // r17-i
 import { handlesSafetyPath, safetyApi, SafetyHttpError } from "./safety-extras/api.js"; // mac7/r17-g: the safety extras
 import { codesResting, confirmWithCode, restingRefusal } from "./safety-extras/code-approvals.js"; // mac7/r17-g
@@ -4379,6 +4380,14 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // ---- end phase2/shell ----
         // ---- R17-C: files, voice, devices and personal connectors under /api/personal (src/personal/api.ts). ----
         if (handlesPersonalPath(path)) {
+          if (path === "/api/personal/facebook" || path.startsWith("/api/personal/facebook/")) {
+            const requireWindow = () => {
+              app.store.profiles.requireOwner("Your Facebook Page content");
+              if (throughDoor(request) || startedWithShortLivedKey() || currentPerson() || app.sessionLock.locked()) throw new HttpError(403, "Use the unlocked owner's local window");
+            };
+            const answer = await facebookApi(app.personal.facebook, app.runtime, path, request.method ?? "GET", () => readBody(request, 8192), requireWindow);
+            send(response, 200, answer); return;
+          }
           app.store.profiles.requireOwner("Your personal connectors");
           const answer = await personalApi({ personal: app.personal, runtime: app.runtime, method: request.method ?? "GET",
             readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
