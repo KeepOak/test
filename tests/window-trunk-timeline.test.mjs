@@ -147,10 +147,14 @@ test("New conversation starts fresh in the same timeline, under a new line, neve
   assert.equal(await page.locator(`#side .row[data-line="${home.id}"]`).getAttribute("aria-current"), "true");
 
   const sent = runBody(page);
+  // The bubble is drawn before the run is even sent (chat.js sendPlain), so the engine's store is read only once the run
+  // has answered, which it does after making the session (CI run 36674068082: read before, it had none).
+  const ran = page.waitForResponse((r) => r.url().endsWith("/api/run") && r.request().method() === "POST");
   await page.locator("#prompt").fill("fresh words");
   await page.keyboard.press("Enter");
   assert.equal((await sent).sessionId, undefined, "a new session for a new context");
   await page.locator("#scroll").locator(".u", { hasText: "fresh words" }).waitFor();
+  assert.ok((await ran).ok(), "the run was taken");
   const fresh = app.store.recentSessions(app.runtime.owner, 10).sessions.find((s) => s.opening === "fresh words");
   assert.equal(app.trunks.trunkForConversation(fresh.sessionId)?.trunkId, home.id, "the engine keeps it with the default Trunk");
   await page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`), fresh.sessionId);
