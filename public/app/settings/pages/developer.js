@@ -84,7 +84,7 @@ export function draw() {
     + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
     + sw("Save task trajectories", "Every step as JSON Lines, for analysis."));
-  return html + '<div class="sec"><h2>Typed tool macros</h2><p>Check a bounded JSON package, import it as a flow, then explicitly run it with typed inputs and your usual approvals.</p><button class="btn" type="button" data-act="macro-import">Import tool macro</button></div>' + developer17(level17());
+  return html + '<div class="sec"><h2>Typed tool macros</h2><p>Check a bounded JSON package, import it as a flow, then explicitly run it with typed inputs and your usual approvals.</p><button class="btn" type="button" data-act="macro-import">Import tool macro</button><button class="btn ghost" type="button" data-act="sop-library">Event procedures</button></div>' + developer17(level17());
 }
 
 async function loadAll() {

@@ -224,6 +224,8 @@ import type { IssueAccess } from "./integrations/issue-tools.js";
 // Wave 6 (collaboration and workflows): labels, durable workflows, the waiting line and days off.
 import { registerLabels } from "./labels.js";
 import { Workflows, registerWorkflows } from "./workflows.js";
+import { SopEvents } from "./sop-events.js";
+import { reachMode } from "./reach/settings.js";
 // Wave 8: the to-do list, and reports saved in several forms.
 import { Todos, registerTodos } from "./todos.js";
 import { Wiki, registerWiki } from "./wiki.js";
@@ -1179,6 +1181,22 @@ ${result.output || "(it said nothing)"}`;
   // The same workflows seen as boxes and arrows, with a way in over HTTP and a note sent out as
   // each box finishes.
   const flows = new Flows(store, runtime.owner, workflows, runtime);
+  const sops = new SopEvents(store, runtime.owner, flows,
+    () => sessionLock.locked() || lockedDown(store, runtime.owner), (event) => {
+      if (event.kind === "webhook") {
+        const trigger = triggers.get(runtime.owner, event.triggerId);
+        if (!trigger?.enabled) return "Enable an existing authenticated trigger first";
+        if (trigger.sessionId) return "Session-bound triggers retain their existing Trunk path; choose a separate unbound trigger";
+        if (!trigger.replayProtection) return "Enable timestamp and nonce replay protection on this trigger first";
+      }
+      if (event.kind === "mqtt" && !channels.sopMqttAvailable(event.channel, event.chatId, event.senderId))
+        return "MQTT must be connected, sender-authorized and unbound to a Trunk; scoped Trunk event runs are not supported";
+      if (event.kind === "device" && (process.platform === "win32" || reachMode(store, runtime.owner, "usb") === "off"))
+        return "USB event scanning must be opted in on a supported Linux or macOS host";
+      return null;
+    });
+  scheduler.onTick.add((now) => sops.tick(now));
+  channels.sopMqtt = (message) => sops.mqtt(message);
   flows.notifyEvent = guardedNotify;
   registerFlows(registry, flows);
   // Bucket 21: tools for people building on Branch (switched off until the owner turns them on).
@@ -1576,6 +1594,7 @@ ${result.output || "(it said nothing)"}`;
     machines: { list: () => (askMode(store, runtime.owner, "nodes") === "off" ? [] : asks.nodes.nodes()) }, version, ...platformRunners(),
     screenHeld: (runId, signal) => desktop.whileDriving({ runId }, signal) }); // a take-over holds background app use too
   scheduler.onTick.add(() => reachParts.tick());
+  reachParts.usb.onPlugged.add((device) => sops.device(device));
   reachParts.remoteTrunks.useRoster(trunkRoster(trunks, runtime, registry, reachParts)); // R17-077 on R17-A's Trunks
   // ── end r17-i ──
   // ── mac7/r17-g: the safety extras (src/safety-extras/). Every part ships off; the emergency stop is unpressed. ──
@@ -1907,6 +1926,7 @@ ${result.output || "(it said nothing)"}`;
     calendar,
     /** The same workflows as boxes and arrows, for the API and the picture in Procedures. */
     flows,
+    sops,
     /** RES-719: GitLab as a connection of its own. */
     gitlab,
     /** Wave 8: the things still to be done, written down where the owner can see them. */

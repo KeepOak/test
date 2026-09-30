@@ -53,6 +53,9 @@ import { listModels } from "../model-switch.js";
  * host command execution.
  */
 export interface InboundMessage {
+  /** Set from the MQTT packet header by the adapter, never from the publisher's JSON body. */
+  mqttTopic?: string;
+  mqttDuplicate?: boolean;
   channel: string;
   chatId: string;
   chatKind: "direct" | "group";
@@ -462,6 +465,12 @@ export class ChannelRouter {
   miniAppUrl: ((runId: string) => string | null) | undefined;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
+  /** An opted-in SOP may consume an authorized MQTT event instead of opening a chat turn. */
+  sopMqtt: ((message: InboundMessage) => boolean) | undefined;
+  sopMqttAvailable(channel: string, chatId: string, senderId: string): boolean {
+    return this.adapters.get(channel)?.adapter.kind === "mqtt" && this.senderAllowed(channel, senderId)
+      && !this.chatTrunk(channel, chatId) && this.liveOn();
+  }
   /**
    * Hides key-shaped values and known secrets in what the live status shows (step labels, streamed
    * text). `createBranch` connects the leak guard; on its own this changes nothing.
@@ -743,6 +752,7 @@ export class ChannelRouter {
     this.latest.set(chatKey(message), message.messageId);
     // Checked without waiting, so messages from one chat still reach `answer` in the order they came.
     if (this.overCeiling(message)) return "rejected";
+    if (adapter.kind === "mqtt" && this.sopMqtt?.(message)) return "ignored";
     return this.answer(message);
   }
   /**
