@@ -1292,7 +1292,7 @@
   "commands.heartbeat": "une vérification discrète de cette conversation qui ne parle qu'en cas de nouvelles ; status, pause, resume ou stop",
   "commands.help": "les commandes utilisables ici ; avec une question, une réponse tirée du guide de Branch",
   "commands.helpMore": "Envoyez /help all pour toutes les commandes, ou /help <question> pour poser une question sur Branch.",
-  "commands.history": "cette conversation jusqu'ici",
+  "commands.history": "les vingt derniers échanges de cette conversation",
   "commands.improve": "demander au propriétaire une modification de Branch lui-même ; seul le propriétaire répond, dans l’application Branch",
   "commands.inbox": "ce qui attend votre accord, ce qui est terminé, et l'historique",
   "commands.init": "examiner ce projet et écrire son fichier d'instructions (AGENTS.md)",

@@ -1291,7 +1291,7 @@
   "commands.heartbeat": "a quiet check on this conversation that speaks up only with news; status, pause, resume or stop",
   "commands.help": "the commands you can use here; with a question, an answer from Branch's handbook",
   "commands.helpMore": "Send /help all for every command, or /help <question> to ask about Branch.",
-  "commands.history": "this conversation so far",
+  "commands.history": "the last twenty turns of this conversation",
   "commands.improve": "ask the owner for a change to Branch itself; only the owner answers, in the Branch app",
   "commands.inbox": "what needs you, what finished, and the history",
   "commands.init": "look around this project and write its instruction file (AGENTS.md)",
