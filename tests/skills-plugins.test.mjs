@@ -249,6 +249,9 @@ const pluginSource = (permission = "files.read") => `export default {
 
 test("a plugin adds nothing until the owner switches it on, and its tool is still gated by permission", async (t) => {
   const { app, api, dataDir } = await fixture(t);
+  // RES-251: a hand-placed plugin runs walled as shipped (tests/add-ons-review.test.mjs); this is about switching a plugin on and its permissions, so the owner
+  // lets plugins run inside Branch, as a Linux build machine without bubblewrap could not start the wall.
+  app.addOns.save({ wallEveryPlugin: false, confirmLoosening: true });
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   await writeFile(join(dataDir, "plugins", "example.mjs"), pluginSource());
   await writeFile(join(dataDir, "plugins", "example.plugin.json"), JSON.stringify({ id: "example", name: "Example plugin",
@@ -296,6 +299,9 @@ test("suggestions come from the words in recent tasks and never switch anything 
 
 test("inspecting a plugin reads its manifest and never runs its code; switching it on does", async (t) => {
   const { app, api, dataDir } = await fixture(t);
+  // RES-251: a hand-placed plugin runs walled as shipped (tests/add-ons-review.test.mjs); this is about when a plugin's code runs, so the owner
+  // lets plugins run inside Branch, as a Linux build machine without bubblewrap could not start the wall.
+  app.addOns.save({ wallEveryPlugin: false, confirmLoosening: true });
   const folder = join(dataDir, "plugins"), marker = join(dataDir, "ran.txt");
   await mkdir(folder, { recursive: true });
   const code = (id, permissions) => `import { writeFileSync } from "node:fs";
