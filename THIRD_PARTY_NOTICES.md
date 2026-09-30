@@ -9,7 +9,10 @@ Electron distributions additionally include LICENSE and LICENSES.chromium.html. 
 The ChatGPT subscription adapter also adapts the pinned OpenClaw Quicksilver
 wire, audio-only SDP admission, sideband event and context append contracts
 (`extensions/openai/realtime-quicksilver-wire.ts`, `realtime-sdp-offer.ts`,
-`realtime-quicksilver-events.ts`, `realtime-quicksilver-protocol.ts`). OAuth is
+`realtime-quicksilver-events.ts`, `realtime-quicksilver-protocol.ts`,
+`realtime-quicksilver-delegation-controller.ts`, `realtime-quicksilver-bridge-delegation.ts`).
+Branch adapts consultation generation/cancellation and bounded transcript admission
+to its existing delegated runtime and approval cards. OAuth is
 resolved by Branch's existing selected-account adapter; no account data or upstream
 implementation package is bundled. The MIT notice below covers these adaptations.
 

@@ -8118,15 +8118,19 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | `liveMaxMinutes` | How many minutes one live conversation may last. 10 by default. |
 | `liveMaxDollars` | How much one live conversation may cost. $1.00 by default. |
 | `liveVoiceDetection` | Let the service decide when you have stopped speaking, rather than waiting for the button. |
+| `keepLiveRecordings` | Note in the task's record how much sound a live conversation carried — the size of each piece and nothing else. The sound itself is never kept either way. |
+| `liveView` | `off` (the default) or `on`. On: Talk live opens a view of its own, like the voice modes of ChatGPT and Codex: a circle that moves with the real sound going up and coming back, what each side says as it is said, Mute (the sound stops leaving this computer), Show the chat, and End; the send button offers Talk live while the message box is empty. A question the assistant asks mid-conversation folds the view away so its card can be answered. The microphone is asked for only when you press Talk live. Off: Talk live is the plain button it always was. Talk live is never offered in a room or a conversation a Trunk answers in. |
 
 When the selected connection is a ChatGPT subscription, Talk live uses its existing selected account
 for `gpt-live-1-codex`, with a browser WebRTC audio offer and engine-owned sideband. No provider token
-is given to the page. The existing owner/profile, Lockdown, conversation and local-audio refusals
-still apply. This route requires automatic voice detection; its provider controls interruption when
-you speak. It does not execute Branch actions: request those in chat. The time limit applies, but
-subscription quota/dollar usage is unavailable and the dollar cap cannot be enforced for this route.
-| `keepLiveRecordings` | Note in the task's record how much sound a live conversation carried — the size of each piece and nothing else. The sound itself is never kept either way. |
-| `liveView` | `off` (the default) or `on`. On: Talk live opens a view of its own, like the voice modes of ChatGPT and Codex: a circle that moves with the real sound going up and coming back, what each side says as it is said, Mute (the sound stops leaving this computer), Show the chat, and End; the send button offers Talk live while the message box is empty. A question the assistant asks mid-conversation folds the view away so its card can be answered. The microphone is asked for only when you press Talk live. Off: Talk live is the plain button it always was. Talk live is never offered in a room or a conversation a Trunk answers in. |
+is given to the page. The existing owner/profile, app-lock, Lockdown, conversation and local-audio
+refusals still apply. This route requires automatic voice detection; its provider controls interruption
+when you speak. Requests needing Branch actions go through the ordinary delegated runtime, using
+the exact selected account and usual approval cards. Answer a waiting card in Inbox; spoken agreement
+does not grant approval. End or a new consultation cancels pending work and retires its unanswered cards.
+With account pooling off, the connection's primary account remains selected. A later account/model
+change ends the live conversation. The time limit applies, but subscription quota/dollar usage is
+unavailable and the dollar cap cannot be enforced for this route. WebRTC audio size recording is unavailable.
 
 ### The rest
 

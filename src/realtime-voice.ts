@@ -13,6 +13,9 @@ import type { OpenSpan } from "./tracing.js";
 import { settingsToolNames } from "./settings-kit/tools.js";
 import { voiceSettings, type VoiceSettings } from "./voice.js";
 import { audioOf } from "./voice-service.js";
+import { withAccountCall } from "./accounts/context.js";
+import { LiveAgentConsultation } from "./realtime-consultation.js";
+import { lockedDown } from "./lockdown.js";
 
 /**
  * A live conversation, as the rest of Branch sees it. It decides whether one is possible at all,
@@ -66,7 +69,7 @@ export function livePlanFor(settings: VoiceSettings, preset: ModelPreset | undef
     return { available: false, reason: "ChatGPT live voice requires automatic voice detection.", service: null, model: "", ...limits };
   if (preset?.provider.realtimeTransport === "chatgpt-webrtc" && preset.provider.realtime) return {
     available: true, service: "openai", model: chatgptLiveModel, transport: "webrtc", ...limits,
-    reason: `Live voice uses your selected ChatGPT account and stops after ${limits.maxMinutes} minutes. Subscription quota and dollar usage are unavailable; Branch cannot enforce the dollar limit here. Branch actions must be requested in chat.`,
+    reason: `Live voice uses your selected ChatGPT account and stops after ${limits.maxMinutes} minutes. Branch actions use the usual approval cards. Subscription quota and dollar usage are unavailable; Branch cannot enforce the dollar limit here.`,
   };
   if (!service || !route) return { available: false, reason: noRealtime, service: null, model: "", ...limits };
   return {
@@ -105,6 +108,12 @@ export class LiveConversation {
   private readonly opening = new AbortController();
   private span: OpenSpan | null = null;
   private readonly partial = { person: "", assistant: "" };
+  private consultation: LiveAgentConsultation | undefined;
+  private consultationInput = "";
+  private liveTranscript = "";
+  private inputGeneration = 0;
+  private consumedInputGeneration = -1;
+  private accountWatch: NodeJS.Timeout | undefined;
 
   constructor(
     private readonly deps: LiveVoiceDeps,
@@ -126,6 +135,7 @@ export class LiveConversation {
     if (this.stopped) { session.close(); throw new Error("The conversation was stopped."); }
     this.session = session;
     this.wire(session, settings);
+    if (session.onAgentConsult && session.agentConsultResult) this.wireConsultation(session, preset);
     // The task a live conversation hangs off is made outside a model round, so it has no trace of
     // its own yet. One is started here, before the connection is opened, so the span written for
     // that connection has somewhere to hang and the whole conversation reads as one trace.
@@ -152,7 +162,8 @@ export class LiveConversation {
     };
     if (plan.transport === "webrtc" && preset.provider.realtime) {
       if (!settings.liveVoiceDetection) throw new Error("ChatGPT live voice requires automatic voice detection.");
-      return preset.provider.realtime(this.deps.policy, shape, offer, this.runId, this.opening.signal);
+      return withAccountCall({ owner: this.deps.owner, sessionId: this.sessionId, runId: this.runId }, () =>
+        preset.provider.realtime!(this.deps.policy, shape, offer, this.runId, this.opening.signal));
     }
     const route = audioOf(preset.provider)!;
     const options = { endpoint: route.endpoint, apiKey: route.apiKey, runId: this.runId };
@@ -202,6 +213,25 @@ export class LiveConversation {
     session.onClosed = (reason) => this.finish(reason);
   }
 
+  private wireConsultation(session: RealtimeSession, preset: ModelPreset): void {
+    const current = (): boolean => !this.stopped && this.session === session && this.deps.store.isOpen &&
+      this.deps.store.profiles.isOwner() && !this.deps.runtime.fullAccessLocked() && !lockedDown(this.deps.store, this.deps.owner) &&
+      this.deps.store.ownsSession(this.deps.owner, this.sessionId) && this.deps.store.run(this.runId)?.status === "running" &&
+      this.deps.models.plan(this.deps.owner, this.sessionId).candidates[0]?.id === preset.id &&
+      this.deps.models.presets.get(preset.id)?.provider === preset.provider && (session.consultationCurrent?.() ?? false);
+    this.consultation = new LiveAgentConsultation({ ...this.deps, runId: this.runId, sessionId: this.sessionId,
+      model: preset.id, session, current, instructions: this.instructions(),
+      transcript: () => {
+        const input = this.inputGeneration === this.consumedInputGeneration ? "" : this.partial.person || this.consultationInput;
+        this.consumedInputGeneration = this.inputGeneration;
+        this.consultationInput = "";
+        return { input, context: this.liveTranscript };
+      }, notice: (data) => this.out.notice("voice.live.consultation", data) });
+    session.onAgentConsult = ({ id, question }) => void this.consultation?.request(id, question);
+    this.accountWatch = setInterval(() => { if (!current()) this.stop("The live voice account or permission changed."); }, 200);
+    this.accountWatch.unref();
+  }
+
   /**
    * What either side said. Whole sentences go into the conversation as ordinary messages, so the
    * transcript is there afterwards exactly as if it had been typed; the pieces in between only go
@@ -209,8 +239,9 @@ export class LiveConversation {
    */
   private heard(who: "person" | "assistant", text: string, final: boolean): void {
     if (!text) return;
+    if (who === "person" && !this.partial.person) this.inputGeneration++;
     this.out.notice("voice.live.transcript", { who, text, final });
-    if (!final) { this.partial[who] += text; return; }
+    if (!final) { this.partial[who] = (this.partial[who] + text).slice(-8000); return; }
     // One service sends the rest of the sentence at the end, the other sends the whole of it again.
     // Joining the pieces blindly would say it twice, so a last piece that already contains what came
     // before it stands on its own.
@@ -218,6 +249,8 @@ export class LiveConversation {
     const whole = (text.startsWith(heardSoFar) ? text : heardSoFar + text).trim();
     this.partial[who] = "";
     if (!whole) return;
+    if (who === "person" && this.inputGeneration !== this.consumedInputGeneration) this.consultationInput = whole;
+    this.liveTranscript = `${this.liveTranscript}\n${who}: ${this.deps.runtime.hideSecrets(whole)}`.slice(-8000);
     // Anything the owner has saved as a password or key is taken back out before what was said
     // becomes an ordinary message, which is kept and shown like any other.
     this.deps.store.message(this.sessionId, {
@@ -317,6 +350,8 @@ export class LiveConversation {
   say(text: string): void {
     if (!this.session) throw new Error("There is no live conversation open");
     this.deps.store.message(this.sessionId, { role: "user", content: text });
+    this.inputGeneration++; this.consultationInput = text;
+    this.liveTranscript = `${this.liveTranscript}\nperson: ${this.deps.runtime.hideSecrets(text)}`.slice(-8000);
     this.session.sendText(text);
   }
   /** Bucket 17: a picture shown while talking. Only its name is written into the conversation. */
@@ -344,6 +379,9 @@ export class LiveConversation {
   private finish(reason: string): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.consultation?.stop(); this.consultation = undefined;
+    if (this.accountWatch) clearInterval(this.accountWatch);
+    this.accountWatch = undefined;
     if (this.timer) { clearTimeout(this.timer); this.timer = null; }
     const seconds = this.startedAt ? Math.round((Date.now() - this.startedAt) / 1000) : 0;
     this.deps.store.event(this.runId, "voice.live.ended", {

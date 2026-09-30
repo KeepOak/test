@@ -160,6 +160,7 @@ function receive(data) {
   if (message?.kind === "voice.live.ready") void ready(body);
   else if (message?.kind === "voice.live.refused" || message?.kind === "voice.live.problem") end({ say: String(body.message ?? "") });
   else if (message?.kind === "voice.live.transcript") heard(body);
+  else if (message?.kind === "voice.live.consultation" && body.waiting) { L.last = String(body.message ?? ""); toast(L.last); }
   else if (message?.kind === "voice.live.capped") { L.last = String(body.sentence ?? ""); toast(L.last); }
   else if (message?.kind === "voice.live.ended" || message?.kind === "end") end();
 }

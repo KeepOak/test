@@ -62,6 +62,7 @@ export class ChatGPTRealtimeSession extends SocketSession {
   private readonly controller = new AbortController();
   private readonly requestIds = { "session-id": randomUUID(), "thread-id": randomUUID(), "x-session-id": randomUUID() };
   private readonly delegations = new Set<string>();
+  onAgentConsult: (request: { id: string; question: string }) => void = () => undefined;
   get answerSdp(): string { return this.answer; }
 
   constructor(policy: NetworkPolicy, settings: RealtimeSettings, private readonly options: SubscriptionOptions) {
@@ -111,7 +112,7 @@ export class ChatGPTRealtimeSession extends SocketSession {
       method: "POST", redirect: "error", headers: { ...this.headers(), "content-type": "application/json" },
       signal: AbortSignal.any([this.controller.signal, this.options.signal, AbortSignal.timeout(30_000)]),
       body: JSON.stringify({ sdp: this.options.offer, session: { model: chatgptLiveModel,
-        instructions: `${this.settings.instructions.slice(0, 8000)}\nThis voice session cannot execute Branch actions. Never claim an action was executed.`,
+        instructions: `${this.settings.instructions.slice(0, 8000)}\nDelegate requests requiring Branch actions to the client. Wait for Branch's result or exact approval card; never claim an action succeeded before that result.`,
         audio: { output: { voice } }, delegation: { type: "client" } } }),
     });
     if (!response.ok) { await response.body?.cancel(); throw new Error(problem); }
@@ -146,7 +147,13 @@ export class ChatGPTRealtimeSession extends SocketSession {
       if (!id || id.length > 200 || this.delegations.has(id)) return;
       if (this.delegations.size >= 128) { this.close("The conversation reached its action limit"); return; }
       this.delegations.add(id);
-      this.context("I cannot carry out Branch actions in this live session. Ask the person to send that request in the chat window.", id);
+      const parts = Array.isArray(item.content) ? item.content : [];
+      const question = parts.slice(0, 32).flatMap((part: unknown) => {
+        if (!part || typeof part !== "object") return [];
+        const content = part as Record<string, unknown>;
+        return content.type === "input_text" ? [textAt(content.text).slice(0, 4000)] : [];
+      }).join("").slice(0, 4000);
+      this.onAgentConsult({ id, question });
     } else if (type === "error") { this.onError("The ChatGPT live connection had a problem."); this.close(); }
     else if (type === "session.closed") this.close();
   }
@@ -168,6 +175,7 @@ export class ChatGPTRealtimeSession extends SocketSession {
   commit(): void {}
   sendText(text: string): void { this.context(text); }
   toolResult(_id: string, _name: string, _result: unknown): void {}
+  agentConsultResult(id: string, text: string): void { if (this.delegations.has(id)) this.context(text, id); }
   interrupt(): void { this.onError("This ChatGPT voice controls interruption when you speak."); }
   close(reason = "The conversation ended"): void {
     if (this.closed) return;
