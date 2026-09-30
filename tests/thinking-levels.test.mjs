@@ -14,6 +14,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { thinkingLevels } from "../dist/thinking-levels.js";
 import { openSettingFor } from "./places.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const all = ["low", "medium", "high"];
 
@@ -189,7 +190,7 @@ test("K5 dogfood B9: the model chip carries the thinking level, chosen from its 
   const menu = page.locator("#app > .pop");
   assert.ok(await menu.getByText("Thinking", { exact: true }).isVisible(), "the menu has a Thinking part");
   await menu.locator('[data-act="pick-think"][data-v="medium"]').click();
-  await page.waitForFunction(async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
+  await waitInPage(page, async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
     headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") } })).json()).reasoning === "medium", sessionId, { timeout: 10000 });
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => /· medium$/.test(document.querySelector('#composer [data-act="modelmenu2"] .lbl')?.textContent.trim() ?? ""), null, { timeout: 10000 });

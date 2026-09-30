@@ -9,7 +9,7 @@
    LM Studio themselves, so they are covered by tests/settings-batch-d.test.mjs (D5) and tests/local-oneclick.test.mjs
    (O8, P4) instead. */
 const path = require("node:path");
-const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT ?? "playwright";
 const { chromium } = require(PW);
 const { start } = require(path.join(__dirname, "stub-model-b6.cjs"));
 

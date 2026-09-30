@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
-import { mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod';
 import type { LockerKeySource } from '../locker.js';
@@ -51,7 +51,7 @@ export class BrowserProfiles {
     const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', await this.key(), iv);
     const body = Buffer.concat([cipher.update(plain), cipher.final()]);
     await mkdir(this.folder(owner), { recursive: true, mode: 0o700 });
-    await writeFile(this.file(owner, name), Buffer.concat([iv, cipher.getAuthTag(), body]), { mode: 0o600 });
+    await writeWhole(this.file(owner, name), Buffer.concat([iv, cipher.getAuthTag(), body]));
     return describe(name, state, savedAt);
   }
   /** An empty sign-in the owner can fill in later by signing in once. */
@@ -147,3 +147,15 @@ const BundleSchema = z.object({
 }).loose();
 const describe = (name: string, state: StorageState, savedAt: string): ProfileInfo =>
   ({ name, savedAt, cookies: state.cookies.length, sites: state.origins.length });
+
+/**
+ * Writes a saved sign-in beside the one it replaces and then puts it in its place in one step, so a crash or a full
+ * disk part-way through leaves the earlier sign-in whole rather than a half-written file that can no longer be opened.
+ */
+export async function writeWhole(target: string, bytes: Buffer | AsyncIterable<Uint8Array>): Promise<void> {
+  const partial = `${target}.${randomBytes(6).toString('hex')}.partial`;
+  try {
+    await writeFile(partial, bytes, { mode: 0o600, flush: true });
+    await rename(partial, target);
+  } catch (error) { await rm(partial, { force: true }).catch(() => undefined); throw error; }
+}

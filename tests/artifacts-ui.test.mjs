@@ -165,7 +165,6 @@ test("W1 Save to workspace keeps the artifact beside its task, where Documents l
   const card = artCard(page);
   await card.waitFor({ timeout: 10000 });
   await card.getByRole("button", { name: "Save to Library", exact: true }).click();
-  await page.waitForFunction(async () => true);
   let mine;
   for (let tries = 0; tries < 40 && !mine; tries++) {
     mine = (await app.artifacts.list(20)).find((entry) => entry.name.startsWith("artifact-"));

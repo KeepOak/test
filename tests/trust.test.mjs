@@ -182,3 +182,8 @@ test("live activity names each step in plain words and shows what is happening r
   assert.deepEqual(activity.steps.map((s) => [s.label, s.status]), [["Writing a.txt", "done"], ["Reading nope.txt", "failed"]]);
   assert.deepEqual(await api("activity"), []);
 });
+
+test("RES-254: with no setting, a fetched page's line that gives the assistant orders is taken out, not only noted", async () => {
+  const { WebConfigSchema } = await import("../dist/integrations/web.js");
+  assert.equal(WebConfigSchema.parse({}).injection, "redact");
+});

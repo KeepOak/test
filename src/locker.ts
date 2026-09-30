@@ -26,7 +26,11 @@ export class FileLockerKey implements LockerKeySource {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       const fresh = randomBytes(32);
-      await writeFile(this.path, fresh, { mode: 0o600, flag: "wx" });
+      try { await writeFile(this.path, fresh, { mode: 0o600, flag: "wx" }); } catch (made) {
+        // Another reader of the same key (the ChatGPT sign-in file shares it) made it first: that one is the key.
+        if ((made as NodeJS.ErrnoException).code !== "EEXIST") throw made;
+        return this.key();
+      }
       return (this.cached = fresh);
     }
   }

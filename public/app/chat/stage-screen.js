@@ -7,11 +7,14 @@
    When the engine refuses (the screen switch is off, a password window is showing, Lockdown), its own words are shown
    in place of the screen; frames come back by themselves when the reason goes, and a refused or ended request is
    asked again every few seconds. A locked Branch (423) is not asked again until the view is opened anew. Viewing
-   only: nothing here sends a click or a key. */
+   only: nothing here sends a click or a key.
+   Each frame also says whether the owner is driving (Take over: every task's screen actions wait) and, while a task that
+   clicked is still going, where its newest click landed on the frame and whose task it is (`cursor`), for the Trunk's
+   cursor over the screen. */
 
 import { token } from "../core/api.js";
 
-const V = { on: false, open: null, width: 0, timer: 0, frame: "", refusal: "", onChange: null, watching: false };
+const V = { on: false, open: null, width: 0, timer: 0, frame: "", refusal: "", onChange: null, watching: false, cursor: null, driving: false };
 const REFUSED = 3000;
 const SMALL = 640, LARGE = 1280; // a frame's width: for a small view, or any other
 
@@ -19,6 +22,12 @@ const SMALL = 640, LARGE = 1280; // a frame's width: for a small view, or any ot
 export const screenFrame = () => V.frame;
 /** The engine's words for why there is no frame, or "". */
 export const screenRefusal = () => V.refusal;
+/** Where the Trunk's newest click landed on the frame ({ x, y } shares, `at`, `trunk`), or null. */
+export const screenCursor = () => (V.frame ? V.cursor : null);
+/** Whether the owner is driving this screen, as the newest frame said. */
+export const screenDriving = () => V.driving;
+/** The engine's answer to Take over or Hand back, until the next frame says the same. */
+export function setDriving(driving) { V.driving = driving === true; }
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const showing = () => V.on && !document.hidden && !locked();
 /* The step the view is drawn at, in the screen's own pixels. */
@@ -31,9 +40,10 @@ function wanted() {
 function shown(got) {
   if (!V.on) return;
   if (got.frame) {
-    const first = !V.frame || !!V.refusal;
-    Object.assign(V, { frame: got.frame, refusal: "" });
-    V.onChange?.(first);
+    const first = !V.frame || !!V.refusal, flipped = (got.driving === true) !== V.driving;
+    const changedTrunk = (got.cursor?.trunk ?? null) !== (V.cursor?.trunk ?? null);
+    Object.assign(V, { frame: got.frame, refusal: "", cursor: got.cursor ?? null, driving: got.driving === true });
+    V.onChange?.(first || flipped || changedTrunk);
   } else if (got.refusal) {
     const changed = V.refusal !== got.refusal;
     Object.assign(V, { frame: "", refusal: got.refusal });

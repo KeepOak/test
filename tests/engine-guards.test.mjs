@@ -137,3 +137,34 @@ test("ordinary code comments are not taken out of a file, and a file read with a
   await assert.rejects(app.registry.execute("files.write", { path: "notes.md", content: guarded.content + "more\n" }, context), /files\.edit/);
   assert.match(await readFile(join(workspace, "notes.md"), "utf8"), /HACKED/, "the line is still in the file");
 });
+
+test("a fact saved in the same instant as the one it replaces still ends it", async (t) => {
+  const { app } = await fixture(t, [say("ok")]);
+  const run = await app.runtime.run({ prompt: "setup" });
+  const context = app.runtime.context({ runId: run.id });
+  const realNow = Date.now;
+  const frozen = realNow();
+  Date.now = () => frozen;
+  t.after(() => { Date.now = realNow; });
+  await app.registry.execute("memory.put", { text: "I live in Atlanta.", source: "the person", validFrom: new Date(frozen).toISOString() }, context);
+  await app.registry.execute("memory.put", { text: "I live in Denver.", source: "the person", validFrom: new Date(frozen).toISOString() }, context);
+  Date.now = realNow;
+  const current = app.store.list("memory", "local").filter((record) => !record.data.validTo).map((record) => record.data.text);
+  assert.deepEqual(current, ["I live in Denver."]);
+});
+
+test("saves in one millisecond with no start given, the model naming the detail two ways, leave only the last current", async (t) => {
+  const { app } = await fixture(t, [say("ok")]);
+  const run = await app.runtime.run({ prompt: "setup" });
+  const context = app.runtime.context({ runId: run.id });
+  // The case CI met: no start given, so each fact starts at the clock's now. Mocked, `new Date()` is held still too.
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-09-28T06:00:00.000Z") });
+  await app.registry.execute("memory.put", { text: "Works at Acme", source: "the person", entity: "owner", attribute: "employer" }, context);
+  await app.registry.execute("memory.put", { text: "Now works at Globex", source: "the person", entity: "user", attribute: "job" }, context);
+  await app.registry.execute("memory.put", { text: "I work at Initech", source: "the person" }, context);
+  t.mock.timers.reset();
+  const current = app.store.list("memory", "local").filter((record) => !record.data.validTo).map((record) => record.data.text);
+  assert.deepEqual(current, ["I work at Initech"], "each save ends the one before it");
+  const now = await app.registry.execute("memory.at", { entity: "me", attribute: "work", at: "2026-09-28T06:00:00.000Z" }, context);
+  assert.deepEqual(now.map((fact) => fact.text), ["I work at Initech"], "at that instant only the last one holds");
+});

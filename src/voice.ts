@@ -10,6 +10,11 @@ import type { Store } from "./store.js";
 export const VoiceSettingsSchema = z
   .object({
     autoReadAloud: z.boolean().default(false),
+    /**
+     * wire-greyed: with read-aloud on, "always" reads every reply the owner is watching; "spoken" only a reply to a message
+     * the owner said rather than typed (dictation in the window marks that message).
+     */
+    readAloudWhen: z.enum(["always", "spoken"]).default("always"),
     voiceId: z.string().max(200).default("default"),
     speechRate: z.number().min(0.5).max(2).default(1),
     useProviderVoice: z.boolean().default(false),

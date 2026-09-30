@@ -4,6 +4,7 @@
  * turning "update by itself" off stops one it started. The Update button still works with it off. Node only.
  */
 import test from "node:test";
+import { saveComfort } from "../dist/comfort/settings.js";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -41,9 +42,10 @@ test("the engine's readiness carries the owner's update-by-itself choice, read f
   app.store.save("settings", app.runtime.owner, "comfort-notify", { autoUpdate: "install", releaseChannel: "dev" });
   const first = await updateReadiness(loopback, server.token);
   // A Dev choice saved before Beta became the source build is Beta.
-  assert.deepEqual(first, { channel: "beta", busyTasks: 0, autoUpdate: "install" });
+  assert.deepEqual(first, { channel: "beta", busyTasks: 0, workingTasks: 0, autoUpdate: "install" });
   assert.equal(changedMind(first, { channel: "beta", automatic: true }), null);
-  app.store.save("settings", app.runtime.owner, "comfort-notify", { autoUpdate: "off", releaseChannel: "dev" });
+  // The owner switches it off in Settings: their own choice, kept on Beta too.
+  saveComfort(app.store, app.runtime.owner, "notify", { autoUpdate: "off" });
   const later = await updateReadiness(loopback, server.token);
   assert.match(changedMind(later, { channel: "beta", automatic: true }) ?? "", /turned off/);
 });
@@ -52,7 +54,8 @@ test("an automatic install that finds the channel just changed only switches it,
   // src/desktop/updater-ipc.ts is Electron code, so its order is read here, as tests/update-install-claim.test.mjs does.
   const { readFile } = await import("node:fs/promises");
   const source = await readFile(new URL("../src/desktop/updater-ipc.ts", import.meta.url), "utf8");
-  const handler = source.slice(source.indexOf('"branch:update-install"'));
+  // One install for the Update button and the app's own loop (updater-ipc.ts installNow).
+  const handler = source.slice(source.indexOf("const installNow = "));
   const moved = handler.indexOf("const moved = updater.selectedChannel !== readiness.channel;");
   const setChannel = handler.indexOf("updater.setChannel(readiness.channel);");
   const goesBack = handler.indexOf("if (automatic === true && moved) throw new UpdateDeferredError(");

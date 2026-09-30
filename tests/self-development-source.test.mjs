@@ -34,7 +34,8 @@ test("a worktree whose contract predates pinned destinations is pinned when prep
   const input = { name: "remove-button", repository: "https://github.com/stabrea/Branch-Agent.git", base: "redesign/window", contract: terms };
   const again = await prepareBranchSourceChange(deps, input, AbortSignal.timeout(1000));
   assert.equal(again.contract.revision, 2, "pinned as the next revision; the first stays as written");
-  assert.deepEqual(again.contract.sendRepositories, ["stabrea/branch-agent"], "read from origin now, by the same rules as a new worktree");
+  assert.deepEqual(again.contract.sendRepositories, ["keepoak/branch-agent"], "read from origin now, by the same rules as a new worktree (stabrea is read as KeepOak)");
+  assert.ok(calls.includes("remote set-url origin https://github.com/KeepOak/Branch-Agent.git"), "a checkout cloned before the move is pointed at KeepOak");
   assert.deepEqual(again.contract.allowedPaths, terms.allowedPaths, "and nothing else changes");
   assert.equal(again.contract.sourceSha, sha);
   assert.deepEqual(contracts.history("local", folder).map((each) => each.revision), [1, 2]);
@@ -72,18 +73,18 @@ test("an owner's fork becomes an isolated Branch Agent project without touching 
   const result = await prepareBranchSourceChange(deps, input, AbortSignal.timeout(1000));
 
   assert.equal(result.ready, true);
-  assert.equal(result.pullRequestTarget, "stabrea/Branch-Agent");
+  assert.equal(result.pullRequestTarget, "KeepOak/Branch-Agent");
   assert.match(result.instructions, /Run node scripts\/review\.mjs with the focused test files/);
   assert.match(result.instructions, /never send to a shared line or change a repository.s settings or branch protection/);
-  assert.match(result.instructions, /pending is never passed\), then call branch\.finish_source_change/);
+  assert.match(result.instructions, /pending is never passed; when one fails, read why with github\.check_logs[^)]*\), then call branch\.finish_source_change/);
   assert.ok(calls.some((call) => call.includes("clone")), "the owner's fork is cloned into the workspace, not the installation");
-  assert.ok(calls.some((call) => call.join(" ").includes("remote add upstream https://github.com/stabrea/Branch-Agent.git")));
+  assert.ok(calls.some((call) => call.join(" ").includes("remote add upstream https://github.com/KeepOak/Branch-Agent.git")));
   assert.ok(calls.some((call) => call.join(" ").includes("fetch upstream redesign/window")));
   assert.ok(calls.some((call) => call.join(" ").includes(`worktree add -b branch/self-remove-button .branch-worktrees/self-remove-button ${sha}`)),
     "the worktree is made at the exact commit the contract names");
   assert.ok(calls.some((call) => call.join(" ").includes("rev-parse --verify upstream/redesign/window^{commit}")));
   assert.equal(result.contract.sourceSha, sha);
-  assert.deepEqual(result.contract.sendRepositories, ["alice/branch-agent", "stabrea/branch-agent"], "a fork proposes to itself or to the upstream it was made from, nothing else");
+  assert.deepEqual(result.contract.sendRepositories, ["alice/branch-agent", "keepoak/branch-agent"], "a fork proposes to itself or to the upstream it was made from, nothing else");
   assert.equal(pendingAtClone, true, "the proposed contract was written down as pending before anything was cloned");
   assert.match(records.find((entry) => entry.outcome === "pending").reason, /From alice\/Branch-Agent at redesign\/window\. Paths src\/ui\/\*\*/);
   assert.equal(result.contract.worktreePath, "branch-agent-source/.branch-worktrees/self-remove-button");
@@ -207,4 +208,14 @@ test("selfdev: only the task chain that wrote a worktree's contract counts as ha
   assert.equal(preparedByTask(store, book, "local", folder, "other"), false, "another task does not");
   assert.equal(preparedByTask(store, book, "someone-else", folder, "lead"), false, "another owner's book has no such contract");
   assert.equal(preparedByTask(store, book, "local", "branch-agent-source/.branch-worktrees/self-other", "lead"), false);
+});
+
+test("the move to KeepOak: a contract written as stabrea/branch-agent still proposes and pushes to KeepOak/Branch-Agent, and nowhere else", async () => {
+  const { pullRequestPinned, pushRepositoryRefusal } = await import("../dist/self-development-contract.js");
+  const pr = { repo: "KeepOak/Branch-Agent", base: "redesign/window", head: "branch/self-fix", draft: true };
+  assert.equal(pullRequestPinned(pr, ["stabrea/branch-agent"]), null, "GitHub redirects the old name; it is the same repository");
+  assert.equal(pullRequestPinned({ ...pr, repo: "stabrea/Branch-Agent" }, ["keepoak/branch-agent"]), null);
+  assert.match(pullRequestPinned({ ...pr, repo: "mallory/Branch-Agent" }, ["stabrea/branch-agent"]) ?? "", /proposed only to stabrea\/branch-agent/);
+  assert.equal(pushRepositoryRefusal(["stabrea/branch-agent"], "origin", ["keepoak/branch-agent"]), null);
+  assert.match(pushRepositoryRefusal(["stabrea/branch-agent"], "origin", ["keepoak/branch-agent", "mallory/branch-agent"]) ?? "", /nothing is sent/);
 });

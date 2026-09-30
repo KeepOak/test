@@ -6,7 +6,7 @@
    again); Browser profiles that stay signed in lists the Trunk's own profile under the Trunk's name. Nothing leaves this
    computer. */
 const path = require("node:path");
-const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT ?? "playwright";
 const { chromium } = require(PW);
 
 const BASE = `http://127.0.0.1:${process.env.PORT}`, TOKEN = process.env.TOKEN;

@@ -8,7 +8,13 @@
 import { api, apiBlob } from "../core/api.js";
 import { toast } from "../core/ui.js";
 
-const A = { audio: null, url: "" };
+const A = { audio: null, url: "", spoken: false, lastSpoken: false };
+
+/* "When I talk" (Settings › Voice, readAloudWhen "spoken"): a message the person said rather than typed. Dictation marks
+   the words it put in the box (heardSpeech); the next send takes that mark with it (sentMessage), a fix typed into the
+   words included, and clears it for the message after. */
+export function heardSpeech() { A.spoken = true; }
+export function sentMessage() { A.lastSpoken = A.spoken; A.spoken = false; }
 
 const replies = (messages) => (messages ?? []).filter((m) => m.role === "assistant" && m.from !== "branch" && typeof m.content === "string" && m.content.trim());
 
@@ -38,6 +44,7 @@ export async function readNewReply(before, messages, words = (m) => m.content) {
   let settings, sound;
   try { settings = await api("voice/settings"); } catch (error) { toast(error.message); return; }
   if (!settings.autoReadAloud || mine !== turn) return;
+  if (settings.readAloudWhen === "spoken" && !A.lastSpoken) return;
   try { sound = await apiBlob("voice/speak", { text, speed: settings.speechRate }); } catch (error) { toast(error.message); return; }
   if (mine !== turn) return;
   stop();

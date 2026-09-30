@@ -1,0 +1,35 @@
+/* The Telegram Mini App: one task's browser on the owner's phone. Telegram's own colours when it gives them. */
+:root {
+  --bg: var(--tg-theme-bg-color, #111416);
+  --fg: var(--tg-theme-text-color, #eef1f2);
+  --muted: var(--tg-theme-hint-color, #9aa4a8);
+  --accent: var(--tg-theme-button-color, #3f8f5a);
+  --accent-fg: var(--tg-theme-button-text-color, #ffffff);
+  --line: rgba(127, 127, 127, 0.28);
+  --warn: #d9534f;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: var(--tg-theme-bg-color, #f6f7f5); --fg: var(--tg-theme-text-color, #16191a); --muted: var(--tg-theme-hint-color, #5d676b); }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.ma { max-width: 720px; margin: 0 auto; padding: 12px 12px calc(12px + env(safe-area-inset-bottom)); display: grid; gap: 10px; }
+.ma-head { display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+.ma-chip { font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; }
+.ma-chip[data-holder="you"] { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+.ma-note { margin: 0; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--warn); }
+.ma-pin { display: grid; gap: 8px; }
+.ma-frame { position: relative; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #000; }
+.ma-frame img { display: block; width: 100%; height: auto; min-height: 120px; touch-action: manipulation; user-select: none; }
+.ma-live[data-driving="true"] .ma-frame { border-color: var(--accent); }
+.ma-address { margin: 0; padding: 4px 8px; font-size: 12px; color: var(--muted); background: var(--bg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ma-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.ma-row input { flex: 1 1 160px; min-width: 0; }
+.ma-drive { display: grid; gap: 8px; }
+.ma-question { border: 1px solid var(--accent); border-radius: 10px; padding: 8px 10px; }
+.ma-question p { margin: 0 0 8px; }
+input { font: inherit; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+button { font: inherit; border: 0; border-radius: 10px; padding: 10px 14px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+button.ma-quiet { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+button:disabled { opacity: 0.5; cursor: default; }
+[hidden] { display: none !important; }

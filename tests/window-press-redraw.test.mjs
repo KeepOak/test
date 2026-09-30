@@ -21,15 +21,15 @@ const quiet = { name: "scripted", async complete() { return { content: "ok", too
 async function signedIn(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-press-redraw-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: quiet });
-  const owner = app.runtime.owner;
   const sessions = [];
+  // trunk-one-row: the side list has one row per Trunk, so each conversation here is a Trunk's own.
   for (const words of ["First conversation", "Second conversation"]) {
-    const run = app.store.createRun(owner, words);
-    app.store.message(run.sessionId, { role: "user", content: words });
-    app.store.message(run.sessionId, { role: "assistant", content: "Done." });
-    app.store.finish(run.id, "completed", "Done.");
-    sessions.push(run.sessionId);
+    const trunk = app.trunks.create({ name: words.split(" ")[0] });
+    app.store.message(trunk.chatSessionId, { role: "user", content: words });
+    app.store.message(trunk.chatSessionId, { role: "assistant", content: "Done." });
+    sessions.push(trunk.chatSessionId);
   }
+  await app.trunks.introduced();
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await fetch(new URL("/api/onboarding", server.url), { method: "POST",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });

@@ -352,15 +352,18 @@ test("replies show the assistant's own face, and a Trunk set to 3D is a 3D stand
   await f.page.locator("#prompt").press("Enter");
   const plain = f.page.locator("#main .b").filter({ hasText: "Here it is." }).first();
   await plain.waitFor({ timeout: 15000 });
+  // The owner (2026-09-27): Branch's mascot is its logo only. Here a conversation with no Trunk of its own belongs to the
+  // owner's default Trunk, so that Trunk's character signs the reply; never the mascot or a Branch character loop.
   const home = f.app.trunks.ownerDefault();
   assert.equal(await plain.locator(`.gut .av[data-rk="t:${home.id}"]`).count(), 1, "the default assistant's own character signs its reply");
-  assert.equal(await plain.locator('.gut :is(.av.brand, img[src^="/art/branch-"])').count(), 0, "the mascot stays in the logo");
+  assert.equal(await plain.locator('.gut :is(.av.brand, .mark-face, img[src^="/art/branch-"])').count(), 0, "never the mascot");
+  assert.equal(await plain.locator('.gut video[src^="/art/anim-"]').count(), 0, "no Branch character loop in a reply");
   // A Trunk's reply carries the Trunk's own face, not Branch's.
   await row(f.page, trunk).click();
   await f.page.waitForFunction((id) => document.querySelector(`#side .row[data-id="${id}"]`)?.getAttribute("aria-current") === "true", trunk.chatSessionId);
   const reply = f.page.locator("#main .b").filter({ has: f.page.locator(".gut .av") }).first();
   await reply.waitFor({ timeout: 15000 });
-  assert.equal(await reply.locator('.gut :is(.av.brand, .av.fig17r)').count(), 0, "not Branch's face");
+  assert.equal(await reply.locator('.gut :is(.av.none18c, .av.fig17r, .mark-face)').count(), 0, "not the neutral face, nor Branch's");
   // Redesign: the prototype has no 3D faces (its av() draws the pebble, an emoji or a photo), so a Trunk set to 3D is
   // drawn as its ordinary face.
   assert.equal(await f.page.locator("#app .is3d").count(), 0);

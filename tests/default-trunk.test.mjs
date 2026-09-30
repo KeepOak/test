@@ -77,7 +77,11 @@ test("the engine makes the default quietly once setup is over or skipped, never 
   const made = app.trunks.ensureDefault();
   assert.equal(made.name, "Branch Agent", "named as the owner's assistant is named");
   assert.equal(provider.requests.length, calls, "no introduction is asked of a model");
-  assert.equal(app.store.messages(made.chatSessionId).length, 0);
+  // QA 2026-09-28 (Pass 2): its conversation opens with a written greeting, as a template Trunk's does, still asking no model.
+  assert.deepEqual(app.store.messages(made.chatSessionId).map((m) => m.role), ["assistant"], "one greeting");
+  assert.match(app.store.messages(made.chatSessionId)[0].content, /^Hi, I'm Branch Agent\./);
+  assert.equal(app.trunks.ensureDefault().id, made.id);
+  assert.equal(app.store.messages(made.chatSessionId).length, 1, "greeted once");
   // With Trunks switched off there is no default and nothing is made.
   app.trunks.setMode("trunks", { mode: "off" });
   assert.equal(app.trunks.ensureDefault(), null);

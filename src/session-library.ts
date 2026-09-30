@@ -214,7 +214,10 @@ export class SessionLibrary {
         ORDER BY m.id DESC LIMIT 1) AS latest,
       (SELECT json_extract(m.body,'$.role') FROM messages m
         WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant')
-        ORDER BY m.id DESC LIMIT 1) AS latest_role
+        ORDER BY m.id DESC LIMIT 1) AS latest_role,
+      (SELECT m.created_at FROM messages m
+        WHERE m.session_id=s.id AND json_extract(m.body,'$.role') IN ('user','assistant')
+        ORDER BY m.id DESC LIMIT 1) AS latest_at
       FROM sessions s LEFT JOIN conversation_marks c ON c.session_id=s.id
       WHERE s.owner=? AND s.temporary=0 ${notIn(hidden)} ${notEngineOnly} ${notPutAway} ${project === undefined ? "" : `AND ${projectOf}=?`}
       ORDER BY c.pin_order IS NULL, c.pin_order, s.created_at DESC, s.id DESC LIMIT ?`).all(owner, ...hidden, ...(project === undefined ? [] : [project]), Math.min(Math.max(limit, 1), 100));
@@ -224,6 +227,8 @@ export class SessionLibrary {
         // Dogfood D23: a steer reads as the owner's own words here too, never the marker the model was given it in.
         opening: steerShown(String(row.opening ?? "")), lastMessage: steerShown(String(row.latest ?? "")),
         lastSpeaker: row.latest_role === null ? "" : String(row.latest_role),
+        // trunk-one-row: when its last message was written, so the window lists a Trunk by its newest message
+        ...(row.latest_at == null ? {} : { updatedAt: String(row.latest_at) }),
         ...(row.pin_order == null ? {} : { pinned: true }), ...(row.title ? { title: String(row.title) } : {}),
       })),
     };

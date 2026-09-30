@@ -296,6 +296,9 @@ export class OllamaClient {
         method: "POST", redirect: "error", signal, headers: { "content-type": "application/json" },
         body: JSON.stringify({ model, prompt }),
       });
+      // QA retest 2026-09-28 (m7): a 404 is Ollama saying the model is not downloaded; "could not read these passages
+      // (404)" said nothing a person could act on.
+      if (response.status === 404) throw new Error(`${model}, the model that compares passages by meaning, is not on this computer. Run "ollama pull ${model}" to add it.`);
       if (!response.ok) throw new Error(`The model on this computer could not read these passages (${response.status})`);
       vectors.push(Float32Array.from(embeddingSchema.parse(JSON.parse(await response.text()) as unknown).embedding));
     }

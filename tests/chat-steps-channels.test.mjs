@@ -1,5 +1,5 @@
 /**
- * The steps in every chat app Branch has (src/channels/steps-caps.ts): each of the 55 adapters is built with stand-in
+ * The steps in every chat app Branch has (src/channels/steps-caps.ts): each of the 56 adapters is built with stand-in
  * settings (tests/chat-steps-adapters.mjs), its row in the capability table is checked against the adapter itself, and
  * one fixed task (tests/chat-steps-fixture.mjs) is rendered the way the router sends it there: one message edited in
  * place with code where the app edits, one summary line in plain words where it cannot, nothing where each message
@@ -27,9 +27,9 @@ const adapters = await everyAdapter();
 const OVER_THE_WEB = ["gotify", "webex", "flock", "pumble", "mastodon", "nextcloud-talk", "ntfy", "homeassistant", "guilded", "revolt",
   "mattermost", "rocketchat", "googlechat", "msteams", "feishu", "dingtalk", "wecom", "line", "viber", "telegram", "discord"];
 
-test("the capability table has one row for each of the 55 chat adapters, and each row says what its adapter does", () => {
+test("the capability table has one row for each of the 56 chat adapters, and each row says what its adapter does", () => {
   const kinds = adapters.map((one) => one.kind).sort();
-  assert.equal(kinds.length, 55);
+  assert.equal(kinds.length, 56);
   assert.deepEqual(STEPS_CAPS.map((caps) => caps.kind).sort(), kinds, "no adapter without a row, no row without an adapter");
   for (const { kind, adapter } of adapters) {
     const caps = STEPS_CAPS.find((row) => row.kind === kind);
@@ -78,7 +78,7 @@ test("every app: the fixed task as it goes out there, within the app's own lengt
   }
   assert.deepEqual(Object.fromEntries(seen), {
     "One message, edited in place, a new one when it is full": 4,
-    "One summary line above the reply (plain words)": 50,
+    "One summary line above the reply (plain words)": 51,
     "Nothing added: each message costs money": 1,
   });
 });

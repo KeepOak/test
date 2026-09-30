@@ -9,7 +9,7 @@
    `chromium` from 'playwright' in src/integrations/browser.ts (the engine reaches Playwright), and a case fails. */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -68,4 +68,36 @@ test("comments are not shipped in the built code, where V8 would keep them with 
   assert.equal(compilerOptions.removeComments, true);
   const main = readFileSync(resolve(dist, "desktop/main.js"), "utf8");
   assert.equal(/^\s*\/\/ /m.test(main), false, "the built main process has no line comments");
+});
+
+test("the added chat services load when one is built, listed or switched, and their kinds are known without them", async () => {
+  // About 2.6 MB of heap for 36 services: src/channels/parity-services.ts is loaded on use by parity-config.ts.
+  const loaded = staticClosure("desktop/engine-process.js");
+  assert.equal(loaded.includes("channels/parity-services.js"), false, "the service list is not loaded with the engine");
+  for (const service of ["irc", "xmpp", "nostr", "wechat", "mumble"]) assert.equal(loaded.includes(`channels/${service}.js`), false, `${service} is not loaded with the engine`);
+  const { parityServices } = await import("../dist/channels/parity-services.js");
+  const { PARITY_KINDS } = await import("../dist/channels/parity-kinds.js");
+  assert.deepEqual([...PARITY_KINDS], parityServices.map((service) => service.kind), "the static kinds are the services' own, in order");
+});
+
+test("the built code holds no character past Latin-1, so V8 keeps every module's source at one byte a character", () => {
+  // scripts/ascii-dist.mjs writes them as \u escapes; one such character would double that file's source in memory.
+  const found = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = resolve(dir, entry.name);
+      if (entry.isDirectory()) walk(path);
+      else if (/\.c?js$/.test(entry.name) && /[^\u0000-ÿ]/.test(readFileSync(path, "utf8"))) found.push(relative(dist, path));
+    }
+  };
+  walk(dist);
+  assert.deepEqual(found, [], "built files with a wide character");
+});
+
+test("the engine builds its personal part on first use, listing its tools from their cards until then", () => {
+  // PLAT-191 (src/tool-cards.ts): the part's code, its connectors and their clients load when first needed.
+  const loaded = staticClosure("desktop/engine-process.js");
+  assert.equal(loaded.includes("personal/index.js"), false, "the personal part is not loaded with the engine");
+  for (const connector of ["personal/google.js", "personal/microsoft.js", "personal/mail-search.js", "personal/tunnel.js"])
+    assert.equal(loaded.includes(connector), false, `${connector} is not loaded with the engine`);
 });

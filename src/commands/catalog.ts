@@ -70,6 +70,8 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("preset", ["permissions", "approvals"], "[name]", "when Branch checks with you before doing something", [...W, "terminal"], "owner", { ...was("terminal"), bareLooks: true, route: { method: "POST", path: "/api/policy" }, newAliases: added(["approvals"], "terminal") }),
   entry("memory", [], "[words]", "facts it has saved", [...W, "terminal"], "look", was("terminal")),
   entry("skills", [], "", "skills installed here", [...W, "terminal"], "look", was("terminal")),
+  // CHAT-205: pin one skill to this conversation (src/commands/steer-skill.ts); /skill off unpins it.
+  entry("skill", [], "[name|off]", "pin a skill to this conversation so it applies to every turn; on its own, which one is pinned", ["window", "phone", "terminal", "chat"], "run", { bareLooks: true }),
   entry("plan", [], "[on|off]", "turn a short plan first on or off", [...W, "terminal"], "look", was("terminal")),
   entry("verify", [], "[on|off]", "turn a reviewer's check of the answer on or off", ["terminal"], "look", was("terminal")),
   entry("dry-run", [], "[on|off]", "a dry run: it shows what it would do without doing it", ["terminal"], "look", was("terminal")),
@@ -93,10 +95,13 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("keys", ["shortcuts"], "", "every key the view answers to", ["terminal"], "look", { ...was("terminal"), newAliases: added(["shortcuts"], "terminal") }),
   entry("exit", ["quit"], "", "leave", ["terminal"], "look", was("terminal")),
   // ---- the redesign's terminal (design/redesign/prototype.html termRun): Team, finding and the chat apps ----
-  entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", ["terminal"], "look"),
-  entry("find", ["search"], "<words>", "search every conversation and message", ["terminal"], "owner"),
-  entry("channels", [], "", "the chat apps and which ones reach Branch", ["terminal"], "owner"),
+  // CHAT-187: also in the window's "/" menu (the window opens Team, the sidebar's search, and Customize › Channels).
+  entry("team", [], "[tab]", "who uses Branch, and what their Trunks are doing now", [...W, "terminal"], "look"),
+  entry("find", ["search"], "<words>", "search every conversation and message", [...W, "terminal"], "owner"),
+  entry("channels", [], "", "the chat apps and which ones reach Branch", [...W, "terminal"], "owner"),
   // ---- added with this table ----
+  // CHAT-192: a note for the working task, as the Steer box and "type while it works" do (src/commands/steer-skill.ts).
+  entry("steer", [], "<note>", "a note for the task working now; it reads it before its next step", ["window", "phone", "terminal", "chat"], "run", { whileWorking: true }),
   entry("stop", ["cancel"], "[task]", "stop what is working now", ["window", "phone", "terminal", "chat", "dashboard"], "run", { ...was("chat"), whileWorking: true }),
   entry("status", [], "", "what is working right now, and with which model", ALL, "look", { ...was("chat"), whileWorking: true }),
   entry("compact", ["compress", "fold"], "", "fold the earlier part of this conversation into a summary", ["window", "phone", "terminal", "chat"], "run", { ...was("chat"), newAliases: added(["compress", "fold"], "chat") }),

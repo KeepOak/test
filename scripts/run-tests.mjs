@@ -15,7 +15,10 @@
 // that never exited once held a build machine for an hour. BRANCH_TEST_TIMINGS=<file> writes each file's seconds,
 // which is where the weights come from (scripts/test-weights.mjs). `--list` prints the files and runs nothing.
 // `--files-from=selected-tests.json` runs an explicit selector-produced subset and refuses any path that is not part
-// of the discovered suite. It cannot be combined with sharding.
+// of the discovered suite, and an empty subset. With --lane and --shard it is split like the whole suite.
+// `--retry-failed` (merge-queue and push runs only) runs a failed file once more, alone, after the share has finished,
+// when at most RETRY_AT_MOST files failed and none ran past its limit; a file that passes then is named flaky, not
+// hidden. On 2026-09-30 load-driven browser flakes ejected four merge-queue groups in an hour.
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -135,24 +138,26 @@ export function parseShard(argv) {
   return { index: index - 1, total };
 }
 
-/** Read an explicit selector-produced subset and prove every entry belongs to the discovered suite. */
-export function parseFilesFrom(argv, groups, read = (file) => readFileSync(file, "utf8")) {
+/**
+ * Read an explicit selector-produced subset, prove every entry belongs to the discovered suite (`all`), and keep only
+ * those files in `groups` (a lane's, when --lane is given), so --lane and --shard then split the subset. An empty
+ * subset is refused: a run of nothing must never read as green.
+ */
+export function parseFilesFrom(argv, groups, read = (file) => readFileSync(file, "utf8"), all = groups) {
   const flag = argv.find((arg) => arg.startsWith("--files-from="));
   if (!flag) return null;
-  if (argv.some((arg) => arg.startsWith("--shard=") || arg.startsWith("--lane="))) throw new Error("--files-from cannot be combined with --shard or --lane");
   const file = flag.slice("--files-from=".length);
   const parsed = JSON.parse(read(file));
   if (!Array.isArray(parsed) || parsed.some((entry) => typeof entry !== "string")) {
     throw new Error("--files-from must contain a JSON array of test paths");
   }
+  if (!parsed.length) throw new Error("--files-from names no test files; refusing an empty run");
   const normalized = parsed.map(posix);
   if (new Set(normalized).size !== normalized.length) throw new Error("--files-from contains a duplicate test");
-  const discovered = new Map([...groups.shared, ...groups.browser, ...groups.desktop].map((entry) => [posix(entry), entry]));
-  return normalized.map((entry) => {
-    const match = discovered.get(entry);
-    if (!match) throw new Error(`Selected test was not discovered: ${entry}`);
-    return match;
-  });
+  const discovered = new Set([...all.shared, ...all.browser, ...all.desktop].map(posix));
+  for (const entry of normalized) if (!discovered.has(entry)) throw new Error(`Selected test was not discovered: ${entry}`);
+  const wanted = new Set(normalized);
+  return Object.fromEntries(Object.entries(groups).map(([name, files]) => [name, files.filter((one) => wanted.has(posix(one)))]));
 }
 
 /** Turn an otherwise silent worker death into a named, actionable CI failure. */
@@ -250,6 +255,26 @@ export async function runPool(files, { kindOf, limits, cost = () => 0, runOne = 
   return results;
 }
 
+export const RETRY_AT_MOST = 2;
+
+/**
+ * Run each failed file once more, one at a time, and resolve with the files that still fail and the ones that passed
+ * on the second run (flaky). No retry when more than RETRY_AT_MOST failed (that is a real break) or a file ran past its
+ * limit (a second run would not fit the job's time).
+ */
+export async function retryFailed(failed, { runOne = runFile, onDone = () => {}, passed = (result) => result.status === 0 } = {}) {
+  if (!failed.length || failed.length > RETRY_AT_MOST || failed.some((result) => result.timedOut))
+    return { stillFailed: failed, flaky: [] };
+  const stillFailed = [], flaky = [];
+  for (const first of failed) {
+    const second = await runOne(first.file);
+    onDone(second);
+    if (passed(second)) flaky.push(second);
+    else stillFailed.push(first);
+  }
+  return { stillFailed, flaky };
+}
+
 /** Print one finished file's output under a header, and name it again if it failed. */
 function report(result) {
   const status = testProcessStatus(result, [result.file], () => {});
@@ -258,20 +283,27 @@ function report(result) {
   if (status !== 0) testProcessStatus(result, [result.file]);
 }
 
+/** Say a file passed only on its second run: a warning in the log and a line in the job's summary, so it gets fixed. */
+function nameFlaky(file) {
+  const words = `${posix(file)} failed, then passed when run again alone (flaky).`;
+  console.log(`::warning file=${posix(file)}::${words}`);
+  if (process.env.GITHUB_STEP_SUMMARY) writeFileSync(process.env.GITHUB_STEP_SUMMARY, `- ${words}\n`, { flag: "a" });
+}
+
 function chooseFiles(argv) {
   const all = testGroups();
-  const explicit = parseFilesFrom(argv, all);
   const { lane, groups: laned } = laneGroups(argv, all);
-  const groups = onlyGroups(laned, process.env.BRANCH_TEST_GROUPS);
+  const explicit = parseFilesFrom(argv, laned, undefined, all);
+  const groups = onlyGroups(explicit ?? laned, process.env.BRANCH_TEST_GROUPS);
   const { index, total } = parseShard(argv);
   const weights = loadWeights(lane ? LANES[lane] : process.platform);
-  const mine = new Set(explicit ?? shareFiles(groups, index, total, weights));
-  const pickFrom = (list) => list.filter((file) => mine.has(file));
-  const chosen = { shared: pickFrom(groups.shared), browser: pickFrom(groups.browser), desktop: pickFrom(groups.desktop) };
+  const chosen = Object.fromEntries(Object.entries(groups).map(([name]) => [name, []]));
+  const mine = new Set(shareFiles(groups, index, total, weights));
+  for (const [name, list] of Object.entries(groups)) chosen[name] = list.filter((file) => mine.has(file));
   const count = chosen.shared.length + chosen.browser.length + chosen.desktop.length;
   const everything = all.shared.length + all.browser.length + all.desktop.length;
-  console.log(explicit ? `Selected ${count} of ${everything} test files.`
-    : `${lane ? `Lane ${lane}, share` : "Share"} ${index + 1} of ${total}: ${count} of ${everything} test files.`);
+  console.log(`${explicit ? "Selected subset, " : ""}${lane ? `lane ${lane}, ` : ""}share ${index + 1} of ${total}: ${count} of ${everything} test files.`);
+  if (explicit && !count) throw new Error("This share of the selected subset has no test files; refusing an empty run");
   return { chosen, weights };
 }
 
@@ -291,7 +323,14 @@ async function main() {
     kindOf: (file) => kind.get(file), limits: { shared: shared || 3, browser: browser || 1, desktop: 1 },
     cost: costOf(weights), runOne: (file) => runFile(file, { limit }), onDone: report,
   });
-  const failed = results.filter((result) => testProcessStatus(result, [result.file], () => {}) !== 0);
+  let failed = results.filter((result) => testProcessStatus(result, [result.file], () => {}) !== 0);
+  if (argv.includes("--retry-failed") && failed.length) {
+    console.log(`\nRunning ${failed.length} failed file(s) once more, alone.`);
+    const retried = await retryFailed(failed, { runOne: (file) => runFile(file, { limit }), onDone: report,
+      passed: (result) => testProcessStatus(result, [result.file], () => {}) === 0 });
+    failed = retried.stillFailed;
+    for (const result of retried.flaky) nameFlaky(result.file);
+  }
   if (process.env.BRANCH_TEST_TIMINGS) {
     const timings = Object.fromEntries(results.map((r) => [posix(r.file), Math.round(r.seconds * 1000) / 1000]).sort());
     writeFileSync(process.env.BRANCH_TEST_TIMINGS, `${JSON.stringify(timings, null, 2)}\n`);

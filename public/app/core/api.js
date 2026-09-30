@@ -140,8 +140,11 @@ export async function apiBlob(path, body) {
 export function stream(prefixes, onEvent, onEnd) {
   const controller = new AbortController();
   const wanted = (kind) => !prefixes.length || prefixes.some((p) => kind === p || kind.startsWith(p + "."));
+  /* hot-update: a stream opened again asks for what came after the last event it had, so nothing that happened while it
+     reconnected (an engine handed over, a restart) is missed. */
+  let last = null;
   const once = async () => {
-    const response = await fetch("/api/events/stream", { headers: headers(false), signal: controller.signal });
+    const response = await fetch(last === null ? "/api/events/stream" : `/api/events/stream?after=${last}`, { headers: headers(false), signal: controller.signal });
     if (!response.ok || !response.body) throw new Error(String(response.status));
     setLink(true);
     const reader = response.body.getReader();
@@ -150,7 +153,11 @@ export function stream(prefixes, onEvent, onEnd) {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer = drain(buffer + decoder.decode(value, { stream: true }), (kind, data) => { if (kind === "end") onEnd?.(data); else if (wanted(kind)) onEvent(kind, data); });
+      buffer = drain(buffer + decoder.decode(value, { stream: true }), (kind, data) => {
+        const seen = kind === "end" ? data?.after : data?.id;
+        if (Number.isInteger(seen) && seen > (last ?? 0)) last = seen;
+        if (kind === "end") onEnd?.(data); else if (wanted(kind)) onEvent(kind, data);
+      });
     }
   };
   const run = async () => {

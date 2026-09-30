@@ -3,7 +3,9 @@
    of the chosen suite for each model choice, from GET /api/evaluation/history?suite=<id>; Run again is
    POST /api/evaluation/compare { suite, presets } over the connections set up, mixtures left out (GET
    /api/model-savings connections; it needs two, runs read-only and spends on each).
-   The engine keeps no answer per task, so "side by side" stays greyed.
+   Side by side: each task of the suite, with each model's own answer beside the others and whether it passed. Every
+   task of a comparison is a task of its own (GET /api/evaluation/history runs[].tasks[].runId), so its answer is that
+   task's own record (GET /api/runs/<id>, the last answer in its conversation), read only when Side by side is opened.
    What it saved: the current conversation's rounds (GET /api/model-savings/rounds?session=<id>), shown as the share of
    what was sent that the service's cache served. The engine keeps no before-and-after figures, so none are drawn.
    Mixing models needs a mixture chosen first (GET /api/model-savings), which the design has no way to pick: greyed.
@@ -52,6 +54,30 @@ function cmpDlg() {
   const last = C.runs[0] ? `<p class="hint" data-css="margin:0">${t("window.settings.p17-models.last-run-value-each-task-checked", { value: esc(new Date(C.runs[0].startedAt).toLocaleDateString(language(), { month: "short", day: "numeric" })) })}</p>` : "";
   openDlg({ title: t("window.settings.p17-models.compare-models"), wide: true, body: seg + table + last,
     foot: `<button class="btn ghost" type="button" data-act="cmpsideb17">${t("window.settings.p17-models.side-by-side")}</button><button class="btn pri" type="button" data-act="cmprunb17" ${presets().length >= 2 && C.suite ? "" : "disabled"}>${t("window.places.library17.run-again")}</button>` });
+}
+/* ---------- side by side ---------- */
+async function openSide() {
+  const rows = newestPerModel();
+  if (!rows.length) { toast(t("window.settings.p17-models.side-none")); return; }
+  const ids = [...new Set(rows.flatMap((r) => r.tasks.map((task) => task.runId)).filter(Boolean))]; // a skipped task ran nothing
+  let answers;
+  // The model's own words are the task's last answer in its conversation; a task whose answer failed its check keeps the
+  // check's sentence as its output, so the output is only the fallback.
+  const said = (rec) => [...(rec.messages ?? [])].reverse().find((m) => m.role === "assistant" && String(m.content ?? "").trim())?.content ?? rec.run?.output ?? "";
+  try { answers = new Map(await Promise.all(ids.map(async (id) => [id, said(await api(`runs/${encodeURIComponent(id)}`))]))); }
+  catch (error) { toast(error.message); return; }
+  const taskIds = [...new Set(rows.flatMap((r) => r.tasks.map((task) => task.id)))];
+  const cell = (r, id) => {
+    const task = r.tasks.find((x) => x.id === id);
+    if (!task) return `<td class="muted">—</td>`;
+    const mark = task.passed ? `<span class="pill ok">${t("window.settings.p17-models.side-passed")}</span>` : `<span class="pill warn">${t("window.settings.p17-models.side-failed")}</span>`;
+    const said = task.runId ? `<pre class="side-ans-b17">${esc(String(answers.get(task.runId) ?? "").slice(0, 2000))}</pre>` : "";
+    return `<td>${mark}${said}${task.problem ? `<small>${esc(task.problem)}</small>` : ""}</td>`;
+  };
+  const head = `<tr><th>${t("window.settings.p17-models.side-task")}</th>${rows.map((r) => `<th>${esc(nameOf(r.preset))}</th>`).join("")}</tr>`;
+  const body = taskIds.map((id) => `<tr><th>${esc(id)}</th>${rows.map((r) => cell(r, id)).join("")}</tr>`).join("");
+  openDlg({ title: t("window.settings.p17-models.side-by-side"), wide: true, body: `<table class="tbl-b17 side-b17"><thead>${head}</thead><tbody>${body}</tbody></table>`,
+    foot: `<button class="btn ghost" type="button" data-act="cmpback17">${t("window.settings.p17-models.compare-models")}</button><button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 async function readRuns() {
   C.runs = C.suite ? (await api(`evaluation/history?suite=${encodeURIComponent(C.suite)}`)).runs ?? [] : [];
@@ -150,12 +176,14 @@ export function init17() {
   started = true;
   on("compareb17", () => openCompare());
   on("cmpsuiteb17", (el) => pickSuite(el));
+  on("cmpsideb17", () => openSide());
+  on("cmpback17", () => cmpDlg());
   on("cmprunb17", (el) => runCompare(el));
   on("savingsb17", () => openSavings());
   on("arenab17", () => openArena());
   on("arenaaskb17", () => askArena());
   on("arenavoteb17", (el) => voteArena(el));
   on("arenanextb17", () => { Object.assign(A, { round: null, vote: null, names: null, question: "" }); askDlg(); });
-  markLive(["compareb17", "cmpsuiteb17", "cmprunb17", "savingsb17", "arenab17", "arenaaskb17", "arenavoteb17", "arenanextb17", "sw:arena-q17"]);
+  markLive(["compareb17", "cmpsuiteb17", "cmprunb17", "cmpsideb17", "cmpback17", "savingsb17", "arenab17", "arenaaskb17", "arenavoteb17", "arenanextb17", "sw:arena-q17"]);
   render();
 }

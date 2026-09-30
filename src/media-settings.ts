@@ -46,6 +46,15 @@ export const builtInImagePrices: Record<string, number> = {
   "gemini-2.5-flash-image": 0.039,
   "gemini-2.0-flash-preview-image-generation": 0.039,
 };
+/**
+ * models-ui: the picture models Branch knows by kind of picture route (src/media-images.ts ImageEndpoint.kind), read off
+ * the price table so a model is offered only where its price is on file. Settings › Models › Media offers the ones that
+ * fit the connection making pictures now; anything else the owner typed stays theirs.
+ */
+export const knownPictureModels: Record<"openai" | "gemini", string[]> = {
+  openai: Object.keys(builtInImagePrices).filter((model) => !model.startsWith("gemini")),
+  gemini: Object.keys(builtInImagePrices).filter((model) => model.startsWith("gemini")),
+};
 export interface ImageCostEstimate {
   amount: number | null;
   currency: "USD";

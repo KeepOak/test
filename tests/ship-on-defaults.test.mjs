@@ -53,6 +53,7 @@ import { MorningBrief } from "../dist/brief.js";
 import { currentValue } from "../dist/settings-kit/changes.js";
 import { accountsSettings, saveAccountsSettings } from "../dist/accounts/settings.js";
 import { markChosen } from "../dist/ship-on.js";
+import { troubleshootSettings, saveTroubleshootSettings } from "../dist/troubleshoot.js";
 import { sdkKitMode, saveSdkKitSettings } from "../dist/sdk-kit.js";
 import { readKnobs, saveKnobs, resetKnobs } from "../dist/knobs/settings.js";
 
@@ -139,6 +140,9 @@ const flipped = [
     old: (s) => s.raw("accounts", { mode: "off", pools: [], poolingRule: 1, poolingNotices: [] }) },
   { name: "quick answers from the web", read: (s) => askMode(s, owner, "answer-engine"), ships: "when-needed", off: (s) => saveAskMode(s, owner, "answer-engine", { mode: "off" }) },
   // Defaults audit (2026-09-28, DEFAULTS-AUDIT.md): none of (a)–(f).
+  { name: "fixing a failed command", read: (s) => troubleshootSettings(s, owner).mode, ships: "when-needed", off: (s) => saveTroubleshootSettings(s, owner, { mode: "off" }),
+    old: (s) => s.raw("troubleshoot", { mode: "off", maxTries: 3 }) },
+  { name: "tidying the history before it is sent", read: (s) => safetyMode(s, owner, "history-repair"), ships: "when-needed", off: (s) => saveSafetyMode(s, owner, "history-repair", { mode: "off" }) },
   { name: "tools for building on Branch", read: (s) => sdkKitMode(s, owner), ships: "when-needed", off: (s) => saveSdkKitSettings(s, owner, { mode: "off" }) },
   { name: "the about-you note", read: (s) => (readKnobs(s, owner, "memory").aboutYouOn ? "on" : "off"), ships: "on", off: (s) => saveKnobs(s, owner, "memory", { aboutYouOn: false }),
     old: (s) => s.raw("knobs-memory", { snapshotFacts: 30, snapshotChars: 2000, aboutYouOn: false, aboutYou: "", aboutYouChars: 1500 }) },
@@ -262,8 +266,6 @@ test("what spends, sends, deletes, listens, is heavy or loosens approvals is sti
   const kept = {
     "procedures that start themselves (f)": autonomyMode(store, owner, "procedures"),
     "asking whether a long task is getting anywhere (a)": safetyMode(store, owner, "progress-judge"),
-    // Not (a)–(f), but on it drops the real result of an approved call from a model that reuses call ids.
-    "tidying a conversation before it is sent (breaks ordinary use)": safetyMode(store, owner, "history-repair"),
     "outside memory services (b)": learningMode(store, owner, "providers"),
     "add-on packages (b, f)": addOnMode(store, owner, "packages"),
     "counting how Branch is used (b)": askMode(store, owner, "analytics"),
@@ -360,19 +362,19 @@ test("a morning brief that names a chat keeps its own switch: an off there is ne
   assert.equal(new MorningBrief(store).settings(owner).enabled, false);
 });
 
-test("updating by itself ships on Stable only; an older record that names Beta keeps its own off", () => {
+test("updating by itself ships on for Beta too (the owner never presses Update); an off the owner chose stays off", () => {
   const store = memoryStore();
   store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "beta" });
-  assert.equal(readComfort(store, owner, "notify").autoUpdate, "off", "Beta builds every merged change here: heavy (e)");
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "install", "an old default off on Beta reads as shipped");
   store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "dev" });
-  assert.equal(readComfort(store, owner, "notify").autoUpdate, "off", "a saved Dev is Beta");
-  // The lead's decision (Codex P1, accepted by the owner): an older Stable record's off cannot be told from the old
-  // default, so it reads as shipped.
+  assert.equal(readComfort(store, owner, "notify").autoUpdate, "install", "a saved Dev is Beta");
   store.raw("comfort-notify", { method: "window", sound: "off", autoUpdate: "off", releaseChannel: "stable" });
   assert.equal(readComfort(store, owner, "notify").autoUpdate, "install");
   const fresh = memoryStore();
   saveComfort(fresh, owner, "notify", { releaseChannel: "beta" });
-  assert.equal(readComfort(fresh, owner, "notify").autoUpdate, "install", "choosing Beta after the upgrade keeps what was shown");
+  assert.equal(readComfort(fresh, owner, "notify").autoUpdate, "install", "choosing Beta keeps updating by itself");
+  saveComfort(fresh, owner, "notify", { autoUpdate: "off" });
+  assert.equal(readComfort(fresh, owner, "notify").autoUpdate, "off", "the owner's own off is kept");
 });
 
 test("putting voice back as shipped forgets the owner's choices, so the kit has nothing left to put back", () => {

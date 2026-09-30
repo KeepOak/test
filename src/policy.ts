@@ -251,7 +251,7 @@ const readOnlyPermissions = new Set([
   "leads.read",
   // Looking at what a program left running has printed changes nothing; starting or stopping one does.
   "process.read",
-  // GitLab is read-only here: issues, releases and how the checks went.
+  // Reading GitLab (issues, merge requests, releases, how the checks went) changes nothing; `gitlab.manage` does.
   "gitlab.read",
   // A check-in writing down its own answer (src/heartbeat.ts); the news goes out afterwards, by Branch.
   "heartbeat.respond",

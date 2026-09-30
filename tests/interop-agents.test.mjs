@@ -502,3 +502,22 @@ test("a pairing link carries its own key: it reaches only the A2A door, runs out
   assert.ok(app.sessionTokens.revoke("local", made.body.keyId), "listed and taken back like any other key");
   assert.equal((await as("/.well-known/agent.json")).status, 401, "a key taken back stops working");
 });
+
+test("an A2A task belongs to the key that started it: another caller can neither read, stop nor take over its id", async (t) => {
+  const { app, rpc, shareA2a, provider } = await fixture(t);
+  await shareA2a(true);
+  const ada = app.sessionTokens.createPairingKey("local").token, bob = app.sessionTokens.createPairingKey("local").token;
+  const as = (key) => ({ authorization: `Bearer ${key}` });
+  const message = { role: "user", parts: [{ type: "text", text: "count the files" }] };
+  const sent = await rpc("tasks/send", { id: "shared-id", message }, as(ada));
+  assert.ok(!sent.body.error, JSON.stringify(sent.body.error));
+  assert.ok((await rpc("tasks/get", { id: "shared-id" }, as(ada))).body.result, "the caller that started it finds it");
+  const peek = await rpc("tasks/get", { id: "shared-id" }, as(bob));
+  assert.match(peek.body.error.message, /not known/, "another caller does not");
+  const stop = await rpc("tasks/cancel", { id: "shared-id" }, as(bob));
+  assert.match(stop.body.error.message, /not known/);
+  const steal = await rpc("tasks/send", { id: "shared-id", message }, as(bob));
+  assert.match(steal.body.error.message, /already in use/, "nor can it take the id over");
+  assert.ok((await rpc("tasks/get", { id: "shared-id" }, as(ada))).body.result, "the first caller's task is still there");
+  void provider;
+});

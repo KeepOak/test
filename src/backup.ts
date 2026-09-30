@@ -10,8 +10,9 @@ import { neverTouched, settingsCatalogue } from "./settings-kit/catalogue.js";
 import { coveredSettings } from "./lockdown.js";
 import { ensureWikiTables, wikiTables } from "./wiki.js";
 import { settleForgotten } from "./conversation-residue.js";
-import { introPrompt, introSystem } from "./trunks/intro.js";
+import { defaultGreeting, introPrompt, introSystem } from "./trunks/intro.js";
 import { holdRestoredTrunks, narrowTrunk, restoredTrunksKey, type HeldTrunk } from "./trunks/restore-narrow.js";
+import { MemoryFileSchema, memoryFileName } from "./trunks/files.js"; // workbench (SELF-311)
 
 /**
  * Whole-application backup: every table that holds the person's state, as plain rows, so it can be
@@ -67,7 +68,7 @@ const restoredFiles = (data: string): string | null => {
     "AGENTS.md": z.string().max(8000).optional(), "USER.md": z.string().max(8000).optional(),
     "MEMORY.md": z.string().max(8000).optional(), "TOOLS.md": z.string().max(8000).optional(),
     "HEARTBEAT.md": z.string().max(8000).optional(),
-  }).strict() }).strict();
+  }).strict(), memories: z.record(memoryFileName, MemoryFileSchema).optional() }).strict(); // workbench (SELF-311)
   try { return JSON.stringify(schema.parse(JSON.parse(data))); } catch { return null; }
 };
 export const backupTables = [...requiredTables, ...flyTables, ...appendOnlyTables, ...wikiTables, ...conversationTables, ...trunkTables] as const;
@@ -129,6 +130,9 @@ export const signInPrefixes: readonly string[] = ["remote-agent:"];
 export const thisComputerSettings: readonly string[] = [
   "folder_trust", "folder_trust_mode", "folder-trust-real", "folder-trust-copies", "remote-agent-pairing", "remote-computers",
   "secret-commands", "keychain-entries", "reach-remote-trunks-keys",
+  // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
+  // no backup carries, so the account stays with it.
+  "gitlab-account",
   // NAS 49b183b's unchecked class: this computer's OS sandbox, whether its emergency stop is pressed (letting it go
   // needs the authenticator code, which a replacing restore would skip), and which tools need that code.
   "os-sandbox", "safety-emergency-stop", "safety-code-approvals-setup",
@@ -163,6 +167,8 @@ export const thisComputerSettings: readonly string[] = [
   "studies", "trunk-receipts",
   // Q230, keys worked out in code: the shell a coding task snapshots, and this computer's memory-history status.
   "coding-shell-snapshot", "memory-history-status",
+  // RES-251: which hand-placed plugins on this disk were kept running inside Branch when the wall began shipping on.
+  "add-ons-plugin-wall-kept",
 ];
 /** NAS 23e7382: one row per add-on file on this disk, its fingerprint (src/safety-extras/wasm-add-ons.ts). */
 const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
@@ -174,6 +180,14 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // Q230 (NAS eba8bd8): a conversation's live waiting line, whose words run by themselves; this computer's MCP tool
   // cache, plugins and their fingerprints; and a running task's shared notes.
   "followups:", "mcp-tools:", "plugin-catalog:", "plugin:", "scratch:",
+  // #890: this computer's installed plugin and add-on code versions kept for rollback, a staged candidate's local
+  // folder, the evaluation evidence and the "not yet proven" mark: a file must never supply code or clear the mark.
+  "plugin-version:", "plugin-review:", "plugin-evaluation:", "add-on-version:", "add-on-candidate:",
+  // workbench (SELF-305): a wake-up set in a conversation, whose words later run as the owner's own task; like the
+  // waiting line, a file must never put one in place.
+  "wakeup:",
+  // workbench (SELF-307): which plan window a conversation was last asked to write a handoff in; this computer's own.
+  "handoff-asked:",
   // Q230, keys worked out in code: this computer's place in each chat stream and its offsets, its holds against redoing
   // a chat task, its webhook word, its MCP sign-in clients, which Trunk a flow run works as, the file-undo slots, a
   // "Watch me" under way, kept answers (a planted one comes back as if real) and the yeses carried over a restart.
@@ -212,6 +226,8 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   // switch, the chats a relay may bring, the USB rules that start a task, and the git sources the assistant shares to.
   "desktop-control", "approval_reviewer", "loop_guard", "security-check", ...safetyParts.map(safetyKey), ...reachParts.map(reachKey),
   "reach-relay-chats", "reach-usb-rules", "reach-agent-git-sources",
+  // RES-719: the GitLab switch reaches a server, so a file cannot switch it on by itself.
+  "gitlab-connection",
   // NAS 23e7382: which chat accounts count as the owner for `/platform`, read before the sender list is.
   "reach-platform-settings",
   // NAS f30facf: where the owner's words and records are sent: the trace export's endpoint and the memory service.
@@ -242,7 +258,7 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   "flowboards-kanban-settings", "flowboards-widget-ideas", "gemini-signin", "governance", "interop-modes-list",
   "knowledge", "live-scoring", "local-models", "mcp-connections", "mcp-sharing", "media", "memory-consolidation",
   "memory-retrieval", "metering", "model-profiles", "models", "orchestration", "page-notes", "page-notes:list",
-  "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults",
+  "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults", "codex-models",
   "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages"];
 /** One row per automatic job: a loop, a heartbeat, a standing order or a procedure runs its words by itself (as a schedule does, Q168 C). */
 const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "autonomy-loop:", "autonomy-heartbeat:", "autonomy-order:", "autonomy-procedure:",
@@ -255,6 +271,8 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
   "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
   "skill-origin:", "skill-package:",
+  // #890: an API skill learned from a browser recording names an outside address and the request it sends.
+  "captured-api-skill:",
   // A registry signing key the owner trusted: a file must never make a key trusted by itself.
   "registry-key:",
   // Q230, keys worked out in code: each coding, interop, learning-more, Trunks and model-savings part (they run
@@ -281,6 +299,7 @@ export const travelsWithBackup: Readonly<Record<string, string>> = {
   "reflection-cursor:": "how far a look back has read; nothing runs from it",
   "reflection-note:": "what accepting a queued note would do; it still needs the owner's yes",
   "skill-install-log": "install history for display only",
+  "stays-here:": "only keeps a conversation that held personal details on this computer; it can never send anything elsewhere",
   "tool-context-modes": "only how much of an already-permitted tool's or skill's description a request carries",
   "ask-first": "askFirst and maxQuestions only decide whether clarifying questions are asked",
   "calendar": "country, days off, working days, timezone and quiet hours only skip or hold existing work",
@@ -511,9 +530,17 @@ function onlyIntroduction(db: DatabaseSync, sessionId: string, setup: readonly S
   if (!tasks.every(engines)) return false;
   if (markedByThePerson(db, sessionId, tasks.map((task) => task.id))) return false;
   const messages = db.prepare("SELECT body FROM messages WHERE session_id=?").all(sessionId) as { body: string }[];
-  // The default is created quietly, with no model introduction. Only its exact engine opening counts as setup.
-  if (!messages.length) return tasks.length === 1 && tasks[0]!.status === "completed" && tasks[0]!.output === "Opened"
+  // The default is created quietly, with no model introduction: its exact engine opening, and at most the greeting the
+  // engine writes for it (src/trunks/intro.ts defaultGreeting), count as setup.
+  const quiet = tasks.length === 1 && tasks[0]!.status === "completed" && tasks[0]!.output === "Opened"
     && setup.some((trunk) => tasks[0]!.owner === trunk.owner && tasks[0]!.prompt === `Trunk: ${trunk.name}`);
+  if (!messages.length) return quiet;
+  if (quiet && messages.length === 1) {
+    try {
+      const only = JSON.parse(messages[0]!.body) as { role?: unknown; content?: unknown; toolCalls?: unknown };
+      if (only.role === "assistant" && only.toolCalls === undefined && setup.some((trunk) => only.content === defaultGreeting(trunk.name))) return true;
+    } catch { return false; }
+  }
   let asks = 0;
   for (const row of messages) {
     let message: { role?: unknown; content?: unknown; system?: unknown; toolCalls?: unknown };

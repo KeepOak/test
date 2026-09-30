@@ -8,7 +8,7 @@ import { createBranch } from "../dist/index.js";
 import { accountsServiceFor } from "../dist/accounts/service.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
 import { saveAccountsSettings, saveSessionChoice } from "../dist/accounts/settings.js";
-import { setMode } from "../dist/accounts/manage.js";
+import { setMode, viewAll } from "../dist/accounts/manage.js";
 import { withAccountCall } from "../dist/accounts/context.js";
 import { underShortLivedKey } from "../dist/key-context.js";
 import { discardTemp } from "./temp-dir.mjs";
@@ -57,6 +57,49 @@ test("production registration routes the saved/default Claude account through Br
   assert.equal(f.app.store.events(run.id).filter((one) => one.kind === "tool.completed" && one.data.name === "files.read").length, 1);
   assert.equal(f.seen.length, 2); assert.ok(f.seen.every((body) => body.model === "claude-opus-5-5"));
   assert.ok(f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.primaryClaudeHome));
+});
+test("supported Claude subscription choices route the requested model through Branch tools and share one account pool", async (t) => {
+  const f = await fixture(t, { runtime: true });
+  await writeFile(join(f.root, "workspace", "proof.txt"), "selected subscription model proof\n");
+  const choices = [[pool, "claude-opus-5-5"], [`${pool}-sonnet`, "sonnet"], [`${pool}-opus`, "opus"], [`${pool}-haiku`, "haiku"],
+    [`${pool}-sonnet-5`, "claude-sonnet-5"], [`${pool}-haiku-4-5`, "claude-haiku-4-5"]];
+  for (const [id, model] of choices) {
+    const preset = f.app.runtime.models.presets.get(id);
+    assert.ok(preset, `${id} is selectable`);
+    assert.equal(preset.model, model);
+    assert.deepEqual(f.service.poolFor(preset), { pool, kind: "cli" });
+    const offset = f.launches.length, requests = f.seen.length;
+    const run = await f.app.runtime.run({ prompt: "Read proof.txt", model: id, permissions: ["files.read"] });
+    assert.equal(run.status, "completed"); assert.match(run.output, /selected subscription model proof/);
+    assert.equal(f.seen.length - requests, 2);
+    assert.ok(f.seen.slice(requests).every((body) => body.model === model));
+    assert.ok(f.launches.slice(offset).every((one) => one.args[one.args.indexOf("--model") + 1] === model));
+    assert.ok(f.launches.slice(offset).every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.primaryClaudeHome));
+  }
+  f.service.notePlanWindows(pool, "primary", [{ id: "five-hour", usedPercent: 35, minutes: 300, resetAt: null, measuredAt: new Date().toISOString() }]);
+  const listed = (await viewAll(f.service)).pools.filter((one) => one.pool.startsWith(pool));
+  assert.equal(listed.length, 1, "model variants never duplicate the signed-in account or its shared allowance");
+  assert.equal(f.service.planWindows.get(pool, "primary")[0].usedPercent, 35);
+  assert.equal(f.app.runtime.models.settings(f.app.runtime.owner).activePreset, pool);
+  assert.equal(f.app.runtime.models.presets.has(`${pool}-fable`), false, "a model that can spend extra usage is not added");
+});
+test("Claude model variants use canonical account switching and helper account references", async (t) => {
+  const f = await fixture(t, { mode: "on", runtime: true }), owner = f.app.runtime.owner;
+  await writeFile(join(f.root, "workspace", "proof.txt"), "variant helper proof\n");
+  const session = f.app.store.createSession(owner);
+  saveSessionChoice(f.app.store, owner, session, pool, second);
+  const run = await f.app.runtime.run({ prompt: "Read proof.txt", sessionId: session, model: `${pool}-sonnet-5`, permissions: ["files.read"] });
+  assert.equal(run.status, "completed"); assert.match(run.output, /variant helper proof/);
+  assert.ok(f.seen.every((body) => body.model === "claude-sonnet-5"));
+  assert.ok(f.launches.every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, second)));
+  const before = f.launches.length;
+  const helper = await f.app.runtime.delegate("Read proof.txt", f.app.runtime.context({ runId: run.id }), ["files.read"], "", {
+    model: `${pool}-haiku-4-5`, accountRef: { pool, account: third },
+  });
+  assert.equal(helper.status, "completed"); assert.match(helper.output, /variant helper proof/);
+  assert.ok(f.seen.slice(before).every((body) => body.model === "claude-haiku-4-5"));
+  assert.ok(f.launches.slice(before).every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, third)));
+  assert.equal(f.service.pool(pool).defaultAccount, "primary");
 });
 test("parallel helpers use distinct saved Claude accounts through Branch's tool loop", async (t) => {
   const f = await fixture(t, { runtime: true });

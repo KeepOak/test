@@ -20,9 +20,10 @@ import { say as inWords } from "../core/words.js";
 import { binding, spoken } from "./keys.js";
 import { petLine, hintLine, hintDue } from "./pettalk.js";
 import { popupsOn } from "../flows/guides.js";
+import { DRAWN, drawDrawn, drawnKey, stopDrawn, drawScenery } from "./procbg.js";
 
 const KEY = "branch-scene";
-export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side" };
+export const W = { bg: "painted", scene: "auto", season: "auto", petWhere: "side", scenery: true };
 export const D = { settings: null, earned: null, rank: null, asked: false };
 
 /* The painted scenes: the four groves and the night from /art, and the extra scenes in /art/bg. */
@@ -47,10 +48,11 @@ export function saveWindow() {
 function loadWindow() {
   let saved = null;
   try { saved = JSON.parse(localStorage.getItem(KEY) || "null"); } catch (error) { toast(error.message); }
-  if (["painted", "none", "own"].includes(saved?.bg)) W.bg = saved.bg;
+  if (["painted", "none", "own", ...DRAWN].includes(saved?.bg)) W.bg = saved.bg;
   if (SCENES.some((s) => s[0] === saved?.scene)) W.scene = saved.scene;
-  if (["auto", "spring", "autumn", "winter"].includes(saved?.season)) W.season = saved.season;
-  if (["side", "status"].includes(saved?.petWhere)) W.petWhere = saved.petWhere;
+  if (["auto", "spring", "summer", "autumn", "winter"].includes(saved?.season)) W.season = saved.season;
+  if (["side", "status", "dock"].includes(saved?.petWhere)) W.petWhere = saved.petWhere;
+  if (typeof saved?.scenery === "boolean") W.scenery = saved.scenery;
 }
 
 /* The engine's delight switches, read once the window is let in and after every change. */
@@ -118,9 +120,15 @@ export async function pickPet(v) {
   if (v !== "none" && D.settings?.pets?.on) setTimeout(() => say(t("window.shell.scene.hi-im-name-click-me-for-a", { name: D.settings.pets.name })), 200);
 }
 
-/* What "Behind the glass" has chosen: none while the engine's switch is off, else the painted grove or your own. */
+/* What "Behind the glass" has chosen: none while the engine's switch is off, else the painted grove, one of the drawn
+   ones (shell/procbg.js) or your own. */
 export const bgChoice = () => (D.settings?.background?.on ? W.bg : "none");
-export const showsBackground = () => bgChoice() === "painted" || (bgChoice() === "own" && !!OWN.url);
+/* The oak's season on screen: the painted grove by the season, or one season's grove, in daylight (Moonlight shows the
+   night grove). Null when no oak is shown. For the "The oak in …" achievements (shell/notices.js). */
+const OAK_SCENES = ["spring", "autumn", "winter"];
+export const oakSeason = () => (bgChoice() !== "painted" || effMode() === "dark" ? null
+  : W.scene === "auto" ? seasonNow() : OAK_SCENES.includes(W.scene) ? W.scene : null);
+export const showsBackground = () => bgChoice() === "painted" || DRAWN.includes(bgChoice()) || (bgChoice() === "own" && !!OWN.url);
 const calm = () => !!E.state?.preferences?.reduceMotion || matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /* Your own file: a video plays muted in a loop (paused while things are kept still); a picture or an animation fills,
@@ -145,17 +153,24 @@ export function drawBackground() {
   let layer = $("#bgLayer");
   const on = showsBackground();
   app.classList.toggle("has-bg", on);
-  if (!on) { layer?.remove(); layerKey = ""; return; }
+  if (!on) { stopDrawn(); layer?.remove(); layerKey = ""; return; }
   if (!layer) { layer = Object.assign(document.createElement("div"), { id: "bgLayer" }); app.prepend(layer); layerKey = ""; }
   layer.style.setProperty("--scrim", (D.settings.background.scrim ?? 60) / 100);
-  const own = bgChoice() === "own", fit = D.settings.background.fit ?? "fill";
-  const key = own ? `own|${OWN.url}|${fit}|${calm()}` : paintFile() + "|" + calm();
+  const own = bgChoice() === "own", fit = D.settings.background.fit ?? "fill", drawn = DRAWN.includes(bgChoice());
+  const key = own ? `own|${OWN.url}|${fit}|${calm()}` : drawn ? drawnKey(bgChoice(), seasonNow(), effMode() === "dark", calm(), app.clientWidth > 700) : paintFile() + "|" + calm();
   if (key === layerKey) return;
   layerKey = key;
+  stopDrawn();
+  if (drawn) { layer.innerHTML = ""; drawDrawn(layer, bgChoice(), { season: seasonNow(), dark: effMode() === "dark", still: calm() }); layer.insertAdjacentHTML("beforeend", '<div class="bg-scrim"></div>'); return; }
   if (own) { layer.innerHTML = '<div class="bg-scrim"></div>'; drawOwn(layer, fit); return; }
   layer.innerHTML = `<div class="paint11 ${calm() ? "" : "drift11"}"></div><div class="bg-scrim"></div>`;
   layer.firstElementChild.style.backgroundImage = `url("${paintFile()}")`;
 }
+
+/* The scenery behind the list (Settings › Appearance › What's shown): a small pixel oak at the list's foot, painted by
+   shell/procbg.js drawScenery once its canvas is drawn. */
+export const sceneryHTML = () => (W.scenery ? '<canvas class="scenery" id="scenery" width="146" height="60" aria-hidden="true"></canvas>' : "");
+export const paintScenery = () => drawScenery($("#scenery"));
 
 /* ---------- the pet ---------- */
 /* Every kind the gallery offers (core/pets.js): a pixel pet on its canvas or a picture pet as its walk loop.
@@ -182,7 +197,8 @@ export function petMood(mood, ms, hop = 0) {
 }
 onRest(() => drawPet());
 
-/* The pet's markup, drawn inside the list's foot or the status bar by whichever region W.petWhere names. */
+/* The pet's markup, drawn in the owner row at the list's foot, the status bar or by the message box (the chat's dock
+   hook, chat/chat.js addDockItem) by whichever region W.petWhere names. */
 export function petHTML(where) {
   if (!petShown() || W.petWhere !== where) return "";
   const p = D.settings.pets, pet = petOf(p.kind), speaking = P.say && Date.now() < P.until;
@@ -201,13 +217,22 @@ export function petHTML(where) {
    every frame of every step (about 2.5 s a minute with a long conversation open). */
 function placePet(box) {
   box.classList.toggle("flip", P.dir < 0);
-  box.style.transform = W.petWhere === "side" ? `translateX(${P.x}px)` : "";
+  const to = W.petWhere === "side" ? `translateX(${P.x}px)` : "";
+  if (box.dataset.placed) { box.style.transform = to; return; }
+  /* A box just drawn starts where the pet already stands; only a step slides. Placed through its transition, a redrawn
+     list slid the pet in from its edge each time, a sleeping pet too (tests/window-sleep.test.mjs). */
+  box.dataset.placed = "1";
+  box.style.transition = "none";
+  box.style.transform = to;
+  getComputedStyle(box).transform; // the start is taken without a transition
+  box.style.transition = "";
 }
 export function drawPet() {
   syncWalker();
   const box = $(".petbox");
   if (box) placePet(box);
   document.body.classList.toggle("pet-status15", petShown() && W.petWhere === "status");
+  document.body.classList.toggle("pet-dock15", petShown() && W.petWhere === "dock" && S.view === "chat");
   applyMood();
   paintPixels();
 }

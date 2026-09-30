@@ -49,7 +49,8 @@ export async function savePanel(root) {
   try {
     const answer = await phone.vault.request("POST", `/api/channel-setup/${V.id}/check`, { values });
     for (const input of root.querySelectorAll('#connect-body input[type="password"]')) input.value = "";
-    V.said = answer.botName ? t("channel-setup.checked-as", { name: answer.botName }) : t("channel-setup.done");
+    // CHAT-147: the Branch connects it as it saves; its own words say if it did not, or what is still needed.
+    V.said = [answer.botName ? t("channel-setup.checked-as", { name: answer.botName }) : t("channel-setup.done"), answer.connectNote].filter(Boolean).join(" ");
   } catch (error) { V.said = error.message; }
   if (said) said.textContent = V.said;
 }

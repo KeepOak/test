@@ -1,5 +1,6 @@
 import type { IncomingMessage } from "node:http";
 import { z } from "zod";
+import { errorText } from "./request-errors.js";
 import { flowsApi } from "./flows.js";
 // Wave 8: the to-do list and reports saved in several forms.
 import { remindAbout, todosApi } from "./todos.js";
@@ -28,7 +29,7 @@ const notFound = (): never => { throw new OrchestrationApiError(404, "Endpoint n
 
 /** Every path this file answers, so the main route file can hand them over in one line. */
 export function handlesOrchestrationPath(path: string): boolean {
-  return /^\/api\/(flows|deferred|processes|code-check|code-run|background-programs|specialist-styles|skill-revisions|plugin-catalog|todos|reports|log|request-rates|cached-answers|batch-sets|obsidian|embeds)(\/|$)/.test(path);
+  return /^\/api\/(flows|deferred|processes|open-work|code-check|code-run|background-programs|specialist-styles|skill-revisions|plugin-catalog|todos|reports|log|request-rates|cached-answers|batch-sets|obsidian|embeds)(\/|$)/.test(path);
 }
 
 export async function orchestrationApi(
@@ -82,6 +83,7 @@ export async function orchestrationApi(
   if (path.startsWith("/api/skill-revisions")) return revisionsApi(app, request, path, readBody);
   if (path.startsWith("/api/plugin-catalog")) return pluginCatalogApi(app, request, path, readBody);
   if (path === "/api/processes") return processesApi(app, request, readBody);
+  if (path.startsWith("/api/open-work")) return openWorkApi(app, request, path);
   if (path === "/api/specialist-styles")
     return { styles: specialistStyles.map((style) => ({ style, ...summaryOf(style) })) };
   if (path === "/api/code-check")
@@ -160,6 +162,20 @@ async function pluginCatalogApi(
       throw error instanceof AddOnsApiError ? new OrchestrationApiError(error.status, error.message) : error;
     });
   if (request.method !== "POST") return notFound();
+  if (path === "/api/plugin-catalog/evaluate") return app.pluginEvaluations.evaluate(await readBody(request, 1_000_000));
+  if (path === "/api/plugin-catalog/status") {
+    const body = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/) }).strict().parse(await readBody(request));
+    return app.pluginEvaluations.status(body.id);
+  }
+  if (path === "/api/plugin-catalog/promote") {
+    const body = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), evaluationId: z.string().uuid() }).strict().parse(await readBody(request));
+    return app.pluginEvaluations.promote(body.id, body.evaluationId);
+  }
+  if (path === "/api/plugin-catalog/restore") {
+    const body = z.object({ id: z.string().regex(/^[a-z][a-z0-9-]{0,39}$/), sha256: z.string().regex(/^[a-f0-9]{64}$/),
+      expectedCurrent: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(await readBody(request));
+    return app.pluginEvaluations.restore(body.id, body.sha256, body.expectedCurrent);
+  }
   if (path === "/api/plugin-catalog/inspect") return app.pluginCatalog.inspect(pluginSource.parse(await readBody(request)).source);
   if (path === "/api/plugin-catalog/install") {
     const body = pluginSource.parse(await readBody(request));
@@ -170,6 +186,34 @@ async function pluginCatalogApi(
     return app.pluginCatalog.forget(id);
   }
   return notFound();
+}
+
+/**
+ * The lead's workbench (window): what one conversation still has going, for the helpers frame.
+ *   GET    /api/open-work?session=<id>                 its tasks with a helper still working (their helpers are read
+ *                                                      through GET /api/runs/<id>/steps, so steering and stopping keep
+ *                                                      their own rules), its wake-ups, and its programs left running
+ *   DELETE /api/open-work/wakeups/<id>?session=<id>   cancels one of its wake-ups
+ * A program is stopped through POST /api/processes, a helper through POST /api/runs/<id>/cancel.
+ */
+function openWorkApi(app: Branch, request: IncomingMessage, path: string): unknown {
+  const session = new URL(request.url ?? "/", "http://branch.local").searchParams.get("session") ?? "";
+  if (!session || !app.store.ownsSession(app.runtime.owner, session)) throw new OrchestrationApiError(404, "Conversation not found");
+  const cancel = /^\/api\/open-work\/wakeups\/([0-9a-f-]{36})$/.exec(path);
+  if (cancel && request.method === "DELETE") {
+    try { return { cancelled: app.wakeups.cancel(cancel[1]!, session) }; } catch (error) { throw new OrchestrationApiError(404, errorText(error)); }
+  }
+  if (path !== "/api/open-work" || request.method !== "GET") return notFound();
+  const helperRuns = app.store.sqlite.prepare(`SELECT DISTINCT t.id AS id FROM events e JOIN tasks t ON t.id=e.run_id
+    JOIN tasks c ON c.id=json_extract(e.data,'$.childRunId')
+    WHERE t.session_id=? AND t.owner=? AND e.kind='delegation.background_started' AND c.status IN ('running','needs_input','queued')`)
+    .all(session, app.runtime.owner).map((row) => String(row.id));
+  return {
+    helperRuns,
+    wakeups: app.wakeups.list(session).map(({ id, message, nextAt, everyMinutes, cron, timezone, left }) =>
+      ({ id, message, nextAt, everyMinutes, cron: cron ?? null, timezone: timezone ?? null, left })),
+    programs: app.processes.list({ sessionId: session, active: true }).map(({ id, name, program, startedAt }) => ({ id, name, program, startedAt })),
+  };
 }
 
 async function processesApi(

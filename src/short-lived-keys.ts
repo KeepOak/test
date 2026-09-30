@@ -88,6 +88,9 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
   // r17-i: another of the owner's computers hands a message to a Trunk here with the "run" key it was given;
   // the message is quoted as that computer's text, capped and limited per hour (src/reach/remote-trunks.ts).
   post("/api/reach/trunks/inbox", "a message from a Trunk on another of the owner's computers"),
+  post("/api/reach/continuity/receive", "receives idempotent continuation work from its owner-paired run key"),
+  post("/api/reach/continuity/status", "reads only the continuity receipt belonging to this paired key"),
+  post("/api/reach/continuity/release", "fences and stops only the continuity transfer belonging to this paired key"),
   // mac7/r17-g: the safety extras. Everything else under /api/safety-extras (the switches, letting the
   // emergency stop go, setting up authenticator codes, installing or running WebAssembly add-ons) is
   // refused by the rule above. Reading /api/safety-extras is allowed: it never carries the code key.
@@ -104,6 +107,9 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
 
 /** Reads a short-lived key may not make: what they return is a secret, or everybody's data. */
 const ownerOnlyReads: readonly RegExp[] = [
+  /^\/api\/reach\/continuity(\/|$)/,
+  /^\/api\/taste(\/|$)/,
+  /^\/api\/self-development\/publications(\/|$)/,
   /^\/api\/backup$/,
   // accounts-wizard-plans: a waiting ChatGPT sign-in's one-time code links Branch to whoever types it on OpenAI's page.
   /^\/api\/chatgpt\/status$/,
@@ -134,6 +140,7 @@ const ownerOnlyReads: readonly RegExp[] = [
   // P17-D §9: which of the owner's computers a Trunk may use names them, as the devices list does.
   new RegExp(`^/api/trunks/${id}/computers$`),
   new RegExp(`^/api/trunks/${id}/files$`), // personal instructions and private notes outlive a script's key
+  new RegExp(`^/api/trunks/${id}/secrets$`), // RES-260: the names of a Trunk's own secrets
   // R17-S-A: the settings file outlives the key, and the owner's own files say who they are.
   /^\/api\/settings-kit\/(export|files)(\/.*)?$/,
   // mac7/r17-d: the shell snapshot holds the owner's PATH, aliases and functions.

@@ -52,11 +52,30 @@ async function send(page, words) {
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 }
 async function scrollUp(page) {
-  const box = await page.locator("#scroll").boundingBox();
+  // The scroll box may be drawn anew as the window's own reads arrive (a Trunk's earlier conversation joining the
+  // timeline, trunk-one-row), which takes it away for a moment: it is measured once it is back.
+  let box = null;
+  for (let tries = 0; tries < 50 && !box; tries++) box = await page.locator("#scroll").boundingBox();
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 3);
   for (let i = 0; i < 20 && await top(page) > 0; i += 1) await page.mouse.wheel(0, -2000);
 }
-const row = (page, words) => page.locator('#side [data-act="chat"]').filter({ hasText: words });
+/* Where a scroll up by the keyboard comes to rest. The browser animates it, and on a busy machine it lands frames after
+   the key: false if the view never moved up; otherwise its top once three frames in a row found it still. */
+async function restedUp(page) {
+  const moved = await page.waitForFunction(() => { const box = document.getElementById("scroll"); return box.scrollHeight - box.scrollTop - box.clientHeight > 80; },
+    null, { timeout: 10000 }).then(() => true, () => false);
+  if (!moved) return false;
+  let last = -1;
+  for (let still = 0; still < 3;) {
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const now = await top(page);
+    still = now === last ? still + 1 : 0;
+    last = now;
+  }
+  return last;
+}
+/* trunk-one-row: a conversation with a Trunk is opened from the Trunk's one row, which opens its newest conversation. */
+const row = (page, words) => page.locator('#side [data-act="chat"]').filter({ hasText: words }).or(page.locator('#side [data-act="chat"][data-line]')).first();
 /* A redraw of the open conversation, as the person causes one (switching light or dark draws the window again), with a
    control that the conversation really was drawn again. */
 async function redrawn(page) {
@@ -161,20 +180,40 @@ test("Q197 Shift+Space, and a key pressed with the focus on the page itself, cou
   assert.ok((await gap(page)) <= 80, "control: following after the answer");
   await page.locator("#conversation").click();
   await page.keyboard.press("Shift+Space");
-  await page.waitForTimeout(300);
-  const read = await top(page);
-  assert.ok((await gap(page)) > 80, "control: Shift+Space scrolled up");
+  const read = await restedUp(page);
+  assert.ok(read !== false, "control: Shift+Space scrolled up");
   await redrawn(page);
   assert.equal(await top(page), read, "Shift+Space in the conversation counts as reading: a redraw leaves the view");
   await page.evaluate(() => document.getElementById("scroll").scrollTo(0, document.getElementById("scroll").scrollHeight));
   await page.evaluate(() => { document.activeElement?.blur(); });
   await page.keyboard.press("PageUp");
-  await page.waitForTimeout(300);
-  const paged = await top(page);
-  assert.ok((await gap(page)) > 80, "control: PageUp scrolled up");
+  const paged = await restedUp(page);
+  assert.ok(paged !== false, "control: PageUp scrolled up");
   await redrawn(page);
   assert.equal(await top(page), paged, "PageUp with the focus on the page itself counts as reading");
   assert.deepEqual(errors, []);
+});
+
+/* A click in the conversation makes its part draw anew at the next re-read (main.js touched); the box Space and
+   Shift+Space scrolled was the one taken away, so the keys scrolled nothing until the next click (seen on CI as Q197's
+   "control: Shift+Space scrolled up"). The box takes focus on a click now, and focus is found again by its id.
+   Mutation: drop tabindex="-1" from #scroll in chat.js draw(), and this goes red. */
+test("Q197 after a click in the conversation and a redraw of it, Shift+Space still scrolls it", async (t) => {
+  const { page } = await fixture(t, { name: "scripted", async complete() { return { content: long, toolCalls: [] }; } });
+  await send(page, "A long answer please.");
+  for (let still = 0, tries = 0; still < 2 && tries < 40; tries++)
+    still = await page.evaluate(() => new Promise((resolve) => { const box = document.getElementById("scroll"), before = box.scrollHeight; setTimeout(() => resolve(box.scrollHeight === before), 400); })) ? still + 1 : 0;
+  await page.locator("#conversation").click();
+  const replaced = await page.evaluate(async () => {
+    const box = document.getElementById("scroll");
+    document.getElementById("conversation").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    (await import("/app/core/dom.js")).renderNow();
+    return document.getElementById("scroll") !== box;
+  });
+  assert.ok(replaced, "control: the conversation's box was drawn anew");
+  await page.keyboard.press("Shift+Space");
+  const moved = await restedUp(page);
+  assert.ok(moved !== false, "Shift+Space scrolled up after the redraw");
 });
 
 test("Q198 a conversation opened from Recents after a scroll up on the empty screen starts at its newest message (NAS e87c522)", async (t) => {

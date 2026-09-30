@@ -3,6 +3,7 @@ import type { ToolContext } from '../contracts.js';
 /** What Chrome says about a tab (CDP Target.TargetInfo), the parts used here. */
 interface TargetInfo { targetId: string; type: string; url: string; openerId?: string }
 import type { StorageState } from './browser-profiles.js';
+import { PageLog } from './browser-actions.js';
 
 /** A message box the website put up. It is always dismissed; the words are kept so they can be reported. */
 export interface DialogRecord { kind: string; message: string; at: string }
@@ -105,6 +106,8 @@ export class BrowserSession {
   private readonly pages: Page[] = [];
   private active = 0;
   private dialogs: DialogRecord[] = [];
+  /** What the tabs logged and asked the network for (browser.console, browser.network). */
+  readonly log = new PageLog();
   private downloads: DownloadRecord[] = [];
   private pending: Promise<void>[] = [];
   options: SessionOptions = {};
@@ -408,6 +411,7 @@ export class BrowserSession {
       void (accept ? dialog.accept() : dialog.dismiss()).catch(() => undefined);
     });
     page.on('download', download => this.pending.push(this.collect(download)));
+    this.log.watch(page);
     this.pages.push(page);
     // Only now, when it is one of ours by name, does it stop being the tab being made.
     if (this.creating === creating) this.creating = null;

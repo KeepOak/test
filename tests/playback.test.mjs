@@ -185,11 +185,18 @@ test("a clip sent into a conversation whose messages were never drawn here is no
     failed = true;
     return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "not now" }) });
   });
+  /* Redesign: the new window says the engine's refusal in the conversation and keeps going. The refusal is drawn only
+     until the next event reads the saved conversation again (chat/chat.js rereadOpen), which now succeeds, so it is
+     noted the moment it is drawn: a slow machine polling for it together with "no typing dots" missed it for 120 s. */
+  await page.evaluate(() => {
+    window.saidRefusal = false;
+    new MutationObserver(() => {
+      if (/not now/.test(document.getElementById("conversation")?.textContent ?? "")) window.saidRefusal = true;
+    }).observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
   await page.fill("#prompt", "first, with no file");
   await page.click("#send");
-  // Redesign: the new window says the engine's refusal in the conversation and keeps going.
-  await page.waitForFunction(() => /not now/.test(document.getElementById("conversation")?.textContent ?? "")
-    && !document.querySelector("#conversation .typing"), undefined, { timeout: 120000 });
+  await page.waitForFunction(() => window.saidRefusal && !document.querySelector("#conversation .typing"), undefined, { timeout: 120000 });
 
   await attachSound(page);
   await sendAndAwaitRedraw(page, "second, with a note", 2);

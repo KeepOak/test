@@ -60,7 +60,7 @@ test("this test needs a real browser, and says so", () => {
 test("every comfort setting ships as Branch has always behaved, but for a chime and updating by itself", () => {
   const values = allComfort(memoryStore(), "local");
   assert.deepEqual(values, {
-    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "", stopTask: "Ctrl+Shift+S", searchHistory: "", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", vim: false },
+    keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "Ctrl+L", stopTask: "Ctrl+Shift+S", searchHistory: "Ctrl+Shift+F", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", previousConversation: "Ctrl+Shift+Tab", switchPerson: "", vim: false },
     display: { statusLine: null, timestamps: false, hideTimes: false },
     notify: { method: "system", sound: "chime", needsYes: true, taskDone: true, autoUpdate: "install", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
@@ -271,7 +271,7 @@ test("R17-S20: the settings route checks the proxy and certificates before keepi
   assert.equal(shown.status, 200);
   assert.equal(shown.body.values.mcp.startupTimeoutSeconds, 10);
   assert.deepEqual((await call("GET", "/api/comfort/update-readiness")).body,
-    { channel: "stable", busyTasks: 0, autoUpdate: "install" });
+    { channel: "stable", busyTasks: 0, workingTasks: 0, autoUpdate: "install" });
   const outsideTask = branch.store.createRun("person:sam", "a long task");
   assert.equal((await call("GET", "/api/comfort/update-readiness")).body.busyTasks, 1,
     "work from another profile blocks the update");
@@ -445,21 +445,21 @@ test("R17-S17: automatic updates install by themselves as shipped, look once a d
   assert.equal(updatePlan(store, "local", { busyTasks: 0, updaterPhase: "available", now }).step, "install");
 });
 
-test("beta checks every five minutes without changing stable or interrupting busy work", () => {
+test("beta checks every minute without changing stable or interrupting busy work", () => {
   const records = { "comfort-notify": { autoUpdate: "check", releaseChannel: "beta" }, "ship-on-chosen": { "comfort-notify": ["autoUpdate"] } };
   const store = { get: (_k, _o, key) => ({ data: records[key] }), save: (_k, _o, key, data) => { records[key] = data; } };
   const start = new Date("2026-09-23T06:00:00Z");
   noteUpdateCheck(store, "local", start);
   const facts = (milliseconds, extra = {}) => ({ busyTasks: 0, now: new Date(+start + milliseconds), ...extra });
-  assert.equal(updatePlan(store, "local", facts(299_999)).step, "nothing");
-  assert.equal(updatePlan(store, "local", facts(300_000)).step, "check");
+  assert.equal(updatePlan(store, "local", facts(59_999)).step, "nothing");
+  assert.equal(updatePlan(store, "local", facts(60_000)).step, "check");
   records["comfort-notify"].releaseChannel = "stable";
-  assert.equal(updatePlan(store, "local", facts(300_000)).step, "nothing");
+  assert.equal(updatePlan(store, "local", facts(60_000)).step, "nothing");
   records["comfort-notify"] = { autoUpdate: "install", releaseChannel: "beta" };
-  assert.equal(updatePlan(store, "local", facts(300_000, { busyTasks: 1, updaterPhase: "available" })).step, "nothing");
-  assert.equal(updatePlan(store, "local", facts(300_000, { updaterPhase: "available" })).step, "install");
+  assert.equal(updatePlan(store, "local", facts(60_000, { busyTasks: 1, updaterPhase: "available" })).step, "nothing");
+  assert.equal(updatePlan(store, "local", facts(60_000, { updaterPhase: "available" })).step, "install");
   records["comfort-notify"].autoUpdate = "off";
-  assert.equal(updatePlan(store, "local", facts(300_000)).step, "nothing");
+  assert.equal(updatePlan(store, "local", facts(60_000)).step, "nothing");
 });
 
 test("R17-S16: the status line says the pieces picked, in order, or nothing when kept as always", () => {

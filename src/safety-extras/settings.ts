@@ -42,9 +42,10 @@ export const safetyShipsOn: Partial<Record<SafetyPart, SafetyMode>> = {
   "wasm-add-ons": "when-needed",
   // The owner's rule (ships on, 2026-09-26): holds nothing until the owner enrols an authenticator and picks the yeses; none of (a)–(f).
   "code-approvals": "when-needed",
-  // Kept off, by the owner's rule: progress-judge asks the model on its own every few rounds (a). History repair is none
-  // of (a)–(f), but on it breaks ordinary use: a model that reuses a call id (as local models do) has the real result
-  // of an approved call dropped as a second result, so the task never hears the call went through.
+  // Defaults audit (2026-09-28): history repair tidies only the copy sent, and repairs only broken pairs; a call id reused
+  // in a later answer (as local models do) is its own call now (src/safety-extras/history-repair.ts). None of (a)–(f).
+  "history-repair": "when-needed",
+  // Kept off, by the owner's rule: progress-judge asks the model on its own every few rounds (a).
 };
 
 /** What each part is, in the owner's words, for the card and for a refusal. */

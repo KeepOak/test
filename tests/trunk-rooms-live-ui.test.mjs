@@ -58,6 +58,16 @@ const send = async (page, text) => {
   await page.locator("#prompt").fill(text);
   await page.locator("#prompt").press("Enter");
 };
+/* The room has heard the person's `n`th message. Enter only starts the page's request, and rooms.settled() resolves at
+   once for a room with nothing to drive, so it is asked only once the message is in (rooms.ts send appends it and starts
+   the room in one step). Reading the room before that found none of the answers ("0 !== 2" on busy runners). */
+async function heard(call, room, n) {
+  for (const until = Date.now() + 30000; Date.now() < until;) {
+    if ((await call(`/api/trunks/rooms/${room.id}`)).events.filter((e) => e.kind === "user").length >= n) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail(`the room never heard message ${n}`);
+}
 
 test("dragging one Trunk onto another opens a room with both, made by the engine; again, it opens the same room", async (t) => {
   const { page, call, errors, kim, lee } = await fixture(t);
@@ -115,6 +125,7 @@ test("the toggle in a room: Everyone answers, Only the lead (by name), Work toge
   assert.equal(await seg.locator('[aria-pressed="true"]').innerText(), "Everyone answers");
   // Everyone answers: talking freely, both answer.
   await send(page, "hello both");
+  await heard(call, room, 1);
   await app.trunks.rooms.settled(room.id);
   let events = (await call(`/api/trunks/rooms/${room.id}`)).events;
   assert.equal(events.filter((e) => e.kind === "member").length, 2);
@@ -123,7 +134,7 @@ test("the toggle in a room: Everyone answers, Only the lead (by name), Work toge
   await page.waitForFunction(() => document.querySelector('.talk-tr [aria-pressed="true"]')?.dataset.v === "tag", null, { timeout: 15000 });
   assert.equal((await rooms(call))[0].rule, "tag", "saved in the engine");
   await send(page, "just one of you");
-  for (let i = 0; i < 50 && (await call(`/api/trunks/rooms/${room.id}`)).events.filter((e) => e.kind === "user").length < 2; i++) await page.waitForTimeout(100);
+  await heard(call, room, 2);
   await app.trunks.rooms.settled(room.id);
   events = (await call(`/api/trunks/rooms/${room.id}`)).events;
   const second = events.filter((e) => e.kind === "user").at(-1).seq;
@@ -132,7 +143,7 @@ test("the toggle in a room: Everyone answers, Only the lead (by name), Work toge
   await seg.locator('[data-v="together"]').click();
   await page.waitForFunction(() => document.querySelector('.talk-tr [aria-pressed="true"]')?.dataset.v === "together", null, { timeout: 15000 });
   await send(page, "work it out together");
-  for (let i = 0; i < 50 && (await call(`/api/trunks/rooms/${room.id}`)).events.filter((e) => e.kind === "user").length < 3; i++) await page.waitForTimeout(100);
+  await heard(call, room, 3);
   await app.trunks.rooms.settled(room.id);
   events = (await call(`/api/trunks/rooms/${room.id}`)).events;
   const third = events.filter((e) => e.kind === "user").at(-1).seq;
@@ -183,6 +194,7 @@ test("under Everyone, every time the toggle presses none; a talk of one message 
   // "Everyone answers" would let a tag address one Trunk; under "Everyone, every time" a tag narrows nothing.
   assert.equal(await seg.locator('[aria-pressed="true"]').count(), 0, "no toggle stands for Everyone, every time");
   await send(page, "@lee only you");
+  await heard(call, room, 1);
   await app.trunks.rooms.settled(room.id);
   const events = (await call(`/api/trunks/rooms/${room.id}`)).events;
   assert.equal(events.filter((e) => e.kind === "member").length, 2, "a tag narrows nothing under that rule");
@@ -190,7 +202,7 @@ test("under Everyone, every time the toggle presses none; a talk of one message 
   await seg.locator('[data-v="together"]').click();
   await page.waitForFunction(() => document.querySelector('.talk-tr [aria-pressed="true"]')?.dataset.v === "together", null, { timeout: 15000 });
   await send(page, "nothing to add, just sum it");
-  for (let i = 0; i < 50 && (await call(`/api/trunks/rooms/${room.id}`)).events.filter((e) => e.kind === "user").length < 2; i++) await page.waitForTimeout(100);
+  await heard(call, room, 2);
   await app.trunks.rooms.settled(room.id);
   await page.waitForFunction(() => /sums it up/.test(document.getElementById("conversation")?.textContent ?? ""), null, { timeout: 15000 });
   const card = page.locator("#conversation details.a2a10").last();

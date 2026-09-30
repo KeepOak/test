@@ -23,7 +23,7 @@ const official = { loggedIn: true, authMethod: "claude.ai", apiProvider: "firstP
 const secretSentinel = "token-must-never-reach-the-window";
 const stamped = "2026-09-27T00:00:00.000Z";
 async function fixture(t) {
-  const scratch = process.platform === "win32" ? "C:/Users/bishi/AppData/Local/Temp/Codex-session-files" : tmpdir();
+  const scratch = tmpdir();
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(join(scratch, "account-identities-")), bin = join(root, "bin");
   await mkdir(bin);

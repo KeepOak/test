@@ -18,6 +18,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { watchSettled } from "./page-settled.mjs";
 
 const quiet = { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } };
 
@@ -53,25 +54,27 @@ async function setChecklist(call, lines) {
 const checklist = async (call) => (await call("GET", "/api/heartbeat")).body.heartbeat.settings.checklist.split("\n").filter(Boolean);
 
 /* Opens Automations on Check-ins with the checklist drawn, then holds a real press on the Remove of `line` while the
-   engine's list changes to `meanwhile` and the page reads it again; lets go and waits for the save. */
+   engine's list changes to `meanwhile` and the page reads it again; lets go and waits until the page has settled. */
 async function removeUnderPress(page, call, line, meanwhile) {
+  const settled = watchSettled(page);
   await page.evaluate(async () => {
     const [{ S }, { renderNow }] = await Promise.all([import("/app/core/state.js"), import("/app/core/dom.js")]);
     S.view = "automations";
     S.tabs.automations = "checkins";
     renderNow();
   });
-  const button = page.locator(`#main [data-act="hb-rm"]`).nth(1);
-  await button.waitFor({ state: "visible", timeout: 30000 });
-  const box = await button.boundingBox();
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  /* The Remove of `line`, by the words it names. The list is drawn again when a re-read lands, so the pointer is put on
+     it with hover(), which waits until the button is visible and still and tries again if a draw replaced it, rather
+     than measuring a node a draw may already have taken away (its box was null on a busy build machine). */
+  const button = page.locator(`#main [data-act="hb-rm"][data-v="${line}"]`);
+  await button.hover({ timeout: 30000 });
   await page.mouse.down();
   await setChecklist(call, meanwhile);
   await page.evaluate(async () => (await import("/app/places/automations.js")).after());
-  const saved = page.waitForResponse((r) => r.url().endsWith("/api/heartbeat") && r.request().method() === "GET", { timeout: 10000 });
   await page.mouse.up();
-  await saved;
-  await page.waitForTimeout(500);
+  /* Remove reads the list again and then saves it (automations.js removeLine): wait until every request the press
+     started has been answered. Waiting for the first GET and 500 ms more left the save still in flight on a busy runner. */
+  await settled();
 }
 
 test("Remove on a check-in line held across a re-read takes away that line, and nothing when it is gone", async (t) => {

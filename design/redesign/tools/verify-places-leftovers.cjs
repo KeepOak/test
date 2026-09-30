@@ -215,7 +215,7 @@ async function greyed(page) {
 }
 
 async function run() {
-  const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+  const { chromium } = require("playwright");
   const model = await startModel();
   const s = await setup();
   const browser = await chromium.launch();

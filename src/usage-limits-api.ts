@@ -8,6 +8,7 @@ import { presetRunsLocally, type ModelRouter } from "./models.js";
 import { primaryAccount } from "./accounts/settings.js";
 import { planLimitWindow } from "./plan-windows.js";
 import type { Store } from "./store.js";
+import type { SessionLock } from "./session-lock.js";
 import { limitsView, saveUsageLimitsSettings, usageLimitsSettings, type LimitsAccount, type LimitsView } from "./usage-limits.js";
 import { askable, nextDelayMs, OpenRouterKeyReader } from "./usage-limits-openrouter.js";
 import { glanceFrom, saveProgressNote, saveUsageGlanceSettings, usageGlanceSettings, type GlanceMonth, type UsageGlance } from "./usage-glance.js";
@@ -34,8 +35,9 @@ export class UsageLimitsError extends Error {
   constructor(readonly status: number, message: string) { super(message); }
 }
 
-interface LimitsApp {
+export interface LimitsApp {
   store: Store;
+  sessionLock?: Pick<SessionLock, "refusal">;
   runtime: { owner: string; models: ModelRouter; steer?: (runId: string, text: string) => unknown };
 }
 
@@ -133,7 +135,7 @@ export async function usageLimits(app: LimitsApp): Promise<LimitsView> {
   return limitsNow(app);
 }
 /** The rows from what Branch already holds. Asks nobody anything, so the ring may read it often. */
-function limitsNow(app: LimitsApp): LimitsView {
+export function limitsNow(app: LimitsApp): LimitsView {
   const reader = readerFor(app.runtime.models);
   const busy = new Map(app.runtime.models.requests.rates().map((rate) => [rate.connection, rate.lastMinute]));
   const now = Date.now();
@@ -157,6 +159,14 @@ const ownerHere = (store: Store): boolean => {
   try { requireOwnerHere(store); return true; } catch { return false; }
 };
 const runningTasks = (app: LimitsApp) => app.store.runs(app.runtime.owner).filter((run) => run.status === "running");
+function readUsageIdentities(app: LimitsApp): Promise<void> {
+  const service = accountsServiceFor(app.runtime.models);
+  const pools = [...app.runtime.models.presets.values()].flatMap((preset) => {
+    const found = service?.poolFor(preset);
+    return found && found.kind !== "api-key" ? [found.pool] : [];
+  });
+  return service?.readIdentities([...new Set(pools)]).catch(() => undefined) ?? Promise.resolve();
+}
 
 /**
  * GET /api/usage/glance. Anybody but the owner in the app window is told only that there is nothing
@@ -166,11 +176,23 @@ const runningTasks = (app: LimitsApp) => app.store.runs(app.runtime.owner).filte
 export function usageGlance(app: LimitsApp, now = Date.now()): UsageGlance {
   if (!ownerHere(app.store)) return { available: false };
   // Who each sign-in is, read for the next look; this one answers from what is already known, and never waits.
-  void accountsServiceFor(app.runtime.models)?.readIdentities().catch(() => undefined);
+  void readUsageIdentities(app);
   const glance = glanceFrom(limitsNow(app), usageGlanceSettings(app.store, app.runtime.owner), runningTasks(app).length, now,
     monthSpend(app.store, app.runtime.owner, now), app.runtime.models.settings(app.runtime.owner).activePreset);
   const addable = addableNow(app);
   return addable.length && glance.available ? { ...glance, addable } : glance;
+}
+
+/** Fast status readings arrive with the first view; slow profiles hydrate without holding the usage surface closed. */
+export async function readUsageGlance(app: LimitsApp): Promise<UsageGlance> {
+  if (!ownerHere(app.store) || app.sessionLock?.refusal("GET", usageGlancePath)) return { available: false };
+  let ready = false, timer: ReturnType<typeof setTimeout> | undefined;
+  const reading = readUsageIdentities(app).then(() => { ready = true; });
+  try { await Promise.race([reading, new Promise<void>((resolve) => { timer = setTimeout(resolve, 200); })]); }
+  finally { clearTimeout(timer); }
+  if (app.sessionLock?.refusal("GET", usageGlancePath)) return { available: false };
+  const glance = usageGlance(app);
+  return glance.available && !ready ? { ...glance, identitiesPending: true } : glance;
 }
 
 /* ---------- a Claude Code signed in on this computer but not added yet ----------
@@ -244,8 +266,7 @@ async function refreshPlan(app: LimitsApp, input: unknown): Promise<UsageGlance>
   if (!parsed.success || !service) throw new UsageLimitsError(400, "Say which connection and which account to check.");
   try { await service.readPlan(parsed.data.connection, parsed.data.account); }
   catch (error) { throw new UsageLimitsError(400, errorText(error)); }
-  await service.readIdentities();
-  return usageGlance(app);
+  return readUsageGlance(app);
 }
 
 export const usageLimitsPaths = ["/api/usage/limits", "/api/usage/limits/settings", "/api/usage/limits/measure", "/api/usage/limits/refresh", "/api/usage/limits/look",
@@ -270,7 +291,7 @@ export async function usageLimitsRoute(app: LimitsApp, request: IncomingMessage,
     if (method !== "POST") throw new UsageLimitsError(405, "Use POST");
     z.object({}).strict().parse(await readBody() ?? {});
     await lookForClaude(app);
-    return usageGlance(app);
+    return readUsageGlance(app);
   }
   if (path === "/api/usage/limits/refresh") {
     requireOwnerHere(app.store);

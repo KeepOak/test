@@ -45,6 +45,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { readPolicy, savePolicy } from "../dist/policy.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const say = (content) => ({ content, toolCalls: [] });
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
@@ -126,7 +127,7 @@ async function fixture(t) {
     lets a queued profile reset put the next message in a new Ask first conversation. */
 async function openAs(f, sid) {
   const profile = f.app.store.profiles.active()?.id ?? null;
-  const opened = () => f.page.waitForFunction(async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
+  const opened = () => waitInPage(f.page, async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
   for (let tries = 0; ; tries++) {
     try {
       await f.page.goto("about:blank", { waitUntil: "load" });

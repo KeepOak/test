@@ -1,7 +1,11 @@
-/* A ```mermaid block in a reply (pass 17, design/redesign/pass17/FEATURES17C.md §6), drawn as the prototype's diagram card
-   without a renderer: no library is added, so the card shows the diagram's own text, and Open larger shows it as an
-   artifact in the sealed frame the engine serves (POST /api/artifacts/page: its own origin, no script, nothing fetched),
-   in a sandboxed iframe. Copy the text puts the text on the clipboard. Save to Library keeps the text beside the task
+/* A ```mermaid block in a reply (pass 17, design/redesign/pass17/FEATURES17C.md §6), drawn as the prototype's diagram card:
+   the drawing, "The text that drew it" folded under it, Open larger, Copy the text and Save to Library.
+   The drawing is made by Mermaid inside the sealed frame the engine serves (GET /diagram-frame, src/diagram-frame.ts): an
+   iframe sandboxed with scripts only (an opaque origin: it cannot reach this window, its storage or the key) under its
+   own policy (only its two scripts run; nothing is fetched or sent). The window's own policy is unchanged. The frame says
+   when it is ready; the window posts it the diagram's text (read back from the card) and whether the window is dark, and
+   the frame answers with the drawing's height, which is all that comes back. A diagram that cannot be drawn keeps its text.
+   Open larger shows the same frame, wide. Copy the text puts the text on the clipboard. Save to Library keeps the text beside the task
    whose answer holds it (POST /api/artifacts/save), and reads "In Library" once Library › Made for you lists it
    (GET /api/artifacts); with no such task among the engine's recent ones it stays greyed. */
 
@@ -36,6 +40,52 @@ async function readKept() {
 /* The diagram's text, read back from its own card: nothing is kept beside the page. */
 const cardSource = (el) => el.closest("[data-dia17c]")?.querySelector("pre")?.textContent ?? "";
 
+/* The sealed frame, as the card and Open larger draw it. Its markup never changes once drawn, so a redraw of the
+   conversation keeps the same frame; a drawing's height, once known, is given to a new frame of it as soon as it is ready. */
+const heights = new Map();
+const frame = (source, big) => `<iframe class="dmm-frame${big ? " big" : ""}" sandbox="allow-scripts" referrerpolicy="no-referrer" src="/diagram-frame" title="${t("window.chat.dia.diagram")}"></iframe>`;
+const dark = () => {
+  const [r, g, b] = (getComputedStyle(document.body).backgroundColor.match(/[\d.]+/g) ?? [255, 255, 255]).map(Number);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
+};
+/* Each frame told its card's text, and whether the window was dark when it was told. */
+const told = new WeakMap();
+/* The window changed between light and dark: each frame already told draws the text it keeps again in the new colours.
+   Only the colour is sent: the text went to that frame once, and is never sent again to whatever the frame holds now. */
+function recolour() {
+  const now = dark();
+  for (const el of document.querySelectorAll("iframe.dmm-frame")) {
+    if (!told.has(el) || told.get(el) === now) continue;
+    told.set(el, now);
+    el.contentWindow?.postMessage({ dark: now }, "*");
+  }
+}
+/* Only a frame this window drew is answered, and only with its own card's text; a height is the only thing taken back. */
+function frameSaid(event) {
+  const el = [...document.querySelectorAll("iframe.dmm-frame")].find((f) => f.contentWindow === event.source);
+  if (!el || typeof event.data !== "object" || event.data === null) return;
+  const source = cardSource(el);
+  /* A frame is told its text once: a frame that says "ready" again has been taken somewhere else, and gets nothing. */
+  if (event.data.kind === "ready" && source && !told.has(el)) {
+    const now = dark();
+    told.set(el, now);
+    if (heights.has(source)) el.style.height = `${heights.get(source)}px`;
+    el.contentWindow.postMessage({ source, dark: now }, "*");
+  }
+  else if (event.data.kind === "drawn" && Number.isFinite(event.data.height)) {
+    // A very tall drawing is shown up to this height, and scrolls inside its frame beyond it.
+    const height = Math.max(40, Math.min(8000, Math.round(event.data.height)));
+    heights.set(source, height);
+    el.style.height = `${height}px`;
+  } else if (event.data.kind === "failed") {
+    /* Mermaid could not read it: the drawing's place goes and the text that was meant to draw it is shown instead. */
+    const card = el.closest("[data-dia17c]");
+    el.closest(".dwrap17c")?.setAttribute("hidden", "");
+    const text = card?.querySelector("details");
+    if (text) text.open = true;
+  }
+}
+
 function saveButton(run, source) {
   /* Q262: the file would be kept in the owner's Library, so a household person is not offered Save at all. */
   if (!ownerHere()) return "";
@@ -47,20 +97,17 @@ function saveButton(run, source) {
 export function diagramCard(source) {
   if (!D.asked && ownerHere()) { D.asked = true; readKept(); }
   const run = runOf(source);
-  return `<div class="card dia17c" data-dia17c="1"><div class="card-h">${ic("dia17c", "s")}<span class="pill idle ml">${t("window.chat.dia.diagram")}</span></div>
-    <pre>${esc(source)}</pre>
-    <div class="acts"><button class="btn sm" type="button" data-act="diaopen17c">${t("window.chat.art.larger")}</button><button class="btn sm" type="button" data-act="diacopy17c">${t("window.chat.dia.copy")}</button>${saveButton(run, source)}</div></div>`;
+  return `<div class="card dia17c" data-dia17c="1"><div class="card-h">${ic("dia17c", "s")}<span class="pill idle ml">${t("window.chat.dia.diagram")}</span></div><p class="note">${t("window.chat.dia.note")}</p><div class="dwrap17c">${frame(source, false)}</div>
+    <div class="acts"><button class="btn sm" type="button" data-act="diaopen17c">${t("window.chat.art.larger")}</button><button class="btn sm" type="button" data-act="diacopy17c">${t("window.chat.dia.copy")}</button>${saveButton(run, source)}</div>
+    <details><summary>${ic("chev", "s chev")}${t("window.chat.dia.text-drew")}</summary><pre>${esc(source)}</pre></details></div>`;
 }
 
-async function openLarger(el) {
+function openLarger(el) {
   const source = cardSource(el);
   if (!source) return;
-  let page;
-  try { page = await api("artifacts/page", { kind: "html", title: "Diagram", code: `<pre>${esc(source)}</pre>` }); } catch (error) { toast(error.message); return; }
-  if (!/^\/artifact\/[A-Za-z0-9_-]+$/.test(page.url ?? "")) return;
   const run = runOf(source);
   openDlg({ title: t("window.chat.dia.diagram"), wide: true,
-    body: `<iframe class="dframe17c" sandbox="" referrerpolicy="no-referrer" title="${t("window.chat.dia.diagram")}" src="${esc(page.url)}"></iframe><p class="hint" data-css="margin:8px 0">${t("window.chat.dia.sealed")}</p><pre class="dsrc17c" data-dia17c="1">${esc(source)}</pre>`,
+    body: `<div data-dia17c="1"><div class="dwrap17c big17c">${frame(source, true)}</div><p class="hint" data-css="margin:8px 0">${t("window.chat.dia.note")}</p><pre class="dsrc17c">${esc(source)}</pre></div>`,
     foot: `<span data-dia17c="1"><pre hidden>${esc(source)}</pre><button class="btn" type="button" data-act="diacopy17c">${t("window.chat.dia.copy")}</button>${saveButton(run, source).replace('class="btn sm"', 'class="btn pri"')}</span>` });
 }
 
@@ -82,6 +129,9 @@ async function save(el) {
 }
 
 export function initDiagram() {
+  addEventListener("message", frameSaid);
+  new MutationObserver(recolour).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme", "class", "style"] });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", recolour);
   markLive(["diaopen17c", "diacopy17c", "diasave17c"]);
   on("diaopen17c", (el) => openLarger(el));
   on("diacopy17c", (el) => copyText(el));

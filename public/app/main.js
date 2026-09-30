@@ -18,8 +18,11 @@ import { openConversation, rereadOpen } from "./chat/chat.js";
 import { forgetChips } from "./chat/chips.js";
 import { toast } from "./core/ui.js";
 import { goHome } from "./chat/goto.js";
+import { leaveSettings } from "./settings/settings.js";
 import { splash, splashDone } from "./shell/inperson.js";
+import { initNotices } from "./shell/notices.js";
 import { initLanguage, t } from "../i18n.js";
+import { initLive, restoreOpen } from "./shell/liveupdate.js"; // hot-update: live window updates keep what is open
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -169,22 +172,26 @@ async function boot() {
   listen();
   listenTips();
   initShell();
+  initNotices(); // UI-202: what the window saw that earns an achievement (shell/notices.js)
   initLock();
   onRender(drawShell);
   onRender(drawMain);
   onRender(drawWidth);
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") escape(); });
+  initLive();
   splash();
   await connect();
   splashDone();
 }
 
-/* Escape, as the prototype's: the popover, else the dialog, else Focus mode; and the phone's list closes. */
+/* Escape, as the prototype's: the popover, else the dialog, else Focus mode, else Settings back to where the person was;
+   and the phone's list closes. */
 function escape() {
   const app = $("#app");
   if (document.querySelector(".pop")) closePop({ refocus: true });
   else if (dialog()) closeDlg();
   else if (app?.classList.contains("focus")) { app.classList.remove("focus"); renderNow(); }
+  else if (S.view === "settings") leaveSettings();
   app?.classList.remove("side-open");
 }
 
@@ -221,6 +228,7 @@ async function connect(refusal = "") {
   }, (end) => { if (end?.reason === "profile") askNow(); });
   followLink();
   addEventListener("hashchange", () => followLink());
+  await restoreOpen(openConversation);
 }
 
 /* The engine's state read again, and the open conversation with it when something happened there (or always, `all`).

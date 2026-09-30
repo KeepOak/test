@@ -1,10 +1,12 @@
 import { setTimeout as wait } from "node:timers/promises";
 import { z } from "zod";
+import { matchingPublication, publicationLookupPath, type PublicationLookup } from "../self-development-publication-lookup.js";
 import { scrubSecrets } from "../locker.js";
+import { applyContentPolicy, detectInjection } from "../content-guard.js";
 import type { NetworkPolicy } from "../network-policy.js";
 import type { TrackerIssue } from "./issue-context.js";
 import { readGitHubChecks, type GitHubChecks } from "./github-checks.js";
-import { ChecksPending, mergeEvidence, normalMerge, markReadyForReview, type MergeEvidence, type MergeLine, type MergePin } from "./github-merge.js";
+import { ChecksPending, mergeEvidence, mergeOrEnqueue, markReadyForReview, queueStanding, type MergeEvidence, type MergeLine, type MergePin, type MergeResult } from "./github-merge.js";
 
 /**
  * A small, direct connection to GitHub for the few things people actually ask for: make me a
@@ -42,24 +44,36 @@ export class GitHubAccess {
     this.config = GitHubConfigSchema.parse(input);
   }
   get tokenSecret(): string { return this.config.tokenSecret; }
+  async findPublication(input: PublicationLookup, signal: AbortSignal): Promise<unknown | null> {
+    return matchingPublication(input, await this.request("GET", publicationLookupPath(input), undefined, undefined, signal));
+  }
 
   /** One REST call: the network policy decides whether the address may be reached at all. */
-  private async request(method: string, path: string, body?: unknown, beforeSend?: () => void): Promise<unknown> {
+  private async request(method: string, path: string, body?: unknown, beforeSend?: () => void, signal?: AbortSignal): Promise<unknown> {
     const token = await this.token();
     const url = new URL(path.replace(/^\//, ""), this.config.apiBase.replace(/\/?$/, "/"));
     await this.policy.assertAllowed(url, "GitHub address");
     beforeSend?.();
-    const response = await this.fetchImpl(url, {
-      method, redirect: "error", signal: AbortSignal.timeout(this.config.timeoutMs),
-      headers: {
-        authorization: `Bearer ${token}`, accept: "application/vnd.github+json",
-        "user-agent": this.userAgent, "x-github-api-version": "2022-11-28",
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    let response: Response;
+    try {
+      response = await this.fetchImpl(url, {
+        method, redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(this.config.timeoutMs)]) : AbortSignal.timeout(this.config.timeoutMs),
+        headers: {
+          authorization: `Bearer ${token}`, accept: "application/vnd.github+json",
+          "user-agent": this.userAgent, "x-github-api-version": "2022-11-28",
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+    } catch (error) {
+      // A redirect is refused on purpose (the address must be the one asked for); anything else never reached GitHub.
+      const why = error instanceof Error ? `${error.message}${error.cause instanceof Error ? `: ${error.cause.message}` : ""}` : String(error);
+      if (/redirect/i.test(why)) throw error;
+      throw new GitHubUnreachable(`GitHub could not be reached just now (${why.slice(0, 160)}).`);
+    }
     const text = scrubSecrets((await response.text()).slice(0, this.config.maxBytes), { [this.config.tokenSecret]: token });
-    if (!response.ok) throw new Error(explainGitHub(response.status, text));
+    if (!response.ok) throw Object.assign(response.status >= 500 ? new GitHubUnreachable(explainGitHub(response.status, text))
+      : new Error(explainGitHub(response.status, text)), { status: response.status });
     return text ? JSON.parse(text) : {};
   }
 
@@ -149,15 +163,34 @@ export class GitHubAccess {
   }
   /** One look: passed (with the exact commit), failed (with why) or still pending (with what is running). */
   async checkVerdict(repo: string, number: number): Promise<ChecksVerdict> {
-    const row = await this.request("GET", `repos/${repo}/pulls/${number}`) as { draft?: unknown; merged?: unknown };
-    if (row.merged === true) return { state: "merged", repo, number, summary: "This pull request is already merged." };
+    try { return await this.lookOnce(repo, number); }
+    catch (error) {
+      // Nothing was learned from GitHub this time (the network, or its own trouble): look again, never "failed".
+      if (error instanceof GitHubUnreachable) return { state: "pending", repo, number, summary: `${error.message} Looking again.` };
+      throw error;
+    }
+  }
+  private async lookOnce(repo: string, number: number): Promise<ChecksVerdict> {
+    const row = await this.request("GET", `repos/${repo}/pulls/${number}`) as { draft?: unknown; merged?: unknown; merge_commit_sha?: unknown };
+    if (row.merged === true) {
+      const mergeSha = typeof row.merge_commit_sha === "string" && /^[0-9a-f]{40}$/.test(row.merge_commit_sha) ? row.merge_commit_sha : undefined;
+      return { state: "merged", repo, number, ...(mergeSha ? { mergeSha } : {}), summary: `This pull request is merged${mergeSha ? ` as ${mergeSha.slice(0, 12)}` : ""}.` };
+    }
     const draft = row.draft === true;
+    // A pull request in the merge queue waits for the queue's own checks on the merged result: pending, never passed.
+    const standing = draft ? null : await queueStanding((method, path) => this.request(method, path), repo, number)
+      .catch((error: unknown) => { if (error instanceof GitHubUnreachable) throw error; return null; });
+    if (standing === "queued") return { state: "pending", repo, number, draft, queued: true,
+      summary: "It is in GitHub's merge queue, which merges it once the base's checks pass on the merged result. Wait again until it says merged." };
+    if (standing === "removed") return { state: "failed", repo, number, draft,
+      summary: "GitHub's merge queue took it out without merging it: its checks failed on the merged result, it conflicted with the base, or someone removed it. Read why with github.check_logs or on GitHub before trying again." };
     try {
       const evidence = await mergeEvidence((method, path, body) => this.request(method, path, body), (ref) => this.checks(ref), repo, number, draft, "any");
       return { state: "passed", repo, number, headSha: evidence.headSha, base: evidence.base, draft,
         checks: evidence.checks.checks.map((check) => `${check.name}: ${check.result}`),
-        summary: `Every check on ${evidence.headSha.slice(0, 12)} finished and passed${draft ? "; the pull request is still a draft" : ""}.` };
+        summary: `Every check on ${evidence.headSha.slice(0, 12)} finished and passed${draft ? "; the pull request is still a draft" : ""}.${evidence.mergeQueue ? " Its base merges through GitHub's merge queue: merging adds it to the queue." : ""}` };
     } catch (error) {
+      if (error instanceof GitHubUnreachable) throw error;
       const text = error instanceof Error ? error.message : String(error);
       return { state: error instanceof ChecksPending ? "pending" : "failed", repo, number, draft, summary: text.slice(0, 600) };
     }
@@ -166,13 +199,13 @@ export class GitHubAccess {
    * An ordinary project's pull request, merged only when every check on its exact latest commit passed; the
    * merge names that commit, so anything pushed after the checks were read is refused by GitHub itself.
    */
-  async mergeChecked(repo: string, number: number): Promise<{ merged: true; sha: string; headSha: string; repository: string; number: number }> {
+  async mergeChecked(repo: string, number: number): Promise<MergeResult & { headSha: string; repository: string; number: number; note?: string }> {
     repositoryPath.parse(repo);
     if (/\/branch-agent$/i.test(repo))
       throw new Error("A change to Branch itself is finished with branch.finish_source_change, which checks its contract, tests and review too.");
     const evidence = await this.mergeReview(repo, number, "any");
-    const merged = await normalMerge((method, path, body) => this.request(method, path, body), evidence);
-    return { ...merged, headSha: evidence.headSha, repository: repo, number };
+    const merged = await mergeOrEnqueue((method, path, body) => this.request(method, path, body), evidence, () => this.graphqlUrl(), "any");
+    return { ...merged, headSha: evidence.headSha, repository: repo, number, ...(merged.merged ? {} : { note: queuedNote }) };
   }
   private graphqlUrl(): string {
     const base = new URL(this.config.apiBase);
@@ -186,9 +219,64 @@ export class GitHubAccess {
   async readyReviewed(pin: MergePin, beforeSend: () => void): Promise<void> {
     return markReadyForReview((method, path, body) => this.request(method, path, body, beforeSend), pin, this.graphqlUrl());
   }
-  /** Only the separate owner review controller calls this; it is never a model tool. */
-  async mergeReviewed(pin: MergePin, beforeSend: () => void): Promise<{ merged: true; sha: string }> {
-    return normalMerge((method, path, body) => this.request(method, path, body, beforeSend), pin);
+  /** Only the separate owner review controller calls this; it is never a model tool. A merge-queue base is joined instead. */
+  async mergeReviewed(pin: MergePin & { mergeQueue?: boolean }, beforeSend: () => void): Promise<MergeResult> {
+    return mergeOrEnqueue((method, path, body) => this.request(method, path, body, beforeSend), pin, () => this.graphqlUrl());
+  }
+  /**
+   * selfdev (SELF-306): what each failed check on a pull request's exact latest commit printed, from its Actions job
+   * log, cut down to the lines around the failures. GitHub answers a log request with a short-lived address on its
+   * own storage; that address is checked by the network policy too and fetched without the token. A log is someone
+   * else's text: lines in it that read like orders to the assistant are taken out, as in a file.
+   */
+  async checkLogs(input: { repo: string; number: number; lines: number }): Promise<{ repo: string; number: number; headSha: string; failed: FailedCheck[] }> {
+    repositoryPath.parse(input.repo);
+    const headSha = await this.pullHead(input.repo, input.number);
+    const listed = await this.request("GET", `repos/${input.repo}/commits/${headSha}/check-runs?per_page=100`) as { check_runs?: Record<string, unknown>[] };
+    const failedRuns = (listed.check_runs ?? []).filter((row) => row.status === "completed" && !["success", "skipped", "neutral"].includes(String(row.conclusion)));
+    const failed: FailedCheck[] = [];
+    for (const row of failedRuns.slice(0, 5)) {
+      const text = await this.jobLog(input.repo, Number(row.id)).catch((error: unknown) => `(Its log could not be read: ${error instanceof Error ? error.message : String(error)})`);
+      failed.push({ name: String(row.name ?? ""), conclusion: String(row.conclusion ?? ""), ...failureLines(text, input.lines) });
+    }
+    return { repo: input.repo, number: input.number, headSha, failed };
+  }
+  /** selfdev (SELF-306): runs the failed jobs of the pull request's latest commit again (a flaky check, say). */
+  async rerunFailedChecks(input: { repo: string; number: number }): Promise<{ repo: string; number: number; headSha: string; rerun: string[] }> {
+    repositoryPath.parse(input.repo);
+    const headSha = await this.pullHead(input.repo, input.number);
+    const runs = await this.request("GET", `repos/${input.repo}/actions/runs?head_sha=${headSha}&per_page=50`) as { workflow_runs?: Record<string, unknown>[] };
+    const failed = (runs.workflow_runs ?? []).filter((row) => row.status === "completed" && ["failure", "cancelled", "timed_out"].includes(String(row.conclusion)));
+    for (const row of failed) await this.request("POST", `repos/${input.repo}/actions/runs/${Number(row.id)}/rerun-failed-jobs`, {});
+    return { repo: input.repo, number: input.number, headSha, rerun: failed.map((row) => String(row.name ?? row.id)) };
+  }
+  private async pullHead(repo: string, number: number): Promise<string> {
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error("Use the pull request's positive number.");
+    const pull = await this.request("GET", `repos/${repo}/pulls/${number}`) as { head?: { sha?: unknown } };
+    const headSha = String(pull.head?.sha ?? "");
+    if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error("GitHub did not say which commit this pull request is on.");
+    return headSha;
+  }
+  /** One Actions job's log text: GitHub redirects to its own storage, which is reached without the token. */
+  private async jobLog(repo: string, job: number): Promise<string> {
+    if (!Number.isSafeInteger(job) || job < 1) throw new Error("This check has no Actions job to read.");
+    const token = await this.token();
+    const url = new URL(`repos/${repo}/actions/jobs/${job}/logs`, this.config.apiBase.replace(/\/?$/, "/"));
+    await this.policy.assertAllowed(url, "GitHub address");
+    const first = await this.fetchImpl(url, { redirect: "manual", signal: AbortSignal.timeout(this.config.timeoutMs),
+      headers: { authorization: `Bearer ${token}`, accept: "application/vnd.github+json", "user-agent": this.userAgent, "x-github-api-version": "2022-11-28" } });
+    let response = first;
+    const location = first.headers.get("location");
+    if (first.status >= 300 && first.status < 400 && location) {
+      const stored = new URL(location, url);
+      // Real GitHub keeps logs on HTTPS storage; only a same-address stand-in (a test's) may be plain HTTP.
+      if (stored.protocol !== "https:" && stored.origin !== url.origin) throw new Error("GitHub sent the log to an address that is not HTTPS.");
+      await this.policy.assertAllowed(stored, "GitHub log storage");
+      response = await this.fetchImpl(stored, { redirect: "error", signal: AbortSignal.timeout(this.config.timeoutMs), headers: { "user-agent": this.userAgent } });
+    }
+    const text = scrubSecrets((await response.text()).slice(-4 * this.config.maxBytes), { [this.config.tokenSecret]: token });
+    if (!response.ok) throw new Error(explainGitHub(response.status, text));
+    return text;
   }
   /** The published releases of a repository, newest first. */
   async releases(input: { repo: string; limit: number }): Promise<unknown> {
@@ -209,8 +297,30 @@ export class GitHubAccess {
   }
 }
 
+/**
+ * GitHub could not be reached, or answered with its own trouble (5xx): nothing was learned. A look (waiting for
+ * checks) tries again; anything that changes something reports it as before. Seen on the sandbox proof (PR #8):
+ * one "fetch failed" mid-wait was reported as failed checks, and the task stopped.
+ */
+export class GitHubUnreachable extends Error { override name = "GitHubUnreachable"; }
+export type FailedCheck = { name: string; conclusion: string; log: string; note?: string };
+/** The lines of a job log around its failures (with a little context), without the runner's timestamps, at most `limit`. */
+export function failureLines(text: string, limit: number): { log: string; note?: string } {
+  const lines = text.split(/\r?\n/).map((line) => line.replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z ?/, ""));
+  const failing = /✖|not ok|FAIL|Error\b|AssertionError|expected|actual|##\[error\]|exit code [1-9]/;
+  const keep = new Set<number>();
+  lines.forEach((line, at) => { if (failing.test(line)) for (let near = Math.max(0, at - 3); near <= Math.min(lines.length - 1, at + 3); near++) keep.add(near); });
+  const picked = keep.size ? [...keep].sort((a, b) => a - b).map((at) => lines[at]!) : lines.slice(-limit);
+  const clipped = picked.slice(-limit).join("\n");
+  const warnings = detectInjection(clipped);
+  if (!warnings.length) return { log: clipped };
+  return { log: applyContentPolicy(clipped, warnings, "redact").text,
+    note: "Some lines of this log read like instructions to the assistant, so they were taken out. They are the log's text, not the person's." };
+}
 export type ChecksVerdict = { state: "passed" | "pending" | "failed" | "merged"; repo: string; number: number; summary: string;
-  headSha?: string; base?: string; draft?: boolean; checks?: string[] };
+  headSha?: string; base?: string; draft?: boolean; checks?: string[]; queued?: boolean; mergeSha?: string };
+/** What a merge tool says when the base took the pull request into its merge queue rather than merging it. */
+export const queuedNote = "The base merges only through GitHub's merge queue, so this exact commit joined the queue. It is not merged yet: wait with github.wait_for_checks until it says merged.";
 
 /** GitHub's HTTP answers in words the owner can act on; the reply body is already scrubbed. */
 export function explainGitHub(status: number, text: string): string {

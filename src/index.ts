@@ -1,3 +1,6 @@
+import { environmentTool } from "./environment.js";
+import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
+import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
 import { OwnMcpServers } from "./mcp-own-servers.js"; // eng-connectors
 import { readModelWindow } from "./model-info.js"; // dogfood follow-up
@@ -24,6 +27,7 @@ import { registerHumanTasks } from "./deferred.js";
 import { BackgroundProcesses, registerProcesses } from "./processes.js";
 import { CodeRunner, registerCodeRun } from "./code-run.js";
 import { HandOff, registerHandOff } from "./coding/hand-off.js";
+import { heldHandOffCommands } from "./coding/hand-off-commands.js";
 import { CredentialResolver } from "./credential-cli.js";
 import { OsPermissions, probeReader } from "./os-permissions.js";
 import { Runtime, argumentFingerprint } from "./runtime.js";
@@ -34,7 +38,7 @@ import { Knowledge, registerKnowledge } from "./knowledge.js";
 import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
-import { memoryScope, registerMemory } from "./memory.js";
+import { isCurrentFact, memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
@@ -55,8 +59,12 @@ import { pricingSettings } from "./pricing.js";
 import { registerSessions } from "./sessions.js";
 // Wave 8: conversations branched off other conversations, seen as a tree, and one answer carried back.
 import { SessionTree, registerSessionTree } from "./session-tree.js";
+import { holdTaskBrowser } from "./browser-hold.js";
+import { MiniAppSessions } from "./miniapp/sessions.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
 import { runOrigin } from "./key-context.js";
+import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
+import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
 import { registerContextFiles } from "./context-files.js";
 import { startMcpServer } from "./mcp-server.js";
@@ -67,6 +75,7 @@ import { integrationsFileTrusted, recordWorktreeCopy } from "./folder-trust.js";
 import type { CachedMcpTool } from "./integrations/mcp.js";
 import type { BranchBrowser } from "./integrations/browser.js";
 import { registerMcpTools } from "./mcp-tools.js";
+import { signInShowing } from "./sign-in-showing.js";
 import { A2aServer } from "./a2a.js";
 import { RemoteAgents, registerRemoteAgents } from "./a2a-client.js";
 import { createRequire } from "node:module";
@@ -75,6 +84,7 @@ import { ModelRouter, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
+import { connectionName } from "./accounts/manage.js"; // models-ui: a Trunk's pools by name
 import { trunkProfileName } from "./integrations/browser-profiles.js"; // a removed Trunk's own browser profile
 import { stopProgramSignIns } from "./accounts/sign-ins.js";
 import { People } from "./people/index.js"; // bucket 19
@@ -93,6 +103,7 @@ import { ChannelConnectors, registerChannelTools } from "./channels/connectors.j
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
 import { Teams } from "./teams.js";
+import { registerTeamGroups } from "./team-groups.js"; // RES-721
 import { Triggers } from "./triggers.js";
 import { SlackAutomations } from "./channels/slack-automations.js"; // mac6/bucket-16
 import { Webhooks } from "./webhooks.js";
@@ -112,6 +123,7 @@ import { NeedsInputError, type ToolContext } from "./contracts.js";
 import { defaultPreset } from "./providers.js";
 import { restoreConnections } from "./connections-preset.js";
 import { restoreSignIns } from "./accounts/saved-sign-ins.js"; // accounts-wizard-plans
+import { CodexModels, attachCodexModels } from "./codex-models.js";
 import { JevDecisions, registerJevDecisions, type JevRunner } from "./jev-decisions.js";
 import { DecisionModels } from "./decision-models.js"; // P17-D §4
 import { Workbooks, registerWorkbookTools } from "./workbooks.js"; // P17-D §3
@@ -127,6 +139,7 @@ import { VoiceService, registerVoice } from "./voice-service.js";
 import { startWakeWord, type ProgramPresent, type WakeCaptureRunner, type WakeRunner } from "./voice-wake.js"; // mac7/wake-mic
 import { startDictation, type SoundStreamRunner, type SpeechStreamRunner } from "./voice-dictation-run.js"; // mac7/live-voice
 import { soundStreamRunner, speechStreamRunner } from "./voice-dictation-host.js"; // mac7/live-voice
+import type { LocalWhisper } from "./voice-whisper.js"; // RES-709
 import { wakeCaptureRunner, wakeRunner } from "./voice-wake-host.js"; // mac7/wake-mic
 // Bucket 17.
 import { MediaUnderstanding, registerMediaUnderstanding } from "./media-understand.js";
@@ -144,16 +157,28 @@ import { GitCheckpoints, GitWorkspaces, type GitRun } from "./git-checkpoint.js"
 import { RemoteWorkspaces, registerRemoteWorkspaces, sshRunner } from "./remote/ssh-workspace.js";
 import { SessionLimiter } from "./session-limits.js";
 import { ConversationRetention } from "./retention.js";
+import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
+import { registerTrunkMemoryFiles } from "./trunks/memory-files.js"; // workbench (SELF-311)
+import { fromHelper, registerHelperMessages, tellTask } from "./helper-messages.js"; // selfdev (SELF-303)
+import { askForHandoffs, registerLeadUsage } from "./lead-usage.js"; // workbench (SELF-307)
+import { openWork } from "./open-work.js"; // workbench (SELF-307)
 import { GitRunner, type GitRunOptions } from "./integrations/git-run.js";
-import { registerGit } from "./integrations/git-tools.js";
+import { githubAccessForPublication, registerGit } from "./integrations/git-tools.js";
 import { repositoryPath } from "./integrations/github.js";
+import { PluginEvaluations } from "./plugin-evaluations.js";
+import { createTasteLearning } from "./taste/integration.js";
 import { offerSelfDevelopment, type SelfDevelopmentDeps } from "./self-development.js";
 import { offerSourceRequests, SourceChangeRequests } from "./self-development-requests.js";
 import { SelfDevelopmentMerges } from "./self-development-merge.js";
+import { offerContractTests } from "./self-development-tests.js";
+import { gatedCall } from "./coding/gated.js";
 import { ContractBook, contractGuard, contractPreflight } from "./self-development-contract.js"; // Q12
 import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
 import { registerSdkKit } from "./sdk-kit.js"; // bucket 21
+import { GitLabConnection } from "./gitlab-connection.js"; // RES-719
+import { gitlabLaunch } from "./gitlab-switch.js"; // RES-719
+import { registerGitLab } from "./integrations/gitlab.js"; // RES-719
 import { WebPages, registerWebPages } from "./web-pages.js"; // w911 (A0743, A1452) hook
 import { PluginCatalog } from "./plugin-catalog.js";
 import { AddOns } from "./add-ons/index.js"; // bucket-15: add-ons other people wrote
@@ -226,7 +251,9 @@ import { isReadOnlyPermission } from "./policy.js";
 import { KeptArtifacts, registerKeptArtifacts } from "./build-artifacts.js";
 import { registerArtifactVersions } from "./artifact-versions.js"; // bucket-18 (A1183)
 import { offerPullRequestFromChanges, watchFinishedTasks, type PullRequestDeps } from "./pr-hook.js"; // bucket-18 (A0300)
-import { computerGhOpener } from "./integrations/gh-pull-request.js"; // selfdev
+import { computerGhOpener, computerGhPublicationFinder } from "./integrations/gh-pull-request.js"; // selfdev
+import { sourcePublicationQueue, startSourcePublications } from "./self-development-publication-hook.js";
+import { assertContinuityTool, continuityRunChain } from "./reach/continuity-store.js";
 import { protectedTarget } from "./never-break/protected.js"; // bucket-18 integration review
 import { OpenApiTools, registerOpenApiTools } from "./openapi-tools.js";
 import { redactLeaksIn } from "./leak-guard.js";
@@ -235,6 +262,7 @@ import { SecurityService } from "./security-audit/service.js";
 // mac2/fly-core: the learning core switch and its on-demand tool.
 import { flyCoreSettings } from "./fly-core/settings.js";
 import { setWallEdge } from "./sandbox-wall.js"; // wave mac3 (os-sandbox)
+import { wallSettings } from "./sandbox.js";
 import { setFlyCoreMode, syncSuggestTool } from "./fly-core/tool.js";
 // mac3/never-break: the gateway's settings and the one tool that suggests a change to them.
 import { loadGatewayConfig } from "./never-break/gateway-config.js";
@@ -247,7 +275,10 @@ import { formatCopiesToPrune } from "./install/update-backup.js";
 import { applyDataRestore } from "./install/data-copy.js";
 import { recoverOnStart } from "./never-break/resume.js";
 import { longWorkSettings, resumeMode } from "./long-work.js"; // long-work
+import { commandHost } from "./commands/host.js"; // CHAT-185
 import { connectGuidedTelegram, saveTelegramSetup, telegramSetupView } from "./never-break/telegram-setup.js";
+import { liveChannels } from "./channel-setup/live.js"; // CHAT-147: every chat app set up in the window connects there and then
+import { buildChannelEntry, type ChannelHost } from "./integrations/bootstrap.js";
 import { fileURLToPath } from "node:url";
 import { Asks } from "./asks/index.js"; // mac6/bucket-23: the smaller asks
 import { Devices, type DeviceNetwork } from "./devices/index.js"; // mac7/nodes: the owner's other devices
@@ -255,10 +286,14 @@ import { Autonomy } from "./autonomy/index.js"; // r17-b: it suggests, and runs 
 import { trunkMode } from "./trunks/settings.js"; // Q153
 import { Trunks } from "./trunks/index.js"; // R17-A: Trunks, named long-lived agents
 import { computerPlatforms } from "./trunks/starts-in.js"; // Q44
-import { accountsSettings, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
+import { accountsSettings, poolOf, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
 import { Coding } from "./coding/index.js"; // mac7/r17-d: coding polish
 import { worktreeScope } from "./coding/worktrees.js"; // mac7/r17-d
-import { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
+import type { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
+// PLAT-191: parts of Branch built the first time they are needed, with their tools listed from cards until then.
+import { personalMode, personalParts, personalTools } from "./personal/settings.js";
+import { loadNow } from "./load-now.js";
+import { listFromCards } from "./tool-cards.js";
 import { unsetConnectorTools } from "./personal/settings.js"; // ships-on sweep
 import { Reach } from "./reach/index.js"; // r17-i: reach and platform
 import { platformRunners } from "./reach/host.js"; // r17-i
@@ -343,6 +378,11 @@ export async function createBranch(options: {
    * microphone is opened, no sound is recorded and no speech program is started by the tests.
    */
   dictation?: { speech?: SpeechStreamRunner; sound?: SoundStreamRunner; present?: ProgramPresent; platform?: string };
+  /**
+   * RES-709: the free speech program on this computer (src/voice-whisper.ts). Left out, Branch looks for the real
+   * faster-whisper; a test hands in its own, or null for none.
+   */
+  localSpeech?: LocalWhisper | null;
   /** Test-only: clock function for deterministic rate limiting. Normal production uses Date.now. */
   clock?: () => number;
   /** Test-only: a JEV process double. Production runs the owner's configured JEV command. */
@@ -647,7 +687,8 @@ export async function createBranch(options: {
   // is happening now, then the job in hand, then everything the assistant knows for good.
   // mac2/fly-core-2: with the learning core "on", the facts that helped in similar tasks go first.
   store.review.orderFacts = (factOwner, agent, sessionId) =>
-    chooseForInjection(advisedFacts(sessionId, memory.retrieval.ranking(factOwner, agent).map((entry) => entry.record)), knobSnapshotLimits(store, runtime.owner)).records;
+    chooseForInjection(advisedFacts(sessionId, memory.retrieval.ranking(factOwner, agent).map((entry) => entry.record)
+      .filter((record) => isCurrentFact(record))), knobSnapshotLimits(store, runtime.owner)).records; // SELF-202: only facts still true
   // ── R17-S-B: the owner's memory budget and the leak guard's sensitivity, read fresh each time. ──
   store.review.snapshotLimits = () => knobSnapshotLimits(store, runtime.owner);
   runtime.leakGuard.options = () => leakOptions(store, runtime.owner);
@@ -680,6 +721,7 @@ export async function createBranch(options: {
   };
   registerDocuments(registry, documents);
   registerAttachmentTools(registry, store, attachments);
+  registry.register(environmentTool((runId) => runtime.channelOf(runId))); // where Branch is running, on request
   runtime.documents = documents;
   registry.register({
     name: "user.ask", permission: "user.ask",
@@ -709,8 +751,9 @@ export async function createBranch(options: {
   // Q12: Branch changing its own source is held to a contract written before anything changes.
   const selfContracts = new ContractBook(store.sqlite);
   // Branch builds Branch: a coding job handed to the owner's own Claude Code or Codex, inside one folder (src/coding/hand-off.ts).
+  // SELF-083: a handed-off Claude Code's commands are weighed and run as the task's own shell.execute, held to its folder.
   registerHandOff(registry, new HandOff({ store, owner: runtime.owner, workspace, dataDir, book: selfContracts,
-    git: (options, signal) => gitRunner.run(options, signal) }));
+    git: (options, signal) => gitRunner.run(options, signal), commands: heldHandOffCommands({ registry, store, runtime }) }));
   // FQ-memory.providers: an outside memory service the owner switches on in Settings replaces this
   // computer's database for the assistant's remember/recall/forget loop, not only sits beside it —
   // src/memory-provider.ts reads the owner's choice fresh on every call, and web.policy is the same
@@ -745,9 +788,12 @@ export async function createBranch(options: {
   // Offered, like the setup tools, only while sending Git work to a remote is switched on (src/self-development.ts).
   const finishTool = "branch.finish_source_change";
   const registerFinish = (): void => registry.register({ name: finishTool, permission: "git.remote", group: "code",
-    description: "Finish this task's exact tested Branch source draft only in the owner's selected Full Access conversation: independent read-only review, every check verified finished and passed on the exact commit (run github.wait_for_checks first), then a normal GitHub merge pinned to that commit. Refuses if any evidence changes.",
+    description: "Finish this task's exact tested Branch source draft only in the owner's selected Full Access conversation: independent read-only review, every check verified finished and passed on the exact commit (run github.wait_for_checks first), then a normal GitHub merge pinned to that commit (or, when the base merges through GitHub's merge queue, that commit joins the queue: wait with github.wait_for_checks until it says merged). Refuses if any evidence changes.",
     parameters: z.object({ worktree: z.string().regex(/^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/),
       repo: repositoryPath, number: z.number().int().positive() }).strict(),
+    // Its independent review is a model's answer and the merge waits on GitHub: cut off half-way, a draft is left ready
+    // but not merged, which no retry can finish (ToolDefinition.waitsUpToMs).
+    waitsUpToMs: 900_000,
     target: (input) => String(input.worktree), execute: (input, context) => sourceMerges.autoFinish(input, context) });
   const offerFinish = (): void => {
     const remote = registry.names().includes("git.push"), offered = registry.names().includes(finishTool);
@@ -756,6 +802,7 @@ export async function createBranch(options: {
   };
   offerFinish();
   registry.onToolsChanged(offerFinish);
+  offerContractTests(registry, selfContracts, sourceMerges, (name, args, context) => gatedCall({ runtime, registry }, name, args, context), options.owner ?? "local");
   offerSourceRequests(runtime, sourceRequests);
   const contractChecks = { store, owner: options.owner ?? "local", workspace, registry, book: selfContracts,
     git: (input: GitRunOptions, signal: AbortSignal) => gitRunner.run(input, signal) };
@@ -816,6 +863,13 @@ export async function createBranch(options: {
     guard: (path) => protectedTarget({ tool: "files.read", readOnly: true, args: { path }, target: path, workspace: files.base }, runtime.protectedAreas),
     // selfdev: with no saved GitHub connection, a change to Branch itself opens with this computer's own `gh` sign-in.
     openWithComputerGh: computerGhOpener(),
+    findPublication: async (entry, signal) => {
+      const lookup = { repo: entry.repository, pushRepo: entry.pushRepo, branch: entry.branch, base: entry.base, sha: entry.sha };
+      if (entry.adapter === "computer") return computerGhPublicationFinder()(lookup, signal);
+      const github = githubAccessForPublication(registry);
+      if (!github) throw new Error("The saved GitHub connection is unavailable.");
+      return github.findPublication(lookup, signal);
+    },
   };
   const stopOfferingPullRequests = offerPullRequestFromChanges(pullRequestDeps);
   const stopPullRequests = watchFinishedTasks(pullRequestDeps, (work) => {
@@ -834,7 +888,8 @@ export async function createBranch(options: {
   registerMedia(registry, media);
   // Wave 7: one place that turns speech into words and words into speech, whichever service does
   // the work, plus switching model in one conversation. Voice notes on chat apps come through here.
-  const voice = new VoiceService(store, runtime.models, web.policy, web.policy.guard(globalThis.fetch));
+  const voice = new VoiceService(store, runtime.models, web.policy, web.policy.guard(globalThis.fetch),
+    options.localSpeech !== undefined ? { whisper: options.localSpeech } : {});
   // Wave 8: live conversations. Every connection that stays open leaves a span and a line in the
   // record of what the assistant was allowed to do — the host and the path only, never the whole
   // address, because a key can travel in the query string.
@@ -873,11 +928,24 @@ export async function createBranch(options: {
   const channels = new ChannelRouter(store, runtime);
   channels.appLocked = () => sessionLock.locked();
   const priorToolGuard = registry.beforeTool;
+  /** RES-253: the owner marked this Trunk "sandboxed" (Trunk › Reach), so its commands are walled like an outsider's. */
+  const trunkSandboxed = (id: string | undefined): boolean =>
+    !!id && (store.get("governance", runtime.owner, `trunk:${id}`)?.data as { reach?: { sandboxed?: unknown } } | undefined)?.reach?.sandboxed === true;
   registry.beforeTool = async (name, args, context) => {
+    assertContinuityTool(store, runtime.owner, context.runId);
     const held = await priorToolGuard?.(name, args, context);
     if (registry.permissionOf(name) === "shell.execute" && runOrigin(store, context.runId).source === "channel"
       && !channels.commandRunAllowed(context.runId)) throw new Error("Commands from this chat are no longer allowed. Ask in Branch's window.");
-    return held;
+    // RES-253 (src/outside-commands.ts): a program started for someone other than the owner is held to the workspace
+    // behind the system's own wall, with no network, or refused where no wall can run.
+    const who = !(walledTools.includes(name) || remoteTools.includes(name)) || !context.runId ? null
+      : outsideCaller(runOrigin(store, context.runId)) ?? (trunkSandboxed(context.trunk) ? "a Trunk the owner set to run sandboxed" : null);
+    if (!who) return held;
+    if (remoteTools.includes(name)) throw new Error(outsideRemoteRefusal(who, name));
+    if (name !== heldOnly) throw new Error(outsideProgramRefusal(who, name));
+    store.event(context.runId, "sandbox.outside_caller", { tool: name, who });
+    // SELF-083: a command already held to a narrower folder (a hand-off's) stays held there.
+    return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.writesConfinedTo ?? context.workspace };
   };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
   channels.speakReply = async (text) => {
@@ -903,6 +971,8 @@ export async function createBranch(options: {
   channels.liveAllowed = () => !lockedDown(store, runtime.owner);
   // ...and nothing key-shaped or secret shows in a step label or streamed text (mac2/leak-guard).
   channels.hideLeaks = (text) => redactLeaksIn(store.secrets.scrubber.deep(text)).value;
+  // Data carried out in an address a task opens (src/egress-guard.ts): the values the locker has unlocked.
+  runtime.egress.secrets = () => store.secrets.scrubber.values();
   runtime.hideSecrets = (value) => {
     // mac2/leak-guard: key-shaped values nobody looked up are hidden in logs and question cards too.
     const scrubbed = redactLeaksIn(store.secrets.scrubber.deep(value)).value;
@@ -935,16 +1005,18 @@ export async function createBranch(options: {
   // Signing in to outside services the ordinary way, with the answer coming back to this computer.
   const oauth = new OAuthConnections(runtime.owner, store.secrets, web.policy, web.policy.guard(globalThis.fetch));
   // accounts-wizard-plans: the coding assistants and the Gemini sign-in the owner added come back (src/accounts/saved-sign-ins.ts).
+  attachCodexModels(runtime.models, new CodexModels(store, runtime.owner)); // QA 2026-09-28: Codex's model, chosen in Branch
   await restoreSignIns({ store, owner: runtime.owner, models: runtime.models, oauth });
   const hooks = new Hooks(store, runtime.owner);
   const teams = new Teams(store, runtime.owner);
+  registerTeamGroups(registry, runtime, knowledge, teams); // RES-721: small groups, each with its own lead
   const version = String(createRequire(import.meta.url)("../package.json").version);
   const userAgent = `BranchAgent/${version}`;
   // Wave 7: one finished task's full record, in the documented trajectory shape.
   registerRunExport(registry, store, version);
   const skillRegistry = new SkillRegistry(store, runtime.owner, web.policy);
   // Skill packages people can hand to each other, and single-file plugins the owner switches on.
-  const skillPackages = new SkillPackages(store, runtime.owner, registry, { store, policy: web.policy });
+  const skillPackages = new SkillPackages(store, runtime.owner, registry, { store, policy: web.policy, fetchImpl: web.policy.guard(globalThis.fetch) });
   skillPackages.replayRecipe = (recipe, _event, runId) => replayNamedRecipe(knowledge, store, runtime, recipe, runId);
   const packageProblems = skillPackages.restore();
   // Model connections a plugin brought; nothing is registered until a plugin is switched on, so
@@ -971,6 +1043,8 @@ export async function createBranch(options: {
   const addOns = new AddOns({ store, runtime, registry, plugins, dataDir, policy: web.policy,
     vet: (command, args) => vetAddOn(command, args),
     secret: async (name) => (await store.secrets.resolve(runtime.owner, "default", [name], { purpose: "pipelines" }).catch(() => ({} as Record<string, string>)))[name] ?? null });
+  const pluginEvaluations = new PluginEvaluations({ store, owner: runtime.owner, catalog: pluginCatalog, plugins,
+    shelf: addOns.shelf, wall: { unreadable: () => [dataDir, ...wallSettings(store, runtime.owner).unreadable], timeoutMs: 10000 } });
   // ── end bucket-15 ──
   // Drafts of better versions of a skill, tried against real tasks as a practice run first.
   const skillRevisions = new SkillRevisions(store, runtime.owner);
@@ -1018,11 +1092,54 @@ export async function createBranch(options: {
     sessionLimiter.check({ scope: "sender", id: `${channel}:${senderId}` }, "stranger");
   const scheduler = new Scheduler(store, runtime, (channel, chatId, text, key) => channels.deliver(channel, chatId, text, key));
   registerSchedules(registry, scheduler);
+  // selfdev (SELF-303): helpers the lead starts talk to it while they work, and tell it when they finish.
+  registerHelperMessages(registry, runtime);
+  // workbench (SELF-307): what each account has left, and a handoff asked for only when every account is near its limit.
+  registerLeadUsage(registry, runtime);
+  scheduler.onTick.add(async (now) => { askForHandoffs(runtime, now.getTime()); });
+  // Only helpers started for the lead (helpers.start) wake it; other background work keeps its result for the parent, as before.
+  runtime.onBackgroundFinished = (result) => {
+    if (!result.parentRunId || !result.tellsLead) return;
+    const said = `finished (${result.status}). Its report:
+${result.output || "(it said nothing)"}`;
+    try { tellTask(runtime, result.parentRunId, `helper ${result.childRunId.slice(0, 8)}`, said, fromHelper); }
+    catch (error) { store.event(result.parentRunId, "delegation.tell_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
+  };
+  // selfdev (SELF-305): wake-ups set inside a conversation arrive in it as follow-ups; the scheduler's tick finds them.
+  // A wake-up is never more than the task that asked for it: it carries that task's own tools.
+  const askedWith = (runId: string): string[] | null => {
+    const recorded = store.events(runId).find((event) => event.kind === "run.started")?.data.permissions;
+    return Array.isArray(recorded) ? recorded.map(String) : null;
+  };
+  const wakeups = new Wakeups(store, runtime.owner, (sessionId, text, runId) => { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); });
+  registerWakeups(registry, store, wakeups);
+  // workbench (SELF-307): helpers, wake-ups and programs still open ride with every round, so compaction never loses them.
+  runtime.openWork = (sessionId) => openWork(store, runtime.owner, sessionId, wakeups, processes);
+  scheduler.onTick.add((now) => wakeups.tick(now));
   // wave mac2 (quiet-jobs follow-up): a program left running that finishes wakes the check-in; wake() does nothing while it is off.
   processes.finished.add(() => { void scheduler.heartbeat.wake("a background command finished").catch(() => undefined); });
+  // workbench (SELF-304): a command the assistant may run once it may also leave running, and be woken when it ends.
+  processes.commandPrograms = () => ownClis.commandPrograms();
+  // SELF-304: while Branch's own source is checked out, a program left running is walled by the shell, as a held command is.
+  processes.heldLauncher = (input, context, timeoutMs) => ownClis.launchHeld(input, context, timeoutMs);
+  // selfdev (SELF-304): a program left running with wakeOnExit or wakeOnText wakes its own conversation, as a follow-up
+  // of the task that started it, so the assistant is told instead of checking on it.
+  processes.waker = ({ sessionId, runId, text }) => {
+    try { runtime.followUp(sessionId, text, null, { originFrom: runId, permissions: askedWith(runId) }); }
+    catch (error) { store.event(runId, "process.wake_refused", { reason: error instanceof Error ? error.message.slice(0, 200) : "refused" }); }
+  };
   // Figures, looking things up properly, watching pages, and the one message first thing.
   const deliverMessage = (channel: string, chatId: string, text: string, key: string) => channels.deliver(channel, chatId, text, key);
-  const dataTables = new DataTables(files, web, writeObserver);
+  // QA retest 2026-09-28 (m6): data.load opens a file attached to the task's own conversation, by id or exact name.
+  const dataTables = new DataTables(files, web, writeObserver, async (runId, key) => {
+    const sessionId = store.run(runId)?.sessionId;
+    if (!sessionId) return null;
+    const temporary = store.sessionTemporary(sessionId);
+    const ref = (await attachments.list(sessionId, { temporary })).find((one) => (key.id ? one.id === key.id : one.name === key.name));
+    if (!ref) return null;
+    const found = await attachments.locate(sessionId, ref.id, { temporary });
+    return { name: found.ref.name, size: found.size, read: async () => (await attachments.read(sessionId, ref.id, { temporary })).bytes };
+  });
   registerData(registry, dataTables, artifacts);
   // Writing Word, spreadsheet, slide, Markdown and web-page files, and changing Word and
   // spreadsheet files in place with every untouched part kept byte for byte.
@@ -1092,6 +1209,9 @@ export async function createBranch(options: {
   registerFlows(registry, flows);
   // Bucket 21: tools for people building on Branch (switched off until the owner turns them on).
   registerSdkKit(registry, store);
+  // RES-719: GitLab set up in the window (Settings › Advanced › GitLab); its tools reach the index only once connected.
+  const gitlab = new GitLabConnection({ store, policy: web.policy });
+  registerGitLab(registry, (who) => gitlab.access(who));
   // w911 (A0743, A1452) hook: web.page and web.crawl (switched off until the owner turns them on).
   const webPages = new WebPages({ store, web, registry, runtime }); registerWebPages(registry, webPages);
   // "workflows.resume" is the one way in for carrying anything saved on, a graph flow included, so
@@ -1331,8 +1451,20 @@ export async function createBranch(options: {
   // R17-005: a Trunk's account is its own conversation's choice in the accounts work (src/accounts/).
   const trunkAccounts = {
     get connected() { return accountsSettings(store, runtime.owner).mode !== "off"; },
-    pools: () => accountsSettings(store, runtime.owner).pools.map((pool) => ({ id: pool.pool, label: pool.pool,
-      accounts: pool.accounts.map((account) => ({ id: account.id, label: account.label, signIn: pool.kind !== "api-key" })) })),
+    // models-ui: the connection's own name ("Claude Code", "ChatGPT"), so keyPlan's notes read as the window's lists do.
+    // QA retest 2026-09-28 pass 2: every connection that can have several accounts, as Settings › Accounts lists them
+    // (src/accounts/manage.ts viewAll), not only the lists saved once a second account was added: a connection with
+    // just its first account (Claude Code signed in on this computer) was missing, and Edit Trunk › Accounts said
+    // "No connection has accounts to pick from yet". The saved settings are only read here, never written.
+    pools: () => {
+      const saved = accountsSettings(store, runtime.owner), draft = { ...saved, pools: [...saved.pools] };
+      for (const preset of runtime.models.presets.values()) {
+        const found = accounts.poolFor(preset);
+        if (found) poolOf(draft, found.pool, found.kind);
+      }
+      return draft.pools.map((pool) => ({ id: pool.pool, label: connectionName(accounts, pool.pool),
+        accounts: pool.accounts.map((account) => ({ id: account.id, label: account.label, signIn: pool.kind !== "api-key" })) }));
+    },
     choose: (sessionId: string, pool: string, account: string | null) => saveSessionChoice(store, runtime.owner, sessionId, pool, account),
   };
   const trunks = new Trunks({ runtime, registry, knowledge, scheduler, workflows, accounts: trunkAccounts,
@@ -1345,6 +1477,7 @@ export async function createBranch(options: {
       if (!made.path || !runtime.artifacts) throw new Error("The picture model did not hand back a picture");
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
+  registerTrunkMemoryFiles(registry, store, trunks); // workbench (SELF-311): a Trunk's own memory files
   // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
   trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
@@ -1367,6 +1500,10 @@ export async function createBranch(options: {
   try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); }
   setInterval(() => { try { store.purgeExpiredConversations(); } catch (error) { console.error(`Recently Deleted: ${error instanceof Error ? error.message : String(error)}`); } }, 3_600_000).unref();
   live.refuse = (sessionId) => liveRefusal({ store, owner: runtime.owner, kind: (id) => trunks.conversations.kind(id) }, sessionId);
+  channels.trunkName = (sessionId) => {
+    const owned = trunks.trunkForConversation(sessionId);
+    return (owned ? trunks.records.find(owned.trunkId)?.name : undefined) ?? null;
+  };
   // defaulttrunk: the default Trunk is the owner's own assistant, so it answers on every chat app, as Branch always did.
   const reachRefusal = (channel: string, trunkId: string): string | null => {
     const trunk = trunks.records.find(trunkId);
@@ -1396,7 +1533,14 @@ export async function createBranch(options: {
   // ── R17-C: files, voice, devices and personal connectors (src/personal/). Every part ships off. ──
   const personalSecret = async (name: string, purpose: string) =>
     (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!;
-  const personal = new Personal({ runtime, registry, files, oauth, fetch: web.policy.guard(globalThis.fetch), secret: personalSecret,
+  // PLAT-191: built the first time anything needs it (a call to one of its tools, Settings, the terminal); its tools are
+  // listed from their cards until then, exactly as the parts' switches say (src/tool-cards.ts).
+  let personalBuilt: Personal | undefined;
+  let localAddress = "";
+  const personal = (): Personal => personalBuilt ??= buildPersonal();
+  const buildPersonal = (): Personal => {
+    const { Personal } = loadNow<typeof import("./personal/index.js")>("./personal/index.js");
+    const built = new Personal({ runtime, registry, files, oauth, fetch: web.policy.guard(globalThis.fetch), secret: personalSecret,
     assertHost: (host, port) => web.policy.assertAllowed(new URL(`https://${host}:${port}/`), "mail server address"),
     channels: { adapter: (id) => channels.adapter(id), outboundGuard: (text) => channels.outboundGuard(text),
       reachable: (id, chatId) => channels.chats(runtime.owner).some((chat) => chat.channel === id && chat.chatId === chatId) },
@@ -1406,7 +1550,12 @@ export async function createBranch(options: {
     speak: async (text) => { const spoken = await voice.speak(runtime.owner, { text, voice: "", speed: 1 }); return { bytes: spoken.bytes, mediaType: spoken.mediaType }; },
     transcribe: async (clip) => (await voice.transcribe(runtime.owner, { ...clip, name: "spoken answer" })).text,
     lockdownRefusal: () => (lockedDown(store, runtime.owner) ? lockdownRefusal : null) });
-  releaseOnLock.push(() => personal.close()); // locking Branch stops the tunnel and forgets spoken answers
+    built.tunnel.localAddress = localAddress;
+    return built;
+  };
+  listFromCards(registry, personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
+    () => void personal());
+  releaseOnLock.push(async () => { await personalBuilt?.close(); }); // locking Branch stops the tunnel and forgets spoken answers
   // ── end R17-C ──
   // ── mac7/wake-mic: the word that starts a turn, actually listening. Ships off, like everything else. ──
   // It runs only while the switch is on, a word is chosen, and this computer can really listen, and
@@ -1448,9 +1597,17 @@ export async function createBranch(options: {
   releaseOnLock.push(async () => dictation.stop()); // locking Branch lets go of the microphone
   // ── end mac7/live-voice ──
   // ── r17-i: reach and platform (src/reach/). Every part ships off. ──
+  const taste = createTasteLearning(store, runtime, trunks);
+  runtime.taste = taste;
   const reachParts = new Reach({ runtime, registry, router: channels, files, policy: web.policy, fetch: web.policy.guard(globalThis.fetch),
+    assertContinuityQuiescent: (sessionId) => {
+      const busy = processes.list().some((process) => process.status === "running" && (process.sessionId === sessionId
+        || continuityRunChain(store, process.runId).some((id) => store.run(id)?.sessionId === sessionId)));
+      if (busy) throw new Error("Stop this conversation's background programs before transferring it to another computer.");
+    },
     secret: async (name, purpose) => (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!,
-    machines: { list: () => (askMode(store, runtime.owner, "nodes") === "off" ? [] : asks.nodes.nodes()) }, version, ...platformRunners() });
+    machines: { list: () => (askMode(store, runtime.owner, "nodes") === "off" ? [] : asks.nodes.nodes()) }, version, ...platformRunners(),
+    screenHeld: (runId, signal) => desktop.whileDriving({ runId }, signal) }); // a take-over holds background app use too
   scheduler.onTick.add(() => reachParts.tick());
   reachParts.remoteTrunks.useRoster(trunkRoster(trunks, runtime, registry, reachParts)); // R17-077 on R17-A's Trunks
   // ── end r17-i ──
@@ -1500,6 +1657,8 @@ export async function createBranch(options: {
     policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
   const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
   registerBudding(registry, budding);
+  const sourcePublications = sourcePublicationQueue(pullRequestDeps);
+  const stopSourcePublications = startSourcePublications(pullRequestDeps);
   scheduler.onTick.add(async () => { void budding.tick().catch(() => undefined); });
   const ownClis = new OwnClis({ store, owner: () => runtime.owner, workspace: () => runtime.workspace });
   const replyFlags = new ReplyFlags(store, () => runtime.owner);
@@ -1534,6 +1693,9 @@ export async function createBranch(options: {
   let closing: Promise<void> | undefined;
   /** Wave mac2 (guards): the sections of the integrations file this start left out, which the launch-file card names. */
   const launchFile = { leftOut: [] as readonly string[] };
+  /** The chat apps' host, filled in once `branch` exists, for apps the Set up panel connects (src/channel-setup/live.ts). */
+  const channelHostRef: { current?: ChannelHost } = {};
+  const miniAppSessions = new MiniAppSessions();
   const branch = {
     store,
     registry,
@@ -1554,8 +1716,10 @@ export async function createBranch(options: {
     trunks,
     /** mac7/r17-d: coding polish (src/coding/); every part ships off. */
     coding,
-    /** R17-C: files, voice, devices and personal connectors (src/personal/); every part ships off. */
-    personal,
+    /** R17-C: files, voice, devices and personal connectors (src/personal/); built the first time it is needed. */
+    get personal(): Personal { return personal(); },
+    /** Where Branch listens, for the personal part's webhook door; handed on when that part is built. */
+    set localAddress(address: string) { localAddress = address; if (personalBuilt) personalBuilt.tunnel.localAddress = address; },
     /** r17-i: other computers, Trunks across computers, background apps, videos, relay, send and pause, sharing, USB, notes, arena. */
     reachParts,
     /** mac7/r17-g: tool scripts, WebAssembly add-ons, codes, the emergency stop, scans, the activity chain. */
@@ -1590,6 +1754,12 @@ export async function createBranch(options: {
         apiBase: options.telegramApiBase,
       },
     },
+    /** CHAT-147: the Set up panel's apps, connected without a restart and again at every start. */
+    channelSetup: liveChannels(() => ({ store, owner: runtime.owner, router: channels,
+      build: (entry: Record<string, unknown>) => {
+        if (!channelHostRef.current) throw new Error("Chat apps cannot be connected in this launch.");
+        return buildChannelEntry(entry, process.env, channelHostRef.current, web.policy);
+      } })),
     /** mac3/security-check: the security self-check, its repairs, and the malware check on add-ons. */
     security,
     /** eng-connectors: the owner's own MCP servers, allowed command-line tools, and flagged replies. */
@@ -1705,19 +1875,30 @@ export async function createBranch(options: {
     reach: { browserOrigins: [] as string[], browserAnyWebsite: false, commandsMayReachInternet: true },
     /** Secrets for host commands: only the active project's, never returned to the model. */
     secretsFor: async (context: ToolContext, names: string[]) => {
-      const project = store.projects.active(context.owner).id;
-      const values = await store.secrets.resolve(context.owner, project, names,
-        { runId: context.runId, purpose: "host command" });
-      // The names only; a value never leaves the locker, and never reaches this record.
-      for (const name of Object.keys(values))
-        audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (project ${project})`,
-          reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      // RES-260: a Trunk's own secrets reach only its own turns (src/trunks/secrets.ts).
+      const trunk = context.trunk ?? currentAccountCall()?.trunk?.id ?? null;
+      const keys = trunk ? (store.get("governance", context.owner, `trunk:${trunk}`)?.data as { keys?: { copyFromOwner?: unknown } } | undefined)?.keys : undefined;
+      const work = { trunk, helper: !!runOrigin(store, context.runId).parentRunId,
+        copyFromOwner: context.trunkKeys?.copyFromOwner ?? keys?.copyFromOwner !== false };
+      const own = trunk ? store.secrets.list(context.owner, trunkSecretsProject(trunk)).map((entry) => entry.name) : [];
+      const { plan, refused } = secretSources(work, names, own, store.projects.active(context.owner).id);
+      if (refused.length) throw new Error(trunkSecretRefusal(refused));
+      const values: Record<string, string> = {};
+      for (const [project, wanted] of Object.entries(plan)) {
+        Object.assign(values, await store.secrets.resolve(context.owner, project, wanted, { runId: context.runId, purpose: "host command" }));
+        // The names only; a value never leaves the locker, and never reaches this record.
+        for (const name of wanted)
+          audit(store, context.owner, { action: "secret.used", actor: "a command you allowed", subject: `${name} (${project === trunkSecretsProject(trunk ?? "") ? "the Trunk's own" : `project ${project}`})`,
+            reason: "A command this assistant ran needed it", source: context.source ?? "owner", runId: context.runId, outcome: "handed over" });
+      }
       return values;
     },
     /** References, replacement dates, the use audit and the shared scrubber. */
     secrets: store.secrets,
     /** Locking the app, by hand or after a quiet spell. */
     sessionLock,
+    /** The phones holding a task's browser through the Telegram Mini App (src/miniapp/sessions.ts). */
+    miniAppSessions,
     /** Signing in to outside services with the standard authorization-code flow and PKCE. */
     oauth,
     /** Personal details and the optional content check, either side of the assistant. */
@@ -1743,6 +1924,9 @@ export async function createBranch(options: {
     pluginProblems,
     /** Where plugins came from, with the fingerprint each one had when it was accepted. */
     pluginCatalog,
+    pluginEvaluations,
+    taste,
+    sourcePublications,
     /** Drafted better versions of a skill: the changed lines, the trial, and the owner's answer. */
     skillRevisions,
     evaluation,
@@ -1761,6 +1945,8 @@ export async function createBranch(options: {
     calendar,
     /** The same workflows as boxes and arrows, for the API and the picture in Procedures. */
     flows,
+    /** RES-719: GitLab as a connection of its own. */
+    gitlab,
     /** Wave 8: the things still to be done, written down where the owner can see them. */
     todos,
     wiki,
@@ -1783,11 +1969,14 @@ export async function createBranch(options: {
     debugAdapters,
     /** Programs left running, and the switch that stops them all when the app closes. */
     processes,
+    /** workbench (SELF-305): wake-ups set inside conversations, for the window's open-work list. */
+    wakeups,
     /** What integrations need to host messaging channels: the router and default-project secrets. */
     channelHost: {
       router: channels,
       git,
       /** A secret from whichever project is active right now, for GitHub's personal access token. */
+      gitlab: (settings: unknown) => gitlabLaunch.set(store, settings),
       activeSecret: async (name: string) => {
         const project = store.projects.active(runtime.owner).id;
         const value = (await store.secrets.resolve(runtime.owner, project, [name], { purpose: "integration" }))[name]!;
@@ -1841,6 +2030,7 @@ export async function createBranch(options: {
       stopPullRequests();
       stopOfferingPullRequests();
       pullRequestStop.abort(new Error("Branch is closing"));
+      await stopSourcePublications();
       await Promise.allSettled([...pullRequestWork]);
       stopWatchingErrors();
       stopLiveScoring();
@@ -1859,10 +2049,11 @@ export async function createBranch(options: {
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
+      voice.close(); // RES-709: the free speech worker ends with the app
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app
       await autonomy.close(); // r17-b: nothing more starts by itself, and a turn that is working gets a moment
       await trunks.close(); // R17-A: rooms stop between turns
-      await personal.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
+      await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
@@ -1897,6 +2088,28 @@ export async function createBranch(options: {
   // on, once everything above has started as the owner: the launch carry-on of interrupted flows
   // included (NAS 52f87df), which is the owner's and must not meet another person's window.
   store.profiles.resumeWhereLeft();
+  channelHostRef.current = branch.channelHost;
+  channels.ownerDmHost = () => commandHost(runtime, branch); // CHAT-185: the owner's commands from their own chat
+  runtime.ownerChatRun = (runId) => channels.ownerDmRun(runId); // owner-dm-signin: the owner's own verified DM may use their sign-in
+  // Pictures of a chat task's own browser window, as the window's live view takes them: password and code boxes covered,
+  // never a borrowed browser, never while Branch's own sign-in handling is showing.
+  channels.browserPicture = async (runId) => {
+    if (signInShowing()) return null;
+    // A page between two addresses has no picture for a moment: tried again briefly before giving up.
+    for (let tries = 0; tries < 3; tries++) {
+      if (tries) await new Promise((done) => setTimeout(done, 400));
+      const seen = await branch.browser?.watch(runtime.owner, runId).catch(() => null);
+      if (!seen || seen.borrowed) return null;
+      if (seen.frame) return { frame: seen.frame, url: seen.url, title: seen.title };
+    }
+    return null;
+  };
+  // Take over and Hand back from a chat (the live browser's buttons): the task's own window becomes the conversation's
+  // kept browser with the chat's owner holding it, exactly as the window's Take over does; Hand back lets the task on.
+  channels.browserHold = (runId, op) => holdTaskBrowser({ browser: branch.browser, store, owner: runtime.owner,
+    locked: () => sessionLock.locked(), running: (id) => !!runtime.activeRunSignal(id) }, runId, op, `chat:${runId}`,
+  // The chat's own hold, or the same person's phone through the Mini App, is theirs to hand back from the chat.
+  (holder) => holder === `chat:${runId}` || holder === miniAppSessions.clientFor(runId));
   return branch;
 }
 /** Runs one of the owner's own verified recipes by name, for a skill package's event hook. */
@@ -2201,6 +2414,7 @@ export * from "./voice-stt.js";
 export * from "./voice-tts.js";
 export * from "./voice-talk.js";
 export * from "./voice-service.js";
+export * from "./voice-whisper.js"; // RES-709
 export * from "./realtime.js";
 export * from "./realtime-openai.js";
 export * from "./realtime-gemini.js";

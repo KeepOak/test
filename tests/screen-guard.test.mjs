@@ -130,7 +130,8 @@ test("a screen call on a window through computer.* is refused during research; t
 
 test("the owner asking for the screen is offered it, is asked first even under Full access, and a yes runs it", async (t) => {
   const shot = call("desktop.screenshot", {}, "p1");
-  const { app, seen, calls } = await scripted(t, [shot, shot, { content: "Here is your screen.", toolCalls: [] }, call("desktop.open", { app: "notepad" }, "o1"), done]);
+  // QA R1: after the yes the engine takes the approved screenshot itself; the model never makes the call again.
+  const { app, seen, calls } = await scripted(t, [shot, { content: "Here is your screen.", toolCalls: [] }, call("desktop.open", { app: "notepad" }, "o1"), done]);
   const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
   assert.ok(offeredNames(seen[0]).includes("desktop.screenshot"), "asked for in the owner's words, the tool is offered");
   assert.equal(first.status, "needs_input", "it stops to ask, even under Full access");
@@ -144,6 +145,7 @@ test("the owner asking for the screen is offered it, is asked first even under F
   const next = await app.runtime.continueAsked(first.id);
   assert.equal(next.status, "completed");
   assert.equal(calls.length, 1, "after the owner's yes, the task that asked took the screenshot once");
+  assert.deepEqual(events(app, first, "run.approved_call").map((event) => event.data.id), ["p1"], "the engine ran the approved call itself");
   const elsewhere = await app.runtime.run({ prompt: "open notepad", conversationMode: "full" });
   assert.equal(elsewhere.status, "needs_input", "another conversation asks again: a screen yes is never carried over");
   assert.equal(calls.length, 1);
@@ -189,7 +191,7 @@ test("a prompt the engine framed (a room turn quoting other members) never unloc
 test("one yes to a screenshot never carries into the next task of the same conversation", async (t) => {
   const shot = call("desktop.screenshot", {}, "p1");
   const press = call("desktop.key", { window: "Chrome", chord: "escape" }, "k1");
-  const { app, calls } = await scripted(t, [shot, shot, { content: "Here is your screen.", toolCalls: [] }, press, done]);
+  const { app, calls } = await scripted(t, [shot, { content: "Here is your screen.", toolCalls: [] }, press, done]);
   const first = await app.runtime.run({ prompt: "take a screenshot of my screen", conversationMode: "full" });
   const [waiting] = app.runtime.approvals.waiting(first.sessionId);
   app.runtime.approve(first.sessionId, "allow", "never", waiting.fingerprint);

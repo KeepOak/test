@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import { newWindow } from "./new-window-places.mjs";
 import { openSettingsPage } from "./settings-window.mjs";
 import { gselChoices } from "./gsel.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 
 test("dropdowns are the window's glass list: ticked, keyboard, saves, narrows, above dialogs; no native select", async (t) => {
   const { page, call, errors } = await newWindow(t, { width: 1280, height: 900 });
@@ -68,7 +69,7 @@ test("dropdowns are the window's glass list: ticked, keyboard, saves, narrows, a
   await page.keyboard.press("Enter");
   await page.locator(".gsel-pop").waitFor({ state: "detached" });
   assert.equal(await zone.evaluate((el) => el.value), "Asia/Tokyo");
-  await page.waitForFunction(async () => {
+  await waitInPage(page, async () => {
     const [{ api }, { profilePath }] = await Promise.all([import("/app/core/api.js"), import("/app/core/faces.js")]);
     return (await api(profilePath(null, "about"))).timezone === "Asia/Tokyo";
   }, null, { polling: 100 });
