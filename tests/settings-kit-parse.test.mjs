@@ -100,6 +100,7 @@ const strictReaders = {
   retention: retentionSettings,
   "round-limit": (store, owner) => readKnobs(store, owner, "limits"),
   "task-tokens": (store, owner) => ({ taskAllowance: readKnobs(store, owner, "limits").maxTaskTokens }), // selfdev: the limits card
+  "step-limit": (store, owner) => ({ maxSteps: readKnobs(store, owner, "limits").maxSteps }), // the limits card too
   ...Object.fromEntries(["command-scan", "progress-judge", "activity-chain", "tool-scripts", "wasm-add-ons", "history-repair"]
     .map((name) => [`safety-${name}`, part(safetyMode, name)])),
   ...Object.fromEntries(["recipe-checks", "widgets", "install-requests", "time-travel", "kanban", "waiting-line", "focus"]
@@ -132,7 +133,7 @@ const notStrict = {
 const unreadableExtra = { "local-models": { enabled: "yes" } };
 
 /** Settings kept inside another record than their own key: the round limit is a field of the owner's limits knob. */
-const recordKeys = { "round-limit": "knobs-limits", "task-tokens": "knobs-limits" };
+const recordKeys = { "round-limit": "knobs-limits", "step-limit": "knobs-limits", "task-tokens": "knobs-limits" };
 const recordOf = (spec) => recordKeys[spec.key] ?? spec.key;
 /** Fields kept under another name in their record: Settings › General's commands switch is the record's `window`
     (this computer's window alone; `mode` is the switch for every surface, src/commands/settings.ts). */
