@@ -129,7 +129,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("heartbeat", ["hb"], "every <30m> <what to watch>", "a quiet check on this conversation that speaks up only with news; status, pause, resume or stop", [...W, "terminal"], "owner", { bareLooks: true }),
   entry("subgoal", [], "[text | remove n | clear]", "more that must be true before this conversation's goal is done", [...W, "terminal"], "run", { bareLooks: true }),
   entry("bg", ["background"], "<what to do>", "do something in a separate conversation, so this one stays free", [...W, "terminal"], "run"),
-  entry("handoff", [], "<chat app | terminal | assistant name>", "carry this conversation on in a chat app, a terminal or another assistant", [...W, "terminal"], "owner"),
+  entry("handoff", [], "<exact chat destination | terminal | assistant name>", "carry this conversation on in a selected owner chat, a terminal or another assistant", [...W, "terminal"], "owner"),
   entry("suggestions", ["suggest"], "[catalog | accept n | dismiss n]", "automations Branch suggests; a no is never offered again", [...W, "terminal"], "owner", { bareLooks: true }),
   entry("blueprint", ["bp"], "[name] [blank=value ...]", "the automation catalogue; with a name and its blanks, make one", [...W, "terminal"], "owner", { bareLooks: true }),
   // ---- end r17-b ----
