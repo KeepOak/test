@@ -8,7 +8,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch } from "../dist/index.js";
+import { createBranch, savePolicy } from "../dist/index.js";
 
 test("CHAT-023: an own sent message is edited once recorded; an unknown id is refused untouched", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-own-messages-"));
@@ -32,4 +32,22 @@ test("CHAT-023: an own sent message is edited once recorded; an unknown id is re
   assert.equal(edited.confirmed, true);
   assert.deepEqual(asked, [["edit", "7", "m-41", "The meeting is at 4."]]);
   assert.equal(app.channels.ownMessages({ channel: "chat", chatId: "7" }).messages[0].text, "The meeting is at 4.");
+});
+
+test("CHAT-023: deleting a sent message asks once, even where a rule would allow it", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-own-messages-ask-"));
+  const call = { id: "d1", name: "channels.delete_message", arguments: JSON.stringify({ channel: "chat", chatId: "7", messageId: "m-41" }) };
+  let turn = 0;
+  const provider = { name: "scripted", async complete() { return turn++ === 0 ? { content: "", toolCalls: [call] } : { content: "Done.", toolCalls: [] }; } };
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const asked = [];
+  await app.channels.attach({ id: "chat", kind: "fake", botName: () => "Branch", async start() {}, async stop() {},
+    async send() { return "m-41"; }, async deleteMessage(chatId, messageId) { asked.push([chatId, messageId]); } },
+    { activation: "always", pairing: true, allowlist: ["owner"] });
+  await app.channels.deliver("chat", "7", "The meeting is at 3.");
+  savePolicy(app.store, app.runtime.owner, { preset: "custom", rules: [{ tool: "channels.delete_message", match: "*", applies: "any", decision: "allow", remember: "session" }] });
+  const run = await app.runtime.run({ prompt: "Delete the message you sent about the meeting" });
+  assert.notEqual(run.status, "completed", `the delete waited for the owner (${run.status})`);
+  assert.deepEqual(asked, [], "nothing was deleted before the owner answered");
 });
