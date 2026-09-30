@@ -52,6 +52,11 @@ const GUARDS = [
   // TRUNK-106: tying a private saved fact to a local picture is the owner's own memory.
   { file: "src/memory-images.ts", tool: "memory.image", args: { id: "no-such-fact" } },
   { file: "src/channels/connectors.ts", tool: "channels.broadcast", args: { text: "hello" } },
+  // CHAT-023: listing, editing or deleting Branch's own sent chat messages is the owner's.
+  { file: "src/channels/message-actions.ts", tool: "channels.own_messages", args: { channel: "telegram", chatId: "1" } },
+  { file: "src/channels/message-actions.ts", tool: "channels.delete_message", args: { channel: "telegram", chatId: "1", messageId: "5" } },
+  // router.ts checks the owner again (requireMessageActionOwner) before it touches the message.
+  { file: "src/channels/router.ts", tool: "channels.edit_message", args: { channel: "telegram", chatId: "1", messageId: "5", text: "fixed" } },
   { file: "src/channels/connectors.ts", tool: "channels.digest", args: { channel: "telegram", chatId: "1" } },
   // Choosing the chat the morning brief goes to is choosing where the owner's messages go.
   { file: "src/brief.ts", tool: "brief.configure", args: { deliverTo: { channel: "telegram", chatId: "1" } } },

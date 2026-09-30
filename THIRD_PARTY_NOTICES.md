@@ -169,6 +169,35 @@ https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918
 and live tools using Branch's existing content detector. Copyright (c) 2025 Nous Research, MIT;
 https://github.com/NousResearch/hermes-agent/blob/a9a54245b2311c705d29050b7f9868c015917aec/tools/mcp_tool_schema.py
 and `tools/mcp_tool_registration.py`. The MIT license text is reproduced in this document.
+## GitHub skill import
+
+The tree-first revision pinning, regular-blob selection and validate-before-quarantine approach in
+`src/skill-github.ts` is adapted from Nous Research's Hermes Agent at
+`a9a54245b2311c705d29050b7f9868c015917aec`, `tools/skills_hub_github.py` and
+`tools/skills_hub_install.py`. Branch uses an in-memory quarantine and immutable blob checks,
+and its existing skill scan, approval and switched-off install. No repository is automatically trusted.
+
+MIT License
+
+Copyright (c) 2025 Nous Research
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 Branch Agent application code is MIT licensed. Distributed dependencies retain their own licenses and notices. This file collects notices from the pinned runtime dependency packages; their original files are also retained in the desktop package.
 
