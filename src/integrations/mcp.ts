@@ -193,7 +193,8 @@ export async function openMcp(
     // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
     let alive = true;
     client.onclose = () => { alive = false; };
-    return { config, found, secrets, call: through(client), close: () => client.close(), alive: () => alive };
+    return { config, found, secrets, call: through(client), close: () => client.close(), alive: () => alive,
+      check: async () => { await client.ping({ timeout: 10000 }); } };
   } catch {
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');
@@ -227,7 +228,11 @@ function restarting(first: Awaited<ReturnType<typeof openMcp>>, reopen: () => Pr
     }
     return current.call(tool, args, context);
   };
-  return { call, close: async () => { closed = true; await current.close(); } };
+  const check = async () => {
+    if (closed || !current.alive()) throw new Error('MCP connection is not open. Use a tool to connect it before checking.');
+    await current.check();
+  };
+  return { call, check, close: async () => { closed = true; await current.close(); } };
 }
 
 export async function connectMcp(
@@ -245,7 +250,7 @@ export async function connectMcp(
     if (definitions.some(tool => existing.has(tool.name))) throw new Error('MCP tool name collision');
     for (const tool of definitions) registry.register(tool);
     return { id: opened.config.id, version: opened.config.expectedVersion,
-      tools: definitions.map(tool => tool.name), call: opened.call, close: opened.close };
+      tools: definitions.map(tool => tool.name), call: opened.call, close: opened.close, check: live.check };
   } catch {
     await opened.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');

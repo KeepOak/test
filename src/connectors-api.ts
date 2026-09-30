@@ -21,7 +21,7 @@ export interface ConnectorsHost {
   issues?: IssueAccess | null;
 }
 
-const serverAction = /^\/api\/mcp\/servers\/([a-z][a-z0-9-]{0,29})\/(start|stop|remove)$/;
+const serverAction = /^\/api\/mcp\/servers\/([a-z][a-z0-9-]{0,29})\/(start|stop|remove|test)$/;
 const flagRemove = /^\/api\/reply-flags\/([a-f0-9-]{36})\/remove$/;
 const Empty = z.object({}).strict();
 
@@ -41,6 +41,7 @@ async function serversApi(app: ConnectorsHost, request: IncomingMessage, path: s
     app.store.profiles.requireOwner("Changing a tool server");
     Empty.parse(await readBody(request));
     const [, id, verb] = action;
+    if (verb === "test") return { health: await app.ownMcp.test(id!) };
     return verb === "start" ? app.ownMcp.start(id!) : verb === "stop" ? app.ownMcp.stop(id!) : app.ownMcp.remove(id!);
   }
   return undefined;

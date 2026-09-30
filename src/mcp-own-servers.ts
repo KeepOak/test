@@ -47,6 +47,7 @@ import { makeTransport, McpTransportSchema, type McpTransportConfig } from "./in
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
 import { workspaceRefusal } from "./mcp-workspace-guard.js";
+import type { ConnectionHealth } from "./personal/probe.js";
 
 export const AddServerSchema = z.object({
   name: z.string().trim().min(1).max(60),
@@ -99,7 +100,7 @@ export interface OwnServersDeps {
 interface Waiting { runId: string; sessionId: string; fingerprint: string; launch: string; question: string; timer: NodeJS.Timeout; since: number; byOwner?: boolean }
 
 /** What one start put in place: how to close its connection and program, and the tool names it registered. */
-interface Started { close: () => Promise<void>; names: string[] }
+interface Started { close: () => Promise<void>; names: string[]; check?: () => Promise<void> }
 
 export class OwnMcpServers {
   private readonly live = new Map<string, Started>();
@@ -157,6 +158,20 @@ export class OwnMcpServers {
       tools: entry.tools.length, hidden: entry.hidden, error: this.problems.get(entry.id) ?? null, catalogue: entry.catalogue ?? null };
   }
   list(full: boolean) { return { servers: this.saved().map((entry) => this.view(entry, full)) }; }
+
+  /** MCP ping checks session liveness only, without invoking a tool or opening an idle connection. */
+  async test(id: string): Promise<ConnectionHealth> {
+    this.find(id);
+    const live = this.live.get(id);
+    let ok = false, reason: string | null = null;
+    try {
+      if (!live?.check) throw new Error("No live session");
+      await live.check();
+      ok = this.live.get(id) === live;
+    } catch { reason = "The open MCP session could not be verified. Use a tool to connect it, then try again."; }
+    if (!ok && !reason) reason = "The MCP session closed during this check.";
+    return { checkedAt: new Date().toISOString(), ok, checks: [{ capability: "MCP session liveness", ok, reason }] };
+  }
 
   /** Written as a connection changing, with what happened in the subject and the outcome. */
   private record(what: string, subject: string, outcome: string): void {
@@ -292,7 +307,8 @@ export class OwnMcpServers {
       if (!found.version) throw new Error("That server did not say which version it is.");
       const config = { id: entry.id, tools: found.tools, expectedVersion: found.version, ...entry.server };
       const stop = await startMcp(this.deps.registry, config, this.env, this.deps.policy(), this.hostFor(entry, generation, overtaken));
-      started = { close: stop ?? (async () => undefined), names: found.tools.map((tool) => mcpToolName(entry.id, tool)) };
+      started = { close: stop ?? (async () => undefined), names: found.tools.map((tool) => mcpToolName(entry.id, tool)),
+        ...(stop?.check ? { check: stop.check } : {}) };
       if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
       this.live.set(entry.id, started);
       this.problems.delete(entry.id);
@@ -332,6 +348,10 @@ export class OwnMcpServers {
         connections.register(id, opener);
       },
       acquire: (runId, id) => connections.acquire(runId, id),
+      check: async (id) => {
+        if (!connections.check) throw new Error("This host cannot check an existing MCP session.");
+        await connections.check(id);
+      },
       forget: async (id) => { await connections.forget?.(id); },
     } };
   }
