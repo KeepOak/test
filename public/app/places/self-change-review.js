@@ -1,7 +1,7 @@
 /* The owner writes preparation terms, then separately reviews the exact committed
    source before consenting to the engine's durable draft-publication request. */
 import { esc } from "../core/dom.js";
-import { ownerHere, activeId } from "../core/state.js";
+import { S, ownerHere, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
 import { openDlg, closeDlg, dialog, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
@@ -59,7 +59,10 @@ function publicationForm(id, snapshot) {
 
 export async function openSourceReview(request, diffHTML, details = "") {
   if (!allowed()) return;
-  const mine = ++generation, who = here();
+  /* The review opens only over what asked for it: the same person, unlocked, on the same page, with no dialog opened,
+     closed or replaced while the draft and diff were read. A late answer is dropped instead of covering newer work. */
+  const mine = ++generation, who = here(), view = S.view, opened = dialog();
+  const still = () => mine === generation && who === here() && allowed() && S.view === view && dialog() === opened;
   current = null;
   let snapshot = null, diff = null, problem = "";
   try {
@@ -68,8 +71,8 @@ export async function openSourceReview(request, diffHTML, details = "") {
       catch (error) { problem = error.message; }
     }
     diff ??= await api(route(request.id, "diff"));
-  } catch (error) { if (mine === generation && who === here()) toast(error.message); return; }
-  if (mine !== generation || who !== here() || !allowed()) return;
+  } catch (error) { if (still()) toast(error.message); return; }
+  if (!still()) return;
   const ready = request.status === "approved" && snapshot;
   current = { id: request.id, who, snapshot, mine };
   const form = ready ? publicationForm(request.id, snapshot) : request.status === "waiting" ? termsForm(request.id) : `<div data-source-review="${esc(request.id)}"><p class="hint">${words("notReady")}</p></div>`;
@@ -109,4 +112,6 @@ export function initSourceReview(afterChange) {
   markLive(["selfdo15", ...fields.map((name) => `sw:source-${name}`)]);
   on("selfdo15", (el) => answer(el));
   addEventListener("pagehide", () => { current = null; generation += 1; });
+  /* Closing any dialog is newer owner activity: a review still being read must not open after it. */
+  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) generation += 1; }, true);
 }
