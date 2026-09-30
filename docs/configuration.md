@@ -9275,7 +9275,7 @@ The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli
 The owner can set a **stop-next-round estimate** through `POST /api/model-savings`, initially off:
 
 ```json
-{"card":"costThresholds","values":{"mode":"on","rules":[
+{"card":"costThresholds","values":{"mode":"on","activatedAt":"2026-09-30T12:00:00.000Z","rules":[
   {"provider":"openai","model":"gpt-4o","maxMonthlyDollars":10,"fallbackPreset":"my-small-model"}
 ]}}
 ```
@@ -9285,12 +9285,16 @@ the provider key is the catalogue service id, or the preset id for a custom conn
 `model` counts every model on that service. The named fallback must already be set up; null stops
 the round. This API is owner-only, including reads; there is no dedicated window control yet.
 
+`activatedAt` (ISO 8601 timestamp or null) records when the guard was last enabled; the system uses it
+to determine which month's rounds to count. The field is set automatically when the guard is turned on
+and cleared when it is turned off. Changing rules while the guard is on retains the current `activatedAt`.
+
 Estimates count completed runtime rounds from when the owner enables the guard, resetting at the
 start of each UTC month. Turning it off and on starts a new counting period; changing rules while
 it is on retains that period. Prices are the current catalogue or owner correction and tokens use
-the larger of Branch's estimate and the service's reported count. Kept answers cost nothing.
-Unknown prices or unreadable receipts stop an enabled matching guard instead of counting as zero. `activatedAt` is when the guard
-was last switched on; Branch writes it, and it is where the current counting period starts.
+the larger of Branch's estimate and the service's reported count, including cache-read, cache-write,
+and one-hour cache-write tokens. Kept answers cost nothing. Unknown prices or unreadable receipts
+stop an enabled matching guard instead of counting as zero.
 
 Only the owner's explicitly named fallback is considered, and its own thresholds, known price,
 tool/picture/JSON capabilities, local-only routing and Trunk sign-in rules still apply. A pinned
