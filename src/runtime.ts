@@ -21,6 +21,7 @@ import { practiceRunsEnabled } from "./practice-runs.js";
 import { CliAgentProvider } from "./providers/cli-agent.js";
 import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
+import { chatPersonalityForRun } from "./channels/personality-settings.js";
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
@@ -95,7 +96,7 @@ import { canonicalArguments } from "./loop-guard.js";
 import { alreadyRunResult, approvedWork, notRunResult, type ApprovedWork } from "./approved-call.js"; // QA R1
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
-import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation } from "./comfort/browser-safety.js"; // R17-S19
+import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation, withDownloadQuestion, withNewSiteQuestion } from "./comfort/browser-safety.js"; // R17-S19
 // mac5/manual-actions: the gate for tools run outside a conversation.
 import { gateToolUse, type ToolGateOptions } from "./tool-gate.js";
 import * as safetyExtras from "./safety-extras/hooks.js"; // mac7/r17-g: the safety extras' hooks
@@ -744,7 +745,7 @@ export class Runtime {
   /** eng-trunk-controls: each running task that is a Trunk's turn → that Trunk, so "pause now" can stop it. */
   private readonly trunkRuns = new Map<string, string>();
   /** Notes the owner sent to a task that is still working, waiting for its next round. */
-  private readonly steers = new Map<string, { note: string; from: string | undefined }[]>();
+  private readonly steers = new Map<string, { note: string; from: string | undefined; lateTurn?: boolean }[]>();
   /** The catalog each running task is showing the model, so a tool it found stays loaded. */
   private readonly catalogs = new Map<string, ToolLoader>();
   /**
@@ -1884,6 +1885,7 @@ ${run.output.slice(0, 6000)}`;
         this.helperModels.set(run.id, connection.preset);
         this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
       }
+      if (!parent && !context.isolated && !sealed) instructions += chatPersonalityForRun(this.store, this.owner, run.id);
       const work = async (working: ToolContext) => {
         if (approved) await this.runApproved(run, working, approved); // QA R1
         return this.loop(run, working, instructions, options.onTextDelta, {
@@ -2236,11 +2238,17 @@ ${run.output.slice(0, 6000)}`;
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
       // selfdev (SELF-303): a helper's note that arrived as its lead finished is not lost: it goes to the lead's
-      // conversation as a new message, labelled as the helper's words. The owner's own late note is dropped as before.
-      const late = (this.steers.get(run.id) ?? []).filter((one) => one.from !== undefined && /^helper /.test(one.from));
+      // conversation as a new message, labelled as the helper's words. A note the owner typed in the window while the
+      // task worked (`lateTurn`) is not lost either: unread, it becomes its own next turn, word for word and never
+      // joined to another message, as Codex CLI and Claude Code run a message sent too late to steer as the next turn.
+      // Stopped by the owner, the task takes nothing further. A chat app's notes are its router's (unreadNotes).
+      const left = this.steers.get(run.id) ?? [];
+      const late = left.filter((one) => one.from !== undefined && /^helper /.test(one.from));
+      const unread = status === "cancelled" ? [] : left.filter((one) => one.lateTurn && one.from === undefined);
       this.steers.delete(run.id);
-      if (late.length) queueMicrotask(() => {
+      if (late.length || unread.length) queueMicrotask(() => {
         for (const one of late) try { this.followUp(run.sessionId, fromHelper(one.from!, one.note), null, { originFrom: run.id }); } catch { /* the conversation is gone */ }
+        for (const one of unread) try { this.followUp(run.sessionId, one.note); } catch { /* the conversation is gone */ }
       });
       this.recordToolWork(run, context, status);
       // What this conversation is carrying is written down at the end of every task, so closing the
@@ -2961,14 +2969,18 @@ ${run.output.slice(0, 6000)}`;
    * A note the owner sends to a task that is still working. It goes in front of the next round,
    * unlike a follow-up message, which waits for the task to finish.
    */
-  steer(runId: string, text: string, from?: string): { queued: number } {
+  steer(runId: string, text: string, from?: string, options: { lateTurn?: boolean } = {}): { queued: number } {
     const note = String(text ?? "").trim();
     if (!note || note.length > 2000) throw new Error("A note has to be between 1 and 2000 characters");
     const run = this.store.run(runId);
     if (!run || run.owner !== this.owner) throw new Error("Run not found");
     if (run.status !== "running") throw new Error("Only a task that is still working can be steered");
     // `from` names a chat participant (wave mac2, chat-live); such a note never speaks as the owner.
-    const queue = [...(this.steers.get(runId) ?? []), { note, from }];
+    // Only the owner's own note, to the owner's own task, may run later as a turn of its own: a short-lived key's, a
+    // household person's, a chat participant's or a helper's note never becomes a new task with the owner's reach.
+    const lateTurn = options.lateTurn === true && from === undefined && !startedWithShortLivedKey() && !currentPerson()
+      && helperParent(this.store, runId) === null;
+    const queue = [...(this.steers.get(runId) ?? []), { note, from, ...(lateTurn ? { lateTurn: true } : {}) }];
     this.steers.set(runId, queue);
     this.store.event(runId, "run.steered", { note: note.slice(0, 500), waiting: queue.length, ...(from === undefined ? {} : { from: from.slice(0, 80) }) });
     return { queued: queue.length };
@@ -4229,13 +4241,19 @@ ${run.output.slice(0, 6000)}`;
     // R17-S19: with "confirm sensitive browser steps" on, those steps ask every time (src/comfort/browser-safety.ts).
     // mac7/outside-resume: held by the task's own record too, so work carried on from outside stays held.
     const held = source !== "owner" ? source : this.recordedSource(runId) ?? "owner";
-    return withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner);
+    const policy = withDownloadQuestion(withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner), this.store, this.owner);
+    // An address the owner opens by hand in their own browser view is their own choice, never asked about as a new site.
+    return runId && this.ownerDriven.has(runId) ? policy : withNewSiteQuestion(policy, this.store, this.owner);
   }
+  /** Runs the owner's own browser controls make for one hand-pressed step (src/browser-control-api.ts). */
+  readonly ownerDriven = new Set<string>();
   /** Redesign phase 1: the owner's policy as this task's conversation has narrowed or widened it. */
   private conversationPolicy(runId?: string): Policy {
     const saved = readPolicy(this.store, this.owner);
     const mode = this.heldConversationMode(saved, runId);
-    return mode ? policyForMode(saved, mode, lockdownActive(this.store, this.owner), this.registry.outboundTools()) : saved; // Q59
+    const held = mode ? policyForMode(saved, mode, lockdownActive(this.store, this.owner), this.registry.outboundTools()) : saved; // Q59
+    // Owner ruling 2026-09-30: commands no rule covers run for the owner; a household person's or short-lived key's task still asks.
+    return runId && this.store.run(runId) && !this.ownersOwnTask(runId) ? { ...held, unmatchedCommands: "ask" } : held;
   }
   /** The mode this task's conversation holds it to, or null when it follows the owner's setting. */
   private heldConversationMode(saved: Policy, runId?: string): ConversationMode | null {
@@ -4258,7 +4276,9 @@ ${run.output.slice(0, 6000)}`;
       if (seen.has(id)) continue;
       seen.add(id);
       const start = this.store.events(id).find((event) => event.kind === "run.started")?.data;
-      if (!start || this.store.run(id)?.owner !== this.owner || start.callerKind !== "owner-here"
+      // owner-dm-full: the owner's own verified direct chat (no request behind it, so "system") counts as the owner here.
+      const here = start?.callerKind === "owner-here" || (start?.callerKind === "system" && runOrigin(this.store, id).ownerChat === true);
+      if (!start || this.store.run(id)?.owner !== this.owner || !here
         || start.callerDoor || start.source !== "owner" || start.shortLivedKey || start.shortLivedKeyId
         || start.personProfileId || start.lentTo || start.dryRun) return null;
       for (const next of [start.parentRunId, start.resumedFrom, start.originFrom]) if (typeof next === "string") queue.push(next);
@@ -4284,6 +4304,25 @@ ${run.output.slice(0, 6000)}`;
     // selfdev: a Trunk's keys mean a Trunk's turn; only the owner's designated default Trunk (their own assistant) keeps the owner's mode.
     if (context.trunkKeys && !this.ownersDefaultRoot(root.id)) return null;
     return `${this.owner} (Full Access in conversation ${root.sessionId})`;
+  }
+  /**
+   * Owner ruling (2026-09-30, "loosen up security on everything"): the owner's own task in a conversation they set to
+   * Full access. Full access asks nothing but the dangerous commands Hermes Agent asks about (src/safety-extras/
+   * dangerous-commands.ts), as OpenClaw's `tools.exec.mode: "full"` and Hermes's CLI do for their owner. It is the mode
+   * the conversation is held to (never a household person's, a short-lived key's, a paired device's, a chat app's or
+   * a schedule's), with Lockdown and the App lock still able to take it away. `ownerFullAccessFor` stays the stricter
+   * test for attributing an unattended merge or network reach to the owner.
+   */
+  ownerFullMode(context: ToolContext): boolean {
+    const run = this.store.run(context.runId), caller = currentCaller();
+    if (!run || run.owner !== this.owner || context.owner !== this.owner || context.dryRun || this.fullAccessLocked()
+      || lockdownActive(this.store, this.owner) || !this.store.profiles.isOwner() || currentPerson() || throughPairedDoor()
+      || startedWithShortLivedKey() || caller.throughDoor || caller.household || caller.appLocked
+      || this.sourceOf(context) !== "owner" || !this.ownersOwnTask(run.id) || this.learningOf(run.id)) return false;
+    // Started at this computer's own window (or by the engine for it), never through a door or from another computer.
+    const started = this.store.events(run.id).find((event) => event.kind === "run.started")?.data;
+    if (!started || started.callerDoor || !["owner-here", "system"].includes(String(started.callerKind ?? "system"))) return false;
+    return this.heldConversationMode(readPolicy(this.store, this.owner), run.id) === "full";
   }
   /** selfdev: the task's root ran as the owner's designated default Trunk, in its own (not a room's) conversation, checked now. */
   private ownersDefaultRoot(rootId: string): boolean {
@@ -4387,6 +4426,9 @@ ${run.output.slice(0, 6000)}`;
     if (!runId) return null;
     if (this.recordedSources.has(runId)) return this.recordedSources.get(runId) ?? null;
     const found = outsideSourceOf(this.store, runId);
+    // owner-dm-full: a task from the owner's own verified direct chat is the owner's only while that chat still is (the
+    // switch on, no Lockdown or App lock, the account still named), so it is read afresh at every step, never kept.
+    if (!found && runOrigin(this.store, runId).ownerChat) return found;
     if (this.recordedSources.size >= 500) this.recordedSources.clear();
     this.recordedSources.set(runId, found);
     return found;
@@ -4471,8 +4513,12 @@ ${run.output.slice(0, 6000)}`;
     // owner did not start is asked about, and a lock or door always is, just this once — whatever the rules say.
     // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
     // the owner's external program sign-in and keeps its own once-only question.
-    const fullAccess = this.ownerFullAccessFor(context) !== null;
-    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
+    // Owner ruling 2026-09-30: under Full access none of these extra questions is put; only Hermes's dangerous commands ask,
+    // and a settings change that takes a protection away (the command scan among them) asks once, as Hermes Agent asks
+    // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
+    const fullAccess = this.ownerFullMode(context);
+    const loosening = fullAccess ? settingsHold(tool, args) : null;
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
@@ -4739,10 +4785,10 @@ ${run.output.slice(0, 6000)}`;
     // — work the agreed plan did not mention, and a command that already failed being tried again.
     const patternNo = decision === "deny" ? null : this.patternRefusal(call, context); // eng-trunk-controls
     if (patternNo) return { refusal: { ok: false, error: patternNo }, ...held };
-    const aside = decision === "deny" ? null
+    // selfdev (owner ruling 09-27, widened 09-30): the owner's selected Full Access never asks these asides.
+    const aside = decision === "deny" || this.ownerFullMode(context) ? null
       : this.offPlanQuestion(context, { label, target, readOnly })
-        // selfdev (owner ruling 09-27): the owner's selected Full Access never asks, so a corrected command just runs.
-        ?? (this.ownerFullAccessFor(context) !== null ? null : this.retriedCommandQuestion(call, args, context))
+        ?? this.retriedCommandQuestion(call, args, context)
         ?? this.patternAside(call, context); // eng-trunk-controls
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));

@@ -13,6 +13,14 @@ import { t } from "../../i18n.js";
 const LONG = 10; // more choices than this get the narrowing box
 const LIST_ID = "gsel-options"; // the window has one popover at a time
 
+/** Use the platform picker for touch and forced-colors accessibility; keep one live value/control. */
+export function selectField(config) {
+  if (!globalThis.matchMedia?.("(forced-colors: active), (pointer: coarse)").matches) return gsel(config);
+  const { id = "", sw = "", label = "", options, value = "", attrs = "", cls = "" } = config;
+  const selected = options.find(([v]) => String(v ?? "") === String(value ?? ""))?.[0] ?? options[0]?.[0] ?? "";
+  return `<select class="inp ${esc(cls)}"${id ? ` id="${esc(id)}"` : ""}${sw ? ` data-sw="${esc(sw)}"` : ""}${label ? ` aria-label="${esc(label)}"` : ""} ${attrs}>${options.map(([v, words, off]) => `<option value="${esc(v ?? "")}"${String(v ?? "") === String(selected) ? " selected" : ""}${off ? " disabled" : ""}>${esc(words ?? "")}</option>`).join("")}</select>`;
+}
+
 /**
  * A dropdown. `options` is [[value, words, cannotTake?], ...]; `attrs` is any other attribute text (data-k, data-j, data-flow...).
  * `label` names it for a screen reader when no visible label does.
@@ -25,6 +33,7 @@ export function gsel({ id = "", sw = "", label = "", options, value = "", attrs 
 
 /** Sets a dropdown's choice from code, as `select.value = v` did (no "change" is sent). */
 export function setGsel(el, value) {
+  if (el?.tagName === "SELECT") { el.value = value; return; }
   const found = choices(el).find(([v]) => v === String(value ?? ""));
   if (!el || !found) return;
   el.value = found[0];
@@ -36,6 +45,7 @@ const choices = (el) => { try { return JSON.parse(el?.dataset.opts ?? "[]"); } c
 let open = null; // the dropdown whose list is showing
 
 function show(el) {
+  if (el.disabled) return;
   const list = choices(el), current = el.value;
   /* Select semantics follow Hermes Desktop's searchable-select (Nous Research, MIT), adapted to our popover. */
   const items = list.map(([v, words, off], i) => `<button class="mi" type="button" role="option" aria-selected="${v === current}" tabindex="-1" data-act="gsel-pick" data-i="${i}"${off ? ' aria-disabled="true"' : ""}><span class="tick">${ic("check", "s")}</span><span class="mi-t">${esc(words)}</span></button>`).join("");
@@ -58,7 +68,7 @@ const inPlace = (el) => (!el || el.isConnected ? el : el.id ? document.getElemen
 
 function pick(i) {
   const el = inPlace(open), found = choices(el)[i];
-  if (!el || !found || found[2]) return; // a choice that cannot be taken stays where it is
+  if (!el || el.disabled || !found || found[2]) return; // a choice that cannot be taken stays where it is
   closePop({ refocus: true });
   open = null;
   if (el.value === found[0]) return;

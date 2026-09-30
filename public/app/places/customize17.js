@@ -4,8 +4,8 @@
      the owner's own hand-run tool). "Run N test cases" runs the specialist's own evaluation (specialists.evaluate), Promote
      makes a passing draft the one in use (specialists.promote, refused in the engine's words until it passed) and Roll
      back returns to the one before (specialists.rollback). Everything is read back from GET /api/state specialists.
-   - Specialists › Other coding agents (Advanced): no route lists the coding programs a task could hand work to, and
-     handing work over starts a program here, so it stays greyed.
+   - Specialists › Other coding agents (Advanced): only Branch itself hands a coding job to the owner's own Claude Code
+     or Codex, never a Trunk, so the row says that in words and has no button (window.why.d17-handoffcli).
    - Tools, Advanced, by kind: skills (how often each is used, GET /api/learning-more/curator; the last install's written
      account, GET /api/skill-installs; checking a skill's writing and skills from other assistants have no route, so they
      stay greyed), plugins (what the chosen plugin asks for, POST /api/plugins/<id>/inspect, which runs none of its code;
@@ -15,8 +15,10 @@
      engine refuses in its own words while sharing with other assistants is off). No key or token is ever shown. */
 
 import { esc, renderNow } from "../core/dom.js";
+import { selectField } from "../core/gsel.js";
 import { E, level, refresh } from "../core/state.js";
-import { toast, openDlg, dialog } from "../core/ui.js";
+import { toast, openDlg, dialog, ic } from "../core/ui.js";
+import { reason } from "../core/why.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -82,12 +84,12 @@ async function openSpec(id) {
 function helperRows(id) {
   if (!helpers) return "";
   const saved = helpers.specialists?.[id] ?? null, choice = helpers.choices.find((c) => c.model === saved?.model);
-  const models = helpers.choices.map((c) => `<option value="${esc(c.model)}" ${c.model === saved?.model ? "selected" : ""}>${esc(c.name)}</option>`).join("");
-  const model = `<div class="ctl"><b>${t("window.places.customize17.helper-model")}</b><span class="right"><select class="inp" data-sw="spec-model" data-id="${esc(id)}" aria-label="${t("window.places.customize17.helper-model")}"><option value="" ${saved ? "" : "selected"}>${t("window.places.customize17.helper-model-usual")}</option>${models}</select></span><small>${t("window.places.customize17.helper-model-sub")}</small></div>`;
+  const models = [["", t("window.places.customize17.helper-model-usual")], ...helpers.choices.map((c) => [c.model, c.name])];
+  const model = `<div class="ctl"><b>${t("window.places.customize17.helper-model")}</b><span class="right">${selectField({ sw: "spec-model", label: t("window.places.customize17.helper-model"), options: models, value: saved?.model ?? "", attrs: `data-id="${esc(id)}"` })}</span><small>${t("window.places.customize17.helper-model-sub")}</small></div>`;
   if (!choice?.accounts.length) return model;
   const picked = saved.accountRef?.account ?? "";
-  const accounts = choice.accounts.map((a) => `<option value="${esc(a.id)}" ${a.id === picked ? "selected" : ""}>${esc(a.label)}</option>`).join("");
-  return model + `<div class="ctl"><b>${t("window.places.customize17.helper-account")}</b><span class="right"><select class="inp" data-sw="spec-account" data-id="${esc(id)}" aria-label="${t("window.places.customize17.helper-account")}"><option value="" ${picked ? "" : "selected"}>${t("window.places.customize17.helper-account-usual")}</option>${accounts}</select></span><small>${t("window.places.customize17.helper-account-sub")}</small></div>`;
+  const accounts = [["", t("window.places.customize17.helper-account-usual")], ...choice.accounts.map((a) => [a.id, a.label])];
+  return model + `<div class="ctl"><b>${t("window.places.customize17.helper-account")}</b><span class="right">${selectField({ sw: "spec-account", label: t("window.places.customize17.helper-account"), options: accounts, value: picked, attrs: `data-id="${esc(id)}"` })}</span><small>${t("window.places.customize17.helper-account-sub")}</small></div>`;
 }
 /* A new model starts on that connection's usual account; an account is always one of the chosen model's own. */
 async function saveHelper(el) {
@@ -138,7 +140,7 @@ export function toolsSection(kind, selected) {
   if (level() < 1 || !set) return "";
   return `<div class="sec x15-sec"><h2>${esc(say(set[0]))}</h2><div class="rows">${set[1].map(([k, i, w]) => demoPlace17(k, i, w)).join("")}</div></div>`;
 }
-export const codingAgentsSection = () => (level() >= 1 ? `<div class="sec x15-sec"><h2>${t("window.places.customize17.other-coding-agents")}</h2><div class="rows">${demoPlace17("handoffcli", "term", [t("window.places.customize17.hand-coding-to-another-agent"), t("window.places.customize17.a-trunk-can-pass-a-coding"), t("window.places.customize17.see-how")])}</div></div>` : "");
+export const codingAgentsSection = () => (level() >= 1 ? `<div class="sec x15-sec"><h2>${t("window.places.customize17.other-coding-agents")}</h2><div class="rows"><div class="prow"><span class="ico-tile">${ic("term", "s")}</span><span class="grow"><b>${esc(t("window.places.customize17.hand-coding-to-another-agent"))}</b><small>${esc(reason("d17-handoffcli"))}</small></span></div></div></div>` : "");
 
 /* A read from outside /api (the OpenAI-shaped address and the agent card), signed like every other request. */
 async function outside(path) {

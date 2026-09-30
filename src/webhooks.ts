@@ -92,6 +92,7 @@ export class Webhooks {
    */
   private started = 0;
   private readonly lastFailure = new Map<string, number>();
+  private readonly lastSuccess = new Map<string, number>();
 
   /**
    * Notify every webhook listening for an event. Deliveries run in the background and their
@@ -267,14 +268,19 @@ export class Webhooks {
   }
   /** A delivery got through: the count starts again, unless a delivery started after this one has since given up. */
   private recordSuccess(owner: string, webhookId: string, turn: number): void {
-    if ((this.lastFailure.get(webhookId) ?? 0) > turn) return;
+    const key = JSON.stringify([owner, webhookId]);
+    this.lastSuccess.set(key, Math.max(turn, this.lastSuccess.get(key) ?? 0));
+    if ((this.lastFailure.get(key) ?? 0) > turn) return;
     const current = this.get(owner, webhookId);
     if (current?.failureCount) this.saveState(owner, webhookId, { ...current, failureCount: 0 });
   }
 
   /** Counts one giving-up delivery and switches the webhook off once failures pile up. */
   private recordFailure(owner: string, webhookId: string, turn: number): void {
-    this.lastFailure.set(webhookId, Math.max(turn, this.lastFailure.get(webhookId) ?? 0));
+    const key = JSON.stringify([owner, webhookId]);
+    // A newer success or explicit re-enable ends the streak for older in-flight deliveries.
+    if ((this.lastSuccess.get(key) ?? 0) > turn) return;
+    this.lastFailure.set(key, Math.max(turn, this.lastFailure.get(key) ?? 0));
     const current = this.get(owner, webhookId);
     if (!current) return;
     const failureCount = current.failureCount + 1;
@@ -282,7 +288,7 @@ export class Webhooks {
     this.saveState(owner, webhookId, {
       ...current,
       failureCount,
-      enabled: !off,
+      enabled: current.enabled && !off,
       disabledAt: off ? new Date().toISOString() : current.disabledAt,
       disabledReason: off ? `Switched off after ${maxConsecutiveFailures} consecutive delivery failures` : current.disabledReason,
     });
@@ -295,6 +301,7 @@ export class Webhooks {
     const webhook = this.get(owner, id);
     if (!webhook) throw new Error("Webhook not found");
     this.saveState(owner, id, { ...webhook, enabled: true, failureCount: 0, disabledAt: null, disabledReason: null });
+    this.lastSuccess.set(JSON.stringify([owner, id]), ++this.started);
     return this.get(owner, id)!;
   }
 

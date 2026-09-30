@@ -18,12 +18,14 @@
      greyed for the security review; the engine has no route that runs the hook checks. */
 
 import { esc, renderNow } from "../core/dom.js";
+import { selectField } from "../core/gsel.js";
 import { S, level } from "../core/state.js";
 import { startConversation } from "../chat/chat.js";
 import { ic, toast, openDlg, closeDlg } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { reason } from "../core/why.js";
 import { pill17, btn17 } from "./parts17.js";
 import { onDemo17, demoPlace17, demoDlg17 } from "./demo17.js";
 import { t, language } from "../../i18n.js";
@@ -156,7 +158,8 @@ function registerDemos() {
   }, go: () => sendTest() });
   onDemo17("hooks", { open: async () => {
     const { hooks } = await api("hooks");
-    demoDlg17("hooks", { title: t("window.places.automations17.before-and-after-each-step"), lead: t("window.places.automations17.hooks-on-this-computer"), go: t("window.places.automations17.run-the-checks"), rows: hooks.map((h) => [h.event, h.executable, onOff(h.enabled)]) });
+    // No primary: Branch runs each hook only when its event happens, never by hand, and the lead says so (window.why.d17-hooks-go).
+    demoDlg17("hooks", { title: t("window.places.automations17.before-and-after-each-step"), lead: `${t("window.places.automations17.hooks-on-this-computer")} ${reason("d17-hooks-go")}`, go: "", rows: hooks.map((h) => [h.event, h.executable, onOff(h.enabled)]) });
   } });
   onDemo17("turnhook", { open: async () => {
     const { hooks } = await api("hooks");
@@ -168,7 +171,7 @@ function registerDemos() {
 /* Days off: the owner's own list (GET /api/calendar daysOff), and Add a day off puts the date in the box on it. The
    calendar record is saved whole, as read (POST /api/calendar). */
 const fieldRow = (id, label, input) => `<div class="ctl" data-css="margin-top:12px"><b>${esc(label)}</b><span class="right">${input}</span><small></small></div>`;
-const pickField = (id, label, options) => fieldRow(id, label, `<select class="inp" id="${id}" aria-label="${esc(label)}">${options.map(([v, words]) => `<option value="${esc(v)}">${esc(words)}</option>`).join("")}</select>`);
+const pickField = (id, label, options) => fieldRow(id, label, selectField({ id, label, options }));
 async function openHolidays() {
   const { settings } = await api("calendar");
   shown.calendar = settings;

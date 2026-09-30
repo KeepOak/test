@@ -94,6 +94,9 @@ test("a real task's command waiting on a yes shows in Terminal with the command 
       : { content: "done", toolCalls: [] };
   } };
   const { app } = await world(t, provider);
+  // Owner ruling 2026-09-30: commands no rule covers ship as "allow"; this owner keeps them asking, so one waits.
+  const { savePolicy } = await import("../dist/policy.js");
+  savePolicy(app.store, app.runtime.owner, { unmatchedCommands: "ask" });
   // The command tool comes with the terminal integration, so a stand-in of it is registered and given to the task: a
   // tool that is not there, or not the task's, is refused without a question (#498), and this one must be asked about.
   const { z } = await import("zod");
@@ -229,6 +232,24 @@ test("one switch opens the side panel in the calm window, its tabs are inside it
   assert.match(steps, /compare\.mjs|git|node/, "the command a step ran shows with it");
   await f.page.keyboard.press("ControlOrMeta+Shift+k");
   assert.equal(await paneOpen(f.page), false, "the same switch, from the keyboard, closes it");
+  assert.deepEqual(f.errors, []);
+});
+
+test("SCREEN-144: a command the owner approved says so in Terminal even when the owner has no name", async (t) => {
+  const f = await newWindow(t);
+  await f.page.route("**/api/profiles", async (route) => {
+    const response = await route.fetch(), data = await response.json();
+    await route.fulfill({ response, json: { ...data, owner: { ...(data.owner ?? {}), name: "" } } });
+  });
+  await f.page.route("**/api/panels/work?*", async (route) => {
+    const response = await route.fetch(), data = await response.json();
+    const entry = { id: "approved-1", command: "ls -la", state: "done", allowed: "owner", output: "" };
+    await route.fulfill({ response, json: { ...data, terminal: { ...(data.terminal ?? {}), entries: [entry] } } });
+  });
+  await f.conversation();
+  await f.page.locator('[data-act="pane"][data-p="activity"]').first().click();
+  await f.page.locator("#pane .ptab", { hasText: "Terminal" }).click();
+  await f.page.locator("#pane .term7", { hasText: "Approved by you" }).waitFor({ timeout: 20000 });
   assert.deepEqual(f.errors, []);
 });
 
