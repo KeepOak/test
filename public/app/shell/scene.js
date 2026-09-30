@@ -232,7 +232,15 @@ export function petHTML(where) {
    every frame of every step (about 2.5 s a minute with a long conversation open). */
 function placePet(box) {
   box.classList.toggle("flip", P.dir < 0);
-  box.style.transform = W.petWhere === "side" ? `translateX(${P.x}px)` : "";
+  const to = W.petWhere === "side" ? `translateX(${P.x}px)` : "";
+  if (box.dataset.placed) { box.style.transform = to; return; }
+  /* A box just drawn starts where the pet already stands; only a step slides. Placed through its transition, a redrawn
+     list slid the pet in from its edge each time, a sleeping pet too (tests/window-sleep.test.mjs). */
+  box.dataset.placed = "1";
+  box.style.transition = "none";
+  box.style.transform = to;
+  getComputedStyle(box).transform; // the start is taken without a transition
+  box.style.transition = "";
 }
 export function drawPet() {
   syncWalker();

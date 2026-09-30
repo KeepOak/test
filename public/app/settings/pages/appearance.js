@@ -18,10 +18,12 @@ import { level as level17 } from "../../core/state.js";
 import { ART17, art17Slot } from "../../core/art17.js";
 import { sec17 } from "../rows17.js";
 import { AG, saveUi } from "../../chat/agent17.js";
-import { LANGUAGES, language, t } from "../../../i18n.js";
+import { language, t } from "../../../i18n.js";
 import { say } from "../../core/words.js";
-import { canSpeak, chooseLanguage } from "../../shell/language.js";
+import { canSpeak, chooseLanguage, languageChoices } from "../../shell/language.js";
 import { gsel } from "../../core/gsel.js";
+import { READING_FONTS } from "../../core/reading-font.js";
+import { markLive } from "../../core/features.js";
 
 const pressed = (on) => `aria-pressed="${!!on}"`;
 const segAct = (title, sub, opts, cur, act) => `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opts.map(([v, l, a]) => `<button type="button" ${pressed(v === cur)} data-act="${a ?? act}" data-v="${v}">${esc(l)}</button>`).join("")}</span></span><small>${esc(sub)}</small></div>`;
@@ -81,7 +83,9 @@ function backgroundSection() {
 
 function readingSection() {
   const p = prefs();
-  return `<div class="sec"><h2>${t("window.settings.appearance.reading")}</h2>${segAct(t("look.widthRow"), t("window.settings.appearance.wide-uses-more-of-a-big"), [["comfortable", t("appearance.density.comfortable")], ["wide", t("onscreen.width.wide")], ["full", t("window.settings.appearance.full")]], p.conversationWidth, "widthset")}${segAct(t("appearance.textSize"), t("window.settings.appearance.changes-every-screen"), [["small", t("appearance.textSize.small")], ["medium", t("settingsGrown.level.regular")], ["large", t("appearance.textSize.large")]], p.textSize, "size")}</div>`;
+  const font = gsel({ id: "reading-font", sw: "reading-font", label: t("window.settings.appearance.reading-font"), value: p.readingFont ?? "", options: [["", t("window.settings.appearance.theme-font")], ...READING_FONTS.map((name) => [name, name])] });
+  const fontRow = `<div class="ctl"><b>${t("window.settings.appearance.reading-font")}</b><span class="right">${font}</span><small>${t("window.settings.appearance.reading-font-hint")}</small></div>`;
+  return `<div class="sec"><h2>${t("window.settings.appearance.reading")}</h2>${fontRow}${segAct(t("look.widthRow"), t("window.settings.appearance.wide-uses-more-of-a-big"), [["comfortable", t("appearance.density.comfortable")], ["wide", t("onscreen.width.wide")], ["full", t("window.settings.appearance.full")]], p.conversationWidth, "widthset")}${segAct(t("appearance.textSize"), t("window.settings.appearance.changes-every-screen"), [["small", t("appearance.textSize.small")], ["medium", t("settingsGrown.level.regular")], ["large", t("appearance.textSize.large")]], p.textSize, "size")}</div>`;
 }
 
 /* Every pet of the prototype's gallery, drawn as its cards (shell/scene.js, core/pets.js). The row of buttons stays hidden,
@@ -110,15 +114,11 @@ function shownSection() {
 }
 
 /* Only the languages that have words on file (public/locales, i18n.js LANGUAGES) are listed, the same list setup's
-   Language picker shows, each named in its own language by the browser (Intl.DisplayNames). The one in force is the one
+   Language picker shows, each with the catalogue's own-language label and translation notice. The one in force is the one
    shown; picking one saves it (shell/language.js). */
-const ownName = (code) => {
-  const name = new Intl.DisplayNames([code], { type: "language" }).of(code) ?? code;
-  return name.charAt(0).toLocaleUpperCase(code) + name.slice(1);
-};
 function languageSection() {
   const now = language();
-  const pick = gsel({ id: "lang", sw: "lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now });
+  const pick = gsel({ id: "lang", sw: "lang", label: t("appearance.language"), options: languageChoices(), value: now });
   return `<div class="sec"><h2>${t("appearance.language")}</h2><div class="ctl"><b>${t("appearance.language")}</b><span class="right">${pick}</span><small>${t("window.settings.appearance.dates-and-numbers-follow-it-too")}</small></div></div>`;
 }
 /* The window is drawn again in the new words; English says so as the prototype does. */
@@ -176,6 +176,7 @@ async function removeOwn() {
 async function setFit(fit) { await saveDelight({ background: { fit } }); drawBackground(); renderNow(); }
 
 export function init() {
+  markLive(["sw:reading-font"]);
   // "themeset" belongs to the shell, which applies the look and saves it to the engine; the theme controls are shell/themes.js.
   on("widthset", (el) => savePrefsAndDraw({ conversationWidth: el.dataset.v }));
   on("size", (el) => savePrefsAndDraw({ textSize: el.dataset.v }));
@@ -205,6 +206,7 @@ export function init() {
     if (tr.id === "ag-show") { saveUi({ show: tr.checked }); toast(tr.checked ? t("window.settings.appearance.the-agent-is-back-beside-the") : t("window.settings.appearance.hidden")); return; }
     if (tr.id === "pet-name") { saveDelight({ pets: { name: tr.value } }).then(() => renderNow()); return; }
     if (tr.id === "lang") { pickLanguage(tr.value); return; }
+    if (tr.id === "reading-font") { savePrefsAndDraw({ readingFont: tr.value || null }); return; }
     /* Keep things still: the engine's preference reduceMotion (POST /api/preferences), which the pet and the painted
        scene read (core/pets.js calmPets, shell/scene.js calm). */
     if (tr.id === "a-still") { savePrefsAndDraw({ reduceMotion: tr.checked }); return; }

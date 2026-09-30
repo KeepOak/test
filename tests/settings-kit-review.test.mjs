@@ -15,7 +15,7 @@ import { reviewerSettings } from "../dist/approval-reviewer.js";
 import { securityCheckSettings } from "../dist/security-audit/settings.js";
 import { wallSettings } from "../dist/sandbox.js";
 import { setLockdown } from "../dist/lockdown.js";
-import { readPolicy } from "../dist/policy.js";
+import { readPolicy, savePolicy } from "../dist/policy.js";
 import { saveGoalUndoSettings } from "../dist/goal-mode.js";
 
 /* R17-S-A integration review (adversarial pass): the holes found, each shut and kept shut. */
@@ -99,6 +99,8 @@ test("review: guards are saved through their own save, so a kept copy cannot go 
 
 test("review: a crafted settings file cannot pollute, reach locked records, or smuggle values out of bounds", async (t) => {
   const { store, owner } = await fixture(t);
+  // Owner ruling 2026-09-30: commands ship as "allow"; this owner chose "ask", so the file's "allow" is a loosening.
+  savePolicy(store, owner, { unmatchedCommands: "ask" });
   const crafted = '{"format":"branch-settings","version":1,"exportedAt":"x","appVersion":"x","settings":{'
     + '"__proto__":{"mode":"on","polluted":"yes"},"constructor":{"mode":"on"},"loop_guard":{"__proto__":{"x":1},"mode":"when-needed"},'
     + '"accounts":{"mode":"on"},"add-ons":{"wall":"off"},"leak-guard":{"mode":"off"},"knobs":{"env":"pass"},"never-break":{"mode":"off"},'
