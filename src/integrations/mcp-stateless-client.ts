@@ -14,6 +14,7 @@ import { mcpToolName } from './mcp.js';
 import type { McpOwnerRequests } from '../mcp-owner-requests.js';
 import { randomUUID } from 'node:crypto';
 import { urlRequiredRetry } from './mcp-url-retry.js';
+import { mcpProgress } from './mcp-progress.js';
 export class LegacyMcpFallback extends Error {}
 
 function selectedEnv(config: Extract<McpConfig, { transport: 'stdio' }>, env: NodeJS.ProcessEnv): Record<string, string> {
@@ -133,6 +134,7 @@ function modernCall(client: Client, found: Tool[], continuations: Map<string, { 
     if (!tool) throw new Error('MCP tool is not in the reviewed allowlist');
     const key = `${context.runId}:${argumentFingerprint(name, JSON.stringify(args))}`, deadline = Date.now() + 120000;
     const bound = { ...context, signal: AbortSignal.any([context.signal, closed, AbortSignal.timeout(120000)]) };
+    const onprogress = mcpProgress(bound, config.id, name);
     let inputResponses: Record<string, unknown> | undefined;
     let retried = false;
     for (const [id, held] of continuations) if (held.expires < Date.now()) continuations.delete(id);
@@ -145,7 +147,7 @@ function modernCall(client: Client, found: Tool[], continuations: Map<string, { 
       const invoke = () => client.request({ method: 'tools/call', params: { name, arguments: args,
         ...(held ? { requestState: held.state } : {}), ...(inputResponses ? { inputResponses } : {}) } }, withInputRequired(CallToolResultSchema),
         { signal: bound.signal, timeout: Math.min(30000, Math.max(1, deadline - Date.now())), allowInputRequired: true,
-          headers: parameterHeaders(tool.inputSchema, args) });
+          headers: parameterHeaders(tool.inputSchema, args), onprogress });
       const result = ownerRequests && declared.has('elicitation/url') ? await urlRequiredRetry(invoke,
         (error): error is ProtocolError => error instanceof ProtocolError, async questions => {
           if (retried) throw new Error('This original call already used its owner-approved retry.');

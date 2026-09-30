@@ -19,6 +19,7 @@ import { argumentFingerprint } from './runtime.js';
 import { approvalQuestion, maximumPendingPerSession } from './approvals.js';
 import { completed, protocolKey, statelessVersion, StatelessError } from './mcp-stateless.js';
 import { lockedDown } from './lockdown.js';
+import type { RunObserver } from './mcp-run-observer.js';
 
 /**
  * Protocol versions Branch understands, newest first. A client that asks for something else is told
@@ -376,7 +377,7 @@ export class McpServer {
   }
 
   async callModernTool(params: { name: string; arguments?: Record<string, unknown> }, principal: string,
-    signal: AbortSignal, state: unknown): Promise<CallToolResult | InputRequiredResult> {
+    signal: AbortSignal, state: unknown, observe?: RunObserver): Promise<CallToolResult | InputRequiredResult> {
     this.requireModern();
     signal.throwIfAborted();
     const args = params.arguments ?? {}, fingerprint = argumentFingerprint(params.name, JSON.stringify(args));
@@ -392,12 +393,13 @@ export class McpServer {
     if (!retained && this.modernPending.size >= 100) throw new StatelessError(-32603, 'Too many pending calls');
     pending.busy = true;
     this.modernPending.set(token, pending);
-    try { return await this.executeModern(params.name, args, signal, token, pending); }
+    try { return await this.executeModern(params.name, args, signal, token, pending, observe); }
     finally { pending.busy = false; }
   }
 
   private async executeModern(name: string, args: Record<string, unknown>, signal: AbortSignal, token: string,
-    pending: { session: McpSession; principal: string; owner: string; generation: number; asked: boolean }): Promise<CallToolResult | InputRequiredResult> {
+    pending: { session: McpSession; principal: string; owner: string; generation: number; asked: boolean },
+    observe?: RunObserver): Promise<CallToolResult | InputRequiredResult> {
     this.rateModern(pending.principal);
     const guard = () => {
       signal.throwIfAborted(); this.requireModern();
@@ -410,7 +412,7 @@ export class McpServer {
       if (this.inFlight - this.waiting >= this.options.maxConcurrentCalls) throw new StatelessError(-32603, 'Branch is busy');
       this.inFlight++;
       try {
-        const result = name === 'branch.ask' ? await this.callAsk(args, signal) : this.snapshot(pending.session, args);
+        const result = name === 'branch.ask' ? await this.callAsk(args, signal, observe) : this.snapshot(pending.session, args);
         guard();
         return CallToolResultSchema.parse(this.runtime.hideSecrets(result));
       } finally { this.inFlight--; }
@@ -433,7 +435,7 @@ export class McpServer {
     }
     guard();
     this.modernPending.delete(token); // Consume before effects, so parallel/repeated retries cannot execute twice.
-    return CallToolResultSchema.parse(this.runtime.hideSecrets(await this.callRegistryTool(name, args, exposed, pending.session, signal, guard)));
+    return CallToolResultSchema.parse(this.runtime.hideSecrets(await this.callRegistryTool(name, args, exposed, pending.session, signal, guard, observe)));
   }
 
   private rateModern(principal: string): void {
@@ -662,26 +664,29 @@ export class McpServer {
   }
 
   /** Delegate a prompt to Branch itself; the runtime records the run, we add the receipt. */
-  private async callAsk(args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown> {
+  private async callAsk(args: Record<string, unknown>, signal?: AbortSignal, observe?: RunObserver): Promise<unknown> {
     const parsed = z.object({ prompt: z.string().trim().min(1).max(16000) }).strict().safeParse(args);
     if (!parsed.success) return failure('Give a "prompt" saying what you want Branch to do.');
+    let stop: (() => Promise<void>) | undefined;
     try {
       // Bound to what the owner shares: the task may use only the permissions the shared tools need, and as a task from
       // outside it asks before any change (cappedPolicy), whatever the owner's own setting is.
       const permissions = [...new Set([...this.exposed()].filter((name) => this.registry.names().includes(name)).map((name) => this.registry.permissionOf(name)))];
-      const run = await this.runtime.run({ prompt: parsed.data.prompt, source: 'mcp', permissions, ...(signal ? { signal } : {}) });
+      const run = await this.runtime.run({ prompt: parsed.data.prompt, source: 'mcp', permissions,
+        ...(signal ? { signal } : {}), ...(observe ? { onStarted: (run) => { stop = observe(run.id); } } : {}) });
       await this.recordCall(run.id, 'branch.ask', parsed.data, run.output, run.status === 'completed');
       this.announceRun(run.id);
-      return { content: [{ type: 'text', text: run.output }], isError: run.status !== 'completed' };
+      return { content: [{ type: 'text', text: run.output }], isError: run.status !== 'completed',
+        ...(observe ? { _meta: { 'io.keepoak.branch/run': { id: run.id, status: run.status, source: 'mcp' } } } : {}) };
     } catch (e) {
       return failure(errorText(e));
-    }
+    } finally { await stop?.(); }
   }
 
   /** Run one shared tool as its own recorded task, so it appears in Activity with a receipt. */
   private async callRegistryTool(
     name: string, args: Record<string, unknown>, exposed: Set<string>, session?: McpSession,
-    signal?: AbortSignal, guard?: () => void,
+    signal?: AbortSignal, guard?: () => void, observe?: RunObserver,
   ): Promise<unknown> {
     const verdict = this.gate(name, args, session);
     if (verdict.decision === 'deny') return failure(verdict.refusal);
@@ -696,22 +701,27 @@ export class McpServer {
     if (signal) this.inFlight++;
     const run = this.store.createRun(this.runtime.owner, `Another AI tool used ${name}`);
     this.store.event(run.id, 'run.started', { source: 'mcp', tool: name, provider: this.runtime.provider.name, parentRunId: null });
+    const stop = observe?.(run.id);
+    let operationSignal = signal;
     try {
       const context = { ...this.toolContext(run.id, exposed), ...verdict.sandbox };
       if (signal) context.signal = AbortSignal.any([context.signal, signal]);
-      const result = await this.registry.execute(name, args, context);
+      const result = signal ? await this.runtime.recordedMcpOperation(run.id, context.signal,
+        (bound) => { operationSignal = bound; return this.registry.execute(name, args, { ...context, signal: bound }); })
+        : await this.registry.execute(name, args, context);
       guard?.();
       await this.recordCall(run.id, name, args, result, true);
       this.store.finish(run.id, 'completed', JSON.stringify(result));
       this.announceRun(run.id);
-      return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false };
+      return { content: [{ type: 'text', text: JSON.stringify(result) }], isError: false,
+        ...(observe ? { _meta: { 'io.keepoak.branch/run': { id: run.id, status: 'completed', source: 'mcp' } } } : {}) };
     } catch (e) {
       const error = errorText(e);
       await this.recordCall(run.id, name, args, error, false);
-      this.store.finish(run.id, 'failed', error);
+      this.store.finish(run.id, operationSignal?.aborted ? 'cancelled' : 'failed', error);
       this.announceRun(run.id);
       return failure(error);
-    } finally { if (signal) this.inFlight--; }
+    } finally { if (signal) this.inFlight--; await stop?.(); }
   }
 
   /**
