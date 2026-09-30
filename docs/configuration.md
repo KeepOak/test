@@ -6644,6 +6644,12 @@ plainest example — something for you to do by hand. `GET /api/deferred` lists 
 `POST /api/deferred/settle` with the id and what came of it brings the answer back into the
 conversation as an ordinary follow-up message.
 
+`user.task` keeps the small core API for manual handoffs. Typed handoffs are available through
+`user.later` in the agents toolbox: `kind: "signing"` waits for your report that you signed,
+and the default `kind: "later"` records unfinished work for the **Finish now** action.
+Neither performs or verifies a signature, sets a timer, or grants the continuation new permissions.
+Earlier `user.task` calls with `kind: "signing"` remain accepted.
+
 All the routes in this batch — flows, the handed-over jobs, the programs left running, and the
 three switches above — belong to the owner. With somebody else's profile switched on they answer
 "belongs to the owner", exactly as saved workflows and the waiting line do, and so does the
