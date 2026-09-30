@@ -13,6 +13,7 @@ import {
   AnthropicProvider,
   ProviderStreamError,
 } from "../dist/index.js";
+import { Budget } from "../dist/contracts.js";
 import {
   ProviderHttpError,
   parseRetryAfter,
@@ -474,8 +475,8 @@ test("delegated retries consume the unchanged parent step and token budget", asy
   const { app, requests } = await fixture(t, "openai", (_entry, res) =>
     respond(res, 503, {}),
   );
-  const context = app.runtime.context();
-  context.budget.limits.maxSteps = 2;
+  // Budget.limits is read-only (it folds in the billed limits), so the lower step limit is set where the budget is made.
+  const context = app.runtime.context({ budget: new Budget({ maxSteps: 2, maxTokens: 200000 }) });
   const run = await app.runtime.delegate(
     "child retry",
     context,
