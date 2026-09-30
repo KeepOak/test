@@ -6834,6 +6834,7 @@
   "window.chat.msg.saved-prompt": "saved prompt",
   "window.chat.msg.second-opinion": "Second opinion",
   "window.chat.msg.seconds": "{n} s total",
+  "window.chat.msg.via-app": "via {name}",
   "window.chat.msg.sent-at": "Sent at {time}",
   "window.chat.msg.steps": "Steps",
   "window.chat.msg.steps-in": "{count} in this task · model calls, tools and approvals",
