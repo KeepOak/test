@@ -2534,7 +2534,9 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
   // wire-greyed: Settings › Advanced › Archive facts unused for (owner only).
   if (path === "/api/memory/auto-archive")
     return autoArchiveApi({ store: app.store, owner: app.runtime.owner, retrieval: app.memory.retrieval,
-      requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", () => readBody(request, 1024)).catch((error: unknown) => {
+      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireUnlocked: () => { if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing how unused facts are set aside."); },
+    }, request.method ?? "GET", () => readBody(request, 1024)).catch((error: unknown) => {
       throw error instanceof AutoArchiveApiError ? new HttpError(error.status, error.message) : error;
     });
   if (request.method === "POST" && path === "/api/memory/hygiene") return app.store.memoryHygiene(owner, await readBody(request));
