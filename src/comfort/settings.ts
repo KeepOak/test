@@ -41,6 +41,16 @@ export const shortcutDefaults = {
   /** UI-106: the conversation before the one open, and "Who is using Branch" (the person menu). */
   previousConversation: "Ctrl+Shift+Tab",
   switchPerson: "",
+  findConversation: "Ctrl+F",
+  conversation1: "Ctrl+1",
+  conversation2: "Ctrl+2",
+  conversation3: "Ctrl+3",
+  conversation4: "Ctrl+4",
+  conversation5: "Ctrl+5",
+  conversation6: "Ctrl+6",
+  conversation7: "Ctrl+7",
+  conversation8: "Ctrl+8",
+  conversation9: "Ctrl+9",
 } as const;
 export type ShortcutAction = keyof typeof shortcutDefaults;
 export const shortcutActions = Object.keys(shortcutDefaults) as ShortcutAction[];
@@ -79,6 +89,16 @@ export const ComfortKeysSchema = z.preprocess(defaultsGiveWay, z.object({
   nextConversation: keyCombo.default(shortcutDefaults.nextConversation),
   previousConversation: keyCombo.default(shortcutDefaults.previousConversation),
   switchPerson: keyCombo.default(shortcutDefaults.switchPerson),
+  findConversation: keyCombo.default(shortcutDefaults.findConversation),
+  conversation1: keyCombo.default(shortcutDefaults.conversation1),
+  conversation2: keyCombo.default(shortcutDefaults.conversation2),
+  conversation3: keyCombo.default(shortcutDefaults.conversation3),
+  conversation4: keyCombo.default(shortcutDefaults.conversation4),
+  conversation5: keyCombo.default(shortcutDefaults.conversation5),
+  conversation6: keyCombo.default(shortcutDefaults.conversation6),
+  conversation7: keyCombo.default(shortcutDefaults.conversation7),
+  conversation8: keyCombo.default(shortcutDefaults.conversation8),
+  conversation9: keyCombo.default(shortcutDefaults.conversation9),
   /** Esc leaves typing for moving (h j k l, w b, 0 $, x, dd, i a o), as in vim. */
   vim: z.boolean().default(false),
 }).strict().superRefine((value, context) => {

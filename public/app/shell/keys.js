@@ -8,7 +8,8 @@ import { E } from "../core/state.js";
 
 const MAC = /Mac/.test(navigator.platform);
 const FIRST = { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", stopTask: "Ctrl+Shift+S", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab",
-  previousConversation: "Ctrl+Shift+Tab", focusPrompt: "Ctrl+L", searchHistory: "Ctrl+Shift+F" };
+  previousConversation: "Ctrl+Shift+Tab", focusPrompt: "Ctrl+L", searchHistory: "Ctrl+Shift+F", findConversation: "Ctrl+F",
+  ...Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`conversation${i + 1}`, `Ctrl+${i + 1}`])) };
 /* Multiple default chords approach: Hermes keybinds/actions.ts (Nous Research, MIT,
    a9a54245b2311c705d29050b7f9868c015917aec). Original Branch compatibility layer. */
 const ALIASES = { sidePane: ["Ctrl+J"] };
@@ -47,7 +48,15 @@ export function bindings(action) {
   const aliases = (ALIASES[action] ?? []).filter((combo) => !actions.some((other) => other !== action && same(binding(other)) === same(combo)));
   return [primary, ...aliases];
 }
-export const pressed = (e, action) => bindings(action).some((b) => same(comboOf(e)) === same(b));
+/* Composition, AltGr and editor commands stay with the original target. */
+const EDITOR_KEYS = new Set(["ctrl+a", "ctrl+c", "ctrl+x", "ctrl+v", "ctrl+z", "ctrl+y", "ctrl+b", "ctrl+i", "ctrl+u", "ctrl+shift+v", "ctrl+shift+z", "alt+backspace"]);
+export function pressed(e, action) {
+  if (e.defaultPrevented || e.isComposing || e.repeat || e.getModifierState?.("AltGraph")) return false;
+  const combo = same(comboOf(e));
+  if (e.target.closest?.("input, textarea, select, [contenteditable]") && EDITOR_KEYS.has(combo)) return false;
+  return bindings(action).some((b) => combo === same(b));
+}
+export const actionAria = (action) => bindings(action).map(ariaKeys).join(" ");
 /* How a key is shown: the engine's "Ctrl" is the computer's main key, Command on a Mac, so a Mac shows it as Cmd.
    Only the display changes; what is kept and compared stays the engine's own writing. */
 const shown = (part) => (MAC && part === "Ctrl" ? "Cmd" : part);

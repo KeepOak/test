@@ -69,7 +69,8 @@ async function setGateway(v) {
 const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sidePane", "Show or hide the side panel"], ["focusMode", "Focus mode"], ["talkLive", "Talk live"], ["stopTask", "Stop the current task"], ["openInbox", "Open the Inbox"], ["nextConversation", "Next conversation"], ["previousConversation", "Previous conversation"],
   ["searchHistory", "Search the history"], ["focusPrompt", "Focus the message box"], ["lookInside", "Look inside the latest task"], ["newTrunk", "Start a new Trunk"],
   ["switchPerson", "Who is using Branch"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"]];
-const FIXED = [["Open conversation 1 to 9 in the list", "Ctrl+1…9"], ["New line in a message", "Shift+Enter"], ["Call a Trunk in a message", "@"], ["Use a skill", "/"], ["This list", "?"], ["Close anything", "Esc"]];
+KEYS.push(["findConversation", "Find in this conversation"], ...Array.from({ length: 9 }, (_, i) => [`conversation${i + 1}`, `Open conversation ${i + 1} in the list`]));
+const FIXED = [["New line in a message", "Shift+Enter"], ["Call a Trunk in a message", "@"], ["Use a skill", "/"], ["This list", "?"], ["Close anything", "Esc"]];
 let listening = null;
 const nameOf = (action) => KEYS.find(([a]) => a === action)?.[1] ?? "";
 
@@ -169,8 +170,9 @@ function nextConversation(step = 1) {
 }
 /* Ctrl+1…9: the Nth conversation in the list, as tabs in a browser. */
 function nthConversation(e) {
-  if (!/^Ctrl\+[1-9]$/.test(comboOf(e))) return false;
-  const id = listed()[Number(comboOf(e).slice(-1)) - 1];
+  const slot = Array.from({ length: 9 }, (_, i) => i + 1).find((i) => pressed(e, `conversation${i}`));
+  if (!slot) return false;
+  const id = listed()[slot - 1];
   if (!id) return false;
   e.preventDefault();
   openRow(id);
