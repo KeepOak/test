@@ -46,6 +46,7 @@ function drawSettings(form, models) {
   const server = field(form, 'Server ID'); server.required = true; server.pattern = '[a-z][a-z0-9-]{0,29}';
   const sampling = field(form, 'Allow requests to a model', 'checkbox');
   const elicitation = field(form, 'Allow questions for you', 'checkbox');
+  const roots = field(form, 'Allow requests to see a task workspace root', 'checkbox');
   const rpm = field(form, 'Requests per minute', 'number'); rpm.value = '3'; rpm.min = '1'; rpm.max = '20';
   const cap = field(form, 'Maximum output tokens per request', 'number'); cap.value = '2048'; cap.min = '128'; cap.max = '8192';
   const allowed = document.createElement('select'); allowed.multiple = true;
@@ -57,6 +58,7 @@ function drawSettings(form, models) {
     try {
       const value = await api(`mcp/owner-requests/settings?server=${encodeURIComponent(server.value)}`);
       sampling.checked = value.sampling; elicitation.checked = value.elicitation;
+      roots.checked = value.roots === true;
       rpm.value = String(value.requestsPerMinute); cap.value = String(value.tokenCap);
       for (const option of allowed.options) option.selected = value.models.includes(option.value);
     } catch (error) { toast(error.message); }
@@ -65,7 +67,7 @@ function drawSettings(form, models) {
   form.onsubmit = async event => {
     event.preventDefault();
     try { await api('mcp/owner-requests/settings', { server: server.value, settings: {
-      sampling: sampling.checked, elicitation: elicitation.checked, requestsPerMinute: Number(rpm.value),
+      sampling: sampling.checked, elicitation: elicitation.checked, roots: roots.checked, requestsPerMinute: Number(rpm.value),
       tokenCap: Number(cap.value), models: [...allowed.selectedOptions].map(o => o.value) } }); toast('Saved. Reconnect this server to advertise the enabled features.'); }
     catch (error) { toast(error.message); }
   };
@@ -76,6 +78,7 @@ function question(request) {
   title.textContent = `${request.server}: ${request.kind === 'sampling' ? 'Permission to ask a model' : 'A question for you'}`;
   const inputs = new Map();
   if (request.kind === 'sampling') body.textContent = `${request.details.notice}\nModel: ${request.details.modelName}\nOutput limit: ${request.details.maxTokens}\n${request.details.messages.map(m => `${m.role}: ${m.content}`).join('\n\n')}`;
+  else if (request.kind === 'roots') body.textContent = `${request.details.message}\n${request.details.uri}\nTask: ${request.details.runId}`;
   else body.textContent = `${request.details.message}\nYour answers will be sent to ${request.server}.`;
   form.append(title, body);
   if (request.kind === 'elicitation') for (const [name, spec] of Object.entries(request.details.requestedSchema.properties)) {

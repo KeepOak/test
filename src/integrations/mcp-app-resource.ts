@@ -1,5 +1,9 @@
-import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
+export interface McpResourceReader {
+  readResource(params: { uri: string }, options: { signal: AbortSignal; timeout: number }): Promise<{
+    contents: { uri: string; mimeType?: string | undefined; text?: string | undefined }[];
+  }>;
+}
 
 export function mcpUi(tool: Pick<Tool, '_meta'>): { uri?: string; app: boolean; model: boolean } {
   const meta = tool._meta as { ui?: { resourceUri?: unknown; visibility?: unknown }; 'ui/resourceUri'?: unknown } | undefined;
@@ -10,13 +14,13 @@ export function mcpUi(tool: Pick<Tool, '_meta'>): { uri?: string; app: boolean; 
 }
 
 /** Read only the tool's declared UI resource on its already-authorized connection. */
-export async function appendMcpUi(client: Client, tool: Tool | undefined, result: unknown, signal: AbortSignal): Promise<unknown> {
+export async function appendMcpUi(client: McpResourceReader, tool: Tool | undefined, result: unknown, signal: AbortSignal): Promise<unknown> {
   const uri = tool ? mcpUi(tool).uri : undefined;
   if (!uri) return result;
   try {
     const resource = await client.readResource({ uri }, { signal, timeout: 10000 });
     const page = resource.contents.find(item => item.uri === uri && 'text' in item && /^text\/html\b/i.test(item.mimeType ?? ''));
-    if (!page || !('text' in page) || Buffer.byteLength(page.text) > 40000) return result;
+    if (!page || typeof page.text !== 'string' || Buffer.byteLength(page.text) > 40000) return result;
     const original = result as { content?: unknown[] };
     if (!Array.isArray(original.content) || (result as { isError?: boolean }).isError) return result;
     const appended = { ...original, content: [{ type: 'resource', resource: page }, ...original.content] };

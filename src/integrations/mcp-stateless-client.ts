@@ -1,4 +1,5 @@
-import { Client, StreamableHTTPClientTransport, withInputRequired, isInputRequiredResult } from '@modelcontextprotocol/client';
+import { Client, StreamableHTTPClientTransport, withInputRequired, isInputRequiredResult,
+  SdkError, SdkErrorCode, ProtocolError } from '@modelcontextprotocol/client';
 import { CallToolResultSchema } from '@modelcontextprotocol/core';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -8,6 +9,9 @@ import { boundedFetch } from './bounded-fetch.js';
 import { runAsNode } from '../child-env.js';
 import { argumentFingerprint } from '../runtime.js';
 import { headerAnnotations, parameterHeaders } from './mcp-stateless-headers.js';
+import { appendMcpUi } from './mcp-app-resource.js';
+import { mcpToolName } from './mcp.js';
+import type { McpOwnerRequests } from '../mcp-owner-requests.js';
 export class LegacyMcpFallback extends Error {}
 
 function selectedEnv(config: Extract<McpConfig, { transport: 'stdio' }>, env: NodeJS.ProcessEnv): Record<string, string> {
@@ -44,10 +48,15 @@ function boundedRequests(base: typeof fetch): typeof fetch {
 }
 
 export async function openStatelessMcp(config: McpConfig, env: NodeJS.ProcessEnv,
-  policy: { guard(base: typeof fetch): typeof fetch } | undefined, timeout: number) {
+  policy: { guard(base: typeof fetch): typeof fetch } | undefined, timeout: number, ownerRequests?: McpOwnerRequests) {
+  const interactive = ownerRequests?.capabilities(config.id, true) ?? {};
   const client = new Client({ name: 'branch', version: '0.1.0' }, {
-    capabilities: {}, inputRequired: { autoFulfill: false }, listMaxPages: 10,
-    versionNegotiation: { mode: config.protocol === 'auto' ? 'auto' : { pin: '2026-07-28' } },
+    capabilities: { ...(interactive.sampling ? { sampling: {} } : {}),
+      ...(interactive.elicitation ? { elicitation: { form: {} } } : {}), ...(interactive.roots ? { roots: {} } : {}),
+      ...(config.apps ? { extensions: {
+      'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } } } : {}) },
+    inputRequired: { autoFulfill: false }, listMaxPages: 10,
+    versionNegotiation: { mode: { pin: '2026-07-28' } },
   });
   const selected = config.transport === 'stdio' ? selectedEnv(config, env) : {};
   const connection = config.transport === 'http' ? httpTransport(config, env, policy) : {
@@ -60,11 +69,11 @@ export async function openStatelessMcp(config: McpConfig, env: NodeJS.ProcessEnv
   client.onclose = () => { alive = false; };
   const continuations = new Map<string, { state: string; expires: number }>();
   try {
-    await client.connect(connection.transport, { timeout });
+    await negotiateModern(client, connection.transport, config, timeout);
     if (client.getProtocolEra() !== 'modern') throw new LegacyMcpFallback('Server negotiated legacy MCP');
     if (client.getServerVersion()?.version !== config.expectedVersion) throw new Error('MCP server version changed');
     const found = await listTools(client, config.tools, timeout);
-    const call = modernCall(client, found, continuations);
+    const call = modernCall(client, found, continuations, config, new Set(Object.keys(interactive)), ownerRequests);
     // Shared Apps bridge can consume this structural interface after capability negotiation is wired.
     const resourceReader = { readResource: client.readResource.bind(client) };
     return { config, found, secrets: connection.secrets, call, resourceReader, alive: () => alive,
@@ -72,29 +81,62 @@ export async function openStatelessMcp(config: McpConfig, env: NodeJS.ProcessEnv
   } catch (error) { await client.close(); throw error; }
 }
 
-function modernCall(client: Client, found: Tool[], continuations: Map<string, { state: string; expires: number }>) {
+async function negotiateModern(client: Client, transport: Parameters<Client['connect']>[0], config: McpConfig, timeout: number) {
+  try { await client.connect(transport, { timeout }); }
+  catch (error) {
+    // Only the side-effect-free discovery negotiation may fall back; never tool execution.
+    if (config.protocol === 'auto' && (error instanceof SdkError && error.code === SdkErrorCode.EraNegotiationFailed
+      || error instanceof ProtocolError && [-32601, -32022].includes(error.code)))
+      throw new LegacyMcpFallback('Modern discovery was unavailable');
+    throw error;
+  }
+}
+
+function modernCall(client: Client, found: Tool[], continuations: Map<string, { state: string; expires: number }>,
+  config: McpConfig, declared: ReadonlySet<string>, ownerRequests?: McpOwnerRequests) {
   return async (name: string, args: Record<string, unknown>, context: ToolContext): Promise<unknown> => {
     const tool = found.find((item) => item.name === name);
     if (!tool) throw new Error('MCP tool is not in the reviewed allowlist');
-    const key = `${context.runId}:${argumentFingerprint(name, JSON.stringify(args))}`, deadline = Date.now() + 30000;
+    const key = `${context.runId}:${argumentFingerprint(name, JSON.stringify(args))}`, deadline = Date.now() + 120000;
+    const bound = { ...context, signal: AbortSignal.any([context.signal, AbortSignal.timeout(120000)]) };
+    let inputResponses: Record<string, unknown> | undefined;
     for (const [id, held] of continuations) if (held.expires < Date.now()) continuations.delete(id);
     for (let round = 0; round < 10 && Date.now() < deadline; round++) {
-      context.signal.throwIfAborted();
+      bound.signal.throwIfAborted();
       const held = continuations.get(key);
       const result = await client.request({ method: 'tools/call', params: { name, arguments: args,
-        ...(held ? { requestState: held.state } : {}) } }, withInputRequired(CallToolResultSchema),
-        { signal: context.signal, timeout: Math.max(1, deadline - Date.now()), allowInputRequired: true,
+        ...(held ? { requestState: held.state } : {}), ...(inputResponses ? { inputResponses } : {}) } }, withInputRequired(CallToolResultSchema),
+        { signal: bound.signal, timeout: Math.min(30000, Math.max(1, deadline - Date.now())), allowInputRequired: true,
           headers: parameterHeaders(tool.inputSchema, args) });
-      if (!isInputRequiredResult(result)) { continuations.delete(key); return result; }
-      if (result.inputRequests && Object.keys(result.inputRequests).length)
-        throw new Error('MCP requested an interactive capability Branch did not advertise');
-      if (typeof result.requestState !== 'string' || result.requestState.length > 16384 || continuations.size >= 100 && !held)
+      if (!isInputRequiredResult(result)) {
+        continuations.delete(key);
+        return config.apps ? appendMcpUi(client, tool, result, bound.signal) : result;
+      }
+      inputResponses = await embeddedResponses(result.inputRequests, config.id, name, args, bound, declared, ownerRequests);
+      if (result.requestState !== undefined && (typeof result.requestState !== 'string' || result.requestState.length > 16384 || continuations.size >= 100 && !held))
         throw new Error('MCP continuation exceeds limits');
-      continuations.set(key, { state: result.requestState, expires: Date.now() + 600000 });
-      await pause(context.signal);
+      if (result.requestState === undefined) continuations.delete(key);
+      else continuations.set(key, { state: result.requestState, expires: Date.now() + 600000 });
+      if (!inputResponses) await pause(bound.signal);
     }
     throw new Error('MCP is waiting for its native owner approval. The same task may retry after the owner answers.');
   };
+}
+
+async function embeddedResponses(requests: Record<string, unknown> | undefined, server: string, tool: string, args: Record<string, unknown>,
+  context: ToolContext, declared: ReadonlySet<string>, ownerRequests?: McpOwnerRequests): Promise<Record<string, unknown> | undefined> {
+  if (!requests || !Object.keys(requests).length) return undefined;
+  if (!ownerRequests || Object.keys(requests).length > 8 || Buffer.byteLength(JSON.stringify(requests)) > 32768)
+    throw new Error('MCP embedded requests are unavailable or exceed limits');
+  const responses: Record<string, unknown> = {};
+  for (const [id, request] of Object.entries(requests)) {
+    if (!id || id.length > 200 || ['__proto__', 'constructor', 'prototype'].includes(id)) throw new Error('Invalid embedded request ID');
+    const method = request && typeof request === 'object' ? (request as { method?: unknown }).method : undefined;
+    const capability = method === 'sampling/createMessage' ? 'sampling' : method === 'elicitation/create' ? 'elicitation' : method === 'roots/list' ? 'roots' : '';
+    if (!declared.has(capability)) throw new Error('MCP requested a capability absent from this connection');
+    responses[id] = await ownerRequests.fulfill(server, request, context, mcpToolName(server, tool), args);
+  }
+  return responses;
 }
 
 function pause(signal: AbortSignal): Promise<void> {

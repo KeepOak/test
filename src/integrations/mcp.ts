@@ -188,7 +188,7 @@ export async function openMcp(
 ) {
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
-  const modern = await tryStateless(config, env, policy, cache, startupTimeoutMs);
+  const modern = await tryStateless(config, env, policy, cache, startupTimeoutMs, ownerRequests);
   if (modern) return modern;
   const { transport, secrets } = await makeTransport(config, env, policy);
   const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' },
@@ -214,11 +214,11 @@ export async function openMcp(
 }
 
 async function tryStateless(config: McpConfig, env: NodeJS.ProcessEnv, policy: { guard(base: typeof fetch): typeof fetch } | undefined,
-  cache: McpToolCache | undefined, timeout: number): Promise<Awaited<ReturnType<typeof openStatelessMcp>> | undefined> {
+  cache: McpToolCache | undefined, timeout: number, ownerRequests?: McpOwnerRequests): Promise<Awaited<ReturnType<typeof openStatelessMcp>> | undefined> {
   if ((config.protocol ?? 'legacy') === 'legacy') return undefined;
   let opened: Awaited<ReturnType<typeof openStatelessMcp>> | undefined;
   try {
-    opened = await openStatelessMcp(config, env, policy, timeout);
+    opened = await openStatelessMcp(config, env, policy, timeout, ownerRequests);
     if (JSON.stringify(redact(opened.found, opened.secrets)) !== JSON.stringify(opened.found))
       throw new Error('MCP discovery contains a configured credential');
     cache?.write(config.id, cacheable(opened.found));
