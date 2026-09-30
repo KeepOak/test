@@ -9159,6 +9159,39 @@ is sent only to OpenRouter, and selecting Cheapest or Fastest clears that list.
 The planning, difficulty and OpenRouter ideas come from aider, cline, gemini-cli and Hermes Agent
 (Apache-2.0 and MIT); no code was copied.
 
+### Recorded cost thresholds
+
+The owner can set a **stop-next-round estimate** through `POST /api/model-savings`, initially off:
+
+```json
+{"card":"costThresholds","values":{"mode":"on","rules":[
+  {"provider":"openai","model":"gpt-4o","maxMonthlyDollars":10,"fallbackPreset":"my-small-model"}
+]}}
+```
+
+Use `connections[].thresholdProvider` and `connections[].model` from `GET /api/model-savings`:
+the provider key is the catalogue service id, or the preset id for a custom connection. A null
+`model` counts every model on that service. The named fallback must already be set up; null stops
+the round. This API is owner-only, including reads; there is no dedicated window control yet.
+
+Estimates count completed runtime rounds from when the owner enables the guard, resetting at the
+start of each UTC month. Turning it off and on starts a new counting period; changing rules while
+it is on retains that period. Prices are the current catalogue or owner correction and tokens use
+the larger of Branch's estimate and the service's reported count. Kept answers cost nothing.
+Unknown prices or unreadable receipts stop an enabled matching guard instead of counting as zero.
+
+Only the owner's explicitly named fallback is considered, and its own thresholds, known price,
+tool/picture/JSON capabilities, local-only routing and Trunk sign-in rules still apply. A pinned
+helper model/account is stopped rather than moved to another account. Household and short-key
+callers receive no dollar figures from a threshold refusal.
+
+This is not an API billing ceiling: it reserves nothing for concurrent or in-flight requests and
+a completed round can cross the figure before the next round stops. Failed/interrupted requests,
+direct provider calls, mixture members and cache keep-alive pings are not attributed separately.
+Plan subscription list-price estimates are not subscription bills. Disable the guard or reset this
+card to roll back its routing effect. The cost guard is original Branch code: Hermes's similarly
+named `model_thresholds` sets context-compression ratios, not dollar limits.
+
 **macOS and Linux.** Nothing here depends on the system: the cards, the routing and the pings behave
 the same on Windows, macOS and Linux, and the keep-alive timers never keep the app from closing.
 
