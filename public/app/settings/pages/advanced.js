@@ -9,6 +9,7 @@ import { fact15 } from "../rows15.js";
 import { sections17, init17, load17 } from "../p17-advanced.js";
 import { initMarket } from "../market.js"; // RES-720
 import { t } from "../../../i18n.js";
+import { initSpecialistOrder, specialistOrderLive } from "../specialist-order.js";
 import { tunnelSeg, loadTunnel, initTunnel, tunnelLive } from "../tunnel-seg.js";
 import { restart as restartEngine } from "./self.js";
 
@@ -22,6 +23,9 @@ import { restart as restartEngine } from "./self.js";
    POST /api/heartbeat/switches, merged), checks and retries (flows-boards part "recipe-checks"), USB triggers (reach part
    "usb"). Tools: the readiness check (autonomy part "readiness"), searching X (personal part "x-search") and video tools
    (GET/POST /api/media/programs { mode }, merged). A three-way switch shows on unless "off" and turns on as "when-needed".
+   "From now on" for a specialist keeps one standing instruction for one Trunk, listed there with Remove
+   (../specialist-order.js). Checking install requests for malware is how every install request always works
+   (src/flows-boards/install-requests.ts), so it is drawn on and has nothing to turn off.
    Reach webhooks from outside is the owner's public door for webhooks only (../tunnel-seg.js).
    Crash reports need a linked destination first, so they stay greyed; every other greyed row says why under itself
    (core/why.js, the locale's window.why.*). */
@@ -132,7 +136,7 @@ export function draw() {
     html += `<div class=\"sec x15-sec\"><h2>${t("window.settings.advanced.tools-and-skills")}</h2>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-a-skill-is-ready-first")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-check-a-skill-is-ready-first")} aria-label=\"${t("window.settings.advanced.check-a-skill-is-ready-first")}\" data-sw=\"set\"><small>${t("window.settings.advanced.programs-keys-and-systems-it-needs")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.only-signed-skill-packages")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-only-signed-skill-packages\" aria-label=\"${t("window.settings.advanced.only-signed-skill-packages")}\" data-sw=\"set\"><small></small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-install-requests-for-malware")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-check-install-requests-for-malware\" aria-label=\"${t("window.settings.advanced.check-install-requests-for-malware")}\" data-sw=\"set\"><small>${t("window.settings.advanced.against-the-osv-database-before-you")}</small></div>`;
+    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.check-install-requests-for-malware")}</b><input class=\"sw\" type=\"checkbox\" id=\"f15-check-install-requests-for-malware\" checked aria-label=\"${t("window.settings.advanced.check-install-requests-for-malware")}\" data-sw=\"set\"><small>${t("window.settings.advanced.against-the-osv-database-before-you")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.web-search")}</b><span class=\"right\"><span class=\"seg\" role=\"group\" aria-label=\"${t("window.settings.advanced.web-search")}\"><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">DuckDuckGo</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Brave</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">SearXNG</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Tavily</button><button type=\"button\" aria-pressed=\"false\" data-act=\"seg\" data-why=\"web-search\">Exa</button></span></span><small>${t("window.settings.advanced.duckduckgo-needs-no-key-so-search")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("personal.x.search")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-search-x")} aria-label=\"${t("personal.x.search")}\" data-sw=\"set\"><small>${t("window.settings.advanced.turns-on-when-an-x-account")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.video-tools")}</b><input class=\"sw\" type=\"checkbox\" ${own("f15-video-tools")} aria-label=\"${t("window.settings.advanced.video-tools")}\" data-sw=\"set\"><small>${t("window.settings.advanced.download-read-captions-and-make-short")}</small></div>`;
@@ -142,7 +146,7 @@ export function draw() {
     html += fact15(t("window.settings.advanced.projects-pick-up-matching-work"), "f15-projects-pick-up-matching-work");
     html += fact15(t("window.settings.advanced.follow-up-tasks"), "f15-follow-up-tasks");
     html += `<div class=\"ctl\"><b>${t("autonomy.orders.title")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"ad-orders\">${t("window.settings.p17-permissions.see")} ` + esc(D.orders?.length ?? "") + `</button></span><small>${t("window.settings.advanced.named-programmes-a-trunk-keeps-running")}</small></div>`;
-    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.from-now-on-for-a-specialist")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"from-now-on-for-a-specialist\">${t("window.settings.advanced.add-one")}</button></span><small>${t("window.settings.advanced.a-standing-instruction-kept-by-one")}</small></div>`;
+    html += `<div class=\"ctl\"><b>${t("window.settings.advanced.from-now-on-for-a-specialist")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"ad-fno\">${t("window.settings.advanced.add-one")}</button></span><small>${t("window.settings.advanced.a-standing-instruction-kept-by-one")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.share-a-trunk")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"soon\" data-why=\"share-a-trunk\">${t("window.settings.p17-usage.export-2")}</button></span><small>${t("window.settings.advanced.through-git-as-a-skill-bundle")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.custom-modes")}</b><span class=\"right\"><code class=\"code15\">.branch/modes.json</code></span><small>${t("window.settings.advanced.your-own-modes-one-can-hand")}</small></div>`;
     html += `<div class=\"ctl\"><b>${t("window.settings.advanced.agent-marketplace")}</b><span class=\"right\"><button class=\"btn sm\" type=\"button\" data-act=\"mk-open\">${t("window.settings.advanced.browse")}</button></span><small>${t("window.settings.advanced.trunks-others-made-each-with-a")}</small></div>`;
@@ -214,8 +218,9 @@ export function init() {
   on("restart16", () => restartNow());
   on("ad-orders", () => openOrders());
   on("ad-outside", (el) => chooseOutside(el));
+  initSpecialistOrder();
   initTunnel();
-  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "sw:ad-facts", ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
+  markLive(["adv-logs", "restart16", "ad-orders", "ad-outside", "sw:ad-facts", ...specialistOrderLive, ...tunnelLive, ...Object.keys(WIRES).map((id) => "sw:" + id)]);
   document.addEventListener("change", async (e) => {
     if (e.target.id === "ad-facts") { await saveFacts(e.target); return; }
     const wire = WIRES[e.target.id];
@@ -228,4 +233,4 @@ export function init() {
 
 export async function load() { await Promise.all([loadAll(), load17()]); }
 
-export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "sw:ad-facts": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };
+export const live = { "adv-logs": true, "ad-orders": true, "ad-outside": true, "sw:ad-facts": true, "ad-fno": true, "tunnel-seg": true, ...Object.fromEntries(Object.keys(WIRES).map((id) => ["sw:" + id, true])) };
