@@ -30,7 +30,8 @@ test("a name brought from Hermes or OpenClaw asks for the help of the Branch com
 });
 
 test("everything else is the program's to answer", () => {
-  for (const argv of [[], ["start"], ["status"], ["run", "hello"], ["version"], ["no-such-command", "--help"], ["report", "--help"]])
+  for (const argv of [[], ["start"], ["status"], ["run", "hello"], ["version"], ["no-such-command", "--help"], ["report", "--help"],
+    ["completion"], ["completion", "tcsh"]])
     assert.equal(quickAnswer(argv), null, argv.join(" ") || "no arguments");
 });
 
@@ -52,4 +53,9 @@ process.on("exit", () => process.stderr.write("LOADED " + count + " " + engine +
   const full = await run(process.execPath, ["--import", preload, "dist/cli.js", "no-such-command"]).catch((error) => error);
   assert.match(full.stderr, /I do not know the command "no-such-command"/, "anything else reaches the program");
   assert.match(full.stderr, /LOADED \d+ true/, "which loads the engine");
+  // A shell with no completion script is refused by the program in plain words, not with a stack trace.
+  const refused = await run(process.execPath, ["dist/cli.js", "completion", "tcsh"]).catch((error) => error);
+  assert.equal(refused.code, 1);
+  assert.match(refused.stderr, /Completion is available for: /);
+  assert.doesNotMatch(refused.stderr, /\n\s+at /, "no stack trace");
 });

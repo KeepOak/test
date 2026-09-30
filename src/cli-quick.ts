@@ -14,7 +14,10 @@ export function quickAnswer(argv: readonly string[]): string | null {
   const [command = "", ...rest] = terminalArgv([...argv], false);
   if (command === "report") return null;
   if (cliCommands.some((entry) => entry.name === command) && asksForHelp(rest)) return commandHelp(command) ?? null;
-  if (command === "completion") return completionScript(rest[0] ?? "");
+  // A shell it has no script for is the program's to refuse, in its plain words and with its exit code.
+  if (command === "completion") {
+    try { return completionScript(rest[0] ?? ""); } catch { return null; }
+  }
   if (["help", "--help", "-h"].includes(command)) return usageText();
   return null;
 }
