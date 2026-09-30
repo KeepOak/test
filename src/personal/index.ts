@@ -7,6 +7,7 @@ import { CalendarAvailability, availabilityEnabled, registerCalendarAvailability
 import { ChatFiles, registerChatFiles } from "./chat-files.js";
 import { GoogleConnector, registerGoogle } from "./google.js";
 import { DocsWrite, registerDocsWrites } from "./docs-write.js";
+import { MeetingNotes } from "./meeting-notes.js";
 import { HomeControl, registerHomeControl } from "./home-control.js";
 import { MailSearch, registerMailSearch, type MailClient } from "./mail-search.js";
 import { MicrosoftConnector, registerMicrosoft } from "./microsoft.js";
@@ -65,6 +66,7 @@ export class Personal {
   readonly availability: CalendarAvailability;
   readonly google: GoogleConnector;
   readonly microsoft: MicrosoftConnector;
+  readonly meetingNotes: MeetingNotes;
   readonly spotify: SpotifyConnector;
   readonly x: XSearch;
   readonly home: HomeControl;
@@ -84,6 +86,7 @@ export class Personal {
     this.availability = new CalendarAvailability({ store, owner, fetch: deps.fetch, signIns: this.signIns, requireOwner: deps.requireOwner });
     this.google = new GoogleConnector(store, owner, deps.fetch, this.signIns.google);
     this.microsoft = new MicrosoftConnector(store, owner, deps.fetch, this.signIns.microsoft);
+    this.meetingNotes = new MeetingNotes(store, owner, deps.requireOwner, this.signIns.microsoft, this.signIns.google, deps.fetch);
     this.spotify = new SpotifyConnector(store, owner, deps.fetch, this.signIns.spotify);
     this.x = new XSearch(store, owner, deps.fetch, (name) => deps.secret(name, "searching X"));
     this.home = new HomeControl(store, owner, deps.fetch, (name) => deps.secret(name, "Home Assistant"));
