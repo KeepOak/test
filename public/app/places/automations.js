@@ -272,11 +272,11 @@ function checkinsTile(hb) {
     <div class="sec"><h2>${t("window.places.automations.last-check-ins")}</h2><ol class="tl">${history.map((h) => `<li class="${h.outcome === "failed" ? "" : "ok"}"><span>${esc(h.outcome)}<small>${esc(h.reason ?? "")}</small></span><time>${esc(new Date(h.startedAt).toLocaleString(language(), { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }))}</time></li>`).join("")}</ol></div></div>${proposalTiles(hb)}${gateTiles(hb)}`;
 }
 
-/* What a check-in proposes (GET /api/heartbeat state.proposals, status waiting). A check-in only looks; Accept starts the
+/* What a check-in proposes (GET /api/heartbeat state.proposals, status waiting). Nothing runs until Accept starts the
    task as the owner's own, under their usual approvals (POST /api/heartbeat/proposals/<id>/accept), Dismiss drops it. */
 function proposalTiles(hb) {
   const waiting = (hb?.heartbeat?.state?.proposals ?? []).filter((p) => p.status === "waiting").reverse();
-  return waiting.map((p) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-in-suggests")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${esc(p.task)}</p><small>${t("window.places.automations.it-only-looked-accept-runs-it")}</small><div class="acts"><button class="btn pri sm" type="button" data-act="hb-accept" data-id="${esc(p.id)}">${t("window.places.automations.accept-suggestion")}</button><button class="btn ghost sm" type="button" data-act="hb-dismiss" data-id="${esc(p.id)}">${t("window.places.automations.dismiss-suggestion")}</button></div></div>`).join("");
+  return waiting.map((p) => `<div class="tile" data-css="margin-top:14px"><div class="th"><b>${t("window.places.automations.a-check-in-suggests")}</b><span class="pill work ml"><i></i>${t("dashboard.needs.title")}</span></div><p>${esc(p.task)}</p><small>${t("window.places.automations.accept-runs-it-as-your-task")}</small><div class="acts"><button class="btn pri sm" type="button" data-act="hb-accept" data-id="${esc(p.id)}">${t("window.places.automations.accept-suggestion")}</button><button class="btn ghost sm" type="button" data-act="hb-dismiss" data-id="${esc(p.id)}">${t("window.places.automations.dismiss-suggestion")}</button></div></div>`).join("");
 }
 
 async function answerProposal(id, answer) {

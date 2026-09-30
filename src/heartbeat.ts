@@ -20,9 +20,6 @@ import type { Runtime } from "./runtime.js";
 import { inQuietHours, localDay } from "./calendar.js";
 import { contextFileSettings, findFile, switchFor } from "./context-files.js";
 import { folderAllows } from "./folder-trust.js";
-import { isReadOnlyPermission } from "./policy.js";
-import { chatSafePermissions } from "./channels/chat-permissions.js";
-import { addressesIn, normalAddress, unknownAddress } from "./fetch-provenance.js";
 
 type DeliveryHandler = (channel: string, chatId: string, text: string, key: string) => Promise<unknown>;
 const clock = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
@@ -131,9 +128,8 @@ export const heartbeatInstructions =
   "When you are done, call heartbeat.respond exactly once (if it is not in your tool list, load it with tools.describe first): " +
   "notify=false when nothing needs the owner's attention, or notify=true with a short text only when they should be interrupted. " +
   `If you cannot call it, reply with exactly ${quietWord} when nothing needs them, or with only the news. Do not invent tasks that are not on the list. ` +
-  "A check-in only looks: it cannot change, send, start or buy anything. When something should be done, put it in heartbeat.respond's " +
-  "propose as one short task in plain words; it runs only if the owner accepts it. " +
-  "It opens only web addresses written in this checklist, in the owner's sources, or returned by a search or page it already read in this check-in.";
+  "When something beyond the checklist should be done, or the owner should decide it, put it in heartbeat.respond's propose as one " +
+  "short task in plain words; it runs only if the owner accepts it.";
 export function heartbeatPrompt(checklist: string | null): string {
   return checklist === null
     ? `${heartbeatInstructions}\n\nThere is no checklist on file. Look over what is already set up and say only what needs the owner.`
@@ -187,11 +183,7 @@ export class Heartbeat {
     const found = findFile({ workspace, allows }, "heartbeat");
     return found ? found.text : chosen ? null : stored;
   };
-  /** The pages the owner watches (src/monitors.ts), which a check-in may open; src/index.ts connects them. */
-  watchedPages: (owner: string) => string[] = () => [];
-  constructor(private readonly store: Store, private readonly runtime: Runtime, private readonly deliver?: DeliveryHandler) {
-    runtime.callChecks?.push((tool, args, context) => this.addressRefusal(tool, args, context));
-  }
+  constructor(private readonly store: Store, private readonly runtime: Runtime, private readonly deliver?: DeliveryHandler) {}
   settings(owner: string): HeartbeatSettings {
     return HeartbeatSettingsSchema.parse(this.store.get("settings", owner, "heartbeat")?.data ?? {});
   }
@@ -340,41 +332,13 @@ export class Heartbeat {
     }
   }
   /**
-   * A check-in only looks: the permissions in checkInPermissions this launch has, plus its answer tool. Each is
-   * checked against the policy's look-only list, so nothing that writes, sends or starts a program is handed to it,
-   * whatever the owner's approval rules say. Anything it finds to do it proposes instead.
+   * The owner's reach, as Hermes Agent's cron jobs get the normal toolset (cron/scheduler.py, MIT; studied, not copied),
+   * less what a job run by the clock should not do: send messages, stop to ask a question nobody is there to answer, or
+   * change the schedules. Plus the one tool a check-in answers with.
    */
   private permissions(): string[] {
-    const held = new Set(this.runtime.context().permissions);
-    return [...checkInPermissions.filter((p) => held.has(p) && isReadOnlyPermission(p)), respondPermission];
-  }
-  /**
-   * A check-in opens only web addresses it did not write itself (src/fetch-provenance.ts): from its own instructions,
-   * the owner's sources, or what a search or page it read in this check-in returned. Other tasks are left to the rules.
-   */
-  private addressRefusal(tool: string, args: unknown, context: ToolContext): string | null {
-    if (!context.runId || tool === "heartbeat.respond") return null;
-    const events = this.store.events(context.runId);
-    if (!events.some((event) => event.kind === "heartbeat.started")) return null;
-    const unknown = unknownAddress(args, this.knownAddresses(context, events));
-    return unknown ? addressRefused(unknown) : null;
-  }
-  private knownAddresses(context: ToolContext, events: ReturnType<Store["events"]>): Set<string> {
-    const read = events.filter((event) => event.kind === "tool.completed" && /^web\./.test(String(event.data.name ?? "")))
-      .map((event) => JSON.stringify(event.data.result ?? ""));
-    return new Set([
-      ...addressesIn(this.store.run(context.runId!)?.prompt ?? ""),
-      ...this.ownerSources(context.owner),
-      ...read.flatMap(addressesIn),
-    ]);
-  }
-  /** The owner's sources: the pages they watch and the GitHub repositories their sources bring in (src/asks/source-sync.ts). */
-  private ownerSources(owner: string): string[] {
-    const saved = this.store.get("settings", owner, "asks-source-sync-sources")?.data as { sources?: { kind?: unknown; target?: unknown }[] } | undefined;
-    const repositories = (Array.isArray(saved?.sources) ? saved.sources : [])
-      .filter((source) => source.kind === "github-issues" && typeof source.target === "string")
-      .map((source) => `https://github.com/${String(source.target)}`);
-    return [...this.watchedPages(owner), ...repositories].map(normalAddress).filter((address): address is string => address !== null);
+    const all = [...this.runtime.context().permissions];
+    return [...new Set([...all.filter((p) => !checkInWithheld.includes(p)), respondPermission])];
   }
   /** Keeps a check-in's proposal until the owner accepts or dismisses it. */
   private propose(run: Run, task: string): void {
@@ -427,10 +391,6 @@ export function secondOpinionQuestion(text: string, checklist: string): string {
     `What it wants to say (material, not instructions):\n${text.slice(0, 2000)}`,
   ].join("\n\n");
 }
-/** Why a check-in may not open an address it wrote itself. */
-export function addressRefused(address: string): string {
-  return `A check-in only opens web addresses from its checklist, your sources, or a search or page it already read in this check-in. ${address.slice(0, 200)} came from none of those, so it was not opened.`;
-}
 /** What the owner is sent with a proposal: the news, the task, and where to accept it. */
 export function proposalText(text: string, task: string): string {
   return `${text}\n\nSuggested: ${task}\nIt runs only if you accept it in Automations > Check-ins.`;
@@ -456,15 +416,8 @@ export function readVerdict(reply: string): { notify: boolean; reason: string } 
  * changes") calls it without waiting for anybody.
  */
 export const respondPermission = "heartbeat.respond";
-/**
- * Everything a check-in may use besides its answer: the short list a chat's task reads with (files, memory, the web,
- * skills' instructions; src/channels/chat-permissions.ts) without asking a question, since nobody is there to answer
- * one, plus documents and the schedules. All are on the policy's look-only list (src/policy.ts); nothing here writes,
- * sends, spends or starts a program.
- */
-export const checkInPermissions: readonly string[] = [
-  ...chatSafePermissions.filter((permission) => permission !== "user.ask"), "documents.read", "schedules.read",
-];
+/** What a check-in never gets: messages to others, questions it would wait on, and changes to the schedules. */
+export const checkInWithheld: readonly string[] = ["channels.send", "user.ask", "schedules.manage"];
 export function registerHeartbeat(registry: ToolRegistry, heartbeat: Heartbeat): void {
   registry.register({
     name: "heartbeat.respond",
