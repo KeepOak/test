@@ -1191,7 +1191,7 @@ ${result.output || "(it said nothing)"}`;
       }
       if (event.kind === "mqtt" && !channels.sopMqttAvailable(event.channel, event.chatId, event.senderId))
         return "MQTT must be connected, sender-authorized and unbound to a Trunk; scoped Trunk event runs are not supported";
-      if (event.kind === "device" && (process.platform === "win32" || reachMode(store, runtime.owner, "usb") === "off"))
+      if (event.kind === "device" && (!["linux", "darwin"].includes(process.platform) || reachMode(store, runtime.owner, "usb") === "off"))
         return "USB event scanning must be opted in on a supported Linux or macOS host";
       return null;
     });

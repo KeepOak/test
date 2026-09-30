@@ -468,7 +468,8 @@ export class ChannelRouter {
   /** An opted-in SOP may consume an authorized MQTT event instead of opening a chat turn. */
   sopMqtt: ((message: InboundMessage) => boolean) | undefined;
   sopMqttAvailable(channel: string, chatId: string, senderId: string): boolean {
-    return this.adapters.get(channel)?.adapter.kind === "mqtt" && this.senderAllowed(channel, senderId)
+    const adapter = this.adapters.get(channel)?.adapter;
+    return adapter?.kind === "mqtt" && adapter.health?.().state === "connected" && this.senderAllowed(channel, senderId)
       && !this.chatTrunk(channel, chatId) && this.liveOn();
   }
   /**
