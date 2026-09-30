@@ -1,3 +1,6 @@
+import { transcriptWindow, paintWeight, transcriptRevision } from "./transcript-window.js";
+import { privateContext } from "./scroll-follow.js";
+import { FIND } from "./find.js";
 /* trunk-one-row: a Trunk is one contact with one thread, like iMessage. The list has one row per Trunk (shell/shell.js),
    and opening it draws all of that Trunk's conversations as one timeline, oldest at the top: each conversation stays
    the engine's own session (its own context), starts under a quiet "New conversation" line whose menu renames, archives
@@ -131,8 +134,10 @@ function sepHTML(s, messages) {
 }
 
 /* An older conversation's messages as plain bubbles, signed with the Trunk's face where its replies begin. */
-function bubbles(trunk, messages) {
-  const list = messages.filter(shown), out = [];
+function bubbles(trunk, messages, id) {
+  const window = transcriptWindow(`${privateContext()}:${id}:past`, messages,
+    (m) => m.role === "user" && steerWords(m) === null && !chatSteerOf(m), paintWeight, FIND.on);
+  const list = window.items.filter(shown), out = [];
   let prev = firstTimed(list), last = null;
   for (const m of list) {
     const stamp = stampBefore(m, prev);
@@ -146,7 +151,7 @@ function bubbles(trunk, messages) {
       last = "assistant";
     }
   }
-  return out.join("");
+  return window.controls + out.join("");
 }
 
 /* What changes an older conversation's drawing: a new message or name, the day (Today / Yesterday), the language, the
@@ -174,8 +179,8 @@ export function keepRead(id, messages) {
   if (s && messages?.length) L.cache.set(id, { read: readKey(s), messages });
 }
 function block(trunk, s) {
-  const got = L.cache.get(sid(s)), key = drawKey(trunk, s);
-  if (got.drawn !== key || got.drawnFrom !== got.messages) Object.assign(got, { drawn: key, drawnFrom: got.messages, html: sepHTML(s, got.messages) + bubbles(trunk, got.messages) });
+  const got = L.cache.get(sid(s)), key = drawKey(trunk, s) + FIND.on + transcriptRevision(`${privateContext()}:${sid(s)}:past`);
+  if (got.drawn !== key || got.drawnFrom !== got.messages) Object.assign(got, { drawn: key, drawnFrom: got.messages, html: sepHTML(s, got.messages) + bubbles(trunk, got.messages, sid(s)) });
   return `<div class="tl-block19" data-tl-block="${esc(sid(s))}">${got.html}</div>`;
 }
 

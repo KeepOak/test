@@ -1,3 +1,6 @@
+import { transcriptWindow } from "./transcript-window.js";
+import { privateContext } from "./scroll-follow.js";
+import { FIND } from "./find.js";
 /* The helpers frame and the view-only helper conversation (pass 18a; the prototype's frame18, helperRow18, helperCard18,
    helperThread18 and dressViewOnly18). The helpers are the tasks the conversation's newest task started, from
    GET /api/runs/<id>/steps `helpers` (runId, sessionId, name, job, status, model, provider, thinking, steps, cost,
@@ -232,8 +235,10 @@ export function helperThread() {
   });
   const steps = (stepsOf(h.runId)?.steps ?? []).filter((s) => ["tool", "ask", "you"].includes(s.kind));
   const st = helperState(h);
-  const items = steps.map((s, i) => `<li class="${st === "run" && i === steps.length - 1 ? "now18" : ""}">${esc(firstLine(s.title))}</li>`).join("");
-  return `<div class="voh18">${face(28, h)}<span>${esc(t("window.chat.hf.asked-for", { name: parentName(), job: h.job }))}</span></div>
+  const window = transcriptWindow(`${privateContext()}:${h.runId}:helper`, steps, () => true,
+    (step) => 1 + Math.ceil(String(step.title ?? "").length / 600), FIND.on);
+  const items = window.items.map((s, i) => `<li class="${st === "run" && i + window.start === steps.length - 1 ? "now18" : ""}">${esc(firstLine(s.title))}</li>`).join("");
+  return window.controls + `<div class="voh18">${face(28, h)}<span>${esc(t("window.chat.hf.asked-for", { name: parentName(), job: h.job }))}</span></div>
     <div class="b"><div class="gut">${face(28, h)}</div><div>${items ? `<ol class="vosteps18">${items}</ol>` : ""}${thinking(h, " open")}${(h.waiting ?? []).map((q) => ask(h, q)).join("")}
     <p class="hint">${esc([liveLine(h), meta(h)].filter(Boolean).join(" · "))}</p></div></div>`;
 }

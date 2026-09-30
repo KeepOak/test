@@ -1,3 +1,5 @@
+import { transcriptWindow, paintWeight } from "./transcript-window.js";
+import { privateContext } from "./scroll-follow.js";
 /* A room drawn as the prototype's group conversation (pass 10: "people and agents in a conversation"), from the engine's
    own record of the room (GET /api/trunks/rooms/<id>: events, people, roster, waiting, typing, here):
    - a stamp where the day changes or half an hour has passed (each event's `at`);
@@ -185,7 +187,7 @@ function passRow(view, e) {
 }
 
 /** The room's whole thread, or null when this is not a room or its record is not read yet (the ordinary thread then). */
-export function roomThread(info, messages, sid) {
+export function roomThread(info, messages, sid, showAll = false) {
   const view = roomView(info);
   if (!view) return null;
   const events = [...(view.events ?? [])].sort((a, b) => a.seq - b.seq);
@@ -194,7 +196,9 @@ export function roomThread(info, messages, sid) {
   const here = new Set((view.here ?? []).map((p) => p.id));
   let prev = null, lastWho = null;
   const out = [];
-  for (const { e, m } of items) {
+  const window = transcriptWindow(`${privateContext()}:${sid}:room`, items, (item) => item.e.kind === "user",
+    (item) => paintWeight(item.m ?? { content: item.e.text }), showAll);
+  for (const { e, m } of window.items) {
     if (inside.has(e)) continue;
     out.push(stamp(e, prev));
     prev = e;
@@ -204,7 +208,7 @@ export function roomThread(info, messages, sid) {
     else if (e.kind === "pass") out.push(passRow(view, e));
     else if ((e.kind === "failed" || e.kind === "stopped") && e.text) out.push(`<div class="pass10">${esc(e.text)}</div>`);
   }
-  return out.join("") + typingRows(view);
+  return window.controls + out.join("") + typingRows(view);
 }
 
 /* ---------- who else is typing ---------- */
