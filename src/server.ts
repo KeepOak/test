@@ -3505,6 +3505,25 @@ async function researchApi(app: Branch, request: IncomingMessage, path: string):
   throw new HttpError(404, "Endpoint not found");
 }
 async function mcpApi(app: Branch, request: IncomingMessage, path: string): Promise<unknown> {
+  if (path.startsWith('/api/mcp/owner-requests')) {
+    app.store.profiles.requireOwner('Server questions');
+    if (startedWithShortLivedKey() || throughDoor(request))
+      throw new HttpError(403, 'Answer server questions in the local owner window.');
+    if (path === '/api/mcp/owner-requests/window' && request.method === 'POST') return app.mcpOwnerRequests.window();
+    if (path === '/api/mcp/owner-requests/close' && request.method === 'POST') { app.mcpOwnerRequests.closeWindow(); return { closed: true }; }
+    if (path === '/api/mcp/owner-requests/answer' && request.method === 'POST') {
+      await app.mcpOwnerRequests.answer(await readBody(request)); return { answered: true };
+    }
+    if (path === '/api/mcp/owner-requests/settings') {
+      if (request.method === 'POST') { app.mcpOwnerRequests.save(await readBody(request)); return { saved: true }; }
+      if (request.method === 'GET') {
+        const server = new URL(request.url ?? '/', 'http://localhost').searchParams.get('server') ?? '';
+        if (!/^[a-z][a-z0-9-]{0,29}$/.test(server)) throw new HttpError(400, 'Choose a server ID.');
+        return app.mcpOwnerRequests.settings(server);
+      }
+    }
+    throw new HttpError(405, 'Unsupported server question request.');
+  }
   const extra = await mcpModeApi(app, request, path);
   if (extra !== undefined) return extra;
   if (path === "/api/mcp/settings") {
