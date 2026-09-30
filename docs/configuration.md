@@ -908,6 +908,26 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
+### The home chat, what is working, and naming a conversation (the chat-parity build)
+
+Three commands Hermes Agent and OpenClaw have, on the one command table:
+
+- **`/sethome`** (Hermes). The home chat is the one chat that results sent "home" go to: a schedule, heartbeat,
+  watch or morning brief whose `deliverTo` is `{"channel": "home", "chatId": "home"}`. Home is read when each
+  one is sent, so moving it moves them all; with no home a delivery fails with "No chat is set as home yet".
+  Choosing it is the owner's. At the window, phone or terminal, `/sethome` says where home is,
+  `/sethome <chat app> [chat]` chooses a chat that has talked to Branch (the latest one on that app when no chat
+  is named), and `/sethome off` forgets it. In a chat, `/sethome` (or `/sethome off`) is taken only in a direct
+  chat from one of your own chat accounts (the exact list `/platform` uses, or the paired accounts marked as yours
+  under Settings › Chat apps › Commands from your own chat, whether or not running commands is on), and before any other command
+  is read; from anybody else, or in a group, it is an ordinary message, and one sent while Branch was closed is
+  let go.
+- **`/agents`** (`/tasks`, `/subagents`; Hermes `/agents`, OpenClaw `/subagents` and `/tasks`): every task working
+  now, with the helpers each one started listed under it. In a chat, only that chat's own tasks.
+- **`/title <name>`** (`/name`, `/rename`; Hermes `/title`, OpenClaw `/name`): names the conversation it is typed
+  in, as renaming it from the window's menu does, from a chat too.
+- **`/commands`**: every command the surface can use, as `/help all`.
+
 ### The window's commands from your own chat (CHAT-185)
 
 From one of your own chat accounts (the `/platform` list, or the paired accounts marked as yours under Settings ›
@@ -932,8 +952,8 @@ task a chat message starts is marked as coming from a chat (`source: "channel"` 
 record), and so is everything it starts: a helper it hands work to, a side question (`/btw`, `/compact`,
 `/help <question>`), a prompt step of a workflow it runs, and the same task carried on after a restart
 (with the same tools it had). No setting makes a chat account count as you. The one list of your own
-chat accounts (under reach, for `/platform pause|resume|status`) is used only for that command and
-lends those accounts nothing else. What that means:
+chat accounts (under reach, for `/platform pause|resume|status` and `/sethome`) is used only for those
+two commands and lends those accounts nothing else. What that means:
 
 - **Your approval rules are held to "Ask before changes"**, as they are for a schedule or another AI
   tool: your standing yeses do not reach a chat's task, so a change it wants waits for a yes. The chat

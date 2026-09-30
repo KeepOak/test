@@ -149,6 +149,16 @@ export const COMMANDS: readonly CatalogCommand[] = [
   // at this computer with its own key: never from a chat app, a phone or the browser dashboard,
   // each of which reaches Branch as another computer does.
   entry("adapt", ["unblock"], "[what it said | yes <line>]", "what a stopped task is missing, what would fix it and what that costs; with yes and the offer's line, get it and carry on", ["window", "terminal"], "owner", { bareLooks: true, route: { method: "POST", path: "/api/adapt/go" } }),
+  // ---- the chat-parity build (Hermes Agent and OpenClaw): home chat, what is working, naming a conversation, the full list ----
+  // CHAT-190: where results sent "home" go. Owner only; from a chat app it is taken only from the owner's own account in a
+  // direct chat, before any command is read (`homeGate` in src/channels/home-chat.ts), exactly as /platform is.
+  entry("sethome", [], "[off | <chat app> [chat]]", "the chat that gets schedule results and notices sent home; from your own account in a chat, make it that one", [...W, "terminal"], "owner", { bareLooks: true }),
+  // CHAT-196: every task working now and the helpers each started; in a chat, only that chat's own
+  entry("agents", ["tasks", "subagents"], "", "what is working now, with the helpers each task started", ALL, "look"),
+  // CHAT-193: OpenClaw /name, Hermes /title
+  entry("title", ["name", "rename"], "<name>", "give this conversation a name", ["window", "phone", "terminal", "chat"], "run"),
+  // CHAT-204: Hermes and OpenClaw /commands
+  entry("commands", [], "", "every command you can use here, with what each does", ALL, "look"),
 ];
 
 const bare = (name: string): string => name.replace(/^\//, "").replace(/@[\w.-]+$/, "").toLowerCase();

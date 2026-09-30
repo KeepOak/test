@@ -32,6 +32,7 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { homeGate, noHome, resolveHome } from "./home-chat.js"; // CHAT-190
 import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
 import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
@@ -684,6 +685,10 @@ export class ChannelRouter {
    * so a task finished while the channel was down is delivered once, in order, after reconnect.
    */
   async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
+    // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
+    const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
+    if (!home) throw new Error(noHome);
+    ({ channel, chatId } = home);
     const target = this.adapters.get(channel);
     if (!target) throw new Error(`Channel ${channel} is not connected`);
     const checked = await this.outboundGuard(text);
@@ -725,7 +730,7 @@ export class ChannelRouter {
     const { adapter, policy } = entry;
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
-    const held = platformGate(this.store, this.runtime.owner, message);
+    const held = platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message); // CHAT-190
     if (held) {
       if (held.reply) await adapter.send(message.chatId, held.reply, this.quoteFor(message)).catch(() => undefined);
       return "ignored";
