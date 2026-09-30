@@ -61,12 +61,32 @@ export class LocalPiper {
     this.child = undefined; this.directory = ""; this.key = ""; this.output = "";
     this.pending?.reject(new Error("The installed voice stopped reading aloud."));
     this.pending = undefined;
-    child?.kill();
+    if (child) this.terminateChild(child, directory);
+  }
+
+  private terminateChild(child: ChildProcessWithoutNullStreams, directory: string): void {
+    // POSIX: send SIGTERM, then escalate to SIGKILL after grace period if needed.
+    // Windows: skip escalation since SIGKILL is not available; process.kill() on Windows
+    // always sends SIGKILL equivalent.
+    child.kill("SIGTERM");
+
+    // On POSIX, set a timer to escalate to SIGKILL if the process doesn't exit.
+    const escalate = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) {
+        // Process is still alive; escalate to SIGKILL.
+        child.kill("SIGKILL");
+      }
+    }, 2000);
+
     // Wait for process exit before removing its private output directory on Windows.
-    if (directory) {
-      const clean = () => { void rm(directory, { recursive: true, force: true }).catch(() => undefined); };
-      if (child && child.exitCode === null && child.signalCode === null) child.once("close", clean);
-      else clean();
+    const clean = () => {
+      clearTimeout(escalate);
+      void rm(directory, { recursive: true, force: true }).catch(() => undefined);
+    };
+    if (child.exitCode === null && child.signalCode === null) {
+      child.once("close", clean);
+    } else {
+      clean();
     }
   }
 
