@@ -11,6 +11,8 @@ import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { initPause } from "./pause.js";
 import { init as initShare } from "./share.js";
+import { initTrunkImport } from "./trunk-import.js";
+import { initTrunkInbox } from "./trunk-inbox.js";
 import { looks17, look17, NEW17 } from "../core/art17.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
@@ -440,7 +442,7 @@ function shuffle() {
 /* The conversation menu's items for a Trunk's or a room's own conversation; "" for any other conversation. */
 export function trunkMenu() {
   const tr = trunkOfChat();
-  if (tr) return mi("pin", "pin", tr.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("window.flows.pause.this"), "", `data-id="${esc(tr.id)}"`) + mi("rename", "edit", t("accounts.action.rename")) + mi("edit", "sliders", t("window.flows.trunk.edit-trunk"), "", `data-id="${esc(tr.id)}"`) + mi("teach-start", "teach", t("window.flows.trunk.show-how"));
+  if (tr) return (ownerHere() ? mi("trunk-inbox", "chat", t("place.inbox"), "", `data-id="${esc(tr.id)}"`) : "") + mi("pin", "pin", tr.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("pausetrunk", "pause", tr.paused ? t("autonomy.resume") : t("window.flows.pause.this"), "", `data-id="${esc(tr.id)}"`) + mi("rename", "edit", t("accounts.action.rename")) + mi("edit", "sliders", t("window.flows.trunk.edit-trunk"), "", `data-id="${esc(tr.id)}"`) + mi("teach-start", "teach", t("window.flows.trunk.show-how"));
   const r = roomOfChat();
   if (r) return mi("pin", "pin", r.pinned ? t("accounts.action.unpin") : t("window.flows.trunk.pin-top")) + mi("rename", "edit", t("window.flows.trunk.rename-room")) + mi("room-rules", "sliders", t("window.flows.trunk.room-rules"), t(RULE_SHORT[ruleOf(r)]), `data-id="${esc(r.id)}"`);
   return "";
@@ -666,6 +668,8 @@ async function setRule(el, field) {
 export function init() {
   initPause();
   initShare();
+  initTrunkImport();
+  initTrunkInbox();
   markLive(["room-rules", "room-rule", "room-pat", "grp-rule"]);
   on("room-rules", (el) => openRules(el.dataset.id));
   on("room-rule", (el) => setRule(el, "rule"));
