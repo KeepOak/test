@@ -9975,9 +9975,10 @@ and `morningBrief` (all on) and `maxCharacters` (1500). The email inbox: `host`,
 (`EMAIL_PASSWORD`) and `folder` (`mail-attachments`). The webhook address: `program` (`cloudflared`) and
 `executable` (a full path, or empty to find the program by name).
 
-**Not built in this round.** *Live voice in Discord voice channels* (R17-023) is left out: Discord voice needs the Opus
-codec and Discord's end-to-end voice encryption (DAVE, built on MLS), neither of which Node ships, and new
-dependencies are not allowed. *A wake word* is now built, separately and off,
+**Discord voice remains opt-in and requires prepared components.** Settings → Voice now offers a bounded
+owner-selected Discord voice lease using an optional DAVE-capable SDK, Opus and FFmpeg bundle. Nothing installs
+or autojoins; missing components hold joining. See [Discord voice](discord-voice.md) for exact consent, bounds and
+unvalidated runtime limits. *A wake word* is built separately and off,
 under "A word that starts a turn"; nothing in this round listens by itself.
 
 **macOS and Linux.** Everything above is plain HTTPS, IMAP and the owner's own programs started with an argument list,

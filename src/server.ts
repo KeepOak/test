@@ -1047,6 +1047,9 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path === "/api/discord-voice" && request.method === "GET") return app.discordVoice.status();
+  if (path === "/api/discord-voice/join" && request.method === "POST") return app.discordVoice.join(await readBody(request));
+  if (path === "/api/discord-voice/leave" && request.method === "POST") return app.discordVoice.leave();
   if (path === "/api/telephone" && request.method === "GET") return app.telephone.status();
   if (path === "/api/telephone" && request.method === "POST") return app.telephone.configure(await readBody(request));
   if (path === "/api/telephone/recover" && request.method === "POST") return app.telephone.recover(z.object({ id: z.string().uuid(), sid: z.string().regex(/^CA[0-9a-fA-F]{32}$/) }).strict().parse(await readBody(request)));
@@ -5444,7 +5447,7 @@ function isExecution(request: IncomingMessage, path: string): boolean {
     // mac7/r17-d: every change under /api/coding may start work (a snapshot, the checks, a fork).
     || (request.method !== "GET" && handlesCodingPath(path))
     // Telephone configuration/proposals/dial approvals can reach a paid service.
-    || (request.method !== "GET" && path.startsWith("/api/telephone"))
+    || (request.method !== "GET" && (path.startsWith("/api/telephone") || path.startsWith("/api/discord-voice")))
     // R17-C: every change under /api/personal may reach an outside service or start a program.
     || (request.method !== "GET" && handlesPersonalPath(path))
     // r17-i: every change under /api/reach may start work (a task elsewhere, a video, a send, an import).

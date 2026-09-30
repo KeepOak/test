@@ -1,3 +1,4 @@
+import { DiscordVoice } from "./discord-voice.js";
 import { lockdownActive } from "./lockdown.js";
 import { Telephone } from "./telephone.js";
 import { environmentTool } from "./environment.js";
@@ -1514,6 +1515,13 @@ ${result.output || "(it said nothing)"}`;
       source: "channel", isolatedTelephone: true, signal, timeoutMs: 12_000, budget: { maxSteps: 1, maxTokens: tokens } }); return runtime.hideSecrets(result.answer); },
   });
   releaseOnLock.push(async () => telephone.close());
+  const discordVoice = new DiscordVoice({ store, owner: runtime.owner, voice,
+    blocked: () => sessionLock.locked() || lockdownActive(store, runtime.owner), adapter: (id) => channels.adapter(id),
+    endpoint: (url) => web.policy.assertAllowed(url, "approved Discord voice server"),
+    reply: async (prompt, tokens, signal) => { const result = await runtime.run({ prompt, permissions: [], isolated: true, isolatedTelephone: true, temporary: true,
+      source: "channel", signal, timeoutMs: 15_000, budget: { maxSteps: 1, maxTokens: tokens } }); return runtime.hideSecrets(result.answer); },
+  });
+  releaseOnLock.push(async () => discordVoice.close());
   // ── R17-C: files, voice, devices and personal connectors (src/personal/). Every part ships off. ──
   const personalSecret = async (name: string, purpose: string) =>
     (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!;
@@ -1764,6 +1772,7 @@ ${result.output || "(it said nothing)"}`;
     /** Writing speech out and reading text aloud, whichever service does the work. */
     voice,
     telephone,
+    discordVoice,
     /** Bucket 17: videos and sound understood through the owner's own ffmpeg and yt-dlp. */
     understanding,
     webPages, // w911 (A0743, A1452) hook: reading and crawling web pages
@@ -2021,6 +2030,7 @@ ${result.output || "(it said nothing)"}`;
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
+      discordVoice.close();
       telephone.close();
       voice.close(); // RES-709: the free speech worker ends with the app
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app

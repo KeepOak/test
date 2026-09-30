@@ -1,3 +1,4 @@
+import type { VoiceSink } from "./discord-voice-sdk.js";
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
 import { EditedWords } from "./edited-words.js";
@@ -55,6 +56,18 @@ const interactionSchema = z.object({ id: z.string().min(1).max(64), token: z.str
 }).passthrough();
 
 export class DiscordAdapter implements ChannelAdapter {
+  private voiceRefreshing = false;
+  private voiceSink: VoiceSink | undefined;
+  /** One explicit owner voice lease; enabling its non-privileged intent requires a fresh Identify. */
+  attachVoice(sink: VoiceSink): () => void {
+    if (this.voiceSink) throw new Error("This Discord source already has a voice lease.");
+    this.voiceSink = sink; this.voiceRefreshing = true; this.session = null; this.socket?.close();
+    return () => { if (this.voiceSink !== sink) return; this.voiceSink = undefined; this.session = null; this.socket?.close(); };
+  }
+  sendVoice(payload: { op: 4; d: { guild_id: string; channel_id: string | null; self_mute: boolean; self_deaf: boolean } }): boolean {
+    if (!this.voiceSink || this.stopping || this.state.state !== "connected" || !this.socket) return false;
+    this.socket.send(JSON.stringify(payload)); return true;
+  }
   readonly kind = "discord";
   /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
   readonly replyQuotes = true;
@@ -105,6 +118,7 @@ export class DiscordAdapter implements ChannelAdapter {
     await Promise.race([this.loop, new Promise((resolve) => setTimeout(resolve, 50))]);
   }
   async stop(): Promise<void> {
+    this.voiceSink?.stopped(); this.voiceSink = undefined;
     this.stopping = true;
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.keepalive) clearInterval(this.keepalive);
@@ -145,6 +159,7 @@ export class DiscordAdapter implements ChannelAdapter {
     await socket.closed;
     if (this.heartbeat) clearInterval(this.heartbeat);
     if (this.keepalive) clearInterval(this.keepalive);
+    if (this.voiceRefreshing) this.voiceRefreshing = false; else this.voiceSink?.stopped();
     if (!this.stopping) this.state = { state: "reconnecting", reason: "Discord closed the connection; reconnecting" };
   }
   private async gateway(): Promise<string> {
@@ -162,7 +177,9 @@ export class DiscordAdapter implements ChannelAdapter {
     if (payload.op === 7) { this.socket?.close(); return; }
     if (payload.op === 9) { this.session = null; this.socket?.close(); return; }
     if (payload.op !== 0) return;
-    if (payload.t === "READY") return this.ready(payload.d);
+    if (payload.t === "READY") { this.ready(payload.d); if (this.user) this.voiceSink?.ready(this.user.id); return; }
+    if (payload.t === "GUILD_CREATE") this.voiceSink?.event(payload.t, payload.d);
+    if (payload.t === "VOICE_STATE_UPDATE" || payload.t === "VOICE_SERVER_UPDATE") this.voiceSink?.event(payload.t, payload.d);
     if (payload.t === "INTERACTION_CREATE")
       return (payload.d as { type?: unknown } | undefined)?.type === 2 ? this.slash(payload.d, onMessage) : this.button(payload.d, onMessage);
     if (payload.t === "MESSAGE_UPDATE") {
@@ -243,7 +260,7 @@ export class DiscordAdapter implements ChannelAdapter {
     this.heartbeat.unref();
     this.socket?.send(JSON.stringify(this.session
       ? { op: 6, d: { token: this.options.token, session_id: this.session.id, seq: this.sequence } }
-      : { op: 2, d: { token: this.options.token, intents, properties: { os: process.platform, browser: "Branch Agent", device: "Branch Agent" } } }));
+      : { op: 2, d: { token: this.options.token, intents: intents | (this.voiceSink ? (1 << 7) : 0), properties: { os: process.platform, browser: "Branch Agent", device: "Branch Agent" } } }));
   }
   private beat(): void { this.socket?.send(JSON.stringify({ op: 1, d: this.sequence })); }
   private ready(data: unknown): void {
