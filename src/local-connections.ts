@@ -61,7 +61,7 @@ function providerFor(record: LocalConnection, deps: LocalConnectionDeps): Provid
   if (record.runtime === "ollama") return new OllamaProvider({ endpoint, model: record.model, fetchImpl: call });
   return new OpenAIProvider({ endpoint, model: record.model, apiKey: "local", fetchImpl: call });
 }
-const catalogIds: Record<RuntimeId, string | undefined> = { ollama: "ollama", "lm-studio": "lm-studio", "llama-cpp": "llama-cpp", mlx: undefined };
+const catalogIds: Record<RuntimeId, string | undefined> = { ollama: "ollama", "lm-studio": "lm-studio", "llama-cpp": "llama-cpp", mlx: undefined, localai: "localai" };
 
 function install(record: LocalConnection, deps: LocalConnectionDeps): void {
   const catalogId = catalogIds[record.runtime];

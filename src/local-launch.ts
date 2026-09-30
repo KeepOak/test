@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { promisify } from "node:util";
 import { ollamaHome } from "./local-models.js";
+import { localAIArgs, localAIChildEnv, localAIModel, prepareLocalAI, removeLocalAIWorkspace, type LocalAIWorkspace } from "./local-localai.js";
 
 /**
  * Wave mac5 (local models): the programs that run models, found and started — never installed.
@@ -15,8 +16,8 @@ import { ollamaHome } from "./local-models.js";
  * a shell line, through a runner and a spawner the tests replace, and each is told to listen on
  * this computer only. Branch stops only what it started itself.
  */
-export type RuntimeId = "ollama" | "lm-studio" | "llama-cpp" | "mlx";
-export const runtimeIds: readonly RuntimeId[] = ["ollama", "lm-studio", "llama-cpp", "mlx"];
+export type RuntimeId = "ollama" | "lm-studio" | "llama-cpp" | "mlx" | "localai";
+export const runtimeIds: readonly RuntimeId[] = ["ollama", "lm-studio", "llama-cpp", "mlx", "localai"];
 
 export interface RuntimeInfo {
   id: RuntimeId;
@@ -37,6 +38,8 @@ export const runtimeInfo: Record<RuntimeId, RuntimeInfo> = {
     installNote: "Free. Its install page lists a package for each system; Branch uses its llama-server program." },
   mlx: { id: "mlx", name: "MLX", baseUrl: "http://127.0.0.1:8081", installPage: "https://github.com/ml-explore/mlx-lm",
     installNote: "Free, for Macs with Apple silicon. Its page shows how to install mlx-lm." },
+  localai: { id: "localai", name: "LocalAI", baseUrl: "http://127.0.0.1:8082", installPage: "https://localai.io/basics/getting_started/",
+    installNote: "Install a compatible Linux LocalAI and llama.cpp gRPC backend yourself. Branch uses only existing local GGUF files." },
 };
 
 export interface LaunchEnv {
@@ -78,6 +81,8 @@ function systemPaths(id: RuntimeId, at: LaunchEnv): string[] {
     case "mlx":
       if (at.platform !== "darwin" || at.arch !== "arm64") return [];
       return [...onPath("mlx_lm.server"), "/opt/homebrew/bin/mlx_lm.server", join(at.home, ".local", "bin", "mlx_lm.server")];
+    case "localai":
+      return at.platform === "linux" ? [...onPath("local-ai"), join(at.home, ".local", "bin", "local-ai")] : [];
   }
 }
 
@@ -135,8 +140,8 @@ export async function runnerIsBranchOwn(
 }
 
 export type Runner = (file: string, args: string[], options: { timeout: number; windowsHide: boolean }) => Promise<{ stdout: string }>;
-export interface Started { pid: number | undefined; stop(): void }
-export type Spawner = (file: string, args: string[], env?: Record<string, string>) => Started;
+export interface Started { pid: number | undefined; stop(): void; closed?: Promise<void> }
+export type Spawner = (file: string, args: string[], env?: Record<string, string>, localAIHome?: string) => Started;
 /**
  * Integration review: a runtime gets Branch's variables minus anything secret or anything that
  * changes how a program loads (Branch's own settings, keys and tokens, NODE_OPTIONS, injected
@@ -154,13 +159,15 @@ export function runtimeChildEnv(env: Record<string, string | undefined>, extra: 
 }
 const realRunner: Runner = (file, args, options) =>
   promisify(execFile)(file, args, { ...options, env: runtimeChildEnv(process.env) });
-const realSpawner: Spawner = (file, args, env = {}) => {
-  const child = spawn(file, args, { stdio: "ignore", windowsHide: true, detached: false, env: runtimeChildEnv(process.env, { OLLAMA_HOST: new URL(ollamaHome).host, ...env }) });
+const realSpawner: Spawner = (file, args, env = {}, localAIHome) => {
+  const inherited = localAIHome ? localAIChildEnv(process.env, localAIHome) : process.env;
+  const child = spawn(file, args, { stdio: "ignore", windowsHide: true, detached: false, env: runtimeChildEnv(inherited, { OLLAMA_HOST: new URL(ollamaHome).host, ...env }) });
+  const closed = new Promise<void>((done) => { child.once("close", () => done()); });
   child.on("error", () => undefined);
-  return { pid: child.pid, stop: () => { child.kill(); } };
+  return { pid: child.pid, stop: () => { child.kill(); }, closed };
 };
 
-export interface ModelToStart { file?: string; repo?: string; context?: number; port?: number }
+export interface ModelToStart { file?: string; repo?: string; context?: number; port?: number; backend?: string; localAIWorkspace?: LocalAIWorkspace }
 /** A port nobody on this computer is using now, chosen by the system. */
 export const freeLoopbackPort = (): Promise<number> => new Promise((resolve, reject) => {
   const probe = createServer();
@@ -171,7 +178,7 @@ export const freeLoopbackPort = (): Promise<number> => new Promise((resolve, rej
   });
 });
 /** The runtimes Branch starts with one model, each on a fresh port (integration review). */
-const ownPort = (id: RuntimeId): boolean => id === "llama-cpp" || id === "mlx";
+const ownPort = (id: RuntimeId): boolean => id === "llama-cpp" || id === "mlx" || id === "localai";
 
 export interface StartPlan {
   /** Programs to run and wait for, in order (LM Studio's command line). */
@@ -221,6 +228,9 @@ export function startPlan(
     case "mlx":
       if (!model.repo) return { commands: [], serve: null, instead: "Choose a model first; MLX starts with one model.", env };
       return { commands: [], serve: [program, "--model", model.repo, "--host", "127.0.0.1", "--port", port], instead: null, env };
+    case "localai":
+      if (at.platform !== "linux" || !model.localAIWorkspace) return { commands: [], serve: null, instead: "Choose a local GGUF and a local llama.cpp gRPC executable on Linux for LocalAI.", env };
+      return { commands: [], serve: localAIArgs(program, model.localAIWorkspace, port), instead: null, env };
   }
 }
 
@@ -299,16 +309,33 @@ export class RuntimeLauncher {
     const program = await this.find(id);
     const info = runtimeInfo[id];
     if (!program) return { started: false, message: `${info.name} is not installed on this computer. ${info.installNote}` };
-    const port = ownPort(id) ? await this.freePort() : undefined;
-    const plan = startPlan(id, program, { ...model, ...(port ? { port } : {}) }, this.at,
-      id === "ollama" ? await this.linuxService() : "none", await this.ownModelsFolder(id));
-    if (plan.instead) return { started: false, message: plan.instead };
-    for (const command of plan.commands) await this.run(command[0]!, command.slice(1), { timeout: 60000, windowsHide: true });
-    if (plan.serve) {
-      this.stop(id);
-      this.started.set(id, Object.assign(this.spawner(plan.serve[0]!, plan.serve.slice(1), plan.env), port ? { port } : {}));
-    }
-    return { started: true, message: `${info.name} is starting on this computer.` };
+    const workspace = id === "localai" ? await this.localAIWorkspace(model) : null;
+    if (workspace) model = { ...model, localAIWorkspace: workspace };
+    try {
+      const port = ownPort(id) ? await this.freePort() : undefined;
+      const plan = startPlan(id, program, { ...model, ...(port ? { port } : {}) }, this.at,
+        id === "ollama" ? await this.linuxService() : "none", await this.ownModelsFolder(id));
+      if (plan.instead) {
+        if (workspace) await removeLocalAIWorkspace(workspace);
+        return { started: false, message: plan.instead };
+      }
+      for (const command of plan.commands) await this.run(command[0]!, command.slice(1), { timeout: 60000, windowsHide: true });
+      if (plan.serve) {
+        this.stop(id);
+        const running = this.spawner(plan.serve[0]!, plan.serve.slice(1), plan.env, workspace ? posix.join(workspace.root, "home") : undefined);
+        if (workspace) void running.closed?.then(async () => {
+          if (this.started.get(id) === running) this.started.delete(id);
+          await removeLocalAIWorkspace(workspace);
+        }).catch(() => {});
+        this.started.set(id, Object.assign(running, port ? { port } : {}));
+      }
+      return { started: true, message: `${info.name} is starting on this computer.` };
+    } catch (error) { if (workspace) await removeLocalAIWorkspace(workspace); throw error; }
+  }
+  private async localAIWorkspace(model: ModelToStart): Promise<LocalAIWorkspace> {
+    if (!this.dataDir) throw new Error("LocalAI needs Branch's private data folder for its generated config.");
+    const selected = await localAIModel(model.file ?? "", model.backend ?? "", this.at);
+    return prepareLocalAI(this.dataDir, selected, Math.min(8192, Math.max(512, model.context ?? 4096)));
   }
   /** Stops a runtime Branch started. LM Studio is asked to stop its server; others are ended. */
   async stopRuntime(id: RuntimeId): Promise<{ stopped: boolean }> {

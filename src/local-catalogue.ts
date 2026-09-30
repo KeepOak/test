@@ -51,6 +51,7 @@ export function localCatalogue(): CatalogueEntry[] {
 
 /** How big the download is for this runtime, or null when this runtime cannot use this size. */
 export function variantBytes(variant: CatalogueVariant, runtime: RuntimeId): number | null {
+  if (runtime === "localai") return null; // This managed route uses the owner's existing GGUF.
   if (runtime === "ollama") return variant.ollama?.bytes ?? null;
   if (runtime === "mlx") return variant.mlx?.bytes ?? null;
   return variant.gguf?.bytes ?? null;
@@ -114,6 +115,7 @@ export const searchQuery = z.string().trim().min(2).max(80).regex(/^[A-Za-z0-9 .
 
 /** Hugging Face models that LM Studio, llama.cpp (GGUF) or MLX can run. */
 export async function searchHuggingFace(query: string, runtime: Exclude<RuntimeId, "ollama">, call: typeof globalThis.fetch): Promise<SearchHit[]> {
+  if (runtime === "localai") throw new Error("Choose an existing local GGUF and backend for LocalAI; this route does not search or download them.");
   const q = searchQuery.parse(query);
   const filter = runtime === "mlx" ? "&filter=mlx" : "&filter=gguf";
   const response = await call(`https://huggingface.co/api/models?search=${encodeURIComponent(q)}${filter}&sort=downloads&limit=20`, { signal: AbortSignal.timeout(15000) });
