@@ -93,7 +93,8 @@ export class SignIn {
   async start(): Promise<OAuthStart> {
     this.clearHealth();
     const started = await this.deps.oauth.start(await this.provider());
-    this.deps.oauth.waitFor(started.id).catch(() => undefined);
+    // A check begun on the old grant must not be kept for the new one: finishing the sign-in forgets checks again.
+    this.deps.oauth.waitFor(started.id).then(() => this.clearHealth(), () => undefined);
     return started;
   }
   async status(): Promise<{ signedIn: boolean; expiresAt: string | null; scope: string | null; health: ConnectionHealth | null }> {
