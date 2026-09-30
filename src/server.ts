@@ -1568,7 +1568,9 @@ async function api(
   }
   if (request.method === "GET" && path === "/api/artifacts") {
     const type = new URL(request.url ?? "/", "http://local").searchParams.get("type") ?? "";
-    const kept = await app.artifacts.list();
+    // SCREEN-162: the same rule as the file route, so the gallery lists only files this profile can open.
+    const scope = scopeWhileUnlocked(app);
+    const kept = (await app.artifacts.list()).filter((entry) => !!scope && ownArtifact(app, scope, entry.runId));
     return { artifacts: type ? kept.filter((entry) => entry.mediaType.startsWith(`${type}/`)) : kept };
   }
   // Batch 26 (wave 8): what Windows itself allows, with the page that turns each one on.
@@ -2540,6 +2542,11 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
  * App lock: whose records an open stream or socket may still carry. Once Branch locks with a PIN set
  * the answer is nobody's, so a stream opened before the lock ends there instead of flowing on.
  */
+/** A kept file is this profile's when the task that made it is theirs, in a conversation they own. */
+const ownArtifact = (app: Branch, scope: string, runId: string): boolean => {
+  const run = app.store.run(runId);
+  return !!run && run.owner === scope && app.store.ownsSession(scope, run.sessionId);
+};
 const scopeWhileUnlocked = (app: Branch): string => (app.sessionLock.refusal("GET", "/api/events/stream") ? "" : app.store.profiles.scope());
 /** An App lock refusal answered with its own status (400, 403 or 429); anything else as it was. */
 async function appLockAnswer(step: () => Promise<unknown>): Promise<unknown> {
@@ -4942,11 +4949,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     const wanted = new URL(request.url ?? "/", "http://local").searchParams.get("path") ?? "";
     const entry = (await app.artifacts.list(500)).find((kept) => kept.path === wanted);
     if (!entry) throw new HttpError(404, "That file was not made by the assistant");
-    const readable = () => {
-      const currentScope = scopeWhileUnlocked(app), run = app.store.run(entry.runId);
-      return !!requestingScope && currentScope === requestingScope && !!run && run.owner === currentScope
-        && app.store.ownsSession(currentScope, run.sessionId);
-    };
+    const readable = () => !!requestingScope && scopeWhileUnlocked(app) === requestingScope && ownArtifact(app, requestingScope, entry.runId);
     if (!readable()) throw new HttpError(404, "That file is not available in this profile");
     if (!/^(image|audio)\//.test(entry.mediaType)) throw new HttpError(415, "Only pictures and sounds are shown here");
     const bytes = await app.artifacts.read(entry.path);

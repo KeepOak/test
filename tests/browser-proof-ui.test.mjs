@@ -44,3 +44,15 @@ test("SCREEN-162: the task's picture file is served to its own profile, not to a
   t.after(() => app.store.profiles.switch({ profileId: null }));
   assert.notEqual(await status(), 200, "another profile does not");
 });
+
+test("SCREEN-162: the gallery lists only pictures this profile can open, so a deleted conversation leaves no broken tile", { timeout: 180000 }, async (t) => {
+  const { app, server } = await newWindow(t);
+  const kept = app.store.createRun(app.runtime.owner, "keep this");
+  const gone = app.store.createRun(app.runtime.owner, "then forget it");
+  await app.artifacts.write(kept.id, "screenshot-kept.png", "image/png", png);
+  await app.artifacts.write(gone.id, "screenshot-gone.png", "image/png", png);
+  app.store.finish(gone.id, "completed", "done");
+  app.store.forgetSession(app.runtime.owner, gone.sessionId);
+  const listed = await (await fetch(`${server.url}/api/artifacts?type=image`, { headers: { authorization: `Bearer ${server.token}` } })).json();
+  assert.deepEqual(listed.artifacts.map((entry) => entry.name), ["screenshot-kept.png"]);
+});
