@@ -8589,6 +8589,8 @@
   "window.places.library.count-things-remembered": "{count} choses mémorisées",
   "window.places.library.count-things-remembered.one": "{count} chose mémorisée",
   "window.places.library.disagree": "En désaccord",
+  "window.places.library.doc-added-by": "Ajouté par {name}",
+  "window.places.library.doc-added-by-unknown": "Origine de cet ajout non enregistrée",
   "window.places.library.doc-keep": "Le garder",
   "window.places.library.doc-kept": "Gardé dans vos documents, et cherché avec eux.",
   "window.places.library.doc-name": "Nom",

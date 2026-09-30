@@ -344,7 +344,7 @@ import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
 import { readScheduledDashboard } from "./scheduled-dashboards.js";
 import { proposeTrigger } from "./trigger-words.js";
-import { ownerTimezone } from "./person-about.js"; // your-profile
+import { aboutOf, ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
 import type { AnswerShape, ShapedAnswer } from "./answer-shape.js";
 // Wave 6 (collaboration and workflows): sharing pages and links, labels and notes, workflows,
@@ -3490,8 +3490,16 @@ async function documentsApi(app: Branch, request: IncomingMessage, path: string)
     if (request.method === "POST") return library.configure(owner, await readBody(request));
   }
   if (request.method === "GET" && path === "/api/documents") return library.view(owner);
-  if (request.method === "POST" && path === "/api/documents")
-    return library.add(owner, await readBody(request, documentBodyBytes));
+  if (request.method === "POST" && path === "/api/documents") {
+    const body = await readBody(request, documentBodyBytes);
+    const allowed = () => {
+      app.store.profiles.requireOwner("Adding a document");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before adding a document.");
+    };
+    // Checked again after waiting for the body, and again after the file's words are read, before anything is kept.
+    allowed();
+    return library.add(owner, body, undefined, true, { kind: "person", name: aboutOf(app, "owner").name, role: "owner" }, allowed);
+  }
   if (request.method === "POST" && path === "/api/documents/search")
     return { results: await library.search(owner, await readBody(request)) };
   if (request.method === "POST" && path === "/api/documents/reindex") {
