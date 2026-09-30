@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { inlineShortcuts } from "../dist/channels/inline-shortcuts.js";
+import { setPaused } from "../dist/reach/platform.js";
 
 const authored = (text, spans = []) => ({ text, protected: spans });
 
@@ -15,7 +16,7 @@ test("only exact shortcuts outside code, quotes and links are picked, and only t
   assert.deepEqual(inlineShortcuts(authored("Please continue /status with the report"), "Please continue /status with the report"),
     { names: ["status"], remainder: "Please continue  with the report" });
   assert.deepEqual(inlineShortcuts(authored("/whoami\n/status /status"), "/whoami\n/status /status")?.names, ["whoami", "status"]);
-  for (const text of ["run `/status` please", "> /status", "\"/status\"", "see https://x.test/status now", "/status2", "/stop now", "/status@bot"])
+  for (const text of ["hello /status\"quoted\"", "run `/status` please", "> /status", "\"/status\"", "see https://x.test/status now", "/status2", "/stop now", "/status@bot"])
     assert.equal(inlineShortcuts(authored(text), text), null, text);
   assert.equal(inlineShortcuts(authored("a /status"), "different words"), null, "the vouched text must be the message");
   assert.equal(inlineShortcuts(authored("a /status", [{ offset: 2, length: 7 }]), "a /status"), null, "a code span the app marked stays text");
@@ -40,7 +41,7 @@ async function fixture(t) {
   let id = 1;
   const message = (text, extra = {}) => ({ channel: "chat", chatId: "c1", chatKind: "direct", senderId: "owner", senderName: "Sam",
     text, addressed: true, messageId: `m${id++}`, ...extra });
-  return { app, sent, prompts, message };
+  return { app, sent, prompts, message, adapter };
 }
 
 test("a vouched direct message answers /status at once and sends only the rest of the words to the task", async (t) => {
@@ -60,4 +61,19 @@ test("without the app vouching for the words, or in a group, a shortcut inside a
   await f.app.channels.handle(f.message(text, { chatKind: "group", chatId: "g1", authoredCommandText: authored(text) }));
   assert.ok(!f.sent.includes("Nothing is working right now."), "no fast answer");
   assert.match(f.prompts[0] ?? "", /\/status/);
+});
+
+test("pausing the chat app while a shortcut's answer goes out stops the rest of the message", async (t) => {
+  const f = await fixture(t);
+  const text = "Please /status then summarise the notes";
+  // The owner pauses the chat app while the first answer is being delivered.
+  const deliver = f.app.channels.deliver.bind(f.app.channels);
+  f.app.channels.deliver = async (...args) => {
+    const done = await deliver(...args);
+    setPaused(f.app.store, f.app.runtime.owner, "chat", true, "test");
+    return done;
+  };
+  assert.equal(await f.app.channels.handle(f.message(text, { authoredCommandText: authored(text) })), "ignored");
+  assert.equal(f.sent.length, 1, "only the first answer went out");
+  assert.equal(f.prompts.length, 0, "the rest never reached the model");
 });

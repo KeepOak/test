@@ -7,7 +7,8 @@ export interface InlineShortcuts { names: ("status" | "whoami")[]; remainder: st
 
 function protectedText(text: string, spans: AuthoredCommandText["protected"]): string | null {
   const mask = [...text.split("")];
-  const hide = (start: number, length: number) => { for (let i = start; i < start + length; i++) mask[i] = " "; };
+  // Masked with a non-space mark, so a hidden span never makes a word boundary a shortcut could stand on.
+  const hide = (start: number, length: number) => { for (let i = start; i < start + length; i++) mask[i] = "\u0000"; };
   for (const span of spans) {
     if (!Number.isSafeInteger(span.offset) || !Number.isSafeInteger(span.length) || span.offset < 0 || span.length < 0 || span.offset + span.length > text.length) return null;
     hide(span.offset, span.length);
