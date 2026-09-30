@@ -4516,3 +4516,15 @@ audio.docread18m{width:100%}
 .tl-past19+#conversation{padding-top:16px}
 #conversation:has(+.tl-after19){padding-bottom:0}
 .tl-after19{padding-top:16px}
+
+/* Scoped saved pages for the owner browser. */
+.owner-browser7 .ob7-library-bar{display:flex;gap:6px;padding:6px 12px;background:var(--raise);border-bottom:1px solid var(--line)}
+.owner-browser7 .ob7-library{max-height:240px;overflow:auto;padding:10px 12px;background:var(--raise);color:var(--ink);border-bottom:1px solid var(--line)}
+.owner-browser7 .ob7-library ul{list-style:none;padding:0;margin:8px 0 12px}
+.owner-browser7 .ob7-library li{display:flex;align-items:center;gap:8px;margin:4px 0;min-width:0}
+.owner-browser7 .ob7-library li small{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.owner-browser7 .ob7-library li button:first-child{max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+#stage7 .ob7-library-range { display:flex; flex-wrap:wrap; align-items:end; gap:8px; margin:8px 0; }
+#stage7 .ob7-library-range label { display:grid; gap:3px; }
+#stage7 .ob7-library-range small { flex-basis:100%; }
