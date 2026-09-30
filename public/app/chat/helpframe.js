@@ -20,7 +20,7 @@
    A helper is not a Trunk: it shows its specialist's face, or its parent Trunk's, dimmed and badged (never the mascot). The engine decides who may steer or stop a helper
    (src/helper-control.ts); its refusal is shown in its own words. */
 
-import { $, esc, render, renderNow } from "../core/dom.js";
+import { $, esc, render, renderNow, composing } from "../core/dom.js";
 import { ic, av, faceOf, toast } from "../core/ui.js";
 import { figureFace } from "../core/figures.js";
 import { look17 } from "../core/art17.js";
@@ -327,7 +327,7 @@ export function initHelpFrame() {
   on("lane18b", (el) => openMember(el));
   on("voback18", () => back());
   document.addEventListener("input", (e) => { if (e.target.id === "steer18") F.drafts[e.target.dataset.id] = e.target.value; });
-  document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.id === "steer18") { e.preventDefault(); $('[data-act="hfsend18a"]')?.click(); } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.id === "steer18" && !composing(e)) { e.preventDefault(); $('[data-act="hfsend18a"]')?.click(); } });
   setInterval(tick, 1000);
   /* While the frame or a helper's view shows, its helpers are read again every two seconds (the read is shared and
      throttled; the conversation is drawn again only when what the frame shows changed, chat/timeline.js). */

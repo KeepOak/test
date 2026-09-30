@@ -224,7 +224,8 @@ async function twoTurns(t, name, options = {}) {
   const app = await createBranch({ workspace, dataDir: join(root, "private"), ...branchOptions,
     provider: { name: "scripted", async complete(request) {
       const said = request.messages.at(-1).content;
-      if (!options.skipCommands) await steps[said]?.();
+      // A command runs through the tool gate, which waits for the snapshot begun as the task started (chat-speed).
+      if (!options.skipCommands && steps[said]) { await app.rewinds.settled(); await steps[said](); }
       return { content: `done ${said}`, toolCalls: [] };
     } } });
   later(t, () => app.close());
@@ -592,4 +593,38 @@ test("switches: snapshots when needed are taken just before a task's first chang
   const result = await app.rewinds.rewind("local", sessionId, { messageId: users[1].messageId, restore: "files" });
   assert.equal(result.files.method, "snapshot");
   assert.equal(await readFile(join(workspace, "notes.txt"), "utf8"), "before the change");
+});
+
+test("chat-speed: a slow snapshot never holds up the model's first call; a change waits for it, and takes never overlap", async (t) => {
+  const root = await temp(t, "slowsnap");
+  let adding = 0, added = 0, overlapped = false;
+  const fake = async (args) => {
+    if (args[0] === "init") await mkdir(args.at(-1), { recursive: true }).then(() => writeFile(join(args.at(-1), "HEAD"), "ref: x\n"));
+    if (args.includes("add")) {
+      if (adding++) overlapped = true;
+      await new Promise((resolve) => setTimeout(resolve, 1500)); // the owner's computer took 8 and 23 seconds (2026-09-29)
+      adding--;
+      added++;
+    }
+    return { ok: true, stdout: args.includes("write-tree") ? String(added).padStart(40, "a") + "\n" : "", stderr: "" };
+  };
+  const asked = [];
+  const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "p"), snapshotGit: fake,
+    provider: { name: "scripted", async complete() { asked.push(Date.now()); return { content: "Hi!", toolCalls: [] }; } } });
+  later(t, () => app.close());
+  saveGoalUndoSettings(app.store, "local", { snapshots: "on" });
+  const treeOf = (runId) => app.store.sqlite.prepare("SELECT tree FROM turn_snapshots WHERE run_id=?").get(runId).tree;
+  const began = Date.now();
+  const one = await app.runtime.run({ prompt: "Hi" });
+  assert.ok(asked[0] - began < 1000, `the model was asked ${asked[0] - began} ms after the task began, not after the snapshot`);
+  assert.equal(treeOf(one.id), null, "the snapshot is still being taken as the answer comes back");
+  const two = await app.runtime.run({ prompt: "Again", sessionId: one.sessionId });
+  assert.ok(asked[1] - began < 1400, `the next message did not wait for the last one's snapshot (${asked[1] - began} ms)`);
+  const reading = Date.now();
+  await app.runtime.askHooks(two.id, { tool: "files.read" });
+  assert.ok(Date.now() - reading < 500, "a call that only reads does not wait for the snapshot");
+  await app.runtime.askHooks(two.id, { tool: "files.write" });
+  assert.match(treeOf(one.id) ?? "", /^[0-9a]{40}$/, "a change waits until the earlier task's snapshot is written down");
+  assert.match(treeOf(two.id) ?? "", /^[0-9a]{40}$/, "and its own");
+  assert.equal(overlapped, false, "one git add at a time on the hidden index");
 });

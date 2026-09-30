@@ -133,7 +133,7 @@ test("a failed load on a Mac is reported, not hidden", async (t) => {
 
 // ------------------------------------------------------------------------------- Linux sign-in
 
-test("the Linux sign-in file restarts only after a crash, quotes safely and refuses line breaks", () => {
+test("the Linux sign-in file restarts unless stopped on purpose, quotes safely and refuses line breaks", () => {
   assert.equal(systemdUnitPath({}, "/home/pat"), "/home/pat/.config/systemd/user/branch-agent.service");
   assert.equal(systemdUnitPath({ XDG_CONFIG_HOME: "/cfg" }, "/home/pat"), "/cfg/systemd/user/branch-agent.service");
   const unit = systemdUnit({ ...program, executable: "/opt/Branch Agent/branch-agent", workspace: "/home/pat/100% \"real\" $HOME" });
@@ -141,7 +141,8 @@ test("the Linux sign-in file restarts only after a crash, quotes safely and refu
   assert.match(unit, /^Environment="ELECTRON_RUN_AS_NODE=1"$/m);
   assert.match(unit, /^Environment="BRANCH_WORKSPACE=\/home\/pat\/100%% \\"real\\" \$HOME"$/m, "% is doubled, $ is left alone where nothing expands");
   assert.match(unit, /^Environment="BRANCH_PORT=3210"$/m);
-  assert.match(unit, /^Restart=on-failure$/m);
+  assert.match(unit, /^Restart=always$/m);
+  assert.match(unit, /^RestartPreventExitStatus=78$/m, "a stop on purpose stays stopped");
   assert.match(unit, /^StandardOutput=append:\/Users\/pat\/Library\/Application Support\/Branch Agent\/data\/logs\/background\.log$/m);
   assert.match(unit, /^WantedBy=default\.target$/m);
   assert.equal(systemdQuote("a$b\\c"), '"a$$b\\\\c"', "ExecStart doubles $ so nothing is expanded");

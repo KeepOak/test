@@ -6,7 +6,7 @@ import { z } from "zod";
 import { reconnectDelay } from "../../channels/ws-client.js";
 import { capabilities, CapabilitySchema, mediaLimitBytes, type Capability, type DevicePlatform } from "../capabilities.js";
 import { helloText, keyCheck, mediaFrame, pairText, protocolVersion, WindowLimit } from "../protocol.js";
-import type { NodeActions } from "./actions.js";
+import type { Notice, NodeActions } from "./actions.js";
 import { checkHubAddress, dialNode, RefusedError, type DialNode, type NodeSocket } from "./socket.js";
 export { checkHubAddress };
 
@@ -115,6 +115,10 @@ export class NodeClient {
   private offers: Capability[] = [];
   private readonly seen = new Set<string>();
   private readonly limit = new WindowLimit(60, 60_000);
+  /** computer-control: the owner's clicks and keys from Branch's view have their own budget. */
+  private readonly inputs = new WindowLimit(120, 60_000);
+  /** computer-control: the owner's hold on this computer, with the notice showing it; input is refused without it. */
+  private hold: { owner: string; notice: Notice } | null = null;
   constructor(private readonly options: NodeClientOptions) {}
 
   /** What is switched on here right now: Branch's switches, less anything this computer refuses. */
@@ -154,6 +158,7 @@ export class NodeClient {
     clearInterval(watch);
     signal.removeEventListener("abort", stop);
     this.enabled.clear();
+    this.letGo("Branch is out of reach.");
     if (state.revoked) return "revoked";
     return state.proven ? "proven" : "failed";
   }
@@ -167,6 +172,9 @@ export class NodeClient {
     } else if (frame.type === "welcome" || frame.type === "enabled") {
       state.proven = true;
       this.switches(frame.enabled, frame.folder);
+    } else if (frame.type === "driving") {
+      if (frame.on === true) this.takeOver(socket, String(frame.owner ?? ""));
+      else this.letGo("Branch's owner handed this computer back.");
     } else if (frame.type === "invoke") {
       void this.invoke(socket, frame);
     } else if (frame.type === "bye") {
@@ -181,7 +189,35 @@ export class NodeClient {
       if (!this.enabled.has(capability)) void this.options.actions.prepare(capability).catch(() => undefined);
     this.enabled = new Set(wanted);
     this.folder = typeof folder === "string" ? folder : null;
+    if (!this.enabled.has("input")) this.letGo("Using its screen and keyboard from Branch was switched off.");
   }
+
+  /**
+   * The owner took this computer over from Branch's view: the notice goes on top of every window, and Stop there
+   * (or the notice failing) ends the hold here and tells Branch.
+   */
+  private takeOver(socket: NodeSocket, owner: string): void {
+    if (this.hold || !this.enabled.has("input")) return;
+    const notice = this.options.actions.startNotice(owner);
+    const hold = { owner, notice };
+    this.hold = hold;
+    this.options.log?.(`${owner || "Branch's owner"} took over this computer's mouse and keyboard from Branch. A notice with Stop is on the screen.`);
+    void notice.stopped.then((reason) => {
+      if (this.hold !== hold) return;
+      this.hold = null;
+      this.options.log?.(`The hold ended here: ${reason}`);
+      socket.text({ type: "hold-stopped", reason });
+    });
+  }
+  private letGo(why: string): void {
+    const hold = this.hold;
+    if (!hold) return;
+    this.hold = null;
+    hold.notice.close();
+    this.options.log?.(`No longer used from Branch: ${why}`);
+  }
+  /** Whether the owner holds this computer now (its notice showing). */
+  held(): boolean { return this.hold !== null; }
 
   private async invoke(socket: NodeSocket, frame: Record<string, unknown>): Promise<void> {
     const id = String(frame.id ?? "");
@@ -193,9 +229,17 @@ export class NodeClient {
     if (this.seen.size > 500) this.seen.delete(this.seen.values().next().value!);
     if (!capability.success || !this.enabled.has(capability.data)) return refuse("That is switched off on this device.");
     if (typeof frame.deadline !== "number" || frame.deadline < (this.options.now ?? Date.now)()) return refuse("The request came too late.");
-    if (!this.limit.take("all")) return refuse("This device has been asked too often in the last minute.");
+    if (!(capability.data === "input" ? this.inputs.take("input") : this.limit.take("all"))) return refuse("This device has been asked too often in the last minute.");
+    if (capability.data === "input") {
+      // Only while the owner holds it and its notice is up and on top.
+      const hold = this.hold;
+      if (!hold || !(await hold.notice.shown) || this.hold !== hold) return refuse("Nobody is using this computer from Branch now, or Stop was pressed here.");
+    }
     try {
       const result = await this.options.actions.perform(capability.data, frame.args, this.folder);
+      // Q2: the keys the owner pressed here are kept in this computer's own log (typed words are not).
+      const args = frame.args as Record<string, unknown> | undefined;
+      if (capability.data === "input" && args?.action === "key") this.options.log?.(`Branch's owner pressed ${String(args.chord).slice(0, 40)} here.`);
       if (!result.media) return socket.text({ type: "result", id, ok: true, value: result.value });
       if (result.media.data.length > mediaLimitBytes) return refuse("The picture or sound was larger than Branch accepts.");
       socket.text({ type: "result", id, ok: true, value: result.value,
