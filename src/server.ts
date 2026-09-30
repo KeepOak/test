@@ -298,6 +298,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
+import { streamLiveStage } from "./live-stage-stream.js";
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { MiniAppDoor } from "./miniapp/door.js";
 import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
@@ -4904,6 +4905,18 @@ async function noteFirstStart(app: Branch, dataDir: string): Promise<void> {
 }
 /** Endpoints that write the response themselves (streams and the OpenAI-style chat). */
 async function rawApi(app: Branch, request: IncomingMessage, response: ServerResponse, path: string): Promise<boolean> {
+  if (request.method === "GET" && path === liveStagePath
+    && new URL(request.url ?? "/", "http://local").searchParams.get("stream") === "1") {
+    const session = new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "";
+    if (!/^[a-f0-9-]{36}$/.test(session)) throw new HttpError(400, "Choose a conversation for the live view.");
+    const scope = scopeWhileUnlocked(app);
+    const readable = () => !!scope && scopeWhileUnlocked(app) === scope && app.store.profiles.isOwner()
+      && app.store.ownsSession(scope, session);
+    if (!readable()) throw new HttpError(404, "Conversation not found");
+    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
+      session, response, readable);
+    return true;
+  }
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {
