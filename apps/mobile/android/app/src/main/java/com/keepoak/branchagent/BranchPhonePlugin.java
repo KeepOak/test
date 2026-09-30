@@ -11,6 +11,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.CancellationSignal;
 import android.webkit.PermissionRequest;
+import android.webkit.GeolocationPermissions;
+import android.app.NotificationManager;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.BridgeWebChromeClient;
 import com.getcapacitor.JSObject;
@@ -89,6 +91,15 @@ public class BranchPhonePlugin extends Plugin {
                     return;
                 }
                 super.onPermissionRequest(request);
+            }
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
+                if (!foreground || !BranchRefusals.sameOrigin(origin, getBridge().getAppUrl()) || node.never().contains("location")) {
+                    callback.invoke(origin, false, false); return;
+                }
+                super.onGeolocationPermissionsShowPrompt(origin, (from, allowed, remember) -> callback.invoke(from,
+                    allowed && foreground && !node.never().contains("location")
+                        && BranchRefusals.sameOrigin(String.valueOf(getBridge().getWebView().getUrl()), getBridge().getAppUrl()), false));
             }
         });
     }
@@ -284,6 +295,78 @@ public class BranchPhonePlugin extends Plugin {
         call.resolve();
     }
 
+    @PluginMethod
+    public void lendNotify(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (!foreground || !BranchRefusals.sameOrigin(String.valueOf(getBridge().getWebView().getUrl()), getBridge().getAppUrl()))
+                    throw new IllegalStateException("Open the phone app’s own page.");
+                NotificationManager manager = getContext().getSystemService(NotificationManager.class);
+                if (BranchWords.position(getContext(), "notifications").equals("off") || manager == null || !manager.areNotificationsEnabled()
+                    || Build.VERSION.SDK_INT >= 33 && getContext().checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                    throw new IllegalStateException("Enable notifications on this phone first.");
+                String title = call.getString("title", ""), body = call.getString("body", "");
+                if (title.isEmpty() || title.length() > 120 || body.length() > 1000) throw new IllegalStateException("Invalid notification text.");
+                lend.performAction(call.getString("id", ""), "notify", () -> BranchNotify.show(getContext(), call.getString("id", ""), title, body));
+                call.resolve();
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        });
+    }
+
+    @PluginMethod
+    public void lendOpen(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (!foreground || !BranchRefusals.sameOrigin(String.valueOf(getBridge().getWebView().getUrl()), getBridge().getAppUrl()))
+                    throw new IllegalStateException("Open the phone app’s own page.");
+                Uri url = Uri.parse(call.getString("url", ""));
+                if (!"https".equals(url.getScheme()) || url.getHost() == null || url.getUserInfo() != null || url.toString().length() > 2048)
+                    throw new IllegalStateException("Only HTTPS web addresses without credentials can be opened.");
+                lend.performAction(call.getString("id", ""), "open-url", () -> getActivity().startActivity(new Intent(Intent.ACTION_VIEW, url)));
+                call.resolve();
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        });
+    }
+
+    @PluginMethod
+    public void notificationAccess(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (!foreground || !BranchRefusals.sameOrigin(String.valueOf(getBridge().getWebView().getUrl()), getBridge().getAppUrl()))
+                    throw new IllegalStateException("Open the phone app’s own settings page.");
+                if (call.getData().has("allow")) {
+                    BranchWords.state(getContext()).edit().putBoolean("notification-reader", Boolean.TRUE.equals(call.getBoolean("allow"))).apply();
+                    BranchNotificationReader.clearTickets();
+                    lend.pause(); lend.resume();
+                }
+                if (Boolean.TRUE.equals(call.getBoolean("settings"))) getActivity().startActivity(new Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS));
+                call.resolve(JSObject.fromJSONObject(BranchNotificationReader.status(getContext())));
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        });
+    }
+
+    @PluginMethod
+    public void lendNotifications(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            try {
+                if (!foreground || !BranchRefusals.sameOrigin(String.valueOf(getBridge().getWebView().getUrl()), getBridge().getAppUrl()))
+                    throw new IllegalStateException("Open the phone app’s own page.");
+                String capability = call.getString("capability", "");
+                if (!capability.equals("notification-read") && !capability.equals("notification-action")) throw new IllegalStateException("Unknown notification operation.");
+                final JSONObject[] result = {null};
+                final Exception[] failed = {null};
+                lend.performAction(call.getString("invokeId", ""), capability, () -> {
+                    try {
+                        result[0] = capability.equals("notification-read")
+                            ? BranchNotificationReader.list(getContext(), call.getString("package", ""), Boolean.TRUE.equals(call.getBoolean("content")), call.getInt("limit", 5), call.getString("scope", ""), node.publicKey())
+                            : BranchNotificationReader.action(getContext(), call.getString("id", ""), call.getString("scope", ""), node.publicKey(), call.getString("action", ""), call.getString("text", ""));
+                    } catch (Exception error) { failed[0] = error; }
+                });
+                if (failed[0] != null) throw failed[0];
+                call.resolve(JSObject.fromJSONObject(result[0]));
+            } catch (Exception error) { call.reject(error.getMessage()); }
+        });
+    }
     @PluginMethod
     public void lastSeen(PluginCall call) {
         JSObject out = new JSObject();

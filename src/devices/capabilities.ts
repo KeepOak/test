@@ -16,7 +16,7 @@ import { z } from "zod";
  */
 export const capabilities = [
   "camera", "screen", "location", "notify", "clipboard-read", "clipboard-write", "open-url",
-  "run", "files", "speak", "listen", "canvas",
+  "run", "files", "speak", "listen", "canvas", "notification-read", "notification-action",
 ] as const;
 export type Capability = (typeof capabilities)[number];
 export const CapabilitySchema = z.enum(capabilities);
@@ -43,7 +43,9 @@ export const capabilityInfo: Record<Capability, CapabilityInfo> = {
   camera: { kind: "capture", tool: "device.camera", label: "Take a photo with the camera", platforms: ["darwin", "linux", "ios", "android"] },
   screen: { kind: "capture", tool: "device.screen", label: "Take a picture of the screen", platforms: computers },
   location: { kind: "capture", tool: "device.location", label: "Say where the device is", platforms: ["linux", "ios", "android"] },
-  notify: { kind: "act", tool: "device.notify", label: "Show a notification", platforms: computers },
+  notify: { kind: "act", tool: "device.notify", label: "Show a notification", platforms: everywhere },
+  "notification-read": { kind: "capture", tool: "phone.notifications.read", label: "Read selected app notifications", platforms: ["android"] },
+  "notification-action": { kind: "act", tool: "phone.notifications.action", label: "Act on one selected notification", platforms: ["android"] },
   "clipboard-read": { kind: "capture", tool: "device.clipboard", label: "Read what was copied", platforms: computers },
   "clipboard-write": { kind: "act", tool: "device.clipboard", label: "Put text on the clipboard", platforms: computers },
   "open-url": { kind: "act", tool: "device.open", label: "Open a web page", platforms: everywhere },
@@ -60,7 +62,7 @@ export const devicePermissions: Record<CapabilityKind | "list", string> = {
 };
 
 /** Every tool this feature registers, so the catalog can leave them out while it is off. */
-export const deviceTools: readonly string[] = ["device.list",
+export const deviceTools: readonly string[] = ["device.list", "phone.list", "phone.camera", "phone.location", "phone.notify", "phone.open",
   ...new Set(Object.values(capabilityInfo).map((info) => info.tool))];
 
 /**
@@ -70,12 +72,12 @@ export const deviceTools: readonly string[] = ["device.list",
  */
 const askingTools = new Set(Object.values(capabilityInfo)
   .filter((info) => info.kind === "capture" || info.kind === "run").map((info) => info.tool));
-export const asksUnlessRuled = (tool: string): boolean => askingTools.has(tool);
+export const asksUnlessRuled = (tool: string): boolean => askingTools.has(tool) || ["phone.camera", "phone.location"].includes(tool);
 /**
  * Integration review: a yes to a picture, a recording or a command is for that one call; it is not
  * remembered for the conversation unless the owner picks that when answering (or writes a rule).
  */
-const everyTimeTools = new Set(["device.camera", "device.screen", "device.listen", "device.run"]);
+const everyTimeTools = new Set(["device.camera", "device.screen", "device.listen", "device.run", "phone.camera", "phone.notifications.read", "phone.notifications.action"]);
 export const asksEveryTime = (tool: string): boolean => everyTimeTools.has(tool);
 
 /** What a platform can offer at all, before any switch is looked at. */

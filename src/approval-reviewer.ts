@@ -140,6 +140,7 @@ const sessionOf = (host: ReviewerHost, context: ToolContext): string =>
 /** Why this call is looked at, or null when it is not: the two questions are asked separately. */
 interface Reasons { classify: boolean; judge: boolean }
 function reasonsFor(host: ReviewerHost, mode: ReviewerSettings["mode"], check: PolicyCheck, about: ReviewedCall): Reasons | null {
+  if (about.call.name === "phone.notifications.read" || about.call.name === "phone.notifications.action") return null;
   // A refusal for a reason other than the rules (a profile's role) is never looked at again.
   if (mode === "off" || check.reason || about.context.dryRun) return null;
   const { call, context } = about;

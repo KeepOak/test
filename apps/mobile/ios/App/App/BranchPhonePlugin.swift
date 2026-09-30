@@ -24,7 +24,7 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         // B6: connecting from the window's "Pair a phone" square: pairs as a device, then collects the phone's session.
         "phonePair",
         // PH-03: lending this phone while the app's own page is open.
-        "lendStart", "lendStop", "lendResult",
+        "lendStart", "lendStop", "lendResult", "lendNotify", "lendOpen",
     ].map { CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise) }
 
     /// PH-03: the device socket. Asks reach the page only while the app's own page shows (never the owner's Branch).
@@ -47,6 +47,7 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
     private func appPageShowing() -> Bool {
         var showing = false
         let check = {
+            guard UIApplication.shared.applicationState == .active else { return }
             guard let shown = self.bridge?.webView?.url, let local = self.bridge?.config.localURL else { return }
             showing = shown.scheme == local.scheme && shown.host == local.host && shown.port == local.port
         }
@@ -262,6 +263,8 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         guard fromAppPage(call) else { return }
         do {
             call.resolve(["never": try BranchNode.setNever(call.getArray("never", String.self) ?? [])])
+            lend.pause()
+            lend.resume()
         } catch {
             call.reject(BranchNative.word("phone.device.failed", "That did not work."))
         }
@@ -286,6 +289,42 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         guard fromAppPage(call) else { return }
         lend.stop()
         call.resolve()
+    }
+
+    @objc func lendNotify(_ call: CAPPluginCall) {
+        guard fromAppPage(call) else { return }
+        guard BranchSwitches.position("notifications") != "off", let id = call.getString("id"),
+              let title = call.getString("title"), !title.isEmpty, title.count <= 120,
+              let body = call.getString("body"), body.count <= 1000 else { call.reject("Enable notifications and give bounded text."); return }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+                call.reject("Enable system notifications on this phone first."); return
+            }
+            self.lend.performAction(id, capability: "notify") { allowed in
+                guard allowed && BranchSwitches.position("notifications") != "off" else { call.reject("No current phone action request."); return }
+                let content = UNMutableNotificationContent(); content.title = title; content.body = body
+                UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil)) { error in
+                    if let error { call.reject(error.localizedDescription) } else { call.resolve() }
+                }
+            }
+        }
+    }
+
+    @objc func lendOpen(_ call: CAPPluginCall) {
+        guard fromAppPage(call) else { return }
+        guard let id = call.getString("id"), let raw = call.getString("url"), raw.count <= 2048,
+              let url = URL(string: raw), url.scheme == "https", url.host != nil, url.user == nil, url.password == nil else {
+            call.reject("Only HTTPS web addresses without credentials can be opened."); return
+        }
+        self.lend.performAction(id, capability: "open-url") { allowed in
+            guard allowed else { call.reject("No current phone action request."); return }
+            DispatchQueue.main.async {
+                guard self.appPageShowing() else { call.reject("Open the phone app’s own page."); return }
+                UIApplication.shared.open(url, options: [:]) { opened in
+                    if opened { call.resolve() } else { call.reject("No app could open that page.") }
+                }
+            }
+        }
     }
 
     /// The page's answer to one ask it was handed (BranchLend.answer checks it).
@@ -315,10 +354,10 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
 ///     one the page keeps: https anywhere, plain http only to this network or a Tailscale address.
 enum BranchNode {
     /// PH-03: what this phone does for Branch when lent, before the owner's refusals: the app's page takes photos,
-    /// records and speaks (apps/mobile/web/phone-node.js APP_OFFERS). Nothing else is offered.
-    static let offers = ["camera", "listen", "speak"]
+    /// records and speaks, gets one foreground location fix, and delegates bounded notification/HTTPS opening here.
+    static let offers = ["camera", "listen", "speak", "location", "notify", "open-url"]
     /// What this phone can promise never to do (apps/mobile/web/rules.js DEVICE_REFUSALS).
-    static let refusals = ["camera", "screen", "listen", "run"]
+    static let refusals = ["camera", "screen", "listen", "run", "location", "notify", "open-url"]
     /// The 12 bytes an Ed25519 public key carries in front of it as SPKI DER, which is what Branch takes.
     private static let spkiPrefix = Data([0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00])
     private static let service = "com.keepoak.branchagent.node"
@@ -509,6 +548,7 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
     private var task: URLSessionWebSocketTask?
     private var enabled: [String] = []
     private var waiting: [String: Int64] = [:]
+    private var waitingActions: [String: String] = [:]
     private var seen = Set<String>()
 
     init(showing: @escaping () -> Bool, state: @escaping (Bool, [String]) -> Void, invoke: @escaping ([String: Any]) -> Void) {
@@ -605,6 +645,7 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
         session = nil
         enabled = []
         waiting = [:]
+        waitingActions = [:]
         state(false, [])
     }
 
@@ -662,9 +703,21 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
         }
         let deadline = (ask["deadline"] as? NSNumber)?.int64Value ?? now
         waiting[id] = deadline
+        waitingActions[id] = capability
         invoke(["id": id, "capability": capability, "args": ask["args"] as? [String: Any] ?? [:], "deadline": deadline])
     }
 
+    /// Authorization remains tied to this connection's pending action and the phone's own refusal.
+    func performAction(_ id: String, capability: String, done: @escaping (Bool) -> Void) {
+        queue.async {
+            let now = Int64(Date().timeIntervalSince1970 * 1000)
+            let allowed = self.task != nil && self.proven && self.waitingActions[id] == capability
+                && (self.waiting[id] ?? 0) >= now && self.enabled.contains(capability)
+                && !BranchNode.refuses(capability) && self.showing()
+            if allowed { self.waitingActions.removeValue(forKey: id) }
+            done(allowed)
+        }
+    }
     /// The page's answer to one ask it was handed: answered once, a picture or sound as its own frame after it.
     func answer(_ from: [String: Any], done: @escaping (String?) -> Void) {
         queue.async {
@@ -672,6 +725,7 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
                 done("That request is not waiting.")
                 return
             }
+            self.waitingActions.removeValue(forKey: id)
             let ok = from["ok"] as? Bool ?? false
             var result: [String: Any] = ["type": "result", "id": id, "ok": ok]
             var bytes: Data?
