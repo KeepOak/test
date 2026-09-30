@@ -30,7 +30,7 @@ export class LocalManager {
     this.ollama = new OllamaClient(runtimeInfo.ollama.baseUrl, localRuntimeFetch(deps.policy, call, runtimeInfo.ollama.baseUrl));
     this.lmStudio = new LmStudioClient(runtimeInfo["lm-studio"].baseUrl, localRuntimeFetch(deps.policy, call, runtimeInfo["lm-studio"].baseUrl));
   }
-  private server(runtime: "llama-cpp" | "mlx"): OpenAiServerClient {
+  private server(runtime: "llama-cpp" | "mlx" | "vllm"): OpenAiServerClient {
     const base = this.deps.launcher.baseUrl(runtime) ?? runtimeInfo[runtime].baseUrl;
     return new OpenAiServerClient(base, localRuntimeFetch(this.deps.policy, this.deps.fetch ?? globalThis.fetch, () => this.deps.launcher.baseUrl(runtime)));
   }
@@ -45,7 +45,7 @@ export class LocalManager {
     const studio = await this.lmStudio.list().catch(() => ({ running: false, models: [] }));
     for (const model of studio.models) for (const one of model.instances)
       found.push({ runtime: "lm-studio", name: model.name, instanceId: one.id, sizeBytes: model.sizeBytes, graphicsBytes: 0, contextLength: one.contextLength });
-    for (const runtime of ["llama-cpp", "mlx"] as const) {
+    for (const runtime of ["llama-cpp", "mlx", "vllm"] as const) {
       if (!this.deps.launcher.owns(runtime)) continue;
       for (const name of await this.server(runtime).models() ?? [])
         found.push({ runtime, name, instanceId: name, sizeBytes: 0, graphicsBytes: 0, contextLength: null });
@@ -92,6 +92,7 @@ export class LocalManager {
   /** Removes a downloaded model and the connection that used it; says how much space it freed. */
   async remove(input: unknown): Promise<{ removed: string; freedBytes: number; message: string }> {
     const { runtime, id } = UnloadSchema.parse(input);
+    if (runtime === "vllm") throw new Error("Branch did not download this vLLM directory, so it will not delete it. Stop the runtime and manage your model files yourself.");
     if (runtime === "lm-studio") throw new Error("LM Studio has no way for another program to delete a model. Delete it in LM Studio, under My Models.");
     // Integration review: the name is checked before anything else, and "." or ".." never pass.
     if (runtime !== "ollama" && !/^(?!\.{1,2}$)[A-Za-z0-9._-]+$/.test(id)) throw new Error("That is not a model Branch downloaded");
