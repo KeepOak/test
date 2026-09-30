@@ -93,6 +93,7 @@ import { Moderation } from "./moderation.js";
 import { PrivacyGuard } from "./privacy-guard.js";
 import { OAuthConnections } from "./oauth.js";
 import { RunArtifacts } from "./artifacts.js";
+import { SandboxUiPages } from './sandbox-ui-pages.js';
 import { Attachments } from "./attachments.js";
 import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
@@ -1001,6 +1002,7 @@ export async function createBranch(options: {
   // this has to exist before the plugins the owner already chose are loaded back.
   const providerPlugins = new ProviderPlugins(runtime.models, web.policy, globalThis.fetch, userAgent);
   const plugins = new Plugins(store, runtime.owner, registry, join(dataDir, "plugins"));
+  const sandboxUi = new SandboxUiPages(store, () => runtime.owner, plugins, () => !sessionLock.refusal('GET', '/api/sandbox-ui/canvas'));
   plugins.providers = providerPlugins;
   // Chat services a plugin brought, registered the same way a model connection is: available to
   // connect, never connected on the plugin's own say-so.
@@ -1729,6 +1731,7 @@ ${result.output || "(it said nothing)"}`;
     security,
     /** eng-connectors: the owner's own MCP servers, allowed command-line tools, and flagged replies. */
     ownMcp,
+    sandboxUi,
     ownClis,
     replyFlags,
     /** mac2/fly-core: the learning core's three-way switch (off, when-needed, on); it ships off. */

@@ -23,6 +23,7 @@ import { splash, splashDone } from "./shell/inperson.js";
 import { initNotices } from "./shell/notices.js";
 import { initLanguage, t } from "../i18n.js";
 import { initLive, restoreOpen } from "./shell/liveupdate.js"; // hot-update: live window updates keep what is open
+import { initSandboxUi } from './chat/sandbox-ui.js';
 
 /* A place draws its own <main class="main" id="main">; inside the shell's #main that would be a second main and a second
    #main, so it becomes a <div> with the same classes and children (the styles are by class). */
@@ -172,6 +173,7 @@ async function boot() {
   listen();
   listenTips();
   initShell();
+  initSandboxUi();
   initNotices(); // UI-202: what the window saw that earns an achievement (shell/notices.js)
   initLock();
   onRender(drawShell);
