@@ -1,3 +1,6 @@
+import type { CopyIdentity } from "./coding/worktrees.js";
+import { realpath } from "node:fs/promises";
+import { resumeAuthority, type ResumeAuthority } from "./resume-authority.js";
 import { randomUUID } from "node:crypto";
 import { assertContinuitySession } from "./reach/continuity-store.js";
 import type { TasteLearning } from "./taste/learning.js";
@@ -950,6 +953,45 @@ export class Runtime {
     const controller = this.controllers.get(id);
     return controller && !controller.signal.aborted && !this.pausing.get(id)?.signal.aborted ? controller.signal : null;
   }
+  /** Register interrupted journal recovery with the same Stop, Pause and shutdown controls as live work. */
+  beginInterruptedRecovery(id: string): { signal: AbortSignal; cancelled(): boolean; release(): void } {
+    const run = this.store.run(id);
+    if (!this.accepting || !run || run.status !== "interrupted" || run.owner !== this.owner
+      || this.controllers.has(id) || this.pausing.get(id)?.signal.aborted || this.activeSessions.has(run.sessionId))
+      throw new Error("This interrupted task cannot start automatic recovery while stopped, paused or already active.");
+    const events = this.store.events(id);
+    if (events.some((event) => event.kind === "run.recovery_stopped" || event.kind === "run.pause_asked" || event.kind === "run.paused"))
+      throw new Error("This task was stopped or paused. Continue it explicitly when ready.");
+    const deadline = Number(events.find((event) => event.kind === "run.started")?.data.deadlineMs);
+    if (!Number.isFinite(deadline) || deadline <= 0) throw new Error("The interrupted task has no recorded recovery deadline.");
+    const controller = new AbortController(), pausing = new AbortController();
+    const paused = () => controller.abort(pausing.signal.reason);
+    pausing.signal.addEventListener("abort", paused, { once: true });
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(new Error("Interrupted recovery reached its deadline")); }, Math.min(deadline, 120_000));
+    this.controllers.set(id, controller);
+    this.pausing.set(id, pausing);
+    this.activeSessions.add(run.sessionId);
+    let finished!: () => void;
+    const pending = new Promise<void>((resolve) => { finished = resolve; });
+    this.pending.add(pending);
+    let released = false;
+    return { signal: controller.signal,
+      cancelled: () => controller.signal.aborted && !pausing.signal.aborted && !timedOut && this.accepting,
+      release: () => {
+        if (released) return;
+        released = true;
+        clearTimeout(timer);
+        pausing.signal.removeEventListener("abort", paused);
+        if (this.controllers.get(id) === controller) {
+          this.controllers.delete(id);
+          if (this.pausing.get(id) === pausing) this.pausing.delete(id);
+          this.activeSessions.delete(run.sessionId);
+        }
+        this.pending.delete(pending);
+        finished();
+    } };
+  }
   cancel(id: string): boolean {
     const controller = this.controllers.get(id);
     controller?.abort(new Error("Cancelled by user"));
@@ -1202,13 +1244,29 @@ export class Runtime {
    * Continues a task that was interrupted (for example by a restart) from its saved transcript.
    * Tool calls whose outcome was never recorded are marked unknown; nothing is replayed.
    */
-  async resume(runId: string): Promise<Run> {
+  /** A recovery handoff restricts continuation; it never supplies authority to execute. */
+  recoveryHandoff(runId: string, context: ToolContext, copy: CopyIdentity | null) {
+    const run = this.store.run(runId);
+    if (!run) throw new Error("The original task is unavailable.");
+    const saved = resumeAuthority(this.store, runId, this.owner, this.registry.permissions());
+    const permissions = saved.permissions.filter((permission) => !this.store.sessionTemporary(run.sessionId) || permission !== "memory.write");
+    if (permissions.length !== context.permissions.size || permissions.some((permission) => !context.permissions.has(permission))
+      || saved.agent !== context.agent || saved.depth !== context.depth || saved.delegates !== (context.delegates === true)
+      || saved.dryRun !== (context.dryRun === true) || saved.source !== (context.source ?? "owner") || (saved.ownCopy && !copy))
+      throw new Error("Normal continuation does not match the task's reconciled authority and retained copy. Automatic continuation was held.");
+    return { authority: { ...saved, permissions }, copy, workspace: context.workspace };
+  }
+
+  async resume(runId: string, restriction?: ReturnType<Runtime["recoveryHandoff"]>): Promise<Run> {
     const previous = this.store.run(runId);
     const origin = previous ? runOrigin(this.store, runId) : null;
     // bucket 19 (integration review): a person's own task, handed back to them at start, may carry on too.
     const lentTo = origin?.lentTo ?? null;
     if (!previous || !origin || (previous.owner !== this.owner && previous.owner !== lentTo)) throw new Error("Run not found");
     if (previous.status !== "interrupted") throw new Error("Only interrupted tasks can be continued");
+    if (!previous.project || !this.store.projects.list(previous.owner).some((project) => project.id === previous.project)
+      || this.store.sessionProject(previous.sessionId) !== previous.project)
+      throw new Error("The original task's project is missing or its conversation changed project. Reconcile it before continuing.");
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
     // (carryOrigin, mac7/outside-resume), whoever pressed Continue.
@@ -1220,14 +1278,14 @@ export class Runtime {
       ...(Number.isFinite(deadline) && deadline > 0 ? { timeoutMs: deadline } : {}),
       ...(typeof titled === "string" ? { title: titled } : {}) };
     const go = async () => {
-      if (!lentTo) return this.execute(again);
+      if (!lentTo) return this.execute(again, undefined, "", undefined, restriction);
       // Lent to the assistant for the resumed task, and handed back to the person after it.
       this.store.reassignSession(previous.sessionId, this.owner);
-      try { return await this.execute({ ...again, lentTo }); } finally { this.store.reassignSession(previous.sessionId, lentTo); }
+      try { return await this.execute({ ...again, lentTo }, undefined, "", undefined, restriction); } finally { this.store.reassignSession(previous.sessionId, lentTo); }
     };
     // bucket 19: a task a household person started carries on as that person, after a restart too.
     const person = origin.personProfileId;
-    return this.track(() => (person && !currentPerson() ? asPerson({ profileId: person, keyId: "resumed" }, go) : go()));
+    return this.track(() => underProject(previous.project!, () => (person && !currentPerson() ? asPerson({ profileId: person, keyId: "resumed" }, go) : go())));
   }
   /** A tool run outside a conversation; `options` says how it is gated (src/tool-gate.ts). */
   async executeTool(name: string, args: unknown, options: ToolGateOptions = {}): Promise<unknown> {
@@ -1270,6 +1328,7 @@ export class Runtime {
         status,
         // integrate/empty-completion: an operation that returns nothing still ran; `undefined` is not JSON.
         status === "completed" ? JSON.stringify(value) ?? "null" : errorText(failure),
+        "not-applicable",
       );
       if (status !== "completed") throw failure;
       if (settled.status !== "completed") throw new Error(settled.output);
@@ -1330,6 +1389,7 @@ export class Runtime {
       status,
       // mac7/empty-completion: `undefined` is not JSON, and a tool that returns nothing still ran.
       this.hideSecrets(status !== "completed" ? errorText(failure) : JSON.stringify(result) ?? "null"),
+      "not-applicable",
     );
     if (status !== "completed") throw failure;
     if (settled.status !== "completed") throw new Error(settled.output);
@@ -1449,6 +1509,7 @@ export class Runtime {
       signal: AbortSignal.any([parent.signal, timeout.signal]),
       permissions: new Set(permissions),
       depth: parent.depth + 1,
+      ownCopy: options.ownCopy === true, delegates: options.delegates === true,
       ...(options.agent ? { agent: options.agent } : {}),
     };
     let connection: HelperConnection | undefined;
@@ -1676,9 +1737,22 @@ ${run.output.slice(0, 6000)}`;
     parent?: ToolContext,
     instructions = "",
     helper?: HelperConnection,
+    restriction?: ReturnType<Runtime["recoveryHandoff"]>,
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
+    const from = options.continuing?.runId ?? options.resumeFrom;
+    if (parent && from) throw new Error("A saved task continues through its original runtime lifecycle, not a new parent's context.");
+    const authority = from ? resumeAuthority(this.store, from, this.owner, this.registry.permissions()) : undefined;
+    if (authority) {
+      const previous = this.store.run(from!)!;
+      if (options.sessionId && options.sessionId !== previous.sessionId) throw new Error("A task continues only in its original conversation.");
+      if (!previous.project || this.store.sessionProject(previous.sessionId) !== previous.project
+        || !this.store.projects.list(previous.owner).some((project) => project.id === previous.project))
+        throw new Error("The original task's project is unavailable or differs from its conversation. Reconcile it before continuing.");
+      options = { ...options, sessionId: previous.sessionId, permissions: authority.permissions.filter((permission) => !options.permissions || options.permissions.includes(permission)),
+        ...(authority.dryRun ? { dryRun: true } : {}), source: authority.source };
+    }
     assertContinuitySession(this.store, this.owner,
       options.sessionId ?? this.store.run(options.resumeFrom ?? options.continuing?.runId ?? "")?.sessionId, parent?.runId, options.continuing?.runId);
     // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
@@ -1708,6 +1782,8 @@ ${run.output.slice(0, 6000)}`;
     const budget = parent?.budget ?? new Budget(options.budget ?? knobs.taskBudget(this.store, this.owner)); // R17-S09
     // ── R17-A (Trunks): a Trunk's turn carries its own instructions, memory scope, tools and model. ──
     const trunk = parent ? null : this.trunkShape(options);
+    if (authority && authority.trunkId !== trunk?.trunkId)
+      throw new Error("The original task's Trunk scope is unavailable or its conversation now routes to another Trunk. Reconcile it before continuing.");
     // eng-trunk-controls: a paused Trunk starts nothing new, whoever asks; said in words, above the first await.
     const paused = trunk ? this.trunkPaused(trunk.trunkId) : null;
     if (paused) throw new Error(paused);
@@ -1750,11 +1826,11 @@ ${run.output.slice(0, 6000)}`;
     // dogfood-ux-2: from here on the task works in ITS conversation's project: its folder and its saved secrets, never
     // those of a project picked anywhere else while it runs (src/project-scope.ts). Entered synchronously, so every
     // refusal above still comes before the first await.
-    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet, helper));
+    return underProject(run.project ?? defaultProjectId, () => this.started(run, options, parent, instructions, budget, trunk, inlet, helper, authority, restriction));
   }
   /** The rest of `execute`, once the task exists: everything it does, inside its own project. */
   private async started(run: Run, options: RunOptions, parent: ToolContext | undefined, instructions: string, budget: Budget,
-    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null, helper?: HelperConnection): Promise<Run> {
+    trunk: TrunkRunShape | null, inlet: { text: string; blocked: string | null; applied: string[] } | null, helper?: HelperConnection, authority?: ResumeAuthority, restriction?: ReturnType<Runtime["recoveryHandoff"]>): Promise<Run> {
     if (options.title?.trim()) this.store.event(run.id, "run.titled", { title: options.title.trim().split(/\r?\n/)[0]!.slice(0, 200) }); // DESIGN-DIRECTION PR 2
     if (options.system) this.store.markAside(run.id); // overview: the engine's own ask (a Trunk's introduction), set aside in GET /api/state
     // fix399: a helper of a task kept out of Recent (a learning pass, reading words) is kept out with it.
@@ -1793,7 +1869,15 @@ ${run.output.slice(0, 6000)}`;
           ...(options.unattended ? { unattended: true } : {}),
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
           ...this.carriedHelper(options), // helper-lifecycle
+          ...(authority ? { depth: authority.depth, delegates: authority.delegates, ...(authority.agent ? { agent: authority.agent } : {}) } : {}),
         }), trunk);
+    if (authority) {
+      context.ownCopy = authority.ownCopy;
+      context.delegates = authority.delegates;
+      context.depth = authority.depth;
+      if (authority.agent) context.agent = authority.agent;
+      context.permissions = new Set([...context.permissions].filter((permission) => authority.permissions.includes(permission)));
+    }
     // QA R1: the call a yes was given for (or, carried on after a restart, the call whose question was lost) is run by the
     // engine itself, through the same gate, before the model's next turn; the model never has to make it again.
     const approved = this.approvedFor(run, options);
@@ -1840,19 +1924,20 @@ ${run.output.slice(0, 6000)}`;
     else this.store.event(run.id, "run.started", {
       provider: this.provider.name,
       parentRunId: parent?.runId ?? null,
+      ownCopy: context.ownCopy === true,
+      delegates: context.delegates === true,
+      dryRun: context.dryRun === true,
       deadlineMs, // long-work: a resumed task is given the same time again
       // Pass 17 (Helpers): which specialist or mode a helper works as, so the parent's Activity can name it.
       // Its name as it was then (agentName), so a helper whose specialist is deleted later is still named, never by its id.
-      ...(parent && context.agent ? this.helperMarks(context.agent) : {}),
+      ...(context.agent ? this.helperMarks(context.agent) : {}),
       // bucket-18 (A0300): where the task came from, kept on the task so later work can read it.
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
       // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
       ...(context.depth ? { depth: context.depth } : {}),
-      ...(context.delegates ? { delegates: true } : {}),
       // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
-      ...(context.dryRun ? { dryRun: true } : {}),
       ...(options.channel ? { channel: options.channel.slice(0, 64) } : {}),
     });
     this.recordedSources.delete(run.id); // mac7/outside-resume: read again now that the start is written
@@ -1870,9 +1955,29 @@ ${run.output.slice(0, 6000)}`;
     let status: Run["status"] = "completed";
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
-    const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let place: Awaited<ReturnType<CodingHooks["placeTask"]>> = null;
+    let placementReady = false;
     let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
+      place = this.coding ? await this.coding.placeTask(run, context, parent) : null;
+      if (context.ownCopy && !place) throw new Error("The task's required saved project copy could not be restored. It was not continued in a shared workspace.");
+      if (restriction) {
+        const expected = restriction.authority;
+        if (context.permissions.size !== expected.permissions.length || expected.permissions.some((permission) => !context.permissions.has(permission))
+          || context.agent !== expected.agent || context.depth !== expected.depth || (context.delegates === true) !== expected.delegates
+          || (context.dryRun === true) !== expected.dryRun || (context.ownCopy === true) !== expected.ownCopy || (context.source ?? "owner") !== expected.source)
+          throw new Error("The recovered task's effective authority changed before continuation. No model continuation was started.");
+        const samePath = (left: string, right: string) => process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+        if (restriction.copy) {
+          const actual = place?.identity, wanted = restriction.copy;
+          if (!actual || actual.scope !== wanted.scope || actual.branch !== wanted.branch || actual.base !== wanted.base
+            || actual.source !== wanted.source || !samePath(actual.workspace, wanted.workspace))
+            throw new Error("The recovered task's retained copy changed before continuation. No model continuation was started.");
+        } else if (place || !samePath(await realpath(context.workspace), await realpath(restriction.workspace)))
+          throw new Error("The recovered task's original workspace changed before continuation. No model continuation was started.");
+        context.signal.throwIfAborted();
+      }
+      placementReady = true;
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
       options.onStarted?.(run);
@@ -1923,7 +2028,7 @@ ${run.output.slice(0, 6000)}`;
     await place?.release().catch(() => undefined); // mac7/r17-d
     if (context.dryRun) this.reportDryRun(run);
     if (status === "completed" && !context.isolated && !sealed) await this.advise(run, context, output);
-    const settled = await this.settleRun(run, context, status, output);
+    const settled = await this.settleRun(run, context, status, output, placementReady ? "ready" : "failed");
     flyCoreSettled?.(settled); // mac2/fly-core (see above)
     const usage = this.store.usage(run.id);
     span.end(settled.status === "completed" ? "ok" : "error", settled.status === "completed" ? "" : settled.output, {
@@ -1946,7 +2051,7 @@ ${run.output.slice(0, 6000)}`;
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
     // asked with no tools, charged to this task, as reviewRun's is; everything it finds waits for
     // the owner. Nothing happens unless its switches are on, and it never fails the task. ──
-    if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
+    if (placementReady && !parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId)) void this.track(() => learnAfterTask(this, settled, context, async (system, question) => {
       const preset = this.sideJobPreset(this.owner, run.sessionId); // R17-S11
       const scoped: ToolContext = { ...context, permissions: new Set(), budget: new Budget({ maxSteps: 2, maxTokens: 24000 }), signal: AbortSignal.timeout(120000) };
       return (await this.complete(run, [{ role: "system", content: system }, { role: "user", content: question }], scoped, preset, null)).content;
@@ -2202,6 +2307,7 @@ ${run.output.slice(0, 6000)}`;
     context: ToolContext,
     status: Run["status"],
     output: string,
+    placement: "ready" | "failed" | "not-applicable" = "not-applicable",
   ): Promise<Run> {
     // mac7/empty-completion: a task that claims to have finished with nothing to show for it is a
     // failure with a plain sentence, not a success. This is the only place the runtime finishes a
@@ -2264,7 +2370,11 @@ ${run.output.slice(0, 6000)}`;
       if ((context.scratchRoot ?? run.id) === run.id) this.orchestration.clearScratch(run.id);
       // A plan that was being carried out by a task that stopped early is not resumed by the next
       // message; one still waiting for the owner's yes stays, because that task stopped to ask.
-      if (status !== "completed") this.orchestration.dropAbandonedPlan(run.sessionId, status);
+      if (status === "failed" && placement === "failed" && this.orchestration.plan(run.sessionId)?.approved) {
+        // A copy refusal precedes model/tool work. Preserve the approved plan for reconciliation.
+        this.orchestration.pausePlan(run.sessionId);
+        this.store.event(run.id, "plan.placement_blocked", { preserved: true, waitingOnOwner: true });
+      } else if (status !== "completed") this.orchestration.dropAbandonedPlan(run.sessionId, status);
     }
     const settled = this.finish(run, status, output);
     this.saveTrace(run.id);
@@ -4487,6 +4597,9 @@ ${run.output.slice(0, 6000)}`;
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
     const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
+    // A helper's lead controls whether it may hand work on, including a named call omitted from its catalogue.
+    const handOn = handOnRefusal(tool, context);
+    if (handOn) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: handOn };
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
     const screen = reachesScreen(tool, permission, args, this.registry.declaresScreen(tool))
@@ -5305,6 +5418,8 @@ ${run.output.slice(0, 6000)}`;
   }
   /** The registry's own refusal (src/registry.ts execute) for a tool that is not there or not this task's, else null. */
   private outsideReach(name: string, context: ToolContext): string | null {
+    const handOn = handOnRefusal(name, context);
+    if (handOn) return handOn;
     const permission = this.registry.permissionOf(name);
     if (!permission) return `Unknown tool: ${name}`;
     return context.permissions.has(permission) ? null : `Permission denied: ${permission}`;
