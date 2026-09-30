@@ -803,6 +803,7 @@ export const ROUTES = {
   "/api/mcp/connections": "owner POST",
   "/api/mcp/preflight": "look",
   "/api/mcp/servers": "owner POST",
+  "/api/mcp/registry/search": "owner POST",
   "/api/mcp/servers/sample/remove": "owner POST",
   "/api/mcp/servers/sample/start": "owner POST",
   "/api/mcp/servers/sample/stop": "owner POST",
