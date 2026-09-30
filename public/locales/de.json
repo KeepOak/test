@@ -10417,5 +10417,7 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "window.flows.setup.greeting-account": "Beim Einschalten eines Kontos wird eine kurze Begrüßung gesendet. Das verbraucht einen kleinen Teil seines Kontingents oder Guthabens.",
+  "window.flows.setup.signin-expired": "Diese Anmeldung ist abgelaufen. Starten Sie sie erneut, um eine neue Anmeldeseite oder einen neuen Code zu erhalten."
 }

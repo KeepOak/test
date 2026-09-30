@@ -89,7 +89,7 @@ const PastedCode = z.string().regex(/^[\x21\x22\x24-\x7e]{1,2048}#[\x21\x22\x24-
  * A sign-in program Branch started, one per program and account, until it ends; each engine keeps its own. `url` is the
  * maker's page for finishing by hand and `send` forwards one line to the program, for a code sign-in only.
  */
-interface Login { stop: () => void; failed: string | null; running: boolean; url: string | null; send: ((line: string) => boolean) | null }
+interface Login { stop: () => void; failed: string | null; running: boolean; url: string | null; expiresAt: string; send: ((line: string) => boolean) | null }
 const loginsOf = new WeakMap<AccountsService, Map<string, Login>>();
 function logins(host: SignInsHost): Map<string, Login> {
   let map = loginsOf.get(host.service);
@@ -200,7 +200,7 @@ async function inspectProgram(host: SignInsHost, input: unknown, run: RunStatus)
   if (signedIn === true) { login?.stop(); return { id, installed: true, signedIn: true, taskReady: null, canStart, ...(identity ? { identity } : {}),
     message: `${row.name} reports a saved sign-in. Its first task checks whether that sign-in still works.` }; }
   if (signedIn === false) {
-    if (login?.running) return { id, installed: true, signedIn: false, canStart, signingIn: true, ...(login.url && login.send ? { url: login.url, takesCode: true } : {}),
+    if (login?.running) return { id, installed: true, signedIn: false, canStart, signingIn: true, expiresAt: login.expiresAt, ...(login.url && login.send ? { url: login.url, takesCode: true } : {}),
       message: `${row.name} opened its sign-in page in your browser. Finish there and Branch carries on by itself; it never sees that sign-in. If no page opened, run "${loginLine(row, id)}" in a terminal.` };
     if (login?.failed) return { id, installed: true, signedIn: false, canStart, message: login.failed };
     return { id, installed: true, signedIn: false, canStart,
@@ -255,7 +255,8 @@ export async function startProgramSignIn(host: SignInsHost, input: unknown, run:
   if (logins(host).get(key)?.running) return checkProgram(host, { id, ...(account ? { account } : {}) }, run);
   // Lockdown may have been switched on while the status command ran.
   if (lockdownActive(store, owner)) throw new SignInRefused(lockedOut(row, id));
-  const login: Login = { stop: () => undefined, failed: null, running: true, url: null, send: null };
+  const login: Login = { stop: () => undefined, failed: null, running: true, url: null, send: null,
+    expiresAt: new Date(Date.now() + loginTimeoutMs).toISOString() };
   const timer = setTimeout(() => { login.failed = `The sign-in page was not finished within ten minutes, so Branch stopped waiting. Press Sign in to try again.`; login.stop(); }, loginTimeoutMs);
   timer.unref?.();
   // Switched on while the sign-in runs, Lockdown stops it: it refuses leaving a program running.
@@ -325,5 +326,5 @@ export async function startGeminiSignIn(host: SignInsHost, input: unknown) {
   const oauth = host.oauth, provider = googleGeminiSignIn(settings.clientId);
   const started = await oauth.start(provider);
   oauth.waitFor(started.id).then(() => registerSignedInGemini(oauth, settings, (preset) => models.register(preset))).catch(() => undefined);
-  return { url: started.url, expiresInMs: started.expiresInMs };
+  return { id: started.id, url: started.url, expiresInMs: started.expiresInMs };
 }

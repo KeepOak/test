@@ -17,8 +17,8 @@
 
 import { esc } from "../core/dom.js";
 import { ic, toast, dialog, closeDlg } from "../core/ui.js";
-import { S, refresh, ownerHere } from "../core/state.js";
-import { api } from "../core/api.js";
+import { S, refresh, ownerHere, activeId } from "../core/state.js";
+import { api, token } from "../core/api.js";
 import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
 import { W, draw, loadAccounts, poolById, openAddAcct } from "./account.js";
@@ -112,7 +112,7 @@ export function planFoot() {
   const back = `<button class="btn ghost" type="button" data-act="aa-back">${t("action.back")}</button>`;
   const kind = W.plan?.kind;
   if (kind === "chatgpt") return back + (W.code ? "" : `<button class="btn pri" type="button" data-act="aa-dev">${W.error ? t("first-run-trouble.retry") : t("window.flows.acct.continue-there")}</button>`);
-  if (kind === "gemini") return back;
+  if (kind === "gemini") return back + (W.error ? `<button class="btn pri" type="button" data-act="aa-goo">${t("first-run-trouble.retry")}</button>` : "");
   const again = `<button class="btn ghost" type="button" data-act="aa-chk">${t("window.flows.acct.check-again")}</button>`;
   if (W.line) return `${again}<button class="btn pri" type="button" data-act="aa-fin">${t("window.flows.acct.done")}</button>`;
   const ready = !!W.check?.installed && W.check.signedIn !== false;
@@ -127,68 +127,99 @@ let ticket = 0;
 /* What is still waiting in the engine for this sign-in ([route, body]), stopped by Back or by closing the dialog. */
 let waiting = null;
 /* Asks again every few seconds while this very sign-in is on screen; closing the dialog or going back stops it. */
-function poll(step) {
-  const mine = ++ticket;
+let expiryTimer = null;
+function poll(step, deadline = null) {
+  const mine = ++ticket, actor = token.get(), profile = activeId(), plan = W.plan;
+  const current = () => mine === ticket && ownerHere() && actor === token.get() && profile === activeId() && dialog() && W.plan === plan;
+  clearTimeout(expiryTimer);
+  const expires = deadline === null ? null : Date.parse(deadline);
+  const expire = () => {
+    if (!current()) { if (mine === ticket) stopPolling(); return; }
+    stopPolling();
+    Object.assign(W, { code: null, check: W.plan?.kind === "program" ? { ...W.check, signingIn: false, failed: true, url: null, takesCode: false } : null, error: t("window.flows.setup.signin-expired") });
+    draw();
+  };
+  if (expires !== null && Number.isFinite(expires)) expiryTimer = setTimeout(expire, Math.max(0, expires - Date.now()));
   const tick = async () => {
-    if (mine !== ticket) return;
-    if (!dialog() || !W.plan) { stopPolling(); return; }
-    try { if (await step()) return; } catch (error) { W.error = error.message; W.code = null; waiting = null; draw(); return; }
-    setTimeout(tick, 3000);
+    if (!current()) { if (mine === ticket) stopPolling(); return; }
+    if (expires !== null && Number.isFinite(expires) && Date.now() >= expires) { expire(); return; }
+    try { if (await step(current)) { if (mine === ticket) settled(); return; } }
+    catch (error) { if (!current()) return; stopPolling(); W.error = error.message; W.code = null; draw(); return; }
+    if (current()) setTimeout(tick, 3000);
   };
   setTimeout(tick, 3000);
 }
 export const stopPolling = () => {
   ticket++;
+  clearTimeout(expiryTimer);
+  expiryTimer = null;
   const was = waiting;
   waiting = null;
-  if (was) api(was[0], was[1]).catch((error) => toast(error.message));
+  if (was && ownerHere() && was[2] === token.get() && was[3] === activeId()) api(was[0], was[1]).catch((error) => toast(error.message));
 };
 const settled = () => { waiting = null; stopPolling(); };
 
+/* Ignore a start/check response after this owner, token, dialog or plan changed. */
+function currentSignInView() {
+  const actor = token.get(), profile = activeId(), plan = W.plan, generation = ticket;
+  return () => ownerHere() && actor === token.get() && profile === activeId() && dialog() && W.plan === plan && generation === ticket;
+}
+
 async function connected(pool, name) {
+  const actor = token.get(), profile = activeId();
   settled();
   await loadAccounts();
+  if (!ownerHere() || actor !== token.get() || profile !== activeId() || !dialog()) return;
   Object.assign(W, { plan: null, code: null, check: null, line: null, pool, first: name, step: 3, error: "" });
   await refresh();
-  draw();
+  if (ownerHere() && actor === token.get() && profile === activeId() && dialog()) draw();
 }
 
 /* The first ChatGPT sign-in: the engine asks OpenAI for the code; the tokens stay in the engine. */
 async function startChatGPT() {
+  const current = currentSignInView();
+  if (!current()) return;
   try {
     const got = await api("chatgpt/login", {});
+    if (!current()) return;
     if (got.signedIn) { await connected("chatgpt", "ChatGPT"); return; }
     W.code = got;
     W.error = "";
-    waiting = ["chatgpt/cancel", {}];
-    poll(async () => {
+    waiting = ["chatgpt/cancel", {}, token.get(), activeId()];
+    poll(async (current) => {
       const status = await api("chatgpt/status");
+      if (!current()) return true;
       if (status.signedIn) { await connected("chatgpt", "ChatGPT"); return true; }
       if (!status.pending && status.lastError) { waiting = null; W.error = status.lastError; W.code = null; draw(); return true; }
       return false;
-    });
+    }, got.expiresAt);
   } catch (error) { W.error = error.message; }
   draw();
 }
 
 /* An extra ChatGPT account, just added by accounts/add: it signs in by the same code, into its own locker place. */
 export async function signInExtraChatGPT(account, label) {
+  const current = currentSignInView();
+  if (!current()) return;
   const prompt = await api("accounts/chatgpt/login", { account });
+  if (!current()) return;
   Object.assign(W, { plan: { kind: "chatgpt", account }, code: prompt, step: 2, error: "" });
-  waiting = ["accounts/chatgpt/cancel", { account }];
-  poll(async () => {
+  waiting = ["accounts/chatgpt/cancel", { account }, token.get(), activeId()];
+  poll(async (current) => {
     const pool = (await loadAccounts())?.pools?.find((p) => p.pool === "chatgpt");
+    if (!current()) return true;
     /* Signed in as an account already in the list: the engine merged it into that one, which is the account now connected. */
     const into = pool?.mergedInto?.[account];
     if (pool?.signedIn?.[account] || into) {
       settled(); closeDlg(); S.addAcct = null;
       toast(t("window.flows.acct.connected", { name: into ? pool.accounts?.find((a) => a.id === into)?.label ?? label : label }));
+      document.dispatchEvent(new CustomEvent("branch-account-connected", { detail: { pool: "chatgpt", account: into ?? account } }));
       return true;
     }
     const problem = pool?.signInProblems?.[account];
     if (problem) { waiting = null; W.error = problem; W.code = null; draw(); return true; }
     return false;
-  });
+  }, prompt.expiresAt);
   draw();
 }
 
@@ -214,19 +245,24 @@ async function check(first = false) {
 /* Sign in: the engine starts the program's own sign-in, whose page opens in the browser; the program finishes it by
    itself. The status is asked every few seconds until it says signed in, then the connection is added. */
 async function startProgram() {
+  const current = currentSignInView();
+  if (!current()) return;
   const { id, account } = W.plan ?? {};
   if (!id) return;
   const body = account ? { id, account } : { id };
   pasted = "";
   try {
-    W.check = await api("accounts/sign-ins/start", body);
+    const result = await api("accounts/sign-ins/start", body);
+    if (!current()) return;
+    W.check = result;
     W.error = "";
   } catch (error) { W.error = error.message; draw(); return; }
   if (W.check.signedIn === true) { if (W.line) await check(); else await addProgram(); return; }
-  waiting = ["accounts/sign-ins/stop", body];
+  waiting = ["accounts/sign-ins/stop", body, token.get(), activeId()];
   draw();
-  poll(async () => {
+  poll(async (current) => {
     const now = await api("accounts/sign-ins/check", body);
+    if (!current()) return true;
     if (now.signedIn === true) { W.check = now; if (W.line) await check(); else await addProgram(); return true; }
     const shown = (c) => JSON.stringify([c?.message, c?.signingIn, c?.url, c?.takesCode]);
     const changed = shown(now) !== shown(W.check);
@@ -235,7 +271,7 @@ async function startProgram() {
     /* Redrawn only when something shown changed, so the code box keeps its focus while it is typed in. */
     if (changed) draw();
     return false;
-  });
+  }, W.check.expiresAt);
 }
 
 /* The code the maker's page showed, forwarded to the program's running sign-in; the engine's words when it cannot be. */
@@ -263,14 +299,20 @@ async function addProgram() {
 }
 
 async function startGoogle() {
+  const current = currentSignInView();
+  if (!current()) return;
   try {
-    W.code = await api("accounts/sign-ins/gemini", {});
+    const result = await api("accounts/sign-ins/gemini", {});
+    if (!current()) return;
+    W.code = result;
     Object.assign(W, { plan: { kind: "gemini" }, step: 2, error: "" });
-    poll(async () => {
+    waiting = [`connections/oauth/${encodeURIComponent(W.code.id)}/cancel`, {}, token.get(), activeId()];
+    poll(async (current) => {
       const state = await api("models/gemini-signin");
+      if (!current()) return true;
       if (state.connected) { await connected("google-gemini", "Gemini"); return true; }
       return false;
-    });
+    }, new Date(Date.now() + W.code.expiresInMs).toISOString());
   } catch (error) { W.error = error.message; }
   draw();
 }
@@ -302,6 +344,7 @@ export function finishFirst() {
   closeDlg();
   S.addAcct = null;
   toast(t("window.flows.acct.connected", { name: W.first }));
+  document.dispatchEvent(new CustomEvent("branch-account-connected", { detail: { pool: W.pool, account: "primary" } }));
 }
 
 export function initSignIns(on) {

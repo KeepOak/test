@@ -10,8 +10,8 @@
 import { $, esc, applyCss, renderNow } from "../core/dom.js";
 import { ic, av, app, toast, hex, SHAPE_NAMES } from "../core/ui.js";
 import { lookOf } from "./trunk.js";
-import { S, E, refresh } from "../core/state.js";
-import { api, origin } from "../core/api.js";
+import { S, E, refresh, ownerHere, activeId } from "../core/state.js";
+import { api, origin, token } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
@@ -98,15 +98,15 @@ function testOut(o) {
   const res = o.test;
   if (!res) return "";
   if (res === "wait") return `<div class="status"><span class="sdot"></span><div><b>${t("window.flows.setup.saying-hello")}</b></div></div>`;
-  if (!res.ok) return `<div class="status"><span class="sdot bad"></span><div><b>${t("window.flows.setup.no-answer")}</b><p>${esc(res.error ?? res.reply ?? "")}</p></div></div>`;
-  return `<div class="status"><span class="sdot"></span><div><b>${t("window.flows.setup.answered-in", { s: (res.ms / 1000).toFixed(1) })}</b><p>“${esc(res.reply)}” · ${esc(res.presetName)}</p></div></div>`;
+  if (!res.ok) return `<div class="status" role="alert"><span class="sdot bad"></span><div><b>${t("window.flows.setup.no-answer")}</b><p>${esc(res.error ?? res.reply ?? "")}</p></div></div>`;
+  return `<div class="status"><span class="sdot"></span><div><b>${t("window.flows.setup.answered-in", { s: (res.ms / 1000).toFixed(1) })}</b><p>“${esc(res.reply)}” · ${esc(res.presetName)} · ${esc(res.model ?? "")}</p><button class="btn sm" type="button" data-act="ob-model-change">${t("action.change-the-model")}</button></div></div>`;
 }
 
 function models(o) {
   /* Accounts found are listed under the prototype's line; what runs on this computer is the picker's (it says plainly
      when nothing was found), so the line never stands over an empty list. */
   const rows = modelRows(o);
-  return `<h2 tabindex="-1">${t("window.flows.setup.models")}</h2>${rows ? `<p>${t("window.flows.setup.found")}</p><div class="rows">${rows}</div>` : ""}${localPicker()}<div class="acts" data-css="margin-top:10px"><button class="btn sm" type="button" data-act="addacct">${ic("plus", "s")}${t("window.flows.setup.add-account")}</button><button class="btn sm" type="button" data-act="ob-test">${t("window.flows.setup.say-hello")}</button></div><div id="ob-test-out">${testOut(o)}</div>${later(o)}`;
+  return `<h2 tabindex="-1">${t("window.flows.setup.models")}</h2>${rows ? `<p>${t("window.flows.setup.found")}</p><div class="rows">${rows}</div><p class="hint">${t("window.flows.setup.greeting-account")}</p>` : ""}${localPicker()}<div class="acts" data-css="margin-top:10px"><button class="btn sm" type="button" data-act="addacct">${ic("plus", "s")}${t("window.flows.setup.add-account")}</button><button class="btn sm" type="button" data-act="ob-test">${t("window.flows.setup.say-hello")}</button></div><div id="ob-test-out">${testOut(o)}</div>${later(o)}`;
 }
 
 /* Pass 18c: the model can wait. "Choose the model later" moves on to the next step; nothing is chosen, so Models is not
@@ -266,6 +266,7 @@ async function close() {
   if (!o) return;
   if (!(await leaveTrunks(o))) return; // Trunks picked and not yet made are made on leaving, as Continue does
   progress(o, { skipped: true });
+  cancelHello(o);
   $(".ob9")?.remove();
   S.ob = null;
   origin.setup = false;
@@ -328,10 +329,13 @@ async function propose() {
   if (S.ob === o) draw();
 }
 
+const cancelHello = (o) => { o?.hello?.abort(); if (o) { o.hello = null; if (o.test === "wait") o.test = null; } };
+
 async function go(i) {
   const o = S.ob;
   if (!o || i < 0 || i >= STEPS.length || (i > 0 && !o.trust)) return;
   if (!(await leaveTrunks(o))) return;
+  cancelHello(o);
   o.i = i;
   draw();
   progress(o, { step: WIZARD[i] });
@@ -363,18 +367,39 @@ async function finish() {
 
 /* An account's switch: saved at once, and drawn from the engine's answer; a refusal says why and puts it back. */
 async function answerWith(sw) {
-  const o = S.ob, { pool, account } = sw.dataset;
-  if (!o || !pool || !account) return;
+  const o = S.ob, { pool, account } = sw.dataset, enabled = sw.checked;
+  if (!o || !pool || !account || !ownerHere()) return;
+  cancelHello(o);
+  const actor = token.get(), profile = activeId();
   sw.disabled = true;
   try {
-    const view = await api("accounts/update", { pool, account, disabled: !sw.checked });
+    const view = await api("accounts/update", { pool, account, disabled: !enabled });
+    if (S.ob !== o || token.get() !== actor || activeId() !== profile || !ownerHere()) return;
     o.pools = o.pools.map((p) => (p.pool === view.pool ? { ...p, ...view } : p));
+    if (enabled && WIZARD[o.i] === "models") await greetAccount(o, { pool, account });
   } catch (error) { toast(error.message); }
   if (S.ob === o) draw();
 }
 
+/* Enabling an account includes one tiny paid/plan completion, never router fallback. */
+async function greetAccount(o, accountRef) {
+  if (S.ob !== o || !ownerHere() || WIZARD[o.i] !== "models") return;
+  cancelHello(o);
+  const actor = token.get(), profile = activeId(), control = new AbortController();
+  o.hello = control;
+  o.test = "wait";
+  draw();
+  const res = await api("models/test", { accountRef }, undefined, control.signal)
+    .catch((error) => ({ ok: false, error: error.message }));
+  if (control.signal.aborted || S.ob !== o || o.hello !== control || token.get() !== actor || activeId() !== profile || !ownerHere()) return;
+  o.hello = null;
+  o.test = res;
+  draw();
+}
+
 async function test() {
   const o = S.ob;
+  if (!o || o.test === "wait" || !ownerHere()) return;
   /* Q072: while the picker above shows the hello it just said, Say hello says it again there, so setup shows one time. */
   if (await helloAgain()) { o.test = null; if (S.ob === o) draw(); return; }
   o.test = "wait";
@@ -395,7 +420,7 @@ async function pickLanguage(code) {
 
 export function init() {
   initLocalPick();
-  markLive(["sw:ob-brain", "sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
+  markLive(["sw:ob-brain", "sw:ob-trust", "sw:ob-lang", "onboard", "onboard-resume", "ob-go", "ob-next", "ob-close", "ob-done", "ob-test", "ob-model-change", "oblater18c", "ob-tpl", "ob-propose", "ob-prop", "sw:ob-life", "ob-restore", "sw:ob-restore-file"]);
   on("ob-restore", () => document.getElementById("ob-restore-file")?.click());
   document.addEventListener("change", (e) => {
     if (e.target?.id !== "ob-restore-file" || !e.target.files?.[0]) return;
@@ -410,6 +435,16 @@ export function init() {
   on("ob-close", () => close());
   on("ob-done", () => finish());
   on("ob-test", () => test());
+  on("ob-model-change", async () => { await close(); if (!S.ob && ownerHere()) run("setgo", { dataset: { v: "models" } }); });
+  document.addEventListener("branch-account-connected", async (event) => {
+    const o = S.ob;
+    if (!o || WIZARD[o.i] !== "models" || !ownerHere()) return;
+    const actor = token.get(), profile = activeId();
+    await load(o).catch(() => undefined);
+    if (S.ob !== o || actor !== token.get() || profile !== activeId() || !ownerHere()) return;
+    const pool = o.pools.find((p) => p.pool === event.detail?.pool);
+    if (pool?.accounts?.some((a) => a.id === event.detail.account && !a.disabled)) await greetAccount(o, event.detail);
+  });
   on("oblater18c", () => { S.ob.later = true; go(S.ob.i + 1); }); // Models waits: on to the next step, nothing chosen
   on("ob-tpl", (el) => { const i = +el.dataset.i; if (S.ob.tpls.has(i)) S.ob.tpls.delete(i); else S.ob.tpls.add(i); draw(); });
   on("ob-propose", () => propose());

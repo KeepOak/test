@@ -10417,5 +10417,7 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "window.flows.setup.greeting-account": "Switching an account on sends one small greeting through it. This uses a little of its plan or paid allowance.",
+  "window.flows.setup.signin-expired": "This sign-in has expired. Start it again for a fresh sign-in page or code."
 }

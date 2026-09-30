@@ -10417,5 +10417,7 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "window.flows.setup.greeting-account": "Activar una cuenta le envía un breve saludo. Esto consume una pequeña parte de su plan o saldo de pago.",
+  "window.flows.setup.signin-expired": "Este inicio de sesión ha caducado. Inícielo de nuevo para obtener una página o un código nuevos."
 }

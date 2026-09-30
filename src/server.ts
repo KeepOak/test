@@ -205,7 +205,7 @@ import { requireBoundSession } from "./people/access.js";
 import { keyAnswerRefusal, keyStopRefusal, shortLivedKeyMark } from "./key-context.js";
 import { ownersOwnTask } from "./asked-task.js"; // Q050
 import { helperMark, needsYou } from "./needs-you.js"; // Q050
-import { currentPerson, enterPairedDoor, enterPerson } from "./people/context.js";
+import { currentPerson, enterPairedDoor, enterPerson, throughPairedDoor } from "./people/context.js";
 import { type CallerFacts, enterCaller, resolveCaller } from "./caller.js";
 import { callerRefusal, offLimitsToHousehold } from "./caller-policy.js";
 // ---- end bucket 19 ----
@@ -320,6 +320,7 @@ import { SetupRefusal } from "./channel-setup/check.js"; // mac7/connect
 // mac6/accounts: several accounts per connection (src/accounts/api.ts).
 import { AccountsApiError, accountsApi, handlesAccountsPath } from "./accounts/api.js";
 import { accountsServiceFor } from "./accounts/service.js";
+import { withAccountCall } from "./accounts/context.js";
 import { mergeChatGPTDuplicates } from "./accounts/dedupe.js";
 import { snapshotData } from "./never-break/canary.js";
 // Wave mac3 (tool-safety): the second look before an approval.
@@ -664,26 +665,53 @@ function onboardingState(app: Branch): Record<string, unknown> {
   return { ...view, mine: true };
 }
 /** A real, tiny completion through the chosen preset so setup ends with evidence, not a saved form. */
-async function testModel(app: Branch, body: unknown): Promise<unknown> {
-  const { preset } = z.object({ preset: z.string().min(1).max(64).nullable().optional() }).strict().parse(body);
+function accountTestControl(app: Branch, request: IncomingMessage) {
+  const control = new AbortController();
+  const check = () => {
+    if (app.store.profiles.scope() !== app.runtime.owner || app.sessionLock.shut() || lockdownActive(app.store, app.runtime.owner))
+      control.abort(new Error("The account greeting stopped because access changed"));
+  };
+  const disconnected = () => control.abort(new Error("The account greeting was closed"));
+  request.once("aborted", disconnected);
+  request.socket.once("close", disconnected);
+  const timer = setInterval(check, 250);
+  timer.unref();
+  check();
+  return { signal: AbortSignal.any([control.signal, AbortSignal.timeout(30000)]),
+    dispose: () => { clearInterval(timer); request.off("aborted", disconnected); request.socket.off("close", disconnected); } };
+}
+async function testModel(app: Branch, body: unknown, request: IncomingMessage): Promise<unknown> {
+  const { preset, accountRef } = z.object({ preset: z.string().min(1).max(64).nullable().optional(),
+    accountRef: z.object({ pool: z.string().min(1).max(64), account: z.string().regex(/^(primary|[a-f0-9]{8})$/) }).strict().optional(),
+  }).strict().parse(body);
   const owner = app.runtime.owner;
+  if (preset && accountRef) throw new HttpError(400, "Choose a model or an exact account, not both");
+  if (accountRef) app.store.profiles.requireOwner("Greeting this account");
+  if (accountRef && (throughPairedDoor() || startedWithShortLivedKey())) throw new HttpError(403, "Greet this account in the owner window on this computer");
+  if (accountRef && (app.sessionLock.shut() || lockdownActive(app.store, owner))) throw new HttpError(403, "Unlock Branch before greeting this account");
   if (!preset && !app.runtime.models.configured) throw new HttpError(400, noModelWords);
-  const chosen = preset ? app.runtime.models.presets.get(preset) : app.runtime.models.plan(owner, "").candidates[0];
+  const context = { owner, sessionId: "connection-test", runId: "connection-test" };
+  const chosen = accountRef ? await withAccountCall(context, async () => accountsServiceFor(app.runtime.models)?.connectionTest(accountRef))
+    : preset ? app.runtime.models.presets.get(preset) : app.runtime.models.plan(owner, "").candidates[0];
   if (!chosen) throw new HttpError(400, "That model is not configured");
+  const control = accountRef ? accountTestControl(app, request) : null;
   const started = Date.now();
   try {
-    const completion = await chosen.provider.complete({
+    control?.signal.throwIfAborted();
+    const complete = () => chosen.provider.complete({
       messages: [
         { role: "system", content: "You are Branch Agent. Reply with the single word OK." },
         { role: "user", content: "Connection test" },
       ],
-      tools: [], maxTokens: 16, signal: AbortSignal.timeout(30000),
+      tools: [], maxTokens: 16, signal: control?.signal ?? AbortSignal.timeout(30000),
     });
+    const completion = accountRef ? await withAccountCall(context, complete) : await complete();
+    control?.signal.throwIfAborted();
     return { ok: true, presetId: chosen.id, presetName: chosen.name, model: chosen.model,
       reply: completion.content.slice(0, 80), ms: Date.now() - started };
   } catch (error) {
     throw new HttpError(502, `${chosen.name} did not answer: ${errorText(error)}`);
-  }
+  } finally { control?.dispose(); }
 }
 
 function providersCatalog(): unknown {
@@ -1472,7 +1500,7 @@ async function api(
   }
   if (request.method === "POST" && path === "/api/models")
     return app.runtime.models.configure(app.runtime.owner, await readBody(request));
-  if (request.method === "POST" && path === "/api/models/test") return testModel(app, await readBody(request));
+  if (request.method === "POST" && path === "/api/models/test") return testModel(app, await readBody(request), request);
   if (request.method === "GET" && path === "/api/providers/catalog") return providersCatalog();
   if (request.method === "POST" && path === "/api/providers/test") return testProvider(await readBody(request), app.web.policy);
   if (request.method === "GET" && path === "/api/providers/local") return localProviders();
