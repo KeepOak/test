@@ -3,7 +3,7 @@
 
 import { restOf } from "../core/sleep.js";
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, trunkIntro, chatFace, defaultTrunk, threadTrunk, ownerHere, projectName, level } from "../core/state.js";
+import { S, E, refresh, trunkIntro, chatFace, defaultTrunk, threadTrunk, ownerHere, projectName, level, activeId } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast, faceOf } from "../core/ui.js";
@@ -12,7 +12,7 @@ import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, readyWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
-import { practiceFlag, practiceSent, refusePracticeRoute } from "./practice-next.js";
+import { practiceFlag, practiceSent, restorePracticeNext, refusePracticeRoute } from "./practice-next.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
 import { binding, spoken } from "../shell/keys.js";
@@ -27,6 +27,7 @@ import { initTalkLive } from "./talklive.js";
 import { replyMark, readNewReply, sentMessage } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
 import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
+import { holdBackgroundFiles } from "./attach.js";
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { rosterButton, initBeside } from "./beside.js";
 import { panesWrap, panesOn, paneOpen, followPane, paneTo, paneWords, paneTarget, paneBusy, paneRoom, sendToPane, makeMain, initPanes } from "./panes.js"; // RES-703: one composer, many panes
@@ -815,6 +816,16 @@ async function sendPlain(said, withLead = false) {
    with it, while the person stays here. A command, a room, Ask me questions first and a refused model go the usual way,
    which says why; files still arriving wait, as they do for Enter. */
 let away = false;
+const backgroundRecoveries = [];
+onRender(() => {
+  if (S.chat || String(S.drafts.new ?? "").trim()) return;
+  const index = backgroundRecoveries.findIndex((r) => r.profile === activeId());
+  if (index < 0) return;
+  const [recovery] = backgroundRecoveries.splice(index, 1);
+  recovery.restore();
+  S.drafts.new = recovery.prompt;
+  render();
+});
 async function sendAway() {
   const box = $("#prompt"), prompt = (box?.value ?? "").trim();
   if (!prompt || viewingHelper() || away) return;
@@ -823,11 +834,33 @@ async function sendAway() {
   if (!roomAway()) return; // before the files, Temporary and the mode pick are taken for it: refused, they all stay
   away = true; // a second press while files finish arriving starts nothing more
   let started = false;
-  try { started = sendInBackground(prompt, { ...(await takePending(true)), ...(await startMode()), ...newProject() }); } finally { away = false; }
+  const profile = activeId(), recipient = JSON.stringify(whoHere()), restores = [];
+  const restore = () => { if (activeId() === profile) for (const putBack of restores) putBack(); };
+  try {
+    const project = newProject();
+    const [mode, pending] = await Promise.all([startMode((putBack) => restores.push(putBack)), takePending(true, (putBack) => restores.push(putBack))]);
+    const fields = { ...pending, ...mode, ...project };
+    if (pending.dryRun) restores.push(restorePracticeNext);
+    if (activeId() !== profile || C.sessionId || S.chat || JSON.stringify(whoHere()) !== recipient) return;
+    const lead = PREFIX.map((take) => take(null)).filter(Boolean).join("\n");
+    const requestPrompt = lead ? `${lead}\n\n${prompt}` : prompt;
+    const files = holdBackgroundFiles(pending.uploads);
+    const settle = (refused) => {
+      if (refused && (activeId() !== profile || S.chat || String(S.drafts.new ?? "").trim())) {
+        backgroundRecoveries.push({ profile, prompt: requestPrompt, restore: () => { files(true); restore(); } });
+        return false;
+      }
+      files(refused);
+      if (refused) restore();
+      return true;
+    };
+    started = sendInBackground(requestPrompt, fields, settle, requestPrompt);
+    if (!started) settle(true);
+  } catch (error) { toast(error.message); } finally { away = false; if (!started) restore(); }
   if (!started) return;
-  filesSent();
   practiceSent(); // a practice task was carried (takePending dryRun); the flag is used once, as Enter uses it
-  clearBox(true);
+  // Upload preparation may outlive this draft: keep whatever the person typed next.
+  if (!C.sessionId && $("#prompt") === box && box.value.trim() === prompt) clearBox(true);
   box?.dispatchEvent(new Event("input", { bubbles: true }));
   renderNow();
   $("#prompt")?.focus();
@@ -1051,7 +1084,7 @@ export function init() {
   /* Enter sends; in a new conversation Ctrl+Enter (Cmd+Enter on a Mac) sends it to work in the background (RES-702).
      While another pane is active the box writes to that pane (RES-703), so Ctrl+Enter sends there like Enter. */
   document.addEventListener("keydown", (e) => {
-    if (e.target.id !== "prompt" || e.key !== "Enter" || e.shiftKey) return;
+    if (e.target.id !== "prompt" || e.key !== "Enter" || e.shiftKey || e.altKey || e.isComposing) return;
     e.preventDefault();
     if ((e.ctrlKey || e.metaKey) && !C.sessionId && !C.sending && !paneTarget()) sendAway(); else send();
   });

@@ -9,7 +9,7 @@
 
 import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
-import { render } from "../core/dom.js";
+import { render, onRender } from "../core/dom.js";
 import { toast } from "../core/ui.js";
 import { plain } from "./markdown.js";
 import { announce } from "../shell/notify.js";
@@ -18,6 +18,20 @@ import { t } from "../../i18n.js";
 
 
 const LINES = { completed: null, needs_input: "window.chat.bgsend.waiting", failed: "window.chat.bgsend.failed", cancelled: "panels.state.stopped", interrupted: "panels.state.stopped", budget_exceeded: "window.chat.bgsend.failed" };
+const ENDED = new Set(["completed", "failed", "cancelled", "interrupted", "budget_exceeded"]);
+const firstTasks = new Map();
+function finished(run, prompt) {
+  if (!ENDED.has(run?.status)) return false;
+  const title = E.sessions.find((s) => (s.sessionId ?? s.id) === run.sessionId)?.title || prompt;
+  announce({ sessionId: run.sessionId, who: title, question: lineOf(run) });
+  return true;
+}
+onRender(() => {
+  for (const [id, pending] of firstTasks) {
+    const run = E.state?.runs?.find((r) => r.id === id);
+    if (finished(run, pending.prompt)) firstTasks.delete(id);
+  }
+});
 /* The card's words: the reply's opening words once it finished, else how it ended. */
 function lineOf(run) {
   const key = LINES[run?.status];
@@ -37,20 +51,21 @@ export function roomAway() {
  * Starts a new conversation with `prompt` in the background. `fields` is what Enter would send with it (files,
  * Temporary, mode, project). Answers false, with the reason said, when it was not started; the caller keeps the words.
  */
-export function sendInBackground(prompt, fields = {}) {
+export function sendInBackground(prompt, fields = {}, settle = () => {}, draft = prompt) {
   if (!waitRoom()) { toast(t("window.chat.bgsend.full", { count: LONG_WAITS })); return false; }
   const letGo = holdWait();
   toast(t("window.chat.bgsend.started"));
   api("run", { prompt, ...fields })
     .then(async (run) => {
+      settle(false);
       await refresh().catch(() => {}); // the new conversation's row, before the card names it
-      const title = E.sessions.find((s) => (s.sessionId ?? s.id) === run.sessionId)?.title || prompt;
-      if (!announce({ sessionId: run.sessionId, who: title, question: lineOf(run) }) && S.chat !== run.sessionId) toast(t("window.chat.bgsend.finished", { name: title }));
+      if (!finished(run, prompt) && run?.id && run?.sessionId) firstTasks.set(run.id, { prompt });
     }, (error) => {
       toast(error.message);
       /* Never started (the engine was away, or refused the message): the words go back in an empty new-conversation box. */
       const refused = error.offline || (error.status >= 400 && error.status < 500);
-      if (refused && !String(S.drafts.new ?? "").trim()) { S.drafts.new = prompt; if (!S.chat) render(); }
+      const restoreHere = settle(refused) !== false;
+      if (refused && restoreHere && !String(S.drafts.new ?? "").trim()) { S.drafts.new = draft; if (!S.chat) render(); }
     })
     .finally(() => { letGo(); render(); });
   return true;

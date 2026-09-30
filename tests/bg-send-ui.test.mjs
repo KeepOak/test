@@ -112,3 +112,13 @@ test("at most three background conversations wait at once; a fourth is refused w
   release();
   assert.deepEqual(errors, []);
 });
+
+test("Alt with Ctrl+Enter starts nothing in the background: the words stay for a plain Enter", async (t) => {
+  const { app, page, errors } = await fixture(t);
+  await page.locator("#prompt").fill("Say hello");
+  await page.locator("#prompt").press("Alt+Control+Enter");
+  await page.locator("#prompt").press("Enter");
+  await page.locator("#conversation .b .txt").filter({ hasText: "Hello there." }).waitFor({ timeout: 60000 });
+  assert.equal(app.store.runs(app.runtime.owner).filter((r) => r.prompt === "Say hello").length, 1, "one foreground task, none in the background");
+  assert.deepEqual(errors, []);
+});

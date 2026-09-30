@@ -18,6 +18,7 @@ export async function loadPractice() {
 }
 export const practiceNext = () => next;
 export const practiceSent = () => { next = false; };
+export const restorePracticeNext = () => { if (enabled) next = true; };
 export const practiceFlag = () => next ? `<span class="flag">${t("practice.task")}</span>` : "";
 export const practiceMenu = () => `<div class="row-in"><span>${t("practice.task")}</span><input class="sw" type="checkbox" id="pm-practice" data-sw="practice" ${next ? "checked" : ""} ${enabled ? "" : "disabled"} aria-label="${t("practice.task")}"></div><div class="ph">${t(enabled ? "practice.next-hint" : "practice.off")}</div>`;
 /** Routes that do not carry a task flag cannot safely start a practice task. */
