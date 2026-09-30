@@ -15,7 +15,7 @@ test("CHAT-203: thirty days are added up, with top models and unknown prices sai
   assert.match(text, /3 tasks · 6 tool calls · 2 active days/);
   assert.match(text, /1,050 tokens in · 20 out/);
   assert.match(text, /about \$0\.50 · 1 tasks have unknown prices/);
-  assert.match(text, /gpt-5\.5: 2 tasks · 1,020 tokens · about \$0\.50\nlocal: 1 tasks · 60 tokens · price unknown/);
+  assert.match(text, /gpt-5\.5: 2 tasks · 1,010 tokens · about \$0\.50\nlocal: 1 tasks · 60 tokens · price unknown/);
 });
 
 test("CHAT-203: in a chat, /insights all is refused and nothing is read", () => {
