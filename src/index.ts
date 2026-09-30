@@ -654,6 +654,8 @@ export async function createBranch(options: {
   // Locking the app: after a quiet spell the locker stays shut until the owner unlocks it again.
   const sessionLock = new SessionLock(store, runtime.owner);
   runtime.fullAccessLocked = () => sessionLock.locked();
+  // Owner ruling 2026-09-30: in the owner's Full access the file tools reach the whole computer (src/files.ts).
+  files.wholeComputer = (context) => context !== undefined && runtime.ownerFullMode(context);
   store.secrets.gate = () => sessionLock.require();
   // Batch 26 (wave 8): the owner's own password manager, asked at the call boundary and only when
   // they have switched it on. It waits for the same unlock the locker does.
@@ -1640,6 +1642,7 @@ ${result.output || "(it said nothing)"}`;
   // eng-connectors: whether another person's server is started as Branch starts or only when a task needs it, and
   // what it last said its tools are. The launch file's servers and the owner's own (kept in the store) share it.
   const mcpHost = {
+    injectionPolicy: () => web.injectionPolicy,
     connectWhen: () => readLifecycleSettings(store, store.profiles.scope()).connect,
     cache: {
       read: (id: string) =>
