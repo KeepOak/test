@@ -95,16 +95,20 @@ export const SettleDeferredSchema = z.union([
  * deferring tool does.
  */
 export function registerHumanTasks(registry: ToolRegistry): void {
+  const manualTask = z.object({ description: z.string().trim().min(1).max(500) }).strict();
   registry.register({
     name: "user.task", permission: "user.ask", group: "core",
-    description: "Hand something to the person to do themselves (sign in somewhere, post a letter, check a machine). Use kind signing only when they must sign something themselves; Branch does not sign or verify it. The task carries on without waiting, and their answer arrives as a new message in this conversation when they have done it.",
+    description: "Hand something to the person to do themselves (sign in somewhere, post a letter, check a machine). You are not made to wait: the task carries on without it, and their answer arrives as a new message in this conversation when they have done it.",
+    // Keep the original core API size. Earlier recorded calls may still supply kind;
+    // new typed handoffs are discovered through the non-core deferred tool below.
+    inputSchema: z.toJSONSchema(manualTask),
     parameters: z.object({ description: z.string().trim().min(1).max(500), kind: z.enum(["manual", "signing"]).default("manual") }).strict(),
     execute: async ({ description, kind }) => ({ deferred: true as const, description, kind }),
   });
   registry.register({
-    name: "user.later", permission: "user.ask", group: "core",
-    description: "When the person asks to leave unfinished work for later, write down what remains. Do not do that remaining work now. Finish your answer saying it is pending; their Finish now button queues a continuation in this conversation. This does not schedule a time or grant any permissions.",
-    parameters: z.object({ description: z.string().trim().min(1).max(500) }).strict(),
-    execute: async ({ description }) => ({ deferred: true as const, description, kind: "later" as const }),
+    name: "user.later", permission: "user.ask", group: "agents",
+    description: "Record a signing handoff or unfinished work for later. Branch never signs or verifies a signature. Later work stays pending until Finish now; do not do it now. This schedules no time or permissions.",
+    parameters: z.object({ description: z.string().trim().min(1).max(500), kind: z.enum(["signing", "later"]).default("later") }).strict(),
+    execute: async ({ description, kind }) => ({ deferred: true as const, description, kind }),
   });
 }
