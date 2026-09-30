@@ -13,15 +13,16 @@ import { assertLocalRuntimeAllowed, assertOwnerRules, localRuntimeFetch } from "
  *
  * The allowance is for an address written out as this computer (localhost, 127.0.0.1, [::1]) or as
  * an address on the owner's own network (10/8, 172.16/12, 192.168/16, fc00::/7), and only for a
- * catalog entry whose address is the owner's to set: a local program, or "Something else that
- * speaks OpenAI's shape". A name other than localhost is never let through, so no lookup can move
- * the connection somewhere else; link-local, shared and testing ranges get no allowance.
+ * catalog entry whose address is the owner's to set: a local program, an owner-managed SSH forward,
+ * or "Something else that speaks OpenAI's shape". A name other than localhost is never let through,
+ * so no lookup can move the connection somewhere else; link-local, shared and testing ranges get no allowance.
  */
 const loopbackHosts = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 /** True when the owner sets this entry's address: a local program, or a service by address. */
 function ownerSetsAddress(entry: CatalogEntry): boolean {
-  return entry.kind === "local" || (entry.extras ?? []).some((extra) => extra.key === "baseUrl");
+  return entry.kind === "local" || entry.remoteBehindLoopback === true ||
+    (entry.extras ?? []).some((extra) => extra.key === "baseUrl");
 }
 
 export interface OwnModelOrigin {
@@ -36,6 +37,7 @@ export function ownModelOrigin(entry: CatalogEntry | undefined, baseUrl: string)
   if (!entry || !ownerSetsAddress(entry)) return null;
   const url = new URL(baseUrl);
   if (url.username || url.password) return null;
+  if (entry.remoteBehindLoopback && (url.protocol !== "http:" || url.hostname !== "127.0.0.1")) return null;
   if (loopbackHosts.has(url.hostname)) return { origin: url.origin, here: true };
   return onOwnNetwork(url.hostname) ? { origin: url.origin, here: false } : null;
 }

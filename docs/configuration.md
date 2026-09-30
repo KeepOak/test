@@ -149,6 +149,30 @@ A connection added from the catalog for a program on this computer (Ollama, LM S
 
 When a service moves (Perplexity to its Agent API, Moonshot, Qwen and MiniMax gaining a region choice), Branch moves the saved connection when it starts. The connection's name and its key stay as they were; the records as they were are copied once to the `model-connections-before-move` setting, and the record of what Branch did lists each old and new model or address. A Sonar model Perplexity named no replacement for (such as `sonar-reasoning`) is not guessed at: using it says to pick a preset. These moves change a value inside a setting, not the database's shape, so they need no new data format number.
 
+**NAS model through your SSH forward** (`nas-ssh`) connects to an OpenAI-compatible model server
+you run on another computer. Start and keep your own forward open before choosing this connection.
+For example, replace the destination and remote server port in
+`ssh -N -o ExitOnForwardFailure=yes -L 127.0.0.1:18080:127.0.0.1:8080 user@your-nas`
+with your own values. See the [OpenSSH forwarding documentation](https://man.openbsd.org/ssh#L).
+Branch never starts SSH, reads SSH keys, installs a server or verifies the remote GPU.
+
+Choose **NAS model through your SSH forward**, set its **local port** (18080 in that example),
+enter the server's API key (a placeholder only when your own server needs no key), and choose its
+actual model from its list or enter its name. `nas-model` is a placeholder to replace, not a
+download or a detected model. The address stays `http://127.0.0.1:<port>/v1`; another host, URL or
+port outside 1–65535 is refused. If the forward is closed, the connection cannot answer.
+
+This is a remote model: prompts and embedding inputs leave this computer. Catalogue metadata
+`remoteBehindLoopback: true` excludes it from local-only model routing even though the connection
+listens on loopback. A separately selected embedding connection must honor the same
+`presetRunsLocally` check; endpoint-only embedding selection needs that accompanying change
+before this entry is used for embeddings. No zero price is supplied; ordinary price overrides,
+account constraints and pinned choices still apply. Only this connection's chosen origin gets
+the model-server allowance, with redirects refused and your host/path rules and emergency stop
+still applied. Web tools keep their ordinary network rules. A manually configured generic
+loopback connection cannot reveal whether a forward is behind it; use this NAS entry to record
+that boundary. The remote server decides which models and tool/embedding features work.
+
 ### Which model services work (wave 7)
 
 Every model service Branch knows about is written down in `data/providers.json`, not in code. Each

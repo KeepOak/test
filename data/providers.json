@@ -478,6 +478,26 @@
       "terms": { "route": "Runs on this computer", "url": "https://docs.vllm.ai/", "standing": "official" }
     },
     {
+      "id": "nas-ssh",
+      "name": "NAS model through your SSH forward",
+      "shape": "openai-chat",
+      "kind": "cloud",
+      "remoteBehindLoopback": true,
+      "baseUrl": "http://127.0.0.1:{port}/v1",
+      "auth": "bearer",
+      "modelsPath": "/models",
+      "capabilities": ["chat", "tools", "streaming", "embeddings"],
+      "defaultModel": "nas-model",
+      "recommendedModels": [],
+      "pricingUrl": "",
+      "extras": [
+        { "key": "port", "label": "The local port of your SSH forward", "required": true, "example": "18080", "default": "18080" }
+      ],
+      "note": "Run your own SSH forward to an OpenAI-compatible model server on your NAS first. Branch uses only its 127.0.0.1 port and never starts SSH. Choose the server's real model name. Use its API key, or a placeholder only if your server requires none. Prompts leave this computer; prices are not assumed free.",
+      "signUp": "https://man.openbsd.org/ssh",
+      "terms": { "route": "Your own remotely hosted model through SSH", "url": "https://man.openbsd.org/ssh", "standing": "unofficial", "warning": "You manage the forward, server and model license. Branch cannot verify the SSH destination or GPU; this connection is excluded from local-only tasks." }
+    },
+    {
       "id": "llama-cpp",
       "name": "llama.cpp",
       "shape": "openai-chat",
