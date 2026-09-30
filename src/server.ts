@@ -342,6 +342,7 @@ import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
 import { proposeSchedule } from "./schedule-words.js";
+import { readScheduledDashboard } from "./scheduled-dashboards.js";
 import { proposeTrigger } from "./trigger-words.js";
 import { ownerTimezone } from "./person-about.js"; // your-profile
 import { workbooksRoute } from "./workbooks.js"; // P17-D §3
@@ -2649,17 +2650,34 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
   if (path === "/api/schedules" || path === "/api/schedules/") {
     app.store.profiles.requireOwner("Your schedules");
     if (request.method === "GET") return { schedules: app.store.list("schedules", owner) };
-    if (request.method === "POST") return app.scheduler.create(scheduleContext(app), await readBody(request));
+    if (request.method === "POST") {
+      const input = await readBody(request);
+      app.store.profiles.requireOwner("Creating your schedule");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before creating a schedule.");
+      return app.scheduler.create(scheduleContext(app), input);
+    }
     throw new HttpError(404, "Endpoint not found");
   }
   // Words to a schedule (src/schedule-words.ts): a proposal only, which the owner confirms with POST /api/schedules.
   if (path === "/api/schedules/propose" && request.method === "POST") {
     app.store.profiles.requireOwner("Your schedules");
-    const proposal = await proposeSchedule(await readBody(request), { now: new Date(),
+    const input = await readBody(request);
+    app.store.profiles.requireOwner("Reading your schedule proposal");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading a schedule proposal.");
+    const proposal = await proposeSchedule(input, { now: new Date(),
       defaultTimezone: ownerTimezone(app.store, owner), askModel: (question, shape) => askAside(app, question, shape) });
+    app.store.profiles.requireOwner("Reading your schedule proposal");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading a schedule proposal.");
     // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
     const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
+  }
+  const dashboard = /^\/api\/schedules\/([a-f0-9-]{36})\/dashboard$/.exec(path);
+  if (dashboard && request.method === "GET") {
+    app.store.profiles.requireOwner("Your scheduled dashboard");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Scheduled dashboards belong to the owner at the app.");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch to read the dashboard.");
+    return readScheduledDashboard(app.store, owner, dashboard[1]!);
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");
@@ -4950,7 +4968,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {
-    await recordingApi(app, request, response, path, { readBody: () => readBody(request) });
+    await recordingApi(app, request, response, path, { readBody: () => readBody(request, path === "/api/recordings/restart" ? 32 * 1024 * 1024 : undefined) });
     return true;
   }
   // ---- end of the bucket 13 block ----
