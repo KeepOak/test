@@ -176,3 +176,36 @@ test("while task updates cannot be reached the live block says it is reconnectin
   assert.ok(seen.asked >= 1);
   assert.deepEqual(errors, []);
 });
+
+test("a question still waiting stays in view with its helper when newer steps fold the older ones away", async (t) => {
+  const { app, dataDir } = await branch(t);
+  const server = await startServer(app, { dataDir, port: 0 });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await server.close(); });
+  const page = await browser.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(server.url, { waitUntil: "networkidle" });
+  const labels = await page.evaluate(async () => {
+    const words = await import("/i18n.js");
+    await words.initLanguage();
+    const step = (id, extra) => ({ id, kind: "tool", state: "done", depth: 0, icon: "*", label: `Step ${id}`, ...extra });
+    const steps = [step("h", { kind: "helper", label: "Helper Ada" }), step("q", { kind: "ask", state: "waiting", depth: 1, label: "May I send it?" }),
+      ...Array.from({ length: 12 }, (_, i) => step(`s${i}`, { label: `Newer step ${i}` }))];
+    const body = `event: steps\ndata: ${JSON.stringify({ runId: "run-q", status: "running", steps, total: steps.length })}\n\nevent: end\ndata: {}\n\n`;
+    const real = window.fetch;
+    window.fetch = (url, ...rest) => String(url).includes("/live") ? Promise.resolve(new Response(body)) : real(url, ...rest);
+    const { liveFollower } = await import("/app/chat/livesteps.js");
+    document.body.insertAdjacentHTML("beforeend", '<div id="probe-scroll"><div id="probe-steps"></div></div>');
+    const follower = liveFollower({ block: "probe-steps", scroll: "#probe-scroll" });
+    follower.follow("run-q");
+    for (let i = 0; i < 50 && !document.querySelector("#probe-steps li"); i++) await new Promise((done) => setTimeout(done, 100));
+    const seen = [...document.querySelectorAll("#probe-steps .ls-t")].map((el) => el.textContent);
+    follower.forget();
+    window.fetch = real;
+    return seen;
+  });
+  assert.deepEqual(labels.slice(0, 2), ["Helper Ada", "May I send it?"], "the waiting question and its helper stay, in order");
+  assert.ok(labels.includes("Newer step 11") && !labels.includes("Newer step 0"), "the newest steps still show and older ones fold");
+  assert.deepEqual(errors, []);
+});

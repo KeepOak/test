@@ -171,10 +171,27 @@ function line(s) {
   const body = more ? `<details data-ls="${esc(s.id)}"${OPENED.has(s.id) ? " open" : ""}><summary>${head}</summary>${more}</details>` : `<div class="ls-row">${head}</div>`;
   return `<li class="ls-${esc(s.state)} ls-${esc(s.kind)}${s.depth ? " ls-in" : ""}"><span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span>${body}</li>`;
 }
+/* Keep unanswered questions alongside the newest steps, with their helper headers for context.
+   Select by position so overlapping selections appear once and keep the snapshot's original order. */
+function visibleSteps(L, steps) {
+  if (L.all) return steps;
+  const kept = new Set();
+  const helpers = [];
+  steps.forEach((step, index) => {
+    helpers.length = step.depth || 0;
+    if (step.kind === "helper") helpers[step.depth || 0] = index;
+    if (index >= steps.length - SHOWN) kept.add(index);
+    if (step.kind === "ask" && step.state === "waiting") {
+      kept.add(index);
+      for (const header of helpers) if (typeof header === "number") kept.add(header);
+    }
+  });
+  return steps.filter((_, index) => kept.has(index));
+}
 function lines(L) {
   const steps = foldSteps(L.snap?.steps ?? []);
-  const cut = !L.all && steps.length > SHOWN;
-  const shown = cut ? steps.slice(-SHOWN) : steps;
+  const shown = visibleSteps(L, steps);
+  const cut = shown.length < steps.length;
   const all = cut ? `<button type="button" class="btn ghost sm ls-all" data-act="live-all" data-v="${esc(L.block)}">${esc(t("window.chat.live.show-all", { count: L.snap.total ?? steps.length }))}</button>` : "";
   const running = L.snap?.status === "running" ? liveHead(L.snap.runId, L.snap.startedAt) : "";
   const connection = L.reconnecting ? `<p class="ls-time" role="status">${esc(t("window.chat.live.reconnecting-updates"))}</p>` : "";
