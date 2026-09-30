@@ -9,6 +9,8 @@ import { available, commandMode, commandsFor } from "../commands/settings.js";
 import { executeCommand } from "../commands/execute.js";
 import { commandHost } from "../commands/host.js";
 import { improveCommand } from "../self-development-requests.js";
+import { voiceCommand } from "./chat-voice.js";
+import { stepsDisplayFor, stepsSettings, verboseInChat } from "./steps-display.js";
 
 /**
  * Commands a person can type in a chat app while Branch works: stop the task, ask where it is,
@@ -47,6 +49,9 @@ const RUNNERS: Record<string, ChatCommandSpec["run"]> = {
   btw: (a, c) => aside(a, c),
   help: (a, c) => (a && modeHere(c) !== "off" ? shared("help")(a, c) : chatCommandHelp(modeHere(c))),
   improve: (a, c) => improveCommand(a, c),
+  voice: (a, c) => voiceCommand(c.runtime.store, c.runtime.owner, c.channel, c.chatId, a, c.ownAccount === true),
+  verbose: (a, c) => verboseInChat(c.runtime.store, c.runtime.owner, c.channel, c.chatId, a,
+    stepsDisplayFor(stepsSettings(c.runtime.store, c.runtime.owner), { id: c.channel, kind: c.kind ?? c.channel })),
 };
 const modeHere = (context: CommandContext): FeatureMode => commandMode(context.runtime.store, context.runtime.owner);
 /** A command carried out by the shared code, for this chat, with what this chat's sender may do. */
@@ -109,12 +114,15 @@ export interface ChatTurn {
 export interface CommandContext {
   runtime: Runtime;
   channel: string;
+  kind?: string;
   chatId: string;
   /** The conversation this chat carries on, when it has one. */
   sessionId: string | undefined;
   turn: ChatTurn | undefined;
   /** What a task from this chat may use; a side question gets none of it. */
   permissions: string[];
+  /** The sender is one of the accounts the owner named as their own (router `ownAccount`). */
+  ownAccount?: boolean;
   /** The message the command came in: who sent it, so a request to change Branch says so. */
   from?: { senderId: string; senderName: string; messageId: string };
   /** Drops a message that is still waiting to start. True when there was one. */
