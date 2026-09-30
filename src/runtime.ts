@@ -746,7 +746,7 @@ export class Runtime {
   /** eng-trunk-controls: each running task that is a Trunk's turn → that Trunk, so "pause now" can stop it. */
   private readonly trunkRuns = new Map<string, string>();
   /** Notes the owner sent to a task that is still working, waiting for its next round. */
-  private readonly steers = new Map<string, { note: string; from: string | undefined }[]>();
+  private readonly steers = new Map<string, { note: string; from: string | undefined; lateTurn?: boolean }[]>();
   /** The catalog each running task is showing the model, so a tool it found stays loaded. */
   private readonly catalogs = new Map<string, ToolLoader>();
   /**
@@ -2238,11 +2238,17 @@ ${run.output.slice(0, 6000)}`;
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
       // selfdev (SELF-303): a helper's note that arrived as its lead finished is not lost: it goes to the lead's
-      // conversation as a new message, labelled as the helper's words. The owner's own late note is dropped as before.
-      const late = (this.steers.get(run.id) ?? []).filter((one) => one.from !== undefined && /^helper /.test(one.from));
+      // conversation as a new message, labelled as the helper's words. A note the owner typed in the window while the
+      // task worked (`lateTurn`) is not lost either: unread, it becomes its own next turn, word for word and never
+      // joined to another message, as Codex CLI and Claude Code run a message sent too late to steer as the next turn.
+      // Stopped by the owner, the task takes nothing further. A chat app's notes are its router's (unreadNotes).
+      const left = this.steers.get(run.id) ?? [];
+      const late = left.filter((one) => one.from !== undefined && /^helper /.test(one.from));
+      const unread = status === "cancelled" ? [] : left.filter((one) => one.lateTurn && one.from === undefined);
       this.steers.delete(run.id);
-      if (late.length) queueMicrotask(() => {
+      if (late.length || unread.length) queueMicrotask(() => {
         for (const one of late) try { this.followUp(run.sessionId, fromHelper(one.from!, one.note), null, { originFrom: run.id }); } catch { /* the conversation is gone */ }
+        for (const one of unread) try { this.followUp(run.sessionId, one.note); } catch { /* the conversation is gone */ }
       });
       this.recordToolWork(run, context, status);
       // What this conversation is carrying is written down at the end of every task, so closing the
@@ -2964,14 +2970,18 @@ ${run.output.slice(0, 6000)}`;
    * A note the owner sends to a task that is still working. It goes in front of the next round,
    * unlike a follow-up message, which waits for the task to finish.
    */
-  steer(runId: string, text: string, from?: string): { queued: number } {
+  steer(runId: string, text: string, from?: string, options: { lateTurn?: boolean } = {}): { queued: number } {
     const note = String(text ?? "").trim();
     if (!note || note.length > 2000) throw new Error("A note has to be between 1 and 2000 characters");
     const run = this.store.run(runId);
     if (!run || run.owner !== this.owner) throw new Error("Run not found");
     if (run.status !== "running") throw new Error("Only a task that is still working can be steered");
     // `from` names a chat participant (wave mac2, chat-live); such a note never speaks as the owner.
-    const queue = [...(this.steers.get(runId) ?? []), { note, from }];
+    // Only the owner's own note, to the owner's own task, may run later as a turn of its own: a short-lived key's, a
+    // household person's, a chat participant's or a helper's note never becomes a new task with the owner's reach.
+    const lateTurn = options.lateTurn === true && from === undefined && !startedWithShortLivedKey() && !currentPerson()
+      && helperParent(this.store, runId) === null;
+    const queue = [...(this.steers.get(runId) ?? []), { note, from, ...(lateTurn ? { lateTurn: true } : {}) }];
     this.steers.set(runId, queue);
     this.store.event(runId, "run.steered", { note: note.slice(0, 500), waiting: queue.length, ...(from === undefined ? {} : { from: from.slice(0, 80) }) });
     return { queued: queue.length };
