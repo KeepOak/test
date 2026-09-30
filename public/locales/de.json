@@ -1280,6 +1280,7 @@
   "commands.dashboard.title": "Befehle",
   "commands.dashboard.unknown": "Diese Seite kennt diesen Befehl nicht. Sende /help für die Liste.",
   "commands.default": "das Modell, mit dem jede neue Unterhaltung startet",
+  "commands.diff": "verfolgte Git-Änderungen in einem Arbeitsbereich-Ordner, gekürzt auf eine Antwort; Direktchat des Besitzers mit git.read",
   "commands.dry-run": "ein Probelauf: er zeigt, was er tun würde, ohne es zu tun",
   "commands.exit": "beenden",
   "commands.export": "diese Unterhaltung als Markdown-Datei speichern",

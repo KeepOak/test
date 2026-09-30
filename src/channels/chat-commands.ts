@@ -11,6 +11,7 @@ import { commandHost } from "../commands/host.js";
 import { improveCommand } from "../self-development-requests.js";
 import { chatTrunkCommand } from "./trunk-command.js";
 import { chatBranchCommand } from "./branch-command.js";
+import { chatDiffCommand } from "./diff-command.js";
 
 /**
  * Commands a person can type in a chat app while Branch works: stop the task, ask where it is,
@@ -51,6 +52,7 @@ const RUNNERS: Record<string, ChatCommandSpec["run"]> = {
   improve: (a, c) => improveCommand(a, c),
   trunk: (a, c) => chatTrunkCommand(a, c),
   branch: (a, c) => chatBranchCommand(a, c),
+  diff: (a, c) => chatDiffCommand(a, c),
 };
 const modeHere = (context: CommandContext): FeatureMode => commandMode(context.runtime.store, context.runtime.owner);
 /** A command carried out by the shared code, for this chat, with what this chat's sender may do. */
@@ -126,6 +128,8 @@ export interface CommandContext {
   onTrunkStarted?: (runId: string) => void;
   branchRefusal?: () => string | null;
   bindBranch?: (parentSessionId: string, sessionId: string) => boolean;
+  diffRefusal?: () => string | null;
+  maxReplyChars?: number;
   /** The message the command came in: who sent it, so a request to change Branch says so. */
   from?: { senderId: string; senderName: string; messageId: string };
   /** Drops a message that is still waiting to start. True when there was one. */

@@ -1280,6 +1280,7 @@
   "commands.dashboard.title": "Comandos",
   "commands.dashboard.unknown": "Esta página no conoce ese comando. Envía /help para ver la lista.",
   "commands.default": "el modelo con el que empieza cada conversación nueva",
+  "commands.diff": "los cambios de Git registrados en una carpeta del espacio de trabajo, en una sola respuesta; chat directo del propietario con git.read",
   "commands.dry-run": "una prueba: muestra lo que haría sin hacerlo",
   "commands.exit": "salir",
   "commands.export": "guardar esta conversación como archivo Markdown",
