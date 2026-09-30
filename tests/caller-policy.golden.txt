@@ -557,6 +557,10 @@ owner GET /api/heartbeat | here=ok remote=ok phone=ok legacy=ok person=401/32729
 owner POST /api/heartbeat | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
 owner GET /api/heartbeat/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/heartbeat/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
+owner GET /api/heartbeat/proposals/:id/accept | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/heartbeat/proposals/:id/accept | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
+owner GET /api/heartbeat/proposals/:id/dismiss | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/heartbeat/proposals/:id/dismiss | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
 owner GET /api/heartbeat/switches | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/heartbeat/switches | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
 owner GET /api/help | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2823,6 +2827,10 @@ owner+lockdown GET /api/heartbeat | here=ok remote=ok phone=ok legacy=ok person=
 owner+lockdown POST /api/heartbeat | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
 owner+lockdown GET /api/heartbeat/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/heartbeat/check | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
+owner+lockdown GET /api/heartbeat/proposals/:id/accept | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/heartbeat/proposals/:id/accept | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
+owner+lockdown GET /api/heartbeat/proposals/:id/dismiss | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/heartbeat/proposals/:id/dismiss | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
 owner+lockdown GET /api/heartbeat/switches | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/heartbeat/switches | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/5bd248 run=401/5bd248 nobody=401/40daee
 owner+lockdown GET /api/help | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -5089,6 +5097,10 @@ household GET /api/heartbeat | here=400/f6e21c remote=400/f6e21c read=400/f6e21c
 household POST /api/heartbeat | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
 household GET /api/heartbeat/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/heartbeat/check | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
+household GET /api/heartbeat/proposals/:id/accept | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/heartbeat/proposals/:id/accept | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
+household GET /api/heartbeat/proposals/:id/dismiss | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/heartbeat/proposals/:id/dismiss | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
 household GET /api/heartbeat/switches | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/heartbeat/switches | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
 household GET /api/help | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -7355,6 +7367,10 @@ household+lockdown GET /api/heartbeat | here=400/f6e21c remote=400/f6e21c read=4
 household+lockdown POST /api/heartbeat | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
 household+lockdown GET /api/heartbeat/check | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/heartbeat/check | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
+household+lockdown GET /api/heartbeat/proposals/:id/accept | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/heartbeat/proposals/:id/accept | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
+household+lockdown GET /api/heartbeat/proposals/:id/dismiss | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/heartbeat/proposals/:id/dismiss | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
 household+lockdown GET /api/heartbeat/switches | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/heartbeat/switches | here=400/f6e21c remote=400/f6e21c read=401/5bd248 run=401/5bd248
 household+lockdown GET /api/help | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9621,6 +9637,10 @@ applock GET /api/heartbeat | here=423/a8f863
 applock POST /api/heartbeat | here=423/a8f863
 applock GET /api/heartbeat/check | here=423/a8f863
 applock POST /api/heartbeat/check | here=423/a8f863
+applock GET /api/heartbeat/proposals/:id/accept | here=423/a8f863
+applock POST /api/heartbeat/proposals/:id/accept | here=423/a8f863
+applock GET /api/heartbeat/proposals/:id/dismiss | here=423/a8f863
+applock POST /api/heartbeat/proposals/:id/dismiss | here=423/a8f863
 applock GET /api/heartbeat/switches | here=423/a8f863
 applock POST /api/heartbeat/switches | here=423/a8f863
 applock GET /api/help | here=423/a8f863
