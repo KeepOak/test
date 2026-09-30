@@ -4976,6 +4976,8 @@
   "settings-kit.everything": "Tout ce qui est dans cette liste",
   "settings-kit.field.audit": "Vérifier de lui-même",
   "settings-kit.field.chat-extras": "Utiliser ma liste de ce que les conversations peuvent faire en plus",
+  "settings-kit.field.chat-owner-chats": "Vos propres conversations ont votre accès complet",
+  "settings-kit.field.chat-owner-chats-hint": "Votre propre compte, en tête-à-tête, sur une application qui garantit ses expéditeurs, peut faire ce que vous faites dans la fenêtre. Les groupes et les autres personnes gardent la liste courte. Le verrouillage le désactive.",
   "settings-kit.field.dictation-silence": "Durée de silence qui met fin à la dictée",
   "settings-kit.field.file-agents": "Fichier AGENTS.md",
   "settings-kit.field.file-heartbeat": "Fichier HEARTBEAT.md",

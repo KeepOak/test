@@ -4270,7 +4270,9 @@ ${run.output.slice(0, 6000)}`;
       if (seen.has(id)) continue;
       seen.add(id);
       const start = this.store.events(id).find((event) => event.kind === "run.started")?.data;
-      if (!start || this.store.run(id)?.owner !== this.owner || start.callerKind !== "owner-here"
+      // owner-dm-full: the owner's own verified direct chat (no request behind it, so "system") counts as the owner here.
+      const here = start?.callerKind === "owner-here" || (start?.callerKind === "system" && runOrigin(this.store, id).ownerChat === true);
+      if (!start || this.store.run(id)?.owner !== this.owner || !here
         || start.callerDoor || start.source !== "owner" || start.shortLivedKey || start.shortLivedKeyId
         || start.personProfileId || start.lentTo || start.dryRun) return null;
       for (const next of [start.parentRunId, start.resumedFrom, start.originFrom]) if (typeof next === "string") queue.push(next);
@@ -4399,6 +4401,9 @@ ${run.output.slice(0, 6000)}`;
     if (!runId) return null;
     if (this.recordedSources.has(runId)) return this.recordedSources.get(runId) ?? null;
     const found = outsideSourceOf(this.store, runId);
+    // owner-dm-full: a task from the owner's own verified direct chat is the owner's only while that chat still is (the
+    // switch on, no Lockdown or App lock, the account still named), so it is read afresh at every step, never kept.
+    if (!found && runOrigin(this.store, runId).ownerChat) return found;
     if (this.recordedSources.size >= 500) this.recordedSources.clear();
     this.recordedSources.set(runId, found);
     return found;
