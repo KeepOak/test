@@ -162,6 +162,7 @@ export class Workflows {
       taskLimit: Array.isArray(existing?.taskLimit) ? existing.taskLimit : null,
       // mac7/outside-resume: nor who set a paused run going.
       ...(typeof existing?.startedFrom === "string" ? { startedFrom: existing.startedFrom } : {}),
+      ...(typeof existing?.project === "string" ? { project: existing.project } : {}),
       // Q114/Q119: nor the Trunk whose work it is, so saving the steps again never hands the rest to someone else.
       ...(whose ? { startedBy: whose } : {}),
       // Q250: nor that a model's own call set a paused run going.
