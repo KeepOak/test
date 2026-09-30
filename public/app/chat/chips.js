@@ -91,7 +91,8 @@ export async function loadChips() {
   // Read again when a task of this conversation starts or ends, too: a plan limit may have moved it to another account.
   const newest = sid ? (E.state?.runs ?? []).filter((r) => r.sessionId === sid).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] : null;
   const runKey = newest ? `${newest.id}:${newest.status}` : "";
-  if (sid === M.sid && runKey === M.runKey && Date.now() - M.at < 5000) return;
+  // A read that failed (before sign-in, say) is tried again at once: the chip must not keep a start it never read.
+  if (M.mode && sid === M.sid && runKey === M.runKey && Date.now() - M.at < 5000) return;
   M.at = Date.now();
   M.runKey = runKey;
   const [model, mode, account] = await Promise.all([

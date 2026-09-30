@@ -427,7 +427,9 @@ export class Scheduler {
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
         prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[], ...(thread ? { sessionId: thread } : {}),
         source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
-        ...(data.ownerMade === true && !route && !madeBy && data.fromChat !== true ? { ownerSchedule: true } : {}), // owner ruling 2026-09-30
+        // Owner ruling 2026-09-30: the clock's turn or the owner's run-now, never a webhook's or one carrying somebody's payload.
+        ...(data.ownerMade === true && !route && !madeBy && data.fromChat !== true && trigger !== "webhook" && payload === undefined
+          ? { ownerSchedule: true } : {}),
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
         ...(madeBy ? { trunkId: madeBy } : {}),

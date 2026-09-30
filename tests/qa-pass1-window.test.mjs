@@ -190,7 +190,7 @@ test("Q013: new Trunks and rooms start on what new conversations start on, never
   const one = (await f.call("/api/trunks", { name: "Scout" })).body.trunk, two = (await f.call("/api/trunks", { name: "Ledger" })).body.trunk;
   assert.equal(await modeOf(one.chatSessionId), "full", "a new Trunk's own conversation starts on Full access, as the chip says");
   const room = (await f.call("/api/trunks/rooms", { name: "Price check", members: [one.id, two.id] })).body.room;
-  assert.equal(await modeOf(room.sessionId), "full", "so does a new room");
+  assert.equal(await modeOf(room.sessionId), "ask", "a new room is a group, so it starts on Ask first");
   for (const session of Object.values(room.memberSessions))
     assert.equal(f.app.runtime.modeFollows(session), room.sessionId, "and each Trunk's side of the room is held to the room's mode");
   // The owner's own setting is the ceiling: under Read only a new Trunk follows it (a mode of Full access would be looser).
@@ -235,10 +235,10 @@ test("Q015: Shift+Tab in the message box moves to the next mode, and the cursor 
   const f = await windowFor(t);
   await ready(f.page);
   const says = (words) => f.page.waitForFunction((w) => document.querySelector('#composer [data-act="modemenu2"]')?.textContent.trim() === w, words, { timeout: 10000 });
-  await says("Ask first");
+  await says("Full access"); // owner ruling 2026-09-30: new conversations start on Full access
   await f.page.locator("#prompt").focus();
   await f.page.keyboard.press("Shift+Tab");
-  await says("Plan first");
+  await says("Auto");
   assert.equal(await f.page.evaluate(() => document.activeElement?.id), "prompt", "the cursor stays in the box");
 });
 

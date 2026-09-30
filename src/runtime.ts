@@ -4253,8 +4253,11 @@ ${run.output.slice(0, 6000)}`;
       seen.add(id);
       const started = this.store.events(id).find((event) => event.kind === "run.started")?.data;
       if (!started) continue;
-      if (started.source === "schedule") { if (started.ownerSchedule !== true) return false; owners = true; }
-      for (const next of [started.parentRunId, started.resumedFrom, started.originFrom]) if (typeof next === "string") queue.push(next);
+      const links = [started.parentRunId, started.resumedFrom, started.originFrom].filter((next): next is string => typeof next === "string");
+      // The schedule's own turn carries the mark; its helpers and a turn carried on after a question inherit it.
+      if (started.ownerSchedule === true) owners = true;
+      else if (started.source === "schedule" && !links.length) return false;
+      queue.push(...links);
     }
     return owners;
   }

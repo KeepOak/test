@@ -15,9 +15,17 @@ import { startServer } from "../dist/server.js";
 import { underShortLivedKey } from "../dist/key-context.js";
 import { discardTemp } from "./temp-dir.mjs";
 
+/** Says done, except that a prompt asking to clean up first calls `rm -rf ~/notes`, once. */
+const provider = { name: "scripted", async complete(request) {
+  const asked = String(request.messages.find((m) => m.role === "user")?.content ?? "");
+  const last = request.messages.at(-1);
+  if (/clean up/.test(asked) && last?.role !== "tool")
+    return { content: "", toolCalls: [{ id: "c1", name: "shell.execute", arguments: JSON.stringify({ executable: "rm", args: ["-rf", "~/notes"] }) }] };
+  return { content: "Done.", toolCalls: [] };
+} };
+
 async function served(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-owner-defaults-"));
-  const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   t.after(async () => { app.store.profiles.switch({ profileId: null }); await server.close(); await app.close(); await discardTemp(root); });
@@ -85,4 +93,28 @@ test("a task started from a chat asks before a change, and a schedule record can
   const outside = await app.runtime.run({ prompt: "from a trigger", source: "trigger", ownerSchedule: true });
   assert.notEqual(started(app, outside.id).ownerSchedule, true, "only a schedule's source can carry the mark");
   assert.equal(decide(outside.id, "files.write", { path: "a.txt", content: "x" }), "ask");
+});
+
+test("a webhook's turn of the owner's schedule, carrying somebody's payload, stays held to Ask before changes", async (t) => {
+  const { app, decide } = await served(t);
+  const owners = await app.runtime.run({ prompt: "hello" });
+  const made = app.scheduler.create(app.runtime.context({ runId: owners.id }), { prompt: "tidy the notes folder", kind: "task", dueAt: dueAt(), webhook: true });
+  const run = await app.scheduler.trigger(app.runtime.owner, made.id, { note: "from outside" }, "webhook");
+  assert.notEqual(started(app, run.id).ownerSchedule, true);
+  assert.equal(decide(run.id, "files.write", { path: "notes/a.txt", content: "x" }), "ask");
+});
+
+test("after the owner answers a dangerous command, the schedule's turn carries on as the owner's; so does its helper", async (t) => {
+  const { app, decide } = await served(t);
+  const owners = await app.runtime.run({ prompt: "hello" });
+  const made = app.scheduler.create(app.runtime.context({ runId: owners.id }), { prompt: "clean up the notes folder", kind: "task", dueAt: dueAt() });
+  const run = await app.scheduler.trigger(app.runtime.owner, made.id, undefined, "local");
+  assert.equal(run.status, "needs_input", "the dangerous command asked");
+  const [waiting] = app.runtime.approvals.waiting(run.sessionId);
+  app.runtime.approve(run.sessionId, "allow", "never", waiting.fingerprint);
+  const next = await app.runtime.continueAsked(run.id);
+  assert.equal(decide(next.id, "files.write", { path: "notes/a.txt", content: "x" }), "allow", "the carried-on turn is still the owner's schedule");
+  const context = app.runtime.context({ runId: run.id });
+  const helper = await app.runtime.delegate("look at the notes", context, [...context.permissions], "");
+  assert.equal(decide(helper.id, "files.write", { path: "notes/b.txt", content: "x" }), "allow", "and its helper is too");
 });

@@ -232,7 +232,7 @@ export class TrunkRooms {
       ...(options.context ? { context: options.context.slice(0, 3000) } : {}),
       ...(options.contextBeforeRoom !== undefined ? { contextBeforeRoom: options.contextBeforeRoom.slice(0, 3000) } : {}) }; // phase2/rooms
     // Q013: the room's conversation starts as a new one in the window does; each Trunk's side follows it (`memberRooms`).
-    if (!options.sessionId) startLikeNew({ store: this.deps.store, runtime: { owner: this.deps.owner } }, room.sessionId);
+    if (!options.sessionId) startLikeNew({ store: this.deps.store, runtime: { owner: this.deps.owner } }, room.sessionId, true);
     for (const id of room.members) room.memberSessions[id] = this.conversation(`Room ${value.name}: ${this.deps.records.get(id).name}`);
     if (!options.sessionId) this.deps.store.message(room.sessionId, { role: "system", content: `Room "${room.name}". ${this.roster(room).map((m) => `@${m.handle}`).join(", ")} and you.` });
     this.put(room);
