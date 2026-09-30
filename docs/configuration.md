@@ -7656,6 +7656,43 @@ A password manager showing on screen stops it outright, as it stops any other pi
 
 Tools: `monitors.screen.create`, `monitors.screen.check`. File: `src/screen-watch.ts`.
 
+Set `readText: true` when creating a screen watch to explain changed pictures with local OCR text
+differences. This is optional and off by default. It requires Tesseract on PATH with its English
+language data; Branch does not install or download it. This optional existing executable avoids
+adding a bundled OCR runtime or sending screen content to a provider. The image is passed through
+stdin, with a 15-second cap and bounded input/output. The existing private-window capture refusal
+and screen-control switches still apply, and known secrets are scrubbed before comparison.
+
+At most 4,096 recognized characters per watch are held as a memory-only baseline. Screenshots and
+baselines are not saved by OCR. A restart or evicted baseline means the next look establishes a new
+baseline; it cannot reconstruct earlier words. When pixels change, the summary includes up to six
+removed and six added text lines, capped at 1,600 characters. These summaries can be retained in
+the resulting conversation or delivered to the chat selected by `notifyVia`, so enable this only
+for a region whose words you want in those notifications. OCR errors fail the look without
+advancing its fingerprint; unchanged OCR text is reported honestly rather than invented as a
+text change. OCR recognizes printed text imperfectly and does not infer what a page means.
+
+### Local OCR of workspace pictures and scans
+
+`documents.ocr` reads a workspace-relative PNG/JPEG or explicitly selected scanned-PDF pages locally.
+It uses the same bounded Tesseract adapter as screen watches. PDF pages additionally need installed
+Poppler `pdftoppm`; neither executable is installed automatically. Executables are resolved only
+from absolute directories on the owner's startup PATH, never from a task argument or working folder.
+
+This is an owner-only `files.read` tool, held to the task's workspace/project, file rules, hidden and
+secret filename checks, and symlink/hardlink refusals. No renderer endpoint accepts arbitrary paths.
+PNG/JPEG inputs are capped at 8 MiB and 4 megapixels; PDFs at 24 MiB. Choose `firstPage` (default 1)
+and `pageCount` (default 1, maximum 5). PDF pages render one at a time at a maximum 2048-pixel long
+side; a page outside the document is an error. Private temporary input/raster files are removed
+on success, error and cancellation. A job has a 90-second overall cap, each child 15 seconds, and
+only one local document OCR job runs at a time.
+
+Recognized text is capped at 4096 characters per page, scrubbed for known secrets and passed through
+the existing file-content instruction filter. Results identify the selected page numbers and remain
+untrusted document content; OCR does not execute their instructions or index the file. Returned text
+can be retained in the tool's conversation, as with other file reads. Password-protected or damaged
+PDFs, unsupported pictures, missing executables and cancelled work fail explicitly.
+
 ## Asking a specialist one question (batch 22, wave 8)
 
 The composer has a **Who should answer** picker beside the Temporary toggle. Leave it on "Your
