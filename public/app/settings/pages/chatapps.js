@@ -28,7 +28,7 @@ import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.j
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], pending: [], steps: null };
 const STEPS = "Show steps in chats";
 const kindOf = (c) => c.kind ?? c.id;
 
@@ -42,6 +42,7 @@ async function loadApps() {
   A.ownerCommands = live?.ownerCommands ?? null;
   A.ownerNamed = live?.ownerNamed !== false; // owner-dm-signin: no chat account is marked as the owner's yet
   A.approved = live?.approved ?? [];
+  A.pending = live?.pending ?? [];
   A.steps = live?.steps ?? null;
   A.apps = setup?.channels ?? [];
   await Promise.all([loadFormats(), loadReplyStyles(), loadPhoneAccess()]);
@@ -58,6 +59,7 @@ export function draw() {
   let html = `<h1>${esc(t("dashboard.links.chats"))}</h1><p class="lede">${esc(t("window.p17d.chat-apps-lede"))}</p>
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
+  html += waitingCard();
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>` + stepsCard(A, lv);
   if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard();
   // Replies in each connected app: quoting your message, and the reaction on it while Branch works.
@@ -67,6 +69,22 @@ export function draw() {
   if (lv >= 1) html += advanced(on);
   if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
   return html;
+}
+
+/**
+ * UP-CHAT-007: people waiting to be let in, with their codes. A code is sent only to a direct chat, so a request made in a
+ * group (and on apps whose every room is a group) is let in from here.
+ */
+function waitingCard() {
+  // A code works for an hour (router.ts pairingCodeMs); an older request is asked again by its sender's next message.
+  const fresh = A.pending.filter((p) => Date.now() - Date.parse(p.requestedAt ?? "") <= 60 * 60_000);
+  if (E.profiles?.isOwner === false || !fresh.length) return "";
+  const rows = fresh.map((p) => `<div class="prow"><span class="grow"><b>${esc(t("window.chat-waiting.row", { name: p.name || p.senderId, app: nameOf(p.channel), code: p.code }))}</b></span><button class="btn sm" type="button" data-act="chat-waiting-let-in" data-v="${esc(p.code)}">${esc(t("window.chat-waiting.let-in"))}</button></div>`).join("");
+  return `<div class="sec x15-sec"><h2>${esc(t("window.chat-waiting.title"))}</h2><p class="hint">${esc(t("window.chat-waiting.hint"))}</p><div class="rows">${rows}</div></div>`;
+}
+async function letIn(code) {
+  try { await api("channels/pairings/approve", { code }); } catch (error) { toast(error.message); }
+  await loadApps();
 }
 
 /* Each switch: the field it saves. */
@@ -117,8 +135,9 @@ async function saveSteps(on) {
 export function init() {
   initFormatting();
   initReplyStyle();
-  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", "chat-waiting-let-in", ...Object.keys(SW).map((id) => "sw:" + id)]);
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
+  on("chat-waiting-let-in", (el) => letIn(el.dataset.v));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
   document.addEventListener("change", (e) => {
     if (e.target.id === "f15-show-steps-in-chats") saveSteps(e.target.checked);

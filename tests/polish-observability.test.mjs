@@ -298,9 +298,10 @@ test("G2 a button press is refused from another chat, from a stranger, with the 
   assert.equal(app.runtime.allowedNow(sessionId).length, 0, "and nothing was allowed");
 
   /* A press from somebody who is not on the list never reaches the approval at all. */
+  const told = sent.length;
   await press("501", "99", yes, "3");
   assert.equal(app.runtime.waitingApprovals(sessionId).length, 1, "a stranger cannot answer it");
-  assert.match(sent.at(-1).text, /private/i, "they are told the assistant is private");
+  assert.equal(sent.length, told, "and is told nothing: a block is silent (UP-CHAT-008)");
 
   /* A press carrying the fingerprint of some other request is refused by the binding, and the chat
      is told the button does not fit rather than being told a yes landed. */
