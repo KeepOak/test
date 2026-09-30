@@ -103,7 +103,8 @@ export class MorningBrief {
     const value = BriefSourcesSchema.extend({ approveBriefSources: z.literal(true) }).parse(input);
     const available = new Set((this.monitors?.list(owner) ?? []).filter(w => w.kind === "search").map(w => w.id));
     if (value.newsWatchIds.some(id => !available.has(id))) throw new Error("Select existing news search watches");
-    const settings = this.settings(owner), sections = settings.sections.filter(s => s !== "news" && s !== "health");
+    const settings = this.settings(owner);
+    const sections: BriefSection[] = settings.sections.filter(s => s !== "news" && s !== "health");
     if (value.newsWatchIds.length) sections.push("news");
     if (value.healthSource !== "off") sections.push("health");
     let template = settings.template;
