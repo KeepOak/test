@@ -2491,6 +2491,8 @@
   "folder-trust.switch.on": "Activado",
   "folder-trust.switch.when-needed": "Cuando haga falta",
   "folder-trust.workspace": "Tu espacio de trabajo",
+  "gatewayActivity.reading": "Leyendo el estado del gateway y su actividad reciente…",
+  "gatewayActivity.unavailable": "No se pudo leer la actividad reciente del gateway.",
   "gatewayChoice.off": "La pasarela no está en marcha. El trabajo en segundo plano se detiene al salir de Branch.",
   "gatewayChoice.offLater": "Guardado como desactivado. Esta pasarela sigue en marcha hasta el próximo inicio de Branch.",
   "gatewayChoice.preference": "Mantener Branch en marcha al cerrar esta ventana",
@@ -10417,7 +10419,5 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta",
-  "gatewayActivity.reading": "Leyendo el estado del gateway y su actividad reciente…",
-  "gatewayActivity.unavailable": "No se pudo leer la actividad reciente del gateway."
+  "wsedit.up": "Subir una carpeta"
 }
