@@ -111,6 +111,15 @@ test("D15: a Trunk's routine is listed by its own name and Trunk", async (t) => 
   assert.match(listed.data.prompt, /^\[Trunk @/, "the schedule itself still carries its Trunk for the scheduler");
 });
 
+test("RES-189: a Trunk's routine can keep its result as a dashboard, and its list says so", async (t) => {
+  const { app } = await branch(t);
+  const trunk = app.trunks.create({ name: "Watcher", title: "", description: "" });
+  const routine = app.trunks.routines.create(trunk.id, { name: "Site health", prompt: "Check the site.", dailyAt: "08:00", timezone: "UTC",
+    dashboard: { title: "Site health" } });
+  assert.deepEqual(app.store.get("schedules", app.runtime.owner, routine.id).data.dashboard, { title: "Site health" });
+  assert.deepEqual(app.trunks.routines.list(trunk.id).find((one) => one.id === routine.id).dashboard, { title: "Site health" });
+});
+
 test("the owner: ChatGPT's connections are named plainly, and a sign-in is named by its email", async (t) => {
   const { app, owner } = await branch(t);
   const ids = syncChatGPTPresets(app.runtime.models, { accessToken: async () => "x" }, true, "BranchTest");

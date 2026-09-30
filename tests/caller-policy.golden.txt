@@ -1881,6 +1881,8 @@ owner GET /api/schedules | here=ok remote=ok phone=ok legacy=ok person=401/32729
 owner POST /api/schedules | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/schedules/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/schedules/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/schedules/:id/dashboard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/schedules/:id/dashboard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/schedules/:id/gate | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/schedules/:id/gate | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/74bab3 run=401/74bab3 nobody=401/40daee
 owner GET /api/schedules/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4125,6 +4127,8 @@ owner+lockdown GET /api/schedules | here=ok remote=ok phone=ok legacy=ok person=
 owner+lockdown POST /api/schedules | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/schedules/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/schedules/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/schedules/:id/dashboard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/schedules/:id/dashboard | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/schedules/:id/gate | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/schedules/:id/gate | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/74bab3 run=401/74bab3 nobody=401/40daee
 owner+lockdown GET /api/schedules/:id/remove | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6369,6 +6373,8 @@ household GET /api/schedules | here=400/f6e21c remote=400/f6e21c read=400/f6e21c
 household POST /api/schedules | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/schedules/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/schedules/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/schedules/:id/dashboard | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/schedules/:id/dashboard | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/schedules/:id/gate | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/schedules/:id/gate | here=400/f6e21c remote=400/f6e21c read=401/74bab3 run=401/74bab3
 household GET /api/schedules/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8613,6 +8619,8 @@ household+lockdown GET /api/schedules | here=400/f6e21c remote=400/f6e21c read=4
 household+lockdown POST /api/schedules | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/schedules/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/schedules/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/schedules/:id/dashboard | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/schedules/:id/dashboard | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/schedules/:id/gate | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/schedules/:id/gate | here=400/f6e21c remote=400/f6e21c read=401/74bab3 run=401/74bab3
 household+lockdown GET /api/schedules/:id/remove | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10857,6 +10865,8 @@ applock GET /api/schedules | here=423/a8f863
 applock POST /api/schedules | here=423/a8f863
 applock GET /api/schedules/:id | here=423/a8f863
 applock POST /api/schedules/:id | here=423/a8f863
+applock GET /api/schedules/:id/dashboard | here=423/a8f863
+applock POST /api/schedules/:id/dashboard | here=423/a8f863
 applock GET /api/schedules/:id/gate | here=423/a8f863
 applock POST /api/schedules/:id/gate | here=423/a8f863
 applock GET /api/schedules/:id/remove | here=423/a8f863
