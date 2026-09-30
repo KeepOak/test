@@ -75,7 +75,7 @@ async function fakeTelegram(t, { readsAll = false, admin = false } = {}) {
   return { state, say, apiBase: `http://127.0.0.1:${server.address().port}` };
 }
 
-test("Telegram groups: called by name is answered, Every message answers the rest, and a stranger who did not speak to it gets no code", async (t) => {
+test("Telegram groups: called by name is answered, Every message answers the rest, and a stranger is let in quietly from Settings", async (t) => {
   const { app, provider } = await fixture(t);
   const telegram = await fakeTelegram(t, { readsAll: true });
   const adapter = new TelegramAdapter({ id: "telegram", token: "123:abc", apiBase: telegram.apiBase, pollTimeoutSeconds: 1 });
@@ -95,9 +95,12 @@ test("Telegram groups: called by name is answered, Every message answers the res
   telegram.say(77, "and who are you?");
   await delay(300);
   assert.equal(telegram.state.sent.length, 2, "a stranger who did not speak to it gets no pairing code in a busy group");
+  assert.equal(app.channels.summary().pending.length, 0, "and talk among others there asks for nothing");
+  // #1054: a code is never sent where a group can read it; a stranger who mentions the bot is written down for the owner.
   telegram.say(77, "@juniper_test_bot hello", undefined, { entities: [{ type: "mention", offset: 0, length: 17 }] });
-  await until(() => telegram.state.sent.length === 3, "a stranger who mentions it gets a code");
-  assert.match(telegram.state.sent[2].text, /approve code \d{6}/);
+  await until(() => app.channels.summary().pending.some((p) => p.senderId === "77"), "a stranger who mentions it waits in Settings");
+  await delay(300);
+  assert.equal(telegram.state.sent.length, 2, "and gets no code in the group");
   const listed = app.channels.summary().groups.find((g) => g.chatId === "-700");
   assert.deepEqual({ ...listed }, { channel: "telegram", chatId: "-700", title: "Family", activation: "always", own: true });
   assert.ok(provider.requests.length >= 2);
