@@ -128,3 +128,22 @@ test("DG-105 the server keeps only a real colour, and never inside the look", as
   assert.deepEqual([cleared.trunk.chosenColour, cleared.trunk.look.colour], [null, "theme"]);
 });
 
+
+test("TRUNK-033 a Trunk keeps its own voice in the editor, even one this computer does not have, and Default clears it", async (t) => {
+  const { page, errors, call } = await signedIn(t);
+  const made = (await (await call("POST", "/api/trunks", { name: "Reader" })).json()).trunk;
+  assert.equal((await call("POST", `/api/trunks/${made.id}`, { voice: "Voice Kept Elsewhere" })).status, 200);
+  await page.reload();
+  await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
+  await openEditor(page, made);
+  const picker = page.locator("#st-voice");
+  await picker.waitFor();
+  assert.match(await picker.innerText(), /Voice Kept Elsewhere/, "a saved voice is shown even when it is not on this computer");
+  await picker.click();
+  await page.locator('.gsel-pop [role="menuitemradio"]', { hasText: "Default" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  const [kept] = (await (await call("GET", "/api/trunks")).json()).trunks;
+  assert.equal(kept.voice, "", "Default follows the owner's own voice setting");
+  assert.deepEqual(errors, []);
+});
