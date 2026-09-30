@@ -51,7 +51,7 @@ import { ownerChatMark, setOwnerChatCheck } from "../key-context.js"; // owner-d
 import { conversationModeSettings, looserThan, readConversationMode, type ConversationMode } from "../conversation-mode.js"; // owner-dm-full
 import { readPolicy } from "../policy.js"; // owner-dm-full
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
-import { ReplyStream, type PlacedReply } from "./reply-stream.js";
+import { ReplyStream, ReplyDeliveryUncertain, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
 import { ModelPicker, staleModelMenu } from "./model-picker.js";
 import { listModels } from "../model-switch.js";
@@ -1539,10 +1539,11 @@ export class ChannelRouter {
         });
         return this.finishTurn(turn, run, "");
       });
-    } catch {
+    } catch (error) {
       await turn.live?.finish("error");
-      await this.deliver(message.channel, message.chatId, "Something went wrong on my side; the owner can see the details in Activity.",
-        `carry-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
+      if (!(error instanceof ReplyDeliveryUncertain) && !turn.reply?.uncertain)
+        await this.deliver(message.channel, message.chatId, "Something went wrong on my side; the owner can see the details in Activity.",
+          `carry-error:${message.channel}:${message.messageId}`, message.messageId).catch(() => undefined);
     } finally {
       off();
       turn.reply?.cancel();
@@ -1670,7 +1671,10 @@ export class ChannelRouter {
       await live?.finish("error");
       // Messages per conversation per hour: that refusal is said as it is, since no task started to show in Activity.
       const said = (error as { conversationRate?: boolean }).conversationRate ? (error as Error).message : "Something went wrong on my side; the owner can see the details in Activity.";
-      await this.deliver(message.channel, message.chatId, said, `reply-error:${message.channel}:${message.messageId}`, this.quoteIn(turn)).catch(() => undefined);
+      // A preview may already exist despite a missing acknowledgement. Keep the exact-message
+      // reconciliation hold: even the generic error would otherwise be a second outbound reply.
+      if (!(error instanceof ReplyDeliveryUncertain) && !turn.reply?.uncertain)
+        await this.deliver(message.channel, message.chatId, said, `reply-error:${message.channel}:${message.messageId}`, this.quoteIn(turn)).catch(() => undefined);
       void error;
       return "failed";
     } finally {

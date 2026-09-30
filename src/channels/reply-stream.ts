@@ -3,6 +3,13 @@ import type { LiveTarget, OutboundGuard } from "./live-status.js";
 import { retryAfterMs } from "./live-status.js";
 import { chunkText } from "./deliveries.js";
 
+/** An outbound acknowledgement is missing; another message is not a safe fallback. */
+export class ReplyDeliveryUncertain extends Error {
+  constructor(readonly messageId: string | null = null) {
+    super("Reply delivery was not acknowledged. Reconcile the original message before sending another answer.");
+    this.name = "ReplyDeliveryUncertain";
+  }
+}
 export interface PlacedReply { messageId: string; text: string; rest?: string[] }
 /** The reply has its own message; tool progress never becomes the answer. */
 export class ReplyStream {
@@ -11,7 +18,7 @@ export class ReplyStream {
   private shown = "";
   private readonly draftId = randomInt(1, 0x7fffffff);
   private draftDisabled = false;
-  private nativeStartUncertain = false;
+  private deliveryUncertain = false;
   private closed = false;
   private failures = 0;
   private pausedUntil = 0;
@@ -22,6 +29,7 @@ export class ReplyStream {
     private readonly intervalMs = 1500) {
     this.limit = Math.min(target.adapter.maxTextLength ?? 3500, 3500);
   }
+  get uncertain(): boolean { return this.deliveryUncertain; }
   round(): void { this.words = ""; }
   /**
    * The steps message is about to open below this reply's first words: they are handed over to become the steps (see
@@ -32,7 +40,7 @@ export class ReplyStream {
     return this.enqueue(async () => {
       const id = this.messageId;
       if (!id) return null;
-      await this.target.adapter.finishStream?.(this.target.chatId, id);
+      await this.stop(id);
       this.messageId = null;
       this.shown = "";
       this.words = ""; // those words came before a step; the next model round writes the reply afresh
@@ -58,13 +66,13 @@ export class ReplyStream {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     if (finalize && this.target.adapter.finishStream) void this.enqueue(async () => {
-      if (this.messageId) await this.target.adapter.finishStream!(this.target.chatId, this.messageId);
+      if (this.messageId) await this.stop(this.messageId);
     }).catch(() => undefined);
   }
   async finish(text: string): Promise<PlacedReply | null> {
     this.cancel(false);
     return this.enqueue(async () => {
-      if (this.nativeStartUncertain) throw new Error("The reply stream start was not acknowledged. Reconcile its delivery before sending another answer.");
+      if (this.deliveryUncertain) throw new ReplyDeliveryUncertain(this.messageId);
       // Native drafts have no message id: the caller persists the full answer with its ordinary send path.
       if (!this.messageId) return null;
       const id = this.messageId;
@@ -73,16 +81,25 @@ export class ReplyStream {
         if (checked === null) return null;
         const [first, ...rest] = chunkText(checked, this.limit);
         if (!first || !await this.write(first, !!this.target.adapter.sendStream)) {
-          if (this.target.adapter.sendStream) throw new Error("The streamed reply could not be finalized. Reconcile its delivery before sending another answer.");
-          return null;
+          // An acknowledged preview exists for ordinary adapters too. A failed edit must not
+          // turn that exact message into a blind fresh-send fallback.
+          throw this.hold();
         }
         return { messageId: id, text: first, ...(rest.length ? { rest } : {}) };
       } finally {
         // Even a blocked final snapshot or failed edit must stop the acknowledged preview.
         // A missing stop acknowledgement throws, holding delivery rather than sending another answer.
-        await this.target.adapter.finishStream?.(this.target.chatId, id);
+        await this.stop(id);
       }
     });
+  }
+  private hold(): ReplyDeliveryUncertain {
+    this.deliveryUncertain = true;
+    return new ReplyDeliveryUncertain(this.messageId);
+  }
+  private async stop(id: string): Promise<void> {
+    try { await this.target.adapter.finishStream?.(this.target.chatId, id); }
+    catch { throw this.hold(); }
   }
   private async put(text: string): Promise<void> {
     if (this.closed || !text.trim() || Date.now() < this.pausedUntil || this.failures >= 2) return;
@@ -99,28 +116,28 @@ export class ReplyStream {
     } catch { return null; }
   }
   private async write(text: string, reconcile = false): Promise<boolean> {
-    if (this.nativeStartUncertain) return false;
+    if (this.deliveryUncertain) return false;
     if (!reconcile && text === this.shown) return true;
     if (!this.messageId && !this.draftDisabled && this.target.adapter.sendDraft) {
       const drafted = await this.draft(text);
       if (drafted !== null) return drafted;
     }
-    let startingNative = false;
+    let starting = false;
     try {
       if (!(this.target.allowed?.() ?? true) || !this.target.adapter.edit || Date.now() < this.pausedUntil) return false;
       if (this.messageId) await this.target.adapter.edit(this.target.chatId, this.messageId, text);
       else {
-        startingNative = !!this.target.adapter.sendStream;
+        starting = true;
         const send = this.target.adapter.sendStream?.bind(this.target.adapter) ?? this.target.adapter.send.bind(this.target.adapter);
         this.messageId = await send(this.target.chatId, text, this.target.quote ? this.target.quote() : this.target.messageId) ?? null;
       }
-      if (!this.messageId) { this.nativeStartUncertain ||= startingNative; this.failures = 2; return false; }
+      if (!this.messageId) { this.deliveryUncertain ||= starting; this.failures = 2; return false; }
       this.shown = text;
       this.failures = 0;
       return true;
     } catch (error) {
       // A missing acknowledgement may hide an existing stream. Never retry that start as another answer.
-      if (startingNative) { this.nativeStartUncertain = true; this.failures = 2; return false; }
+      if (starting) { this.deliveryUncertain = true; this.failures = 2; return false; }
       const wait = retryAfterMs(error);
       if (wait) this.pausedUntil = Date.now() + wait;
       else this.failures++;
