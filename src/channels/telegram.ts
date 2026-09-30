@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
 import { telegramEntities } from "./progress-render.js";
+import { isOggOpus } from "../voice-note.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
@@ -174,18 +175,28 @@ export class TelegramAdapter implements ChannelAdapter {
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
     return parsed.success ? String(parsed.data.message_id) : undefined;
   }
-  /** Sends a spoken reply as a Telegram voice note. Telegram wants the file as a form upload. */
+  /** UP-CHAT-005: a spoken reply is made as OGG/Opus for this app, so it shows as a voice bubble (see `sendVoice`). */
+  readonly voiceNoteType = "audio/ogg";
+  /**
+   * Sends a spoken reply. OGG/Opus goes out with `sendVoice` and shows as a voice bubble; anything else (MP3 or WAV,
+   * when this computer could not convert it) goes out with `sendAudio` as an audio file, as OpenClaw's
+   * extensions/telegram/src/voice.ts `resolveTelegramVoiceSend` (MIT) falls back. Telegram wants the file as a form upload.
+   */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
     const form = new FormData();
     const target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
-    const extension = mediaType.includes("mpeg") ? "mp3" : mediaType.includes("wav") ? "wav" : "ogg";
-    form.append("audio", new Blob([new Uint8Array(audio)], { type: mediaType }), `reply.${extension}`);
-    if (replyToMessageId) form.append("reply_to_message_id", replyToMessageId);
-    const response = await this.fetch(`${this.base}/sendAudio`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const bubble = isOggOpus(mediaType);
+    const method = bubble ? "sendVoice" : "sendAudio";
+    const extension = bubble ? "ogg" : mediaType.includes("wav") ? "wav" : "mp3";
+    form.append(bubble ? "voice" : "audio", new Blob([new Uint8Array(audio)], { type: mediaType }), `reply.${extension}`);
+    // A quoted message that was deleted meanwhile does not stop the reply (as `send` does).
+    if (replyToMessageId && /^\d+$/.test(replyToMessageId))
+      form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
+    const response = await this.fetch(`${this.base}/${method}`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw new Error(`Telegram sendAudio failed: ${parsed.description ?? response.status}`);
+    if (!parsed.ok) throw new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
     return message.success ? String(message.data.message_id) : undefined;
   }
