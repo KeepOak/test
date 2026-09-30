@@ -24,7 +24,7 @@
    saves the workflow the engine drafts from the recording (POST /api/runs/<id>/recording/flow). */
 
 import { $, esc, renderNow, paint } from "../core/dom.js";
-import { S, E, refresh, level, needsYou } from "../core/state.js";
+import { S, E, refresh, level, needsYou, ownerHere, activeId } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -432,10 +432,16 @@ export function init() {
   });
   on("allowall", () => openAllowAll());
   on("allowall-go", () => allowAll());
+  /* After a review is answered its dialog is closed, then the requests are read again. What comes back is kept and drawn
+     only for the owner who answered, unlocked and still on this page; a read that fails after that says nothing. */
   initSourceReview(async (published) => {
-    changeRequests = (await api("self-development/requests").catch(sayOnce)).requests ?? [];
+    const profile = activeId(), view = S.view;
+    const still = () => ownerHere() && activeId() === profile && S.view === view && !document.getElementById("app")?.classList.contains("locked-b17");
+    const read = await api("self-development/requests").catch((error) => (still() ? sayOnce(error) : {}));
+    if (!still()) return;
+    changeRequests = read.requests ?? [];
     if (published) await readSourcePublications();
-    renderNow();
+    if (still()) renderNow();
   });
   on("selfrev15", (el) => reviewChange(el.dataset.id));
   on("selfno15", (el) => declineChange(el));
