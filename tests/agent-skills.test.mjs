@@ -205,4 +205,14 @@ test("integrator: pasted instructions arrive switched off, and an export never c
   assert.equal(leaky.body.record.ok, false);
   assert.doesNotMatch(JSON.stringify(leaky.body), /abcdefghijklmnopqrstuvwx1234/);
   assert.equal(app.store.skills.list(owner).some((entry) => entry.name === "leaky-one"), false);
+  // Held for review instead, it installs, and an export still never carries the key.
+  app.store.save("settings", owner, "skill-scan", { policy: "review" });
+  const held = await json("/api/skill-installs/install", { kind: "agent-skill", approve: true,
+    file: file(zipWrite([["leaky-one/SKILL.md", skill("leaky-one")], ["leaky-one/references/notes.md", long]])) });
+  assert.equal(held.body.record.ok, true);
+  const id = app.store.skills.list(owner).find((entry) => entry.name === "leaky-one").id;
+  const exported = await json(`/api/skill-installs/export?skill=${id}`);
+  assert.notEqual(exported.status, 200);
+  assert.doesNotMatch(JSON.stringify(exported.body), /abcdefghijklmnopqrstuvwx1234/);
+  assert.match(exported.body.error, /key|secret/i);
 });
