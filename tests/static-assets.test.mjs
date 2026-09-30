@@ -41,11 +41,7 @@ test("every file the page loads is on the server's allowlist and answers 200", a
   const css = await readFile(new URL("app.css", publicDir), "utf8");
   for (const m of css.matchAll(/url\(["']?(\/[^"')]+)["']?\)/g)) referenced.add(m[1]);
   assert.ok(referenced.has("/app/main.js") && referenced.has("/app/core/api.js") && referenced.has("/app.css"), "the scan found the window's modules and stylesheet");
-  /* The worker names the files it keeps; every one of them has to be served too. */
-  const worker = await readFile(new URL("service-worker.js", publicDir), "utf8");
-  const shell = /const SHELL = \[([\s\S]*?)\];/.exec(worker);
-  assert.ok(shell, "the worker lists the files it keeps");
-  for (const m of shell[1].matchAll(/"([^"]+)"/g)) referenced.add(m[1]);
+  /* The legacy worker URL is a retirement response; it names no cached shell assets. */
   for (const path of ["/service-worker.js", "/manifest.webmanifest"]) referenced.add(path);
   /* Wave 8: the small box is included by a page of the owner's OWN, so nothing here imports it and
      the scan above cannot see it. It is served only while the owner has switched it on, so switching
@@ -91,4 +87,20 @@ test("the dashboard's page and every file it loads are served while it is switch
     if (response.status !== 200) missing.push(`${path} → ${response.status}`);
   }
   assert.deepEqual(missing, [], "these files the dashboard loads are not served");
+});
+
+test("UP-UI-063: the old phone worker address now only retires itself and Branch's own shell caches", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-retired-worker-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
+  t.after(async () => { await server.close(); await app.close(); await discardTemp(root); });
+  const response = await fetch(new URL("/service-worker.js", server.url));
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store", "a browser must fetch the update, not keep the old copy");
+  const source = await response.text();
+  assert.match(source, /registration\.unregister\(\)/);
+  assert.doesNotMatch(source, /addEventListener\("fetch"/, "no page is answered from a cache any more");
+  assert.doesNotMatch(source, /caches\.open|cache\.put/);
+  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(html, /serviceWorker\.register/, "the window registers no worker");
 });

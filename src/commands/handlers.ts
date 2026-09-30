@@ -25,6 +25,8 @@ import { adaptCommand } from "../adapt/commands.js"; // mac7/adapt
 import { householdHere, mayUseConversation, runsHere } from "./household.js"; // Q259
 import { skill, steer } from "./steer-skill.js"; // CHAT-192, CHAT-205
 import { conversationHolder } from "../household-approvals.js"; // Q261
+import { helperParent } from "../helper-control.js";
+import { homeLine } from "../channels/home-chat.js"; // CHAT-190
 
 /**
  * What each command does when it is carried out for a surface that has no code of its own for it:
@@ -274,6 +276,39 @@ function pane(call: Call): Reply {
   return say("Showing or hiding the side pane.", { do: "toggle", what: "pane", on: tab ? true : null, ...(tab ? { tab } : {}) });
 }
 
+/**
+ * `/agents` (CHAT-196, Hermes /agents, OpenClaw /subagents and /tasks): every task working now, and under each the helpers
+ * it started (run.started `parentRunId`). A chat app sees only its own conversation's tasks and their helpers; the owner's
+ * other work is not a chat's business.
+ */
+function agents(call: Call): Reply {
+  const { store, owner } = call.host.runtime;
+  const working = runsHere(store, owner, call.surface).filter((run) => run.status === "running");
+  const parentOf = new Map(working.map((run) => [run.id, helperParent(store, run.id)]));
+  const rootOf = (id: string): string => { let at = id; for (let i = 0; i < 8 && parentOf.get(at); i++) at = parentOf.get(at)!; return at; };
+  const shown = call.surface === "chat" ? working.filter((run) => { const top = working.find((r) => r.id === rootOf(run.id)); return top?.sessionId === call.sessionId; }) : working;
+  if (!shown.length) return say(call.surface === "chat" ? "Nothing is working in this chat." : "Nothing is working right now.");
+  const tops = shown.filter((run) => !parentOf.get(run.id) || !shown.some((r) => r.id === parentOf.get(run.id)));
+  const lines: string[] = [];
+  const add = (run: (typeof shown)[number], depth: number): void => {
+    lines.push(`${"  ".repeat(depth)}${depth ? "helper " : ""}${runningLines([run])[0]!.trim()}`);
+    for (const child of shown.filter((r) => parentOf.get(r.id) === run.id)) add(child, depth + 1);
+  };
+  for (const run of tops) add(run, 0);
+  const helpers = shown.length - tops.length;
+  return say([`${tops.length} ${tops.length === 1 ? "task" : "tasks"} working${helpers ? `, with ${helpers} ${helpers === 1 ? "helper" : "helpers"}` : ""}:`, ...lines,
+    call.surface === "chat" ? "Send /stop to stop this chat's task." : "Send /stop <task> to stop one."].join("\n"));
+}
+/** `/title <name>` (CHAT-193): names the conversation this is typed in, as renaming it in the window does. */
+function title(call: Call): Reply {
+  const name = call.argument.replace(/\s+/g, " ").trim();
+  if (!name) return say("Say the name: /title <name>.");
+  if (!call.sessionId) return say(needSession);
+  const { store, owner } = call.host.runtime;
+  const saved = store.conversations.rename(owner, call.sessionId, { title: name.slice(0, 120) });
+  return say(`This conversation is called ${saved.title} now.`);
+}
+
 /** Every command a surface may hand to this file, by name. */
 export const HANDLERS: Record<string, Handler> = {
   help, model, think, preset, memory, skills,
@@ -300,6 +335,11 @@ export const HANDLERS: Record<string, Handler> = {
   ...BOARD_HANDLERS, // r17-h: /queue, /busy, /focus, /installs
   orchard, // Orchard: /orchard
   learn: learnCommand, // mac7/learn
+  // the chat-parity build (Hermes Agent and OpenClaw)
+  sethome: (call) => say(homeLine(call.host.runtime.store, call.host.runtime.owner, call.argument)), // CHAT-190; a chat's own is in chat-commands.ts
+  agents, // CHAT-196
+  title, // CHAT-193
+  commands: (call) => say(helpText(call.surface, call.mode, true), { do: "help" }), // CHAT-204
   steer, skill, // CHAT-192, CHAT-205
   // CHAT-187: the terminal's own /team, /find and /channels, in the window too (the terminal keeps its own runners).
   team: go("team"), channels: go("customize channels"),
