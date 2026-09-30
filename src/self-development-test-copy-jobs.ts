@@ -39,7 +39,8 @@ export class TestCopyJobs {
   constructor(private readonly deps: SelfDevelopmentDeps) {}
   verifiedReceipt(id: string): Promise<TestCopyReceipt> { return this.copy(IdInput.parse({ id }).id); }
   private async copy(id: string): Promise<TestCopyReceipt> {
-    const home = resolve(this.deps.workspace, sourceFolder, ".branch-test-copies", id);
+    // From the source folder's real path, as the copy was made: a workspace reached through a link is not a replaced copy.
+    const home = join(await realpath(resolve(this.deps.workspace, sourceFolder)), ".branch-test-copies", id);
     if (await realpath(home) !== home) throw new Error("The saved test copy was replaced by a link.");
     const copy = JSON.parse(await readFile(join(home, "receipt.json"), "utf8")) as TestCopyReceipt;
     const contract = this.deps.contracts.current(this.deps.owner, copy.sourceWorktree);

@@ -1265,6 +1265,11 @@ export const ROUTES = {
   "/api/panels/browser/action": "owner POST",
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
+  "/api/self-development/merge/test-copy": "owner POST",
+  "/api/self-development/merge/test-copy/": "prefix",
+  "/api/self-development/merge/test-copy/cancel": "owner POST",
+  "/api/self-development/merge/test-copy/start": "owner POST",
+  "/api/self-development/merge/test-copy/status": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",
