@@ -20,6 +20,7 @@ import { CliAgentProvider } from "./providers/cli-agent.js";
 import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
+import { clickupWriteSource } from "./personal/clickup-write.js";
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
@@ -4211,6 +4212,9 @@ ${run.output.slice(0, 6000)}`;
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
     const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
+    const clickup = this.registry.sourceOf(tool) === clickupWriteSource;
+    if (clickup && (context.owner !== this.owner || !this.store.profiles.isOwner() || currentPerson() || startedWithShortLivedKey() || source !== "owner"))
+      return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: "Official ClickUp calls belong to the owner's own app-window work." };
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
     const screen = reachesScreen(tool, permission, args, this.registry.declaresScreen(tool))
@@ -4270,7 +4274,8 @@ ${run.output.slice(0, 6000)}`;
     // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
     // the owner's external program sign-in and keeps its own once-only question.
     const fullAccess = this.ownerFullAccessFor(context) !== null;
-    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = (clickup ? { reason: "This exact ClickUp operation needs one-time confirmation; ambiguous side effects are never assumed read-only", onceOnly: true } : null)
+      ?? personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;

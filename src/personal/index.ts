@@ -6,6 +6,7 @@ import type { Runtime } from "../runtime.js";
 import { CalendarAvailability, availabilityEnabled, registerCalendarAvailability } from "./calendar-availability.js";
 import { ChatFiles, registerChatFiles } from "./chat-files.js";
 import { GoogleConnector, registerGoogle } from "./google.js";
+import { DocsWrite, registerDocsWrites } from "./docs-write.js";
 import { HomeControl, registerHomeControl } from "./home-control.js";
 import { MailSearch, registerMailSearch, type MailClient } from "./mail-search.js";
 import { MicrosoftConnector, registerMicrosoft } from "./microsoft.js";
@@ -105,7 +106,11 @@ export class Personal {
       "spoken-brief": () => registerSpokenBrief(tools, this.brief),
       "x-search": () => registerXSearch(tools, this.x),
       spotify: () => registerSpotify(accountTools(tools, this.signIns.spotify), this.spotify),
-      google: () => registerGoogle(accountTools(tools, this.signIns.google), this.google),
+      google: () => {
+        const scoped = accountTools(tools, this.signIns.google);
+        registerGoogle(scoped, this.google);
+        registerDocsWrites(scoped, new DocsWrite(store, owner, deps.fetch, this.signIns.google));
+      },
       microsoft: () => registerMicrosoft(accountTools(tools, this.signIns.microsoft), this.microsoft),
       "mail-search": () => registerMailSearch(tools, this.mail),
     };
