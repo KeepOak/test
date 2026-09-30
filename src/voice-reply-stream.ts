@@ -4,7 +4,8 @@ import { prepareSpokenText, SentenceChunker, spokenSentences } from "./voice-spo
 
 /** Consumes Runtime's already gated prose callback, never provider reasoning or ungated text.
  * Outlet-filtered/held replies and cache hits use the completed-reply fallback instead.
- * Each model attempt gets its own generation: speech already heard cannot be retracted on retry.
+ * Each announced model start gets its own generation. Provider-internal retry callbacks have no
+ * rollback metadata; speech already heard cannot be retracted when the final answer changes.
  */
 export class SpokenReplyStream {
   private run: Run | undefined;
