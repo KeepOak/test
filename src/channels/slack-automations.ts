@@ -97,6 +97,7 @@ export class SlackAutomations {
     if (settings.mode === "off" || !settings.rules.length) return 0;
     const parsed = EventSchema.safeParse(raw);
     if (!parsed.success || parsed.data.bot_id || (botUserId && parsed.data.user === botUserId)) return 0;
+    if (parsed.data.subtype && parsed.data.subtype !== "file_share") return 0;
     if (!this.admit(channelId, parsed.data)) return 0;
     const event = trimEvent(parsed.data);
     const user = String(event.user ?? "");
@@ -144,6 +145,10 @@ export class SlackAutomations {
     return true;
   }
   private async start(seen: SlackEventSeen): Promise<boolean> {
+    const current = this.settings();
+    if (current.mode !== "on" || !current.rules.some((rule) => rule.id === seen.rule && rule.trigger === seen.trigger
+      && rule.connection === seen.channelId && matches(rule, seen.event)
+      && (rule.users.length > 0 || this.senderAllowed(seen.channelId, String(seen.event.user ?? ""))))) return false;
     try { await this.fire(seen.trigger, payloadOf(seen)); return true; }
     catch { return false; /* a disabled or rate-limited trigger writes its own log line */ }
   }
