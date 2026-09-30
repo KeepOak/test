@@ -4,6 +4,7 @@ import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
+import { telegramForwardContext, telegramPollContent, telegramStickerContent, telegramStickerSchema } from "./telegram-content.js";
 import { telegramLocationSchema, telegramLocationText, telegramVenueSchema } from "./telegram-location.js";
 
 /**
@@ -46,6 +47,7 @@ const messageSchema = z.object({
   venue: telegramVenueSchema.optional(),
   photo: z.array(mediaSchema).optional(),
   document: mediaSchema.optional(),
+  sticker: telegramStickerSchema.optional(),
   video: mediaSchema.optional(),
   message_id: z.number(),
   message_thread_id: z.number().int().positive().optional(),
@@ -169,6 +171,22 @@ export class TelegramAdapter implements ChannelAdapter {
   async setPresence(words: string): Promise<void> {
     await this.call("setMyShortDescription", { short_description: words.slice(0, 120) });
   }
+  /** Hermes run_topics.py (MIT): require getMe's actual private-topic flag and sanitize the title. */
+  async createDirectTopic(address: string, title: string): Promise<string> {
+    const target = telegramTarget(address);
+    if (!Number.isSafeInteger(target.chat_id) || target.chat_id <= 0) throw new Error("Create a topic in your Telegram direct chat.");
+    const chat = z.object({ type: z.string() }).passthrough().parse(await this.call("getChat", { chat_id: target.chat_id }));
+    if (chat.type !== "private") throw new Error("Only private Telegram topics can be created from this command.");
+    const me = z.object({ has_topics_enabled: z.boolean().optional() }).passthrough().parse(await this.call("getMe", {}));
+    if (me.has_topics_enabled !== true) throw new Error("Enable forum topic mode for this bot in BotFather, then send /topic <name> again.");
+    const cleaned = title.replace(/\s+/g, " ").trim();
+    const characters = Array.from(cleaned);
+    if (!characters.length) throw new Error("Give the topic a name.");
+    const name = characters.length <= 120 ? cleaned : characters.slice(0, 117).join("").trimEnd() + "...";
+    const result = z.object({ message_thread_id: z.number().int().positive() }).passthrough()
+      .parse(await this.call("createForumTopic", { chat_id: target.chat_id, name }));
+    return topicAddress(target.chat_id, result.message_thread_id);
+  }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
       ...telegramTarget(chatId), text, ...formatted(format),
@@ -176,6 +194,17 @@ export class TelegramAdapter implements ChannelAdapter {
     });
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
     return parsed.success ? String(parsed.data.message_id) : undefined;
+  }
+  /**
+   * Hermes Agent's private-chat send_draft contract (MIT), adapted to Branch's topic handles and plain preview.
+   * Reusing the nonzero id animates the preview; it has no message id and never replaces the final sendMessage.
+   */
+  async sendDraft(chatId: string, draftId: number, text: string): Promise<void> {
+    const target = telegramTarget(chatId);
+    if (!Number.isSafeInteger(target.chat_id) || target.chat_id <= 0 || !Number.isSafeInteger(draftId) || draftId <= 0)
+      throw new Error("Telegram drafts require a private chat and a positive draft id");
+    const result = await this.call("sendMessageDraft", { ...target, draft_id: draftId, text: text.slice(0, 3500) });
+    if (result !== true) throw new Error("Telegram refused the draft preview");
   }
   /** Sends a spoken reply as a Telegram voice note. Telegram wants the file as a form upload. */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
@@ -403,9 +432,11 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   private inbound(message: z.infer<typeof messageSchema>): InboundMessage | null {
     const spoken = message.voice ?? message.audio;
-    const media = message.document ?? message.video ?? message.photo?.at(-1);
+    const sticker = message.sticker && !message.sticker.is_animated && !message.sticker.is_video ? message.sticker : undefined;
+    const media = message.document ?? message.video ?? message.photo?.at(-1) ?? sticker;
+    const extra = [telegramPollContent(message.poll), telegramStickerContent(message.sticker)].filter(Boolean).join("\n");
     const location = telegramLocationText(message);
-    const written = message.text ?? location ?? (spoken || media ? message.caption ?? "" : undefined);
+    const written = message.text ?? location ?? (spoken || media || extra ? message.caption ?? "" : undefined);
     if (written === undefined || !message.from || message.from.is_bot) return null;
     const mention = this.username ? `@${this.username.toLowerCase()}` : null;
     const mentioned = !!mention && (message.entities ?? []).some((entity) =>
@@ -417,12 +448,13 @@ export class TelegramAdapter implements ChannelAdapter {
       channel: this.id, chatId: topicAddress(message.chat.id, message.message_thread_id), chatKind: direct ? "direct" : "group",
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
-      text, addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
+      text: [telegramForwardContext(message.forward_origin), text, extra].filter(Boolean).join("\n"),
+      addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
       ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
-        name: message.document?.file_name ?? message.video?.file_name ?? `photo-${message.message_id}.jpg`,
+        name: message.document?.file_name ?? message.video?.file_name ?? (sticker ? `sticker-${message.message_id}.webp` : `photo-${message.message_id}.jpg`),
         sourceId: media.file_unique_id ?? media.file_id,
-        mediaType: message.document?.mime_type ?? message.video?.mime_type ?? "image/jpeg",
+        mediaType: message.document?.mime_type ?? message.video?.mime_type ?? (sticker ? "image/webp" : "image/jpeg"),
         kind: message.document ? "document" as const : message.video ? "video" as const : "picture" as const,
         ...(media.file_size !== undefined ? { size: media.file_size } : {}),
         bytes: () => this.downloadAttachment(media.file_id, media.file_size),
