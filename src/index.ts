@@ -168,6 +168,8 @@ import { repositoryPath } from "./integrations/github.js";
 import { offerSelfDevelopment, type SelfDevelopmentDeps } from "./self-development.js";
 import { offerSourceRequests, SourceChangeRequests } from "./self-development-requests.js";
 import { SelfDevelopmentMerges } from "./self-development-merge.js";
+import { offerContractTests } from "./self-development-tests.js";
+import { gatedCall } from "./coding/gated.js";
 import { ContractBook, contractGuard, contractPreflight } from "./self-development-contract.js"; // Q12
 import { jsonWriteProblem } from "./approvals.js";
 import { Flows, registerFlows } from "./flows.js";
@@ -781,9 +783,12 @@ export async function createBranch(options: {
   // Offered, like the setup tools, only while sending Git work to a remote is switched on (src/self-development.ts).
   const finishTool = "branch.finish_source_change";
   const registerFinish = (): void => registry.register({ name: finishTool, permission: "git.remote", group: "code",
-    description: "Finish this task's exact tested Branch source draft only in the owner's selected Full Access conversation: independent read-only review, every check verified finished and passed on the exact commit (run github.wait_for_checks first), then a normal GitHub merge pinned to that commit. Refuses if any evidence changes.",
+    description: "Finish this task's exact tested Branch source draft only in the owner's selected Full Access conversation: independent read-only review, every check verified finished and passed on the exact commit (run github.wait_for_checks first), then a normal GitHub merge pinned to that commit (or, when the base merges through GitHub's merge queue, that commit joins the queue: wait with github.wait_for_checks until it says merged). Refuses if any evidence changes.",
     parameters: z.object({ worktree: z.string().regex(/^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/),
       repo: repositoryPath, number: z.number().int().positive() }).strict(),
+    // Its independent review is a model's answer and the merge waits on GitHub: cut off half-way, a draft is left ready
+    // but not merged, which no retry can finish (ToolDefinition.waitsUpToMs).
+    waitsUpToMs: 900_000,
     target: (input) => String(input.worktree), execute: (input, context) => sourceMerges.autoFinish(input, context) });
   const offerFinish = (): void => {
     const remote = registry.names().includes("git.push"), offered = registry.names().includes(finishTool);
@@ -792,6 +797,7 @@ export async function createBranch(options: {
   };
   offerFinish();
   registry.onToolsChanged(offerFinish);
+  offerContractTests(registry, selfContracts, sourceMerges, (name, args, context) => gatedCall({ runtime, registry }, name, args, context), options.owner ?? "local");
   offerSourceRequests(runtime, sourceRequests);
   const contractChecks = { store, owner: options.owner ?? "local", workspace, registry, book: selfContracts,
     git: (input: GitRunOptions, signal: AbortSignal) => gitRunner.run(input, signal) };
