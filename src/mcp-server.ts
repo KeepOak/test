@@ -24,7 +24,7 @@ import { lockedDown } from './lockdown.js';
  * Protocol versions Branch understands, newest first. A client that asks for something else is told
  * plainly which ones work rather than being left to guess.
  */
-export const supportedProtocolVersions = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
+export const supportedProtocolVersions = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
 const PREFERRED_PROTOCOL_VERSION = supportedProtocolVersions[0];
 const CONVERSATION_LIMIT = 20;
 const RUN_LIMIT = 20;
@@ -493,6 +493,9 @@ export class McpServer {
     });
     try {
       const params = request.params ?? {};
+      if (request.method === 'server/discover') return respond({ resultType: 'complete', supportedVersions: [...supportedProtocolVersions],
+        capabilities: this.sharing().enabled ? { tools: {}, resources: {}, prompts: {} } : {},
+        _meta: { 'io.modelcontextprotocol/serverInfo': { name: 'branch', version: '1.0.0' } } });
       if (request.method === 'initialize') return respond(this.initialize(session, params));
       if (request.method === 'ping') return respond({});
       if (!session.initialized) return respond(undefined, { code: -32002, message: 'Not initialized' });

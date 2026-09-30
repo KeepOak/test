@@ -32,6 +32,8 @@ import type { Store } from "./store.js";
 export type ToolGateMode = "owner" | "policy";
 
 export interface ToolGateOptions {
+  /** Internal MCP Apps host marker; never read from a remote tool's arguments. */
+  appCaller?: boolean;
   mode?: ToolGateMode;
   /** Who set the work going; decides how far the approval rules are capped. Owner by default. */
   source?: RunSource;
