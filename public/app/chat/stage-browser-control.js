@@ -20,7 +20,7 @@ import { t } from "../../i18n.js";
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
   busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
-  error: "", typed: "", opening: false, names: { name: "", runId: null } };
+  error: "", typed: "", opening: false, libraryOpen: false, library: null, names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const visible = () => B.shown && !document.hidden && !locked();
@@ -101,7 +101,7 @@ export function watchOwnerBrowser(sid, show, onChange, names = {}) {
   B.onChange = onChange;
   B.names = { name: names.name ?? "", runId: names.runId ?? null };
   const next = show && sid ? sid : null;
-  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null }); }
+  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, libraryOpen: false, library: null }); }
   if (next) B.sid = next;
   B.shown = !!next;
   if (!visible()) { if (B.reading || B.timer || owned()) disconnect(); return; }
@@ -168,6 +168,17 @@ function statusHTML() {
   const title = B.opening ? "" : `<b>${t("window.chat.stage.opening-failed")}</b>`;
   return `<div class="browser-status7 ob7-status" role="status">${title}<small>${esc(said)}</small></div>`;
 }
+function libraryHTML() {
+  const has = hasOwnerBrowser(), change = has && canDrive();
+  const button = (action, label, enabled = true) => `<button type="button" class="btn ghost sm" data-act="owner-browser-library-${action}"${enabled ? "" : " disabled"}>${esc(label)}</button>`;
+  const bar = `<div class="ob7-library-bar">${button("show", t("window.chat.stage.ob.library"), has)}${button("save", t("window.chat.stage.ob.library-save"), change && B.ready)}</div>`;
+  if (!B.libraryOpen) return bar;
+  const saved = B.library, row = (entry, bookmark) => `<li><button type="button" class="btn ghost sm" data-act="owner-browser-library-open" data-url="${esc(entry.url)}"${change ? "" : " disabled"}>${esc(entry.title || entry.url)}</button><small>${esc(entry.url)}</small>${bookmark ? `<button type="button" class="btn ghost sm" data-act="owner-browser-library-remove" data-id="${esc(entry.id)}"${change ? "" : " disabled"}>${esc(t("window.chat.stage.ob.library-remove"))}</button>` : ""}</li>`;
+  return bar + `<section class="ob7-library"><p>${esc(t("window.chat.stage.ob.library-privacy"))}</p>${button("refresh", t("window.chat.stage.ob.library-refresh"))}
+    <b>${esc(t("window.chat.stage.ob.library-bookmarks"))}</b><ul>${saved?.bookmarks?.map(entry => row(entry, true)).join("") || `<li>${esc(t("window.chat.stage.ob.library-empty"))}</li>`}</ul>
+    <b>${esc(t("window.chat.stage.ob.library-history"))}</b><div>${button("history", t(saved?.historyEnabled ? "window.chat.stage.ob.library-disable" : "window.chat.stage.ob.library-enable"), change)}${button("clear", t("window.chat.stage.ob.library-clear"), change && !!saved?.history?.length)}</div>
+    <ul>${saved?.history?.map(entry => row(entry, false)).join("") || `<li>${esc(t("window.chat.stage.ob.library-empty"))}</li>`}</ul></section>`;
+}
 function pageHTML() {
   const ready = !!B.frame, input = owned() || free();
   const empty = !hasOwnerBrowser() ? t("window.chat.stage.ob.empty") : B.page?.borrowed ? t("window.chat.stage.borrowed-preview")
@@ -180,7 +191,7 @@ function pageHTML() {
 }
 /** The whole browser, drawn at the stage's 1280 × 800 like the task's live view. */
 export function ownerBrowserHTML() {
-  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${statusHTML()}${pageHTML()}</div></div>`;
+  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${libraryHTML()}${statusHTML()}${pageHTML()}</div></div>`;
 }
 /** The small window shows only the page. */
 export const ownerBrowserPip = () => `<div class="desk7 brfull7 live7"><div class="dk-win br7"><img class="shot7 owner-browser7-img" alt=""></div></div>`;
@@ -194,6 +205,7 @@ function accept(answer, path, body) {
   if (answer.status === "asked") { question(path, body, answer); return; }
   if (answer.control) { B.control = answer.control; B.profile = answer.control.binding?.profile ?? B.profile; }
   if (answer.status === "stopped") { B.control = null; B.page = null; B.found = null; }
+  if (path === "library" && answer.status === "library") { B.library = answer.library; changed(true); return; }
   const failed = answer.status === "refused" || answer.status === "failed" || answer.ok === false;
   if (failed) B.error = answer.reason || answer.error || t("window.chat.stage.ob.failed");
   else if (path === "action") B.error = "";
@@ -317,10 +329,33 @@ function pointerUp(event) {
 }
 const inPage = (event) => event.target.closest?.("#stage7 .owner-browser7-page");
 
+async function libraryRequest(operation, extra = {}) {
+  if (!B.sid || !visible() || !hasOwnerBrowser() || B.pending) return;
+  if (operation !== "list" && !(await ensureDriving())) return;
+  await drain();
+  if (operation === "bookmark") { await readView(); if (!B.ready || !B.frameId) return; }
+  return send("library", { ...bound(), operation, ...extra,
+    ...(operation === "bookmark" ? { frameId: B.frameId, tabId: B.tabId } : {}) });
+}
+function initBrowserLibrary() {
+  on("owner-browser-library-show", () => {
+    B.libraryOpen = !B.libraryOpen; changed(true);
+    if (B.libraryOpen) void inOrder(() => libraryRequest("list"));
+  });
+  on("owner-browser-library-refresh", () => { void inOrder(() => libraryRequest("list")); });
+  on("owner-browser-library-save", () => { B.libraryOpen = true; void inOrder(() => libraryRequest("bookmark")); });
+  on("owner-browser-library-remove", el => { const entryId = el.dataset.id; void inOrder(() => libraryRequest("remove", { entryId })); });
+  on("owner-browser-library-clear", () => { void inOrder(() => libraryRequest("clear")); });
+  on("owner-browser-library-history", () => { const enabled = !B.library?.historyEnabled; void inOrder(() => libraryRequest("history", { enabled })); });
+  on("owner-browser-library-open", el => { const url = el.dataset.url; void inOrder(() => action("browser.navigate", { url })); });
+}
+
 export function initOwnerBrowser() {
   markLive(["owner-browser-adopt", "owner-browser-stop", "owner-browser-take", "owner-browser-handback",
     "owner-browser-tab", "owner-browser-tab-close", "owner-browser-new-tab", "owner-browser-back", "owner-browser-forward",
-    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys"]);
+    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys",
+    "owner-browser-library-show", "owner-browser-library-refresh", "owner-browser-library-save", "owner-browser-library-remove", "owner-browser-library-clear", "owner-browser-library-history", "owner-browser-library-open"]);
+  initBrowserLibrary();
   on("owner-browser-adopt", (el) => { if (B.sid && !hasOwnerBrowser()) void inOrder(() => send("start", { ...scope(), runId: el.dataset.id })); });
   on("owner-browser-stop", () => { if (hasOwnerBrowser()) void inOrder(() => send("stop", bound())); });
   on("owner-browser-take", () => { if (hasOwnerBrowser()) void inOrder(() => send("control", { ...bound(), operation: "takeover" })); });
