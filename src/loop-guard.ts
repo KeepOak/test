@@ -98,7 +98,7 @@ const historySize = 30;
  * Tools that are meant to be asked again while something finishes: a running program's output,
  * a status, a list. Judged from the tool's name only, never from its arguments.
  */
-const pollNames = /^process\.(read|list)$|\.(status|check|checks|wait|poll|progress|list)$/;
+const pollNames = /^process\.(read|list)$|\.(status|check|checks|wait|wait_for_checks|poll|progress|list)$/;
 
 export function isPollTool(name: string): boolean {
   return pollNames.test(name);

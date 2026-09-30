@@ -274,6 +274,7 @@ const opensOnThisComputer: readonly RegExp[] = [/^\/api\/accounts\/sign-ins\/(st
 const permanentHereOnly: readonly RegExp[] = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/, /^\/api\/retention\/prune$/];
 /** Why a door (the paired door, a phone's own key, or a caller beyond this computer) may not send this, or null. */
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
+  if (/^\/api\/taste(\/|$)/.test(path) || /^\/api\/self-development\/publications(\/|$)/.test(path)) return hereOnly;
   if (/^\/api\/self-development\/merge(\/|$)/.test(path)) return hereOnly;
   if (secretToADoor.some((route) => route.test(path))) return hereOnly;
   if (method === "GET" || method === "HEAD") return null;
