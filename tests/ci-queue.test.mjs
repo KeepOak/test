@@ -155,3 +155,15 @@ test("a rerun is never sent twice, even after a passing error: GitHub may have s
   await label("POST", "issues/5/labels", { labels: ["ci-waiting"] });
   assert.equal(labels, 2, "adding a label is the same done twice, so it is tried again");
 });
+
+test("the queue runs the base's own script and prSlots, never the pull request's (#1367 admitted runs by its unmerged rule)", () => {
+  const flow = readFileSync(new URL("../.github/workflows/checks.yml", import.meta.url), "utf8");
+  const base = "ref: ${{ github.event_name == 'pull_request' && github.base_ref || github.sha }}";
+  const admit = flow.match(/\n\s+run: node (\S+) admit /);
+  assert.equal(admit?.[1], ".ci-queue-base/scripts/ci-queue.mjs", "admit runs from the base's sparse copy");
+  const baseCopy = flow.slice(0, flow.indexOf(admit[0])).split("- uses: actions/checkout").at(-1);
+  assert.ok(baseCopy.includes(base) && baseCopy.includes("path: .ci-queue-base") && baseCopy.includes("tests/test-impact.json"));
+  const handOn = flow.slice(0, flow.indexOf("- name: Hand the CI slot on")).split("- uses: actions/checkout").at(-1);
+  assert.ok(handOn.includes(base) && handOn.includes("tests/test-impact.json"), "the restart reads the base's copy too");
+  assert.equal((flow.match(/node (\S*)scripts\/ci-queue\.mjs/g) ?? []).length, 2, "no other queue call reads the pull request's copy");
+});
