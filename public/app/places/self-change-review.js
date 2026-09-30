@@ -54,7 +54,7 @@ function publicationForm(id, snapshot) {
   return `<dl>${metadata}</dl><details><summary>${words("contract")}</summary><dl>${terms}</dl></details>
     <form id="source-publish" data-source-review="${esc(id)}">
     ${field("title", "title", { max: 200 })}${field("summary", "summary", { multiline: true, max: 8000 })}
-    <label class="ctl"><input type="checkbox" name="consent" required> <b>${words("consent")}</b></label></form>`;
+    <label class="ctl" for="source-consent"><input type="checkbox" id="source-consent" name="consent" required> <b>${words("consent")}</b></label></form>`;
 }
 
 export async function openSourceReview(request, diffHTML, details = "") {
@@ -100,9 +100,13 @@ async function answer(el) {
   await reread(!prepare);
 }
 
+/* Every field both forms draw is read by prepareInput or answer, so each is live (core/features.js greys the rest). */
+const fields = ["name", "repository", "base", "allowedPaths", "permissions", "expectedTests", "definitionOfDone", "sideEffects",
+  "rollbackPlan", "title", "summary", "consent"];
+
 export function initSourceReview(afterChange) {
   reread = afterChange;
-  markLive(["selfdo15"]);
+  markLive(["selfdo15", ...fields.map((name) => `sw:source-${name}`)]);
   on("selfdo15", (el) => answer(el));
   addEventListener("pagehide", () => { current = null; generation += 1; });
 }
