@@ -23,6 +23,7 @@ import { requestUpdateBackup, stopBackgroundEngine } from "../install/background
 import { installedAppRoot } from "./install-root.js";
 import { minimizedFlag, startsMinimized } from "../install/autostart.js";
 import { takeShellLock } from "./shell-lock.js";
+import { serveShellQuit } from "./shell-control.js";
 import { providerFromEnv } from "../providers.js";
 import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
@@ -573,6 +574,8 @@ async function start(): Promise<void> {
     return;
   }
   app.once("will-quit", () => { void lock.release(); });
+  const shellControl = await serveShellQuit(dataDir, () => { quitReason = "command"; app.quit(); });
+  app.once("will-quit", () => { void shellControl.close().catch(() => undefined); });
   startCrashReporter(dataDir);
   // Main's own lines (the updater's steps among them) go into the engine's activity log, engine running or not.
   openMainLog(dataDir);

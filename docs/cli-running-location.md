@@ -1,0 +1,9 @@
+# Finding a running Branch from the CLI
+
+`branch quit` and `branch --version --json` previously looked only in `BRANCH_DATA_DIR` or the current directory's `.branch`. A desktop launch normally writes its running note under its user-data `state` folder, so an unconfigured CLI launched elsewhere could say Branch was not running.
+
+Without an explicit `BRANCH_DATA_DIR`, these two management commands now check the current-directory `.branch`, the configured `BRANCH_DESKTOP_HOME/state`, and the platform's normal desktop state folder. An absolute `BRANCH_EXECUTABLE` also allows the existing portable-marker resolver to find that executable's portable state. They choose a folder only when its existing engine running note or shell lock names a live process. If several folders are running, they ask for an explicit `BRANCH_DATA_DIR` instead of choosing one.
+
+Discovery reads only the existing engine and shell running metadata and checks process existence. It does not scan profiles, open databases, migrate files, or read session tokens. Quitting first uses a separate mutually authenticated local shell-control pipe/socket, checks its PID against the live shell note, and waits for the shell to exit. It then uses the existing authenticated engine quit path and daemon-stop fallback. The shell channel has its own protected descriptor and random key, so the CLI cannot displace the retained broker’s live-update connection. An old or unproved shell is refused; no process-kill fallback is added. Update, uninstall and rollback retain their existing explicit install/data context.
+
+SELF-034 remains partial: source now fixes wrong-folder discovery and separately acknowledges/waits for shell and retained-engine exit. The original missing dogfood receipt is unavailable. Installed behavior, legacy-shell recovery and self-fix-task acceptance remain unverified. Tests, builds and runtime execution are deferred by the owner.
