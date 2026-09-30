@@ -12,9 +12,9 @@ import { personalHold } from "../dist/personal/guard.js";
 function setup(mailSend, scope) {
   const store = { ...fakeStore(), run: () => undefined };
   on(store, "google");
-  const signIn = { token: async () => "access-token-1", settings: () => ({ drafts: false, mailSend }), service: "google",
-    mailPreviewIdentity: () => "same", requireMailSend: SignIn.prototype.requireMailSend,
-    deps: { oauth: { saved: async () => ({ scope }) } } };
+  const oauth = { saved: async () => ({ scope }), accessToken: async () => "access-token-1" };
+  const signIn = new SignIn({ store, owner: "local", oauth, secret: async () => "" }, "google", "google");
+  signIn.save({ clientId: "abc", mailSend });
   const web = fakeWeb([[/\/messages\/send/, { id: "sent-1" }]]);
   const tools = new Map();
   registerGoogle({ register: (tool) => tools.set(tool.name, tool) }, new GoogleConnector(store, "local", web.fetch, signIn));
