@@ -6906,6 +6906,7 @@
   "window.chat.live.read-lines.other": "{count} lignes lues",
   "window.chat.live.read-words.one": "{count} mot lu",
   "window.chat.live.read-words.other": "{count} mots lus",
+  "window.chat.live.reconnecting-updates": "Reconnexion aux mises à jour de la tâche…",
   "window.chat.live.restarted": "Branch a redémarré, donc il a repris la tâche à sa dernière étape",
   "window.chat.live.running": "Exécute {command}",
   "window.chat.live.saved": "Enregistré",

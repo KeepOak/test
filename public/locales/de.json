@@ -6906,6 +6906,7 @@
   "window.chat.live.read-lines.other": "{count} Zeilen gelesen",
   "window.chat.live.read-words.one": "{count} Wort gelesen",
   "window.chat.live.read-words.other": "{count} Wörter gelesen",
+  "window.chat.live.reconnecting-updates": "Verbindung zu Aufgabenaktualisierungen wird wiederhergestellt…",
   "window.chat.live.restarted": "Branch wurde neu gestartet und hat die Aufgabe beim letzten Schritt wieder aufgenommen",
   "window.chat.live.running": "Führt {command} aus",
   "window.chat.live.saved": "Gespeichert",
