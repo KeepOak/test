@@ -3724,6 +3724,10 @@ The Codex parts are used under the Apache License, Version 2.0 (http://www.apach
 
 The getMe capability check and 120-character topic title sanitizer in `src/channels/telegram.ts` are adapted from NousResearch/hermes-agent `gateway/run_topics.py`, https://github.com/NousResearch/hermes-agent/blob/main/gateway/run_topics.py (MIT). Branch uses its own chat routing, owner checks and Telegram transport.
 
+## Hermes personality selection helpers
+
+Neutral-name resolution and selecting a persisted name without rewriting personality files in `src/channels/personality-settings.ts` follow and adapt NousResearch/hermes-agent `hermes_cli/personality.py` and `gateway/slash_commands_model.py`, https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/personality.py and https://github.com/NousResearch/hermes-agent/blob/main/gateway/slash_commands_model.py (MIT). Branch uses its own per-chat setting and task snapshot; its fixed tone instructions are original. Hermes channel override configuration was inspected but not copied.
+
 MIT License
 
 Copyright (c) 2025 Nous Research

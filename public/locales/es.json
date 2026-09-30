@@ -1308,6 +1308,7 @@
   "commands.model": "qué modelo responde; /model solo los lista",
   "commands.new": "empezar una conversación nueva",
   "commands.pane": "mostrar u ocultar el panel lateral",
+  "commands.personality": "elegir el tono de las respuestas para la próxima tarea de este chat",
   "commands.plan": "activar o desactivar hacer primero un plan breve",
   "commands.platform": "pausar una app de chat para que sus mensajes se descarten, o volver a activarla",
   "commands.preset": "cuándo te consulta Branch antes de hacer algo",

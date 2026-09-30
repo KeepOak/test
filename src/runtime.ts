@@ -21,6 +21,7 @@ import { practiceRunsEnabled } from "./practice-runs.js";
 import { CliAgentProvider } from "./providers/cli-agent.js";
 import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
+import { chatPersonalityForRun } from "./channels/personality-settings.js";
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
@@ -1884,6 +1885,7 @@ ${run.output.slice(0, 6000)}`;
         this.helperModels.set(run.id, connection.preset);
         this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
       }
+      if (!parent && !context.isolated && !sealed) instructions += chatPersonalityForRun(this.store, this.owner, run.id);
       const work = async (working: ToolContext) => {
         if (approved) await this.runApproved(run, working, approved); // QA R1
         return this.loop(run, working, instructions, options.onTextDelta, {
