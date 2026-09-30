@@ -1,6 +1,7 @@
 import type { LiveTarget, OutboundGuard } from "./live-status.js";
 import { retryAfterMs } from "./live-status.js";
-import { chunkText } from "./deliveries.js";
+import { chunkText, openFenceAt } from "./deliveries.js";
+import type { FeatureSwitch } from "./chat-live-settings.js";
 
 export interface PlacedReply { messageId: string; text: string; rest?: string[] }
 /** The reply has its own message; tool progress never becomes the answer. */
@@ -15,7 +16,9 @@ export class ReplyStream {
   private chain: Promise<unknown> = Promise.resolve();
   private readonly limit: number;
   constructor(private readonly target: LiveTarget, private readonly guard: OutboundGuard,
-    private readonly intervalMs = 1500) {
+    private readonly intervalMs = 1500,
+    /** UP-CHAT-012: the owner's careful-splitting switch, as the ledger reads it (deliveries.ts `chunkText`). */
+    private readonly splitting: () => FeatureSwitch = () => "off") {
     this.limit = Math.min(target.adapter.maxTextLength ?? 3500, 3500);
   }
   round(): void { this.words = ""; }
@@ -59,17 +62,43 @@ export class ReplyStream {
       if (!this.messageId) return null;
       const checked = await this.checked(text);
       if (checked === null) return null;
-      const [first, ...rest] = chunkText(checked, this.limit);
-      if (!first || !await this.write(first)) return null;
-      return { messageId: this.messageId!, text: first, ...(rest.length ? { rest } : {}) };
+      const [first, ...rest] = this.chunks(checked);
+      if (first && await this.write(first)) return { messageId: this.messageId!, text: first, ...(rest.length ? { rest } : {}) };
+      return first ? this.fallback(checked) : null;
     });
+  }
+  /**
+   * UP-CHAT-012: the last edit failed, so the chat still shows the partial words. When the answer begins with them, they
+   * stay as its head and only the unseen rest is sent after them. Otherwise the whole answer is sent afresh (null) and
+   * the partial is deleted where the app can, so the chat never shows half an answer and then all of it.
+   * Adapted from Hermes Agent (MIT), gateway/stream_consumer_fallback.py `_send_fallback_final` and `_continuation_text`.
+   */
+  private async fallback(checked: string): Promise<PlacedReply | null> {
+    // Nothing may go to this chat now (Lockdown, or the sender taken off the list): the router's own path decides.
+    if (!(this.target.allowed?.() ?? true)) return null;
+    const shown = this.shown, id = this.messageId!;
+    // A preview cut inside a code block was shown with the block closed (`closeFence`); the answer goes on inside it.
+    const closed = /\n(`{3,}|~{3,})$/.exec(shown), bare = closed ? shown.slice(0, closed.index) : shown;
+    const open = closed ? openFenceAt(bare, bare.length) : null;
+    const head = checked.startsWith(shown) ? shown : open && checked.startsWith(bare) ? bare : null;
+    if (head) {
+      const tail = checked.slice(head.length).trim();
+      const rest = tail && head === bare && open ? `${open.line}\n${tail}` : tail;
+      return { messageId: id, text: shown, ...(rest ? { rest: this.chunks(rest) } : {}) };
+    }
+    const adapter = this.target.adapter;
+    if (adapter.deleteMessage) await adapter.deleteMessage(this.target.chatId, id).catch(() => undefined);
+    return null;
+  }
+  private chunks(text: string): string[] {
+    return chunkText(text, this.limit, this.splitting());
   }
   private async put(text: string): Promise<void> {
     if (this.closed || !text.trim() || Date.now() < this.pausedUntil || this.failures >= 2) return;
     const checked = await this.checked(text);
     if (checked === null) return;
-    const first = chunkText(checked, this.limit)[0];
-    if (first) await this.write(first);
+    const first = this.chunks(checked)[0];
+    if (first) await this.write(closeFence(first, this.limit));
   }
   private async checked(text: string): Promise<string | null> {
     try {
@@ -100,4 +129,15 @@ export class ReplyStream {
     this.chain = next.catch(() => undefined);
     return next;
   }
+}
+
+/**
+ * A preview cut while a code block is still open is shown with the block closed, so the rest of the words are not
+ * shown as code (Hermes Agent, MIT, gateway/stream_consumer_fences.py). A preview with no room left is shown as it is.
+ */
+export function closeFence(text: string, limit: number): string {
+  const open = openFenceAt(text, text.length);
+  const closed = open ? `${text}
+${open.close}` : text;
+  return closed.length <= limit ? closed : text;
 }
