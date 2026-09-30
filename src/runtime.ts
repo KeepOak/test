@@ -4487,7 +4487,7 @@ ${run.output.slice(0, 6000)}`;
     // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
     // the owner's external program sign-in and keeps its own once-only question.
     const fullAccess = this.ownerFullAccessFor(context) !== null;
-    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
