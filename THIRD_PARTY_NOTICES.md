@@ -3474,6 +3474,10 @@ Licensed under the Apache License, Version 2.0 (the "License"); you may not use 
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
 
+### OpenClaw: Telegram group commands, forum topics and the command menu (UP-CHAT-013..015), MIT
+
+In `src/channels/telegram.ts`, `targetedCommand` adapts `TARGETED_COMMAND_BODY_RE` from OpenClaw's `src/auto-reply/commands-registry-normalize.ts`, and a command aimed at this bot counting as addressed follows `src/channels/mention-gating.ts`. `forumThread` follows `resolveTelegramForumThreadId` in `extensions/telegram/src/bot/helpers.ts`. `telegramMenu` and the menu's hash-skip and BOT_COMMANDS_TOO_MUCH retry adapt `extensions/telegram/src/bot-native-command-menu.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### Goose and Codex approval reviewers (idea only), Apache-2.0
 
 The second model that reviews tool calls in `src/approval-reviewer.ts` — deciding whether a tool that does not say only reads, and checking a risky call against the owner's own rules with its arguments treated as untrusted data — follows the ideas of Goose's `crates/goose/src/permission/permission_judge.rs` and `crates/goose/src/security/adversary_inspector.rs` (https://github.com/block/goose) and Codex's `codex-rs/core/src/guardian/` (https://github.com/openai/codex, Copyright 2025 OpenAI), both licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). It was written afresh; no code was copied.
@@ -3603,6 +3607,16 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 - `readback.ts` follows the ideas of ZeroClaw's Markdown memory (`crates/zeroclaw-memory/src/markdown.rs`, https://github.com/zeroclaw-labs/zeroclaw, commit 3df68fb, MIT or Apache-2.0) and nanobot's "dream" tidy template (`nanobot/templates/agent/dream.md`, https://github.com/HKUDS/nanobot, commit 2fb1659, MIT).
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+### Telegram inbox, retries and delivery errors: OpenClaw, grammY auto-retry, Hermes Agent (MIT)
+
+Written afresh for Branch; the parts that follow a source's design closely are named here.
+
+- `src/channels/telegram-inbox.ts` and the poll in `src/channels/telegram.ts`: a Telegram update is saved before the read position moves on, the committed save being the acknowledgement, after OpenClaw's `extensions/telegram/src/polling-session.ts` and `extensions/telegram/src/telegram-ingress-spool.ts`. The 409 Conflict handling (delete the webhook, back off from 30 seconds to ten minutes with jitter) follows `extensions/telegram/src/polling-session-restart-policy.ts` and `polling-session.ts` in the same project (https://github.com/openclaw/openclaw, commit c4461b5, Copyright (c) 2026 OpenClaw Foundation, MIT; GitHub reports the licence as NOASSERTION, the LICENSE file is MIT).
+- `src/channels/telegram-retry.ts` and `call()` in `src/channels/telegram.ts`: waiting exactly `retry_after`, backing off on server and network errors, and following `migrate_to_chat_id`, after grammY auto-retry's `src/mod.ts` (https://github.com/grammyjs/auto-retry, commit 9fad835, Copyright (c) 2021-2024 KnorpelSenf, MIT).
+- `sendErrorKind` and the "attempting" state in `src/channels/deliveries.ts`: gone chats never retried, flood waits honoured, other errors backed off, and a send cut off mid-way marked when it is sent again, after Hermes Agent's `gateway/delivery_ledger.py` and the send-error table in `gateway/platforms/base.py` (https://github.com/NousResearch/hermes-agent, commit 94f3f17, Copyright (c) 2025 Nous Research, MIT).
+
+All three are used under the MIT licence, whose text is given under IronClaw above.
 
 ### Helper lifecycle (ideas only), MIT and Apache-2.0
 

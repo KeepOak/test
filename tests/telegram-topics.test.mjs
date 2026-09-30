@@ -10,9 +10,9 @@ const base = { id: 'tg', token: 'fake', pollTimeoutSeconds: 0 };
 test('forum updates retain distinct routing addresses and callbacks stay in their topic', async () => {
   const seen = [], sent = [];
   const updates = [
-    { update_id: 1, message: { message_id: 11, message_thread_id: 7, text: 'one', from: { id: 5 }, chat: { id: -99, type: 'supergroup' } } },
-    { update_id: 2, message: { message_id: 12, message_thread_id: 8, text: 'two', from: { id: 5 }, chat: { id: -99, type: 'supergroup' } } },
-    { update_id: 3, callback_query: { id: 'press', data: 'yes', from: { id: 5 }, message: { message_id: 13, message_thread_id: 7, chat: { id: -99, type: 'supergroup' } } } },
+    { update_id: 1, message: { message_id: 11, message_thread_id: 7, text: 'one', from: { id: 5 }, chat: { id: -99, type: 'supergroup', is_forum: true } } },
+    { update_id: 2, message: { message_id: 12, message_thread_id: 8, text: 'two', from: { id: 5 }, chat: { id: -99, type: 'supergroup', is_forum: true } } },
+    { update_id: 3, callback_query: { id: 'press', data: 'yes', from: { id: 5 }, message: { message_id: 13, message_thread_id: 7, chat: { id: -99, type: 'supergroup', is_forum: true } } } },
   ];
   const fetch = async (url, init) => {
     const method = String(url).split('/').at(-1);
@@ -85,7 +85,7 @@ test('files sent inside a forum topic are stored with cleaned address in the fol
     const message = adapter.inbound({
       message_id: 1,
       message_thread_id: 45,
-      chat: { id: -1001234567890, type: 'supergroup' },
+      chat: { id: -1001234567890, type: 'supergroup', is_forum: true },
       from: { id: 7 },
       document: { file_id: 'd', file_name: 'report.pdf', mime_type: 'application/pdf', file_size: 3 }
     });

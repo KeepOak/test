@@ -167,6 +167,17 @@ export function shrinkToolResults(messages: Message[], keepRecent: number): numb
   return shrunk;
 }
 
+/**
+ * chat-speed: the tool results of turns before the last `keepTurns` of the person's messages, shrunk the same way. A
+ * chat app's "Hi" was carrying 42,000 characters of old tool results (about 10,000 of its 16,800 tokens) on the
+ * owner's computer. What was said stays; a result the model needs again, it asks for again.
+ */
+export function shrinkEarlierTurns(messages: Message[], keepTurns: number): number {
+  const asked = messages.flatMap((message, at) => (message.role === "user" ? [at] : []));
+  const from = asked.length >= keepTurns ? asked[asked.length - keepTurns]! : 0;
+  return from > 0 ? shrinkToolResults(messages, messages.length - from) : 0;
+}
+
 export const ReliabilityOptionsSchema = z.object({
   /** Abort a model call that stays silent this long (5 s to 10 min). */
   modelStallMs: z.number().int().min(5000).max(600000).default(60000),
