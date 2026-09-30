@@ -1,5 +1,5 @@
  ♣ Branch Agent · Inbox › Needs you                     ● Offline demonstration
-  1  2 Inbox 2  3  4  5  6                                 Ctrl+K Find anything
+  1  2 Inbox 2  3  4  5  6  7                              Ctrl+K Find anything
 
   INBOX
   Everything a Trunk is waiting on you for, what finished, and a record of

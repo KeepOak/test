@@ -127,6 +127,8 @@ export function offLimitsToShortLivedKeys(method: string | undefined, path: stri
     return "A short-lived key cannot read an update's problem or make its file. Do that in the app window.";
   if (path === "/api/updates/data-copies")
     return "A short-lived key cannot see or put back the copies of the data folder taken before updates. Do that in the app window.";
+  // CHAT-156: who may message Branch names people; like the door above, a script's key may not even read it.
+  if (path === "/api/channels/allowlist") return "A short-lived key cannot read or change who may message Branch. Do that in the app window.";
   if (method === "GET") return ownerOnlyRead(path);
   // Wave mac3 (commands, integration review): when Branch checks with you, which model every new
   // conversation starts with (and the model services behind it), and which commands are offered

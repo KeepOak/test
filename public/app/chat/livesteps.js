@@ -5,7 +5,9 @@
    Every line carries the emoji the engine chose for its kind of step and opens on a tap to what it was given and what
    came back (scrubbed by the engine). Updates are drawn at most once a frame and only into this block, never the whole
    window; the newest lines show, with "Show all" for the rest. When the task ends the block goes and the reply's folded
-   steps line (chat/furniture.js) takes its place. */
+   steps line (chat/furniture.js) takes its place.
+   RES-703: a pane beside the conversation (chat/panes.js) follows its own task the same way, through a follower of its
+   own (liveFollower): its block has its own id and its own scroll box. The conversation's follower is the first one. */
 
 import { $, esc } from "../core/dom.js";
 import { streamOnce } from "../core/api.js";
@@ -14,26 +16,53 @@ import { t, language, formatNumber } from "../../i18n.js";
 import { liveHead } from "../places/inboxwork.js"; // long-work: time so far and Pause
 
 const SHOWN = 8;
-const L = { runId: null, snap: null, ctl: null, reconnecting: false, open: new Set(), all: false, frame: 0, onAsk: () => {}, onGone: () => {}, onShow: () => {} };
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
 const waitingAsk = (snap) => (snap?.steps ?? []).some((s) => s.kind === "ask" && s.state === "waiting");
+const FOLLOWERS = new Map(); // block id → its follower, for "Show all"
+/* Lines opened by the person, by step id, across every follower (a step id belongs to one task). */
+const OPENED = new Set();
+
+/**
+ * A follower of one task's live steps at a time, drawn into the block with id `block` inside the scroll box `scroll`
+ * (a selector). onAsk runs when a question starts waiting, onGone when the task's steps can no longer be read, onShow
+ * when the first steps have no block to go in yet.
+ */
+export function liveFollower({ block, scroll, onAsk = () => {}, onGone = () => {}, onShow = onGone }) {
+  const L = { runId: null, snap: null, ctl: null, reconnecting: false, all: false, frame: 0, block, scroll, onAsk, onGone, onShow };
+  FOLLOWERS.set(block, L);
+  const me = {
+    follow(runId) {
+      if (!runId || L.runId === runId) return;
+      me.stop();
+      L.runId = runId;
+      L.ctl = new AbortController();
+      follow(L, runId, L.ctl.signal);
+    },
+    stop() {
+      L.ctl?.abort();
+      if (L.frame) cancelAnimationFrame(L.frame);
+      Object.assign(L, { runId: null, snap: null, ctl: null, reconnecting: false, all: false, frame: 0 });
+    },
+    shown: () => shownOf(L),
+    block: () => `<div class="steps live-steps" id="${esc(L.block)}" aria-live="polite">${lines(L)}</div>`,
+    runId: () => L.runId,
+    set(hooks) { Object.assign(L, hooks); },
+    forget() { me.stop(); FOLLOWERS.delete(L.block); },
+  };
+  return me;
+}
+const MAIN = liveFollower({ block: "live-steps", scroll: "#scroll" });
 
 /* Follows one task's live steps until it ends (the engine closes a stream after a while; the next one carries on). */
-export function followLive(runId) {
-  if (!runId || L.runId === runId) return;
-  stopLive();
-  L.runId = runId;
-  L.ctl = new AbortController();
-  follow(runId, L.ctl.signal);
-}
-async function follow(runId, signal) {
+export const followLive = (runId) => MAIN.follow(runId);
+async function follow(L, runId, signal) {
   let wait = 300;
   while (!signal.aborted && L.runId === runId) {
     let ended = false;
     try {
       await streamOnce(`runs/${encodeURIComponent(runId)}/live`, (kind, data) => {
         if (signal.aborted || L.runId !== runId) return;
-        if (kind === "steps") take(data);
+        if (kind === "steps") take(L, data);
         else if (kind === "end") ended = data?.reason === "profile" ? "moved" : true;
       }, signal);
       wait = 300;
@@ -42,58 +71,58 @@ async function follow(runId, signal) {
       // Refused for good (not this person's task, not theirs to read): nothing more to follow, and the last list goes
       // with it, so no step is left spinning. Anything else (locked for now, the engine restarting, the network): try
       // again, a little later.
-      if ([400, 401, 403, 404].includes(error.status)) { gone(runId); return; }
+      if ([400, 401, 403, 404].includes(error.status)) { gone(L, runId); return; }
       wait = Math.min(wait * 2, 5000);
     }
     if (signal.aborted || L.runId !== runId) return;
-    if (ended === "moved") gone(runId); // the window moved to somebody else: nothing of this task stays drawn
-    if (ended) { reconnecting(runId, false); return; }
-    reconnecting(runId, true);
+    if (ended === "moved") gone(L, runId); // the window moved to somebody else: nothing of this task stays drawn
+    if (ended) { reconnecting(L, runId, false); return; }
+    reconnecting(L, runId, true);
     await pause(wait);
   }
 }
 /* Connection state describes the updates only; the last snapshot stays available while the stream retries. */
-function reconnecting(runId, value) {
+function reconnecting(L, runId, value) {
   if (L.runId !== runId || L.reconnecting === value) return;
   L.reconnecting = value;
-  if (!L.frame) L.frame = requestAnimationFrame(draw);
+  if (!L.frame) L.frame = requestAnimationFrame(() => draw(L));
 }
-function gone(runId) {
+/* Before the first step, the thinking line or dots show unless task updates need to reconnect. */
+const shownOf = (L) => L.reconnecting || Boolean(L.snap?.steps?.length);
+function gone(L, runId) {
   if (L.runId !== runId) return;
   L.reconnecting = false;
   L.snap = null;
   L.onGone();
 }
-function take(snap) {
+function take(L, snap) {
   if (snap?.runId !== L.runId) return;
   const asked = waitingAsk(snap) && !waitingAsk(L.snap);
   L.snap = snap;
   L.reconnecting = false;
   if (asked) L.onAsk();
-  if (!L.frame) L.frame = requestAnimationFrame(draw);
+  if (!L.frame) L.frame = requestAnimationFrame(() => draw(L));
 }
 /* Only this block is drawn again; a reader at the bottom stays at the bottom. */
-function draw() {
+function draw(L) {
   L.frame = 0;
-  const block = document.getElementById("live-steps");
-  // The first steps have no block to go in yet: the reply area is drawn again with it, rather than waiting for
-  // something else to redraw the chat (on a slow machine nothing may, and the steps never showed).
-  if (!block) { if (liveShown()) L.onShow(); return; }
-  if (!liveShown()) { L.onGone(); return; }
-  const box = $("#scroll");
+  const block = document.getElementById(L.block);
+  // The first steps have no block to go in yet: the view is drawn again with it, rather than waiting for something
+  // else to redraw (on a slow machine nothing may, and the steps never showed).
+  if (!block) { if (shownOf(L)) L.onShow(); return; }
+  if (!shownOf(L)) { L.onGone(); return; }
+  const box = block.closest(L.scroll) ?? $(L.scroll);
   const atEnd = box && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-  block.innerHTML = lines();
+  block.innerHTML = lines(L);
   if (atEnd) box.scrollTop = box.scrollHeight;
 }
 export function stopLive() {
-  L.ctl?.abort();
-  if (L.frame) cancelAnimationFrame(L.frame);
-  Object.assign(L, { runId: null, snap: null, ctl: null, reconnecting: false, all: false, frame: 0 });
-  L.open.clear();
+  MAIN.stop();
+  OPENED.clear();
 }
-/* Before the first step, show the thinking line or dots unless task updates need to reconnect. */
-export const liveShown = () => L.reconnecting || Boolean(L.snap?.steps?.length);
-export const liveBlock = () => `<div class="steps live-steps" id="live-steps" aria-live="polite">${lines()}</div>`;
+/* Whether there is anything to show yet (until the first step, the reply area keeps its thinking line or dots). */
+export const liveShown = () => MAIN.shown();
+export const liveBlock = () => MAIN.block();
 
 /* The engine's words for a line in the language chosen: a line that comes with its words' key (src/live-steps.ts
    `Said`) is said from the locale files, a number `count` picking the plural form and a length of time said with the
@@ -139,14 +168,14 @@ function line(s) {
   const times = s.times > 1 ? ` <span class="ls-times">(×${formatNumber(s.times)})</span>` : "";
   const head = `<span class="ls-t">${esc(said(s.say?.label, s.label))}${times}</span>${came}${until}${end}`;
   const more = [s.kind === "think" && s.label.length > 140 ? `<p>${esc(s.label)}</p>` : "", s.input ? `<pre>${esc(s.input)}</pre>` : "", s.output ? `<pre>${esc(s.output)}</pre>` : ""].join("");
-  const body = more ? `<details data-ls="${esc(s.id)}"${L.open.has(s.id) ? " open" : ""}><summary>${head}</summary>${more}</details>` : `<div class="ls-row">${head}</div>`;
+  const body = more ? `<details data-ls="${esc(s.id)}"${OPENED.has(s.id) ? " open" : ""}><summary>${head}</summary>${more}</details>` : `<div class="ls-row">${head}</div>`;
   return `<li class="ls-${esc(s.state)} ls-${esc(s.kind)}${s.depth ? " ls-in" : ""}"><span class="ls-ic" aria-hidden="true">${esc(s.icon)}</span>${body}</li>`;
 }
-function lines() {
+function lines(L) {
   const steps = foldSteps(L.snap?.steps ?? []);
   const cut = !L.all && steps.length > SHOWN;
   const shown = cut ? steps.slice(-SHOWN) : steps;
-  const all = cut ? `<button type="button" class="btn ghost sm ls-all" data-act="live-all">${esc(t("window.chat.live.show-all", { count: L.snap.total ?? steps.length }))}</button>` : "";
+  const all = cut ? `<button type="button" class="btn ghost sm ls-all" data-act="live-all" data-v="${esc(L.block)}">${esc(t("window.chat.live.show-all", { count: L.snap.total ?? steps.length }))}</button>` : "";
   const running = L.snap?.status === "running" ? liveHead(L.snap.runId, L.snap.startedAt) : "";
   const connection = L.reconnecting ? `<p class="ls-time" role="status">${esc(t("window.chat.live.reconnecting-updates"))}</p>` : "";
   return `${connection}${running}${all}<ol>${shown.map(line).join("")}</ol>`;
@@ -154,14 +183,12 @@ function lines() {
 
 /* The chat hands in what to do when a question appears (read the waiting questions, so its card shows). */
 export function initLive({ onAsk, onGone, onShow }) {
-  L.onAsk = onAsk;
-  L.onGone = onGone;
-  L.onShow = onShow ?? onGone;
-  on("live-all", () => { L.all = true; draw(); });
+  MAIN.set({ onAsk, onGone, onShow: onShow ?? onGone });
+  on("live-all", (el) => { const L = FOLLOWERS.get(el.dataset.v || "live-steps"); if (L) { L.all = true; draw(L); } });
   // A line opened stays open while the list is drawn again (toggle does not bubble, so it is heard on the way down).
   document.addEventListener("toggle", (event) => {
     const id = event.target?.dataset?.ls;
     if (!id) return;
-    if (event.target.open) L.open.add(id); else L.open.delete(id);
+    if (event.target.open) OPENED.add(id); else OPENED.delete(id);
   }, true);
 }
