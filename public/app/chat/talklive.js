@@ -200,8 +200,8 @@ let shortcutTaking = false, shortcutState = null;
 async function takeShortcut() {
   if (!E.loaded || shortcutTaking || !window.branchDesktop?.takeTalkShortcut) return;
   shortcutTaking = true;
-  const profiles = E.profiles, state = E.state, sessionId = hooks.state().sessionId;
-  const freshPress = () => profiles === E.profiles && state === E.state && sessionId === hooks.state().sessionId &&
+  const person = E.profiles?.active?.id ?? E.profiles?.owner?.id ?? null, sessionId = hooks.state().sessionId;
+  const freshPress = () => person === (E.profiles?.active?.id ?? E.profiles?.owner?.id ?? null) && sessionId === hooks.state().sessionId &&
     E.profiles?.isOwner === true && !E.state?.lock?.locked && !document.querySelector(".locked, .locked-b17, .dlg");
   try {
     const wanted = await window.branchDesktop.takeTalkShortcut();
