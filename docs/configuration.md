@@ -9931,7 +9931,10 @@ rules every round). The registry asks them after every call (`src/registry.ts`).
 Formatters are programs you already have (`formatters`, at most 16): give each one's full address,
 its endings and its arguments (`{file}` is the file). After tidying, Branch waits up to `waitMs`
 (1.5 seconds by default, at most 10) for the language server's error report. A copy per helper
-(`perHelper`, off by default) gives every helper a task starts its own worktree too. Branch never installs one, refuses one that sits inside the
+(`perHelper`, on by default) gives every helper a task starts its own worktree in a Git project, removed when the
+helper finishes with nothing in it. Forking a conversation into its own copy (`forks`) is off by default, because each
+fork keeps a whole copy on disk. The worktrees switch starts at when needed; a saved off choice or `perHelper: false`
+keeps helpers in the shared folder. Branch never installs one, refuses one that sits inside the
 workspace (a task could rewrite it), starts it with an argument array and the clean environment
 (`src/child-env.ts`), and never on one of Branch's own files (`src/never-break/protected.ts`). A
 formatter reads the project's own settings (a `.prettierrc` can load plugins from the project), so it
