@@ -6,7 +6,7 @@
    while the tab is hidden. */
 
 import { $, esc, applyCss, onRender, render } from "../core/dom.js";
-import { E, S } from "../core/state.js";
+import { E, S, activeId, ownerHere } from "../core/state.js";
 import { D, followDelight } from "./scene.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -17,6 +17,7 @@ import { lookFollowed } from "./language.js";
 import { say } from "../core/words.js";
 import { conversationState, sendingPrompt } from "../chat/chat.js";
 import { roomView } from "../chat/rooms.js";
+import { popupsOn } from "../flows/guides.js";
 
 const TIERS = ["Bronze", "Silver", "Gold", "Diamond", "Godly", "SSS+"];
 const COLOUR = { Bronze: "#A86A3D", Silver: "#8C959E", Gold: "#C9982E", Diamond: "#4F8FB8", Godly: "#8A5AA8", "SSS+": "#C2412D" };
@@ -73,9 +74,21 @@ function replying() {
 /* One at a time, the highest tier first; the rest wait for the next look. */
 let later = null, ticker = null;
 const wanted = () => !!D.settings?.achievements?.on && !D.settings.achievements.quiet;
+const mayChange = () => S.signedIn && ownerHere() && !app()?.classList.contains("locked-b17");
+const context = () => JSON.stringify([activeId(), S.signedIn, S.view, S.chat, S.setPage, language()]);
+/* Match the actual tour/setup/lock layers (notify.js), and ordinary dialogs too. A returned snapshot never consumes
+   an achievement while these layers, a hidden tab, a reply, or an owner/settings change prevent its display. */
+const blocked = () => !E.loaded || !mayChange() || !wanted() || !popupsOn() || S.ob || document.hidden
+  || !!document.querySelector(".tour-layer, .ob9, .first, .lockscreen, .scrim, [aria-modal='true']") || replying();
+const fresh = (readContext) => context() === readContext && !blocked();
+function clearBlockedParty() {
+  if (!blocked()) return;
+  $(".ach-toast")?.remove();
+  $(".ach-big")?.remove();
+}
 /* The light timer runs only while achievements are on and not kept quiet. */
 function syncTicker() {
-  const want = E.loaded && wanted() && !refused;
+  const want = E.loaded && mayChange() && wanted() && popupsOn() && !refused;
   if (want && !ticker) ticker = setInterval(check, 15000);
   else if (!want && ticker) { clearInterval(ticker); ticker = null; }
   if (!want) { clearTimeout(later); later = null; }
@@ -84,24 +97,35 @@ function syncTicker() {
 async function check() {
   // Never over setup (what is earned meanwhile waits until it closes), nor while the tab is hidden: nobody would see it,
   // and the engine keeps it fresh until it is told.
-  if (!syncTicker() || busy || S.ob || document.hidden) return;
-  // Nor over a reply being written: the engine keeps it fresh, and the redraw when the reply ends looks again.
-  if (replying()) return;
+  if (!syncTicker() || busy || blocked()) return;
   const wait = 10000 - (Date.now() - last);
   if (wait > 0) { clearTimeout(later); later = setTimeout(check, wait); return; }
   last = Date.now();
   busy = true;
+  const readContext = context();
   try {
     await lookFollowed;
+    if (!fresh(readContext)) return;
     const view = await api(`delight/achievements?lang=${language()}`);
-    const next = (view.on ? view.fresh ?? [] : []).slice().sort((a, b) => TIERS.indexOf(b.tier) - TIERS.indexOf(a.tier))[0];
-    if (next) { show(next); await api("delight/told", { ids: [next.id] }); }
-  } catch (error) { refused = true; syncTicker(); toast(error.message); } finally { busy = false; }
+    if (!fresh(readContext)) return;
+    const next = (view.on && !view.quiet ? view.fresh ?? [] : []).slice().sort((a, b) => TIERS.indexOf(b.tier) - TIERS.indexOf(a.tier))[0];
+    if (next && app()?.isConnected) {
+      show(next);
+      if (fresh(readContext)) await api("delight/told", { ids: [next.id] });
+    }
+  } catch (error) { if (fresh(readContext)) { refused = true; syncTicker(); toast(error.message); } } finally { busy = false; }
 }
 
 /* quiet true stops the pop-ups (with Undo), false brings them back; the engine keeps it, so it holds after a reload. */
 async function keepQuiet(quiet) {
-  try { D.settings = (await api("delight/settings", { achievements: { quiet } })).settings; } catch (error) { toast(error.message); return; }
+  if (!mayChange()) return;
+  const readContext = context();
+  const same = () => mayChange() && context() === readContext;
+  try {
+    const changed = await api("delight/settings", { achievements: { quiet } });
+    if (!same()) return;
+    D.settings = changed.settings;
+  } catch (error) { if (same()) toast(error.message); return; }
   $(".ach-toast")?.remove();
   $(".ach-big")?.remove();
   syncTicker();
@@ -114,5 +138,8 @@ export function initCelebrate() {
   on("ach-close", () => $(".ach-big")?.remove());
   on("ach-mute", () => keepQuiet(true));
   /* After a refresh the switches are read again first, so a look never goes out on switches that were just turned off. */
-  onRender(() => { followDelight().then(check); });
+  onRender(() => { clearBlockedParty(); followDelight().then(check); });
+  const root = app();
+  if (root) new MutationObserver(clearBlockedParty).observe(root, { childList: true, attributes: true, attributeFilter: ["class"] });
+  document.addEventListener("visibilitychange", clearBlockedParty);
 }
