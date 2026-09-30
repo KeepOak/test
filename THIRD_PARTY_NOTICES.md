@@ -39,6 +39,37 @@ Branch Agent application code is MIT licensed. Distributed dependencies retain t
 
 Electron distributions additionally include LICENSE and LICENSES.chromium.html. Font notices accompany the generated files in public/fonts. Build dependencies are recorded in package-lock.json and retain notices in node_modules.
 
+## OpenClaw realtime voice adaptations
+
+`src/realtime-openai.ts` and `public/app/chat/talklive.js` adapt cancellation,
+playback truncation, the minimum played-prefix guard, and retiring output from
+`extensions/openai/realtime-voice-protocol.ts` and `realtime-voice-events.ts`
+at commit `1794d8b4ef8dde46f39a16da2bdbcf0bf2b519ef` of
+https://github.com/openclaw/openclaw. The transport and browser integration are
+modified for Branch's existing run socket and PCM playback.
+
+MIT License
+
+Copyright (c) 2026 OpenClaw Foundation
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ## @hono/node-server 2.1.1
 
 Declared license: MIT

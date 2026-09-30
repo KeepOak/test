@@ -230,8 +230,8 @@ test("the OpenAI shape: which voice, sound up, an answer back, and cutting in", 
 
   session.interrupt();
   await settle();
-  assert.equal(service.of("response.cancel").length, 1, "cutting in cancels the answer");
-  assert.equal(service.of("input_audio_buffer.clear").length, 1, "and throws away what was heard");
+  assert.equal(service.of("response.cancel").length, 0, "an answer that is already done has nothing to cancel");
+  assert.equal(service.of("input_audio_buffer.clear").length, 0, "and what the person is saying is kept");
   session.close();
 });
 
