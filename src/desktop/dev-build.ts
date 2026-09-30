@@ -154,17 +154,20 @@ export const wholeSuiteWorkflow = "checks.yml";
  * moved (one small request, unauthenticated); when it cannot answer, the last passing change found is kept. Null when
  * none is known yet, and the tip is taken as before.
  */
-export function newestGreen(fetchImpl: typeof fetch = globalThis.fetch): (repo: string, tip: string) => Promise<string | null> {
-  let lastTip: string | null = null, green: string | null = null;
+export function newestGreen(fetchImpl: typeof fetch = globalThis.fetch, now: () => number = Date.now): (repo: string, tip: string) => Promise<string | null> {
+  let lastTip: string | null = null, green: string | null = null, askedAt = 0;
   return async (repo, tip) => {
-    if (tip === lastTip && green) return green;
+    // The same tip is asked about again only while it is not the passing change itself: a tip still being checked turns
+    // green later without moving, and remembering the older answer kept the owner a change behind until the next merge.
+    // Every five minutes at most, so GitHub's unauthenticated allowance (60 an hour) is never the limit.
+    if (tip === lastTip && green && (green === tip || now() - askedAt < 5 * 60_000)) return green;
     try {
       const url = `https://api.github.com/repos/${repo}/actions/workflows/${wholeSuiteWorkflow}/runs?branch=${encodeURIComponent(betaLine)}&event=push&status=success&per_page=1`;
       const response = await fetchImpl(url, { headers: { accept: "application/vnd.github+json", "user-agent": "Branch-Agent-updater" }, signal: AbortSignal.timeout(15_000) });
       if (!response.ok) return green;
       const body = await response.json() as { workflow_runs?: { head_sha?: unknown; head_branch?: unknown }[] };
       const sha = body.workflow_runs?.[0]?.head_sha;
-      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) && body.workflow_runs?.[0]?.head_branch === betaLine) { green = sha; lastTip = tip; }
+      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) && body.workflow_runs?.[0]?.head_branch === betaLine) { green = sha; lastTip = tip; askedAt = now(); }
     } catch { /* offline or refused: the last passing change found stands */ }
     return green;
   };

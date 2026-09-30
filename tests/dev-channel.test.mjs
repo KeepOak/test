@@ -727,7 +727,15 @@ test("Beta takes the newest change whose whole suite passed, not the tip, asking
   assert.equal(await green(repo, TIP), GREEN);
   assert.ok(asked[0].endsWith(`/repos/${repo}/actions/workflows/${wholeSuiteWorkflow}/runs?branch=redesign%2Fwindow&event=push&status=success&per_page=1`), asked[0]);
   assert.equal(await green(repo, TIP), GREEN);
-  assert.equal(asked.length, 1, "the same tip is not asked about again");
+  assert.equal(asked.length, 1, "the same tip is not asked about again soon");
+  // The tip itself passes later without moving: it is asked about again after five minutes and taken.
+  let clock = 0; const later = newestGreen(async () => Response.json(answer), () => clock);
+  assert.equal(await later(repo, TIP), GREEN);
+  answer = { workflow_runs: [{ head_sha: TIP, head_branch: betaLine }] };
+  clock = 60_000; assert.equal(await later(repo, TIP), GREEN, "a minute later: not asked again yet");
+  clock = 5 * 60_000 + 1; assert.equal(await later(repo, TIP), TIP, "five minutes later: the tip that has since passed is taken");
+  answer = { workflow_runs: [{ head_sha: GREEN, head_branch: betaLine }] };
+  clock = 60 * 60_000; assert.equal(await later(repo, TIP), TIP, "once the tip itself passed, it is kept without asking");
   ok = false;
   assert.equal(await green(repo, "e".repeat(40)), GREEN, "GitHub not answering keeps the last passing change");
   ok = true; answer = { workflow_runs: [{ head_sha: "f".repeat(40), head_branch: "another-line" }] };
