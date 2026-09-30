@@ -20,11 +20,11 @@ export async function sourceCiApi(app: CiApp, method: string, remote: boolean, b
   };
   authorize();
   if (method !== "POST") throw new HttpError(405, "Choose Refresh CI in the app to read GitHub.");
-  const input = z.object({ repo: repositoryPath }).strict().parse(await body());
+  const input = z.object({ repo: repositoryPath, selected: z.array(z.number().int().positive()).max(20).default([]) }).strict().parse(await body());
   authorize();
   if (Date.now() - (refreshes.get(app.registry) ?? 0) < 60_000) throw new HttpError(429, "Wait a minute before refreshing CI again.");
   refreshes.set(app.registry, Date.now());
-  const result = await ownerGitHubConnection(app.registry).ciQueue(input.repo);
+  const result = await ownerGitHubConnection(app.registry).ciQueue(input.repo, input.selected);
   authorize();
   return result;
 }

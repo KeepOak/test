@@ -7,27 +7,45 @@ const shaPattern = /^[a-f0-9]{40}$/;
 /** Observed CI only. Does not verify required branch rules or authorize any mutation.
  * Contracts: docs.github.com/en/rest/checks/runs and /en/rest/actions/workflow-runs.
  */
-export async function readCiQueue(request: Request, repo: string) {
-  const pulls = await request("GET", `repos/${repo}/pulls?state=open&per_page=100`) as Row[];
-  if (!Array.isArray(pulls) || pulls.length >= 100) throw new Error("The open pull-request list is incomplete. Narrow the repository on GitHub.");
+export async function readCiQueue(request: Request, repo: string, selected: number[] = []) {
+  const listing = await openPulls(request, repo);
   const rows = [];
-  for (const pull of pulls) {
+  for (const pull of listing.pulls) {
     const head = pull.head as Row | undefined;
     if (!Number.isSafeInteger(pull.number) || !shaPattern.test(String(head?.sha ?? ""))) throw new Error("GitHub did not identify the pull-request head.");
     const number = pull.number as number, headSha = head!.sha as string;
+    const summary = { number, title: String(pull.title ?? "").slice(0, 200), headSha,
+      draft: pull.draft === true, labels: Array.isArray(pull.labels) ? pull.labels.map((label) => String((label as Row).name ?? "")) : [] };
+    if (!selected.slice(0, 20).includes(number)) {
+      rows.push({ ...summary, exactHead: null, complete: false, state: "unread", checks: [], workflows: [] });
+      continue;
+    }
     const checks = await readGitHubChecks(request, { repo, ref: headSha });
     const workflows = await readWorkflows(request, repo, headSha);
     const current = await request("GET", `repos/${repo}/pulls/${number}`) as Row;
-    const exactHead = (current.head as Row | undefined)?.sha === headSha && checks.sha === headSha;
+    const exactHead = current.number === number && current.state === "open" && (current.head as Row | undefined)?.sha === headSha && checks.sha === headSha;
     const complete = exactHead && checks.complete && workflows.complete;
     const latest = workflows.rows;
     const state = !complete ? "unknown" : latest.some((run) => run.status !== "completed") || checks.checks.some((run) => run.status !== "completed") ? "pending"
       : checks.allPassed && latest.every((run) => run.conclusion === "success") ? "observed-passed" : "not-passed";
-    rows.push({ number, title: String(pull.title ?? "").slice(0, 200), headSha, exactHead, complete, state,
-      draft: pull.draft === true, labels: Array.isArray(pull.labels) ? pull.labels.map((label) => String((label as Row).name ?? "")) : [],
-      checks: checks.checks, workflows: latest });
+    rows.push({ ...summary, exactHead, complete, state, checks: checks.checks, workflows: latest });
   }
-  return { repository: repo, observedAt: new Date().toISOString(), requiredChecksVerified: false as const, rows };
+  return { repository: repo, observedAt: new Date().toISOString(), listComplete: listing.complete,
+    remaining: listing.complete ? 0 : null, detailLimit: 20, requiredChecksVerified: false as const, rows };
+}
+
+async function openPulls(request: Request, repo: string) {
+  const pulls: Row[] = [], ids = new Set<number>();
+  for (let page = 1; page <= 10; page++) {
+    const batch = await request("GET", `repos/${repo}/pulls?state=open&sort=created&direction=asc&per_page=100&page=${page}`);
+    if (!Array.isArray(batch) || batch.length > 100) return { pulls, complete: false };
+    for (const pull of batch as Row[]) {
+      if (!pull || !Number.isSafeInteger(pull.number) || ids.has(pull.number as number)) return { pulls, complete: false };
+      ids.add(pull.number as number); pulls.push(pull);
+    }
+    if (batch.length < 100) return { pulls, complete: true };
+  }
+  return { pulls, complete: false };
 }
 
 async function readWorkflows(request: Request, repo: string, head: string) {

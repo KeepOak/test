@@ -46,8 +46,8 @@ export class GitHubAccess {
   get tokenSecret(): string { return this.config.tokenSecret; }
 
   /** Owner-triggered read, through the existing authenticated network policy. */
-  async ciQueue(repo: string): Promise<Awaited<ReturnType<typeof readCiQueue>>> {
-    return readCiQueue((method, path) => this.request(method, path), repositoryPath.parse(repo));
+  async ciQueue(repo: string, selected: number[] = []): Promise<Awaited<ReturnType<typeof readCiQueue>>> {
+    return readCiQueue((method, path) => this.request(method, path), repositoryPath.parse(repo), selected);
   }
 
   /** One REST call: the network policy decides whether the address may be reached at all. */
