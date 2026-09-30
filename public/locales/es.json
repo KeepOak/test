@@ -10597,5 +10597,11 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta"
+  "wsedit.up": "Subir una carpeta",
+  "updateFailureDownload.title": "Informe del problema de actualizaci\u00f3n",
+  "updateFailureDownload.failed": "La actualizaci\u00f3n de {from} a {to} no termin\u00f3.",
+  "updateFailureDownload.why": "Descarga el informe existente con los pasos de actualizaci\u00f3n y registros de diagn\u00f3stico. No se env\u00eda nada autom\u00e1ticamente.",
+  "updateFailureDownload.download": "Descargar informe",
+  "updateFailureDownload.preparing": "Preparando informe\u2026",
+  "updateFailureDownload.unavailable": "El informe de actualizaci\u00f3n no est\u00e1 disponible."
 }

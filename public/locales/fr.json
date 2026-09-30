@@ -10597,5 +10597,11 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "updateFailureDownload.title": "Rapport du probl\u00e8me de mise \u00e0 jour",
+  "updateFailureDownload.failed": "La mise \u00e0 jour de {from} vers {to} ne s\u2019est pas termin\u00e9e.",
+  "updateFailureDownload.why": "T\u00e9l\u00e9chargez le rapport existant avec les \u00e9tapes de mise \u00e0 jour et les journaux de diagnostic. Rien n\u2019est envoy\u00e9 automatiquement.",
+  "updateFailureDownload.download": "T\u00e9l\u00e9charger le rapport",
+  "updateFailureDownload.preparing": "Pr\u00e9paration du rapport\u2026",
+  "updateFailureDownload.unavailable": "Le rapport de mise \u00e0 jour est indisponible."
 }

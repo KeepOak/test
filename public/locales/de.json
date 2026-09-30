@@ -10597,5 +10597,11 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "updateFailureDownload.title": "Bericht zum Updateproblem",
+  "updateFailureDownload.failed": "Das Update von {from} auf {to} wurde nicht abgeschlossen.",
+  "updateFailureDownload.why": "Lade den vorhandenen Bericht mit Updateschritten und Diagnoseprotokollen herunter. Nichts wird automatisch gesendet.",
+  "updateFailureDownload.download": "Bericht herunterladen",
+  "updateFailureDownload.preparing": "Bericht wird erstellt\u2026",
+  "updateFailureDownload.unavailable": "Der Updatebericht ist nicht verf\u00fcgbar."
 }
