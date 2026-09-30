@@ -3564,6 +3564,10 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 
+### LibreChat, MIT: one renewal per sign-in at a time
+
+`OAuthConnections.accessToken` in `src/oauth.ts` lets calls that find a sign-in expired at the same moment share one renewal, following LibreChat's in-flight refresh map (https://github.com/LibreChat-AI/LibreChat/blob/4d33d8c2c71ad497fdfaa2c4334b0a2293bcbd67/packages/api/src/mcp/oauth/tokens.ts#L1021-L1025, Copyright (c) 2026 LibreChat). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
 The window shows each service's own mark only to say which service a person connects, never to suggest that its maker
