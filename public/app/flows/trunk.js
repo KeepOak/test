@@ -85,19 +85,26 @@ function voicePicker() {
   return `<div class="field"><label for="st-voice">${t("field.voice")}</label>${gsel({ id: "st-voice", label: t("field.voice"), options, value: ed.d.voice })}<small class="hint">${esc(hint)}</small></div>`;
 }
 
-async function loadTrunkVoices(id) {
+async function loadTrunkVoices() {
+  const editor = ed; // this editor only: one closed and opened again (even for the same Trunk) never takes this answer
   try {
     const voices = await api("voice/voices");
-    if (ed?.id !== id) return;
+    if (ed !== editor) return;
     ed.voices = [...(voices.system ?? []), ...(voices.windows ?? [])].filter((name) => typeof name === "string" && name.length <= 80);
   } catch (error) {
-    if (ed?.id !== id) return;
+    if (ed !== editor) return;
     ed.voiceError = error.message;
   }
-  // Only the voice field is drawn again, and only where it is shown (the Look tab): redrawing the whole editor would
-  // replace its pebble preview mid-motion and close a list the owner has open on another tab.
-  const field = dialog()?.querySelector(".editor #st-voice")?.closest(".field");
+  redrawVoice(editor);
+}
+/* Only the voice field is drawn again, and only where it is shown (the Look tab): redrawing the whole editor would
+   replace its pebble preview mid-motion and close a list open on another tab. While the voice list itself is open it
+   waits until it closes, so the list being chosen from never changes under the pointer. */
+function redrawVoice(editor) {
+  if (ed !== editor) return;
+  const picker = dialog()?.querySelector(".editor #st-voice"), field = picker?.closest(".field");
   if (!field) return;
+  if (picker.getAttribute("aria-expanded") === "true") { setTimeout(() => redrawVoice(editor), 200); return; }
   keepFields();
   field.outerHTML = voicePicker();
 }
@@ -338,7 +345,7 @@ function editTrunk(id) {
   const look = lookOf(tr);
   ed = { id, tab: "look", voices: [], d: { name: tr.name, title: tr.title ?? "", voice: tr.voice ?? "", colour: hex(tr.chosenColour), shape: look.shape, motion: look.motion, eyes: tr.eyes ?? "round" } };
   drawEditor();
-  loadTrunkVoices(id);
+  loadTrunkVoices();
 }
 
 /* The whole look, with this editor's shape and motion (and any extra change) over what is saved. */
