@@ -7957,6 +7957,7 @@
   "window.p17d.to-everyone": "To everyone there",
   "window.p17d.to-me": "To me",
   "window.p17d.trunk-sees": "What the Trunk sees",
+  "window.p17d.telegram-card-only": "This Telegram connection is managed outside the setup card, or has changed. Open its setup instead.",
   "window.p17d.turn-telegram-off": "Turn Telegram off",
   "window.p17d.unclear-note": "Written down to check again later.",
   "window.p17d.up-to": "Up to {max} at once.",
