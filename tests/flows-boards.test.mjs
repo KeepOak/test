@@ -3,7 +3,8 @@
  * and retries (R17-070), the shared board (R17-071), widgets the assistant builds (R17-072), the
  * waiting line you can change and typing while it works (R17-073), focus view (R17-074), and
  * requests for packages and tool servers answered only by the owner (R17-075). Under the owner's ship-on rule every
- * part ships "when needed" except the shared board, which stays off until its tools declare what they touch.
+ * part ships "when needed", and the shared board, now Orchard (tests/orchard.test.mjs), ships on: its tools declare what
+ * they touch.
  */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -51,18 +52,17 @@ const chatRun = (app) => {
 };
 const callAs = (app, runId, name, args) => app.registry.execute(name, args, app.runtime.context({ runId }));
 
-test("every part but the shared board ships when needed; switched off, no tools, and each refuses in one sentence", async (t) => {
+test("every part ships when needed, Orchard too; switched off, no tools, and each refuses in one sentence", async (t) => {
   const { app } = await fixture(t);
-  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), part === "kanban" ? "off" : "when-needed", part);
+  for (const part of boardParts) assert.equal(app.flowsBoards.mode(part), "when-needed", part);
   assert.ok(app.registry.names().includes("procedures.replay_checked"), "a part that ships when needed has its tools listed on a fresh install");
-  assert.ok(!app.registry.names().includes("board.cards"), "the shared board ships off");
+  assert.ok(app.registry.names().includes("orchard.cards"), "Orchard ships on, its tools listed"); 
   for (const part of boardParts) app.flowsBoards.setMode(part, { mode: "off" });
   const names = new Set(app.registry.names());
   for (const tool of Object.values(boardTools).flat()) assert.equal(names.has(tool), false, `${tool} is hidden while off`);
-  assert.throws(() => app.flowsBoards.kanban.view(), /switched off/);
   await assert.rejects(app.flowsBoards.installs.request({ kind: "package", ecosystem: "npm", name: "left-pad", why: "x" }, "assistant", "the assistant"), /switched off/);
   app.flowsBoards.setMode("kanban", { mode: "when-needed" });
-  assert.ok(app.registry.names().includes("board.cards"), "the tools come back once the part is not off");
+  assert.ok(app.registry.names().includes("orchard.cards"), "the tools come back once the part is not off");
 });
 
 /* ---------- R17-069 ---------- */
@@ -161,49 +161,7 @@ test("R17-070 the assistant's tool stays inside what its task may do, and a refu
   assert.equal(counts.tidy, 0);
 });
 
-/* ---------- R17-071 ---------- */
-
-test("R17-071 the shared board: lanes, hand-offs, what the assistant may not do, and the circuit breaker", async (t) => {
-  const { app, provider, on } = await fixture(t);
-  on("kanban");
-  app.flowsBoards.kanban.saveSettings({ stopAfter: 2 });
-  const mine = ownersRun(app);
-  const card = await callAs(app, mine, "board.card_add", { title: "Water\nthe oak", notes: "twice a week" });
-  assert.equal(card.lane, "todo");
-  assert.equal(card.title, "Water the oak", "a title is one line");
-  await assert.rejects(callAs(app, chatRun(app), "board.card_add", { title: "planted" }), /Only the owner's own work/);
-  await assert.rejects(callAs(app, mine, "board.card_move", { id: card.id, lane: "done" }), /owner's/);
-  const moved = await callAs(app, mine, "board.card_move", { id: card.id, lane: "doing" });
-  assert.equal(moved.lane, "doing");
-  const handed = await callAs(app, mine, "board.card_handoff", { id: card.id, to: "gardener", note: "you know the soil" });
-  assert.equal(handed.assignee, "gardener");
-  assert.equal(handed.lane, "todo");
-  assert.match(handed.history.at(-1).what, /you know the soil/);
-
-  app.asks.setMode("project-board", { mode: "on" });
-  const view = app.flowsBoards.kanban.view();
-  assert.ok(view.items && Array.isArray(view.items.flows), "the bucket-23 project board is laid under the lanes");
-  assert.equal(view.lanes.todo[0].id, card.id);
-
-  provider.fail = true;
-  app.flowsBoards.kanban.work(card.id);
-  assert.equal((await app.flowsBoards.kanban.settled(card.id)).lane, "todo");
-  app.flowsBoards.kanban.work(card.id);
-  const stuck = await app.flowsBoards.kanban.settled(card.id);
-  assert.equal(stuck.lane, "blocked");
-  assert.equal(stuck.stuck, true);
-  assert.throws(() => app.flowsBoards.kanban.work(card.id), /stopped after failing/);
-  await assert.rejects(callAs(app, mine, "board.card_move", { id: card.id, lane: "todo" }), /owner's/);
-  provider.fail = false;
-  app.flowsBoards.kanban.reset(card.id);
-  app.flowsBoards.kanban.work(card.id);
-  const finished = await app.flowsBoards.kanban.settled(card.id);
-  assert.equal(finished.lane, "review");
-  assert.equal(finished.failures, 0);
-  assert.ok(finished.runId, "the card knows its task");
-});
-
-/* ---------- R17-072 ---------- */
+/* ---------- R17-071: the shared board is now Orchard (tests/orchard.test.mjs) ---------- */
 
 test("R17-072 a widget is a question first, only a look-only tool, and then a sealed live page", async (t) => {
   const { app, root, on } = await fixture(t);
@@ -401,15 +359,12 @@ test("the owner's routes: switches, the board, and a short-lived key refused eve
     headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
   const overview = await (await call("/api/flows-boards")).json();
-  // The shared board ships off until its tools declare what they touch (src/flows-boards/settings.ts).
-  assert.equal(overview.modes.kanban, "off", "the board ships off");
-  assert.equal((await call("/api/flows-boards/board")).status, 409, "switched off, the board refuses");
+  assert.equal(overview.modes.kanban, "when-needed", "Orchard ships on (when needed)");
+  assert.equal((await call("/api/flows-boards/switch", { part: "kanban", mode: "off" })).status, 200);
+  assert.equal((await call("/api/orchard")).status, 409, "switched off, Orchard refuses");
   assert.equal((await call("/api/flows-boards/switch", { part: "kanban", mode: "on" })).status, 200);
-  const added = await (await call("/api/flows-boards/board/cards", { title: "Rake leaves" })).json();
-  assert.equal(added.card.lane, "todo");
-  const moved = await call(`/api/flows-boards/board/cards/${added.card.id}/move`, { lane: "done" });
-  assert.equal((await moved.json()).card.lane, "done", "the owner may finish a card");
+  assert.equal((await call("/api/flows-boards/board")).status, 404, "the shared board's routes are gone; Orchard has its own");
   const token = app.sessionTokens.create(app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
   assert.equal((await call("/api/flows-boards/switch", { part: "kanban", mode: "off" }, token)).status, 401);
-  assert.equal((await call("/api/flows-boards/board", undefined, token)).status, 200, "a key may look");
+  assert.equal((await call("/api/orchard", undefined, token)).status, 200, "a key may look");
 });

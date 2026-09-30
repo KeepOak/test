@@ -287,14 +287,15 @@ test("what spends, sends, deletes, listens, is heavy or loosens approvals is sti
     "keeping the prompt cache warm (a)": readSavings(store, owner, "keepAlive").mode,
     "the wake word (d)": wakeWordSettings(store, owner).mode,
     "a worktree for every forked conversation (e)": codingMode(store, owner, "worktrees"),
-    "the shared board, until its tools declare what they touch (f)": boardMode(store, owner, "kanban"),
   };
   for (const [name, mode] of Object.entries(kept)) assert.equal(mode, "off", `${name} stays off`);
   assert.equal(localModelsMode(store, owner) === "on", false, "no local runtime is started with Branch (e)");
   assert.equal(languageServerSettings(store, owner).keepRunning, false, "no language server is kept running between tasks (e)");
   assert.equal(debugSettings(store, owner).keepRunning, false);
-  const { hidden } = switchedToolTiers(store, owner, ["procedures.auto.list", "board.cards", "memory.outside_recall", "learn.map", "addon.draft"]);
-  assert.deepEqual(hidden.sort(), ["board.cards", "memory.outside_recall", "procedures.auto.list"], "only the tools of what stays off are hidden");
+  // Orchard (the shared board before it) ships on: its tools declare what they touch (src/orchard/tools.ts).
+  assert.equal(boardMode(store, owner, "kanban"), "when-needed", "Orchard ships on");
+  const { hidden } = switchedToolTiers(store, owner, ["procedures.auto.list", "orchard.cards", "memory.outside_recall", "learn.map", "addon.draft"]);
+  assert.deepEqual(hidden.sort(), ["memory.outside_recall", "procedures.auto.list"], "only the tools of what stays off are hidden");
 });
 
 test("the settings kit starts each flipped field where its module ships it, so a fresh install has nothing to put back", () => {

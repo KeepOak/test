@@ -1617,7 +1617,10 @@ ${result.output || "(it said nothing)"}`;
   // ── end mac7/r17-g ──
   // ── r17-h: flows and boards (src/flows-boards/). Every part ships off. ──
   const flowsBoards = new FlowsBoards({ runtime, registry, flows, knowledge, queue: runQueue, asks,
+    trunks: () => trunks.records.list().map((trunk) => ({ id: trunk.id, name: trunk.name, handle: trunk.handle })),
     fetch: () => web.policy.guard(globalThis.fetch), ...(process.env.BRANCH_OSV_ENDPOINT ? { osvEndpoint: process.env.BRANCH_OSV_ENDPOINT } : {}) });
+  // Orchard pulls what may start on the engine's own tick too, so a Trunk resumed or Lockdown ended is noticed.
+  scheduler.onTick.add(async () => flowsBoards.orchard.grow());
   // ── end r17-h ──
   // ── R17-F: learning, deeper (src/learning-more/). Every part ships off. ──
   const learningMore = new LearningMore({ store, registry, owner: runtime.owner, models: runtime.models,
@@ -2056,6 +2059,7 @@ ${result.output || "(it said nothing)"}`;
       await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
+      flowsBoards.orchard.close(); // Orchard stops following its cards' tasks
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
       await ownMcp.closeAll(); // eng-connectors: no question watcher or server of the owner's outlives the app
       await mcpConnections.closeAll();

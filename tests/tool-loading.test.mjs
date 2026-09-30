@@ -207,7 +207,7 @@ test("the tool a request names comes first, not one that mentions it in passing"
     ["run a WebAssembly add-on on some text", "wasm.run"],
     ["run one script that calls several tools", "tools.script"],
     // flows and boards
-    ["move a card from doing to to check", "board.card_move"],
+    ["post a card to the orchard board", "orchard.card_add"],
     ["each step of a flow run", "flow.steps"],
     // learning, deeper — its tools are always in the catalog; only what they do waits on a switch.
     ["a timeline of what I learned", "learning.journey"],
@@ -232,7 +232,7 @@ test("the tool a request names comes first, not one that mentions it in passing"
     assert.equal(top[0], expected, `"${query}" ranked ${JSON.stringify(top)}, wanted ${expected} first`);
   }
   // An exact name still beats everything, whatever else the words would have found.
-  assert.equal(index.search("board.cards", 3)[0].entry.name, "board.cards");
+  assert.equal(index.search("orchard.cards", 3)[0].entry.name, "orchard.cards");
   // The search is run on most rounds, so it stays cheap: well under a millisecond over the catalogue.
   const started = performance.now();
   for (let run = 0; run < 200; run++) index.search(table[run % table.length][0], 8);

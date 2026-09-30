@@ -57,6 +57,7 @@ const EMPTY18 = {
   "inbox:history": ["clock", "window.p18.empty.inbox-history", "window.p18.start-conversation", "newconv"],
   "automations:scheduled": ["clock", "window.p18.empty.auto-scheduled", "window.shell.shell.new-automation", "newmenu"],
   "automations:triggers": ["bolt", "window.p18.empty.auto-triggers", "window.shell.shell.new-automation", "newmenu"],
+  "automations:orchard": ["board15", "window.p18.empty.auto-orchard", "window.places.orchard.new-card", "orc-new"],
   "library:memory": ["bulb", "window.p18.empty.lib-memory", "window.p18.start-conversation", "newconv"],
   "library:documents": ["doc", "window.p18.empty.lib-documents", "window.p18.start-conversation", "newconv"],
   "library:made": ["spark", "window.p18.empty.lib-made", "window.p18.start-conversation", "newconv"],
