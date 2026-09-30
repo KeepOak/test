@@ -4225,6 +4225,25 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           send(response, 200, await tasteApi.handle(app.runtime.owner, request.method ?? "GET", path, input, authorizeTaste));
           return;
         }
+        if (["/api/mobile-push", "/api/mobile-push/register", "/api/mobile-push/unregister", "/api/mobile-push/revoke"].includes(path)) {
+          app.store.profiles.requireOwner("Mobile push notifications");
+          if (app.sessionLock.locked() || lockdownActive(app.store, app.runtime.owner)) throw new HttpError(423, "Unlock Branch and turn off Lockdown first.");
+          if (path === "/api/mobile-push" || path === "/api/mobile-push/revoke") {
+            if (key !== "window" || throughDoor(request)) throw new HttpError(403, "Configure mobile push in the app window on this computer.");
+            if (request.method === "GET" && path === "/api/mobile-push") { send(response, 200, app.mobilePush.view()); return; }
+            if (request.method !== "POST") throw new HttpError(405, "Use GET or POST.");
+            const body = await readBody(request, 4096);
+            const answer = path.endsWith("/revoke") ? app.mobilePush.unregister(z.object({ id: z.string().regex(/^[a-f0-9]{16}$/) }).strict().parse(body).id)
+              : app.mobilePush.configure(body);
+            send(response, 200, answer); return;
+          }
+          if (request.method !== "POST") throw new HttpError(405, "Use POST.");
+          const device = gateway.keyDevice(supplied);
+          if (!device || key !== "phone" || !device.keyFingerprint) throw new HttpError(403, "A paired phone's own current key is required.");
+          const answer = path.endsWith("/unregister") ? app.mobilePush.unregister(device.id)
+            : await app.mobilePush.register(device.id, device.keyFingerprint, await readBody(request, 8192));
+          send(response, 200, answer); return;
+        }
         if (handlesBrowserApiPath(path) || path === capturedApiSkillsPath) {
           const stopped = new AbortController();
           request.once("aborted", () => stopped.abort());

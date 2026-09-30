@@ -50,10 +50,10 @@ enum BranchBackground {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: content, trigger: nil))
     }
 
-    /// Push: asks iOS for a device token only while the switch is not off. The token is kept on the
-    /// phone until a push service exists to hand it to; nothing is sent anywhere yet.
+    /// Push tokens register with the paired Branch only while the phone switch permits it.
     static func updatePush() {
         if BranchSwitches.position("push") == "off" {
+            if let session = BranchKeychain.load() { unregisterPush(session) }
             UIApplication.shared.unregisterForRemoteNotifications()
             UserDefaults.standard.removeObject(forKey: "branch-push-token")
         } else {
@@ -63,5 +63,18 @@ enum BranchBackground {
 
     static func remember(pushToken: Data) {
         UserDefaults.standard.set(pushToken.map { String(format: "%02x", $0) }.joined(), forKey: "branch-push-token")
+        syncPush()
+    }
+
+    static func syncPush() {
+        guard let session = BranchKeychain.load() else { return }
+        if BranchSwitches.position("push") == "off" { unregisterPush(session); return }
+        guard let token = UserDefaults.standard.string(forKey: "branch-push-token") else { return }
+        Task { _ = try? await BranchClient.send(session, method: "POST", path: "/api/mobile-push/register",
+            json: ["provider": "apns", "token": token, "enabled": true]) }
+    }
+
+    static func unregisterPush(_ session: BranchSession) {
+        Task { _ = try? await BranchClient.send(session, method: "POST", path: "/api/mobile-push/unregister", json: [String: String]()) }
     }
 }

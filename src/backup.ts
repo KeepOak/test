@@ -130,6 +130,8 @@ export const signInPrefixes: readonly string[] = ["remote-agent:"];
 export const thisComputerSettings: readonly string[] = [
   // Scheduled export consent and its destination are specific to this computer; a restore cannot enable sending.
   "scheduled-github-backup", "scheduled-github-backup-status",
+  // RES-600: the phones registered for push here, tied to this computer's pairing keys.
+  "mobile-push-devices",
   "folder_trust", "folder_trust_mode", "folder-trust-real", "folder-trust-copies", "remote-agent-pairing", "remote-computers",
   "secret-commands", "keychain-entries", "reach-remote-trunks-keys",
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
