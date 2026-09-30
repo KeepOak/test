@@ -1185,6 +1185,7 @@ export class Runtime {
         status,
         // integrate/empty-completion: an operation that returns nothing still ran; `undefined` is not JSON.
         status === "completed" ? JSON.stringify(value) ?? "null" : errorText(failure),
+        "not-applicable",
       );
       if (status !== "completed") throw failure;
       if (settled.status !== "completed") throw new Error(settled.output);
@@ -1245,6 +1246,7 @@ export class Runtime {
       status,
       // mac7/empty-completion: `undefined` is not JSON, and a tool that returns nothing still ran.
       this.hideSecrets(status !== "completed" ? errorText(failure) : JSON.stringify(result) ?? "null"),
+      "not-applicable",
     );
     if (status !== "completed") throw failure;
     if (settled.status !== "completed") throw new Error(settled.output);
@@ -1843,7 +1845,7 @@ ${run.output.slice(0, 6000)}`;
     await place?.release().catch(() => undefined); // mac7/r17-d
     if (context.dryRun) this.reportDryRun(run);
     if (status === "completed" && !context.isolated && !sealed) await this.advise(run, context, output);
-    const settled = await this.settleRun(run, context, status, output);
+    const settled = await this.settleRun(run, context, status, output, placementReady ? "ready" : "failed");
     flyCoreSettled?.(settled); // mac2/fly-core (see above)
     const usage = this.store.usage(run.id);
     span.end(settled.status === "completed" ? "ok" : "error", settled.status === "completed" ? "" : settled.output, {
@@ -2124,6 +2126,7 @@ ${run.output.slice(0, 6000)}`;
     context: ToolContext,
     status: Run["status"],
     output: string,
+    placement: "ready" | "failed" | "not-applicable" = "not-applicable",
   ): Promise<Run> {
     // mac7/empty-completion: a task that claims to have finished with nothing to show for it is a
     // failure with a plain sentence, not a success. This is the only place the runtime finishes a
@@ -2179,7 +2182,7 @@ ${run.output.slice(0, 6000)}`;
       if ((context.scratchRoot ?? run.id) === run.id) this.orchestration.clearScratch(run.id);
       // A plan that was being carried out by a task that stopped early is not resumed by the next
       // message; one still waiting for the owner's yes stays, because that task stopped to ask.
-      if (status === "failed" && !placementReady && this.orchestration.plan(run.sessionId)?.approved) {
+      if (status === "failed" && placement === "failed" && this.orchestration.plan(run.sessionId)?.approved) {
         // Required placement failed before the conductor/model could run. Keep the owner's
         // approved plan and progress for reconciliation; this does not schedule a retry.
         this.orchestration.pausePlan(run.sessionId);
