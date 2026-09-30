@@ -142,8 +142,10 @@ async function chatService(t) {
   return { hook: `http://127.0.0.1:${server.address().port}/hooks/branch`, replies };
 }
 
+// The chat here is a group (a Mattermost channel), and a group's task never reads what Branch remembers
+// (src/channels/chat-permissions.ts), so its steps list the workspace's files instead of reading the checklist.
 test("a chat app's turn handed to a newer engine is answered in that chat once, by the new engine, never with a failure", { timeout: 240000 }, async (t) => {
-  const model = await scriptedModel(t, [{ tool: "checklist.read", args: {} }, { tool: "files.list", args: {}, held: true }, { text: "Answered after the update." }]);
+  const model = await scriptedModel(t, [{ tool: "files.list", args: {} }, { tool: "files.list", args: {}, held: true }, { text: "Answered after the update." }]);
   const chat = await chatService(t), secret = "hot-chat-token-0123456789";
   const config = await mkdtemp(join(tmpdir(), "branch-hot-chat-"));
   t.after(() => discardTemp(config));
@@ -177,8 +179,8 @@ test("a chat app's turn handed to a newer engine is answered in that chat once, 
 });
 
 test("a chat app's turn carried through two engine updates back to back is answered once, by the last engine", { timeout: 300000 }, async (t) => {
-  const model = await scriptedModel(t, [{ tool: "checklist.read", args: {} }, { tool: "files.list", args: {}, held: true },
-    { tool: "checklist.read", args: {}, held: true }, { text: "Answered after two updates." }]);
+  const model = await scriptedModel(t, [{ tool: "files.list", args: {} }, { tool: "files.list", args: {}, held: true },
+    { tool: "files.list", args: {}, held: true }, { text: "Answered after two updates." }]);
   const chat = await chatService(t), secret = "hot-chat-token-0123456789";
   const config = await mkdtemp(join(tmpdir(), "branch-hot-chat-"));
   t.after(() => discardTemp(config));
