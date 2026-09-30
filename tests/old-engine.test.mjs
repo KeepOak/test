@@ -12,7 +12,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { closeOldEngine, listenerFromNetstat, listeningInodes, moveOldEngine, startFreshEngine } from "../dist/install/old-engine.js";
 import { writeRunning } from "../dist/install/running.js";
 import { daemonCommandLine } from "../dist/install/daemon.js";
-import { hiddenRunner } from "../dist/desktop/hand-over.js";
+import { hiddenRunner } from "../dist/install/daemon.js";
 
 const KEY = "b".repeat(64);
 const PID = 424242;

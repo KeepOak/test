@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
+import { settingsWindow, openSettingsPage, setLevel, assertHeadings } from "./settings-window.mjs";
 
 /* The new window: Settings › Voice is the prototype's page: "Talking" and "Speaking back" at Regular, "Live
    conversations" from Advanced, at 1440 and 400 px, fitting the window; a choice is kept as it is pressed. */
@@ -19,15 +19,13 @@ for (const width of [1440, 400]) {
   test(`DG-186 at ${width} px the Voice page shows the prototype's headings at each level, and fits`, async (t) => {
     const { page, errors } = await settingsWindow(t, { name: "voice-dg186", width, height: 950 });
     await openSettingsPage(page, "voice");
-    const heads = () => page.locator(".set-col").locator("h1, h2, h3, h4").evaluateAll((all) =>
-      all.filter((node) => node.checkVisibility()).map((node) => node.textContent.trim()));
     await setLevel(page, "regular");
-    assert.deepEqual(await heads(), ["Voice", "Talking", "Speaking back"]);
+    await assertHeadings(page, ["Voice", "Talking", "Speaking back"], "Regular");
     await setLevel(page, "advanced");
     // The prototype's Advanced adds "Listening, more" (FINE15 voice, level 1) and then "Talking, more" (whereB17('voice', 1));
     // it has no "Live conversations" (the lead, 2026-09-26). Pass 17 part D adds "Calls and meetings" after them
     // (addSettings15('voice', 1, ...)).
-    assert.deepEqual(await heads(), ["Voice", "Talking", "Speaking back", "Listening, more", "Talking, more", "Calls and meetings"]);
+    await assertHeadings(page, ["Voice", "Talking", "Speaking back", "Listening, more", "Talking, more", "Calls and meetings"], "Advanced");
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, "the page fits the window");
     assert.deepEqual(errors, []);
   });
