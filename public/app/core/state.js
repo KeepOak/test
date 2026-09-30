@@ -64,11 +64,15 @@ export function loadSaved() {
   try {
     const saved = JSON.parse(localStorage.getItem(SAVED_KEY) || "{}");
     for (const key of SAVED) if (key in saved) S[key] = saved[key];
+    // The side panel is not a saved choice, but one Simple put out of sight comes back after a reload in Simple.
+    if (saved.simple === true && (typeof saved.simplePane === "string" || saved.simplePane === null)) panePreference = saved.simplePane;
     if (migrateSimple(saved)) save();
   } catch { /* a broken save is ignored */ }
 }
 export function save() {
-  try { localStorage.setItem(SAVED_KEY, JSON.stringify(Object.fromEntries(SAVED.map((k) => [k, S[k]])))); } catch { /* storage refused */ }
+  const kept = Object.fromEntries(SAVED.map((k) => [k, S[k]]));
+  if (S.simple === true) kept.simplePane = panePreference;
+  try { localStorage.setItem(SAVED_KEY, JSON.stringify(kept)); } catch { /* storage refused */ }
 }
 
 /* The engine's picture of things: state, the Trunks and the conversation list. */

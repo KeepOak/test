@@ -63,7 +63,10 @@ test("Simple hides the instrumentation, and Advanced puts back the level, the si
   assert.ok(await page.locator("#pane").isHidden(), "the side panel is put away");
   for (const act of ["pane", "stage", "roster10h"]) assert.equal(await page.locator(`.head [data-act="${act}"]`).first().isVisible(), false, `${act} is out of sight`);
   assert.equal(await page.locator('#statusbar [data-act="tasks10"]').isVisible(), false, "the running-tasks chip is out of sight");
-  assert.equal((await saved(page)).level, "regular", "Simple is the Regular level");
+  // UP-UI-061: Simple hides what it hides without writing over the person's own choices, so nothing needs putting back.
+  assert.equal((await saved(page)).level, "technical", "Simple leaves the saved level as it was");
+  assert.equal("simpleFrom" in (await saved(page)), false, "and keeps no snapshot to restore");
+  assert.equal(await page.evaluate(() => import("/app/core/state.js").then((m) => m.level())), 0, "while it shows the Regular level");
 
   await page.reload();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
