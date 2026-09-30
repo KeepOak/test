@@ -147,7 +147,7 @@ import {
 import type { RunToolEmbedder, ToolEmbedder } from "./tool-index.js";
 import { mcpAppIn } from "./mcp-apps.js";
 import { NoteInputSchema } from "./tool-usage.js";
-import { estimateCost, formatCost, pricingSettings } from "./pricing.js";
+import { estimateCost, formatCost, pricingSettings, tokenCountsOf } from "./pricing.js";
 // --- R17-S-B: the owner's knobs, read fresh at each marked hook (src/knobs/apply.ts) ---
 import * as knobs from "./knobs/apply.js";
 import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
@@ -1138,13 +1138,15 @@ export class Runtime {
     const context = { ...parent, signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), stop.signal]), permissions: new Set(permissions), depth: parent.depth + 1,
       ownCopy: options.ownCopy === true, delegates: options.delegates === true,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
+      connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
       context.signal.throwIfAborted();
       parent.signal.throwIfAborted(); // helper-lifecycle: a lead stopped while its helper's connection was chosen starts none
       return await this.startHelper(prompt, parent, context, instructions, connection, options, { home, release, stop });
     } catch (error) {
       release();
+      connection?.release?.(); // MODEL-050: its account lease (released once, however often it is called)
       throw error;
     }
   }
@@ -1170,7 +1172,7 @@ export class Runtime {
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
       this.store.event(parent.runId, "delegation.background_finished", { ...result });
       try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
-    }, () => undefined);
+    }, () => { connection.release?.(); }); // MODEL-050: a helper that failed before it settled gives its account back too
     let timer: ReturnType<typeof setTimeout> | undefined;
     const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(helperNotStarted)), helperStartMs); });
     try {
@@ -1436,11 +1438,14 @@ export class Runtime {
       depth: parent.depth + 1,
       ...(options.agent ? { agent: options.agent } : {}),
     };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, options);
+      connection = await this.helperConnection(parent, options);
       context.signal.throwIfAborted();
-      return await this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+      const chosen = connection;
+      return await this.track(() => this.execute({ prompt, signal: context.signal, model: chosen.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, chosen));
     } finally {
+      connection?.release?.(); // MODEL-050: the helper's account lease, also when it never started
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
@@ -1851,6 +1856,7 @@ ${run.output.slice(0, 6000)}`;
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
       // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
       // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
@@ -1858,6 +1864,7 @@ ${run.output.slice(0, 6000)}`;
       const pinned = helperRoute(this.store, run.owner, run.sessionId);
       if (pinned) {
         const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
+        pinnedHelper = connection;
         context.signal.throwIfAborted();
         keepHelperRoute(this.store, run.owner, run.sessionId, connection);
         this.helperModels.set(run.id, connection.preset);
@@ -1917,6 +1924,7 @@ ${run.output.slice(0, 6000)}`;
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
     this.helperModels.delete(run.id);
+    pinnedHelper?.release?.(); helper?.release?.(); // MODEL-050: the helper's account is free for the next one
     if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
@@ -2016,10 +2024,7 @@ ${run.output.slice(0, 6000)}`;
   private spentOnRun(runId: string, model: string): string {
     const usage = this.store.usage(runId);
     const { overrides } = pricingSettings(this.store, this.owner);
-    const estimate = estimateCost(model, {
-      input: usage.reportedInput || usage.estimatedInput || 0,
-      output: usage.reportedOutput || usage.estimatedOutput || 0,
-    }, overrides);
+    const estimate = estimateCost(model, tokenCountsOf(usage), overrides); // cache parts at their own rates
     return estimate.amount === null ? "" : ` So far this task has used about ${formatCost(estimate)}.`;
   }
   /**

@@ -3,7 +3,7 @@ import type { Message } from "../contracts.js";
 import type { ContextBudget } from "../catalog.js";
 import type { RetryPolicy } from "../provider-retry.js";
 import type { ReasoningEffort } from "../models.js";
-import { estimateCost, formatCost, pricingSettings } from "../pricing.js";
+import { addTokenCounts, estimateCost, formatCost, pricingSettings, tokenCountsOf, type TokenCounts } from "../pricing.js";
 import { askMode, saveAskMode } from "../asks/settings.js";
 import { codingModelRounds, readKnobs } from "./settings.js";
 
@@ -51,12 +51,9 @@ export function retryPolicyFor(store: Reader, owner: string, policy: RetryPolicy
 export function spendCapCheck(store: Store, owner: string, runIds: readonly string[], model: string, extraDollars = 0): { refusal: string | null; unpriced: string | null } {
   const cap = readKnobs(store, owner, "limits").spendCapDollars;
   if (cap === null) return { refusal: null, unpriced: null };
-  const used = { input: 0, output: 0 };
-  for (const runId of runIds) {
-    const usage = store.usage(runId);
-    used.input += usage.reportedInput || usage.estimatedInput || 0;
-    used.output += usage.reportedOutput || usage.estimatedOutput || 0;
-  }
+  // Cache reads and writes are priced at their own rates (src/pricing.ts tokenCountsOf).
+  let used: TokenCounts = { input: 0, output: 0 };
+  for (const runId of runIds) used = addTokenCounts(used, tokenCountsOf(store.usage(runId)));
   // mac7/reach-leftovers: what the task spent outside the model's tokens (a video, for one) counts too.
   const apart = recordedSpend(store, runIds) + extraDollars;
   const estimate = estimateCost(model, used, pricingSettings(store, owner).overrides);
