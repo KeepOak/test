@@ -1712,6 +1712,8 @@ ${run.output.slice(0, 6000)}`;
     if (paused) throw new Error(paused);
     const atOnce = trunk ? this.trunkAtOnce(trunk.trunkId) : null; // P17-D §9: never more side by side than the owner allowed
     if (atOnce) throw new Error(atOnce);
+    const overSpent = trunk ? this.trunkSpendRefusal(trunk.trunkId) : null; // models-ui: the Trunk's monthly limit
+    if (overSpent) throw new Error(overSpent);
     if (trunk) {
       instructions += trunk.instructions;
       options = { ...options, ...(trunk.keepsReach ? {} : { permissions: trunk.permissions }), // defaulttrunk: the owner's reach, untouched
@@ -1977,6 +1979,10 @@ ${run.output.slice(0, 6000)}`;
     const family = this.spendFamily(run.id);
     const check = knobs.spendCapCheck(this.store, this.owner, family, model);
     if (check.refusal) throw new BudgetError(check.refusal);
+    // models-ui: a Trunk's turn, and every helper it started, stops once the Trunk's month reaches its limit.
+    const trunkId = this.trunkRuns.get(this.spendRoot.get(run.id) ?? run.id);
+    const overSpent = trunkId ? this.trunkSpendRefusal(trunkId) : null;
+    if (overSpent) throw new BudgetError(overSpent);
     if (check.unpriced && !this.store.events(run.id).some((event) => event.kind === "limits.spend_unpriced"))
       this.store.event(run.id, "limits.spend_unpriced", { model, message: check.unpriced });
   }
@@ -2301,6 +2307,8 @@ ${run.output.slice(0, 6000)}`;
   trunkPaused: (id: string) => string | null = () => null;
   /** P17-D §9: why a Trunk may not start another task now (it runs as many as it may at once), in words, or null (set by src/trunks). */
   trunkAtOnce: (id: string) => string | null = () => null;
+  /** models-ui: why a Trunk may not go on now (its month's spending reached its limit), in words, or null (set by src/trunks). */
+  trunkSpendRefusal: (id: string) => string | null = () => null;
   /** P17-D §3: a learning task's conversation and the only tools it may use (src/workbooks.ts), or null (set by createBranch). */
   learningRules: (sessionId: string) => { tools: ReadonlySet<string> } | null = () => null;
   /** P17-D §3: the learning rules of the conversation this task (or the task at the top of its tree) belongs to. */

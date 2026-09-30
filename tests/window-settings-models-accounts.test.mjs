@@ -155,6 +155,32 @@ test("Edit Trunk › Accounts: Use my accounts too round-trips, and with it off 
   assert.deepEqual(errors, []);
 });
 
+test("Edit Trunk › Accounts: the monthly spending limit is saved, shows this month's spending, and clears", async (t) => {
+  const { page, errors, call, trunk } = await fixture(t);
+  await openAccounts(page, trunk.id);
+  const cap = page.locator(".dlg #tk-cap");
+  await cap.waitFor();
+  assert.equal(await cap.inputValue(), "", "no limit until the owner sets one");
+  assert.match(await page.locator(".dlg .tk-cap small").textContent(), /This month: about \$0\.00 at list price\./);
+  await cap.fill("0");
+  await cap.dispatchEvent("change");
+  assert.equal((await call(`/api/trunks/${trunk.id}/spend`)).monthlyUsd, null, "nothing below a cent is saved");
+
+  await cap.fill("12.5");
+  await cap.dispatchEvent("change");
+  await waitFor(async () => (await call(`/api/trunks/${trunk.id}/spend`)).monthlyUsd === 12.5);
+  await page.waitForFunction(() => /of \$12\.50/.test(document.querySelector(".dlg .tk-cap small")?.textContent ?? ""));
+
+  await reload(page);
+  await openAccounts(page, trunk.id);
+  await page.locator(".dlg #tk-cap").waitFor();
+  assert.equal(await page.locator(".dlg #tk-cap").inputValue(), "12.5", "still set after a reload");
+  await page.locator(".dlg #tk-cap").fill("");
+  await page.locator(".dlg #tk-cap").dispatchEvent("change");
+  await waitFor(async () => (await call(`/api/trunks/${trunk.id}/spend`)).monthlyUsd === null);
+  assert.deepEqual(errors, []);
+});
+
 test("Settings › Models › Second opinion is live: the switch, who checks and the ceiling are the engine's, and the rest is kept", async (t) => {
   const { app, page, errors, call } = await fixture(t);
   await call("/api/second-opinion", { advisor: false, debateExchanges: 2, debateMaxTokens: 90000 }); // fields this tab does not show

@@ -628,6 +628,21 @@ export class Store {
   sessionTasksSince(sessionId: string, since: string): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);
   }
+  /**
+   * models-ui (trunk spend cap): the tasks that were this Trunk's turns since then, with every helper they started,
+   * at most `limit`. A turn is marked by its `trunk.turn` event; a helper by the parent named on its `run.started`.
+   */
+  trunkTaskIdsSince(trunkId: string, since: string, limit: number): string[] {
+    // Two passes over the month's events, never one per task: the turns, then every helper start, joined here.
+    const family = new Set(this.db.prepare("SELECT run_id FROM events WHERE kind='trunk.turn' AND created_at >= ? AND json_extract(data,'$.trunkId')=?")
+      .all(since, trunkId).map((row) => String(row.run_id)));
+    const helpers = this.db.prepare("SELECT run_id, json_extract(data,'$.parentRunId') AS parent FROM events WHERE kind='run.started' AND created_at >= ? AND json_extract(data,'$.parentRunId') IS NOT NULL ORDER BY id")
+      .all(since).map((row) => [String(row.run_id), String(row.parent)] as const);
+    // A helper starts after its parent, so one pass in the order they started finds helpers of helpers too.
+    for (const [id, parent] of helpers) if (family.has(parent)) family.add(id);
+    return [...family].slice(0, limit);
+  }
+
   /** Every task in one of this person's conversations, id and status only, without the recent-task window's limit (DG-101). */
   sessionRuns(owner: string, sessionId: string): { id: string; status: string }[] {
     return this.db.prepare("SELECT id, status FROM tasks WHERE session_id=? AND owner=? ORDER BY created_at")

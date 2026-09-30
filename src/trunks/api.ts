@@ -29,7 +29,7 @@ const SwitchSchema = z.object({ part: TrunkPartSchema, mode: z.enum(["off", "whe
 const TextSchema = z.object({ text: z.string().trim().min(1).max(16000) }).strict();
 /** eng-trunk-controls: resume takes nothing. */
 const EmptySchema = z.object({}).strict().nullable().optional();
-const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach|pause|resume|computers|default|files|secrets))?$/;
+const trunkPath = /^\/api\/trunks\/([a-f0-9-]{36})(?:\/(remove|say|seen|retire|avatar|export|keys|routines|watch|teach|pause|resume|computers|default|files|spend|secrets))?$/;
 const roomPath = /^\/api\/trunks\/rooms\/([a-f0-9-]{36})(?:\/(remove|send|stop|answer|revoke|artifacts|typing))?$/; // phase2/rooms: revoke; chatlook: typing
 const routinePath = /^\/api\/trunks\/routines\/([a-f0-9-]{36})\/remove$/;
 /** mac7/residuals (integration): Answer / Not now on a Trunk's message that waits for the owner. */
@@ -151,6 +151,8 @@ async function trunkRoute(deps: TrunksHttpDeps, id: string, action: string | und
   if (action === "files") return post ? trunks.files.edit(id, await deps.readBody()) : trunks.files.view(id);
   // P17-D §9: the computers it may use and how many tasks at once; reading names the owner's computers, so both are the owner's.
   if (action === "computers") return post ? trunks.computerRule.set(id, await deps.readBody()) : trunks.computerRule.view(id);
+  // models-ui: the most it may spend in a month, and what it spent; what it spent is the owner's to read.
+  if (action === "spend") return post ? trunks.spendCap.set(id, await deps.readBody()) : trunks.spendCap.view(id);
   // RES-260: its own secrets, by name only; the owner's alone.
   if (action === "secrets") return post ? trunks.secrets(id).change(await deps.readBody()) : trunks.secrets(id).list();
   if (!post) return undefined;
