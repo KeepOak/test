@@ -47,7 +47,6 @@ import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
 import { expireChatThread } from "./thread-lifecycle.js";
 import { recordChatPersonality } from "./personality-settings.js";
-import { startedWithShortLivedKey } from "../key-context.js";
 import { lockedDown } from "../lockdown.js";
 import { requestInstallNow } from "../comfort/update-now.js";
 import { updateStatus, type UpdateFacts } from "../comfort/update-tool.js";
