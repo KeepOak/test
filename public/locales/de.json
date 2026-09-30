@@ -10417,5 +10417,9 @@
   "wsedit.title": "Datei bearbeiten",
   "wsedit.top": "Die oberste Ebene deines Arbeitsbereichs",
   "wsedit.unsaved": "(nicht gespeichert)",
-  "wsedit.up": "Einen Ordner nach oben"
+  "wsedit.up": "Einen Ordner nach oben",
+  "conversation.table.filter": "Zeilen filtern",
+  "conversation.table.reset": "Zurücksetzen",
+  "conversation.table.sort": "Nach {column} sortieren",
+  "conversation.table.rows": "{visible} von {total} Zeilen"
 }

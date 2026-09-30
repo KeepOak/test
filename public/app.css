@@ -4516,3 +4516,13 @@ audio.docread18m{width:100%}
 .tl-past19+#conversation{padding-top:16px}
 #conversation:has(+.tl-after19){padding-bottom:0}
 .tl-after19{padding-top:16px}
+
+/* Local reply-table controls preserve the app tokens and native keyboard focus. */
+.reply-table-wrap{max-width:100%;overflow-x:auto;margin:12px 0}
+.reply-table-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.reply-table-filter{display:flex;align-items:center;gap:8px;font-size:12px}
+.reply-table-filter .input{width:min(240px,45vw)}
+.reply-table-sort{margin-left:6px;border:0;border-radius:4px;background:transparent;color:var(--ink-2);cursor:pointer;padding:4px 6px}
+.reply-table-sort:hover{background:var(--fill)}
+.reply-table-sort:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.reply-table-wrap tr[hidden]{display:none}

@@ -10418,5 +10418,9 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "conversation.table.filter": "Filtrer les lignes",
+  "conversation.table.reset": "Réinitialiser",
+  "conversation.table.sort": "Trier par {column}",
+  "conversation.table.rows": "{visible} lignes sur {total}"
 }

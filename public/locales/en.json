@@ -10417,5 +10417,9 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "conversation.table.filter": "Filter rows",
+  "conversation.table.reset": "Reset",
+  "conversation.table.sort": "Sort by {column}",
+  "conversation.table.rows": "{visible} of {total} rows"
 }
