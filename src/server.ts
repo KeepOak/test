@@ -149,6 +149,7 @@ import { projectsApi, secretsApi } from "./owner-data-api.js";
 import { HttpError, readJsonBody as readBody } from "./server-http.js";
 import { connectorsApi } from "./connectors-api.js"; // eng-connectors
 import { handlesSourceRequestPath, sourceRequestsApi } from "./self-development-requests.js";
+import { handlesSourceDraftPath, sourceDraftApi } from "./self-development-drafts.js";
 import { handlesSourceMergePath, sourceMergeApi } from "./self-development-merge.js";
 import { sourceCiApi } from "./self-development-ci-api.js";
 import { flowsBoardsApi, FlowsBoardsHttpError, handlesFlowsBoardsPath } from "./flows-boards/api.js"; // r17-h
@@ -1071,7 +1072,12 @@ async function api(
   // A change to Branch itself asked for from a chat (src/self-development-requests.ts): reading the requests
   // and answering them is the owner's alone, in the app window. Short-lived keys and household persons are
   // refused before this (src/short-lived-keys.ts, src/household-routes.ts), and each answer checks again.
+  if (handlesSourceDraftPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
+    return sourceDraftApi(app.sourceDrafts, request.method ?? "GET", path, () => readBody(request));
+  }
   if (handlesSourceRequestPath(path)) {
+    if (throughADoor(request)) throw new HttpError(403, hereOnly);
     app.store.profiles.requireOwner("The list of requests to change Branch itself");
     return sourceRequestsApi(app.sourceRequests, request.method ?? "GET", path, () => readBody(request));
   }
