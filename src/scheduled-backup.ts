@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { ToolContext } from "./contracts.js";
 import type { ToolRegistry } from "./registry.js";
-import type { Store } from "./store.js";
+import { Store } from "./store.js";
 import type { GitHubAccess } from "./integrations/github.js";
 import { repositoryPath } from "./integrations/github.js";
 import { backupTables, parseBackupArchive, type BackupArchive } from "./backup.js";
@@ -14,6 +14,8 @@ import { lockdownActive } from "./lockdown.js";
 import { runOrigin, startedFromChat, startedWithShortLivedKey } from "./key-context.js";
 import { accessAgent } from "./trunks/memory-scope.js";
 import { underProject } from "./project-scope.js";
+import { specFor } from "./settings-kit/catalogue.js";
+import { acceptValue } from "./settings-kit/changes.js";
 
 const key = "scheduled-github-backup", statusKey = "scheduled-github-backup-status";
 const maxBytes = 128 * 1024;
@@ -39,7 +41,7 @@ function narrow(archive: BackupArchive, owner: string): BackupArchive {
 }
 
 export function scheduledBackupHold(tool: string): { reason: string; onceOnly: true } | null {
-  return ["backup.github_configure", "backup.github_restore_prepare"].includes(tool)
+  return ["backup.github_configure", "backup.github_restore_prepare", "backup.github_restore"].includes(tool)
     ? { reason: "Confirm this backup destination and schedule, or prepare this exact recovery copy", onceOnly: true } : null;
 }
 
@@ -154,6 +156,37 @@ export class ScheduledGitHubBackup {
     await writeFile(join(folder, "settings.json"), JSON.stringify(v.settings), { flag: "wx", mode: 0o600 });
     return { folder, digest: v.digest, restored: false, note: "Recovery copies prepared. Use backup.json with the existing fresh-install restore; import settings.json through settings proposal review. Your live state and workspace were not replaced." };
   }
+  /** Apply only into a newly generated, empty data folder; never accept an arbitrary destination. */
+  async restoreFresh(pin: z.infer<typeof Pin>) {
+    const v = await this.load(pin);
+    this.permitted();
+    const root = join(this.dataDir, "backup-restores"), folder = join(root, randomUUID());
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    await mkdir(folder, { mode: 0o700 }); // Fails if it exists: no old directory is reused.
+    const path = join(folder, "branch.sqlite");
+    await writeFile(path, "", { flag: "wx", mode: 0o600 });
+    const restored = new Store(path);
+    try {
+      const result = restored.restore(v.archive, { replaceExisting: false });
+      const held = Object.entries(v.settings.settings).flatMap(([id, fields]) => {
+        const spec = specFor(id);
+        if (!spec) return [];
+        const data: Record<string, unknown> = {};
+        for (const field of spec.fields) {
+          const value = acceptValue(field, fields[field.field]);
+          if (value === undefined) continue;
+          const names = field.field.split(".");
+          let node = data;
+          for (const name of names.slice(0, -1)) { node[name] ??= {}; node = node[name] as Record<string, unknown>; }
+          node[names.at(-1)!] = value;
+        }
+        return Object.keys(data).length ? [{ owner: this.owner, id, data: JSON.stringify(data) }] : [];
+      });
+      const configuration = restored.restoreHeld.merge(held);
+      return { ...result, folder, restored: true, configurationPendingReview: configuration, digest: v.digest,
+        note: "Memory and inactive skills restored into this new data folder only. Launch a separate Branch with BRANCH_DATA_DIR set to this folder, then review restored settings and skills there. The running install was not replaced." };
+    } finally { restored.close(); }
+  }
 }
 
 export function registerScheduledBackup(registry: ToolRegistry, backup: ScheduledGitHubBackup): void {
@@ -172,4 +205,8 @@ export function registerScheduledBackup(registry: ToolRegistry, backup: Schedule
     description: "After one-time confirmation, prepare a validated recovery copy of an exact GitHub backup in Branch's data folder. Never replaces live state; use existing fresh-install restore and settings review.",
     target: v => `prepare recovery files for private backup ${v.id} at ${v.commit}; no live-state replacement`,
     execute: async (v, c) => { backup.guard(c); return backup.prepare(v); } });
+  registry.register({ name: "backup.github_restore", permission: "github.manage", reach: "outbound", parameters: Pin,
+    description: "After one-time confirmation, actually restore an exact GitHub snapshot into a new empty Branch data folder. Memory restored, skills inactive, configuration held for owner review. Cannot overwrite the running install or a chosen directory.",
+    target: v => `restore private backup ${v.id} at ${v.commit} into a new empty data folder; hold configuration and skills for review`,
+    execute: async (v, c) => { backup.guard(c); return backup.restoreFresh(v); } });
 }
