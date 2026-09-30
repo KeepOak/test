@@ -248,10 +248,12 @@ async function finish() {
 
 /* Disconnects an app set up here (DELETE /api/channel-setup/<id>); what was pasted stays in the locker. */
 async function remove() {
-  const w = S.chw;
-  if (!w) return;
+  const w = S.chw, dialog = w?.dialog;
+  if (!w || !currentWizard(w, dialog)) return;
   try { await api(`channel-setup/${encodeURIComponent(w.id)}`, undefined, "DELETE"); }
-  catch (error) { toast(error.message); return; }
+  catch (error) { if (currentWizard(w, dialog)) toast(error.message); return; }
+  // The app is disconnected either way; only the wizard that asked is closed, never a newer one or one behind the lock.
+  if (!currentWizard(w, dialog)) return;
   S.chw = null;
   vals = {};
   closeDlg();
