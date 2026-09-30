@@ -85,9 +85,8 @@ function whoAnswers() {
 function save(c, w) {
   const who = whoAnswers();
   const may = [t("window.flows.chw.only-me"), t("window.flows.chw.approved"), t("window.flows.chw.workspace")].map((l, i) => `<button type="button" aria-pressed="${i === 0}" data-act="chw-may">${l}</button>`).join("");
-  /* Telegram always keeps forum topics apart (src/channels/telegram.ts topicAddress) and always passes photos and files on
-     to the task; the engine has no switch for either, so both are drawn on and greyed. */
-  const tg = c.id === "telegram" ? `<div class="tg15"><div class="ctl"><b>${t("window.flows.chw.topics")}</b><input class="sw" type="checkbox" id="tg-topics15" checked aria-label="${t("window.flows.chw.topics")}" data-sw="set"><small>${t("window.flows.chw.topics-hint")}</small></div><div class="ctl"><b>${t("window.flows.chw.media")}</b><input class="sw" type="checkbox" id="tg-media15" checked aria-label="${t("window.flows.chw.media")}" data-sw="set"><small>${t("window.flows.chw.media-hint")}</small></div></div>` : ""; // state: both are how the Telegram adapter always works
+  /* Telegram keeps topics apart. Media intake uses the owner's existing channels/intake endpoint. */
+  const tg = c.id === "telegram" ? `<div class="tg15"><div class="ctl"><b>${t("window.flows.chw.topics")}</b><input class="sw" type="checkbox" id="tg-topics15" checked aria-label="${t("window.flows.chw.topics")}" data-sw="set"><small>${t("window.flows.chw.topics-hint")}</small></div><div class="ctl"><b>${t("window.flows.chw.media")}</b><input class="sw" type="checkbox" id="tg-media15" ${w?.intake?.telegramMedia !== false ? "checked" : ""} aria-label="${t("window.flows.chw.media")}" data-sw="tg-media"><small>${t("window.flows.chw.media-hint")}</small></div></div>` : ""; // topic separation remains fixed
   return `<div class="chw-ok12">${ic("check", "s")}<span><b>${t("window.flows.chw.ready", { name: esc(c.name) })}</b><small>${t("window.flows.chw.choose")}</small></span></div>
     <div class="fld"><span>${t("window.flows.chw.who-answers", { name: esc(c.name) })}</span><span class="seg">${who}</span></div>
     <div class="ctl"><b>${t("window.flows.chw.who-may")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.chw.who-may")}">${may}</span></span><small>${t("window.flows.chw.no-answer")}</small></div>${tg}${w?.result ? liveLine(c, w.result) : ""}${w?.connected ? manage17d(c, w.health) : ""}${c.setUpHere ? `<div class="acts"><button class="btn ghost sm" type="button" data-act="chw-remove">${t("window.flows.chw.remove", { name: esc(c.name) })}</button></div>` : ""}`; // pass 17 part D §8: the app's own page
@@ -119,7 +118,7 @@ export async function openChatWizard(id, at = null) {
   const ownerNamed = live.ownerNamed !== false, pinSet = !ownerNamed && (await api("lock").catch(() => ({}))).pinSet === true;
   // pass 17 part D §8: "Paste a new token" opens a connected app at Paste, saying why.
   const step = at ? Math.max(0, stepsOf(recipe).indexOf(at)) : connected ? stepsOf(recipe).length - 1 : 0;
-  S.chw = { id, recipe, connected, health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
+  S.chw = { id, recipe, intake: live.intake ?? {}, connected, health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
   draw();
 }
 
@@ -186,9 +185,21 @@ async function remove() {
   toast(t("window.flows.chw.removed", { name: w.recipe.name }));
 }
 
+async function saveMedia(el, w) {
+  const before = w.intake?.telegramMedia !== false;
+  el.disabled = true;
+  try {
+    const saved = await api("channels/intake", { telegramMedia: el.checked });
+    w.intake = saved.intake ?? w.intake;
+  } catch (error) { el.checked = before; toast(error.message); }
+  finally { el.disabled = false; }
+  if (S.chw === w) draw();
+}
+
 function onInput(e) {
   const el = e.target, w = S.chw;
   if (!w) return;
+  if (el.dataset.sw === "tg-media") { void saveMedia(el, w); return; }
   if (el.dataset.chf) {
     vals[el.dataset.chf] = el.value;
     const btn = $('.dlg [data-act="chw-next"]');
@@ -207,7 +218,7 @@ function onInput(e) {
 }
 
 export function init() {
-  markLive(["sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
+  markLive(["sw:tg-media15", "sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
   on("ch-open", (el) => openChatWizard(el.dataset.v));
   on("revfix17d", () => openChatWizard(S.chw?.id ?? "telegram", "Paste")); // pass 17 part D §8: the app whose page this is
   on("chw-remove", () => remove());
