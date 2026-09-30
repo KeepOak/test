@@ -1194,6 +1194,10 @@ async function api(
     return { ...listenView(app.store, app.runtime.owner, listen), note: "Saved. It takes effect the next time Branch starts." };
   }
   // mac3/never-break: the gateway switch and the changes the assistant suggested for it.
+  if (path === "/api/never-break/drill") {
+    app.store.profiles.requireOwner("The isolated recovery drill");
+    if (throughDoor(request)) throw new HttpError(403, hereOnly);
+  }
   if (handlesNeverBreakPath(path))
     return neverBreakApi(dataDir, request, path, readBody, {
       snapshot: () => snapshotData({ dataDir, database: app.store.sqlite, journal: app.neverBreak.journal.database }),
