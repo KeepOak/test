@@ -1088,7 +1088,7 @@ export class BranchBrowser {
         const kept = await artifacts.write(context.runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`,
           'application/zip', bytes);
         return { ...kept, note: 'Open this in Playwright\'s trace viewer to watch what the browser did.' };
-      } finally { entry.session.options.beforeAction = undefined; }
+      } finally { if (!entry.session.isRecording()) entry.session.options.beforeAction = undefined; }
     });
     });
   }
@@ -1478,7 +1478,7 @@ export class BranchBrowser {
       entry.session.options.beforeAction = undefined;
       return await this.artifacts.write(runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`, 'application/zip', bytes);
     } catch { return null; } // a recording that could not be kept never holds up the end of a task
-    finally { entry.session.options.beforeAction = undefined; }
+    finally { if (!entry.session.isRecording()) entry.session.options.beforeAction = undefined; }
   }
   /** A run that used a saved sign-in writes what it learned back, so the person stays signed in. */
   private async keepSignIn(owner: string, entry: RunEntry): Promise<void> {
