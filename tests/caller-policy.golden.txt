@@ -101,6 +101,7 @@ owner GET /api/taste/correct | here=ok remote=403/4bac86 phone=403/4bac86 legacy
 owner POST /api/taste/correct | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/taste/forget | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/taste/forget | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/monitors/:id/prices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner GET /a2a | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /a2a | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner GET /ap/v1/agent/tasks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2363,6 +2364,7 @@ owner+lockdown GET /api/taste/correct | here=ok remote=403/4bac86 phone=403/4bac
 owner+lockdown POST /api/taste/correct | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/taste/forget | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/taste/forget | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/monitors/:id/prices | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown GET /a2a | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /a2a | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
 owner+lockdown GET /ap/v1/agent/tasks | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4625,6 +4627,7 @@ household GET /api/taste/correct | here=400/f6e21c remote=403/4bac86 read=401/86
 household POST /api/taste/correct | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/taste/forget | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household POST /api/taste/forget | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household GET /api/monitors/:id/prices | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household GET /a2a | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /a2a | here=400/f6e21c remote=400/f6e21c read=401/d45404 run=ok
 household GET /ap/v1/agent/tasks | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6887,6 +6890,7 @@ household+lockdown GET /api/taste/correct | here=400/f6e21c remote=403/4bac86 re
 household+lockdown POST /api/taste/correct | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/taste/forget | here=400/f6e21c remote=403/4bac86 read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/taste/forget | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
+household+lockdown GET /api/monitors/:id/prices | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown GET /a2a | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /a2a | here=400/f6e21c remote=400/f6e21c read=401/d45404 run=ok
 household+lockdown GET /ap/v1/agent/tasks | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9149,6 +9153,7 @@ applock GET /api/taste/correct | here=423/a8f863
 applock POST /api/taste/correct | here=423/a8f863
 applock GET /api/taste/forget | here=423/a8f863
 applock POST /api/taste/forget | here=423/a8f863
+applock GET /api/monitors/:id/prices | here=423/a8f863
 applock GET /a2a | here=423/a8f863
 applock POST /a2a | here=423/a8f863
 applock GET /ap/v1/agent/tasks | here=423/a8f863
