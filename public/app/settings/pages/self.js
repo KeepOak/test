@@ -20,11 +20,14 @@ import { seg15 } from "../rows15.js";
 import { self17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
+import { continuousQaSection, initContinuousQa, loadContinuousQa } from "../continuous-qa.js";
+import { initTestCopies, loadTestCopies, testCopySection } from "../self-development-test-copy.js";
 
 const D = { history: [], names: {}, gw: null, policy: null, comfort: null, rules: null };
 let pendingRule = null;
 
 async function loadData() {
+  await loadTestCopies();
   const [hist, kit, gw, pol, comfort, rules] = await Promise.all(["settings-kit/history", "settings-kit", "never-break", "policy", "comfort", "self-rules"]
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   D.rules = rules;
@@ -80,6 +83,8 @@ async function doctor() {
 }
 
 export function init() {
+  initContinuousQa();
+  initTestCopies();
   loadData();
   on("doctor", () => doctor());
   on("self-rollback", (el) => rollBack(el.dataset.id));
@@ -95,6 +100,7 @@ export function init() {
 }
 
 export async function load() {
+  await loadContinuousQa();
   await loadData();
 }
 
@@ -173,6 +179,7 @@ export function draw() {
   html += statusSection();
   html += policySection();
   html += neverDiesSection();
+  html += testCopySection();
   html += timelineSection();
-  return html + self17(level17());
+  return html + continuousQaSection() + self17(level17());
 }
