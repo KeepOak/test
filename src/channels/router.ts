@@ -39,6 +39,8 @@ import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
+import { recordChatPersonality } from "./personality-settings.js";
+import { startedWithShortLivedKey } from "../key-context.js";
 import { lockedDown } from "../lockdown.js";
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
@@ -1160,6 +1162,8 @@ export class ChannelRouter {
     const work = () => runChatCommand(command, {
       runtime: this.runtime, channel, chatId, turn,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
+      ownerDm: ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message),
+      personalityRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "personality", command.argument),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
       dropWaiting: () => {
         if (!turn || turn.runId) return false;
@@ -1454,6 +1458,10 @@ export class ChannelRouter {
           this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId,
             senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true,
             waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
+          if (this.store.profiles.isOwner() && !startedWithShortLivedKey()
+            && ownerDmHere(this.store, this.runtime.owner, this.adapters.get(message.channel)?.adapter.kind ?? "", message)
+            && !ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "personality", ""))
+            recordChatPersonality(this.store, this.runtime.owner, started.id, message.channel, message.chatId);
           turn.runId = started.id;
           turn.startedAt = Date.now();
           live?.thinking();
