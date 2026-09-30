@@ -833,10 +833,17 @@ function keepForLater(prompt) {
 async function followRoom(info) {
   /* Answer aloud reads each member's reply as it arrives, while the person is in the room. */
   let heard = C.sessionId === info.sessionId ? replyMark(C.messages) : null;
+  let failures = 0;
   C.sending = true;
   renderNow();
   for (let waited = 0; waited < 600; waited++) {
-    const view = await readRoom(info);
+    let view;
+    try { view = await readRoom(info, { throwOnError: true }); failures = 0; }
+    catch (error) {
+      if (++failures >= 3) { toast(error.message); break; }
+      await pause(1000);
+      continue;
+    }
     try { C.messages = (await api("sessions/" + encodeURIComponent(info.sessionId))).messages ?? C.messages; } catch { /* the next second tries again */ }
     if (heard !== null && C.sessionId === info.sessionId && replyMark(C.messages) !== heard) {
       readNewReply(heard, C.messages, (m) => replyWords(m, info));
