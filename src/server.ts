@@ -91,6 +91,7 @@ import { saveSlackAutomations } from "./channels/slack-automations.js"; // mac6/
 import { wechatXmlLimit } from "./channels/wechat-crypto.js"; // mac6/bucket-16 integration
 import type { ChannelAdapter } from "./channels/router.js";
 import { parityApi } from "./channels/parity-api.js";
+import { telegramDepth } from "./channels/telegram-depth.js";
 // Batch 20 (wave 8): the unguessable word on the end of every inbound webhook address.
 import { rotateWebhookSecret, saveWebhookAddressSettings, webhookAddress, webhookAddressVerdict,
   webhookAddressSettings, webhookSecret, wrongWebhookAddress } from "./channels/webhook-address.js";
@@ -3109,6 +3110,22 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/native-requests" || path === "/api/channels/native-requests/confirm") {
+    if (startedWithShortLivedKey() || throughDoor(request)) throw new Error("Native chat requests require the local owner window.");
+    if (path === "/api/channels/native-requests" && request.method === "GET") return { proposals: app.channels.extraOwnerCommands.list() };
+    if (!path.endsWith("/confirm") || request.method !== "POST") throw new HttpError(405, "Use GET or POST confirm.");
+    const input = z.object({ id: z.string().regex(/^[a-f0-9]{32}$/) }).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("Confirm native chat request");
+    return app.channels.extraOwnerCommands.confirm(input.id);
+  }
+  if (path === "/api/channels/owner-policy-proposals" || path === "/api/channels/owner-policy-proposals/confirm") {
+    if (startedWithShortLivedKey() || throughDoor(request)) throw new Error("Chat admission requests require the local owner window.");
+    if (path === "/api/channels/owner-policy-proposals" && request.method === "GET") return { proposals: app.channels.ownerAllowlistProposals.list() };
+    if (!path.endsWith("/confirm") || request.method !== "POST") throw new HttpError(405, "Use GET or POST confirm.");
+    const input = z.object({ id: z.string().regex(/^[a-f0-9]{32}$/) }).strict().parse(await readBody(request));
+    app.store.profiles.requireOwner("Confirm sender admission");
+    return app.channels.ownerAllowlistProposals.confirm(input.id);
+  }
   if (path === "/api/channels/formatting") {
     if (request.method === "GET") return { formats: channelFormats(app.store, owner) };
     if (request.method !== "POST") throw new HttpError(405, "Use GET or POST here.");
@@ -3125,6 +3142,10 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // Wave mac3 (channels-parity): the list of added chat services and their off / on / when-needed switches.
   if (path === "/api/channels/parity")
     return parityApi(app.store, owner, app.channels, request.method ?? "GET", request.method === "POST" ? await readBody(request) : undefined);
+  if (request.method === "GET" && path === "/api/channels/telegram-depth") {
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before reading your chat apps.");
+    return telegramDepth(app.channels);
+  }
   if (request.method === "GET" && path === "/api/channels") return { ...app.channels.summary(), outstanding: app.channels.outstanding() };
   // mac6/bucket-16: automations started by Slack's own events, and starting one that is waiting.
   if (path === "/api/channels/slack-automations") return request.method === "POST"
@@ -4300,6 +4321,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (handlesDevicesPath(path)) {
           app.store.profiles.requireOwner("Your devices");
           const answer = await devicesApi({ devices: app.devices, store: app.store, owner: app.runtime.owner, method: request.method ?? "GET",
+            chatPairing: app.channels.devicePairProposals,
             readBody: () => readBody(request, 16384), baseUrl: remote.status().url ?? url,
             trunkOf: (sessionId) => app.trunks.trunkForConversation(sessionId)?.trunkId ?? null,
             forgetGateway: (id) => void gateway.forget(id),

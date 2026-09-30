@@ -64,6 +64,7 @@ const was = (...where: Surface[]): Extra => ({ legacy: where });
  * this table added follow.
  */
 export const COMMANDS: readonly CatalogCommand[] = [
+  entry("pair", [], "<phone|computer> [device name]", "request device pairing in this computer's window; codes and approval stay there", ["chat"], "run", { ...was("chat"), whileWorking: true }),
   entry("help", ["?"], "[question]", "the commands you can use here; with a question, an answer from Branch's handbook", ALL, "look", { ...was("window", "phone", "terminal", "chat"), whileWorking: true, newAliases: added(["?"], "window", "phone", "chat"), withArgument: "run" }),
   entry("model", ["models"], "[id]", "which model answers; /model on its own lists them", ["window", "phone", "terminal", "chat"], "run", { ...was("window", "phone", "terminal"), bareLooks: true, route: { method: "POST", path: "/api/models/switch" }, newAliases: added(["models"], "window", "phone") }),
   entry("think", ["reasoning"], "<low|medium|high|default>", "how hard the model thinks in this conversation", ["window", "phone", "terminal", "chat"], "run", was("terminal")),
@@ -106,11 +107,22 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("status", [], "", "what is working right now, and with which model", ALL, "look", { ...was("chat"), whileWorking: true }),
   entry("compact", ["compress", "fold"], "", "fold the earlier part of this conversation into a summary", ["window", "phone", "terminal", "chat"], "run", { ...was("chat"), newAliases: added(["compress", "fold"], "chat") }),
   entry("usage", ["cost"], "[on|off]", "tokens and cost so far; in a chat app, on or off adds a line to each reply", ALL, "look", { ...was("chat"), newAliases: added(["cost"], "chat") }),
+  entry("footer", [], "[on|off]", "toggle this chat's tokens-and-cost footer", ["chat"], "look", was("chat")),
+  entry("allowlist", [], "[list|allow|block|remove <sender ID>]", "owner direct chat: admission for this connection; changes request local owner confirmation", ["chat"], "owner", was("chat")),
+  entry("send", [], "<on|off>", "owner direct chat: enable or hold outgoing messages for this exact chat", ["chat"], "owner", was("chat")),
+  entry("export-session", [], "", "owner direct chat: export a small current conversation as Markdown; larger exports stay in the local window", ["chat"], "owner", was("chat")),
+  entry("review", [], "[focus]", "owner direct chat: critique the latest completed answer in a bounded no-tool task", ["chat"], "owner", was("chat")),
+  entry("refine", [], "<feedback>", "owner direct chat: rewrite the latest completed answer using specific feedback, without tools", ["chat"], "owner", was("chat")),
+  entry("moa", [], "<mixture preset ID> <question>", "owner direct chat: ask an existing configured mixture; several model calls cost more", ["chat"], "owner", was("chat")),
+  entry("reload-mcp", [], "<owner-managed server ID>", "owner direct chat: request local confirmed reload of one idle enabled MCP server", ["chat"], "owner", was("chat")),
+  entry("reload-skills", [], "", "owner direct chat: refresh governed skill versions for the active chat task", ["chat"], "owner", was("chat")),
+  entry("login", [], "<chatgpt|codex|claude-code>", "owner direct chat: request native sign-in selection; codes and tokens stay local", ["chat"], "owner", was("chat")),
   entry("btw", ["side"], "<question>", "a quick question on the side; it does not join the task", ["window", "phone", "terminal", "chat"], "run", { ...was("chat"), whileWorking: true, newAliases: added(["side"], "chat") }),
   entry("tokens", ["context"], "", "what fills the next request: instructions, tools, the conversation, and what it costs", ["window", "phone", "terminal", "chat"], "look"),
   entry("goal", [], "<what should be true> [--max rounds]", "keep working until a goal is met, paused or out of rounds", [...W, "terminal"], "run", { ...was("window", "phone"), route: { method: "POST", path: "/api/goals" } }),
   entry("whoami", ["id"], "", "what you may do from here", ALL, "look"),
   entry("version", ["about"], "", "which Branch this is", ALL, "look"),
+  entry("diagnostics", ["debug"], "[about tasks log]", "save a local metadata report without provider checks or uploads", ALL, "owner", { route: { method: "POST", path: "/api/diagnostics/report" } }),
   entry("health", ["doctor"], "", "a quick check of the database, models, chat apps and schedules", [...W, "terminal", "dashboard"], "look"),
   // bucket 12: the owner's saved prompts and procedures; their own commands are laid over this table in saved.ts
   entry("prompts", ["procedures", "workflows"], "[name]", "your saved prompts and procedures; with a name, one of them in the message box", ALL, "look"),

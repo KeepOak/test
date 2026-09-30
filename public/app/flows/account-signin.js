@@ -17,11 +17,11 @@
 
 import { esc } from "../core/dom.js";
 import { ic, toast, dialog, closeDlg } from "../core/ui.js";
-import { S, refresh } from "../core/state.js";
+import { S, refresh, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { logo } from "../core/logos.js";
 import { t } from "../../i18n.js";
-import { W, draw, loadAccounts, poolById } from "./account.js";
+import { W, draw, loadAccounts, poolById, openAddAcct } from "./account.js";
 import { markLive } from "../core/features.js";
 
 export const SI = { view: null };
@@ -282,6 +282,14 @@ function pickPlan(id) {
     plan: id === "chatgpt" ? { kind: "chatgpt" } : { kind: "program", id } });
   draw();
   if (W.plan.kind === "program") void check(true);
+}
+
+/* A confirmed native owner request opens the existing flow; its codes stay in this window. */
+export async function openChatRequestedSignIn(id) {
+  if (!ownerHere() || !["chatgpt", "codex", "claude-code"].includes(id)) return;
+  await openAddAcct();
+  if (!ownerHere() || !S.addAcct) return;
+  pickPlan(id);
 }
 
 export const googleOffered = () => !!SI.view?.gemini?.signInSetUp;

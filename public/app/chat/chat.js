@@ -541,6 +541,13 @@ async function carryOut(client) {
   } else if (client.do === "send" && typeof client.text === "string") await send(client.text);
   else if (client.do === "refresh-model") { await refresh().catch((error) => toast(error.message)); renderNow(); }
   else if (client.do === "search" && typeof client.text === "string") await searchFor(client.text);
+  else if (client.do === "download" && typeof client.text === "string" && typeof client.name === "string") {
+    const name = client.name.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 160);
+    const url = URL.createObjectURL(new Blob([client.text], { type: "text/plain;charset=utf-8" }));
+    const link = document.createElement("a"); link.href = url; link.download = name || "branch-report.txt";
+    document.body.append(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
 /* /find: the sidebar's search with these words, as if typed there (loaded when first used, as the shell loads it). */
 async function searchFor(text) {

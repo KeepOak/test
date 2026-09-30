@@ -58,7 +58,8 @@ const through = (client: Client): CallThrough =>
   (tool, args, context) => client.callTool({ name: tool, arguments: args }, undefined,
     { signal: context.signal, timeout: 30000 });
 
-function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: string[]): ToolDefinition {
+export type McpCallFence = (id: string, work: () => Promise<unknown>) => Promise<unknown>;
+function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: string[], fence?: McpCallFence): ToolDefinition {
   if (JSON.stringify(redact(tool, secrets)) !== JSON.stringify(tool))
     throw new Error('MCP discovery contains a configured credential');
   // The schema checker is made on the first call, so listing a server's tools loads no part of the SDK.
@@ -72,7 +73,8 @@ function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: s
       validate ??= new (await mcpValidator())().getValidator(tool.inputSchema as JsonSchemaType);
       if (!validate(args).valid) throw new Error('MCP arguments do not match the configured tool schema');
       try {
-        const result = await call(tool.name, args as Record<string, unknown>, context) as { isError?: boolean };
+        const work = () => call(tool.name, args as Record<string, unknown>, context);
+        const result = await (fence ? fence(config.id, work) : work()) as { isError?: boolean };
         if (result.isError) throw new Error('Remote tool reported failure');
         return redact(result, secrets);
       } catch {
@@ -123,6 +125,7 @@ const cacheable = (tools: Tool[]): CachedMcpTool[] =>
 export function registerCachedMcp(
   registry: ToolRegistry, input: unknown, cached: readonly CachedMcpTool[],
   open: () => Promise<LiveMcp>,
+  fence?: McpCallFence,
 ): string[] {
   const config = McpConfigSchema.parse(input);
   const wanted = config.tools
@@ -160,7 +163,7 @@ export function registerCachedMcp(
   };
   const names: string[] = [];
   for (const tool of wanted) {
-    const made = definition(call, config, tool as unknown as Tool, []);
+    const made = definition(call, config, tool as unknown as Tool, [], fence);
     registry.register(made);
     names.push(made.name);
   }
@@ -235,12 +238,13 @@ export async function connectMcp(
   policy?: { guard(base: typeof fetch): typeof fetch }, cache?: McpToolCache, startupTimeoutMs?: number,
   /** How to open the same server again after a crash; the plain open when not given. */
   reopen?: () => Promise<Awaited<ReturnType<typeof openMcp>>>,
+  fence?: McpCallFence,
 ) {
   const first = await openMcp(input, env, policy, cache, startupTimeoutMs);
   const live = restarting(first, reopen ?? (() => openMcp(input, env, policy, cache, startupTimeoutMs)));
   const opened = { ...first, call: live.call, close: live.close };
   try {
-    const definitions = opened.found.map(tool => definition(opened.call, opened.config, tool, opened.secrets));
+    const definitions = opened.found.map(tool => definition(opened.call, opened.config, tool, opened.secrets, fence));
     const existing = new Set(registry.descriptions(new Set(registry.permissions())).map(tool => tool.name));
     if (definitions.some(tool => existing.has(tool.name))) throw new Error('MCP tool name collision');
     for (const tool of definitions) registry.register(tool);

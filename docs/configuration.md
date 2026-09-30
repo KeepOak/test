@@ -10606,3 +10606,7 @@ The Gardener extends this record with the following settings when its feature is
 | `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
+
+### Local diagnostic command
+
+The owner can type `/diagnostics` (alias `/debug`) to save a JSON metadata report in the Branch data home's `diagnostics` folder. Optional `about tasks log` selects sections. The window and paired phone also offer the same file as a download; terminal and authenticated live owner direct chats return its generated local filename. Group chats and untrusted senders cannot invoke it. Reports include process metadata, aggregate counts of up to50 retained owner tasks and up to20 in-memory log breadcrumb timestamps/levels/components. Messages, outputs, log messages/fields, settings and credentials are excluded. No health/provider probes or uploads occur. Reports are limited to one per minute per running engine; saved files stay until the owner removes them. Review a report before sharing it.
