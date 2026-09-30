@@ -83,6 +83,9 @@ test("a chat's task is told where Branch runs and which app the message came in 
   assert.equal(about.channel, "Telegram");
   assert.ok(about.cores >= 1 && about.memoryGb >= 0);
   assert.ok(!result.content.includes(homedir()), "no folder path");
+  // The system line gives only the hour, so a question about the time is offered the tool with the minute.
+  await app.runtime.run({ prompt: "What time is it?" });
+  assert.ok(requests.at(-1).tools.some((tool) => tool.name === "environment.about"), "a time question gets environment.about");
   const own = await app.runtime.run({ prompt: "hello" });
   assert.equal(own.status, "completed");
   assert.match(requests.at(-1).messages.filter((m) => m.role === "system").at(-1).content, /Branch's own window or API/);

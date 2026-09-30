@@ -171,7 +171,7 @@ import { styleShape, takeScratch, type SpecialistStyle } from "./specialist-styl
 import { Deferrals, deferredCall } from "./deferred.js";
 import { switchedToolTiers } from "./feature-switches.js";
 import { troubleshootInTask } from "./troubleshoot.js"; // w911 (A0374) hook: the debugging loop.
-import { RequestCache, type CacheKeyParts } from "./request-cache.js";
+import { RequestCache, timeQuestion, type CacheKeyParts } from "./request-cache.js";
 import { traceSettings, writeRunTrace } from "./trace.js";
 import { LeakGuard } from "./leak-guard.js";
 import { EgressGuard } from "./egress-guard.js";
@@ -3225,7 +3225,8 @@ ${run.output.slice(0, 6000)}`;
       demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
       // QA R1 follow-up (recall): a personal question ("what's my…") is memory work too, so it is offered memory.search.
-      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) || personalQuestion(run.prompt) ? coreMemoryTools : [])]
+      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) || personalQuestion(run.prompt) ? coreMemoryTools : []),
+        ...(timeQuestion.test(run.prompt) ? ["environment.about"] : [])] // the system line gives the hour; this, the minute
         .filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,

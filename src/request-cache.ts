@@ -119,7 +119,7 @@ export function withoutClock(content: string): string {
  * A question about the time or the date is never answered from, or kept in, the kept answers: its right answer
  * changes by the minute even though the key no longer does. Read from the newest question in the request.
  */
-const timeQuestion = /\b(what(?:'s| is)? (?:the )?(?:time|date|day)|what time|which day|today|tonight|tomorrow|yesterday|right now|now|current (?:time|date)|o'?clock|this (?:morning|afternoon|evening))\b/i;
+export const timeQuestion = /\b(what(?:'s| is)? (?:the )?(?:time|date|day)|what time|which day|today|tonight|tomorrow|yesterday|right now|now|current (?:time|date)|o'?clock|this (?:morning|afternoon|evening))\b/i;
 function asksTheTime(parts: CacheKeyParts): boolean {
   const question = [...parts.messages].reverse().find((message) => message.role === "user");
   return !!question && timeQuestion.test(question.content);
