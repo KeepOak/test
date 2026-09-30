@@ -155,6 +155,10 @@ export interface ChannelAdapter {
    * notification sound. An app that cannot show code differently leaves it out and sends the words as they are.
    */
   send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  /** Guarded reply preview only. Explicit unsupported refusals may fall back; ambiguous sends must throw. */
+  sendStream?(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined>;
+  /** Finalize native previews before delivery, cancellation or steps adoption. Sends no new text. */
+  finishStream?(chatId: string, messageId: string): Promise<void>;
   /** Ephemeral private-chat preview, with no message id. The final answer must still use `send`. */
   sendDraft?(chatId: string, draftId: number, text: string): Promise<void>;
   /**

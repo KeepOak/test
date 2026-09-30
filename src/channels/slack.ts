@@ -83,6 +83,10 @@ const slackText = (text: string, format?: MessageFormat): string =>
 /** Plain-text blocks work for sends and edits; chat.update does not accept a mrkdwn switch. */
 const slackPlain = (text: string, format?: MessageFormat): Record<string, unknown> => format?.plain
   ? { link_names: false, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] } : {};
+class SlackApiError extends Error {
+  constructor(readonly code: string, method: string) { super(`Slack ${method} failed: ${code}`); }
+}
+
 export class SlackAdapter implements ChannelAdapter {
   readonly kind = "slack";
   /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
@@ -97,6 +101,10 @@ export class SlackAdapter implements ChannelAdapter {
   private state: ChannelHealth = { state: "reconnecting", reason: "Connecting to Slack" };
   private user: { id: string; name: string } | null = null;
   private readonly seen = new Set<string>();
+  /** Only reply previews enter this map; ordinary messages and progress retain their transport. */
+  private readonly streams = new Map<string, string>();
+  private readonly uncertainAppends = new Set<string>();
+  private streamKey(chatId: string, messageId: string): string { return `${chatId}:${messageId}`; }
   /** The words each recent message had, so an edit that changed none is not one. */
   private readonly edits = new EditedWords();
   private stopping = false;
@@ -132,6 +140,11 @@ export class SlackAdapter implements ChannelAdapter {
     if (this.keepalive) clearInterval(this.keepalive);
     this.socket?.close();
     await this.loop?.catch(() => undefined);
+    // Stop acknowledged previews on adapter shutdown as well as per-turn cancellation.
+    await Promise.all([...this.streams.keys()].map(async (key) => {
+      const split = key.indexOf(":");
+      await this.finishStream(key.slice(0, split), key.slice(split + 1)).catch(() => undefined);
+    }));
   }
   private async run(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     for (let attempt = 0; !this.stopping; attempt++) {
@@ -322,7 +335,53 @@ export class SlackAdapter implements ChannelAdapter {
   async setStatus(chatId: string, threadId: string, words: string): Promise<void> {
     await this.call("assistant.threads.setStatus", this.options.token, { channel_id: chatId, thread_ts: threadId, status: words.slice(0, 100) });
   }
+  /** CHAT-051: native markdown streaming with the existing chat:write bot scope. */
+  async sendStream(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {
+    const thread = threadOf(replyToMessageId);
+    // Channel streams require recipient/team identity absent from the existing DM preview contract.
+    if (!chatId.startsWith("D") || !thread) return this.send(chatId, text, replyToMessageId);
+    let result: unknown;
+    try {
+      result = await this.call("chat.startStream", this.options.token, { channel: chatId, thread_ts: thread, markdown_text: text });
+    } catch (error) {
+      // Explicit no-stream refusals only: transport/internal/invalid responses may have already sent.
+      if (error instanceof SlackApiError && ["unknown_method", "channel_type_not_supported", "invalid_thread_ts"].includes(error.code))
+        return this.send(chatId, text, replyToMessageId);
+      throw error;
+    }
+    const messageId = z.object({ ts: z.string().regex(/^\d+\.\d+$/) }).passthrough().parse(result).ts;
+    this.streams.set(this.streamKey(chatId, messageId), text);
+    return messageId;
+  }
+  async finishStream(chatId: string, messageId: string): Promise<void> {
+    const key = this.streamKey(chatId, messageId);
+    if (!this.streams.has(key)) return;
+    try { await this.call("chat.stopStream", this.options.token, { channel: chatId, ts: messageId }); }
+    catch (error) {
+      if (!(error instanceof SlackApiError && error.code === "message_not_in_streaming_state")) throw error;
+    }
+    this.streams.delete(key);
+    this.uncertainAppends.delete(key);
+  }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
+    const key = this.streamKey(chatId, messageId), previous = this.streams.get(key);
+    if (previous !== undefined) {
+      if (!format && !this.uncertainAppends.has(key) && text.startsWith(previous)) {
+        const delta = text.slice(previous.length);
+        if (delta) try {
+          await this.call("chat.appendStream", this.options.token, { channel: chatId, ts: messageId, markdown_text: delta });
+        } catch (error) {
+          // An unacknowledged append may already be visible. Never append those bytes twice:
+          // a later guarded snapshot must stop and replace this exact message instead.
+          this.uncertainAppends.add(key);
+          throw error;
+        }
+        this.streams.set(key, text);
+        return;
+      }
+      // A replacement cannot be appended: end the stream before the existing whole-message edit.
+      await this.finishStream(chatId, messageId);
+    }
     await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) });
   }
   async deleteMessage(chatId: string, messageId: string): Promise<void> {
@@ -362,7 +421,7 @@ export class SlackAdapter implements ChannelAdapter {
       body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
     });
     const parsed = z.object({ ok: z.boolean(), error: z.string().optional() }).passthrough().parse(await response.json());
-    if (!parsed.ok) throw new Error(`Slack ${method} failed: ${parsed.error ?? response.status}`);
+    if (!parsed.ok) throw new SlackApiError(parsed.error ?? String(response.status), method);
     return parsed;
   }
 }

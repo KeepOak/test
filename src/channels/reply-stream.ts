@@ -11,6 +11,7 @@ export class ReplyStream {
   private shown = "";
   private readonly draftId = randomInt(1, 0x7fffffff);
   private draftDisabled = false;
+  private nativeStartUncertain = false;
   private closed = false;
   private failures = 0;
   private pausedUntil = 0;
@@ -31,6 +32,7 @@ export class ReplyStream {
     return this.enqueue(async () => {
       const id = this.messageId;
       if (!id) return null;
+      await this.target.adapter.finishStream?.(this.target.chatId, id);
       this.messageId = null;
       this.shown = "";
       this.words = ""; // those words came before a step; the next model round writes the reply afresh
@@ -51,21 +53,35 @@ export class ReplyStream {
     }, Math.max(this.intervalMs, this.pausedUntil - Date.now()));
     this.timer.unref();
   }
-  cancel(): void {
+  cancel(finalize = true): void {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+    if (finalize && this.target.adapter.finishStream) void this.enqueue(async () => {
+      if (this.messageId) await this.target.adapter.finishStream!(this.target.chatId, this.messageId);
+    }).catch(() => undefined);
   }
   async finish(text: string): Promise<PlacedReply | null> {
-    this.cancel();
+    this.cancel(false);
     return this.enqueue(async () => {
+      if (this.nativeStartUncertain) throw new Error("The reply stream start was not acknowledged. Reconcile its delivery before sending another answer.");
       // Native drafts have no message id: the caller persists the full answer with its ordinary send path.
       if (!this.messageId) return null;
-      const checked = await this.checked(text);
-      if (checked === null) return null;
-      const [first, ...rest] = chunkText(checked, this.limit);
-      if (!first || !await this.write(first)) return null;
-      return { messageId: this.messageId!, text: first, ...(rest.length ? { rest } : {}) };
+      const id = this.messageId;
+      try {
+        const checked = await this.checked(text);
+        if (checked === null) return null;
+        const [first, ...rest] = chunkText(checked, this.limit);
+        if (!first || !await this.write(first, !!this.target.adapter.sendStream)) {
+          if (this.target.adapter.sendStream) throw new Error("The streamed reply could not be finalized. Reconcile its delivery before sending another answer.");
+          return null;
+        }
+        return { messageId: id, text: first, ...(rest.length ? { rest } : {}) };
+      } finally {
+        // Even a blocked final snapshot or failed edit must stop the acknowledged preview.
+        // A missing stop acknowledgement throws, holding delivery rather than sending another answer.
+        await this.target.adapter.finishStream?.(this.target.chatId, id);
+      }
     });
   }
   private async put(text: string): Promise<void> {
@@ -82,21 +98,29 @@ export class ReplyStream {
       return checked.blocked ? null : checked.text;
     } catch { return null; }
   }
-  private async write(text: string): Promise<boolean> {
-    if (text === this.shown) return true;
+  private async write(text: string, reconcile = false): Promise<boolean> {
+    if (this.nativeStartUncertain) return false;
+    if (!reconcile && text === this.shown) return true;
     if (!this.messageId && !this.draftDisabled && this.target.adapter.sendDraft) {
       const drafted = await this.draft(text);
       if (drafted !== null) return drafted;
     }
+    let startingNative = false;
     try {
       if (!(this.target.allowed?.() ?? true) || !this.target.adapter.edit || Date.now() < this.pausedUntil) return false;
       if (this.messageId) await this.target.adapter.edit(this.target.chatId, this.messageId, text);
-      else this.messageId = await this.target.adapter.send(this.target.chatId, text, this.target.quote ? this.target.quote() : this.target.messageId) ?? null;
-      if (!this.messageId) { this.failures = 2; return false; }
+      else {
+        startingNative = !!this.target.adapter.sendStream;
+        const send = this.target.adapter.sendStream?.bind(this.target.adapter) ?? this.target.adapter.send.bind(this.target.adapter);
+        this.messageId = await send(this.target.chatId, text, this.target.quote ? this.target.quote() : this.target.messageId) ?? null;
+      }
+      if (!this.messageId) { this.nativeStartUncertain ||= startingNative; this.failures = 2; return false; }
       this.shown = text;
       this.failures = 0;
       return true;
     } catch (error) {
+      // A missing acknowledgement may hide an existing stream. Never retry that start as another answer.
+      if (startingNative) { this.nativeStartUncertain = true; this.failures = 2; return false; }
       const wait = retryAfterMs(error);
       if (wait) this.pausedUntil = Date.now() + wait;
       else this.failures++;
