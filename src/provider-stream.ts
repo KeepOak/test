@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { Completion, ToolCall, Usage } from "./contracts.js";
 import { estimateTokens, ProviderStreamError } from "./contracts.js";
 import { thinkingTokens } from "./empty-answer.js";
+import { anthropicUsage, AnthropicUsageSchema, type AnthropicUsage } from "./anthropic-usage.js";
 
 const count = z.number().int().nonnegative();
 const index = count.max(15);
@@ -143,7 +144,7 @@ export class OpenAIStream {
 
 const anthropicEvent = z.discriminatedUnion("type", [
   z.object({ type: z.literal("message_start"), message: z.object({
-    usage: z.object({ input_tokens: count, output_tokens: count }).optional(),
+    usage: AnthropicUsageSchema.nullish(),
   }) }),
   z.object({ type: z.literal("content_block_start"), index, content_block: z.discriminatedUnion("type", [
     z.object({ type: z.literal("text"), text: z.string() }),
@@ -160,7 +161,7 @@ const anthropicEvent = z.discriminatedUnion("type", [
   ]) }),
   z.object({ type: z.literal("content_block_stop"), index }),
   z.object({ type: z.literal("message_delta"), delta: z.object({ stop_reason: z.string().nullable().optional() }),
-    usage: z.object({ output_tokens: count }).optional() }),
+    usage: AnthropicUsageSchema.nullish() }),
   z.object({ type: z.literal("message_stop") }),
   z.object({ type: z.literal("ping") }),
   z.object({ type: z.literal("error") }),
@@ -173,6 +174,8 @@ export class AnthropicStream {
   private blocks = new Map<number, Block>();
   private open = new Set<number>();
   private usage: Usage | undefined;
+  /** What Anthropic said so far, merged across message_start and message_delta. */
+  private said: AnthropicUsage = {};
   private finalUsage = false;
   private started = false;
   private done = false;
@@ -190,9 +193,8 @@ export class AnthropicStream {
     if (event.type === "message_start") {
       if (this.started) throw new Error("Duplicate provider message start");
       this.started = true;
-      if (event.message.usage) this.usage = {
-        input: event.message.usage.input_tokens, output: event.message.usage.output_tokens,
-      };
+      // The cache reads and writes are part of what the call used; Anthropic counts them apart from input_tokens.
+      if (event.message.usage) { this.said = { ...event.message.usage }; this.usage = anthropicUsage(this.said); }
     } else {
       if (!this.started) throw new Error("Provider stream missing message start");
       this.advance(event);
@@ -206,7 +208,9 @@ export class AnthropicStream {
     if (event.type === "message_delta") {
       this.finish = event.delta.stop_reason ?? this.finish;
       if (this.usage && event.usage) {
-        this.usage.output = event.usage.output_tokens;
+        // The closing counts are cumulative; a field it leaves out keeps what message_start said.
+        for (const [key, value] of Object.entries(event.usage)) if (value != null) (this.said as Record<string, unknown>)[key] = value;
+        this.usage = anthropicUsage(this.said, event.usage.output_tokens ?? this.usage.output);
         this.finalUsage = true;
       }
     }

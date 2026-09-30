@@ -6,7 +6,7 @@ import type { Store } from "./store.js";
 import type { Runtime } from "./runtime.js";
 import type { Run } from "./contracts.js";
 import { isReadOnlyPermission } from "./policy.js";
-import { estimateCost, pricingSettings, type CostConfidence } from "./pricing.js";
+import { estimateCost, pricingSettings, type CostConfidence, type TokenCounts } from "./pricing.js";
 import { findSuite, type EvaluationTask, type SuiteEntry } from "./evaluation-suites.js";
 import { gradeTask, type GradeMethod } from "./evaluation-grading.js";
 import { applyGates, EvaluationGateSchema, readTrajectory, runtimeJudge, scoreTrajectory, type GateVerdict } from "./evaluation-run.js";
@@ -202,11 +202,11 @@ export class SuiteRunner {
    * mac7/eval-honesty: the provider's own count when it gave one, Branch's estimate otherwise, and
    * which of the two it was — so a figure worked out from a guess is never printed as a bill.
    */
-  private tokensFor(runId: string): { input: number; output: number; basis: "reported" | "estimated" } {
+  private tokensFor(runId: string): TokenCounts & { basis: "reported" | "estimated" } {
     return ledgerTokens(this.store.usage(runId));
   }
 
-  private costOf(model: string, tokens: { input: number; output: number }) {
+  private costOf(model: string, tokens: TokenCounts) {
     return estimateCost(model, tokens, pricingSettings(this.store, this.owner).overrides);
   }
 

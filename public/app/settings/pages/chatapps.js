@@ -17,6 +17,7 @@ import { level, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
+import { routingCard, initRouting } from "../chat-routing.js";
 import { stepsCard, initSteps } from "../chat-steps.js";
 import { phoneAccessCard, initPhoneAccess, loadPhoneAccess } from "../phone-access.js";
 import { logo } from "../../core/logos.js";
@@ -28,14 +29,14 @@ import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.j
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null, groups: [], reading: {}, ownerCommands: null, ownerNamed: true, approved: [], steps: null };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, groups: [], reading: {}, ownerCommands: null, ownerNamed: true, approved: [], pending: [], chats: [], routing: null, steps: null };
 const STEPS = "Show steps in chats";
 const kindOf = (c) => c.kind ?? c.id;
 
 async function loadApps() {
   if (E.profiles?.isOwner === false) return; // the owner's chat apps: no page asks for them on a household person's profile
   A.at = Date.now();
-  const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
+  const [live, setup, routing] = await Promise.all(["channels", "channel-setup", "channels/routes"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   A.channels = live?.channels ?? [];
   A.intake = live?.intake ?? null;
   A.live = live?.live ?? null;
@@ -43,6 +44,9 @@ async function loadApps() {
   A.ownerCommands = live?.ownerCommands ?? null;
   A.ownerNamed = live?.ownerNamed !== false; // owner-dm-signin: no chat account is marked as the owner's yet
   A.approved = live?.approved ?? [];
+  A.pending = live?.pending ?? [];
+  A.chats = live?.chats ?? [];
+  A.routing = routing;
   A.steps = live?.steps ?? null;
   A.apps = setup?.channels ?? [];
   await Promise.all([loadFormats(), loadReplyStyles(), loadPhoneAccess()]);
@@ -60,8 +64,9 @@ export function draw() {
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
   html += groupsSection();
+  html += waitingCard();
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>` + stepsCard(A, lv);
-  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard();
+  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + routingCard(A) + phoneAccessCard();
   // Replies in each connected app: quoting your message, and the reaction on it while Branch works.
   const kinds = [...new Set(on.map(kindOf))];
   const quotes = (id) => on.some((c) => kindOf(c) === id && c.replyQuotes === true); // an app whose replies can quote
@@ -93,6 +98,21 @@ async function saveGroup(el) {
     if (answer.reading?.everyMessage === false && answer.reading.fix) A.reading[key] = answer.reading.fix;
     else delete A.reading[key];
   } catch (error) { toast(error.message); }
+  await loadApps();
+}
+/**
+ * UP-CHAT-007: people waiting to be let in, with their codes. A code is sent only to a direct chat, so a request made in a
+ * group (and on apps whose every room is a group) is let in from here.
+ */
+function waitingCard() {
+  // A code works for an hour (router.ts pairingCodeMs); an older request is asked again by its sender's next message.
+  const fresh = A.pending.filter((p) => Date.now() - Date.parse(p.requestedAt ?? "") <= 60 * 60_000);
+  if (E.profiles?.isOwner === false || !fresh.length) return "";
+  const rows = fresh.map((p) => `<div class="prow"><span class="grow"><b>${esc(t("window.chat-waiting.row", { name: p.name || p.senderId, app: nameOf(p.channel), code: p.code }))}</b></span><button class="btn sm" type="button" data-act="chat-waiting-let-in" data-v="${esc(p.code)}">${esc(t("window.chat-waiting.let-in"))}</button></div>`).join("");
+  return `<div class="sec x15-sec"><h2>${esc(t("window.chat-waiting.title"))}</h2><p class="hint">${esc(t("window.chat-waiting.hint"))}</p><div class="rows">${rows}</div></div>`;
+}
+async function letIn(code) {
+  try { await api("channels/pairings/approve", { code }); } catch (error) { toast(error.message); }
   await loadApps();
 }
 
@@ -144,9 +164,10 @@ async function saveSteps(on) {
 export function init() {
   initFormatting();
   initReplyStyle();
-  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-group", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-group", "chat-waiting-let-in", ...Object.keys(SW).map((id) => "sw:" + id)]);
   on("ca-group", (el) => saveGroup(el));
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
+  on("chat-waiting-let-in", (el) => letIn(el.dataset.v));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
   document.addEventListener("change", (e) => {
     if (e.target.id === "f15-show-steps-in-chats") saveSteps(e.target.checked);
@@ -159,6 +180,7 @@ export function init() {
   });
   loadApps();
   initOwnerCommands(A, loadApps);
+  initRouting(A, loadApps);
   initSteps(loadApps);
   initPhoneAccess(loadApps);
 }

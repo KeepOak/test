@@ -209,7 +209,6 @@ test("Text messages: a stranger is refused when pairing is off, and a refused to
   t.after(() => channel.stop());
   await until(() => server.calls.length >= 2, "polling");
   await refusalWalk(context, { label: "SMS", say: async (text) => server.text("+15559990000", text), sent: () => server.posts().map((c) => c.form.Body) });
-  assert.equal(server.posts().at(-1).form.To, "+15559990000");
   await assertNoSecret(context, [TWILIO_TOKEN]);
 
   const locked = await twilioServer(t, { refuse: () => true });

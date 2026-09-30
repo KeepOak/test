@@ -86,6 +86,7 @@ async function mergeOne(service: AccountsService, pool: Pool, into: string, from
   carryWindows(service, from, into);
   service.dropBuilt("chatgpt", from);
   service.statesOf("chatgpt").delete(from);
+  service.rests.forget(service.deps.owner, "chatgpt", from);
   audit(service.deps.store, service.deps.owner, {
     action: "connection.changed", actor: service.deps.owner, subject: `${record.label} (chatgpt)`,
     reason: `The same ChatGPT account was signed in twice, so it was merged into "${keptLabel}". The merged-away entry was: ${describe(record)}`.slice(0, 500),
