@@ -129,6 +129,22 @@ test("a published page opens in the window at /#page=<id> and stays current whil
   await tab.waitForTimeout(500);
   assert.equal(await tab.locator(`[data-page19="${page.id}"]`).count(), 0, "the older page did not open over the newer one");
   assert.equal(await tab.locator(`[data-page19="${other.id}"]`).count(), 1, "the newer page is still the one shown");
+
+  // Nothing open, then another dialog opened and closed while the page was read: the screen looks the same, but the
+  // late answer still does not open the page.
+  await tab.locator('.dlg [data-act="dlg-close"]').last().click();
+  await tab.locator(".dlg").waitFor({ state: "detached" });
+  await tab.evaluate(() => { location.hash = ""; });
+  const late = tab.waitForResponse((response) => response.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  await tab.evaluate((id) => { location.hash = "page=" + id; }, page.id);
+  await tab.waitForRequest((request) => request.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  await tab.locator('[data-act="whatcan"]').first().click();
+  await tab.locator(".dlg").first().waitFor();
+  await tab.locator('.dlg [data-act="dlg-close"]').first().click();
+  await tab.locator(".dlg").waitFor({ state: "detached" });
+  await late;
+  await tab.waitForTimeout(500);
+  assert.equal(await tab.locator("[data-page19]").count(), 0, "opened and closed meanwhile: the page is not brought back");
   assert.deepEqual(errors, []);
 });
 

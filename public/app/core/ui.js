@@ -191,10 +191,15 @@ function place(el, a, r, right) {
 /* ---------- dialogs ---------- */
 let dlgEl = null;
 export const dialog = () => dlgEl;
+/* Moves on every time a dialog opens or closes, so a late answer can tell that the screen changed even when it looks
+   the same again (nothing open, then something opened and closed): core/view-fence.js. */
+let dlgRevision = 0;
+export const dialogRevision = () => dlgRevision;
 /* Pass 13c: closing a dialog puts the keyboard back on the button that opened it, or the one drawn in its place. */
 let opener = null;
 export function closeDlg() {
   const had = !!dlgEl;
+  if (had) dlgRevision += 1;
   dlgEl?.remove();
   dlgEl = null;
   syncModalBackground();
@@ -211,6 +216,7 @@ export function openDlg({ title, body, foot = "", wide = false }) {
   closePop();
   closeDlg();
   dlgEl = document.createElement("div");
+  dlgRevision += 1;
   dlgEl.className = fresh ? "scrim in17" : "scrim"; /* pass 17: a fresh dialog eases in once */
   dlgEl.innerHTML = `<div class="dlg ${wide ? "wide" : ""}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><div class="dlg-h"><h2>${esc(title)}</h2><button class="icon-btn" type="button" aria-label="${t("delight.ach.close")}" data-act="dlg-close">${ic("x")}</button></div><div class="dlg-b">${body}</div>${foot ? `<div class="dlg-f">${foot}</div>` : ""}</div>`;
   applyCss(dlgEl);
