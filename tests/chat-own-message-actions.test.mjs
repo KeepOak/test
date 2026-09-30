@@ -11,6 +11,8 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy, TelegramAdapter } from "../dist/index.js";
 import { setLockdown } from "../dist/lockdown.js";
 import { SlackAdapter } from "../dist/channels/slack.js";
+import { DiscordAdapter } from "../dist/channels/discord.js";
+import { MatrixAdapter } from "../dist/channels/matrix.js";
 
 test("CHAT-023: an own sent message is edited once recorded; an unknown id is refused untouched", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-own-messages-"));
@@ -85,6 +87,8 @@ test("CHAT-023: an edit whose chat app was detached or replaced while its text w
 /* A chat app behind Branch's checked fetch (web.policy.guard): an edit or delete first waits while its address is checked,
    and then, like the platform's own fetch, sends nothing once its signal has been aborted. Telegram's long poll waits for
    Stop; Slack's socket is a stand-in. */
+/* A chat app's live socket that says nothing until it is closed. */
+function quietSocket() { let done; const closed = new Promise((resolve) => { done = resolve; }); return Promise.resolve({ send() {}, close() { done(); }, closed }); }
 const APPS = {
   telegram: { chatId: "7", messageId: "41", mutations: ["editMessageText", "deleteMessage"],
     answer: (method) => ({ ok: true, result: method === "getMe" ? { id: 1, is_bot: true, first_name: "Branch", username: "branch_bot" } : method === "sendMessage" ? { message_id: 41 } : true }),
@@ -92,14 +96,23 @@ const APPS = {
   slack: { chatId: "C7", messageId: "171.1", mutations: ["chat.update", "chat.delete"],
     answer: (method) => (method === "auth.test" ? { ok: true, user_id: "U1", user: "branch" } : method === "chat.postMessage" ? { ok: true, ts: "171.1" } : { ok: true }),
     adapter: (fetch) => new SlackAdapter({ id: "slack", token: "xoxb-1", appToken: "xapp-1", apiBase: "http://slack.invalid/api", fetch, socketUrl: "wss://slack.invalid",
-      connect: async () => { let done; const closed = new Promise((resolve) => { done = resolve; }); return { send() {}, close() { done(); }, closed }; } }) },
+      connect: quietSocket }) },
+  discord: { chatId: "900", mutations: ["edit", "delete"],
+    label: (url, init) => (init.method === "PATCH" ? "edit" : init.method === "DELETE" && /\/messages\/[^/]+$/.test(url) ? "delete" : `${init.method} ${new URL(url).pathname}`),
+    answer: (label) => (label.startsWith("POST") ? { id: "555" } : {}),
+    adapter: (fetch) => new DiscordAdapter({ id: "discord", token: "tok", apiBase: "http://discord.invalid", gatewayUrl: "wss://discord.invalid", fetch, connect: quietSocket }) },
+  matrix: { chatId: "!room:test", mutations: ["edit", "delete"],
+    label: (url, init) => (/\/sync\b/.test(url) ? "sync" : /\/redact\//.test(url) ? "delete"
+      : /\/send\/m\.room\.message\//.test(url) ? (String(init.body).includes("m.new_content") ? "edit" : "send") : `${init.method} ${new URL(url).pathname}`),
+    answer: (label) => (label === "send" || label === "edit" ? { event_id: "$sent1" } : label === "delete" ? { event_id: "$gone1" } : {}),
+    adapter: (fetch) => new MatrixAdapter({ id: "matrix", homeserver: "http://matrix.invalid", accessToken: "tok", userId: "@branch:test", fetch }) },
 };
 
 function behindAdmission(app) {
   const sent = [], admitting = [], wire = { throttled: false };
   const fetch = async (url, init) => {
-    const method = String(url).split("/").pop();
-    if (method === "getUpdates") return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
+    const method = app.label ? app.label(String(url), init ?? {}) : String(url).split("/").pop();
+    if (method === "getUpdates" || method === "sync") return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
     if (app.mutations.includes(method)) await new Promise((resolve) => admitting.push(resolve));
     init.signal?.throwIfAborted();
     sent.push(method);
@@ -120,11 +133,13 @@ async function chatApp(t, kind, name) {
   const chat = APPS[kind], wire = behindAdmission(chat);
   await app.channels.attach(chat.adapter(wire.fetch), { activation: "always", pairing: true, allowlist: ["owner"] });
   await app.channels.deliver(kind, chat.chatId, "The meeting is at 3.");
+  const [delivered] = app.channels.ownMessages({ channel: kind, chatId: chat.chatId }).messages;
+  assert.ok(delivered?.messageId, `${kind}: the message was sent and recorded`);
   const run = app.store.createRun(app.runtime.owner, "fix my message");
   app.store.event(run.id, "run.started", { source: "owner", parentRunId: null });
   const stop = new AbortController();
   const context = app.runtime.context({ runId: run.id, permissions: app.registry.permissions(), signal: stop.signal });
-  return { app, wire, context, stop, target: { channel: kind, chatId: chat.chatId, messageId: chat.messageId }, mutations: chat.mutations };
+  return { app, wire, context, stop, target: { channel: kind, chatId: chat.chatId, messageId: delivered.messageId }, mutations: chat.mutations };
 }
 
 for (const kind of Object.keys(APPS)) {
@@ -142,6 +157,10 @@ for (const kind of Object.keys(APPS)) {
     ["Branch is locked", "edit", ({ app }) => app.sessionLock.lock()],
     ["Lockdown comes on", "delete", ({ app }) => setLockdown(app.store, app.runtime.owner, { on: true })],
     ["the chat app is disconnected", "edit", ({ app }) => app.channels.detach(kind)],
+    ["another person's profile is switched to", "delete", ({ app }) => {
+      const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
+      app.store.profiles.switch({ profileId: person.id, pin: "1234" });
+    }],
   ]) {
     test(`CHAT-023: when ${what} while a ${kind} ${action}'s address is checked, nothing is sent`, async (t) => {
       const world = await chatApp(t, kind, action);

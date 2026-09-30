@@ -416,6 +416,7 @@ export class ChannelRouter {
   /** Own-message edits and deletes on their way out, with the chat app each goes through. */
   private readonly messageSends = new Map<AbortController, string>();
   private readonly stopLockdownWatch: () => void;
+  private readonly stopProfileWatch: () => void;
   /** PR #289: the question each chat was last shown (its conversation and fingerprint), so a typed "y" answers that one and no other. */
   private readonly shownInChat = new Map<string, { sessionId: string; fingerprint: string }>();
   private readonly shownCommands = new Map<string, string>();
@@ -516,6 +517,9 @@ export class ChannelRouter {
     this.deliveries.splitting = () => this.switches().splitting;
     // owner-dm-full: the owner's own verified direct chat is the owner along its whole task (src/key-context.ts).
     setOwnerChatCheck(store, (runId) => this.ownerFullRun(runId));
+    // A different person at the window during an own-message send ends it: the send belongs to who asked.
+    // (A stand-in store without profile switching, as some tests build, has nothing to hear.)
+    this.stopProfileWatch = store.profiles?.onSwitched?.(() => this.stopMessageSends("The person using Branch changed; nothing was changed.")) ?? (() => {});
     this.stopLockdownWatch = onLockdownChange((changed, owner, on) => {
       if (on && changed === store && owner === runtime.owner) this.stopMessageSends("Lockdown came on; nothing was changed.");
     });
@@ -683,6 +687,7 @@ export class ChannelRouter {
     this.adapters.clear();
     this.stopMessageSends("Branch's chat apps were disconnected; nothing was changed.");
     this.stopLockdownWatch();
+    this.stopProfileWatch();
     await Promise.allSettled(stops);
   }
   /** Sends every due chunk on every connected channel, one flush at a time. */
@@ -893,7 +898,7 @@ export class ChannelRouter {
     this.messageActions.add(key);
     const sending = new AbortController();
     this.messageSends.set(sending, channel);
-    const gate = this.messageGate(context, channel, attached, AbortSignal.any([context.signal, sending.signal]));
+    const gate = this.messageGate(context, channel, attached, AbortSignal.any([context.signal, sending.signal]), this.store.profiles.active()?.id ?? null);
     try {
       let replacement: string | undefined;
       if (action === "edit") {
@@ -918,9 +923,10 @@ export class ChannelRouter {
    * The chat app may have been detached, or replaced by a new connection, while the text was checked: only the exact
    * connection that was looked up may act, and the stopped one never does.
    */
-  private messageGate(context: ToolContext, channel: string, attached: unknown, signal: AbortSignal): SendGate {
+  private messageGate(context: ToolContext, channel: string, attached: unknown, signal: AbortSignal, who: string | null): SendGate {
     return { signal, check: () => {
       if (this.adapters.get(channel) !== attached) throw new Error("That chat app changed while the message was being checked; nothing was changed.");
+      if ((this.store.profiles.active()?.id ?? null) !== who) throw new Error("The person using Branch changed; nothing was changed.");
       this.requireMessageActionOwner(context);
       signal.throwIfAborted();
     } };
