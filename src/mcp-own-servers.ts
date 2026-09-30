@@ -43,7 +43,7 @@ import { lockdownActive } from "./lockdown.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
-import { makeTransport, McpTransportSchema, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { makeTransport, McpTransportSchema, McpCallTimeoutSchema, type McpTransportConfig } from "./integrations/mcp-config.js";
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
 import { workspaceRefusal } from "./mcp-workspace-guard.js";
@@ -51,6 +51,7 @@ import { workspaceRefusal } from "./mcp-workspace-guard.js";
 export const AddServerSchema = z.object({
   name: z.string().trim().min(1).max(60),
   server: McpTransportSchema,
+  callTimeoutSeconds: McpCallTimeoutSchema.optional(),
   /** The catalogue entry the form was filled from, if it was. */
   catalogue: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/).optional(),
 }).strict();
@@ -60,6 +61,7 @@ export interface OwnServer {
   /** The launch fingerprint the owner said yes to; null until then (a web address needs none). */
   approved: string | null;
   tools: string[]; version: string | null; hidden: string[]; addedAt: string; catalogue?: string;
+  callTimeoutSeconds?: number;
 }
 const Saved = z.object({ servers: z.array(z.custom<OwnServer>()).max(8).default([]) }).strict();
 const key = "mcp-own-servers";
@@ -153,7 +155,7 @@ export class OwnMcpServers {
     const pending = this.waiting.get(entry.id);
     const waiting = pending ? (full ? { sessionId: pending.sessionId, fingerprint: pending.fingerprint, question: pending.question } : { question: pending.question }) : null;
     return { id: entry.id, name: entry.name, transport: entry.server.transport, how: how(entry.server), on: entry.on,
-      running: this.live.has(entry.id), waiting,
+      running: this.live.has(entry.id), waiting, callTimeoutSeconds: entry.callTimeoutSeconds ?? 30,
       tools: entry.tools.length, hidden: entry.hidden, error: this.problems.get(entry.id) ?? null, catalogue: entry.catalogue ?? null };
   }
   list(full: boolean) { return { servers: this.saved().map((entry) => this.view(entry, full)) }; }
@@ -175,7 +177,8 @@ export class OwnMcpServers {
     let id = slug(wanted.name);
     for (let n = 2; taken.has(id); n++) id = `${slug(wanted.name)}-${n}`;
     const entry: OwnServer = { id, name: wanted.name, server: wanted.server, on: false, approved: null, tools: [], version: null,
-      hidden: [], addedAt: new Date().toISOString(), ...(wanted.catalogue ? { catalogue: wanted.catalogue } : {}) };
+      hidden: [], addedAt: new Date().toISOString(), ...(wanted.catalogue ? { catalogue: wanted.catalogue } : {}),
+      ...(wanted.callTimeoutSeconds !== undefined ? { callTimeoutSeconds: wanted.callTimeoutSeconds } : {}) };
     this.save([...servers, entry]);
     this.record("Tool server added:", `${entry.name}: ${how(entry.server)}`, entry.server.transport === "stdio" ? "saved off" : "saved on");
     if (entry.server.transport === "stdio") return { server: this.view(entry), said: `${entry.name} is added. It is off until you switch it on and say yes.` };
@@ -196,6 +199,20 @@ export class OwnMcpServers {
     await this.deps.vet(entry.server.command, entry.server.args);
     const pending = this.waiting.get(id) ?? this.ask(entry);
     return { server: this.view(entry), said: pending.question };
+  }
+
+  /** Change while off so cached openers and in-flight calls retain their original deadline. */
+  setCallTimeout(id: string, seconds: unknown) {
+    this.deps.store.profiles.requireOwner("Changing a tool server timeout");
+    if (startedWithShortLivedKey()) throw new Error("Change the timeout from the owner window.");
+    const callTimeoutSeconds = McpCallTimeoutSchema.parse(seconds);
+    const entry = this.find(id);
+    if (entry.on || this.live.has(id) || this.waiting.has(id))
+      throw new Error("Switch this server off before changing its timeout.");
+    this.nextGeneration(id); // A start still connecting may not install an opener with the old timeout.
+    const updated = this.update(id, { callTimeoutSeconds });
+    this.record("Tool server timeout changed:", `${entry.name}: ${callTimeoutSeconds} seconds without progress`, "saved");
+    return { server: this.view(updated), said: "The new timeout applies when you switch this server on." };
   }
 
   private ask(entry: OwnServer): Waiting {
@@ -290,7 +307,8 @@ export class OwnMcpServers {
       if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
       if (!found.tools.length) throw new Error("Your approval settings refuse every tool this server offers, so it was not started.");
       if (!found.version) throw new Error("That server did not say which version it is.");
-      const config = { id: entry.id, tools: found.tools, expectedVersion: found.version, ...entry.server };
+      const config = { id: entry.id, tools: found.tools, expectedVersion: found.version, ...entry.server,
+        ...(entry.callTimeoutSeconds !== undefined ? { callTimeoutSeconds: entry.callTimeoutSeconds } : {}) };
       const stop = await startMcp(this.deps.registry, config, this.env, this.deps.policy(), this.hostFor(entry, generation, overtaken));
       started = { close: stop ?? (async () => undefined), names: found.tools.map((tool) => mcpToolName(entry.id, tool)) };
       if (!this.stillWanted(entry, generation)) throw new Error(overtaken);
