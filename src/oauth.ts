@@ -47,6 +47,8 @@ interface Flow {
 
 export class OAuthConnections {
   private readonly flows = new Map<string, Flow>();
+  /** A renewal under way for each connection, which calls arriving meanwhile wait for instead of starting their own. */
+  private readonly renewals = new Map<string, Promise<OAuthTokens>>();
   constructor(private readonly owner: string, private readonly secrets: Secrets, private readonly policy: NetworkPolicy,
     private readonly fetchImpl: typeof fetch = globalThis.fetch, private readonly windowMs = 300_000) {}
 
@@ -168,12 +170,23 @@ export class OAuthConnections {
     this.secrets.scrubber.remember(name, saved.data.accessToken);
     return saved.data;
   }
-  /** A usable access key, renewed first when the saved one has expired. */
+  /**
+   * A usable access key, renewed first when the saved one has expired. Calls that find it expired at the same moment
+   * share one renewal: a service that rotates refresh keys accepts each one only once, so a second renewal with the
+   * same key would lose the sign-in. Adapted from LibreChat's in-flight refresh map (packages/api/src/mcp/oauth/tokens.ts,
+   * MIT; see THIRD_PARTY_NOTICES.md).
+   */
   async accessToken(provider: OAuthProvider): Promise<string> {
     const tokens = await this.saved(provider.id);
     if (!tokens) throw new Error(`Branch Agent is not signed in to ${provider.label} yet`);
     const expired = tokens.expiresAt !== null && Date.parse(tokens.expiresAt) - 30_000 <= Date.now();
-    return expired ? (await this.refresh(provider, tokens)).accessToken : tokens.accessToken;
+    if (!expired) return tokens.accessToken;
+    let renewal = this.renewals.get(provider.id);
+    if (!renewal) {
+      renewal = this.refresh(provider, tokens).finally(() => this.renewals.delete(provider.id));
+      this.renewals.set(provider.id, renewal);
+    }
+    return (await renewal).accessToken;
   }
 }
 
