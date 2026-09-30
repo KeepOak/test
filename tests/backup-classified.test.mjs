@@ -84,6 +84,7 @@ const reviewedComputedKeys = new Set([
   "src/gitlab-connection.ts: gitlabSwitchKey", // RES-719: "gitlab-connection" waits for the owner's yes
   "src/goal-mode.ts: key",
   "src/integrations/mcp-oauth.ts: settingsKey",
+  "src/personal/signin.ts: this.healthKey",
   "src/interop/settings.ts: interopKey",
   "src/knobs/settings.ts: keyOf",
   "src/learning-more/settings.ts: learningKey",
@@ -184,7 +185,8 @@ const computedExamples = {
     "channel-mark:telegram", "channel-position:telegram", "channel-replay:telegram:1:2", "webhook-address:slack",
     "mcp-oauth:server", "settings-kit-file-undo-1", "trunk-watch:t", "cache:abc", "session-carry:s", "plugin:p",
     "plugin-catalog:p", "safety-wasm-add-on:w", "restore-held", "restore-trunks-held", "listen-address", "memory-history-status",
-    "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch"],
+    "coding-shell-snapshot", "code-run", "background-processes", "keychain-entries", "desktop-apps-used:branch",
+    "personal-connection-health:google"],
   held: ["account-session:s", "add-on-export:a", "add-on-list:a", "add-on:a", "add-on-pipelines:a", "asks-hindsight",
     "asks-nodes-list", "autonomy-loop:s", "autonomy-heartbeat:s", "autonomy-subgoals:s", "browser-container",
     "channel-session:telegram:1", "coding-checklist:s", "coding-read-first", "coding-ci", "comfort-notify",

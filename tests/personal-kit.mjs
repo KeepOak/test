@@ -9,6 +9,7 @@ export function fakeStore() {
     audits,
     get: (table, owner, id) => rows.has(`${table}/${owner}/${id}`) ? { data: rows.get(`${table}/${owner}/${id}`) } : undefined,
     save: (table, owner, id, data) => { rows.set(`${table}/${owner}/${id}`, data); return { data }; },
+    delete: (table, owner, id) => rows.delete(`${table}/${owner}/${id}`),
     audit: { record: (owner, input) => audits.push(input) },
   };
 }
