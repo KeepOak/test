@@ -89,7 +89,13 @@ function drawLocal() {
 }
 /* PH-03: what this phone does when lent, in the engine's own words for each ability (devices.cap.*). */
 const ABILITY = { camera: ["devices.cap.camera", "Take a photo with the camera"], listen: ["devices.cap.listen", "Listen for a few seconds"],
-  speak: ["devices.cap.speak", "Say something out loud"] };
+  speak: ["devices.cap.speak", "Say something out loud"], screen: ["phone.screenLend.ability", "Take a picture of the foreground Branch app"] };
+function screenConsent(state, never) {
+  if (platform() !== "ios" || !plugin?.lendScreenConsent || never.includes("screen")) return "";
+  const enabled = state.screenOptIn === true;
+  const label = enabled ? w("phone.screenLend.off", "Stop sharing this app's screen") : w("phone.screenLend.on", "Allow pictures of this app while open");
+  return `<p class="p-note8">${w("phone.screenLend.note", "Only this foreground Branch app is captured. Its visible content is sent to your paired Branch after its device screen switch is on and the capture request is approved. iOS may ask for capture permission. This permission resets when lending disconnects or the app leaves the foreground.")}</p><div class="p-list"><button type="button" class="p-li" data-act="screen-lend-consent" data-v="${enabled ? "off" : "on"}" aria-pressed="${enabled}" ${state.connected ? "" : "disabled"}><span class="grow"><b>${label}</b></span></button></div>`;
+}
 function drawLend() {
   const state = lendState(), never = S.lend?.never ?? [];
   const offers = (APP_OFFERS[platform() === "ios" ? "ios" : "android"] ?? []).filter((c) => !never.includes(c));
@@ -97,7 +103,7 @@ function drawLend() {
   const value = (c) => (state.connected ? (state.enabled.includes(c) ? w("accounts.switch.on", "On") : w("accounts.switch.off", "Off")) : "");
   const rows = offers.map((c) => `<div class="p-li"><span class="grow"><b>${w(...ABILITY[c])}</b></span><span class="p-val">${value(c)}</span></div>`).join("");
   return nav(say("phone8.lend.title", "Lend this phone"), say("nav.settings", "Settings")) + `<div class="p-scroll"><p class="p-note8">${w("phone.device.pairedWith", "Lending to {address}", { address: S.lend?.origin ?? "" })}</p>${state.error ? `<p class="p-note8 subtle bad">${esc(state.error)}</p>` : ""}
-    <div class="p-list">${rows}</div><div class="p-list"><button type="button" class="p-li p-bad" data-act="lend-stop"><span class="grow"><b>${w("phone.device.forget", "Stop lending this phone")}</b></span></button></div></div>`;
+    <div class="p-list">${rows}</div>${screenConsent(state, never)}<div class="p-list"><button type="button" class="p-li p-bad" data-act="lend-stop"><span class="grow"><b>${w("phone.device.forget", "Stop lending this phone")}</b></span></button></div></div>`;
 }
 export const SETTINGS_PAGES = { themes: drawThemes, accounts: drawAccounts, notif: drawNotif, chatapps: drawChatApps, chatapp: drawChatApp, localm: drawLocal, lend: drawLend };
 export const SETTINGS_LOADS = { themes: loadLook, accounts: loadAccounts, chatapps: loadChannels, chatapp: () => loadPanel(P.chApp), localm: () => Promise.all([loadLocal(), loadReach()]), lend: loadSettings };
@@ -136,5 +142,9 @@ export function initSettings(onForgotten) {
   on("language", (el) => attempt(async () => { E.look = await post("/api/look", { language: el.dataset.v }); P.sheet = null; await setLanguage(el.dataset.v); }));
   on("forget-go", async () => { P.sheet = null; await phone.vault.forget(); onForgotten(); });
   on("lend-stop", () => stopLending());
+  on("screen-lend-consent", (el) => attempt(async () => {
+    await plugin.lendScreenConsent({ enabled: el.dataset.v === "on" });
+    await loadSettings(); draw();
+  }));
   void toast; void ic;
 }

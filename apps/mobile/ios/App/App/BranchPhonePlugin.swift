@@ -1,6 +1,10 @@
 import Capacitor
 import CryptoKit
+import CoreImage
+import CoreMedia
+import CoreVideo
 import LocalAuthentication
+import ReplayKit
 import Security
 import UIKit
 import UserNotifications
@@ -24,13 +28,16 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         // B6: connecting from the window's "Pair a phone" square: pairs as a device, then collects the phone's session.
         "phonePair",
         // PH-03: lending this phone while the app's own page is open.
-        "lendStart", "lendStop", "lendResult",
+        "lendStart", "lendStop", "lendResult", "lendScreenConsent",
     ].map { CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise) }
 
     /// PH-03: the device socket. Asks reach the page only while the app's own page shows (never the owner's Branch).
     private lazy var lend = BranchLend(
         showing: { [weak self] in self?.appPageShowing() ?? false },
-        state: { [weak self] connected, enabled in self?.notifyListeners("lendState", data: ["connected": connected, "enabled": enabled]) },
+        state: { [weak self] connected, enabled, consent, generation in
+            self?.notifyListeners("lendState", data: ["connected": connected, "enabled": enabled,
+                "screenOptIn": consent, "generation": generation])
+        },
         invoke: { [weak self] ask in self?.notifyListeners("lendInvoke", data: ask) })
 
     override public func load() {
@@ -47,6 +54,7 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
     private func appPageShowing() -> Bool {
         var showing = false
         let check = {
+            guard UIApplication.shared.applicationState == .active else { return }
             guard let shown = self.bridge?.webView?.url, let local = self.bridge?.config.localURL else { return }
             showing = shown.scheme == local.scheme && shown.host == local.host && shown.port == local.port
         }
@@ -197,9 +205,9 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func deviceStatus(_ call: CAPPluginCall) {
         guard fromAppPage(call) else { return }
         let node = BranchNode.load()
-        call.resolve(["paired": node?.hub != nil && node?.nodeId != nil, "origin": node?.hub ?? "",
+        lend.screenStatus { consent in call.resolve(["paired": node?.hub != nil && node?.nodeId != nil, "origin": node?.hub ?? "",
                       "pairedAt": node?.pairedAt ?? "", "nodeId": node?.nodeId ?? "",
-                      "never": node?.never ?? [], "canSign": true])
+                      "never": node?.never ?? [], "canSign": true, "screenOptIn": consent]) }
     }
 
     /// mac7/residuals: this phone's public key (made now when it has none), so the page can show the
@@ -216,6 +224,7 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
     /// Answers the Devices card's invitation, then waits for the owner's yes on the computer.
     @objc func devicePair(_ call: CAPPluginCall) {
         guard fromAppPage(call) else { return }
+        lend.stop()
         guard let origin = BranchRules.checkOrigin(call.getString("origin") ?? ""), let offer = call.getString("offer"),
               offer.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil,
               let code = call.getString("code"), code.range(of: "^[0-9]{6}$", options: .regularExpression) != nil else {
@@ -239,6 +248,7 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
     /// signed with the same key) and keeps it where `pair` keeps the session from a /pair invitation.
     @objc func phonePair(_ call: CAPPluginCall) {
         guard fromAppPage(call) else { return }
+        lend.stop()
         guard let origin = BranchRules.checkOrigin(call.getString("origin") ?? ""), let offer = call.getString("offer"),
               offer.range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil,
               let code = call.getString("code"), code.range(of: "^[0-9]{6}$", options: .regularExpression) != nil else {
@@ -261,7 +271,9 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func deviceNever(_ call: CAPPluginCall) {
         guard fromAppPage(call) else { return }
         do {
-            call.resolve(["never": try BranchNode.setNever(call.getArray("never", String.self) ?? [])])
+            let never = try BranchNode.setNever(call.getArray("never", String.self) ?? [])
+            lend.refusalsChanged()
+            call.resolve(["never": never])
         } catch {
             call.reject(BranchNative.word("phone.device.failed", "That did not work."))
         }
@@ -286,6 +298,14 @@ public class BranchPhonePlugin: CAPPlugin, CAPBridgedPlugin {
         guard fromAppPage(call) else { return }
         lend.stop()
         call.resolve()
+    }
+
+    /// Local consent lasts only while this foreground lending connection stays open.
+    @objc func lendScreenConsent(_ call: CAPPluginCall) {
+        guard fromAppPage(call) else { return }
+        lend.setScreenConsent(call.getBool("enabled") ?? false) { consent in
+            call.resolve(["screenOptIn": consent])
+        }
     }
 
     /// The page's answer to one ask it was handed (BranchLend.answer checks it).
@@ -487,6 +507,144 @@ enum BranchNode {
     }
 }
 
+// ReplayKit start/stop lease ordering adapted from OpenClaw ScreenRecordService.swift (MIT).
+// See LICENSE.phone-screen. Branch's single JPEG, authority and foreground adapter are original.
+// This helper is main-thread confined; a cancelled pending start retains its lease until matching stop completes.
+private final class BranchPhoneScreen {
+    private final class Lease {
+        var startFinished = false
+        var stopping = false
+        var outcome: Result<Data, Error>?
+        var timer: DispatchWorkItem?
+        let showing: () -> Bool
+        let done: (Result<Data, Error>) -> Void
+        private let sampleLock = NSLock()
+        private var sampled = false
+        init(showing: @escaping () -> Bool, done: @escaping (Result<Data, Error>) -> Void) {
+            self.showing = showing
+            self.done = done
+        }
+        func claimSample() -> Bool {
+            sampleLock.lock()
+            defer { sampleLock.unlock() }
+            guard !sampled else { return false }
+            sampled = true
+            return true
+        }
+    }
+    private var lease: Lease?
+    private func failure(_ why: String) -> Error {
+        NSError(domain: "BranchPhoneScreen", code: 1, userInfo: [NSLocalizedDescriptionKey: why])
+    }
+
+    func capture(showing: @escaping () -> Bool, done: @escaping (Result<Data, Error>) -> Void) {
+        precondition(Thread.isMainThread)
+        let recorder = RPScreenRecorder.shared()
+        guard lease == nil, !recorder.isRecording, recorder.isAvailable, showing() else {
+            done(.failure(failure("Foreground app capture is unavailable or already busy."))); return
+        }
+        let current = Lease(showing: showing, done: done)
+        lease = current
+        let timeout = DispatchWorkItem { [weak self, weak current] in
+            guard let self, let current, self.lease === current else { return }
+            self.finish(current, .failure(self.failure("Screen capture did not finish in time.")))
+        }
+        current.timer = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
+        recorder.isMicrophoneEnabled = false
+        recorder.startCapture(handler: { [weak self, weak current] sample, type, error in
+            // No audio is retained. ReplayKit delivers its sample on an arbitrary queue.
+            guard type == .video || error != nil else { return }
+            guard let current, current.claimSample() else { return }
+            DispatchQueue.main.async {
+                guard let self, self.lease === current, current.outcome == nil else { return }
+                if let error { self.finish(current, .failure(error)); return }
+                guard current.showing() else { self.cancel(); return }
+                self.finish(current, self.jpeg(sample))
+            }
+        }, completionHandler: { [weak self, weak current] error in
+            DispatchQueue.main.async {
+                guard let self, let current, self.lease === current else { return }
+                current.startFinished = true
+                if let error { self.release(current, .failure(error)); return }
+                if !current.showing() { self.cancel() }
+                self.stopIfReady(current)
+            }
+        })
+    }
+
+    func cancel() {
+        precondition(Thread.isMainThread)
+        guard let current = lease else { return }
+        // Replace an undelivered image with refusal, including cancellation during stop.
+        current.outcome = .failure(failure("Screen lending stopped."))
+        current.timer?.cancel()
+        stopIfReady(current)
+    }
+
+    private func finish(_ current: Lease, _ outcome: Result<Data, Error>) {
+        guard lease === current, current.outcome == nil else { return }
+        current.outcome = outcome
+        current.timer?.cancel()
+        stopIfReady(current)
+    }
+
+    private func stopIfReady(_ current: Lease) {
+        guard lease === current, current.startFinished, current.outcome != nil, !current.stopping else { return }
+        current.stopping = true
+        RPScreenRecorder.shared().stopCapture { [weak self, weak current] error in
+            DispatchQueue.main.async {
+                guard let self, let current, self.lease === current else { return }
+                if let error {
+                    // An uncertain stop keeps the lease unavailable until the recorder really stops.
+                    current.outcome = .failure(error)
+                    self.waitUntilStopped(current)
+                } else { self.release(current, current.outcome ?? .failure(self.failure("No screen frame."))) }
+            }
+        }
+    }
+
+    private func waitUntilStopped(_ current: Lease) {
+        guard lease === current else { return }
+        if !RPScreenRecorder.shared().isRecording {
+            release(current, current.outcome ?? .failure(failure("Screen lending stopped."))); return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak current] in
+            guard let self, let current else { return }
+            self.waitUntilStopped(current)
+        }
+    }
+
+    private func release(_ current: Lease, _ outcome: Result<Data, Error>) {
+        guard lease === current else { return }
+        current.timer?.cancel()
+        lease = nil
+        guard current.showing() else { current.done(.failure(failure("The Branch app is not in the foreground."))); return }
+        current.done(outcome)
+    }
+
+    private func jpeg(_ sample: CMSampleBuffer) -> Result<Data, Error> {
+        guard CMSampleBufferDataIsReady(sample), let pixels = CMSampleBufferGetImageBuffer(sample) else {
+            return .failure(failure("No screen frame."))
+        }
+        let width = CVPixelBufferGetWidth(pixels), height = CVPixelBufferGetHeight(pixels)
+        guard width > 0, height > 0, width <= 4096, height <= 8192, width * height <= 8_388_608 else {
+            return .failure(failure("The screen frame is too large."))
+        }
+        var image = CIImage(cvPixelBuffer: pixels)
+        if let orientation = CMGetAttachment(sample, key: RPVideoSampleOrientationKey as CFString, attachmentModeOut: nil) as? NSNumber {
+            image = image.oriented(forExifOrientation: orientation.int32Value)
+        }
+        let scale = min(1, 1280 / max(image.extent.width, image.extent.height))
+        image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        guard let made = CIContext().createCGImage(image, from: image.extent),
+              let data = UIImage(cgImage: made).jpegData(compressionQuality: 0.65), data.count <= 2 * 1024 * 1024 else {
+            return .failure(failure("The screen image could not be made within the size limit."))
+        }
+        return .success(data)
+    }
+}
+
 /// PH-03: lending this phone to Branch while the app's own page is open. This side holds the device socket
 /// (src/devices/hub.ts) and the key (BranchNode); the page does the one thing asked (apps/mobile/web/phone-node.js
 /// serveLending) and hands its answer back. What is checked here, whatever the page or Branch says: the socket goes
@@ -495,10 +653,16 @@ enum BranchNode {
 /// switched it on, the phone's own "never" list allows it, it is in time and the app's own page shows, and is
 /// otherwise answered "no" at once; each ask is answered once; a picture or sound is at most 8 MB.
 final class BranchLend: NSObject, URLSessionTaskDelegate {
+    private final class ScreenTicket {
+        private let lock = NSLock()
+        private var valid = true
+        func revoke() { lock.lock(); valid = false; lock.unlock() }
+        func current() -> Bool { lock.lock(); defer { lock.unlock() }; return valid }
+    }
     static let mediaLimit = 8 * 1024 * 1024
     private let queue = DispatchQueue(label: "branch-lend")
     private let showing: () -> Bool
-    private let state: (Bool, [String]) -> Void
+    private let state: (Bool, [String], Bool, Int) -> Void
     private let invoke: ([String: Any]) -> Void
     /// The page asked for lending and has not stopped it; a pause keeps it, so coming back dials again.
     private var desired = false
@@ -508,10 +672,17 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
     private var enabled: [String] = []
+    private var remoteEnabled: [String] = []
+    private var screenOptIn = false
+    private var generation = 0
+    private let screen = BranchPhoneScreen()
+    private var targetIdentity: String?
     private var waiting: [String: Int64] = [:]
+    private var waitingCapability: [String: String] = [:]
+    private var screenTickets: [String: ScreenTicket] = [:]
     private var seen = Set<String>()
 
-    init(showing: @escaping () -> Bool, state: @escaping (Bool, [String]) -> Void, invoke: @escaping ([String: Any]) -> Void) {
+    init(showing: @escaping () -> Bool, state: @escaping (Bool, [String], Bool, Int) -> Void, invoke: @escaping ([String: Any]) -> Void) {
         self.showing = showing
         self.state = state
         self.invoke = invoke
@@ -519,10 +690,44 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
 
     static func offers(never: [String]) -> [String] { BranchNode.offers.filter { !never.contains($0) } }
 
+    private func currentOffers() -> [String] {
+        let never = BranchNode.load()?.never ?? []
+        return (BranchNode.offers + (screenOptIn ? ["screen"] : [])).filter { !never.contains($0) }
+    }
+
+    func screenStatus(_ done: @escaping (Bool) -> Void) { queue.async { done(self.screenOptIn) } }
+
+    private func publishState(_ connected: Bool) { state(connected, enabled, screenOptIn, generation) }
+
+    func setScreenConsent(_ consent: Bool, done: @escaping (Bool) -> Void) {
+        queue.async {
+            self.screenOptIn = consent && self.desired && self.proven && self.task != nil && self.showing() && !BranchNode.refuses("screen")
+            self.enabled = self.currentOffers().filter { self.remoteEnabled.contains($0) }
+            if !self.screenOptIn {
+                for ticket in self.screenTickets.values { ticket.revoke() }
+                DispatchQueue.main.async { self.screen.cancel() }
+            }
+            self.send(["type": "offers", "offers": self.currentOffers()])
+            self.publishState(self.proven)
+            done(self.screenOptIn)
+        }
+    }
+
+    func refusalsChanged() {
+        queue.async {
+            if BranchNode.refuses("screen") { self.screenOptIn = false }
+            self.enabled = self.currentOffers().filter { self.remoteEnabled.contains($0) }
+            for ticket in self.screenTickets.values { ticket.revoke() }
+            DispatchQueue.main.async { self.screen.cancel() }
+            self.send(["type": "offers", "offers": self.currentOffers()])
+            self.publishState(self.proven)
+        }
+    }
+
     /// Why an ask is turned away before the page sees it, or nil when it may go to the page.
     static func refusal(_ capability: String, deadline: Any?, now: Int64, never: [String], enabled: [String], showing: Bool) -> String? {
         if never.contains(capability) { return "This phone never allows that." }
-        if !BranchNode.offers.contains(capability) || !enabled.contains(capability) { return "That is switched off on this phone." }
+        if !(BranchNode.offers + ["screen"]).contains(capability) || !enabled.contains(capability) { return "That is switched off on this phone." }
         guard let due = (deadline as? NSNumber)?.int64Value, due >= now else { return "The request came too late." }
         if !showing { return "The Branch app is not open on this phone." }
         return nil
@@ -532,6 +737,7 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
         queue.async {
             self.desired = true
             self.connect()
+            self.publishState(self.proven && self.task != nil)
         }
     }
 
@@ -578,6 +784,7 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
         task.maximumMessageSize = 256 * 1024
         self.session = session
         self.task = task
+        targetIdentity = target.hub + "\n" + target.id
         proven = false
         task.resume()
         receive(task, id: target.id)
@@ -599,13 +806,21 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
     }
 
     private func close() {
+        generation += 1
+        screenOptIn = false
+        for ticket in screenTickets.values { ticket.revoke() }
+        screenTickets = [:]
+        DispatchQueue.main.async { self.screen.cancel() }
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
         session?.invalidateAndCancel()
         session = nil
         enabled = []
+        remoteEnabled = []
+        targetIdentity = nil
         waiting = [:]
-        state(false, [])
+        waitingCapability = [:]
+        publishState(false)
     }
 
     /// The line dropped or was refused: dialled again a little later each time; refused five times running (switched
@@ -632,12 +847,16 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
         case "challenge":
             guard let nonce = message["nonce"] as? String, BranchNode.helloText(deviceId: id, nonce: nonce) != nil,
                   let signature = try? BranchNode.helloSignature(nonce: nonce) else { ended(); return }
-            send(["type": "hello", "version": 1, "deviceId": id, "platform": "ios", "offers": Self.offers(never: never), "signature": signature])
+            send(["type": "hello", "version": 1, "deviceId": id, "platform": "ios", "offers": currentOffers(), "signature": signature])
         case "welcome", "enabled":
-            let switched = message["enabled"] as? [String] ?? []
-            enabled = Self.offers(never: never).filter { switched.contains($0) }
+            remoteEnabled = message["enabled"] as? [String] ?? []
+            enabled = currentOffers().filter { remoteEnabled.contains($0) }
+            if !enabled.contains("screen") {
+                for ticket in screenTickets.values { ticket.revoke() }
+                DispatchQueue.main.async { self.screen.cancel() }
+            }
             proven = true
-            state(true, enabled)
+            publishState(true)
         case "invoke":
             onInvoke(message, never: never)
         case "bye":
@@ -646,6 +865,7 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
                 desired = false
                 wanted = false
                 BranchNode.forget()
+                close()
             }
         default: break
         }
@@ -656,21 +876,74 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
         if seen.count > 500 { seen.removeAll() }
         let capability = ask["capability"] as? String ?? ""
         let now = Int64(Date().timeIntervalSince1970 * 1000)
-        if let why = Self.refusal(capability, deadline: ask["deadline"], now: now, never: never, enabled: enabled, showing: showing()) {
+        let current = enabled.filter { currentOffers().contains($0) }
+        if let why = Self.refusal(capability, deadline: ask["deadline"], now: now, never: never, enabled: current, showing: showing()) {
             send(["type": "result", "id": id, "ok": false, "error": why])
             return
         }
         let deadline = (ask["deadline"] as? NSNumber)?.int64Value ?? now
         waiting[id] = deadline
-        invoke(["id": id, "capability": capability, "args": ask["args"] as? [String: Any] ?? [:], "deadline": deadline])
+        waitingCapability[id] = capability
+        if capability == "screen" { captureScreen(id); return }
+        invoke(["id": id, "capability": capability, "args": ask["args"] as? [String: Any] ?? [:],
+            "deadline": deadline, "generation": generation])
+    }
+
+    private func captureScreen(_ id: String) {
+        guard screenTickets.isEmpty else {
+            answer(["id": id, "generation": generation, "ok": false, "error": "Screen capture is already busy."], nativeScreen: true, done: { _ in }); return
+        }
+        let ticket = ScreenTicket(), epoch = generation, identity = targetIdentity, deadline = waiting[id] ?? 0
+        screenTickets[id] = ticket
+        DispatchQueue.main.async {
+            guard ticket.current() else { return }
+            self.screen.capture(showing: {
+                guard ticket.current(), self.showing(), !BranchNode.refuses("screen"),
+                      Int64(Date().timeIntervalSince1970 * 1000) <= deadline, let target = BranchNode.lendTarget() else { return false }
+                return identity == target.hub + "\n" + target.id
+            }) { made in
+                var answer: [String: Any] = ["id": id, "generation": epoch]
+                switch made {
+                case .success(let data):
+                    answer["ok"] = true
+                    answer["value"] = ["captured": "screen", "scope": "foreground-branch-app"]
+                    answer["media"] = ["mime": "image/jpeg", "name": "branch-app-screen.jpg", "data": data.base64EncodedString()]
+                case .failure(let error): answer["ok"] = false; answer["error"] = error.localizedDescription
+                }
+                self.answer(answer, nativeScreen: true, done: { _ in })
+            }
+        }
+        queue.asyncAfter(deadline: .now() + 10) {
+            guard self.screenTickets[id] === ticket else { return }
+            ticket.revoke()
+            DispatchQueue.main.async { self.screen.cancel() }
+        }
+    }
+
+    private func refusalForAnswer(_ id: String, epoch: Int?) -> String? {
+        guard epoch == generation, let deadline = waiting[id], let capability = waitingCapability[id],
+              let target = BranchNode.lendTarget(), targetIdentity == target.hub + "\n" + target.id else {
+            return "The lending connection or request changed."
+        }
+        if capability == "screen", screenTickets[id]?.current() != true { return "Screen lending stopped." }
+        return Self.refusal(capability, deadline: deadline, now: Int64(Date().timeIntervalSince1970 * 1000),
+            never: BranchNode.load()?.never ?? [], enabled: enabled.filter { currentOffers().contains($0) }, showing: showing())
     }
 
     /// The page's answer to one ask it was handed: answered once, a picture or sound as its own frame after it.
-    func answer(_ from: [String: Any], done: @escaping (String?) -> Void) {
+    func answer(_ from: [String: Any], nativeScreen: Bool = false, done: @escaping (String?) -> Void) {
         queue.async {
-            guard let id = from["id"] as? String, self.waiting.removeValue(forKey: id) != nil, let task = self.task else {
+            guard let id = from["id"] as? String, self.waiting[id] != nil, let task = self.task else {
                 done("That request is not waiting.")
                 return
+            }
+            if self.waitingCapability[id] == "screen", !nativeScreen { done("Only native capture may answer screen requests."); return }
+            let refusal = self.refusalForAnswer(id, epoch: (from["generation"] as? NSNumber)?.intValue)
+            self.waiting.removeValue(forKey: id)
+            self.waitingCapability.removeValue(forKey: id)
+            self.screenTickets.removeValue(forKey: id)?.revoke()
+            if let refusal {
+                self.send(["type": "result", "id": id, "ok": false, "error": refusal]); done(refusal); return
             }
             let ok = from["ok"] as? Bool ?? false
             var result: [String: Any] = ["type": "result", "id": id, "ok": ok]
@@ -681,16 +954,10 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
             } else {
                 if let value = from["value"] { result["value"] = value }
                 if let media = from["media"] as? [String: Any] {
-                    let mime = media["mime"] as? String ?? "", name = media["name"] as? String ?? ""
-                    let kinds = mime.split(separator: "/", maxSplits: 1)
-                    guard kinds.count == 2, ["image", "audio"].contains(String(kinds[0])),
-                          BranchNode.only(String(kinds[1]), "abcdefghijklmnopqrstuvwxyz0123456789.+-", count: kinds[1].count), kinds[1].count <= 60,
-                          let data = Data(base64Encoded: media["data"] as? String ?? ""), data.count <= Self.mediaLimit, name.count <= 120 else {
+                    guard let (meta, data) = Self.mediaAnswer(media) else {
                         done("The picture or sound was larger than Branch accepts.")
                         return
                     }
-                    var meta: [String: Any] = ["mime": mime, "bytes": data.count]
-                    if !name.isEmpty { meta["name"] = name }
                     result["media"] = meta
                     bytes = data
                 }
@@ -699,6 +966,18 @@ final class BranchLend: NSObject, URLSessionTaskDelegate {
             if let bytes { task.send(.data(Data(id.utf8) + bytes)) { _ in } }
             done(nil)
         }
+    }
+
+    private static func mediaAnswer(_ media: [String: Any]) -> ([String: Any], Data)? {
+        let mime = media["mime"] as? String ?? "", name = media["name"] as? String ?? ""
+        let kinds = mime.split(separator: "/", maxSplits: 1)
+        guard kinds.count == 2, ["image", "audio"].contains(String(kinds[0])),
+              BranchNode.only(String(kinds[1]), "abcdefghijklmnopqrstuvwxyz0123456789.+-", count: kinds[1].count), kinds[1].count <= 60,
+              let text = media["data"] as? String, text.count <= ((mediaLimit + 2) / 3) * 4,
+              let data = Data(base64Encoded: text), data.count <= mediaLimit, name.count <= 120 else { return nil }
+        var meta: [String: Any] = ["mime": mime, "bytes": data.count]
+        if !name.isEmpty { meta["name"] = name }
+        return (meta, data)
     }
 }
 

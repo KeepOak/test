@@ -25,12 +25,13 @@ const PROTOCOL = 1;
 const MEDIA_LIMIT = 8 * 1024 * 1024;
 export const PHONE_OFFERS = ["camera", "location", "open-url", "speak", "listen", "canvas"];
 /**
- * PH-03: what the phone apps really do when lent. The app's own page takes the photo, records and speaks (the native
- * side only carries the socket): camera and microphone on both, speaking where the web view has speech (iOS; Android's
+ * PH-03: what the phone apps really do when lent. The app's own page takes camera photos, records and speaks:
+ * camera and microphone on both, speaking where the web view has speech (iOS; Android's
  * WebView has none). Neither app asks for the location, opens pages for Branch or shows its pages, so none is offered.
- * The native sides keep the same lists (BranchLend.java OFFERS, BranchLend.swift offers).
+ * iOS can additionally capture its foreground app natively; its local opt-in filters the socket's actual offers.
  */
-export const APP_OFFERS = { ios: ["camera", "listen", "speak"], android: ["camera", "listen"] };
+// iOS handles screen invokes natively, only after local foreground opt-in. It never forwards them to perform().
+export const APP_OFFERS = { ios: ["camera", "listen", "speak", "screen"], android: ["camera", "listen"] };
 /** What this phone offers Branch: what it can do, less what the owner told it here never to do. */
 export const offersLess = (never, can = PHONE_OFFERS) => can.filter((capability) => !readNever(never).includes(capability));
 
@@ -216,7 +217,7 @@ export async function serveLending(env, bridge, onState = () => undefined) {
       lent.enabled = new Set(state?.connected && !stopped ? (state.enabled ?? []).filter((c) => lent.offers.includes(c)) : []);
       if (!state?.connected || !lent.enabled.has("speak")) env.stopOutput?.();
       for (const request of active.values()) if (!lent.enabled.has(request.capability)) request.controller.abort();
-      onState({ connected: Boolean(state?.connected), enabled: [...lent.enabled] });
+      onState({ connected: Boolean(state?.connected), enabled: [...lent.enabled], screenOptIn: state?.screenOptIn === true });
     }),
     await bridge.addListener("lendInvoke", async (frame) => {
       if (stopped || !hexOk(frame?.id, 32) || lent.seen.has(frame.id)) return;
