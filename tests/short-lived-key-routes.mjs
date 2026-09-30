@@ -172,6 +172,7 @@ export const ROUTES = {
   "/api/channels/addresses": "secret-read",
   "/api/channels/addresses/rotate": "owner POST",
   "/api/channels/addresses/settings": "owner POST",
+  "/api/channels/allowlist": "owner POST", // CHAT-156: who may message Branch; a short-lived key cannot read it either
   "/api/channels/catalog": "look",
   "/api/channels/deliveries/sample/retry": "other POST",
   "/api/channels/link": "owner POST",
