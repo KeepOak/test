@@ -3158,6 +3158,14 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
   // pairing, the setup cards and the parity checks work exactly as before.
   app.store.profiles.requireOwner("Your chat apps");
   const owner = app.runtime.owner;
+  if (path === "/api/channels/trunk-rooms" || path === "/api/channels/trunk-rooms/disable") {
+    if (startedWithShortLivedKey() || throughDoor(request)) throw new Error("Group room mapping requires the local owner window.");
+    if (path === "/api/channels/trunk-rooms" && request.method === "GET") return app.channelTrunkRooms.list();
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST.");
+    const input = await readBody(request);
+    app.store.profiles.requireOwner("Group room mapping");
+    return path.endsWith("/disable") ? app.channelTrunkRooms.disable(input) : app.channelTrunkRooms.create(input);
+  }
   if (path === "/api/channels/group-responses") {
     if (startedWithShortLivedKey() || throughDoor(request)) throw new Error("Group response settings require the local owner window.");
     if (request.method === "GET") return groupResponses(app.store, owner);

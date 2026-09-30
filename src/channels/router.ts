@@ -778,7 +778,8 @@ export class ChannelRouter {
     if (message.chatKind === "group" && !groupAllowed(policy.groupAllowlist, adapter.kind, message.chatId)) return "ignored";
     const group = groupResponses(this.store, this.runtime.owner).groups.find((g) => g.connection === message.channel && g.chatId === message.chatId);
     const activation = message.chatKind === "group" ? /^\/activation(?:@[\w.-]+)?\s+(mention|always)\s*$/i.exec(message.text) : null;
-    if (!activation && message.chatKind === "group" && (group?.activation ?? policy.activation) === "mention" && !message.addressed) return "ignored";
+    const roomAddressed = adapter.kind === "telegram" && this.groupRoomAddressed?.(message);
+    if (!activation && message.chatKind === "group" && (group?.activation ?? policy.activation) === "mention" && !message.addressed && !roomAddressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
     const held = platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message); // CHAT-190
     if (held) {
@@ -811,6 +812,13 @@ export class ChannelRouter {
     }
     // Checked without waiting, so messages from one chat still reach `answer` in the order they came.
     if (this.overCeiling(message)) return "rejected";
+    if (this.groupRoom && adapter.kind === "telegram" && message.chatKind === "group") {
+      try { if (await this.groupRoom(message, this.chatPermissions(message))) return "replied"; }
+      catch {
+        await adapter.send(message.chatId, "The configured Trunk room is busy or no longer authorized. Review the group mapping and member reach in Branch; no ordinary task fallback was started.").catch(() => undefined);
+        return "failed";
+      }
+    }
     let threaded = message;
     try { if (group?.autoThread && adapter.kind === "discord" && adapter.prepareGroup) threaded = await adapter.prepareGroup(message); }
     catch {
@@ -1375,6 +1383,16 @@ export class ChannelRouter {
   }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
   ownerDmHost: (() => CommandHost) | null = null;
+  /** Fresh Telegram rooms with the same per-sender channel permission ceiling. */
+  groupRoom: ((message: InboundMessage, permissions: string[]) => Promise<boolean>) | null = null;
+  groupRoomAddressed: ((message: InboundMessage) => boolean) | null = null;
+  roomMessageAllowed(message: InboundMessage): boolean {
+    const entry = this.adapters.get(message.channel);
+    if (!entry || entry.adapter.kind !== "telegram" || this.access(message, entry.policy) !== "allowed"
+      || platformGate(this.store, this.runtime.owner, message)) return false;
+    const group = groupResponses(this.store, this.runtime.owner).groups.find((g) => g.connection === message.channel && g.chatId === message.chatId);
+    return (group?.activation ?? entry.policy.activation) !== "mention" || !!message.addressed || !!this.groupRoomAddressed?.(message);
+  }
   /**
    * CHAT-185 (src/channels/owner-dm-commands.ts): one of the window's commands from the owner's own account in a direct
    * chat, carried out through the one command table with that chat's conversation and permissions. Null when the line is

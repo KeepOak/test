@@ -1,4 +1,5 @@
 import { environmentTool } from "./environment.js";
+import { ChannelTrunkRooms } from "./channels/trunk-room.js";
 import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
 import { currentAccountCall } from "./accounts/context.js";
 import { closeSpareAgents } from "./providers/cli-agent.js";
@@ -1531,6 +1532,9 @@ ${result.output || "(it said nothing)"}`;
       ?? trunks.pausedForConversation(sessionId, "it did not answer"); // eng-trunk-controls
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
+  const channelTrunkRooms = new ChannelTrunkRooms(store, runtime, trunks, channels);
+  channels.groupRoom = (message, permissions) => channelTrunkRooms.handle(message, permissions);
+  channels.groupRoomAddressed = (message) => channelTrunkRooms.addressed(message);
   channels.defaultTrunk = () => trunks.mode("trunks") === "off" ? null : trunks.defaultTrunk()?.id ?? null;
   channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
   trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
@@ -1718,6 +1722,7 @@ ${result.output || "(it said nothing)"}`;
   const channelHostRef: { current?: ChannelHost } = {};
   const miniAppSessions = new MiniAppSessions();
   const branch = {
+    channelTrunkRooms,
     store,
     registry,
     launchFile,
@@ -2047,6 +2052,7 @@ ${result.output || "(it said nothing)"}`;
       summary: (limit?: number) => liveScoreSummary(liveScores(store, runtime.owner, limit)),
     },
     close: () => (closing ??= (async () => {
+      await channelTrunkRooms.close();
       // bucket-18 (A0300): nothing is sent to GitHub while the app is closing.
       stopPullRequests();
       stopOfferingPullRequests();
