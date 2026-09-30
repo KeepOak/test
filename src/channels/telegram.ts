@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { telegramMarkdown } from "./chat-markdown.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
 import { telegramEntities } from "./progress-render.js";
 import { isOggOpus } from "../voice-note.js";
@@ -84,6 +85,18 @@ const formatted = (format?: MessageFormat) => ({
   ...(!format?.plain && format?.spans?.length ? { entities: telegramEntities(format.spans) } : {}),
   ...(format?.quiet ? { disable_notification: true } : {}),
 });
+/**
+ * UP-CHAT-011: words sent with no spans of their own (a reply, a command's answer) have their Markdown shown as Telegram
+ * entities (src/channels/chat-markdown.ts), unless the owner chose plain words for this app.
+ */
+const rich = (text: string, format?: MessageFormat): Record<string, unknown> => {
+  if (format?.plain || format?.spans?.length) return { text, ...formatted(format) };
+  const read = telegramMarkdown(text);
+  return { text: read.text, ...(read.entities.length ? { entities: read.entities } : {}), ...(format?.quiet ? { disable_notification: true } : {}) };
+};
+/** Telegram refused the styles themselves: the same words go again without them rather than not at all. */
+const entitiesRefused = (error: unknown, fields: Record<string, unknown>): boolean =>
+  !!fields.entities && /entit/i.test(error instanceof Error ? error.message : String(error));
 /** Topic addresses remain distinct in the router; Telegram receives the underlying chat and thread. */
 const topicAddress = (chatId: number, threadId?: number): string =>
   threadId === undefined ? String(chatId) : `${chatId}:${threadId}`;
@@ -168,9 +181,13 @@ export class TelegramAdapter implements ChannelAdapter {
     await this.call("setMyShortDescription", { short_description: words.slice(0, 120) });
   }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
-    const result = await this.call("sendMessage", {
-      ...telegramTarget(chatId), text, ...formatted(format),
+    const body: Record<string, unknown> = { ...telegramTarget(chatId), ...rich(text, format),
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
+    };
+    const result = await this.call("sendMessage", body).catch((error: unknown) => {
+      if (!entitiesRefused(error, body)) throw error;
+      const { entities: _dropped, ...plain } = body;
+      return this.call("sendMessage", { ...plain, text });
     });
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
     return parsed.success ? String(parsed.data.message_id) : undefined;
@@ -397,8 +414,12 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     try {
-      await this.call("editMessageText", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), text,
-        ...formatted({ spans: format?.spans }) });
+      const body: Record<string, unknown> = { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), ...rich(text, { spans: format?.spans, plain: format?.plain }) };
+      await this.call("editMessageText", body).catch((error: unknown) => {
+        if (!entitiesRefused(error, body)) throw error;
+        const { entities: _dropped, ...plain } = body;
+        return this.call("editMessageText", { ...plain, text });
+      });
     } catch (error) {
       // Sending the same words again is refused with this; the message already says them.
       if (!/message is not modified/i.test(error instanceof Error ? error.message : "")) throw error;
