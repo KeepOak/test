@@ -113,7 +113,7 @@ async function deferredApi(
   }
   if (request.method === "POST" && path === "/api/deferred/settle") {
     const value = SettleDeferredSchema.parse(await readBody(request));
-    return app.runtime.settleDeferred(value.id, value.outcome);
+    return app.runtime.settleDeferred(value.id, value.outcome, value.action);
   }
   return notFound();
 }

@@ -6,16 +6,16 @@
      again, which is for the security review.
    - Later: every job a task handed over to finish later (GET /api/deferred), with its own words and one action for its
      kind, each through POST /api/deferred/settle, which carries its task on in its own conversation: a step you do by
-     hand (user.task) is answered Done; a job an outside tool handed over, which finishes when that tool answers, can be
-     given up with Stop waiting, which tells the task so. Nothing in the engine hands work over to a later time, so the
-     prototype's "Finish now" has no job to act on and is never drawn.
+     hand is answered Done; signing is confirmed with I've signed it; work explicitly set aside by user.later is
+     continued with Finish now; an outside service can be given up with Stop waiting. The engine validates each action
+     against the saved kind. Signing is the person's report, and Finish now queues work rather than claiming it finished.
    - History › Signed receipts: the engine's tamper-evident chain of what happened (GET /api/safety-extras/activity), each
      entry with its fingerprint and the one it links to, the break the engine's own check found (POST
      /api/safety-extras/activity/verify), and "Check this run" reads that run's signed receipts (GET
      /api/runs/<id>/receipts). "What a break looks like" would draw made-up entries, so it stays greyed. */
 
 import { esc, renderNow } from "../core/dom.js";
-import { E, chatFace, ownName } from "../core/state.js";
+import { E, activeId, ownerHere, chatFace, ownName } from "../core/state.js";
 import { av, toast, openDlg, closeDlg, dialog } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -65,25 +65,36 @@ async function leaveStopped(id) {
 }
 
 /* ---------- Later: work handed over to finish later ---------- */
-const HOW = { "user.task": "A step you do by hand", "web.page": "A step you do by hand", "web.crawl": "A step you do by hand" };
-const byHand = (d) => Boolean(HOW[d.tool]);
-export const laterCount = () => deferred.filter((d) => !d.settledAt).length;
+const KINDS = {
+  service: { how: "Waiting on a service", action: "stop", label: "Stop waiting" },
+  manual: { how: "A step you do by hand", action: "done", label: "Done" },
+  signing: { how: "A signing step you do yourself", action: "signed", label: "I've signed it" },
+  later: { how: "Unfinished work set aside for later", action: "finish", label: "Finish now" },
+};
+const kindOf = (d) => KINDS[d.kind] ?? KINDS[["user.task", "web.page", "web.crawl"].includes(d.tool) ? "manual" : "service"];
+export const laterCount = () => ownerHere() ? deferred.filter((d) => !d.settledAt).length : 0;
 
 function laterRow(d) {
   const settled = Boolean(d.settledAt);
   const line = settled ? d.outcome : when17(d.createdAt);
-  const act = byHand(d) ? btn17("laterb17", t("first-run-steps.done"), `data-id="${esc(d.id)}" data-v="done"`) : btn17("laterb17", t("window.places.inbox17.stop-waiting"), `data-id="${esc(d.id)}" data-v="stop"`);
+  const kind = kindOf(d);
+  const act = btn17("laterb17", say(kind.label), `data-id="${esc(d.id)}" data-v="${kind.action}"`);
   const right = settled ? pill17("done", t("window.places.inbox17.settled")) : act;
-  return `<div class="prow later-b17">${faceOf(d.sessionId, 34)}<span class="grow"><b>${esc(String(d.description ?? "").split("\n")[0])}</b><small>${esc(line)}</small><small class="how-b17">${esc(say(HOW[d.tool]) ?? t("window.places.inbox17.handed-over"))}</small></span>${right}</div>`;
+  return `<div class="prow later-b17">${faceOf(d.sessionId, 34)}<span class="grow"><b>${esc(String(d.description ?? "").split("\n")[0])}</b><small>${esc(line)}</small><small class="how-b17">${esc(say(kind.how))}</small></span>${right}</div>`;
 }
 export function laterTab() {
+  if (!ownerHere()) return `<p class="hint">${esc(say("Handed-over work is available to the owner."))}</p>`;
   return `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.inbox17.work-that-finishes-later-by-a")}</p><div class="rows">${deferred.map(laterRow).join("")}</div>`;
 }
 
 async function settle(el) {
+  const entry = deferred.find((d) => d.id === el.dataset.id && !d.settledAt);
+  if (!ownerHere() || !entry || el.disabled || el.dataset.v !== kindOf(entry).action) return;
+  const person = activeId();
   el.disabled = true;
-  const outcome = el.dataset.v === "stop" ? t("window.places.inbox17.you-stopped-waiting") : "Done.";
-  try { await api("deferred/settle", { id: el.dataset.id, outcome }); } catch (error) { toast(error.message); }
+  try { await api("deferred/settle", { id: entry.id, action: kindOf(entry).action }); }
+  catch (error) { if (ownerHere() && activeId() === person) toast(error.message); }
+  if (!ownerHere() || activeId() !== person) return;
   await readDeferred();
   renderNow();
 }
@@ -130,7 +141,13 @@ async function checkRun(el) {
 
 /* ---------- reading and actions ---------- */
 async function readStops() { stops = (await api("adapt")).stops ?? []; }
-async function readDeferred() { deferred = (await api("deferred")).deferred ?? []; }
+let deferredRead = 0;
+async function readDeferred() {
+  const reading = ++deferredRead, person = activeId();
+  if (!ownerHere()) { deferred = []; return; }
+  const answer = await api("deferred");
+  if (reading === deferredRead && ownerHere() && activeId() === person) deferred = answer.deferred ?? [];
+}
 
 /* After the Inbox draws: the stops (Needs you) and the handed-over jobs (every tab, for the Later count). */
 export async function readInbox17(tab) {
