@@ -869,6 +869,8 @@ owner GET /api/personal/home | here=ok remote=ok phone=ok legacy=ok person=401/3
 owner POST /api/personal/home | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/home/states | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/home/states | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/personal/home/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner POST /api/personal/home/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/mail | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/personal/mail | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/personal/mail/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -3067,6 +3069,8 @@ owner+lockdown GET /api/personal/home | here=ok remote=ok phone=ok legacy=ok per
 owner+lockdown POST /api/personal/home | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/home/states | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/home/states | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/personal/home/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
+owner+lockdown POST /api/personal/home/test | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/mail | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/personal/mail | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/personal/mail/search | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
@@ -5265,6 +5269,8 @@ household GET /api/personal/home | here=400/f6e21c remote=400/f6e21c read=401/86
 household POST /api/personal/home | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/home/states | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/home/states | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/personal/home/test | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household POST /api/personal/home/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/mail | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/personal/mail | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/personal/mail/search | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -7463,6 +7469,8 @@ household+lockdown GET /api/personal/home | here=400/f6e21c remote=400/f6e21c re
 household+lockdown POST /api/personal/home | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/home/states | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/home/states | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/personal/home/test | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
+household+lockdown POST /api/personal/home/test | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/mail | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/personal/mail | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/personal/mail/search | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
@@ -9661,6 +9669,8 @@ applock GET /api/personal/home | here=423/a8f863
 applock POST /api/personal/home | here=423/a8f863
 applock GET /api/personal/home/states | here=423/a8f863
 applock POST /api/personal/home/states | here=423/a8f863
+applock GET /api/personal/home/test | here=423/a8f863
+applock POST /api/personal/home/test | here=423/a8f863
 applock GET /api/personal/mail | here=423/a8f863
 applock POST /api/personal/mail | here=423/a8f863
 applock GET /api/personal/mail/search | here=423/a8f863
