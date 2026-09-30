@@ -193,7 +193,7 @@ test("Simple closes the panel and Advanced opens it again, and a panel shut befo
   await simple.click();
   await page.waitForFunction(() => !document.getElementById("app").classList.contains("simple19"));
   await panel(page).waitFor();
-  assert.equal(await page.locator('.titlebar [data-act="home19"]').getAttribute("aria-pressed"), "true", "the panel is open again");
+  assert.equal(await page.locator('.titlebar [data-act="home19"]').getAttribute("aria-expanded"), "true", "the panel is open again");
 
   await page.locator('.titlebar [data-act="home19"]').click();
   await page.locator("#home19").waitFor({ state: "hidden" });
@@ -202,5 +202,19 @@ test("Simple closes the panel and Advanced opens it again, and a panel shut befo
   await simple.click();
   await page.waitForFunction(() => !document.getElementById("app").classList.contains("simple19"));
   assert.ok(await page.locator("#home19").isHidden(), "a panel shut before Simple is not opened by Advanced");
+  assert.deepEqual(errors, []);
+});
+
+test("UI-221: Esc closes the panel and hands the keyboard back to the button that opened it", async (t) => {
+  const { page, errors } = await fixture(t);
+  const opener = page.locator('.titlebar [data-act="home19"]');
+  await opener.focus();
+  await opener.press("Enter");
+  await panel(page).waitFor();
+  assert.equal(await opener.getAttribute("aria-expanded"), "true");
+  assert.equal(await opener.getAttribute("aria-controls"), "home19");
+  await page.locator("#home19-prompt").press("Escape");
+  await page.locator("#home19").waitFor({ state: "hidden" });
+  assert.equal(await page.evaluate(() => document.activeElement?.dataset?.act), "home19", "focus is back on the Home button");
   assert.deepEqual(errors, []);
 });

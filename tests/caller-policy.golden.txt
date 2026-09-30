@@ -173,6 +173,8 @@ owner GET /api/adapt/switch | here=ok remote=ok phone=ok legacy=ok person=401/32
 owner POST /api/adapt/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/4fc965 run=401/4fc965 nobody=401/40daee
 owner GET /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner GET /api/activity/today | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/activity/today | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/alive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -1960,6 +1962,10 @@ owner GET /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok l
 owner POST /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/history-ideas | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/history-ideas | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/home-conversation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/home-conversation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/branch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2437,6 +2443,8 @@ owner+lockdown GET /api/adapt/switch | here=ok remote=ok phone=ok legacy=ok pers
 owner+lockdown POST /api/adapt/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/4fc965 run=401/4fc965 nobody=401/40daee
 owner+lockdown GET /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner+lockdown GET /api/activity/today | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/activity/today | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/alive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4224,6 +4232,10 @@ owner+lockdown GET /api/self-development/requests/:id/diff | here=ok remote=ok p
 owner+lockdown POST /api/self-development/requests/:id/diff | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/history-ideas | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/history-ideas | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/home-conversation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/home-conversation | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/branch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4701,6 +4713,8 @@ household GET /api/adapt/switch | here=400/f6e21c remote=400/f6e21c read=400/f6e
 household POST /api/adapt/switch | here=400/f6e21c remote=400/f6e21c read=401/4fc965 run=401/4fc965
 household GET /api/action | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/action | here=ok remote=ok read=401/d45404 run=ok
+household GET /api/activity/today | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/activity/today | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/activity | here=ok remote=ok read=ok run=ok
 household POST /api/activity | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/alive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6488,6 +6502,10 @@ household GET /api/self-development/requests/:id/diff | here=400/f6e21c remote=4
 household POST /api/self-development/requests/:id/diff | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions | here=ok remote=ok read=ok run=ok
 household POST /api/sessions | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/history-ideas | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/history-ideas | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/home-conversation | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/home-conversation | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id | here=ok remote=ok read=ok run=ok
 household POST /api/sessions/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id/branch | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6965,6 +6983,8 @@ household+lockdown GET /api/adapt/switch | here=400/f6e21c remote=400/f6e21c rea
 household+lockdown POST /api/adapt/switch | here=400/f6e21c remote=400/f6e21c read=401/4fc965 run=401/4fc965
 household+lockdown GET /api/action | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/action | here=ok remote=ok read=401/d45404 run=ok
+household+lockdown GET /api/activity/today | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/activity/today | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/activity | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/activity | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/alive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8752,6 +8772,10 @@ household+lockdown GET /api/self-development/requests/:id/diff | here=400/f6e21c
 household+lockdown POST /api/self-development/requests/:id/diff | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/sessions | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/history-ideas | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/history-ideas | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/home-conversation | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/home-conversation | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/sessions/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/branch | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9229,6 +9253,8 @@ applock GET /api/adapt/switch | here=423/a8f863
 applock POST /api/adapt/switch | here=423/a8f863
 applock GET /api/action | here=423/a8f863
 applock POST /api/action | here=423/a8f863
+applock GET /api/activity/today | here=423/a8f863
+applock POST /api/activity/today | here=423/a8f863
 applock GET /api/activity | here=423/a8f863
 applock POST /api/activity | here=423/a8f863
 applock GET /api/alive | here=ok
@@ -11016,6 +11042,10 @@ applock GET /api/self-development/requests/:id/diff | here=423/a8f863
 applock POST /api/self-development/requests/:id/diff | here=423/a8f863
 applock GET /api/sessions | here=423/a8f863
 applock POST /api/sessions | here=423/a8f863
+applock GET /api/history-ideas | here=423/a8f863
+applock POST /api/history-ideas | here=423/a8f863
+applock GET /api/home-conversation | here=423/a8f863
+applock POST /api/home-conversation | here=423/a8f863
 applock GET /api/sessions/:id | here=423/a8f863
 applock POST /api/sessions/:id | here=423/a8f863
 applock GET /api/sessions/:id/branch | here=423/a8f863
