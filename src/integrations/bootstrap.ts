@@ -53,8 +53,11 @@ const credentialName = z.string().regex(/^[A-Z][A-Z0-9_]{0,63}$/);
 const mailServer = z.object({
   host: z.string().min(1).max(253), port: z.number().int().min(1).max(65535),
   user: z.string().min(1).max(320),
-  /** false means connect in the clear and upgrade with STARTTLS; only sensible for sending. */
-  tls: z.boolean().default(true),
+  /**
+   * true: TLS from the first byte. false: STARTTLS, required before the password is sent (a server that does not offer
+   * it is refused unless it is on this computer). Unset: STARTTLS on ports 25, 143 and 587, TLS from the start otherwise.
+   */
+  tls: z.boolean().optional(),
 }).strict();
 export const TelegramChannelSchema = z.object({
   id: channelId.default('telegram'),
