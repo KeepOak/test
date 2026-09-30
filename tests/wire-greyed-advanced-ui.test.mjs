@@ -94,7 +94,7 @@ test("Rewrite short notes opens nothing late: another dialog opened while the no
     if (slow && request.request().method() === "GET") await new Promise((done) => setTimeout(done, 2500));
     await request.continue();
   });
-  const { page, errors, call } = await settingsWindow(t, { route, name: "rewrite-late" });
+  const { page, errors, call } = await settingsWindow(t, { route, name: "rewrite-late", provider: quiet });
   await call("/api/reach/notes", { title: "Survey", body: "the tower was measured again, it is 41 m tall" });
   await openSettingsPage(page, "general");
   await setLevel(page, "technical");
@@ -110,5 +110,37 @@ test("Rewrite short notes opens nothing late: another dialog opened while the no
   await page.waitForTimeout(500);
   assert.equal(await page.locator("#ad-rw-note").count(), 0, "the rewrite dialog did not open over the newer one");
   assert.equal(await page.locator(".dlg h2").first().innerText(), shown, "the dialog opened meanwhile is still the one shown");
+
+  // Nothing open, then another dialog opened and closed while the notes were read: still nothing opens late.
+  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  const again = page.waitForResponse((response) => response.url().endsWith("/api/reach/notes"), { timeout: 15000 });
+  await page.locator('[data-act="ad-rewrite"]').click();
+  await page.locator('[data-act="ad-orders"]').first().click();
+  await page.locator(".dlg").first().waitFor();
+  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  await again;
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator(".dlg").count(), 0, "opened and closed meanwhile: the rewrite dialog is not brought up late");
+
+  // Closed while the kept version is being saved: the dialog is not opened again afterwards.
+  slow = false;
+  await page.locator('[data-act="ad-rewrite"]').click();
+  await page.locator('.dlg [data-act="ad-rw-go"]').click();
+  await page.locator('.dlg [data-act="ad-rw-keep"]').waitFor();
+  let saving = false;
+  await page.route("**/api/reach/notes", async (request) => {
+    if (request.request().method() === "POST") { saving = true; await new Promise((done) => setTimeout(done, 2500)); }
+    await request.continue();
+  });
+  const saved = page.waitForResponse((response) => response.url().endsWith("/api/reach/notes") && response.request().method() === "POST", { timeout: 15000 });
+  await page.locator('.dlg [data-act="ad-rw-keep"]').click();
+  await page.locator('.dlg [data-act="dlg-close"]').first().click();
+  await page.locator(".dlg").waitFor({ state: "detached" });
+  await saved;
+  await page.waitForTimeout(800);
+  assert.equal(saving, true);
+  assert.equal(await page.locator(".dlg").count(), 0, "closed during the save: not reopened");
   assert.deepEqual(errors, []);
 });

@@ -130,9 +130,10 @@ async function rewriteNow() {
 async function keepRewrite() {
   const note = RW.notes.find((n) => n.id === RW.out?.id);
   if (!note) return;
-  try { await api("reach/notes", { id: note.id, title: note.title, body: RW.out.suggestion, expected: RW.out.basedOn }); } catch (error) { toast(error.message); return; }
+  const still = viewFence("ad-rewrite-keep"); // the dialog this came from: closed while saving, it is not opened again
+  try { await api("reach/notes", { id: note.id, title: note.title, body: RW.out.suggestion, expected: RW.out.basedOn }); } catch (error) { if (still()) toast(error.message); return; }
   toast(t("accounts.saved"));
-  await openRewrite();
+  if (still()) await openRewrite();
 }
 
 /* Outside memory: the engine's four choices (none, Mem0, Honcho, Hindsight), pressed from its own value. */
