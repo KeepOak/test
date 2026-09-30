@@ -6,6 +6,7 @@ import { readEventStream } from "./provider-stream.js";
 import { restoreToolNames, wireName } from "./providers.js";
 import { chatgptAccountId, chatgptDefaults, type ChatGPTAuth } from "./chatgpt-auth.js";
 import { refuseSignInForTrunk } from "./accounts/context.js"; // mac7/lockdown-fix
+import type { CodexImageEndpoint } from "./media-codex-images.js";
 import { audioOnlySdp, chatgptCallUrl, ChatGPTRealtimeSession } from "./realtime-chatgpt.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { RealtimeSession, RealtimeSettings } from "./realtime.js";
@@ -54,6 +55,17 @@ export class ChatGPTProvider implements Provider {
   }
   audio(): null {
     return null;
+  }
+  get signInImagesAvailable(): boolean { return this.apiBase === chatgptDefaults.apiBase; }
+  /** The caller checks owner/source/account constraints before requesting this private route. */
+  async signInImages(signal: AbortSignal): Promise<CodexImageEndpoint> {
+    refuseSignInForTrunk(); signal.throwIfAborted();
+    if (this.apiBase !== chatgptDefaults.apiBase) throw new Error("ChatGPT pictures cannot use a proxy or a different service address.");
+    const token = await this.auth.accessToken();
+    signal.throwIfAborted(); refuseSignInForTrunk();
+    const accountId = chatgptAccountId(token);
+    if (!accountId) throw new Error("The ChatGPT sign-in does not identify its account for making pictures.");
+    return { endpoint: this.apiBase, token, accountId, originator: chatgptDefaults.originator, userAgent: this.userAgent };
   }
   supportsImages(): boolean { return true; }
   async realtime(policy: NetworkPolicy, settings: RealtimeSettings, offer: string, runId: string, signal: AbortSignal): Promise<RealtimeSession> {
