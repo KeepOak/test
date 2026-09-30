@@ -6,6 +6,7 @@ import {
   unavailable,
 } from "./pool.js";
 import { primaryAccount, type Account, type Pool } from "./settings.js";
+import { accountCallReceipt } from "./call-usage.js";
 
 /**
  * One connection answering through several accounts, the way Hermes Agent's credential pools do (owner decision
@@ -32,6 +33,8 @@ export interface PoolHooks {
   /** models-ui: a Trunk's work moved on to another account (told to the owner, src/accounts/service.ts trunkMoves). */
   moved?: (move: TrunkMove) => void;
   model: string;
+  /** Identity bound to the original provider, when its creator knows it. */
+  originalAccount?: string;
   /** The pool as saved now, or null when this connection has no list of its own. */
   settings: () => Pool | null;
   states: Map<string, AccountState>;
@@ -155,11 +158,20 @@ export class AccountPoolProvider {
     if (call?.trunk) return this.forTrunk(pool, call, request);
     // The one account of a list switched off is the owner saying this connection does not answer.
     if (pool?.accounts.length === 1 && pool.accounts[0]!.disabled) throw new Error(allSwitchedOff);
-    if (!pool || pool.accounts.length < 2) return this.original.complete(request);
+    if (!pool || pool.accounts.length < 2) return this.completeOriginal(request, call);
     const usable = pool.accounts.filter((account) => this.personMayUse(pool, account));
     if (!usable.length) throw new Error("None of this connection's accounts is shared with you. Ask the owner to share one.");
     return this.answer(pool, usable, request, call);
   };
+
+  private async completeOriginal(request: CompletionRequest, call: AccountCall | undefined): Promise<Completion> {
+    const completion = await this.original.complete(request);
+    const account = this.hooks.originalAccount ?? null;
+    const label = account ? this.hooks.settings()?.accounts.find((one) => one.id === account)?.label ?? account : null;
+    // A pool default is not evidence of what the original provider used; only its creator can bind it.
+    call?.note?.("model.account", accountCallReceipt(this.hooks.pool, account, label, this.hooks.model, completion, "connection"));
+    return completion;
+  }
 
   private personMayUse(pool: Pool, account: Account): boolean {
     return !this.hooks.personIsNotOwner() || (pool.kind === "api-key" && account.shared);
@@ -185,7 +197,7 @@ export class AccountPoolProvider {
   private forTrunk(pool: Pool | null, call: AccountCall, request: CompletionRequest): Promise<Completion> {
     if (!pool) {
       if (!call.trunk!.keys.copyFromOwner) throw new Error(trunkKeyRefusal(this.hooks.pool, this.hooks.name));
-      return this.original.complete(request);
+      return this.completeOriginal(request, call);
     }
     if (pool.kind !== "api-key" && call.trunk!.signIns !== true) throw new Error(trunkSignInRefusal);
     // models-ui: its pick, then the accounts it goes on to (keys.next), and the owner's others only when it copies them.
@@ -209,7 +221,7 @@ export class AccountPoolProvider {
     // An answer ends a run of rate limits, so the next one rests 30 seconds again.
     if (state.rateFailures) { state.rateFailures = 0; this.hooks.saveRest?.(account.id, state); }
     this.hooks.record(account, completion);
-    call?.note?.("model.account", { pool: this.hooks.pool, account: account.id, label: account.label });
+    call?.note?.("model.account", accountCallReceipt(this.hooks.pool, account.id, account.label, this.hooks.model, completion));
     return completion;
   }
 

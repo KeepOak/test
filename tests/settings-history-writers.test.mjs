@@ -158,6 +158,7 @@ const unreadKeys = {
   "src/deferred.ts": "deferred work, one record each",
   "src/delight.ts": "the delight progress record",
   "src/feature-switch-migration.ts": "the ticked screen and Keychain switches at start-up (see above)",
+  "src/github-device-connection.ts": "the GitHub device sign-in's client ID and account link (github.device.config/account), set from Developer, not a Settings card",
   "src/learning-more/settings.ts": "the learning-more parts, none of them in the catalogue",
   "src/lockdown.ts": "the settings Lockdown takes over, including policy and the screen: recorded (runtime guard below)",
   "src/memory-git.ts": "the memory history's own status record",
