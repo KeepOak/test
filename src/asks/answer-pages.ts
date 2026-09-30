@@ -110,6 +110,8 @@ export class AnswerPages {
     const columns = new Set(store.sqlite.prepare("PRAGMA table_info(asks_pages)").all().map((row) => String(row.name)));
     if (!columns.has("source_path")) store.sqlite.exec("ALTER TABLE asks_pages ADD COLUMN source_path TEXT");
     if (!columns.has("format")) store.sqlite.exec("ALTER TABLE asks_pages ADD COLUMN format TEXT NOT NULL DEFAULT 'text'");
+    // The file a live page was bound to, as a full path: a later project or worktree switch never shows another file.
+    if (!columns.has("source_where")) store.sqlite.exec("ALTER TABLE asks_pages ADD COLUMN source_where TEXT");
   }
   /** SELF-309: publishes a page, or updates one by id (its revision moves on); a live page is checked to be readable now. */
   async publish(input: unknown): Promise<AnswerPage> {
@@ -122,13 +124,14 @@ export class AnswerPages {
       if (!this.files) throw new Error("A live page needs the workspace, and there is none here.");
       await this.files.read(sourcePath, liveBytes); // outside the workspace, hidden, a link or too big: refused now
     }
+    const where = sourcePath && this.files ? await this.files.checked(sourcePath) : null;
     const now = new Date().toISOString(), id = existing?.id ?? randomUUID();
-    this.store.sqlite.prepare(`INSERT INTO asks_pages(id, owner, title, question, body, sources, revision, created_at, updated_at, source_path, format)
-      VALUES(?,?,?,?,?,?,?,?,?,?,?)
+    this.store.sqlite.prepare(`INSERT INTO asks_pages(id, owner, title, question, body, sources, revision, created_at, updated_at, source_path, format, source_where)
+      VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(id) DO UPDATE SET title=excluded.title, body=excluded.body, revision=asks_pages.revision+1,
-      updated_at=excluded.updated_at, source_path=excluded.source_path, format=excluded.format`)
+      updated_at=excluded.updated_at, source_path=excluded.source_path, format=excluded.format, source_where=excluded.source_where`)
       .run(id, this.owner, value.title, existing?.question ?? "", value.body ?? "", JSON.stringify(existing?.sources ?? []), 1,
-        existing?.createdAt ?? now, now, sourcePath, value.format);
+        existing?.createdAt ?? now, now, sourcePath, value.format, where);
     return this.get(id);
   }
   /**
@@ -140,6 +143,9 @@ export class AnswerPages {
     if (!page.sourcePath) return page;
     if (!this.files) return { ...page, missing: "There is no workspace here to read it from." };
     try {
+      const bound = this.store.sqlite.prepare("SELECT source_where FROM asks_pages WHERE id=? AND owner=?").get(page.id, this.owner)?.source_where;
+      if (!bound || await this.files.checked(page.sourcePath) !== String(bound))
+        return { ...page, body: "", missing: `${page.sourcePath} was published from another project or worktree; switch back to it to see this page.` };
       const { content } = await this.files.read(page.sourcePath, liveBytes);
       const changed = await stat(await this.files.checked(page.sourcePath)).then((info) => info.mtime.toISOString(), () => page.updatedAt);
       return { ...page, body: content, updatedAt: changed };

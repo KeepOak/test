@@ -7,7 +7,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
@@ -106,5 +106,32 @@ test("a published page opens in the window at /#page=<id> and stays current whil
   assert.match(await tab.locator("[data-page19]").innerText(), /Live from MASTER-PLAN\.md/);
   await writeFile(plan, "# Master plan\n\nSELF-309 is DONE.\n");
   await tab.waitForFunction(() => /SELF-309 is DONE/.test(document.querySelector(".page19")?.textContent ?? ""), null, { timeout: 15000 });
+
+  // Closed while a read is on its way: the answer that comes back afterwards never opens the page again.
+  await tab.route(`**/api/asks/pages/${page.id}`, async (route) => { await new Promise((done) => setTimeout(done, 2500)); await route.continue(); });
+  await writeFile(plan, "# Master plan\n\nSELF-309 is CLOSED.\n");
+  await tab.waitForRequest((request) => request.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  await tab.locator('.dlg [data-act="dlg-close"]').last().click();
+  await tab.locator("[data-page19]").waitFor({ state: "detached" });
+  await tab.waitForResponse((response) => response.url().endsWith(`/api/asks/pages/${page.id}`), { timeout: 15000 });
+  await tab.waitForTimeout(500);
+  assert.equal(await tab.locator("[data-page19]").count(), 0, "a closed page stays closed");
   assert.deepEqual(errors, []);
+});
+
+test("a live page shows only the file it was bound to: another project's file of the same name is never shown", async (t) => {
+  const f = await fixture(t, {});
+  const owner = f.app.runtime.owner;
+  await writeFile(join(f.workspace, "MASTER-PLAN.md"), "# The workspace's plan\n");
+  const page = await f.app.registry.execute("pages.publish", { title: "Master plan", sourcePath: "MASTER-PLAN.md" }, f.app.runtime.context());
+  await mkdir(join(f.workspace, "other"), { recursive: true });
+  await writeFile(join(f.workspace, "other", "MASTER-PLAN.md"), "# Another project's plan\n");
+  f.app.store.projects.save(owner, { id: "other", name: "Other", folder: "other" });
+  f.app.store.projects.setActive(owner, { active: "other" });
+  const moved = (await f.api(`asks/pages/${page.id}`)).body.page;
+  assert.doesNotMatch(moved.body, /Another project/, "the other project's file is not shown");
+  assert.match(moved.missing, /another project or worktree/);
+  assert.doesNotMatch((await f.api(`asks/pages/${page.id}/export`)).body.html, /Another project/, "nor handed on");
+  f.app.store.projects.setActive(owner, { active: "default" });
+  assert.match((await f.api(`asks/pages/${page.id}`)).body.page.body, /The workspace's plan/, "back in its own project, it shows again");
 });
