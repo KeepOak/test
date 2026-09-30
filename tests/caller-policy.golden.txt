@@ -1573,6 +1573,12 @@ owner GET /api/people/me/pin | here=ok remote=ok phone=ok legacy=ok person=401/3
 owner POST /api/people/me/pin | here=ok remote=ok phone=ok legacy=ok person=ok read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/people/me/sign-out | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/people/me/sign-out | here=ok remote=ok phone=ok legacy=ok person=ok read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/people/rooms | here=ok remote=ok phone=ok legacy=ok person=ok read=ok run=ok nobody=401/40daee
+owner POST /api/people/rooms | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/people/rooms/:id | here=ok remote=ok phone=ok legacy=ok person=ok read=ok run=ok nobody=401/40daee
+owner POST /api/people/rooms/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner GET /api/people/rooms/:id/message | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/people/rooms/:id/message | here=ok remote=ok phone=ok legacy=ok person=ok read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/people/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/people/settings | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/people/shares | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -3850,6 +3856,12 @@ owner+lockdown GET /api/people/me/pin | here=ok remote=ok phone=ok legacy=ok per
 owner+lockdown POST /api/people/me/pin | here=ok remote=ok phone=ok legacy=ok person=ok read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/people/me/sign-out | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/people/me/sign-out | here=ok remote=ok phone=ok legacy=ok person=ok read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/people/rooms | here=ok remote=ok phone=ok legacy=ok person=ok read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/people/rooms | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/people/rooms/:id | here=ok remote=ok phone=ok legacy=ok person=ok read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/people/rooms/:id | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
+owner+lockdown GET /api/people/rooms/:id/message | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/people/rooms/:id/message | here=ok remote=ok phone=ok legacy=ok person=ok read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/people/settings | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/people/settings | here=ok remote=403/4bac86 phone=403/4bac86 legacy=403/4bac86 person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/people/shares | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6127,6 +6139,12 @@ household GET /api/people/me/pin | here=400/f6e21c remote=400/f6e21c read=400/f6
 household POST /api/people/me/pin | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/people/me/sign-out | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/people/me/sign-out | here=ok remote=ok read=401/55661c run=401/55661c
+household GET /api/people/rooms | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/people/rooms | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/people/rooms/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/people/rooms/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household GET /api/people/rooms/:id/message | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/people/rooms/:id/message | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/people/settings | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/people/settings | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household GET /api/people/shares | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8404,6 +8422,12 @@ household+lockdown GET /api/people/me/pin | here=400/f6e21c remote=400/f6e21c re
 household+lockdown POST /api/people/me/pin | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/people/me/sign-out | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/people/me/sign-out | here=ok remote=ok read=401/55661c run=401/55661c
+household+lockdown GET /api/people/rooms | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/people/rooms | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/people/rooms/:id | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/people/rooms/:id | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
+household+lockdown GET /api/people/rooms/:id/message | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/people/rooms/:id/message | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/people/settings | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/people/settings | here=400/f6e21c remote=403/4bac86 read=401/55661c run=401/55661c
 household+lockdown GET /api/people/shares | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -10681,6 +10705,12 @@ applock GET /api/people/me/pin | here=423/a8f863
 applock POST /api/people/me/pin | here=423/a8f863
 applock GET /api/people/me/sign-out | here=423/a8f863
 applock POST /api/people/me/sign-out | here=423/a8f863
+applock GET /api/people/rooms | here=423/a8f863
+applock POST /api/people/rooms | here=423/a8f863
+applock GET /api/people/rooms/:id | here=423/a8f863
+applock POST /api/people/rooms/:id | here=423/a8f863
+applock GET /api/people/rooms/:id/message | here=423/a8f863
+applock POST /api/people/rooms/:id/message | here=423/a8f863
 applock GET /api/people/settings | here=423/a8f863
 applock POST /api/people/settings | here=423/a8f863
 applock GET /api/people/shares | here=423/a8f863
