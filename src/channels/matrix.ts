@@ -1,5 +1,5 @@
 import { matrixPictureContent } from "./matrix-picture.js";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
@@ -78,7 +78,11 @@ export class MatrixAdapter implements ChannelAdapter {
   /** Room ids are longer than the delivery ledger allows, so long ones get a short handle. */
   private readonly rooms = new Map<string, string>();
   /** Original event ids are kept only for recent inbound messages, never accepted from a chat handle alone. */
-  private readonly received = new Map<string, { roomId: string; eventId: string }>();
+  private readonly received = new Map<string, { roomId: string; eventId: string; chatId: string }>();
+  /** Thread roots stay case-sensitive, following OpenClaw monitor/threads.ts (MIT); Branch-specific implementation. */
+  private readonly threads = new Map<string, string>();
+  private readonly eventChats = new Map<string, string>();
+  private readonly sentChats = new Map<string, string>();
   private readonly reactions = new Map<string, { emoji: string; eventId: string }>();
   constructor(private readonly options: MatrixOptions) {
     this.id = options.id;
@@ -202,7 +206,8 @@ export class MatrixAdapter implements ChannelAdapter {
       .safeParse((event.content as Record<string, unknown> | undefined)?.["m.relates_to"]);
     const sender = event.sender ?? "";
     if (!relates.success || !sender || sender === this.options.userId) return null;
-    const chatId = handle(roomId, "room"), senderId = handle(sender, "who");
+    const chatId = this.eventChats.get(`${roomId}:${relates.data.event_id}`), senderId = handle(sender, "who");
+    if (!chatId) return null;
     const said = this.answers.read(relates.data.event_id, chatId, senderId, relates.data.key);
     if (!said) return null;
     if (chatId !== roomId) this.rooms.set(chatId, roomId);
@@ -220,7 +225,11 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!relates.success || !fresh.success) return null;
     const original = this.authors.get(relates.data.event_id);
     if (!original || original !== event.sender) return null; // only its own sender's edit of a message this adapter read
-    const inbound = this.inbound(roomId, { ...event, event_id: relates.data.event_id, content: fresh.data });
+    const chatId = this.eventChats.get(`${roomId}:${relates.data.event_id}`);
+    if (!chatId) return null;
+    const root = this.threads.get(chatId);
+    const renewed = root ? { ...fresh.data, "m.relates_to": { rel_type: "m.thread", event_id: root } } : fresh.data;
+    const inbound = this.inbound(roomId, { ...event, event_id: relates.data.event_id, content: renewed });
     return inbound ? { ...inbound, edited: true } : null;
   }
   private inbound(roomId: string, event: z.infer<typeof eventSchema>): InboundMessage | null {
@@ -234,11 +243,11 @@ export class MatrixAdapter implements ChannelAdapter {
     }
     const text = event.content.body ?? "", sender = event.sender ?? "";
     if (!text || !sender || sender === this.options.userId) return null;
-    const chatId = handle(roomId, "room");
-    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    const chatId = this.chat(roomId, event.content);
     const messageId = handle(event.event_id ?? randomUUID(), "msg");
     if (event.event_id) {
-      this.received.set(messageId, { roomId, eventId: event.event_id });
+      this.received.set(messageId, { roomId, eventId: event.event_id, chatId });
+      this.rememberEvent(roomId, event.event_id, chatId);
       if (this.received.size > 200) this.received.delete(this.received.keys().next().value!);
     }
     const name = this.options.userId.split(":")[0]!.replace(/^@/, "");
@@ -257,8 +266,12 @@ export class MatrixAdapter implements ChannelAdapter {
     const content = event.content!, sender = event.sender ?? "";
     const mxc = /^mxc:\/\/([^/]+)\/([A-Za-z0-9_-]+)$/.exec(content.url ?? "");
     if (!mxc || !sender || sender === this.options.userId) return null;
-    const chatId = handle(roomId, "room");
-    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    const chatId = this.chat(roomId, content);
+    if (event.event_id) {
+      this.received.set(handle(event.event_id, "msg"), { roomId, eventId: event.event_id, chatId });
+      if (this.received.size > 200) this.received.delete(this.received.keys().next().value!);
+      this.rememberEvent(roomId, event.event_id, chatId);
+    }
     const mediaType = content.info?.mimetype?.split(";")[0] ?? (content.msgtype === "m.image" ? "image/jpeg" : "application/octet-stream");
     const host = new RegExp(`^${new URL(this.base).hostname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
     const bytes = () => fetchCapped(this.fetch, `${this.base}/_matrix/client/v1/media/download/${encodeURIComponent(mxc[1]!)}/${encodeURIComponent(mxc[2]!)}`,
@@ -353,6 +366,7 @@ export class MatrixAdapter implements ChannelAdapter {
     const target = this.received.get(messageId), roomId = this.rooms.get(chatId) ?? chatId;
     if (!target || target.roomId !== roomId) throw new Error("Matrix: that message is not in this room");
     const prior = this.reactions.get(messageId);
+    if (target.chatId !== chatId) throw new Error("Matrix: that message is not in this thread");
     if (prior?.emoji === emoji) return;
     if (prior) { await this.redact(roomId, prior.eventId); this.reactions.delete(messageId); }
     const eventId = await this.put(chatId, { "m.relates_to": { rel_type: "m.annotation", event_id: target.eventId, key: emoji } }, "m.reaction");
@@ -373,12 +387,17 @@ export class MatrixAdapter implements ChannelAdapter {
   async send(chatId: string, text: string, replyTo?: string, format?: MessageFormat): Promise<string | undefined> {
     // CHAT-116: a reply quotes the person's own message (m.in_reply_to), only one received in this same room.
     const quoted = replyTo ? this.received.get(replyTo) : undefined;
-    const inReply = quoted && quoted.roomId === (this.rooms.get(chatId) ?? chatId) ? { "m.relates_to": { "m.in_reply_to": { event_id: quoted.eventId } } } : {};
+    const inReply = quoted && quoted.chatId === chatId ? { "m.relates_to": { "m.in_reply_to": { event_id: quoted.eventId } } } : {};
     const eventId = await this.put(chatId, { ...MatrixAdapter.content(text.slice(0, this.maxTextLength), format), ...inReply });
     if (!eventId) return undefined;
     const short = handle(eventId, "msg");
     this.sent.set(short, eventId);
-    if (this.sent.size > 200) this.sent.delete(this.sent.keys().next().value!);
+    this.sentChats.set(short, chatId);
+    this.rememberEvent(this.rooms.get(chatId) ?? chatId, eventId, chatId);
+    if (this.sent.size > 200) {
+      const oldest = this.sent.keys().next().value!;
+      this.sent.delete(oldest); this.sentChats.delete(oldest);
+    }
     return short;
   }
   /**
@@ -387,15 +406,15 @@ export class MatrixAdapter implements ChannelAdapter {
    */
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     const eventId = this.sent.get(messageId);
-    if (!eventId) throw new Error("Matrix: that message was not sent from here, so it cannot be edited");
-    const content = MatrixAdapter.content(text.slice(0, this.maxTextLength), format);
+    if (!eventId || this.sentChats.get(messageId) !== chatId) throw new Error("Matrix: that message was not sent in this conversation, so it cannot be edited");
+    const content = this.threadContent(chatId, MatrixAdapter.content(text.slice(0, this.maxTextLength), format));
     await this.put(chatId, { ...content, body: `* ${content.body}`, "m.new_content": content,
       "m.relates_to": { rel_type: "m.replace", event_id: eventId } });
   }
   /** Redacts an event this adapter sent (only its own, by the handle it gave it). */
   async deleteMessage(chatId: string, messageId: string): Promise<void> {
     const eventId = this.sent.get(messageId);
-    if (!eventId) throw new Error("Matrix: that message was not sent from here, so it cannot be removed");
+    if (!eventId || this.sentChats.get(messageId) !== chatId) throw new Error("Matrix: that message was not sent in this conversation, so it cannot be removed");
     await this.redact(this.rooms.get(chatId) ?? chatId, eventId);
   }
   /** Plain words, with the code as Matrix's HTML beside them when there is any. */
@@ -428,19 +447,45 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!relates.success || !sender || sender === this.options.userId) return null;
     const value = this.questions.get(relates.data.event_id)?.get(relates.data.key.replace(/️/g, ""));
     if (!value) return null;
-    const chatId = handle(roomId, "room");
-    if (chatId !== roomId) this.rooms.set(chatId, roomId);
+    const chatId = this.eventChats.get(`${roomId}:${relates.data.event_id}`);
+    if (!chatId) return null;
     return { channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
       text: value, addressed: true, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+  }
+  /** A thread is its own router conversation; room-only messages keep their existing address. */
+  private chat(roomId: string, content?: Record<string, unknown>): string {
+    const relation = z.object({ rel_type: z.literal("m.thread"), event_id: z.string().min(1).max(300) }).passthrough()
+      .safeParse(content?.["m.relates_to"]);
+    const root = relation.success ? relation.data.event_id : undefined;
+    const chatId = root ? `thread:${createHash("sha256").update(JSON.stringify([roomId, root])).digest("hex").slice(0, 32)}` : handle(roomId, "room");
+    this.rooms.set(chatId, roomId);
+    if (root) this.threads.set(chatId, root);
+    return chatId;
+  }
+  private rememberEvent(roomId: string, eventId: string, chatId: string): void {
+    this.eventChats.set(`${roomId}:${eventId}`, chatId);
+    if (this.eventChats.size > 400) this.eventChats.delete(this.eventChats.keys().next().value!);
+  }
+  /** Replies, files and progress stay in their thread. Edits keep their m.replace relation. */
+  private threadContent(chatId: string, content: Record<string, unknown>): Record<string, unknown> {
+    const root = this.threads.get(chatId);
+    if (!root) return content;
+    const relation = content["m.relates_to"] as Record<string, unknown> | undefined;
+    if (relation?.rel_type === "m.replace") return content;
+    return { ...content, "m.relates_to": { ...relation, rel_type: "m.thread", event_id: root,
+      is_falling_back: !relation?.["m.in_reply_to"],
+      "m.in_reply_to": relation?.["m.in_reply_to"] ?? { event_id: root } } };
   }
   /** Questions this adapter asked with reactions: the question's event, and what each reaction on it answers. */
   private readonly questions = new Map<string, Map<string, string>>();
   private async put(chatId: string, content: Record<string, unknown>, eventType = "m.room.message"): Promise<string | undefined> {
+    if (chatId.startsWith("thread:") && !this.threads.has(chatId))
+      throw new Error("Matrix: this thread has not been read since reconnecting; send a message there first");
     const roomId = this.rooms.get(chatId) ?? chatId;
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(eventType)}/${randomUUID()}`;
     const response = await this.fetch(address, {
       method: "PUT", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify(content), redirect: "error", signal: AbortSignal.timeout(20000),
+      body: JSON.stringify(eventType === "m.room.message" ? this.threadContent(chatId, content) : content), redirect: "error", signal: AbortSignal.timeout(20000),
     });
     if (response.status === 429) {
       const wait = z.object({ retry_after_ms: z.number().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));

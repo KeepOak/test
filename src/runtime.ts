@@ -4247,7 +4247,9 @@ ${run.output.slice(0, 6000)}`;
   private conversationPolicy(runId?: string): Policy {
     const saved = readPolicy(this.store, this.owner);
     const mode = this.heldConversationMode(saved, runId);
-    return mode ? policyForMode(saved, mode, lockdownActive(this.store, this.owner), this.registry.outboundTools()) : saved; // Q59
+    const held = mode ? policyForMode(saved, mode, lockdownActive(this.store, this.owner), this.registry.outboundTools()) : saved; // Q59
+    // Owner ruling 2026-09-30: commands no rule covers run for the owner; a household person's or short-lived key's task still asks.
+    return runId && this.store.run(runId) && !this.ownersOwnTask(runId) ? { ...held, unmatchedCommands: "ask" } : held;
   }
   /** The mode this task's conversation holds it to, or null when it follows the owner's setting. */
   private heldConversationMode(saved: Policy, runId?: string): ConversationMode | null {
@@ -4298,6 +4300,25 @@ ${run.output.slice(0, 6000)}`;
     // selfdev: a Trunk's keys mean a Trunk's turn; only the owner's designated default Trunk (their own assistant) keeps the owner's mode.
     if (context.trunkKeys && !this.ownersDefaultRoot(root.id)) return null;
     return `${this.owner} (Full Access in conversation ${root.sessionId})`;
+  }
+  /**
+   * Owner ruling (2026-09-30, "loosen up security on everything"): the owner's own task in a conversation they set to
+   * Full access. Full access asks nothing but the dangerous commands Hermes Agent asks about (src/safety-extras/
+   * dangerous-commands.ts), as OpenClaw's `tools.exec.mode: "full"` and Hermes's CLI do for their owner. It is the mode
+   * the conversation is held to (never a household person's, a short-lived key's, a paired device's, a chat app's or
+   * a schedule's), with Lockdown and the App lock still able to take it away. `ownerFullAccessFor` stays the stricter
+   * test for attributing an unattended merge or network reach to the owner.
+   */
+  ownerFullMode(context: ToolContext): boolean {
+    const run = this.store.run(context.runId), caller = currentCaller();
+    if (!run || run.owner !== this.owner || context.owner !== this.owner || context.dryRun || this.fullAccessLocked()
+      || lockdownActive(this.store, this.owner) || !this.store.profiles.isOwner() || currentPerson() || throughPairedDoor()
+      || startedWithShortLivedKey() || caller.throughDoor || caller.household || caller.appLocked
+      || this.sourceOf(context) !== "owner" || !this.ownersOwnTask(run.id) || this.learningOf(run.id)) return false;
+    // Started at this computer's own window (or by the engine for it), never through a door or from another computer.
+    const started = this.store.events(run.id).find((event) => event.kind === "run.started")?.data;
+    if (!started || started.callerDoor || !["owner-here", "system"].includes(String(started.callerKind ?? "system"))) return false;
+    return this.heldConversationMode(readPolicy(this.store, this.owner), run.id) === "full";
   }
   /** selfdev: the task's root ran as the owner's designated default Trunk, in its own (not a room's) conversation, checked now. */
   private ownersDefaultRoot(rootId: string): boolean {
@@ -4488,8 +4509,12 @@ ${run.output.slice(0, 6000)}`;
     // owner did not start is asked about, and a lock or door always is, just this once — whatever the rules say.
     // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
     // the owner's external program sign-in and keeps its own once-only question.
-    const fullAccess = this.ownerFullAccessFor(context) !== null;
-    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
+    // Owner ruling 2026-09-30: under Full access none of these extra questions is put; only Hermes's dangerous commands ask,
+    // and a settings change that takes a protection away (the command scan among them) asks once, as Hermes Agent asks
+    // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
+    const fullAccess = this.ownerFullMode(context);
+    const loosening = fullAccess ? settingsHold(tool, args) : null;
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
@@ -4756,10 +4781,10 @@ ${run.output.slice(0, 6000)}`;
     // — work the agreed plan did not mention, and a command that already failed being tried again.
     const patternNo = decision === "deny" ? null : this.patternRefusal(call, context); // eng-trunk-controls
     if (patternNo) return { refusal: { ok: false, error: patternNo }, ...held };
-    const aside = decision === "deny" ? null
+    // selfdev (owner ruling 09-27, widened 09-30): the owner's selected Full Access never asks these asides.
+    const aside = decision === "deny" || this.ownerFullMode(context) ? null
       : this.offPlanQuestion(context, { label, target, readOnly })
-        // selfdev (owner ruling 09-27): the owner's selected Full Access never asks, so a corrected command just runs.
-        ?? (this.ownerFullAccessFor(context) !== null ? null : this.retriedCommandQuestion(call, args, context))
+        ?? this.retriedCommandQuestion(call, args, context)
         ?? this.patternAside(call, context); // eng-trunk-controls
     if (aside) {
       this.orchestration.pausePlan(this.sessionOf(context));

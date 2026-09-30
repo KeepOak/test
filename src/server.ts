@@ -1,4 +1,5 @@
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
+import { retiredPhoneWorker } from "./retired-phone-worker.js";
 import {
   createServer,
   type IncomingMessage,
@@ -298,6 +299,7 @@ import { handlesSavingsPath, savingsApi, SavingsApiError } from "./model-savings
 // mac7/usage-bar: how much of each connection's allowance is left (src/usage-limits.ts).
 import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
+import { streamLiveStage } from "./live-stage-stream.js";
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
 import { MiniAppDoor } from "./miniapp/door.js";
 import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
@@ -565,6 +567,13 @@ async function staticFile(
   response: ServerResponse,
   request?: IncomingMessage,
 ): Promise<boolean> {
+  // Keep the old worker URL updateable, so previously installed registrations can retire.
+  if (path === "/service-worker.js") {
+    response.writeHead(200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "no-store",
+      "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" });
+    response.end(retiredPhoneWorker);
+    return true;
+  }
   const assets: Record<string, [string, string]> = {
     // The window (public/index.html, public/app.css; its modules and art under /app/ and /art/ are served by exact file).
     "/": ["index.html", "text/html; charset=utf-8"],
@@ -572,9 +581,8 @@ async function staticFile(
     "/fonts/archivo.woff2": ["fonts/archivo.woff2", "font/woff2"],
     "/fonts/geist.woff2": ["fonts/geist.woff2", "font/woff2"],
     "/fonts/geist-mono.woff2": ["fonts/geist-mono.woff2", "font/woff2"],
-    // The installable web app: its manifest, icons and service worker.
+    // The window's manifest and icons; no offline shell is registered.
     "/manifest.webmanifest": ["manifest.webmanifest", "application/manifest+json; charset=utf-8"],
-    "/service-worker.js": ["service-worker.js", "text/javascript; charset=utf-8"],
     "/assets/icon-192.png": ["assets/icon-192.png", "image/png"],
     "/assets/icon-512.png": ["assets/icon-512.png", "image/png"],
     "/assets/icon-maskable-512.png": ["assets/icon-maskable-512.png", "image/png"],
@@ -640,7 +648,7 @@ async function staticFile(
     "x-content-type-options": "nosniff",
     "referrer-policy": "no-referrer",
     "content-security-policy":
-      // worker-src and manifest-src let the installable web app register its service worker.
+      // The manifest can name the web app; worker-src permits the legacy retirement update.
       // phase2/delight: blob: lets the owner's own background picture or video, kept in the window's own
       // storage, be shown without ever being sent anywhere. Only the page's own script can make one.
       // Integration review: blob: is allowed for pictures and sound/video only, never for scripts,
@@ -1392,7 +1400,8 @@ async function api(
   // everything else, so a paired phone can pick up what was started at the computer.
   if (request.method === "GET" && path === "/api/sessions") {
     const scope = app.store.profiles.scope();
-    const recent = app.store.recentSessions(scope, Number(new URL(request.url ?? "/", "http://x").searchParams.get("limit") ?? 20) || 20);
+    const params = new URL(request.url ?? "/", "http://x").searchParams;
+    const recent = app.store.recentSessions(scope, Number(params.get("limit") ?? 20) || 20, Number(params.get("offset") ?? 0));
     // Pass 17: whether each has something the person has not seen (src/read-marks.ts).
     // Archived and Recently Deleted, counted, so the list shows either entry only when it holds something.
     const away = app.store.putAwayConversations(scope, { limit: 1 });
@@ -1402,7 +1411,7 @@ async function api(
     const trunkOf = (sessionId: string) => app.store.profiles.isOwner()
       ? app.trunks.trunkForConversation(sessionId)?.trunkId ?? null
       : personal?.threads.get(sessionId)?.trunkId ?? null;
-    return { ...recent, sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
+    return { ...recent, profileId: app.store.profiles.active()?.id ?? null, isOwner: app.store.profiles.isOwner(), sessions: recent.sessions.map((s) => ({ ...s, unread: app.store.readMarks.unread(scope, s.sessionId), trunkId: trunkOf(s.sessionId) })),
       archived: away.totals.archived, deleted: away.totals.deleted };
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
@@ -4910,6 +4919,18 @@ async function noteFirstStart(app: Branch, dataDir: string): Promise<void> {
 }
 /** Endpoints that write the response themselves (streams and the OpenAI-style chat). */
 async function rawApi(app: Branch, request: IncomingMessage, response: ServerResponse, path: string): Promise<boolean> {
+  if (request.method === "GET" && path === liveStagePath
+    && new URL(request.url ?? "/", "http://local").searchParams.get("stream") === "1") {
+    const session = new URL(request.url ?? "/", "http://local").searchParams.get("session") ?? "";
+    if (!/^[a-f0-9-]{36}$/.test(session)) throw new HttpError(400, "Choose a conversation for the live view.");
+    const scope = scopeWhileUnlocked(app);
+    const readable = () => !!scope && scopeWhileUnlocked(app) === scope && app.store.profiles.isOwner()
+      && app.store.ownsSession(scope, session);
+    if (!readable()) throw new HttpError(404, "Conversation not found");
+    await streamLiveStage({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, browser: app.browser },
+      session, response, readable);
+    return true;
+  }
   // ---- bucket 13 (mac4): recordings of a task, the path it took, the run monitor and the event-loop
   // watch (src/run-recording-api.ts). It answers errors itself. ----
   if (handlesRecordingPath(path)) {

@@ -66,3 +66,15 @@ export function decide(list: SenderAllowlist, channel: string, sender: string): 
   if (matching.some((rule) => rule.decision === "allow")) return "allow";
   return null;
 }
+
+/**
+ * Group selection follows OpenClaw group-policy.ts and allowlist-match.ts (MIT); original Branch implementation.
+ * Missing is the existing unrestricted policy, empty admits none, and "*" explicitly admits every group.
+ * Telegram's numeric room address includes its topics; all other opaque thread addresses match exactly.
+ */
+export function groupAllowed(groups: readonly string[] | undefined, kind: string, chatId: string): boolean {
+  if (groups === undefined) return true;
+  if (groups.includes("*") || groups.includes(chatId)) return true;
+  const topic = kind === "telegram" ? /^(-?\d+):\d+$/.exec(chatId) : null;
+  return !!topic && groups.includes(topic[1]!);
+}

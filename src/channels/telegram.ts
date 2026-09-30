@@ -5,6 +5,7 @@ import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
 import { telegramForwardContext, telegramPollContent, telegramStickerContent, telegramStickerSchema } from "./telegram-content.js";
+import { telegramLocationSchema, telegramLocationText, telegramVenueSchema } from "./telegram-location.js";
 
 /**
  * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
@@ -42,6 +43,8 @@ const voiceSchema = z.object({
 }).passthrough();
 const mediaSchema = voiceSchema.extend({ file_unique_id: z.string().optional(), file_name: z.string().optional() });
 const messageSchema = z.object({
+  location: telegramLocationSchema.optional(),
+  venue: telegramVenueSchema.optional(),
   photo: z.array(mediaSchema).optional(),
   document: mediaSchema.optional(),
   sticker: telegramStickerSchema.optional(),
@@ -432,7 +435,8 @@ export class TelegramAdapter implements ChannelAdapter {
     const sticker = message.sticker && !message.sticker.is_animated && !message.sticker.is_video ? message.sticker : undefined;
     const media = message.document ?? message.video ?? message.photo?.at(-1) ?? sticker;
     const extra = [telegramPollContent(message.poll), telegramStickerContent(message.sticker)].filter(Boolean).join("\n");
-    const written = message.text ?? (spoken || media || extra ? message.caption ?? "" : undefined);
+    const location = telegramLocationText(message);
+    const written = message.text ?? location ?? (spoken || media || extra ? message.caption ?? "" : undefined);
     if (written === undefined || !message.from || message.from.is_bot) return null;
     const mention = this.username ? `@${this.username.toLowerCase()}` : null;
     const mentioned = !!mention && (message.entities ?? []).some((entity) =>

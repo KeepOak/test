@@ -50,8 +50,11 @@ export class ZipReader {
     for (let seen = 0; seen < zipEntryLimit; seen++) {
       if (pos + 46 > this.data.length || this.data.readUInt32LE(pos) !== 0x02014b50) break;
       const nameLength = this.data.readUInt16LE(pos + 28);
+      if (pos + 46 + nameLength + this.data.readUInt16LE(pos + 30) + this.data.readUInt16LE(pos + 32) > this.data.length)
+        throw new Error("Damaged document directory");
       const name = this.data.toString("utf8", pos + 46, pos + 46 + nameLength);
-      if (name === path) return this.read(this.data.readUInt32LE(pos + 42));
+      if (name === path) return this.read(this.data.readUInt32LE(pos + 42), this.data.readUInt32LE(pos + 20),
+        this.data.readUInt32LE(pos + 24), this.data.readUInt16LE(pos + 10), this.data.readUInt16LE(pos + 8));
       pos += 46 + nameLength + this.data.readUInt16LE(pos + 30) + this.data.readUInt16LE(pos + 32);
     }
     return null;
@@ -72,17 +75,24 @@ export class ZipReader {
   text(path: string): string {
     return this.entry(path)?.toString("utf8") ?? "";
   }
-  private read(header: number): Buffer {
+  /** Sizes and compression come from the central directory, as document-package.ts unpackRaw does.
+   * A descriptor-written entry deliberately leaves its local sizes at zero until its data is written. */
+  private read(header: number, packedSize: number, unpackedSize: number, method: number, flags: number): Buffer {
     if (header + 30 > this.data.length || this.data.readUInt32LE(header) !== 0x04034b50)
       throw new Error("Damaged document entry");
-    const method = this.data.readUInt16LE(header + 8), size = this.data.readUInt32LE(header + 18);
+    if ((flags & 0x41) || (this.data.readUInt16LE(header + 6) & 0x41)) throw new Error("Encrypted document entries cannot be read");
+    if (this.data.readUInt16LE(header + 8) !== method || packedSize === 0xffffffff || unpackedSize === 0xffffffff)
+      throw new Error("Damaged or unsupported document entry");
     const start = header + 30 + this.data.readUInt16LE(header + 26) + this.data.readUInt16LE(header + 28);
-    const body = this.data.subarray(start, start + size);
-    if (method === 0) return this.spend(Buffer.from(body));
+    if (start > this.data.length || packedSize > this.data.length - start) throw new Error("Damaged document entry");
+    if (unpackedSize > this.budget) throw new Error(unpacksTooLarge);
+    const body = this.data.subarray(start, start + packedSize);
     // The unpacked size is capped as well as checked afterwards, so a part built to unpack into
     // gigabytes stops at the cap instead of being unpacked and only then found to be too big.
-    if (method === 8) return this.spend(this.inflate(body));
-    throw new Error("This document uses a compression method the assistant cannot read");
+    if (method !== 0 && method !== 8) throw new Error("This document uses a compression method the assistant cannot read");
+    const bytes = method === 0 ? Buffer.from(body) : this.inflate(body);
+    if (bytes.length !== unpackedSize) throw new Error("Damaged document entry size");
+    return this.spend(bytes);
   }
   private inflate(body: Buffer): Buffer {
     try { return inflateRawSync(body, { maxOutputLength: this.budget + 1 }); }
