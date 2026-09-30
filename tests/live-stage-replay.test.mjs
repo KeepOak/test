@@ -49,3 +49,12 @@ test("SCREEN-022: kept frames stay within two megabytes", () => {
   for (const step of [0, 1, 2]) rememberReplay(store, "local", "k", plan(step), step, frame(big + step));
   assert.deepEqual(readReplay(store, "local", "k", RUN, plan(2)).replaySteps.map((one) => one.step), [1, 2], "the oldest gave way");
 });
+
+test("SCREEN-022: the pushed live view observes plan steps as the fast read does", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const server = await readFile(new URL("../src/server.ts", import.meta.url), "utf8");
+  const streamed = /await streamLiveStage\(\{([\s\S]*?)\}, session, response, readable\)/.exec(server)?.[1] ?? "";
+  assert.ok(streamed, "the stream route hands its own deps to streamLiveStage");
+  assert.match(streamed, /plan: session => app\.runtime\.orchestration\.plan\(session\)/, "the stream reads the plan");
+  assert.match(streamed, /observeSteps: true/, "the stream keeps a frame for the working step");
+});
