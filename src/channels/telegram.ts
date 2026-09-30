@@ -1,7 +1,7 @@
 import { z } from "zod";
+import { telegramMarkdown } from "./chat-markdown.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
 import { telegramEntities } from "./progress-render.js";
-import { telegramMarkdown } from "./chat-markdown.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";

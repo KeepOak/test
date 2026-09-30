@@ -85,8 +85,11 @@ test("Signal: a reply goes with its text styles", async (t) => {
   void adapter.send("+15551111111", "**Done** with `ls`").catch(() => undefined);
   void adapter.send("+15551111111", "**as is**", undefined, { plain: true }).catch(() => undefined);
   const [styled, plain] = written.filter((call) => call.method === "send").map((call) => call.params);
-  assert.deepEqual([styled.message, styled.textStyle], ["Done with ls", ["0:4:BOLD", "10:2:MONOSPACE"]]);
-  assert.deepEqual([plain.message, plain.textStyle], ["**as is**", undefined]);
+  assert.deepEqual([styled.message, styled.textStyles], ["Done with ls", ["0:4:BOLD", "10:2:MONOSPACE"]]);
+  assert.deepEqual([plain.message, plain.textStyle, plain.textStyles], ["**as is**", undefined, undefined]);
+  void adapter.send("+15551111111", "**one**").catch(() => undefined);
+  const one = written.filter((call) => call.method === "send").at(-1).params;
+  assert.deepEqual([one.message, one.textStyle, one.textStyles], ["one", "0:3:BOLD", undefined], "one style goes as a single textStyle");
 });
 
 test("WhatsApp: a reply goes in WhatsApp's own marks", async () => {
@@ -133,6 +136,27 @@ test("a failed last edit sends only the unseen tail; an answer that does not beg
   other.state.failEdits = true;
   assert.equal(await again.finish("Here is a different answer."), null, "the whole answer is sent afresh by the router");
   assert.deepEqual(other.state.deleted, ["m1"], "and the stale preview is taken away");
+
+  // Nothing may go to the chat now (Lockdown switched on mid-answer): the router's own path decides, nothing is placed.
+  let allowed = true;
+  const held = editable();
+  const locked = new ReplyStream({ adapter: held.adapter, chatId: "c", messageId: "1", allowed: () => allowed }, guard, 5);
+  locked.text("Some words here now");
+  await settle();
+  allowed = false;
+  assert.equal(await locked.finish("Some words here now and more."), null);
+  assert.deepEqual(held.state.deleted, []);
+
+  // A preview cut inside a code block was shown closed; the rest goes on inside the reopened block.
+  const code = editable();
+  const inCode = new ReplyStream({ adapter: code.adapter, chatId: "c", messageId: "1" }, guard, 5);
+  inCode.text("Run this:\n```sh\nnpm run build\nnpm test now");
+  await settle();
+  assert.equal(code.state.sent[0], "Run this:\n```sh\nnpm run build\nnpm test\n```");
+  code.state.failEdits = true;
+  const placedInCode = await inCode.finish("Run this:\n```sh\nnpm run build\nnpm test now\n```\nDone.");
+  assert.deepEqual(placedInCode.rest, ["```sh\nnow\n```\nDone."]);
+  assert.deepEqual(code.state.deleted, []);
 });
 
 test("streamed pieces follow careful splitting, and a preview closes a code block left open", async () => {

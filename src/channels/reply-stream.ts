@@ -74,13 +74,20 @@ export class ReplyStream {
    * Adapted from Hermes Agent (MIT), gateway/stream_consumer_fallback.py `_send_fallback_final` and `_continuation_text`.
    */
   private async fallback(checked: string): Promise<PlacedReply | null> {
+    // Nothing may go to this chat now (Lockdown, or the sender taken off the list): the router's own path decides.
+    if (!(this.target.allowed?.() ?? true)) return null;
     const shown = this.shown, id = this.messageId!;
-    if (shown && checked.startsWith(shown)) {
-      const tail = checked.slice(shown.length).trim();
-      return { messageId: id, text: shown, ...(tail ? { rest: this.chunks(tail) } : {}) };
+    // A preview cut inside a code block was shown with the block closed (`closeFence`); the answer goes on inside it.
+    const closed = /\n(`{3,}|~{3,})$/.exec(shown), bare = closed ? shown.slice(0, closed.index) : shown;
+    const open = closed ? openFenceAt(bare, bare.length) : null;
+    const head = checked.startsWith(shown) ? shown : open && checked.startsWith(bare) ? bare : null;
+    if (head) {
+      const tail = checked.slice(head.length).trim();
+      const rest = tail && head === bare && open ? `${open.line}\n${tail}` : tail;
+      return { messageId: id, text: shown, ...(rest ? { rest: this.chunks(rest) } : {}) };
     }
     const adapter = this.target.adapter;
-    if (adapter.deleteMessage && (this.target.allowed?.() ?? true)) await adapter.deleteMessage(this.target.chatId, id).catch(() => undefined);
+    if (adapter.deleteMessage) await adapter.deleteMessage(this.target.chatId, id).catch(() => undefined);
     return null;
   }
   private chunks(text: string): string[] {

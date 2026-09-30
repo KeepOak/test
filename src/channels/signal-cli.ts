@@ -246,7 +246,9 @@ export class SignalAdapter implements ChannelAdapter {
     const read = format?.plain ? { text, textStyle: [] } : signalMarkdown(text);
     const message = read.text.slice(0, this.maxTextLength);
     const styles = read.textStyle.filter((style) => { const [start, length] = style.split(":").map(Number); return start! + length! <= message.length; });
-    return this.request("send", { ...this.target(chatId), message, ...(styles.length ? { textStyle: styles } : {}), ...quote });
+    // As Hermes Agent sends them to signal-cli (gateway/platforms/signal.py): one style as `textStyle`, several as `textStyles`.
+    const styled = styles.length === 1 ? { textStyle: styles[0] } : styles.length ? { textStyles: styles } : {};
+    return this.request("send", { ...this.target(chatId), message, ...styled, ...quote });
   }
   /** CHAT-109: Signal's typing indicator (it lasts about 15 seconds; the live status asks again while the task works). */
   async sendTyping(chatId: string): Promise<void> {
