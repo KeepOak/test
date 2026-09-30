@@ -31,19 +31,19 @@ export type LinuxDesktopSettings = z.infer<typeof LinuxDesktopSchema>;
 /** Only what was sent: saving the mode alone must not put the image back to its default. */
 export const LinuxDesktopInputSchema = optionalFields(LinuxDesktopSchema);
 
-function savedLinuxDesktop(store: Pick<Store, 'get'>, owner: string): LinuxDesktopSettings {
-  const saved = LinuxDesktopSchema.safeParse(store.get('settings', owner, settingsKey)?.data ?? {});
+function savedLinuxDesktop(store: Pick<Store, 'get'>, owner: string, key = settingsKey): LinuxDesktopSettings {
+  const saved = LinuxDesktopSchema.safeParse(store.get('settings', owner, key)?.data ?? {});
   return saved.success ? saved.data : LinuxDesktopSchema.parse({});
 }
 /** The switch as it stands right now. While Lockdown is on it reads off, whatever was saved. */
-export function readLinuxDesktop(store: Pick<Store, 'get'>, owner: string): LinuxDesktopSettings {
-  const settings = savedLinuxDesktop(store, owner);
-  return lockdownOverrides(store, owner, settingsKey) ? { ...settings, mode: 'off' } : settings;
+export function readLinuxDesktop(store: Pick<Store, 'get'>, owner: string, key = settingsKey): LinuxDesktopSettings {
+  const settings = savedLinuxDesktop(store, owner, key);
+  return (key === settingsKey ? lockdownOverrides(store, owner, key) : lockdownActive(store, owner)) ? { ...settings, mode: 'off' } : settings;
 }
-export function saveLinuxDesktop(store: Pick<Store, 'get' | 'save'>, owner: string, input: unknown): LinuxDesktopSettings {
+export function saveLinuxDesktop(store: Pick<Store, 'get' | 'save'>, owner: string, input: unknown, key = settingsKey): LinuxDesktopSettings {
   const sent = sentFields(LinuxDesktopInputSchema.parse(input ?? {}), input);
-  store.save('settings', owner, settingsKey, LinuxDesktopSchema.parse({ ...savedLinuxDesktop(store, owner), ...sent }));
-  return readLinuxDesktop(store, owner);
+  store.save('settings', owner, key, LinuxDesktopSchema.parse({ ...savedLinuxDesktop(store, owner, key), ...sent }));
+  return readLinuxDesktop(store, owner, key);
 }
 
 export const switchedOffMessage =
@@ -91,12 +91,12 @@ export function xdotoolArgv(action: SharedDesktopAction): string[] {
   return ['key', '--clearmodifiers', action.chord];
 }
 /** The exact `docker run` line: nothing of this computer is shared in, and the VNC port stays local. */
-export function dockerRunArgv(image: string): string[] {
+export function dockerRunArgv(image: string, label = 'branch.shared-desktop=1'): string[] {
   const inner = `Xvfb ${xvfbArgv().join(' ')} & while [ ! -s /tmp/vncpw ]; do sleep 0.2; done; exec x11vnc ${x11vncArgv().join(' ')}`;
   return ['run', '-d', '--rm', '--init', '--pull=never',
     '--network', 'none',
     '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-    '--pids-limit', '256', '--label', 'branch.shared-desktop=1',
+    '--pids-limit', '256', '--label', label,
     '--memory', '1g', '--cpus', '1',
     image, 'sh', '-c', inner];
 }
@@ -194,7 +194,7 @@ export class LinuxDesktopSandbox {
   private readonly epochs = new Map<string, number>();
   private closed = false;
   private readonly stopListening: () => void;
-  constructor(private readonly store: Pick<Store, 'get' | 'save' | 'event'>, options: { banner?: TakeOverNotice } = {}) {
+  constructor(private readonly store: Pick<Store, 'get' | 'save' | 'event'>, private readonly options: { banner?: TakeOverNotice; settingsKey?: string; containerLabel?: string } = {}) {
     this.banner = options.banner ?? new TakeOverBanner();
     this.createListener = this.createListenerImpl.bind(this);
     // Lockdown takes the desktop down at once, rather than at the assistant's next action.
@@ -204,7 +204,7 @@ export class LinuxDesktopSandbox {
   }
 
   private settings(owner: string): LinuxDesktopSettings {
-    return readLinuxDesktop(this.store, owner);
+    return readLinuxDesktop(this.store, owner, this.options.settingsKey ?? settingsKey);
   }
   /** `store.event` keys its rows to a real run; a shared desktop outlives any one run, so writing
    * one down here is best-effort and never the reason a start, a take-over or a stop fails. */
@@ -265,14 +265,14 @@ export class LinuxDesktopSandbox {
     // Remove any stale containers with the shared-desktop label that we're not currently tracking (best-effort)
     const trackedIds = new Set([...this.sessions.values()].map((s) => s.id));
     try {
-      const staleList = (await this.runner('docker', ['container', 'ls', '-a', '--filter', 'label=branch.shared-desktop=1', '--format', '{{.ID}}'], 10_000)).trim().split('\n').filter(Boolean);
+      const staleList = (await this.runner('docker', ['container', 'ls', '-a', '--filter', `label=${this.options.containerLabel ?? 'branch.shared-desktop=1'}`, '--format', '{{.ID}}'], 10_000)).trim().split('\n').filter(Boolean);
       for (const staleId of staleList) if (!trackedIds.has(staleId)) {
         await this.runner('docker', dockerStopArgv(staleId), 5_000).catch(() => undefined);
       }
     } catch { /* best-effort cleanup */ }
     const password = this.password();
     let id = '';
-    try { id = (await this.runner('docker', dockerRunArgv(settings.image), 30_000)).trim().split('\n').at(-1) ?? ''; }
+    try { id = (await this.runner('docker', dockerRunArgv(settings.image, this.options.containerLabel), 30_000)).trim().split('\n').at(-1) ?? ''; }
     catch { throw new Error(sandboxRefusal('Docker could not start the container.')); }
     if (!/^[a-f0-9]{12,64}$/.test(id)) throw new Error(sandboxRefusal('Docker did not say which container it started.'));
     // The container exists from here on, so every way out that is not a running desktop takes it down.
@@ -435,7 +435,7 @@ export class LinuxDesktopSandbox {
   }
   /** The Settings card's save: switching it off takes a running desktop down straight away. */
   async saveSettings(owner: string, input: unknown): Promise<SharedDesktopStatus> {
-    const next = saveLinuxDesktop(this.store, owner, input);
+    const next = saveLinuxDesktop(this.store, owner, input, this.options.settingsKey ?? settingsKey);
     if (next.mode === 'off') await this.end(owner);
     return this.status(owner);
   }
@@ -443,6 +443,26 @@ export class LinuxDesktopSandbox {
   async stop(owner: string): Promise<void> {
     if (this.sessions.get(owner)?.control === 'user') throw new Error(takenOverMessage);
     await this.end(owner);
+  }
+  /** A local filesystem snapshot, not process memory. Take-over fences agent actions before committing.
+   * The transient viewer password is removed from the snapshot and restored only in the live container. */
+  async snapshot(owner: string, image: string, scope: string): Promise<void> {
+    if (!this.options.containerLabel || !/^branch.private-desktop=[a-f0-9]{32}$/.test(this.options.containerLabel))
+      throw new Error('Snapshots are only supported for an isolated private desktop.');
+    if (!/^branch-agent-snapshot-[a-f0-9]{32}-[a-f0-9]{32}$/.test(image) || scope !== this.options.containerLabel.split('=')[1])
+      throw new Error('Invalid private snapshot scope.');
+    await this.allowed(owner);
+    await this.takeOver(owner);
+    const session = this.sessions.get(owner);
+    if (!session || session.control !== 'user') throw new Error(notRunningMessage);
+    await this.runner('docker', ['exec', session.id, 'rm', '-f', '/tmp/vncpw'], 5000);
+    try {
+      await this.runner('docker', ['commit', '--pause=true', '--change', `LABEL branch.private-snapshot=${scope}`, session.id, image], 60_000);
+      if (this.sessions.get(owner) !== session || this.settings(owner).mode === 'off') throw new Error(switchedOffMessage);
+    } finally {
+      if (this.sessions.get(owner) === session)
+        await this.feeder('docker', ['exec', '-i', session.id, 'sh', '-c', 'umask 077; cat > /tmp/vncpw'], session.password, 5000);
+    }
   }
   /** Takes the desktop down whoever holds it, calling off a start under way. Never the assistant's. */
   end(owner: string): Promise<void> {
