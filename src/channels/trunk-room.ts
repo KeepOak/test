@@ -21,7 +21,7 @@ export class ChannelTrunkRooms {
   private readonly work = new Set<Promise<void>>();
   private closing = false;
   constructor(private readonly store: Store, private readonly runtime: Runtime, private readonly trunks: Trunks, private readonly channels: ChannelRouter) {}
-  private bindings() { return Bindings.parse(this.store.get("settings", this.runtime.owner, "channel-trunk-rooms")?.data ?? []); }
+  private bindings() { return Bindings.parse(this.store.get("settings", this.runtime.owner, "channel-trunk-rooms")?.data?.rooms ?? []); }
   list() { return { bindings: this.bindings().map((binding) => {
     try { return { ...binding, roster: this.trunks.rooms.roster(this.trunks.rooms.get(binding.roomId)), executionHost: "This Branch engine", unavailable: false }; }
     catch { return { ...binding, roster: [], executionHost: "This Branch engine", unavailable: true }; }
