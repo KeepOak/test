@@ -58,17 +58,21 @@ const samePath = (a: string, b: string) => a.replace(/\//g, "\\").toLowerCase() 
  * What a shortcut to this copy should say, or null when it already says it. A shortcut that points at
  * another program (another copy of Branch, a portable one) is left exactly as it is.
  */
-export function shortcutChanges(existing: ShortcutFields, executable: string, icon: string | null): ShortcutFields | null {
-  if (!samePath(existing.target, executable)) return null;
-  const wanted = { target: existing.target, appUserModelId: windowsAppId, ...(icon ? { icon, iconIndex: 0 } : {}) };
-  const same = existing.appUserModelId === wanted.appUserModelId
+export function shortcutChanges(existing: ShortcutFields, executable: string, icon: string | null,
+  sameInstall?: (path: string) => boolean): ShortcutFields | null {
+  // Versioned app folders (src/desktop/app-folders.ts): a shortcut to another version of this same install is moved
+  // to this one, the version in use. Any other program's shortcut is left exactly as it is.
+  const moved = !samePath(existing.target, executable) && sameInstall?.(existing.target) === true;
+  if (!samePath(existing.target, executable) && !moved) return null;
+  const wanted = { target: moved ? executable : existing.target, appUserModelId: windowsAppId, ...(icon ? { icon, iconIndex: 0 } : {}) };
+  const same = !moved && existing.appUserModelId === wanted.appUserModelId
     && (!icon || (samePath(existing.icon ?? "", icon) && (existing.iconIndex ?? 0) === 0));
   return same ? null : wanted;
 }
 
 /** Points this copy's shortcuts and its Add or remove programs entry at the mascot. */
 export async function refreshWindowsIdentity(
-  options: { installRoot: string; executableName: string; env: NodeJS.ProcessEnv; hive?: string }, deps: IdentityDeps,
+  options: { installRoot: string; executableName: string; env: NodeJS.ProcessEnv; hive?: string; sameInstall?: (path: string) => boolean }, deps: IdentityDeps,
 ): Promise<IdentityReport> {
   const executable = join(options.installRoot, options.executableName);
   const iconFile = join(options.installRoot, shippedIconPath);
@@ -78,7 +82,7 @@ export async function refreshWindowsIdentity(
     if (!deps.exists(path)) continue;
     let existing: ShortcutFields;
     try { existing = deps.readShortcut(path); } catch { continue; }
-    const changes = shortcutChanges(existing, executable, icon);
+    const changes = shortcutChanges(existing, executable, icon, options.sameInstall);
     if (changes && deps.updateShortcut(path, changes)) updated.push(path);
   }
   return { updated, displayIcon: icon ? await refreshDisplayIcon(options, icon, deps) : false };

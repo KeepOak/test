@@ -189,7 +189,7 @@ test("at every width from a phone to a wide screen nothing runs off sideways and
 test("a quick double tap on a phone's big answer sends one answer, not two", async (t) => {
   const f = await signedIn(t);
   await f.signIn();
-  await ask(f.page);
+  const card = await ask(f.page);
   await f.page.evaluate(() => {
     const original = window.fetch.bind(window);
     window.__branchApprovalRequests = 0;
@@ -203,10 +203,11 @@ test("a quick double tap on a phone's big answer sends one answer, not two", asy
     };
   });
   /* Three presses in the same instant (a thumb's double tap, then a slip onto Don't allow), so a slow machine cannot
-     let the first answer come back before the others land. The card is found in the same page call that presses it: a
-     card found first can be drawn anew before the presses, and a press on the card taken off the page does nothing. */
+     let the first answer come back before the others land. The card is found in the page at the moment of the presses:
+     one found earlier can have been drawn anew in between, and presses on the old one reach nothing (seen on busy CI). */
+  await card.waitFor();
   await f.page.evaluate(() => {
-    const node = document.querySelector("#live-ask");
+    const node = document.getElementById("live-ask");
     const yes = node.querySelector(".acts .btn.pri");
     const no = [...node.querySelectorAll(".acts button")].find((button) => button.textContent === "Don’t allow");
     yes.click();
@@ -232,14 +233,14 @@ test("an answer that could not be sent gives the buttons back; No is the quiet a
   });
   await f.signIn();
   const card = await ask(f.page);
-  // Read in the page once the card's buttons are drawn and styled: a redraw in between left both colours empty.
-  await f.page.waitForFunction(() => {
-    const buttons = [...document.querySelectorAll("#live-ask .acts button, .acts button")];
-    return buttons.length > 1 && buttons.every((b) => b.isConnected && getComputedStyle(b).backgroundColor);
-  });
-  // One page call: a locator's evaluateAll finds the buttons and reads them in two, and can read none between redraws.
-  const answers = await f.page.evaluate(() => [...document.querySelectorAll("#live-ask .acts button")].map((b) => ({
-    text: b.textContent.trim(), live: b.getAttribute("aria-disabled") !== "true" && !b.disabled, pri: b.classList.contains("pri"), bg: getComputedStyle(b).backgroundColor })));
+  /* Read in the page, in one go, once the card's buttons are drawn and styled: buttons found first and read after can
+     have been drawn anew in between, and a button no longer in the page has no colour (seen on busy CI). */
+  const answers = await (await f.page.waitForFunction(() => {
+    const buttons = [...document.querySelectorAll("#live-ask .acts button")];
+    if (buttons.length < 2 || !buttons.every((b) => getComputedStyle(b).backgroundColor)) return null;
+    return buttons.map((b) => ({ text: b.textContent.trim(), live: b.getAttribute("aria-disabled") !== "true" && !b.disabled,
+      pri: b.classList.contains("pri"), bg: getComputedStyle(b).backgroundColor }));
+  })).jsonValue();
   assert.equal(answers.some((b) => /^Always allow/.test(b.text) && b.live), false, `no live standing yes: ${JSON.stringify(answers)}`);
   const yes = answers.find((b) => b.pri), no = answers.find((b) => b.text === "Don’t allow");
   assert.ok(yes?.live && no?.live, "a yes for now and a no");

@@ -188,6 +188,48 @@ test("older conversations are read only when scrolled to", async (t) => {
   assert.deepEqual(errors, []);
 });
 
+/* CI flake (runs 36574033111, 36636445522): opened, the thread is short until its reads land, and a short thread reads
+   further back on a timer. On a busy machine the timer ran after the conversation above had been read, and read the
+   one above that as well, before anyone scrolled. Here every zero-delay timer is held back until the reads have landed
+   and been drawn, which is that busy machine every time. */
+test("a short thread's check that runs late does not read further back than the window needs", async (t) => {
+  const { app, root } = await fixture(t, [long]);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  await app.trunks.introduced();
+  age(app, home.chatSessionId, 5 * 3600000);
+  const oldest = await app.runtime.run({ prompt: "oldest long talk", trunkId: home.id });
+  age(app, oldest.sessionId, 4 * 3600000);
+  const middle = await app.runtime.run({ prompt: "middle long talk", trunkId: home.id });
+  age(app, middle.sessionId, 3 * 3600000);
+  await app.runtime.run({ prompt: "newest long talk", trunkId: home.id });
+  const { page, errors, reads } = await open(t, app, root, { width: 1100, height: 640 });
+  await page.evaluate(() => {
+    const real = window.setTimeout, late = window.lateTimers = { held: [], ran: new Set(), next: 0 }, fetch = window.fetch;
+    window.readsAsked = [];
+    window.fetch = (url, ...rest) => { window.readsAsked.push(String(url)); return fetch(url, ...rest); };
+    window.setTimeout = (fn, ms, ...args) => {
+      if (ms) return real(fn, ms, ...args);
+      const id = ++late.next;
+      late.held.push(() => { try { if (typeof fn === "function") fn(...args); } finally { late.ran.add(id); } });
+      return real(() => undefined, 0);
+    };
+    window.releaseLateTimers = () => { const due = late.held.splice(0); for (const run of due) real(run, 0); return late.next; };
+  });
+  await page.locator(`#side .row[data-line="${home.id}"]`).click();
+  const thread = page.locator("#scroll");
+  await thread.locator(".u", { hasText: "newest long talk" }).waitFor();
+  await thread.locator(".u", { hasText: "middle long talk" }).waitFor();
+  const upTo = await page.evaluate(() => window.releaseLateTimers());
+  assert.ok(upTo > 0, "the short thread's check was held back");
+  await page.waitForFunction((upTo) => Array.from({ length: upTo }, (_, i) => i + 1).every((id) => window.lateTimers.ran.has(id)), upTo);
+  // A read starts inside the timer that asks for it (api.js calls fetch at once), so the page's own list is complete here.
+  const asked = await page.evaluate(() => window.readsAsked);
+  assert.ok(asked.includes(`/api/sessions/${middle.sessionId}`) || reads.includes(`/api/sessions/${middle.sessionId}`), "the conversation just above is read at once");
+  assert.equal([...asked, ...reads].some((url) => url.endsWith(`/api/sessions/${oldest.sessionId}`)), false, "the conversation above that is not read before it is scrolled to");
+  assert.deepEqual(errors, []);
+});
+
 test("a conversation's line deletes and restores just that conversation; the row pins the Trunk", async (t) => {
   const { app, root } = await fixture(t);
   saveOnboarding(app.store, app.runtime.owner, { done: true });

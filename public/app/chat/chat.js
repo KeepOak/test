@@ -470,8 +470,10 @@ export function startConversation(project = null) {
    with that Trunk, a new context shown as a new line at the end of the same timeline, never a row of its own. The
    default Trunk's is begun by its first message (POST /api/run names no conversation, so the engine gives it to the
    default Trunk); another Trunk's is made at once (POST /api/trunks/conversations). Anywhere else it is a new
-   conversation as before. */
-export async function startFresh() {
+   conversation as before. helper-lifecycle: the helpers the conversation left working are stopped, as typed /new stops
+   them (src/commands/handlers.ts freshConversation); `stopped` says /new already did. */
+export async function startFresh({ stopped = false } = {}) {
+  if (!stopped && C.sessionId) void api("commands/run", { surface: "window", line: "/new", sessionId: C.sessionId }).catch(() => undefined);
   const trunk = S.view === "chat" ? lineTrunk() : undefined;
   if (!trunk) return startConversation();
   keepRead(C.sessionId, C.messages);
@@ -537,7 +539,7 @@ async function carryOut(client) {
   if (!client?.do) return;
   if (client.do === "go") { if (goHome(client.home)) renderNow(); }
   else if (client.do === "open-session" && client.id) await openConversation(client.id);
-  else if (client.do === "new") await startFresh();
+  else if (client.do === "new") await startFresh({ stopped: true });
   else if (client.do === "fill" && typeof client.text === "string") {
     S.drafts[C.sessionId ?? "new"] = client.text;
     const box = $("#prompt");

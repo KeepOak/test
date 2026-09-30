@@ -1,10 +1,12 @@
 {
   "prSlots": 3,
+  "prLinuxShards": 2,
   "partialBases": [
     "redesign/window"
   ],
   "partialCeiling": 0.75,
   "hubTests": 25,
+  "platformSourceTests": 5,
   "always": [
     "tests/leak-guard.test.mjs"
   ],
@@ -40,6 +42,8 @@
   "platforms": {
     "windows": [
       "src/desktop/**",
+      "src/computer/**",
+      "src/integrations/desktop-script*.ts",
       "packaging/**",
       "**/*.ps1",
       "**/*.cts",
