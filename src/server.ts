@@ -1047,6 +1047,19 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path === "/api/interop/redis-queue") {
+    const ownerOnly = (): void => {
+      if (throughDoor(request) || startedWithShortLivedKey()) throw new HttpError(403, "Configure Redis in this computer's owner window");
+      app.store.profiles.requireOwner("Redis fleet coordination");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before configuring Redis");
+    };
+    ownerOnly();
+    if (request.method === "GET") return app.interop.redisQueue.settings();
+    if (request.method !== "POST") throw new HttpError(405, "Use GET or POST for Redis queue settings");
+    const settings = await readBody(request);
+    ownerOnly();
+    return app.interop.redisQueue.configure(settings);
+  }
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
   if (handlesMiscPath(path))
