@@ -95,7 +95,7 @@ import { canonicalArguments } from "./loop-guard.js";
 import { alreadyRunResult, approvedWork, notRunResult, type ApprovedWork } from "./approved-call.js"; // QA R1
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
-import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation } from "./comfort/browser-safety.js"; // R17-S19
+import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation, withDownloadQuestion, withNewSiteQuestion } from "./comfort/browser-safety.js"; // R17-S19
 // mac5/manual-actions: the gate for tools run outside a conversation.
 import { gateToolUse, type ToolGateOptions } from "./tool-gate.js";
 import * as safetyExtras from "./safety-extras/hooks.js"; // mac7/r17-g: the safety extras' hooks
@@ -4239,8 +4239,12 @@ ${run.output.slice(0, 6000)}`;
     // R17-S19: with "confirm sensitive browser steps" on, those steps ask every time (src/comfort/browser-safety.ts).
     // mac7/outside-resume: held by the task's own record too, so work carried on from outside stays held.
     const held = source !== "owner" ? source : this.recordedSource(runId) ?? "owner";
-    return withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner);
+    const policy = withDownloadQuestion(withBrowserConfirmation(this.guards.policy(cappedPolicy(this.conversationPolicy(runId), held)), this.store, this.owner), this.store, this.owner);
+    // An address the owner opens by hand in their own browser view is their own choice, never asked about as a new site.
+    return runId && this.ownerDriven.has(runId) ? policy : withNewSiteQuestion(policy, this.store, this.owner);
   }
+  /** Runs the owner's own browser controls make for one hand-pressed step (src/browser-control-api.ts). */
+  readonly ownerDriven = new Set<string>();
   /** Redesign phase 1: the owner's policy as this task's conversation has narrowed or widened it. */
   private conversationPolicy(runId?: string): Policy {
     const saved = readPolicy(this.store, this.owner);
