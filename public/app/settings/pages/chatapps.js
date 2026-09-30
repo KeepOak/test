@@ -13,7 +13,7 @@
    keeps its English title (its id is made from it) and shows through say(); the engine's reason is shown as it wrote it. */
 
 import { esc, render } from "../../core/dom.js";
-import { level, E, ownerHere, activeId } from "../../core/state.js";
+import { level, S, E, ownerHere, activeId } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
@@ -32,12 +32,17 @@ const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerComm
 const STEPS = "Show steps in chats";
 const kindOf = (c) => c.kind ?? c.id;
 
+/* The window is not behind the App lock. */
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
+/* The owner, the same person as when a read began, with the window unlocked: what a late answer may still change. */
+const sameOwner = (profile) => ownerHere() && activeId() === profile && unlocked();
+
 async function loadApps() {
   const profile = activeId();
-  if (!ownerHere()) return; // the owner's chat apps: no page asks for them on a household person's profile
+  if (!ownerHere() || !unlocked()) return; // the owner's chat apps: no page asks for them on a household person's profile
   A.at = Date.now();
-  const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
-  if (!ownerHere() || activeId() !== profile) return;
+  const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { if (sameOwner(profile)) toast(error.message); return null; })));
+  if (!sameOwner(profile)) return;
   A.channels = live?.channels ?? [];
   A.intake = live?.intake ?? null;
   A.live = live?.live ?? null;
@@ -47,7 +52,7 @@ async function loadApps() {
   A.steps = live?.steps ?? null;
   A.apps = setup?.channels ?? [];
   await Promise.all([loadFormats(), loadReplyStyles(), loadPhoneAccess()]);
-  if (ownerHere() && activeId() === profile) render();
+  if (sameOwner(profile)) render();
 }
 
 const nameOf = (id) => A.apps.find((x) => x.id === id)?.name ?? id;
@@ -111,30 +116,35 @@ export function revokedPrompts() {
 export const offlineIn = (connected, id) => connected.some((c) => kindOf(c) === id && revoked(c));
 
 let telegramControlBusy = false;
+/* Turning Telegram off reads the card first; the switch is sent only if the same person is still here, unlocked, with the
+   card's button still on screen. Its note (with Undo) shows after the page is read again only if nothing moved on: the
+   same person on the same page, unlocked. */
 async function turnTelegramOff(el) {
-  const profile = activeId(), channel = el.dataset.v;
-  if (!ownerHere() || telegramControlBusy || !channel) return;
+  const profile = activeId(), channel = el.dataset.v, view = S.view;
+  const still = () => sameOwner(profile) && S.view === view;
+  if (!still() || telegramControlBusy || !channel) return;
   telegramControlBusy = true;
   try {
     const before = await api("never-break/telegram");
-    if (!ownerHere() || activeId() !== profile || !el.isConnected) return;
+    if (!still() || !el.isConnected) return;
     if (before.card?.channel !== channel || before.mode === "off") throw new Error(t("window.p17d.telegram-card-only"));
     const done = await api("never-break/telegram", { action: "off", channel, revision: before.card.revision, expectedMode: before.mode, expectedSettingsRevision: before.settingsRevision });
-    if (!ownerHere() || activeId() !== profile) return;
+    if (!still()) return;
     await loadApps();
-    if (ownerHere() && activeId() === profile) toast(done.note, () => undoTelegramOff(done.receipt, profile));
-  } catch (error) { if (ownerHere() && activeId() === profile) toast(error.message); }
+    if (still()) toast(done.note, () => undoTelegramOff(done.receipt, profile));
+  } catch (error) { if (still()) toast(error.message); }
   finally { telegramControlBusy = false; }
 }
 async function undoTelegramOff(receipt, profile) {
-  if (!receipt || !ownerHere() || activeId() !== profile || telegramControlBusy) return;
+  const view = S.view, still = () => sameOwner(profile) && S.view === view;
+  if (!receipt || !still() || telegramControlBusy) return;
   telegramControlBusy = true;
   try {
     const done = await api("never-break/telegram", { action: "undo", receipt });
-    if (!ownerHere() || activeId() !== profile) return;
+    if (!still()) return;
     await loadApps();
-    if (ownerHere() && activeId() === profile) toast(done.note);
-  } catch (error) { if (ownerHere() && activeId() === profile) toast(error.message); }
+    if (still()) toast(done.note);
+  } catch (error) { if (still()) toast(error.message); }
   finally { telegramControlBusy = false; }
 }
 
