@@ -16,6 +16,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBranch, savePolicy } from "../dist/index.js";
 import { discardTemp } from "./temp-dir.mjs";
+import { startServer } from "../dist/server.js";
+import { executeCommand } from "../dist/commands/execute.js";
+import { commandHost } from "../dist/commands/host.js";
 
 const first = "why tf did you still ask me for permission in full access?";
 const second = "so what can you do cause you havent installed a fix or fixed yourself";
@@ -27,7 +30,7 @@ async function fixture(t, complete) {
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider });
   savePolicy(app.store, app.runtime.owner, { preset: "off" });
   t.after(async () => { await app.close(); await discardTemp(root); });
-  return { app, requests };
+  return { app, requests, root };
 }
 
 const users = (request) => request.messages.filter((m) => m.role === "user").map((m) => String(m.content));
@@ -111,5 +114,41 @@ test("a message sent while a task works reaches the model as its own message, ne
     const said = users(requests.at(-1));
     assert.ok(said.some((text) => text.includes(first) && !text.includes(second)), `${mode}: the first message is its own`);
     assert.ok(said.some((text) => text.includes(second) && !text.includes(first)), `${mode}: the second message is its own`);
+  }
+});
+
+test("a late note from the Steer chip or /steer runs as its own next turn, and one from a chat's /steer does not", async (t) => {
+  let release = null;
+  const { app, requests, root } = await fixture(t, async (request, n) => {
+    if (n === 1) await new Promise((resolve) => { release = resolve; });
+    return { content: `Answer ${n}.`, toolCalls: [] };
+  });
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
+  t.after(() => server.close());
+  const chip = (runId, text) => fetch(new URL(`/api/runs/${runId}/steer`, server.url), { method: "POST",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ text }) });
+  const command = (surface) => (runId, text, sessionId) => executeCommand(commandHost(app.runtime),
+    { surface, line: `/steer ${text}`, sessionId, access: "full", ownWindow: surface === "window" });
+  const ways = [["the Steer chip", chip, true], ["/steer in the window", command("window"), true], ["/steer in a chat", command("chat"), false]];
+  for (const [way, steer, ownTurn] of ways) {
+    requests.length = 0;
+    const session = app.store.createSession(app.runtime.owner);
+    const working = app.runtime.run({ prompt: first, sessionId: session, source: "owner" });
+    await until(() => release !== null, `${way}: the task is working`);
+    const runId = app.store.runs(app.runtime.owner).find((r) => r.sessionId === session).id;
+    // Steered while the model writes its last answer, the note is too late to read.
+    await steer(runId, second, session);
+    release(); release = null;
+    assert.equal((await working).status, "completed", way);
+    const done = () => app.store.runs(app.runtime.owner).filter((r) => r.sessionId === session && r.status === "completed").length;
+    if (!ownTurn) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(done(), 1, `${way}: the chat's router owns its late notes, so no turn starts here`);
+      continue;
+    }
+    await until(() => done() === 2, `${way}: the late note ran as its own turn`);
+    const said = users(requests.at(-1));
+    assert.ok(said.some((text) => text.includes(first) && !text.includes(second)), `${way}: the first message is its own`);
+    assert.ok(said.some((text) => text.includes(second) && !text.includes(first)), `${way}: the note is its own message`);
   }
 });

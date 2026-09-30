@@ -2964,7 +2964,11 @@ ${run.output.slice(0, 6000)}`;
     if (!run || run.owner !== this.owner) throw new Error("Run not found");
     if (run.status !== "running") throw new Error("Only a task that is still working can be steered");
     // `from` names a chat participant (wave mac2, chat-live); such a note never speaks as the owner.
-    const queue = [...(this.steers.get(runId) ?? []), { note, from, ...(options.lateTurn ? { lateTurn: true } : {}) }];
+    // Only the owner's own note, to the owner's own task, may run later as a turn of its own: a short-lived key's, a
+    // household person's, a chat participant's or a helper's note never becomes a new task with the owner's reach.
+    const lateTurn = options.lateTurn === true && from === undefined && !startedWithShortLivedKey() && !currentPerson()
+      && helperParent(this.store, runId) === null;
+    const queue = [...(this.steers.get(runId) ?? []), { note, from, ...(lateTurn ? { lateTurn: true } : {}) }];
     this.steers.set(runId, queue);
     this.store.event(runId, "run.steered", { note: note.slice(0, 500), waiting: queue.length, ...(from === undefined ? {} : { from: from.slice(0, 80) }) });
     return { queued: queue.length };

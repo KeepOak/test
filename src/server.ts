@@ -1704,7 +1704,8 @@ async function api(
       // DESIGN-DIRECTION PR 1: a helper is steered by the owner or its own person only, never by a key or into Lockdown.
       const helperRefusal = helperSteerRefusal(app.store, app.runtime.owner, run.id);
       if (helperRefusal) throw new HttpError(helperRefusal.status, helperRefusal.message);
-      return app.runtime.steer(run.id, text);
+      // The Steer chip's note, too late for the task to read, runs as its own next turn (the runtime says whose may).
+      return app.runtime.steer(run.id, text, undefined, { lateTurn: true });
     }
     if (request.method === "GET" && match[2] === "plan")
       return { plan: app.runtime.orchestration.plan(run.sessionId) ?? null };
