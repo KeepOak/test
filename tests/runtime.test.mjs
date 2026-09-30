@@ -12,7 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch, DemoProvider, RateLimiter } from "../dist/index.js";
+import { Budget, createBranch, DemoProvider, RateLimiter } from "../dist/index.js";
 
 async function fixture(t, provider = new DemoProvider()) {
   const root = await mkdtemp(join(tmpdir(), "branch-test-"));
@@ -240,7 +240,7 @@ test("aborting an in-flight provider cancels work and preserves attempt record",
 test("delegated work charges its parent budget and cannot reset depth", async (t) => {
   const { app } = await fixture(t);
   const context = app.runtime.context();
-  context.budget.limits.maxTokens = 200;
+  context.budget = new Budget({ maxSteps: 60, maxTokens: 200 }); // limits are read-only: the budget is replaced
   const delegated = await app.runtime.delegate(
     "demo",
     context,

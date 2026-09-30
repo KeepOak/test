@@ -33,6 +33,8 @@ export interface HandOverResult {
 interface HandingOver {
   scheduler: { stop(): Promise<void> };
   runtime: { workingRuns(): string[]; idle(ms: number): Promise<boolean>; handOver(): string[]; beginHandOver(): void };
+  /** Chat apps' turns: each one's answer is sent (or, handed over, left to the new engine) before this engine goes. */
+  channels?: { settle(ms: number): Promise<boolean> };
 }
 
 export async function handOverWork(branch: HandingOver, args: HandOverArgs, now = Date.now): Promise<HandOverResult> {
@@ -43,6 +45,9 @@ export async function handOverWork(branch: HandingOver, args: HandOverArgs, now 
   const drained = await branch.runtime.idle(args.drainMs);
   const handedOver = drained ? [] : branch.runtime.handOver();
   if (!drained) await branch.runtime.idle(args.settleMs);
+  // A chat's answer sent from here is written down as sent before this engine lets go, so the new one never sends it
+  // again (src/channels/deliveries.ts), and the chat app's own request is answered, not cut off.
+  await branch.channels?.settle(Math.min(Math.max(args.settleMs, 1000), 15_000));
   // A task that began meanwhile stopped before its first step; it was asked as it began (beginHandOver).
   const stillWorking = branch.runtime.workingRuns();
   return { drained, handedOver, stillWorking, ms: now() - started };

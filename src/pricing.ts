@@ -16,6 +16,10 @@ export interface ModelPrice {
   output: number;
   /** US dollars per million tokens read back from the provider's cache, when it offers one. */
   cached?: number | undefined;
+  /** US dollars per million tokens written to the provider's (five-minute) prompt cache. */
+  cacheWrite?: number | undefined;
+  /** US dollars per million tokens written to the one-hour prompt cache. */
+  cacheWrite1h?: number | undefined;
 }
 export type CostConfidence = "table" | "override" | "unknown";
 export interface CostEstimate {
@@ -26,11 +30,37 @@ export interface CostEstimate {
   /** Plain-language note for the screen, for example "no price on file". */
   note: string;
 }
+/**
+ * What a call or a task used. `input` is the whole prompt; the cache counts are parts of it (Anthropic reports them
+ * apart from its input_tokens, and src/anthropic-usage.ts adds them back in), so each part is charged at its own rate.
+ */
 export interface TokenCounts {
   input: number;
   output: number;
-  /** Tokens served from the provider's cache. Nothing records these yet; reserved for later. */
-  cached?: number;
+  /** Of `input`, the tokens served from the provider's cache. */
+  cached?: number | undefined;
+  /** Of `input`, the tokens written to the provider's prompt cache. */
+  cacheWrite?: number | undefined;
+  /** Of `cacheWrite`, the tokens written to the one-hour cache. */
+  cacheWrite1h?: number | undefined;
+}
+
+/** A usage row (Store.usage) as the tokens to price: what the provider reported, else the estimate. */
+export function tokenCountsOf(row: Record<string, number>): TokenCounts {
+  const reported = (row.reportedInput ?? 0) > 0;
+  return {
+    input: row.reportedInput || row.estimatedInput || 0,
+    output: row.reportedOutput || row.estimatedOutput || 0,
+    ...(reported ? { cached: row.reportedCachedInput ?? 0, cacheWrite: row.reportedCacheWrite ?? 0, cacheWrite1h: row.reportedCacheWrite1h ?? 0 } : {}),
+  };
+}
+/** Two token counts together, cache parts included. */
+export function addTokenCounts(total: TokenCounts, part: TokenCounts): TokenCounts {
+  return {
+    input: total.input + part.input, output: total.output + part.output,
+    cached: (total.cached ?? 0) + (part.cached ?? 0), cacheWrite: (total.cacheWrite ?? 0) + (part.cacheWrite ?? 0),
+    cacheWrite1h: (total.cacheWrite1h ?? 0) + (part.cacheWrite1h ?? 0),
+  };
 }
 
 /** The date the built-in prices were last checked against the providers' public pricing pages. */
@@ -51,23 +81,29 @@ export const builtInPrices: Record<string, ModelPrice> = {
   "gpt-4-turbo": { input: 10, output: 30 },
   "gpt-4": { input: 30, output: 60 },
   "gpt-3.5-turbo": { input: 0.5, output: 1.5 },
-  // Anthropic (date suffixes are stripped before lookup)
-  "claude-3-5-sonnet": { input: 3, output: 15, cached: 0.3 },
-  "claude-3-5-haiku": { input: 0.8, output: 4, cached: 0.08 },
+  // Anthropic (date suffixes are stripped before lookup). cacheWrite is the five-minute cache write, cacheWrite1h the
+  // one-hour one. Cache rates copied from BerriAI/litellm model_prices_and_context_window.json (MIT, commit 27c110cb);
+  // the Claude 3.x and 4.0/4.1 rates are litellm's Bedrock entries for the same models, which carry no one-hour rate,
+  // so a one-hour write there is charged at the five-minute rate, as litellm does.
+  "claude-3-5-sonnet": { input: 3, output: 15, cached: 0.3, cacheWrite: 3.75 },
+  "claude-3-5-haiku": { input: 0.8, output: 4, cached: 0.08, cacheWrite: 1 },
   "claude-3-sonnet": { input: 3, output: 15 },
-  "claude-opus-4-1": { input: 15, output: 75, cached: 1.5 },
+  "claude-opus-4-1": { input: 15, output: 75, cached: 1.5, cacheWrite: 18.75 },
   // Read from platform.claude.com/docs/en/about-claude/pricing on 2026-09-17 (cached = cache hits).
-  "claude-opus-4": { input: 15, output: 75, cached: 1.5 },
-  "claude-opus-4-5": { input: 5, output: 25, cached: 0.5 },
-  "claude-opus-4-6": { input: 5, output: 25, cached: 0.5 },
-  "claude-opus-4-7": { input: 5, output: 25, cached: 0.5 },
-  "claude-opus-4-8": { input: 5, output: 25, cached: 0.5 },
-  "claude-opus-5": { input: 5, output: 25, cached: 0.5 },
-  "claude-sonnet-4": { input: 3, output: 15, cached: 0.3 },
-  "claude-sonnet-4-5": { input: 3, output: 15, cached: 0.3 },
-  "claude-sonnet-4-6": { input: 3, output: 15, cached: 0.3 },
-  "claude-sonnet-5": { input: 2, output: 10, cached: 0.2 },
-  "claude-haiku-4-5": { input: 1, output: 5, cached: 0.1 },
+  "claude-opus-4": { input: 15, output: 75, cached: 1.5, cacheWrite: 18.75 },
+  "claude-opus-4-5": { input: 5, output: 25, cached: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+  "claude-opus-4-6": { input: 5, output: 25, cached: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+  "claude-opus-4-7": { input: 5, output: 25, cached: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+  "claude-opus-4-8": { input: 5, output: 25, cached: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+  "claude-opus-5": { input: 5, output: 25, cached: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 },
+  // Branch's default model. litellm (above) and models.dev providers/anthropic/models/claude-opus-5-5.toml (MIT).
+  "claude-opus-5-5": { input: 4, output: 20, cached: 0.2, cacheWrite: 5, cacheWrite1h: 8 },
+  "claude-sonnet-4": { input: 3, output: 15, cached: 0.3, cacheWrite: 3.75 },
+  "claude-sonnet-4-5": { input: 3, output: 15, cached: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+  "claude-sonnet-4-6": { input: 3, output: 15, cached: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 },
+  "claude-sonnet-5": { input: 2, output: 10, cached: 0.2, cacheWrite: 2.5, cacheWrite1h: 4 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cached: 0.2, cacheWrite: 2.5, cacheWrite1h: 4 },
+  "claude-haiku-4-5": { input: 1, output: 5, cached: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 },
   // Google Gemini
   "gemini-1.5-pro": { input: 1.25, output: 5 },
   "gemini-1.5-flash": { input: 0.075, output: 0.3 },
@@ -97,6 +133,8 @@ const priceSchema = z
     input: z.number().min(0).max(10000),
     output: z.number().min(0).max(10000),
     cached: z.number().min(0).max(10000).optional(),
+    cacheWrite: z.number().min(0).max(10000).optional(),
+    cacheWrite1h: z.number().min(0).max(10000).optional(),
   })
   .strict();
 /** Owner corrections, keyed by model identifier, stored in `settings/pricing`. */
@@ -141,6 +179,22 @@ export function tablePrice(model: string, table: Record<string, ModelPrice> = bu
 const round = (value: number): number => Math.round(value * 1_000_000) / 1_000_000;
 
 /**
+ * The prompt's cost in dollars times a million: the part served from the cache at the cache-read rate, the part written
+ * to the cache at the write rate (the one-hour write at its own), the rest at the input rate. A rate the table lacks
+ * falls back as BerriAI/litellm does (MIT; litellm/litellm_core_utils/llm_cost_calc/utils.py at commit 3a6744cd,
+ * lines 382-394 for the fallbacks and calculate_cache_writing_cost for the five-minute/one-hour split): a missing
+ * read or write rate is the input rate, and a missing one-hour rate is the five-minute write rate.
+ */
+function promptCost(usage: TokenCounts, price: ModelPrice): number {
+  const read = Math.min(usage.cached ?? 0, usage.input);
+  const write = Math.min(usage.cacheWrite ?? 0, usage.input - read);
+  const hour = Math.min(usage.cacheWrite1h ?? 0, write);
+  const writeRate = price.cacheWrite ?? price.input;
+  return (usage.input - read - write) * price.input + read * (price.cached ?? price.input)
+    + (write - hour) * writeRate + hour * (price.cacheWrite1h ?? writeRate);
+}
+
+/**
  * What one model call or one run probably cost. `overrides` wins over the built-in table; a model
  * in neither comes back as unknown with no amount, so nothing ever displays a made-up zero.
  */
@@ -152,10 +206,7 @@ export function estimateCost(
   const override = tablePrice(model, overrides);
   const price = override ?? tablePrice(model);
   if (!price) return { amount: null, currency: "USD", confidence: "unknown", note: "no price on file" };
-  const cachedTokens = usage.cached ?? 0;
-  const amount = round(
-    (usage.input * price.input + usage.output * price.output + cachedTokens * (price.cached ?? price.input)) / 1_000_000,
-  );
+  const amount = round((promptCost(usage, price) + usage.output * price.output) / 1_000_000);
   const confidence: CostConfidence = override ? "override" : "table";
   const updates = localCatalogPriceUpdates;
   const priceDate = updates && (updates.prices[model] || updates.prices[normalizeModelId(model)]) ? updates.pricedAt : pricedAt;
