@@ -15,7 +15,8 @@
 
 import { withBlanksFilled } from "../flows/whatcan.js";
 import { $, esc, render, renderNow, afterDraw } from "../core/dom.js";
-import { S, E } from "../core/state.js";
+import { S, E, ownerHere, activeId } from "../core/state.js";
+import { readSourceMetrics, sourceMetricsReadout } from "./source-metrics.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, mi, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.js";
@@ -220,6 +221,8 @@ async function inspect(el) {
   closePop();
   const runId = el.dataset.run || latestRun((r) => r.sessionId === sid())?.id;
   if (!runId) return;
+  const scope = activeId();
+  const sourceMetrics = readSourceMetrics(runId);
   const rec = await api(`runs/${runId}/inspect`).catch(report);
   if (!rec) return;
   const last = rec.rounds?.filter((round) => !round.check).at(-1); // the answer's own round, not the second opinion's after it
@@ -230,10 +233,13 @@ async function inspect(el) {
     [t("window.chat.msg.second-opinion"), rec.advice?.line]].filter(([, v]) => v);
   const steps = (await loadSteps(runId))?.steps?.length ?? 0;
   if (steps) rows.push([t("window.chat.msg.steps"), t("window.chat.msg.steps-in", { count: steps })]);
+  const sourceResult = await sourceMetrics;
+  if (activeId() !== scope) return;
   M.record = rec;
+  const sourceReadout = ownerHere() ? sourceMetricsReadout(sourceResult) : "";
   openDlg({
     title: t("inspector.open"),
-    body: `<p class="lede" data-css="margin:0">${t("window.chat.msg.went-into", { name: esc(who()) })}</p><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>`,
+    body: `<p class="lede" data-css="margin:0">${t("window.chat.msg.went-into", { name: esc(who()) })}</p><dl class="kv">${rows.map(([k, v]) => `<dt>${k}</dt><dd>${esc(v)}</dd>`).join("")}</dl>${sourceReadout}`,
     foot: `${steps ? `<button class="btn pri" type="button" data-act="tlopen17c" data-run="${esc(runId)}">${ic("tl17c", "s")}${t("recording.page.steps")}</button>` : ""}<button class="btn" type="button" data-act="insp-copy">${t("window.chat.msg.copy-record")}</button>`,
   });
 }
