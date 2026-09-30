@@ -31,7 +31,11 @@ export const WorktreeSettingsSchema = z.object({
   perHelper: z.boolean().default(false),
 }).strict();
 const ForksSchema = z.object({
-  forks: z.array(z.object({ sessionId: z.string().uuid(), name: z.string(), branch: z.string(), folder: z.string(), createdAt: z.string() }).strict()).max(200).default([]),
+  forks: z.array(z.object({ sessionId: z.string().uuid(), name: z.string(), branch: z.string(), folder: z.string(), createdAt: z.string(),
+    /** Captured at creation, never inferred from a later task. Legacy forks may have none. */
+    base: z.string().regex(/^[a-f0-9]{40,64}$/i).optional(),
+    baselineFailed: z.literal(true).optional(),
+  }).strict()).max(200).default([]),
 }).strict();
 const forksKey = "coding-worktree-forks";
 
@@ -84,12 +88,23 @@ export class WorktreePlaces {
     this.helperSources.set(pending, folder);
     try {
       const branched = await this.deps.branchSession(owner, input);
-      this.requireAvailableSource(folder);
       const name = `fork-${short(branched.sessionId)}`, branch = `branch/fork-${short(branched.sessionId)}`;
+      const identity = { sessionId: branched.sessionId, name, branch, folder, createdAt: new Date().toISOString() };
+      // Bind the conversation before the first creation await: every failure retains its required assignment.
+      this.saveForks([...this.forks(), { ...identity, baselineFailed: true }]);
+      this.requireAvailableSource(folder);
       await inWorktree(folder, () => this.deps.git.worktree({ folder: ".", action: "add", name, branch }, signal));
-      const fork = { sessionId: branched.sessionId, name, branch, folder, createdAt: new Date().toISOString() };
-      this.saveForks([...this.forks(), fork]);
-      return { ...fork, path: this.scopeFor(fork.folder, name) };
+      const path = this.scopeFor(folder, name);
+      const head = await this.deps.run(join(this.deps.root, path), ["rev-parse", "--verify", "HEAD^{commit}"], signal).catch(() => null);
+      const base = head?.stdout.trim();
+      if (head?.status !== "completed" || head.exitCode !== 0 || !base || !/^[a-f0-9]{40,64}$/i.test(base)) {
+        // Keep both contents and assignment: the created conversation must never fall back to shared work.
+        signal.throwIfAborted();
+        throw new Error("The new conversation's project copy was preserved, but its initial commit could not be recorded. The conversation cannot work in another folder.");
+      }
+      const fork = { ...identity, base };
+      this.saveForks([...this.forks().filter((entry) => entry.sessionId !== branched.sessionId), fork]);
+      return { ...fork, path };
     } finally { this.helperSources.delete(pending); }
   }
 
@@ -262,11 +277,12 @@ export class WorktreePlaces {
     const fork = this.forks().find((entry) => entry.sessionId === run.sessionId);
     if (!fork) return null;
     const scope = this.scopeFor(fork.folder, fork.name), workspace = join(this.deps.root, scope);
+    if (fork.baselineFailed) throw new Error("This conversation's project copy has no safely recorded initial commit, so the task stopped before working in another folder.");
     if (!existsSync(workspace)) {
       this.deps.note(run.id, "worktree.missing", { path: scope });
       throw new Error("This conversation’s project copy is missing, so this task stopped before working in the original project.");
     }
-    this.deps.note(run.id, "worktree.used", { path: scope, branch: fork.branch });
+    this.deps.note(run.id, "worktree.used", { path: scope, branch: fork.branch, ...(fork.base ? { base: fork.base } : {}) });
     return { scope, workspace, release: async () => undefined };
   }
 
