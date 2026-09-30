@@ -1,5 +1,5 @@
 import { writeFile } from "node:fs/promises";
-import { createBranch } from "../index.js";
+import { createBranch } from "../branch.js";
 import { DemoProvider, demoProviderName } from "../demo.js";
 import { defaultPreset } from "../providers.js";
 import { startServer } from "../server.js";

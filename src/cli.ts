@@ -3,7 +3,7 @@ import { reportCommand, reportUsage } from "./diagnostic-cli.js"; // mac7/diagno
 import { installTypeOf } from "./diagnostic-api.js"; // mac7/diagnostics
 import { resolve } from "node:path";
 import { ZodError } from "zod";
-import { createBranch } from "./index.js";
+import { createBranch } from "./branch.js";
 import { maximumPolicyRules } from "./policy.js"; // Q215
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";

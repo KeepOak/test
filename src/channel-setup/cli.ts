@@ -55,7 +55,7 @@ function attachedBackend(client: Client): ConnectBackend {
 }
 
 async function localBackend(dataDir: string, workspace: string): Promise<{ backend: ConnectBackend; close: () => Promise<void> }> {
-  const { createBranch } = await import("../index.js");
+  const { createBranch } = await import("../branch.js");
   // Saving a chat app's setup asks no model, so none is named here.
   const app = await createBranch({ workspace, dataDir, presets: [] });
   const owner = app.runtime.owner;

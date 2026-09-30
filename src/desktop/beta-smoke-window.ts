@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { BrowserWindow } from "electron";
-import { createBranch } from "../index.js";
+import { createBranch } from "../branch.js";
 import { defaultPreset } from "../providers.js";
 import { startServer } from "../server.js";
 import { saveOnboarding } from "../onboarding.js";

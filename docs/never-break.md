@@ -39,6 +39,12 @@ after each message is handled, and a schedule is claimed in the database before 
 
 ### Desktop gateway draft
 
+The desktop engine and CLI load their factory from `branch.js`, while the public `index.js`
+keeps the same exported API. The public barrel's optional exports no longer become runtime
+startup imports. Document analysis is listed from the existing build-time tool cards and is
+constructed on first input/target/call use. A checkout or build missing either card keeps the
+existing eager fallback. No idle-memory or startup-time saving is claimed without measurement.
+
 The desktop candidate starts a windowless stock Electron broker with `--branch-gateway` and a
 separate single-instance lock. It retains the encrypted device vault, Stop notices and Mac login
 service. Its worker owns the database; its shell windows join the proved public gateway. An absent

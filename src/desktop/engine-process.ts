@@ -9,7 +9,7 @@
 import { setWindowShown } from "../environment.js";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { createBranch } from "../index.js";
+import { createBranch } from "../branch.js";
 import { realDeviceNetwork } from "../devices/network.js";
 import { defaultPreset, providerFromEnv } from "../providers.js";
 import { startServer } from "../server.js";

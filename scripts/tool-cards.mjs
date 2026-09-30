@@ -6,11 +6,18 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
-import { createBranch } from "../dist/index.js";
+import { createBranch } from "../dist/branch.js";
 import { personalParts, personalTools } from "../dist/personal/settings.js";
 
 /* Each part built on first use: how to build it with every switch on, and the names of its tools. */
 export const parts = [
+  { name: "document-analysis", tools: () => ["documents.analyse", "documents.compare"],
+    build: async (app) => {
+      const tool = app.registry.registered("documents.analyse");
+      if (!tool) throw new Error("tool-cards: document analysis is unavailable");
+      // A previous build's card loads the real service; without cards the established fallback already did.
+      void tool.parameters;
+    } },
   { name: "personal", tools: () => personalParts.flatMap((part) => personalTools[part]),
     build: async (app) => { for (const part of personalParts) await app.personal.setMode(part, { mode: "on" }); } },
 ];
