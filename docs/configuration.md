@@ -6904,8 +6904,16 @@ for their owner. The commands on Hermes Agent's dangerous-command list (a recurs
 every mode including Full access, while "Checking commands" in Settings › Safety extras is on (it ships on).
 
 **What changes for you.** An install that was on "No approvals" with commands set to ask is moved to allow once;
-any other preset keeps asking before commands through its own lines. A household person's task, a short-lived key's,
-a chat message's and a schedule's still ask before every command nobody has ruled on. If you would rather be asked,
+any other preset keeps asking before commands through its own lines. A household person's task, a short-lived key's
+and a chat message's still ask before every command nobody has ruled on.
+
+**Schedules and check-ins you made yourself** run as Hermes Agent's and OpenClaw's cron jobs do for their owner: under
+your own approval setting, with your tools except sending messages, asking questions and making more schedules (a
+result still reaches you through the schedule's own delivery). Words that say the job only reads keep it to reading.
+A schedule a chat, a Trunk, a household person or a short-lived key made still asks before every change.
+
+**New conversations** you start in the window begin on Full access, which asks about nothing but Hermes Agent's
+dangerous commands. Pick another start in the mode menu; somebody else in the house never starts on Full access. If you would rather be asked,
 set `unmatchedCommands` to `ask` on the approval settings; saying "yes, always" to a command then writes a standing
 rule for it, and the rules you already have are untouched either way.
 

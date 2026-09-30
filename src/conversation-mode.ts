@@ -34,8 +34,12 @@ import { presetRules, type Policy, type PolicyPresetName, type PolicyRule } from
 export const conversationModes = ["ask", "plan", "auto", "full"] as const;
 export type ConversationMode = (typeof conversationModes)[number];
 export const ConversationModeSchema = z.enum(conversationModes);
-/** What a conversation started in the window gets until somebody picks another. */
-export const newConversationMode: ConversationMode = "ask";
+/**
+ * What a conversation the owner starts in the window gets until they pick another. Owner ruling (2026-09-30): Full
+ * access, as Hermes Agent's CLI and OpenClaw's main session give their owner (everything runs; only Hermes's dangerous
+ * commands ask, src/safety-extras/dangerous-commands.ts). Somebody else in the house never starts on it (`modeChoices`).
+ */
+export const newConversationMode: ConversationMode = "full";
 
 const modePreset: Record<ConversationMode, Exclude<PolicyPresetName, "custom">> = {
   ask: "ask-before-changes", plan: "read-only", auto: "workspace", full: "off",
@@ -101,7 +105,7 @@ export function policyForMode(policy: Policy, mode: ConversationMode, locked = f
 
 /**
  * The owner's one switch for the default: a conversation begun in the window starts on one of the four
- * modes (Ask first unless the owner picks another), or follows their setting the way every conversation
+ * modes (Full access unless the owner picks another), or follows their setting the way every conversation
  * used to. The mode picked here goes through `policyForMode` and every guard, exactly like the chip.
  */
 export const newConversationChoices = [...conversationModes, "follow"] as const;
@@ -173,7 +177,8 @@ export function clearConversationMode(store: Pick<Store, "delete">, owner: strin
  */
 export function heldMode(record: ConversationModeRecord | null, preset: PolicyPresetName, byOwner: boolean): ConversationMode | null {
   if (!record) return null;
-  if (!byOwner && looserThan(record.mode, preset)) return null;
+  // Owner ruling 2026-09-30: Full access is the owner's alone, whatever their own setting is.
+  if (!byOwner && (record.mode === "full" || looserThan(record.mode, preset))) return null;
   return record.mode;
 }
 
@@ -186,8 +191,8 @@ export function modeChoices(preset: PolicyPresetName, options: { locked: boolean
     const looser = modeRank[mode] > modeRank.ask;
     if (options.locked && looser)
       return { mode, available: false, why: "Lockdown is on. It asks before everything until the owner turns it off." };
-    if (!options.owner && looserThan(mode, preset))
-      return { mode, available: false, why: "Only the owner can allow more than the owner's own setting does." };
+    if (!options.owner && (mode === "full" || looserThan(mode, preset)))
+      return { mode, available: false, why: mode === "full" ? "Full access is the owner's alone." : "Only the owner can allow more than the owner's own setting does." };
     return { mode, available: true, why: "" };
   });
 }

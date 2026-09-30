@@ -42,6 +42,19 @@ export function leastPermissions(words: string, held: readonly string[]): string
   return saysReadOnly(words) ? reads : [...new Set([...reads, ...usable.filter((p) => localWrites.includes(p))])];
 }
 
+/**
+ * Owner ruling 2026-09-30: what the owner's own schedule may use, as Hermes Agent gives its cron jobs
+ * (`_resolve_cron_disabled_toolsets` in cron/scheduler.py): everything the owner holds except sending messages
+ * (`messaging`), asking questions (`clarify`) and making more schedules (`cronjob`). A result still reaches the owner
+ * through the schedule's own delivery.
+ */
+export const ownerSchedulePermissions = (held: readonly string[]): string[] =>
+  held.filter((p) => !p.startsWith("schedules.") && p !== "channels.send" && p !== "user.ask");
+
+/** The owner's own schedule from their words: the least when the words say it only reads, else the owner's tools. */
+export const ownerScheduleReach = (words: string, held: readonly string[]): string[] =>
+  saysReadOnly(words) ? leastPermissions(words, held) : ownerSchedulePermissions(held);
+
 /** A list saved before this, that the owner never chose, without the held-back kinds. */
 export const withoutHeldBack = (permissions: readonly string[]): string[] => permissions.filter((p) => !heldBack(p));
 

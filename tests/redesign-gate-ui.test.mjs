@@ -68,11 +68,12 @@ test("sign in, send a message, and the reply shows in the conversation", async (
 });
 
 test("the approval card: the verb lets it go ahead once; Ask first offers no Always allow", async (t) => {
-  const { page, workspace } = await signedIn(t);
+  // Owner ruling 2026-09-30: new conversations ship on Full access; this owner starts them on Ask first.
+  const { page, workspace } = await signedIn(t, { newConversation: "ask" });
   await send(page, "write the note");
   const card = page.locator("#live-ask");
   await card.waitFor({ state: "visible", timeout: 30000 });
-  // A new conversation starts in Ask first, which keeps no standing yes (Q59), so the card does not offer one.
+  // Ask first keeps no standing yes (Q59), so the card does not offer one.
   assert.equal(await card.getByRole("button", { name: "Always allow", exact: true }).count(), 0, "no standing yes in Ask first");
   assert.equal(existsSync(join(workspace, "note.txt")), false, "nothing is written before the answer");
   await card.locator(".btn.pri").click();

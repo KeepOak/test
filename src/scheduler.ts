@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { leastPermissions, withoutHeldBack } from "./schedule-reach.js"; // dogfood
+import { leastPermissions, ownerScheduleReach, ownerSchedulePermissions, withoutHeldBack } from "./schedule-reach.js"; // dogfood
 import { lateNote } from "./never-break/resume.js"; // mac3/never-break
 import { neverBreakModeSync } from "./never-break/gateway-config.js"; // mac3/never-break
 import { z } from "zod";
@@ -196,16 +196,30 @@ export class Scheduler {
   private reachOf(data: Record<string, unknown>): string[] | undefined {
     if (!Array.isArray(data.permissions)) return data.permissions as undefined;
     const saved = data.permissions as string[];
-    return data.permissionsChosen === true ? saved : withoutHeldBack(saved);
+    return data.permissionsChosen === true || data.ownerMade === true ? saved : withoutHeldBack(saved);
+  }
+  /**
+   * Owner ruling 2026-09-30: the owner made this schedule themselves, in the window or in a task of their own, with no
+   * chat, Trunk, household person, short-lived key or outside program behind it. Its turns then run as Hermes Agent's
+   * and OpenClaw's cron jobs do for their owner: the owner's tools and approval setting.
+   */
+  private ownerMade(context: ToolContext, startedBy: string | null | undefined): boolean {
+    const origin = context.runId && this.store.run(context.runId) ? runOrigin(this.store, context.runId) : null;
+    return !startedBy && this.store.profiles.isOwner() && !currentPerson() && !startedWithShortLivedKey()
+      && !startedFromChat(context, this.store) && (context.source ?? "owner") === "owner"
+      && (!origin || (origin.source === "owner" && !origin.shortLivedKey && !origin.personProfileId && !origin.lentTo));
   }
   create(context: ToolContext, input: unknown): SavedRecord {
     if (!context.permissions.has("schedules.manage"))
       throw new Error("Permission denied: schedules.manage");
     // Dogfood: a schedule naming no permissions gets the least its words need (src/schedule-reach.ts), never all. A list
     // a task names (the assistant's own schedules tool) never carries the screen, sending or running: only the owner's does.
+    const startedBy = context.trunk ?? this.runtime.trunkAtWork(), owners = this.ownerMade(context, startedBy);
     const definition = ScheduleSchema.parse(input), byTask = Boolean(context.runId),
-      named = definition.permissions && byTask ? withoutHeldBack(definition.permissions) : definition.permissions,
-      permissions = named ?? leastPermissions(definition.prompt ?? "", [...context.permissions]);
+      // Owner ruling 2026-09-30: the owner's own schedule gets the owner's tools as Hermes Agent's cron jobs do (src/schedule-reach.ts).
+      named = definition.permissions && byTask ? (owners ? ownerSchedulePermissions(definition.permissions) : withoutHeldBack(definition.permissions)) : definition.permissions,
+      // The owner's own words saying it only reads are kept (the dogfood weekday automation); otherwise it gets the owner's tools.
+      permissions = named ?? (owners ? ownerScheduleReach : leastPermissions)(definition.prompt ?? "", [...context.permissions]);
     if (permissions.some((p) => !context.permissions.has(p)))
       throw new Error("Schedule permission escalation denied");
     // A result sent to a chat goes out as the owner's own bot, so only the owner, and only a caller that
@@ -220,7 +234,6 @@ export class Scheduler {
     if (definition.kind === "evaluation" && startedFromChat(context, this.store))
       throw new Error("Running an evaluation suite is for the owner only, and a message from a chat app cannot prove who is typing. Do it in the Branch app.");
     const { webhook, ...rest } = definition;
-    const startedBy = context.trunk ?? this.runtime.trunkAtWork();
     // A check script is a program on this computer: it waits for the owner's own yes, whoever asked.
     return this.store.save("schedules", context.owner, randomUUID(), {
       ...rest,
@@ -233,6 +246,7 @@ export class Scheduler {
       ...(startedFromChat(context, this.store) ? { fromChat: true } : {}),
       // Q118: a schedule a Trunk makes stays that Trunk's work, so each turn runs as it, never as the owner.
       ...(startedBy ? { startedBy, ...this.madeFor(context) } : {}),
+      ...(owners ? { ownerMade: true } : {}), // owner ruling 2026-09-30
       status: definition.gate ? "paused" : "pending",
       ...(definition.gate ? { gateApproved: null, pausedBecause: awaitingApproval } : {}),
       // dogfood-ux-3: the project it was made in, kept with it, so every turn reaches that project's folder and saved
@@ -413,6 +427,9 @@ export class Scheduler {
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
         prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[], ...(thread ? { sessionId: thread } : {}),
         source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
+        // Owner ruling 2026-09-30: the clock's turn or the owner's run-now, never a webhook's or one carrying somebody's payload.
+        ...(data.ownerMade === true && !route && !madeBy && data.fromChat !== true && trigger !== "webhook" && payload === undefined
+          ? { ownerSchedule: true } : {}),
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
         ...(madeBy ? { trunkId: madeBy } : {}),

@@ -69,9 +69,9 @@ const decision = (f, run, tool, args) => f.app.runtime.checkPolicy(tool, args, f
 const written = (f, file) => existsSync(join(f.app.runtime.workspace, file));
 const git = { executable: "git", args: ["status"] };
 
-test("Ask first stays the default, and every new choice is accepted", async (t) => {
+test("Full access is the default (owner ruling 2026-09-30), and every new choice is accepted", async (t) => {
   const f = await realBranch(t);
-  assert.equal((await f.call("/api/conversation-mode")).body.settings.newConversation, "ask");
+  assert.equal((await f.call("/api/conversation-mode")).body.settings.newConversation, "full");
   for (const value of ["plan", "auto", "full", "follow", "ask"]) await setDefault(f, value);
   assert.equal((await f.call("/api/conversation-mode/settings", { newConversation: "anything" })).status, 400);
 });
@@ -196,12 +196,12 @@ test("only the owner at this computer may save what new conversations start on",
   const f = await realBranch(t);
   const saved = async () => (await f.call("/api/conversation-mode")).body.settings.newConversation;
   const settingsUrl = new URL("/api/conversation-mode/settings", f.server.url);
-  const post = (key) => fetch(settingsUrl, { method: "POST", body: JSON.stringify({ newConversation: "full", confirmLoosening: true }),
+  const post = (key) => fetch(settingsUrl, { method: "POST", body: JSON.stringify({ newConversation: "plan", confirmLoosening: true }),
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" } });
   // The route's own check (src/conversation-mode-api.ts, `ownerHere`), with the server's doors out of the way:
   // a household profile and a short-lived key are each refused, and nothing is saved.
   const direct = () => conversationModeApi(f.app, "POST", new URL("http://local/api/conversation-mode/settings"),
-    async () => ({ newConversation: "full" }));
+    async () => ({ newConversation: "plan" }));
   await assert.rejects(underShortLivedKey(direct), (error) => error.status === 403 && /Only the owner/.test(error.message),
     "a short-lived key is refused by the route itself");
   const person = f.app.store.profiles.create({ name: "Sam", pin: "1234" });
@@ -215,7 +215,7 @@ test("only the owner at this computer may save what new conversations start on",
   const key = f.app.sessionTokens.create(f.app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
   const byKey = await post(key);
   assert.equal(byKey.status, 401, "a short-lived key's save is refused at the door");
-  assert.equal(await saved(), "ask", "the default is unchanged by every refused save");
+  assert.equal(await saved(), "full", "the default is unchanged by every refused save");
   assert.equal((await post(f.server.token)).status, 200, "the owner at this computer may save it");
-  assert.equal(await saved(), "full");
+  assert.equal(await saved(), "plan");
 });

@@ -1,5 +1,5 @@
 import type { ToolContext } from "../contracts.js";
-import { leastPermissions } from "../schedule-reach.js"; // dogfood
+import { ownerScheduleReach } from "../schedule-reach.js"; // dogfood
 import type { HandoffParts } from "../interop/handoff.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Runtime } from "../runtime.js";
@@ -212,7 +212,8 @@ export class Autonomy {
     // Only what the owner holds, never more, and never schedules, settings or installing.
     // Dogfood: a blueprint naming none gets the least its words need (src/schedule-reach.ts), never everything held.
     const held = [...context.permissions];
-    draft.permissions = narrowed(Array.isArray(draft.permissions) ? draft.permissions as string[] : leastPermissions(String(draft.prompt ?? ""), held), held);
+    // Owner ruling 2026-09-30: the owner's blueprint gets the owner's tools, as Hermes Agent's cron jobs do, unless its words only read.
+    draft.permissions = narrowed(Array.isArray(draft.permissions) ? draft.permissions as string[] : ownerScheduleReach(String(draft.prompt ?? ""), held), held);
     return this.deps.scheduler.create(context, draft);
   }
 

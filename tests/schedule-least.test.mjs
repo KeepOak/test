@@ -102,15 +102,24 @@ test("a Trunk's routine is made with the least its words need", async (t) => {
   assert.ok(!record.data.permissions.includes("files.write"));
 });
 
-test("a list the assistant names from inside a task never carries the screen, sending or running", async (t) => {
+test("a list the assistant names in the owner's own task keeps what Hermes Agent's cron jobs keep; anybody else's gets no screen, sending or running", async (t) => {
   const { app } = await fixture(t);
   const run = await app.runtime.run({ prompt: "hello" });
   const context = app.runtime.context({ runId: run.id });
-  const made = app.scheduler.create(context, { prompt: "check the page every hour", kind: "task", dueAt: dueAt(),
-    permissions: ["web.read", "desktop.view", "channels.send", "code.execute"] });
+  const named = ["web.read", "desktop.view", "channels.send", "code.execute"];
+  const made = app.scheduler.create(context, { prompt: "check the page every hour", kind: "task", dueAt: dueAt(), permissions: named });
   const record = app.store.get("schedules", app.runtime.owner, made.id);
-  assert.deepEqual(record.data.permissions, ["web.read"], "a page telling the assistant to add them gets nothing");
-  assert.notEqual(record.data.permissionsChosen, true, "and the list is not taken for the owner's own");
+  // Owner ruling 2026-09-30: as `_resolve_cron_disabled_toolsets` in Hermes Agent, only sending, asking and scheduling are left out.
+  assert.deepEqual(record.data.permissions, ["web.read", "desktop.view", "code.execute"], "the owner's own schedule keeps its tools");
+  assert.equal(record.data.ownerMade, true);
+  assert.notEqual(record.data.permissionsChosen, true, "and the list is not taken for one the owner picked by hand");
+  const { underShortLivedKey } = await import("../dist/key-context.js");
+  const keyed = await underShortLivedKey(() => app.runtime.run({ prompt: "hello" }));
+  const theirs = underShortLivedKey(() => app.scheduler.create(app.runtime.context({ runId: keyed.id }),
+    { prompt: "check the page every hour", kind: "task", dueAt: dueAt(), permissions: named }));
+  const kept = app.store.get("schedules", app.runtime.owner, theirs.id);
+  assert.deepEqual(kept.data.permissions, ["web.read"], "a short-lived key's schedule gets nothing held back");
+  assert.notEqual(kept.data.ownerMade, true);
 });
 
 test("the owner's own mail and calendar are read only when the words are about them", async (t) => {

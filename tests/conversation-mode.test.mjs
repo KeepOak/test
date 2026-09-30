@@ -148,7 +148,7 @@ async function served(t, script = writes("d.txt")) {
 test("the window's new conversation starts in the mode picked, and each change is checked", async (t) => {
   const { app, call } = await served(t);
   const fresh = await call("/api/conversation-mode");
-  assert.equal(fresh.body.newConversation, "ask", "a new conversation starts on Ask first");
+  assert.equal(fresh.body.newConversation, "full", "a new conversation starts on Full access (owner ruling 2026-09-30)");
   assert.equal(fresh.body.following.preset, "off");
   const run = (await call("/api/run", { prompt: "write it", mode: "plan" })).body;
   assert.equal((await call(`/api/conversation-mode?sessionId=${run.sessionId}`)).body.mode, "plan");
@@ -176,7 +176,7 @@ test("a household person may not pick a mode looser than the owner's setting", a
   assert.deepEqual(choices.filter((c) => !c.available).map((c) => c.mode), ["auto", "full"]);
   const refused = await call("/api/conversation-mode", { sessionId: run.sessionId, mode: "full" });
   assert.equal(refused.status, 403);
-  assert.match(refused.body.error, /Only the owner/);
+  assert.match(refused.body.error, /owner's alone/);
   app.store.profiles.switch({ profileId: null });
 });
 
@@ -194,10 +194,12 @@ test("agreeing a plan in a Plan conversation lets it act, asking first", async (
 
 /* ---------------------------------------------------------------- the chip in the window */
 
-async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [] }), route = null) {
+async function windowFixture(t, script = () => ({ content: "Done.", toolCalls: [] }), route = null, start = null) {
   const { chromium } = await import("playwright");
   const { app, server, call } = await served(t, script);
   await call("/api/onboarding", { done: true });
+  // Owner ruling 2026-09-30: new conversations ship on Full access; a test about Ask first has the owner choose it.
+  if (start) assert.equal((await call("/api/conversation-mode/settings", { newConversation: start })).status, 200);
   const browser = await chromium.launch({ headless: true });
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1440, height: 950 }, serviceWorkers: "block" });
@@ -225,10 +227,10 @@ const openSession = async (page, id) => {
 /* Redesign: the prototype's menu has no warning before Full access (POPS.modemenu2 'set-mode' sets it at once) and no arrow
    keys inside the menu (its rows carry 1–4); both are replaced by the new window. Checked last, so the menu is still
    exercised: that the conversation was started on Ask first. */
-test("the chip starts a new conversation on Ask first, and its menu asks before giving full access", async (t) => {
+test("the chip starts a new conversation on Full access, and its menu switches the conversation's mode", async (t) => {
   const f = await windowFixture(t);
   const chip = modeChip(f.page);
-  await chipSays(f.page, "Ask first");
+  await chipSays(f.page, "Full access");
   await f.page.locator("#prompt").fill("Tidy my notes");
   await f.page.locator("#send").click();
   await f.page.locator("#conversation .b .txt").first().waitFor({ timeout: 30000 });
@@ -239,15 +241,15 @@ test("the chip starts a new conversation on Ask first, and its menu asks before 
   const menu = f.page.locator("#app > .pop");
   await menu.waitFor({ state: "visible" });
   assert.deepEqual((await menu.locator('[data-act="set-mode"] .mi-t').allInnerTexts()).map((x) => x.trim()), ["Auto", "Ask first", "Plan first", "Full access"]);
-  await menu.locator('[data-act="set-mode"][data-v="full"]').click();
-  await chipSays(f.page, "Full access");
-  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, sessionId).mode, "full");
+  await menu.locator('[data-act="set-mode"][data-v="ask"]').click();
+  await chipSays(f.page, "Ask first");
+  assert.equal(readConversationMode(f.app.store, f.app.runtime.owner, sessionId).mode, "ask");
   await chip.click();
   await menu.waitFor({ state: "visible" });
   await chip.click();
   await menu.waitFor({ state: "hidden" });
   assert.deepEqual(f.errors, []);
-  assert.equal(startedOn, "ask", "the conversation was started on Ask first");
+  assert.equal(startedOn, "full", "the conversation was started on Full access");
 });
 
 /* Redesign: under Lockdown the prototype's menu greys every mode (POPS.modemenu2: disabled when S.locked) and the chip says
@@ -275,7 +277,7 @@ test("under Lockdown the looser modes are greyed with the reason, not hidden, an
 /* Redesign: the new card (public/app/chat/chat.js askCard) is the action's verb (once), "Always allow" and "Don’t allow";
    its "for this conversation" answer is replaced by the new window (not in the design's card). */
 test("Q59: a question in an Ask first conversation offers no standing yes on its card", async (t) => {
-  const f = await windowFixture(t, writes("asked.txt"));
+  const f = await windowFixture(t, writes("asked.txt"), null, "ask");
   await f.page.locator("#prompt").fill("write it");
   await f.page.locator("#send").click();
   const card = f.page.locator("#live-ask");
@@ -303,7 +305,7 @@ test("a conversation from before keeps following the owner's setting, and says s
 
 test("the owner can have new conversations follow the setting instead, and only the owner", async (t) => {
   const { app, call } = await served(t);
-  assert.equal((await call("/api/conversation-mode")).body.settings.newConversation, "ask", "Ask first is the default");
+  assert.equal((await call("/api/conversation-mode")).body.settings.newConversation, "full", "Full access is the default");
   assert.equal((await call("/api/conversation-mode/settings", { newConversation: "follow", confirmLoosening: true })).body.settings.newConversation, "follow");
   assert.equal((await call("/api/conversation-mode")).body.newConversation, null, "the window then starts conversations on the setting");
   const person = app.store.profiles.create({ name: "Sam", pin: "1234" });
@@ -316,7 +318,7 @@ test("the owner can have new conversations follow the setting instead, and only 
 test("in the window, a new conversation on Ask first stops before its first write, though the setting is No approvals", async (t) => {
   const f = await windowFixture(t, (turn, asked) => (asked.includes("note") && turn % 2 === 1
     ? { content: "", toolCalls: [{ id: `w${turn}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] }
-    : { content: "Written.", toolCalls: [] }));
+    : { content: "Written.", toolCalls: [] }), null, "ask");
   await f.page.locator("#prompt").fill("write a note for me");
   await f.page.locator("#send").click();
   await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
@@ -334,7 +336,7 @@ test("in the window, a first message sent before the mode was read still starts 
     : { content: "Written.", toolCalls: [] }), (page) => page.route(/\/api\/conversation-mode(\?|$)/, async (route) => {
     await new Promise((resolve) => setTimeout(resolve, 2500));
     await route.continue();
-  }));
+  }), "ask");
   await f.page.locator("#prompt").fill("write a note for me");
   await f.page.locator("#send").click();
   await f.page.locator("#live-ask").waitFor({ state: "visible", timeout: 20000 });
@@ -394,7 +396,7 @@ test("in the window, setup's Trunk suggestions start their conversation on what 
   await f.page.locator('[data-act="ob-propose"]').click();
   for (let tries = 0; tries < 100 && !sent.length; tries++) await f.page.waitForTimeout(50);
   assert.equal(sent[0]?.temporary, true, "control: this is setup's own conversation");
-  assert.equal(sent[0]?.mode, "ask", "it starts on Ask first, as new conversations do");
+  assert.equal(sent[0]?.mode, "full", "it starts on Full access, as new conversations do");
 });
 
 /* ---------------------------------------------------------------- integration review */
@@ -440,7 +442,7 @@ test("integration review: a short-lived key's task never gets a mode looser than
   const byKey = await underShortLivedKey(() => app.runtime.run({ prompt: "write it", sessionId: owners.sessionId }));
   assert.equal(byKey.status, "needs_input", "the key's task asks, as the owner's setting says");
   assert.equal(existsSync(join(app.runtime.workspace, "key.txt")), false);
-  assert.match(underShortLivedKey(() => modeRefusal(app, "full")) ?? "", /Only the owner/, "and the key cannot start a Full access conversation");
+  assert.match(underShortLivedKey(() => modeRefusal(app, "full")) ?? "", /owner's alone/, "and the key cannot start a Full access conversation");
   assert.equal(underShortLivedKey(() => modeRefusal(app, "plan")), null, "a stricter one is fine");
   const own = await app.runtime.run({ prompt: "write it", sessionId: owners.sessionId });
   assert.equal(own.status, "completed", "the owner's own task in the same conversation still has Full access");

@@ -137,19 +137,22 @@ export async function conversationModeApi(app: ModeApp, method: string, url: URL
 
 /**
  * Q013: what a conversation Branch opens by itself starts on (a new Trunk's own conversation, a room): the start the owner
- * chose for new conversations (Ask first unless they picked another), never looser than their own setting in Settings ›
+ * chose for new conversations (Full access unless they picked another), never looser than their own setting in Settings ›
  * Permissions, and never looser than Ask first under Lockdown, as the window's start is (`view`). Null when it follows
  * the owner's setting: they chose "follow", or their setting is the stricter one.
  */
-export function startingMode(app: ModeApp): ConversationMode | null {
-  const chosen = conversationModeSettings(app.store, app.runtime.owner).newConversation;
-  if (chosen === "follow") return null;
+export function startingMode(app: ModeApp, group = false): ConversationMode | null {
+  const picked = conversationModeSettings(app.store, app.runtime.owner).newConversation;
+  if (picked === "follow") return null;
+  // Owner ruling 2026-09-30: a room is a group, which OpenClaw's non-main mode and Hermes's allowed-users list hold apart;
+  // it starts on Ask first when new conversations start on Full access, and the owner can pick Full access for it.
+  const chosen = group && picked === "full" ? "ask" : picked;
   const capped = lockdownActive(app.store, app.runtime.owner) && looserThan(chosen, "ask-before-changes") ? "ask" : chosen;
   return looserThan(capped, readPolicy(app.store, app.runtime.owner).preset) ? null : capped;
 }
 /** Q013: a conversation Branch opened by itself is given the same start as a new one in the window (`startingMode`). */
-export function startLikeNew(app: ModeApp, sessionId: string): void {
-  const mode = startingMode(app);
+export function startLikeNew(app: ModeApp, sessionId: string, group = false): void {
+  const mode = startingMode(app, group);
   if (mode) pickConversationMode(app, sessionId, mode);
 }
 
