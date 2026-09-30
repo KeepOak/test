@@ -89,9 +89,10 @@ async function chooseAndSend(trunk, sid, text, hooks) {
 }
 
 /* ---------- a room's own state: speaking, and who waits for a yes ---------- */
-export async function readRoom(info) {
+export async function readRoom(info, { throwOnError = false } = {}) {
   if (info?.kind !== "room" || !info.room) { R.view = null; R.viewFor = null; return null; }
-  try { R.view = await api(`trunks/rooms/${encodeURIComponent(info.room.id)}`); R.viewFor = info.room.id; } catch { R.view = null; }
+  try { R.view = await api(`trunks/rooms/${encodeURIComponent(info.room.id)}`); R.viewFor = info.room.id; }
+  catch (error) { R.view = null; if (throwOnError) throw error; }
   return R.view;
 }
 export const roomView = (info) => (info?.kind === "room" && R.viewFor === info.room?.id ? R.view : null);

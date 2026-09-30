@@ -37,7 +37,7 @@
    actions wait, and the view says "You're driving · <name> is paused" until Hand back (POST /api/panels/screen/hand-back).
    Both are the owner's alone, at this computer's own window; the engine refuses anyone else. */
 
-import { $, esc, applyCss, onRender, render } from "../core/dom.js";
+import { $, esc, applyCss, onRender, render, pressIn, whenReleased } from "../core/dom.js";
 import { ic, av, faceOf, toast, app, closePop } from "../core/ui.js";
 import { S, E, refresh, trunkIntro, ownName, chatFace } from "../core/state.js";
 import { api, token } from "../core/api.js";
@@ -477,12 +477,19 @@ function redraw(el, html) {
 }
 
 /* One region each for the full-size view and the small window, made once and removed when closed; drawn again only
-   when what it shows changed. */
+   when what it shows changed, and never under a press (core/dom.js pressIn): a view read landing between a press and its
+   click replaced the button or picture pressed, so the click was lost (a New tab or a click on the page did nothing). */
+let heldBack = false;
 function region(id, cls, show, html) {
   let el = document.getElementById(id);
   if (!show) { el?.remove(); G.drawn[id] = ""; return; }
   if (!el) { el = Object.assign(document.createElement("div"), { id, className: cls }); app()?.appendChild(el); G.drawn[id] = ""; }
   const next = html();
+  if (next !== G.drawn[id] && pressIn(el)) {
+    if (!heldBack) { heldBack = true; whenReleased(() => { heldBack = false; drawStage(); }); }
+    fit(el);
+    return;
+  }
   if (next !== G.drawn[id]) {
     // Restoring a textarea's value/focus cannot restore its native IME session. Frames still paint below.
     if (id === "stage7" && G.kind === "browser" && ownerBrowserComposing(S.chat)) { fit(el); return; }
