@@ -14,7 +14,7 @@
    Branch from here and More are chat/branches.js and chat/more.js (pass 17). */
 
 import { withBlanksFilled } from "../flows/whatcan.js";
-import { $, esc, render, renderNow, afterDraw } from "../core/dom.js";
+import { $, esc, render, renderNow, afterDraw, composing } from "../core/dom.js";
 import { S, E } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -361,7 +361,7 @@ function pickSkill(el) {
 
 /* Arrows, Enter, Tab and Escape belong to an open list before the box sends anything. */
 function listKeys(e) {
-  if (e.target.id !== "prompt") return;
+  if (e.target.id !== "prompt" || composing(e)) return; // the input method owns every key while it composes
   const list = $(".slash6");
   if (list) {
     const n = list.querySelectorAll("[role='option']").length;

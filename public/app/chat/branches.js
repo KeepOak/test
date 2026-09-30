@@ -7,7 +7,7 @@
    - switching opens that path's own conversation; every path stays exactly as it was.
    Approvals are never copied: a question a task stopped on belongs to its task, so it is answered once. */
 
-import { $, esc, render } from "../core/dom.js";
+import { $, esc, render, composing } from "../core/dom.js";
 import { S, E, refresh } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -173,7 +173,7 @@ export function initBranches(context) {
   on("brmake17c", () => makePath());
   on("brgo17c", (el) => go(el));
   on("brcmp17c", () => compare());
-  document.addEventListener("keydown", (e) => { if (e.target.id === "br-name17c" && e.key === "Enter") { e.preventDefault(); makePath(); } });
+  document.addEventListener("keydown", (e) => { if (e.target.id === "br-name17c" && e.key === "Enter" && !composing(e)) { e.preventDefault(); makePath(); } });
   document.addEventListener("change", (e) => {
     if (e.target.id !== "br-sel017c" && e.target.id !== "br-sel117c") return;
     B.pick = [$("#br-sel017c")?.value, $("#br-sel117c")?.value];

@@ -53,41 +53,79 @@ export async function markProblem(mark: number, count: number, checks: MarkCheck
  * rather than trusted: it must be worn by exactly one thing, and by the same thing it was handed
  * to. A page that moves a number onto something else, or puts it on two things at once, is trying
  * to steer the press, and the number is refused instead.
+ *
+ * Every other way must find exactly one thing, by its exact name: "Delete" never finds "Delete account", and a name
+ * two things share presses neither. Taking the first loose match is what let a press land on the wrong button. The
+ * idea of healing from a fresh look at the page rather than from the first near miss follows Stagehand's
+ * `selfHealAction` (browserbase/stagehand, packages/extension/services/actService.ts, MIT); no code was copied.
  */
 function ways(target: HealTarget): { way: HealingWay; find: (page: Page) => Locator }[] {
   const plan: { way: HealingWay; find: (page: Page) => Locator }[] = [];
-  if (target.selector) plan.push({ way: 'selector', find: page => page.locator(target.selector!).first() });
+  if (target.selector) plan.push({ way: 'selector', find: page => page.locator(target.selector!) });
   if (target.name) {
-    plan.push({ way: 'role', find: page => page.getByRole('button', { name: target.name!, exact: false }).first() });
-    plan.push({ way: 'text', find: page => page.getByText(target.name!, { exact: false }).first() });
+    // What a thing is called, exactly: a button, a link, or a box by its label.
+    plan.push({ way: 'role', find: page => page.getByRole('button', { name: target.name!, exact: true })
+      .or(page.getByRole('link', { name: target.name!, exact: true })).or(labelled(page, target.name!)) });
+    plan.push({ way: 'text', find: page => page.getByText(target.name!, { exact: true }) });
   }
   if (target.mark !== undefined)
     plan.push({ way: 'mark', find: page => page.locator(`[${markAttribute}="${target.mark}"]`) });
   return plan.slice(0, maxHealingAttempts);
 }
 
+/** A word as an XPath string, whatever quotes it holds. */
+function xpathText(value: string): string {
+  if (!value.includes('"')) return `"${value}"`;
+  if (!value.includes("'")) return `'${value}'`;
+  return `concat(${value.split('"').map(part => `"${part}"`).join(`, '"', `)})`;
+}
 /**
- * Finds the thing an action is about, trying each way in turn until one is really there. The
- * result says which way worked and how many were tried, so the trace can record it.
+ * A box by its label, exactly: a label tied to it by name, or a label wrapped round it whose own words (not the words
+ * of the list inside it) are exactly the name, as in `<label>Size <select>…</select></label>`.
+ */
+function labelled(page: Page, name: string): Locator {
+  const wrapped = `xpath=//label[normalize-space(text()[1])=${xpathText(name)}]//*[self::select or self::input or self::textarea]`;
+  return page.getByLabel(name, { exact: true }).or(page.locator(wrapped));
+}
+
+/**
+ * The thing could not be told apart: nothing matched, or a way matched more than one thing. Nothing was pressed. The
+ * caller looks at the page afresh and hands the model numbers to choose from (browser.ts `healed`).
+ */
+export class HealMissError extends Error {
+  constructor(message: string, readonly target: HealTarget, readonly ambiguous: boolean) { super(message); }
+}
+
+/**
+ * Finds the thing an action is about, trying each way in turn until one finds exactly one thing. The
+ * result says which way worked and how many were tried, so the trace can record it. A name that matches
+ * several things is never narrowed by a looser way after it (the words could find one wrong thing), only
+ * by the number, when one was given too. A selector that matches several goes on to the name.
  */
 export async function resolve(page: Page, target: HealTarget, timeoutMs = 2000,
   checks: MarkChecks = {}): Promise<HealResult> {
   const plan = ways(target);
   if (!plan.length) throw new Error('Say which thing to act on: a selector, its name, or its number from the page description');
   const tried: HealingWay[] = [];
-  let note = '';
+  let note = '', several = '';
   for (const step of plan) {
+    if (step.way === 'text' && several.startsWith('"')) continue;
     tried.push(step.way);
     const locator = step.find(page);
     const count = await locator.count().catch(() => 0);
     if (step.way === 'mark') {
       note = await markProblem(target.mark!, count, checks);
       if (note) continue;
+    } else if (count > 1) {
+      // What the name matched outranks what the selector matched, since the name is what the model is asked about.
+      if (step.way !== 'selector' || !several)
+        several = `${step.way === 'selector' ? 'That selector' : `"${target.name}"`} matches ${count} things on this page, so nothing was pressed. `;
+      continue;
     } else if (count === 0) continue;
     const ready = await locator.waitFor({ state: 'attached', timeout: timeoutMs }).then(() => true).catch(() => false);
     if (ready) return { locator, way: step.way, attempts: tried.length, tried };
   }
-  throw new Error(`Nothing on this page matched, after ${tried.length} ${tried.length === 1 ? 'try' : 'tries'} `
-    + `(${tried.join(', ')}). ${note ? `${note} ` : ''}`
-    + 'Describe the page again and use the number of the thing you mean.');
+  if (several) throw new HealMissError(`${several}${note ? `${note} ` : ''}`, target, true);
+  throw new HealMissError(`Nothing on this page matched exactly, after ${tried.length} ${tried.length === 1 ? 'try' : 'tries'} `
+    + `(${tried.join(', ')}). ${note ? `${note} ` : ''}`, target, false);
 }

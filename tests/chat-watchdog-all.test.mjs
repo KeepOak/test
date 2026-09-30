@@ -75,21 +75,23 @@ test("Matrix: each answered sync, even an empty one, is contact; restart carries
   assert.ok(afterRestart.every((since) => since !== null), "the restart resumed from its place, not from the start");
 });
 
-test("a watchdog beat that comes far too late restarts every app at once; an ordinary beat does not", async (t) => {
+test("a watchdog beat that comes far too late looks at every app at once and restarts the silent ones; an ordinary beat does not", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-watch-all-"));
   const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"),
     provider: { name: "scripted", async complete() { return { content: "ok", toolCalls: [] }; } } });
   t.after(async () => { await app.close(); await discardTemp(root); });
+  app.channels.wakeProbeMs = 50; app.channels.wakeRetryMs = 1;
   const restarted = [];
+  // Fresh by the beats' own clock, but last heard from long before the wake itself: each is started again then.
   for (const id of ["a", "b"])
     await app.channels.attach({ id, kind: "fake", botName: () => "B", async start() {}, async stop() {}, async send() { return "1"; },
-      lastContact: () => Date.now(), async restart() { restarted.push(id); if (id === "b") throw new Error("still offline"); } },
+      lastContact: () => 1_014_000, async restart() { restarted.push(id); if (id === "b") throw new Error("still offline"); } },
     { activation: "always", pairing: true, allowlist: [] });
   await app.channels.watchTick(1_000_000);
   await app.channels.watchTick(1_015_000);
   assert.deepEqual(restarted, [], "fifteen seconds later is an ordinary beat");
   await app.channels.watchTick(1_015_000 + 10 * 60_000);
-  assert.deepEqual(restarted.sort(), ["a", "b"], "after a sleep every app starts again, one failing stops no other");
+  assert.deepEqual(restarted.sort(), ["a", "b", "b", "b"], "after a sleep each silent app starts again; one failing is retried and stops no other");
   const b = app.channels.summary().channels.find((one) => one.id === "b");
   assert.equal(b.health.state, "needs attention");
   assert.match(b.health.reason, /could not reconnect after this computer woke/);

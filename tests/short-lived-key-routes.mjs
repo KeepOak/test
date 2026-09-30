@@ -1348,7 +1348,7 @@ export const OUTBOUND = [
   /^src\/channels\/(?!parity-api\.ts)/, /^src\/providers\//,
   /^src\/(local-models|tracing-export|voice|provider-batch)\.ts$/,
   // Callers of our own routes, and the route description, rather than the routes themselves.
-  /^src\/(cli|cli-attach|api-openapi|short-lived-keys|household-routes)\.ts$/, /^src\/install\//, /^src\/desktop\//,
+  /^src\/(cli|cli-program|cli-attach|api-openapi|short-lived-keys|household-routes)\.ts$/, /^src\/install\//, /^src\/desktop\//,
   // FQ-collaboration.unified-search: builds links to already-classified routes (/api/sessions/:id,
   // /api/workflows/:id, /api/audit), not a route of its own beyond /api/search, which src/server.ts defines.
   /^src\/unified-search\.ts$/,

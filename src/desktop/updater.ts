@@ -19,6 +19,7 @@ import type { PauseReason } from "./quiet-build.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
 import { primaryRepo, fallbackRepo, isTrustedRepo } from "./repo-pair.js";
 import { diagnose, type Level } from "../diagnostic-log.js";
+import { gatewayTaskName } from "../install/gateway-task.js"; // UP-PLATFORM-002
 
 /** One line in the activity log for each step an update takes (src/desktop/main-log.ts: main's lines reach the file). */
 const note = (level: Level, message: string, fields?: Record<string, unknown>): void =>
@@ -1024,6 +1025,8 @@ export class Updater {
     await writeFile(script, [
       "@echo off", "setlocal", 'set "PID=%~1"', "set TRIES=0", `echo [%date% %time%] update started for pid %PID% >>"${log}"`,
       // The app asked itself to close; if it has not gone within about two minutes, end it so the update still lands.
+      // The gateway's task is switched off first, so a gateway ended below is not started again mid-swap (windowsSwap).
+      "call :taskoff",
       ...waitFor("%PID%", "wait", "WAITED", "app"),
       // The engine that keeps working with the window closed holds the same files open, so it is
       // waited for too; it was already asked to close before this script was started.
@@ -1171,11 +1174,27 @@ export function windowsRecoveryScript(plan: { install: string; previous: string;
   ].join("\r\n");
 }
 
+/**
+ * UP-PLATFORM-002: `:taskoff` switches the gateway's scheduled task off for the swap, remembering that it did (the task
+ * may not exist: Startup shortcut, or never registered), and `:taskon` switches it back on. schtasks reads no input.
+ */
+export function windowsGatewayTaskSwitch(sys: string): string[] {
+  const change = (how: string) => `${sys}schtasks.exe /Change /TN "${gatewayTaskName}" /${how} <NUL >NUL 2>&1`;
+  return [
+    ":taskoff", change("DISABLE"), 'if not errorlevel 1 set "TASKOFF=1"', "exit /b 0",
+    ":taskon", `if defined TASKOFF ${change("ENABLE")}`, "exit /b 0",
+  ];
+}
+
 /** The Windows swap: copy beside, rename twice, carry what is kept; the copy over the folder is the fallback. */
 export function windowsSwap(plan: WindowsSwapPlan): string[] {
   const { install, previous, log, exe } = plan;
   const incoming = `${install}.incoming`, failed = `${install}.failed`, folder = windowsKeep.folder;
   const note = (text: string) => `echo [%time%] ${text} >>"${log}"`;
+  // UP-PLATFORM-002: the gateway's scheduled task restarts a gateway that ends with a failure, as a forced end does.
+  // It is switched off for the swap (`:taskoff`, called by the script before it waits) and on again before any version
+  // starts, so it never starts one from a half-copied folder and the new version's window can start through it.
+  const launch = `call :taskon & start "" "${exe}"`;
   const reg = `${plan.sys}reg.exe`;
   // Armed only for the two renames, so a cut there is put right at the next sign-in.
   const arm = `${reg} add "${plan.runOnceKey}" /v "${recoveryValueName}" /t REG_SZ /d "\\"${plan.recover}\\"" /f >NUL 2>&1`;
@@ -1188,7 +1207,7 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
   return [
     ":copy", "set /a TRIES+=1", note("copying new version beside the old one, attempt %TRIES%"),
     `rmdir /s /q "${incoming}" 2>NUL`, plan.mirror(plan.staged, incoming),
-    `if errorlevel 8 ( if %TRIES% lss 3 ( ${plan.sleep(3)} & goto copy ) else ( ${note("copy failed; nothing was changed")} & rmdir /s /q "${incoming}" 2>NUL & start "" "${exe}" & exit /b 1 ) )`,
+    `if errorlevel 8 ( if %TRIES% lss 3 ( ${plan.sleep(3)} & goto copy ) else ( ${note("copy failed; nothing was changed")} & rmdir /s /q "${incoming}" 2>NUL & ${launch} & exit /b 1 ) )`,
     `call :drop "${previous}-2"`,
     `if exist "${previous}\\" if not exist "${previous}-2\\" move "${previous}" "${previous}-2" >NUL`,
     note("keeping previous version"),
@@ -1196,19 +1215,19 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
     `if exist "${previous}\\" goto inplace`,
     arm, `move "${install}" "${previous}" >NUL 2>&1`, `if errorlevel 1 ( ${disarm} & goto inplace )`,
     `move "${incoming}" "${install}" >NUL 2>&1`,
-    `if errorlevel 1 ( ${note("new version could not be moved in; restoring previous")} & move "${previous}" "${install}" >NUL & ${disarm} & start "" "${exe}" & exit /b 1 )`,
+    `if errorlevel 1 ( ${note("new version could not be moved in; restoring previous")} & move "${previous}" "${install}" >NUL & ${disarm} & ${launch} & exit /b 1 )`,
     disarm, ...carry(previous, install), "goto swapped",
     ":inplace", note("the program folder is in use; copying over it instead"),
-    plan.mirror(install, previous, windowsKeepOut), `if errorlevel 8 ( ${note("could not keep the previous version; nothing was changed")} & start "" "${exe}" & exit /b 1 )`,
+    plan.mirror(install, previous, windowsKeepOut), `if errorlevel 8 ( ${note("could not keep the previous version; nothing was changed")} & ${launch} & exit /b 1 )`,
     plan.mirror(incoming, install, windowsKeepOut), `if errorlevel 8 goto restore`, `rmdir /s /q "${incoming}" 2>NUL`,
     ":swapped",
-    'if "%~2"=="stay" exit /b 0',
+    'if "%~2"=="stay" ( call :taskon & exit /b 0 )',
     ...(plan.started ? [`del /q "${plan.started}" 2>NUL`] : []),
-    note("starting new version"), `start "" "${exe}"`, plan.sleep(20),
+    note("starting new version"), `${launch}`, plan.sleep(20),
     // selfdev (Beta): up means it said so (its engine started) within about ninety seconds and is still running.
     ...(plan.started ? ["set UPWAIT=0", ":upwait", `if exist "${plan.started}" goto upcheck`,
       `if %UPWAIT% lss 70 ( set /a UPWAIT+=1 & ${plan.sleep(1)} & goto upwait )`,
-      note("new version did not say it was up; ending it"), `${plan.sys}taskkill.exe /IM "${plan.image}" /T /F >NUL 2>&1`, plan.sleep(2), "goto restore",
+      note("new version did not say it was up; ending it"), "call :taskoff", `${plan.sys}taskkill.exe /IM "${plan.image}" /T /F >NUL 2>&1`, plan.sleep(2), "goto restore",
       ":upcheck", plan.running, "if not errorlevel 1 goto done", "goto restore"] : []),
     plan.running, "if not errorlevel 1 goto done",
     plan.sleep(15), plan.running, "if not errorlevel 1 goto done",
@@ -1218,13 +1237,14 @@ export function windowsSwap(plan: WindowsSwapPlan): string[] {
     `move "${previous}" "${install}" >NUL 2>&1`, `if errorlevel 1 ( move "${failed}" "${install}" >NUL & ${disarm} & goto restorecopy )`,
     disarm, ...carry(failed, install), "goto restored",
     ":restorecopy", plan.mirror(previous, install, windowsKeepOut),
-    ":restored", note("previous version is back"), `start "" "${exe}"`, "exit /b 1",
+    ":restored", note("previous version is back"), `${launch}`, "exit /b 1",
     ":done", note("new version is running"), `rmdir /s /q "${plan.unpacked}" 2>NUL`, `del /q "${plan.archive}" 2>NUL`, "exit /b 0",
     // Removes an old copy, first moving any Branch Data left in it out beside the program; keeps the copy when that fails.
     ":drop", `if not exist "%~1\\" exit /b 0`,
     `if exist "%~1\\${folder}\\" move "%~1\\${folder}" "${install} - saved ${folder} %RANDOM%" >NUL 2>&1`,
     `if exist "%~1\\${folder}\\" ( ${note("kept %~1 because it holds " + folder)} & exit /b 1 )`,
-    `rmdir /s /q "%~1" 2>NUL`, "exit /b 0", "",
+    `rmdir /s /q "%~1" 2>NUL`, "exit /b 0",
+    ...windowsGatewayTaskSwitch(plan.sys), "",
   ];
 }
 

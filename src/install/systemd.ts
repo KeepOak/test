@@ -11,10 +11,27 @@ import { runTool } from "./windows.js";
 /**
  * Keeping Branch working with the window closed, on Linux. A small file in the person's own settings
  * folder asks the system to start the engine when they sign in, with no window, and to start it
- * again only if it stops by accident. Nothing needs administrator rights.
+ * again whenever it stops, except when it was stopped on purpose. Nothing needs administrator rights.
  */
 export const systemdUnitName = "branch-agent.service";
 export const systemctl = "systemctl";
+/**
+ * UP-PLATFORM-002: the exit code of an engine stopped on purpose (`branch quit`, or closed for an update, which
+ * starts it again itself). `RestartPreventExitStatus=` keeps systemd from starting it again then. 78 is EX_CONFIG,
+ * the code OpenClaw's unit reserves for the same purpose (`src/daemon/systemd-unit.ts`, MIT).
+ */
+export const stoppedOnPurposeCode = 78;
+/** Set in the unit, so the engine knows systemd is the one that would start it again. */
+export const serviceManagerVariable = "BRANCH_SERVICE_MANAGER";
+
+/**
+ * An engine systemd runs is about to stop on purpose: it exits with `stoppedOnPurposeCode`, so it stays stopped.
+ * An exit code already chosen is kept (the dashboard's Restart sets 75 so that it is started again, src/dashboard-api.ts).
+ * Anywhere else nothing changes (launchd's KeepAlive would restart any non-zero exit).
+ */
+export function markStoppedOnPurpose(env: NodeJS.ProcessEnv = process.env, target: { exitCode?: number | string | null | undefined } = process): void {
+  if (env[serviceManagerVariable] === "systemd" && !target.exitCode) target.exitCode = stoppedOnPurposeCode;
+}
 
 export function systemdUnitPath(env: NodeJS.ProcessEnv = process.env, home = homedir()): string {
   return join(env.XDG_CONFIG_HOME || join(home, ".config"), "systemd", "user", systemdUnitName);
@@ -34,20 +51,30 @@ export function systemdQuote(value: string, expands = true): string {
   return `"${expands ? escaped.replace(/\$/g, "$$$$") : escaped}"`;
 }
 
-/** The sign-in file: starts at sign-in, restarts only after a crash, never opens a window. */
+/**
+ * The sign-in file: starts at sign-in and again whenever it stops unless it was stopped on purpose, never opens a
+ * window. The start limit (five starts in ten minutes) keeps a gateway that dies at once from being restarted forever;
+ * the restart storm is also said in Settings › Gateway (src/never-break/gateway-state.ts).
+ */
 export function systemdUnit(program: ServiceProgram): string {
   const logs = serviceLogFiles(program.dataDir);
   return [
     "[Unit]",
     "Description=Branch Agent, working with the window closed",
+    "StartLimitIntervalSec=600",
+    "StartLimitBurst=5",
     "",
     "[Service]",
     "Type=simple",
     `ExecStart=${[program.executable, program.script, "start"].map((word) => systemdQuote(word)).join(" ")}`,
-    ...serviceEnvironment(program).map(([name, value]) => `Environment=${systemdQuote(`${name}=${value}`, false)}`),
+    ...[...serviceEnvironment(program), [serviceManagerVariable, "systemd"]]
+      .map(([name, value]) => `Environment=${systemdQuote(`${name}=${value}`, false)}`),
     `WorkingDirectory=${plain(program.dataDir)}`,
-    "Restart=on-failure",
+    "Restart=always",
     "RestartSec=10",
+    `RestartPreventExitStatus=${stoppedOnPurposeCode}`,
+    // ...and counts as a clean end, so `branch quit` leaves the unit inactive rather than failed.
+    `SuccessExitStatus=${stoppedOnPurposeCode}`,
     `StandardOutput=append:${plain(logs.out)}`,
     `StandardError=append:${plain(logs.err)}`,
     "",

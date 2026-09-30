@@ -6,7 +6,8 @@ import { S, E, level, save, ownerHere } from "../core/state.js";
 import { on, has } from "../core/actions.js";
 import { ic, closePop } from "../core/ui.js";
 import { calm17 } from "../core/art17.js";
-import { ROWS, rowKey, buildIndex, search } from "./find.js";
+import { ROWS, rowKey, indexFor, forgetIndex, search } from "./find.js";
+import { answers } from "../core/api.js";
 import { markLive } from "../core/features.js";
 import { lockBanner } from "../chat/dockinfo.js"; // shell-031: Lockdown's banner above Settings too, as on every place
 
@@ -77,9 +78,10 @@ export function primeSearch() {
 }
 /** The settings rows matching `text`, best first; none for anybody but the owner (never a setting of the owner's). */
 export function findSettings(text, limit) {
-  if (!ownerHere() || !text.trim()) return [];
+  if (!ownerHere() || !text.trim()) { forgetIndex(); return []; }
   primeSearch();
-  return search(buildIndex(indexPages()), text, limit);
+  const key = [E.state, E.profiles, answers.n, document.documentElement.lang, S.level, S.setPage];
+  return search(indexFor(indexPages(), key), text, limit);
 }
 let hits = [];
 
@@ -153,7 +155,7 @@ export function draw() {
   const lv = level();
   if (!started.has(S.setPage)) open(S.setPage);
   const q = searchText.trim().toLowerCase();
-  const rows = q ? findSettings(searchText) : [];
+  const rows = findSettings(searchText); // none, and the index let go, while the box is empty
   const extra = [lv >= 1 ? ["advanced", t("settings.page.advanced")] : null, lv >= 2 ? ["developer", t("settings.card.developer")] : null].filter(Boolean);
   const groups = NAV.map(([g, items]) => [g, g === "Care" ? [...items, ...extra] : items])
     .map(([g, items]) => [g, items.filter(([id, l]) => !q || say(l).toLowerCase().includes(q) || rows.some((r) => r.page === id))])
