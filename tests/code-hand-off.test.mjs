@@ -219,11 +219,11 @@ test("the hand-off is a tool in the code toolbox that reaches outside this compu
     [{ kind: "write", path: "site", folder: true }]);
 });
 
-test("Claude Code runs no commands of its own: nothing walls them in, so Branch runs the checks afterwards (NAS 22aa6e3)", () => {
+test("Claude Code runs no commands of its own: nothing walls them in, so they go through Branch's held shell instead (NAS 22aa6e3, SELF-083)", () => {
   assert.deepEqual([...claudeAllowedCommands], []);
   const claude = programCall("claude-code", "/work/repo");
   assert.ok(claude.args.includes("acceptEdits"));
-  assert.equal(claude.args.includes("--allowedTools"), false, "no command is allowed by name");
+  assert.equal(claude.args.includes("--allowedTools"), false, "no command is allowed by name; only a door Branch opens adds a tool (code-hand-off-commands.test.mjs)");
   assert.equal(claude.args.some((arg) => /^Bash\(/.test(arg)), false);
 });
 
