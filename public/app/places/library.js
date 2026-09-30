@@ -23,6 +23,7 @@ import { initDocRead, revealable } from "./docread.js"; // dogfood D6, dogfood-u
 import { pendingMemories, readPendingMemories, initMemoryReview } from "./memory-review.js";
 import { initMemoryDetail } from "./memory-detail.js";
 import { lockdownOn } from "../chat/approvals.js";
+import { sessionPrincipal } from "../core/session-pages.js";
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -33,6 +34,10 @@ function tabBar(tabs, place, current) {
 let docsKey = "";
 let docsList = [];
 let docsFailed = false;
+/* The documents list is kept for the one principal it was read for (null: nothing kept), and each read is numbered, so
+   a late answer, or a list kept for the owner, is never drawn for a household person or over the App lock. */
+let docsFor = null;
+let docsRead = 0;
 let artsFailed = false;
 let artsKey = "";
 let artsList = [];
@@ -67,11 +72,26 @@ function memoryTab(mem) {
   return html + (mem.length ? "" : empty18("library:memory"));
 }
 
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
+/* Lets the kept documents go when the window is someone else's now, or locked; they are read again when next shown. */
+function dropStaleDocs() {
+  if (docsFor === null || (docsFor === sessionPrincipal(E.profiles) && unlocked())) return;
+  docsFor = null; docsList = []; docsKey = ""; docsFailed = false; docsRead += 1;
+}
+/* A documents read belongs to who asked, on the page they asked from: checked after it answers, before anything is kept. */
+function docsReadFence() {
+  const who = sessionPrincipal(E.profiles), view = S.view, mine = ++docsRead;
+  const current = () => mine === docsRead && sessionPrincipal(E.profiles) === who && E.profiles?.isOwner !== false
+    && unlocked() && S.view === view && (S.tabs.library || "memory") === "documents";
+  return { who, current };
+}
+
 /* "Write a new document" opens a small editor: a name and the text, kept as a document of the owner's (POST /api/documents
    { name, text }, src/documents.ts AddSchema), searched like any other. A household person's window keeps it greyed, as
    the documents are the owner's (Q261). A document's Open and a Made file's Open read it in the window
    (places/docread.js: GET /api/documents/<id>, dogfood D6; GET /api/artifacts/read, dogfood-ux-2). */
 function documentsTab() {
+  dropStaleDocs();
   const view = [["list", "list15", t("addons.lists.address")], ["map", "map15", t("window.places.library.map")]].map(([k, i, l]) => `<button type="button" aria-pressed="${docView === k}" data-act="dv15" data-v="${k}">${ic(i, "s")}${l}</button>`).join("");
   let html = `<div class="acts docacts15" data-css="margin:6px 0"><button class="btn" type="button" data-act="${E.profiles?.isOwner === false ? "doc-new-owner" : "doc-new"}"${E.profiles?.isOwner === false ? ' data-why="knobs-owner-only"' : ""}>
       ${ic('file', 's')}${t("window.places.library.write-a-new-document")}</button><span class="seg dv15" role="group" aria-label="${t("window.places.library.show-documents-as")}">${view}</span></div>`;
@@ -136,10 +156,15 @@ export async function after() {
     if (p17.changed) renderNow();
     /* The engine answers {documents: [...]} with its settings beside the list; only the list is drawn. */
     /* Q261: the documents library and the files tasks made are kept for the owner; a household person reads neither. */
-    if (docsFailed || E.profiles?.isOwner === false) return;
-    let fresh = [];
-    try { fresh = (await api("documents")).documents ?? []; } catch (error) { docsFailed = true; toast(error.message); }
+    dropStaleDocs();
+    if (docsFailed || E.profiles?.isOwner === false || !unlocked()) return;
+    const { who, current } = docsReadFence();
+    let fresh = [], failed = null;
+    try { fresh = (await api("documents")).documents ?? []; } catch (error) { failed = error; }
+    if (!current()) { dropStaleDocs(); return; } // switched, locked or left while it was read: nothing drawn or kept
+    if (failed) { docsFailed = true; toast(failed.message); }
     const key = JSON.stringify(fresh);
+    docsFor = who;
     if (key !== docsKey) { docsKey = key; docsList = fresh; renderNow(); }
   } else if (tab === "made") {
     /* The engine answers {artifacts: [...]} (each kept file's name, path and media type). */
@@ -250,7 +275,10 @@ async function saveNewDoc() {
   const name = !typed ? `${t("window.places.library.doc-untitled")} ${new Date().toISOString().slice(0, 10)}.md` : /\.[a-z0-9]{1,6}$/i.test(typed) ? typed : `${typed}.md`;
   try { await api("documents", { name, text }); } catch (error) { toast(error.message); return; }
   closeDlg();
-  try { docsList = (await api("documents")).documents ?? docsList; docsKey = JSON.stringify(docsList); } catch (error) { toast(error.message); }
+  const { who, current } = docsReadFence();
+  let fresh = null;
+  try { fresh = (await api("documents")).documents ?? null; } catch (error) { toast(error.message); }
+  if (fresh && current()) { docsList = fresh; docsKey = JSON.stringify(fresh); docsFor = who; }
   toast(t("window.places.library.doc-kept"));
   renderNow();
 }

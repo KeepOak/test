@@ -230,11 +230,12 @@ export class DocumentLibrary {
   /** Adds a document from pasted text, a workspace file, or uploaded file bytes. */
   async add(
     owner: string, input: unknown, signal = AbortSignal.timeout(120000), embed: boolean | "background" = true,
-    addedBy?: DocumentAddedBy,
+    addedBy?: DocumentAddedBy, allowed?: () => void,
   ): Promise<DocumentMetadata> {
     const value = AddSchema.parse(input);
     const attribution = addedBy ? DocumentAddedBySchema.parse(addedBy) : null;
     const source = await this.sourceOf(value);
+    allowed?.(); // the caller's own check again after reading the file, before anything is kept
     const id = randomUUID(), now = new Date().toISOString();
     this.db.prepare("INSERT INTO documents(id,owner,name,file_path,file_type,file_size,status,note,created_at,updated_at,added_by) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
       .run(id, owner, source.name, source.path, source.type, source.bytes, "indexed", "", now, now, attribution ? JSON.stringify(attribution) : null);

@@ -3485,8 +3485,16 @@ async function documentsApi(app: Branch, request: IncomingMessage, path: string)
     if (request.method === "POST") return library.configure(owner, await readBody(request));
   }
   if (request.method === "GET" && path === "/api/documents") return library.view(owner);
-  if (request.method === "POST" && path === "/api/documents")
-    return library.add(owner, await readBody(request, documentBodyBytes), undefined, true, { kind: "person", name: aboutOf(app, "owner").name, role: "owner" });
+  if (request.method === "POST" && path === "/api/documents") {
+    const body = await readBody(request, documentBodyBytes);
+    const allowed = () => {
+      app.store.profiles.requireOwner("Adding a document");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before adding a document.");
+    };
+    // Checked again after waiting for the body, and again after the file's words are read, before anything is kept.
+    allowed();
+    return library.add(owner, body, undefined, true, { kind: "person", name: aboutOf(app, "owner").name, role: "owner" }, allowed);
+  }
   if (request.method === "POST" && path === "/api/documents/search")
     return { results: await library.search(owner, await readBody(request)) };
   if (request.method === "POST" && path === "/api/documents/reindex") {
