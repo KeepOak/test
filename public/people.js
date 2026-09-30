@@ -206,7 +206,7 @@ function wireHome() {
   $("people-sign-out").addEventListener("click", () => personCall("/api/people/me/sign-out", {}).finally(() => {
     store.set(PERSON, ""); show("people-signin"); say(words("people.signed-out", "Signed out."));
   }));
-  $("people-new").addEventListener("click", () => { openId = ""; showConversation([], "own"); });
+  $("people-new").addEventListener("click", () => { enterConversation(); openId = ""; showConversation([], "own"); });
   $("people-back").addEventListener("click", () => (store.get(HANDOFF) ? undefined : openHome()));
   $("people-add-passkey").addEventListener("click", () => addPasskey().catch((error) => say(error.message, true)));
   $("people-new-pin-form").addEventListener("submit", (event) => {
@@ -218,6 +218,14 @@ function wireHome() {
 }
 
 /* ---------- one conversation ---------- */
+
+/* The one way into the conversation pane (a room, a conversation or a new one): it shows the pane, lets go of whatever
+   room or conversation was open there, and draws nothing until the caller does. */
+function enterConversation() {
+  show("people-conversation");
+  $("people-message-form").hidden = true;
+  $("people-messages").replaceChildren();
+}
 
 function drawRoom(view) {
   $("people-back").hidden = false;
@@ -234,10 +242,8 @@ function drawRoom(view) {
 }
 
 async function openRoom(id) {
-  show("people-conversation");
+  enterConversation();
   openRoomId = id;
-  $("people-message-form").hidden = true;
-  $("people-messages").replaceChildren();
   $("people-conversation-note").textContent = "";
   const key = store.get(PERSON), generation = roomGeneration;
   const current = () => key === store.get(PERSON) && generation === roomGeneration && openRoomId === id;
@@ -291,10 +297,8 @@ async function readConversation() {
   return personCall(`/api/people/conversations/${openId}`);
 }
 async function openConversation(id) {
-  show("people-conversation");
+  enterConversation();
   openId = id;
-  $("people-message-form").hidden = true;
-  $("people-messages").replaceChildren();
   const generation = roomGeneration, key = store.get(PERSON), handoff = store.get(HANDOFF);
   const current = () => generation === roomGeneration && openId === id && key === store.get(PERSON) && handoff === store.get(HANDOFF);
   const view = await readConversation();
