@@ -135,8 +135,9 @@ test("chat-speed: a chat app's document lookup does not wait on a slow embedding
   const workspace = join(root, "workspace");
   await mkdir(workspace, { recursive: true });
   await writeFile(join(workspace, "handbook.md"), "# Handbook\n\n## Holiday\n\nStaff get twenty days of paid leave each year.\n", "utf8");
+  // Passages travel with the question, as Branch's own note in the turn (src/runtime.ts intoTurn).
   const provider = { name: "scripted", requests: [], embeddings: () => ({ endpoint: `http://127.0.0.1:${embedder.address().port}`, apiKey: "test-key" }),
-    async complete(input) { this.requests.push({ at: Date.now(), system: input.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n") });
+    async complete(input) { this.requests.push({ at: Date.now(), system: input.messages.filter((m) => m.role === "system" || m.from === "branch").map((m) => m.content).join("\n") });
       return { content: "Twenty days.", toolCalls: [] }; } };
   const app = await createBranch({ workspace, dataDir: join(root, "data"), provider });
   t.after(async () => { await app.close(); await discardTemp(root); });
