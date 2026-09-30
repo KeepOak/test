@@ -11,6 +11,7 @@ import { initRecipeRun, recipeRunLive } from "./recipe-run.js";
 import { initRoutineUsage } from "../flows/routine-usage.js";
 import { api } from "../core/api.js";
 import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
+import { initScheduledDashboard } from "../flows/scheduled-dashboard.js";
 import { trigCard, initTriggerCard } from "./trigger-card.js";
 import { ordersSection, onItsOwnSection, hooksSection, readAutomations17, initAutomations17 } from "./automations17.js";
 import { t, language, plural } from "../../i18n.js";
@@ -117,7 +118,7 @@ function scheduleRow(s, i) {
   const who = trunk?.name ?? E.state?.identity?.name ?? "";
   const on = s.data?.status !== "paused";
   /* QA retest 2026-09-28 (m5): Open goes to the schedule's own conversation, where every turn is. */
-  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(what)}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}${ownerHere() ? `<button class="btn sm ghost" type="button" data-act="routine-cost" data-id="${esc(s.id || "")}">${t("routinecost.title")}</button>` : ""}${s.data?.threadId ? `<button class="btn sm ghost" type="button" data-act="chat" data-id="${esc(s.data.threadId)}">${t("ov.open")}</button>` : ""}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(what) })}"></div>`;
+  return `<div class="prow">${trunk ? av(trunk, 34) : `<span class="ico-tile">${ic("clock", "s")}</span>`}<span class="grow"><b>${esc(what)}</b><small>${esc([due, who].filter(Boolean).join(" · "))}</small></span>${health(s)}${ownerHere() ? `<button class="btn sm ghost" type="button" data-act="routine-cost" data-id="${esc(s.id || "")}">${t("routinecost.title")}</button>` : ""}${s.data?.dashboard && ownerHere() ? `<button class="btn sm ghost" type="button" data-act="schedule-dashboard" data-id="${esc(s.id || "")}">${t("scheduleddash.title")}</button>` : ""}${s.data?.threadId ? `<button class="btn sm ghost" type="button" data-act="chat" data-id="${esc(s.data.threadId)}">${t("ov.open")}</button>` : ""}<button class="btn sm" type="button" data-act="sched-run" data-id="${esc(s.id || "")}">${t("autonomy.orders.run")}</button><input class="sw" type="checkbox" id="auto-scheduled-${i}" data-sw="schedule" data-id="${esc(s.id || "")}" ${on ? 'checked=""' : ""} aria-label="${t("window.places.automations.value-on-or-off", { value: esc(what) })}"></div>`;
 }
 
 /* A saved prompt (GET /api/prompts), every one of them: its name and command, then its group and the first 80 characters of
@@ -358,6 +359,7 @@ export function init() {
   // Scheduled: "Add" (and Enter, which presses it) asks the engine to read the words into a proposal card
   // (schedule-card.js). Triggers: the same, read into a trigger (trigger-card.js). The page itself is never submitted.
   initScheduleCard();
+  initScheduledDashboard();
   initTriggerCard();
   document.addEventListener("submit", (e) => { if (e.target.dataset?.form === "nl") e.preventDefault(); });
   document.addEventListener("submit", (e) => {
