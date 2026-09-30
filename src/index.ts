@@ -38,7 +38,7 @@ import { Knowledge, registerKnowledge } from "./knowledge.js";
 import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
 import { registerSecondOpinion } from "./second-opinion-tools.js";
-import { isCurrentFact, memoryScope, registerMemory } from "./memory.js";
+import { inOpeningContext, isCurrentFact, memoryScope, registerMemory } from "./memory.js";
 import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
@@ -99,6 +99,7 @@ import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
 import { linkChatThreads } from "./channels/threads.js"; // defaulttrunk
+import { bindingFor as channelBinding, dropTrunkRoutes } from "./channels/routes.js";
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
@@ -190,7 +191,7 @@ import { Monitors, registerMonitors, trunksSwitchedOff } from "./monitors.js";
 // Wave 8: watching a rectangle of the screen for a change, off unless the owner asks twice.
 import { ScreenWatches, registerScreenWatches } from "./screen-watch.js";
 import { MorningBrief, registerBrief } from "./brief.js";
-import { DesktopControl } from "./integrations/desktop.js";
+import { DesktopControl, type NativeCaptureLease } from "./integrations/desktop.js";
 import { LinuxDesktopSandbox } from "./integrations/linux-desktop.js";
 import { TakeOverBanner } from "./integrations/linux-desktop-banner.js";
 import { registerLinuxDesktop } from "./integrations/linux-desktop-tools.js";
@@ -356,6 +357,8 @@ export async function createBranch(options: {
   reliability?: ReliabilityInput;
   /* mac2/desktop-ui: the desktop app's own Stop notice window, for screen control on macOS and Linux. */
   bannerWindow?: BannerWindowFactory;
+  /** The authenticated native host's own-window capture lease; no HTTP body or CLI setting supplies it. */
+  nativeCaptureLease?: NativeCaptureLease;
   /** Wave mac2: how the hidden snapshot store runs git; null means "git is not installed". */
   snapshotGit?: GitCall | null;
   /** mac3/security-check: the home folder the security check looks under; this computer's own when left out. */
@@ -583,6 +586,7 @@ export async function createBranch(options: {
   // mac2/desktop-ui: on a Mac or Linux the screen is used only while the app's Stop notice shows.
   const desktop = new DesktopControl(store, {
     artifacts, ...screenControlParts(options.bannerWindow ? { window: options.bannerWindow } : {}),
+    ...(options.nativeCaptureLease ? { nativeCaptureLease: options.nativeCaptureLease } : {}),
   });
   // Batch 26 (wave 8): Windows has switches of its own under Privacy & security, and a refusal
   // there looks like nothing happening at all. The screen is probed by asking for the window list;
@@ -688,7 +692,7 @@ export async function createBranch(options: {
   // mac2/fly-core-2: with the learning core "on", the facts that helped in similar tasks go first.
   store.review.orderFacts = (factOwner, agent, sessionId) =>
     chooseForInjection(advisedFacts(sessionId, memory.retrieval.ranking(factOwner, agent).map((entry) => entry.record)
-      .filter((record) => isCurrentFact(record))), knobSnapshotLimits(store, runtime.owner)).records; // SELF-202: only facts still true
+      .filter((record) => isCurrentFact(record) && inOpeningContext(record, agent))), knobSnapshotLimits(store, runtime.owner)).records; // SELF-202: only facts still true
   // ── R17-S-B: the owner's memory budget and the leak guard's sensitivity, read fresh each time. ──
   store.review.snapshotLimits = () => knobSnapshotLimits(store, runtime.owner);
   runtime.leakGuard.options = () => leakOptions(store, runtime.owner);
@@ -705,7 +709,8 @@ export async function createBranch(options: {
     options.snapshotGit === undefined ? systemGit() : options.snapshotGit);
   const rewinds = new Rewinds(store.sqlite, runtime.owner, sessionTree, history, snapshots, files,
     () => goalUndoSettings(store, runtime.owner).snapshots,
-    (tool) => { const permission = registry.permissionOf(tool); return permission !== "" && !isReadOnlyPermission(permission); });
+    // A tool not known to only read counts as a change: with snapshots "on" it waits for the one begun as its task started.
+    (tool) => !isReadOnlyPermission(registry.permissionOf(tool)));
   runtime.turnStarted = (run) => rewinds.turnStarted(run);
   const goals = new GoalMode(runtime, store);
   registerSkills(registry, store);
@@ -983,6 +988,7 @@ export async function createBranch(options: {
   // Spans are written straight to their own table rather than through the event log, so the same
   // scrubber is put in front of them explicitly: no attribute can carry a saved password or key.
   runtime.tracer.scrub = (value) => runtime.hideSecrets(value);
+  store.review.hideSecrets = (value) => runtime.hideSecrets(value); // every memory suggestion's words, before they are stored
   // Locking Branch ends every "yes, for this conversation" as well as closing the secrets locker,
   // and lets go of anything an integration was holding on the owner's behalf — above all a browser
   // of theirs a task had borrowed.
@@ -1517,6 +1523,10 @@ ${result.output || "(it said nothing)"}`;
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
   channels.defaultTrunk = () => trunks.mode("trunks") === "off" ? null : trunks.defaultTrunk()?.id ?? null;
+  channels.bindingFor = (channel, chatId) => channelBinding(store, runtime.owner, channel, chatId, channels.adapter(channel)?.kind ?? "");
+  channels.routingTrunks = () => trunks.records.list().map(({ id, name, handle }) => ({ id, name, handle }));
+  const removedTrunk = trunks.onRemoved;
+  trunks.onRemoved = id => { removedTrunk?.(id); dropTrunkRoutes(store, runtime.owner, id); };
   channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
   trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
   // The migration, at every start (idempotent): conversations with no Trunk are put with one, chats' threads linked.
@@ -2066,6 +2076,8 @@ ${result.output || "(it said nothing)"}`;
       await debugAdapters.stopAll().catch(() => undefined);
       // mac3/reflection-skills: a draft or a look back still being written gets a moment to finish.
       await Promise.race([learningLoop.idle(), new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
+      // chat-speed: a task's workspace snapshot, taken beside its first model call, is written down; git never holds up a close.
+      await Promise.race([rewinds.settled(), new Promise((resolve) => setTimeout(resolve, 5000).unref())]);
       try {
         await closeBranch(scheduler, runtime, store, channels, desktop);
       } finally {
@@ -2229,6 +2241,7 @@ export * from "./integrations/job-object.js";
 export * from "./artifacts.js";
 export * from "./channels/router.js";
 export * from "./channels/telegram.js";
+export * from "./channels/telegram-inbox.js";
 export * from "./channels/discord.js";
 export * from "./channels/slack.js";
 export * from "./channels/whatsapp.js";

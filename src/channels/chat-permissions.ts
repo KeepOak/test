@@ -161,6 +161,13 @@ export function chatPermissionsOf(all: readonly string[], extra: readonly string
   const allowed = new Set<string>([...chatSafePermissions, ...extra.filter(grantableToChat)]);
   return all.filter((permission) => allowed.has(permission));
 }
+/**
+ * A chat with several people in it never reads what Branch remembers: the facts are the owner's, and a message
+ * there may be anybody's. Taken off after the owner's own lines are added, so no line hands it back to a group.
+ */
+export function withoutOwnersMemoryInGroups(permissions: string[], from?: { chatKind?: string | undefined }): string[] {
+  return from && from.chatKind !== "direct" ? permissions.filter((permission) => permission !== "memory.read") : permissions;
+}
 
 /** Every permission on the short list only looks at things; asserted here so the list cannot drift. */
 export const chatSafeListIsReadOnly = (): boolean => chatSafePermissions.every(isReadOnlyPermission);

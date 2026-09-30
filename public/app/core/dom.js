@@ -6,6 +6,12 @@ export const $$ = (selector, root = document) => [...root.querySelectorAll(selec
 const ESCAPES = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
 export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (c) => ESCAPES[c]);
 
+/* UP-UI-001: a key pressed while an input method is still composing (Japanese, Chinese, Korean…) belongs to the input
+   method: its Enter confirms the word, never sends. keyCode 229 covers the Enter some input methods (Safari, macOS Chinese)
+   send just after composing ends. Adapted from Hermes Agent's composer (apps/desktop/src/app/chat/composer/index.tsx, MIT)
+   and Cline's ChatTextArea (Apache-2.0); see THIRD_PARTY_NOTICES.md. */
+export const composing = (e) => e.isComposing === true || e.keyCode === 229;
+
 /* The engine's policy refuses style="…" attributes, so markup carries data-css="…" and this applies it through the CSSOM,
    which the policy allows. Run it on anything just drawn with innerHTML. */
 export function applyCss(root = document) {

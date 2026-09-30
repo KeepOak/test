@@ -11,7 +11,7 @@ import { performInstall, bootstrapperScript, uninstallEntries, uninstallScript, 
 import { shortcutScript, regAddArgs, regDeleteValueArgs } from "../dist/install/windows.js";
 import { portableLocation, installedLocation, resolveDataLocation, migrateLegacyData, legacyDataDirs } from "../dist/install/layout.js";
 import { autostartCommand, setAutostart, startsMinimized, minimizedFlag } from "../dist/install/autostart.js";
-import { daemonCommand, daemonCommandLine, daemonInstallArgs, daemonUninstallArgs, daemonTaskName } from "../dist/install/daemon.js";
+import { daemonCommand, daemonCommandLine, daemonTaskName } from "../dist/install/daemon.js";
 import { attachToRunning, writeRunning, readRunning } from "../dist/install/running.js";
 import { encodeQr, capacity, generator, remainder, maximumQrBytes } from "../dist/remote/qr.js";
 import { readStatus, isTailnetAddress } from "../dist/remote/tailscale.js";
@@ -224,40 +224,48 @@ test("starting with Windows writes one line into the person's own sign-in list",
   assert.equal(startsMinimized(["node", "app"]), false);
 });
 
-test("the background engine is a sign-in task that opens no window, and is never registered here", async (t) => {
+test("the background gateway is a restart-on-failure sign-in task running the app itself, and is never registered here", async (t) => {
   const root = await scratch(t);
-  const calls = [];
-  const fake = async (file, args) => { calls.push({ file, args }); return ""; };
-  const written = [];
+  const calls = [], xml = [];
+  const fake = async (file, args) => {
+    calls.push({ file, args });
+    const path = /ReadAllText\('([^']+)'\)/.exec(args.at(-1) ?? "")?.[1];
+    if (path) xml.push(await readFile(path));
+    return "";
+  };
+  await writeFile(join(root, "branch-daemon.vbs"), "left by an earlier version");
+  const appData = join(root, "appdata");
   const options = {
     executable: "C:\\App\\Branch Agent.exe", script: "C:\\App\\resources\\app\\dist\\cli.js",
-    dataDir: "C:\\Data", workspace: "C:\\Work", port: 3210,
+    dataDir: root, workspace: "C:\\Work", port: 3210,
     launcherPath: join(root, "branch-daemon.vbs"), systemRoot: "C:\\Windows", platform: "win32",
   };
-  const report = await daemonCommand("install", options, {
-    run: fake, write: async (path, content) => { written.push({ path, content }); },
-  });
+  const shortcuts = [];
+  const deps = { run: fake, env: { APPDATA: appData }, writeShortcut: async (link) => { shortcuts.push(link); } };
+  const report = await daemonCommand("install", options, deps);
   assert.equal(report.installed, true);
-  assert.equal(calls[0].file, "C:\\Windows\\System32\\schtasks.exe");
-  const args = daemonInstallArgs(options);
-  assert.deepEqual(calls[0].args, args);
-  assert.equal(args[args.indexOf("/SC") + 1], "ONLOGON", "it starts when the person signs in");
-  assert.equal(args[args.indexOf("/RL") + 1], "LIMITED", "no administrator rights are asked for");
-  assert.equal(args[args.indexOf("/TN") + 1], daemonTaskName);
-  // The task runs the script host, which is what keeps a console window from flashing up.
-  assert.equal(args[args.indexOf("/TR") + 1], `"C:\\Windows\\System32\\wscript.exe" //B //Nologo "${options.launcherPath}"`);
-  assert.equal(written.length, 1);
-  assert.match(written[0].content, /CreateObject\("WScript\.Shell"\)\.Run .*, 0, False/, "window style 0 is hidden");
+  // Registered through Task Scheduler's own interface, so a refusal has a number and not only words (gateway-task.ts).
+  assert.equal(calls[0].file, "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
+  assert.ok(calls[0].args.at(-1).includes(`RegisterTask('${daemonTaskName}'`));
+  const text = xml[0].subarray(2).toString("utf16le");
+  assert.deepEqual([...xml[0].subarray(0, 2)], [0xff, 0xfe], "the XML is UTF-16 with its byte-order mark");
+  assert.match(text, /<Command>C:\\App\\Branch Agent\.exe<\/Command>\s*<Arguments>--branch-gateway<\/Arguments>/, "the app itself, no script host");
+  assert.match(text, /<RestartOnFailure>\s*<Interval>PT1M<\/Interval>\s*<Count>3<\/Count>/);
+  assert.match(text, /<LogonTrigger>/);
+  assert.match(text, /<RunLevel>LeastPrivilege<\/RunLevel>/, "no administrator rights are asked for");
+  assert.equal(report.command, '"C:\\App\\Branch Agent.exe" --branch-gateway');
+  assert.ok(!(await stat(join(root, "branch-daemon.vbs")).catch(() => null)), "the old script-host launcher is gone");
+  assert.ok(!calls.some((call) => /wscript|cscript|\.vbs/i.test([call.file, ...call.args].join(" "))), "no VBScript anywhere");
+  assert.deepEqual(shortcuts, []);
+  // The command line an old background engine is started again with (src/install/old-engine.ts) is unchanged.
   const command = daemonCommandLine(options);
-  assert.match(command, /BRANCH_DATA_DIR=C:\\Data/);
   assert.match(command, /BRANCH_PORT=3210/);
   assert.match(command, /"C:\\App\\Branch Agent\.exe" "C:\\App\\resources\\app\\dist\\cli\.js" start$/);
-  assert.ok(written[0].content.includes(command.replace(/"/g, '""')));
 
-  const removed = await daemonCommand("uninstall", options, { run: fake, write: async () => {} });
+  const removed = await daemonCommand("uninstall", options, deps);
   assert.equal(removed.installed, false);
-  assert.deepEqual(calls[1].args, daemonUninstallArgs(daemonTaskName));
-  const missing = await daemonCommand("status", options, { run: async () => { throw new Error("no such task"); }, write: async () => {} });
+  assert.deepEqual(calls.at(-1).args, ["/Delete", "/F", "/TN", daemonTaskName]);
+  const missing = await daemonCommand("status", options, { ...deps, run: async () => { throw new Error("no such task"); } });
   assert.equal(missing.installed, false);
   assert.match(missing.message, /does not start by itself/);
 });

@@ -95,7 +95,7 @@ const mixedPermissions = {
   "monitors.manage": { local: ["monitor.remove","monitors.screen.check","monitors.screen.create"], outbound: ["monitor.check","monitor.create"] },
   "data.read": { local: ["data.chart","data.describe","data.query"], outbound: ["data.load"] },
   "brief.manage": { local: ["brief.configure"], outbound: ["brief.send"] },
-  "desktop.view": { local: ["desktop.read","desktop.screenshot","usb.devices"], outbound: ["desktop.windows"] },
+  "desktop.view": { local: ["desktop.cursor","desktop.read","desktop.screenshot","desktop.wait","desktop.zoom","usb.devices"], outbound: ["desktop.windows"] },
   "nodes.read": { local: ["machines.list"], outbound: ["machines.look","nodes.status"] },
 };
 const assertOrder = (tool, row) => {

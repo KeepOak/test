@@ -19,9 +19,13 @@ const until = async (fn, ms = 15000) => {
 };
 const chat = async (page, sid) => { await openChat(page, sid); await page.locator("#prompt").waitFor(); };
 
-test("+ › Run it in the background is offered and starts its own task; Take a screenshot says why it waits", async (t) => {
+test("+ › Run it in the background is offered and starts its own task; Take a screenshot attaches the screen", async (t) => {
   // Nothing switched on first: /bg's own part ("session-commands") ships on since #467.
   const { page, app, errors } = await newWindow(t);
+  // computer-control: the screen is a stand-in picture; nothing on this computer's real screen is taken.
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64");
+  let shots = 0;
+  app.desktop.ownerShot = async () => { shots += 1; return png; };
   await page.locator("#prompt").waitFor();
   await page.locator("#prompt").fill("Tidy the notes folder");
   // The + menu reads the window's command list (GET /api/commands?surface=window), which now offers /bg.
@@ -33,8 +37,12 @@ test("+ › Run it in the background is offered and starts its own task; Take a 
   }, 12000);
   assert.ok(offered, "the + menu offers Run it in the background");
   const shot = page.locator('.pop [data-act="shot"]');
-  assert.equal(await shot.getAttribute("aria-disabled"), "true");
-  assert.match(await shot.getAttribute("data-tip"), /can't take a picture of your screen/);
+  assert.notEqual(await shot.getAttribute("aria-disabled"), "true", "Take a screenshot is live");
+  await shot.click();
+  await page.locator('#attached .att b', { hasText: /^Screenshot \d{4}-\d{2}-\d{2} / }).waitFor({ timeout: 15000 });
+  assert.equal(shots, 1, "one picture of the screen, attached to the next message");
+  await page.locator('[data-act="plusmenu"]').first().click();
+  await page.locator('.pop [data-act="bgrun15"]').waitFor();
   const before = app.store.runs(app.runtime.owner).length;
   await page.locator('.pop [data-act="bgrun15"]').click();
   const bg = await until(async () => app.store.runs(app.runtime.owner).find((r) => r.prompt.includes("Tidy the notes folder")));

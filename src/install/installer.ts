@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { quitRunning, type QuitReport } from "./quit.js";
 import { installedLocation, portableLocation, legacyDataDirs, migrateLegacyData, type MigrationReport } from "./layout.js";
 import { createShortcuts, regDeleteKeyArgs, runTool, systemTool, writeRegistryValues, type RegistryValue, type RunTool } from "./windows.js";
+import { gatewayTaskMarker, gatewayTaskName, startupShortcutName } from "./gateway-task.js";
 
 /**
  * Installing without a signed installer. The release zip already carries a complete Node runtime
@@ -155,7 +156,11 @@ export function uninstallScript(options: {
     "if defined DELETE_DATA echo Removing Branch Agent, with its conversations and files.",
     `${sys}taskkill.exe /IM "${options.executableName}" /F >NUL 2>&1`,
     `${sys}ping.exe -n 3 127.0.0.1 >NUL`,
-    `${sys}schtasks.exe /Delete /F /TN "Branch Agent daemon" >NUL 2>&1`,
+    `${sys}schtasks.exe /Delete /F /TN "${gatewayTaskName}" >NUL 2>&1`,
+    // UP-PLATFORM-002: the gateway's Startup shortcut (where Task Scheduler refused its task) and the note of how it was
+    // registered. %APPDATA% is left for the script to expand, so it is not doubled the way a path's own % is.
+    `del /q "%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\${startupShortcutName}" 2>NUL`,
+    ...[gatewayTaskMarker, "gateway-task.xml"].map((file) => `del /q ${batchPath(join(installedLocation(options.userDataDir).dataDir, file))} 2>NUL`),
     `${sys}reg.exe delete "${runKey}" /v "${runValueName}" /f >NUL 2>&1`,
     `${sys}reg.exe delete "${uninstallKey(options.uninstallHive)}" /f >NUL 2>&1`,
     ...remove,

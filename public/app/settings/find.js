@@ -13,6 +13,9 @@ export const ROWS = ".ctl, label.prow, .prow.perm16";
 const titleOf = (row) => (row.querySelector(":scope > b") ?? row.querySelector(":scope > .grow > b"))?.textContent.trim() ?? "";
 const noteOf = (row) => (row.querySelector(":scope > small") ?? row.querySelector(":scope > .grow > small"))?.textContent.trim() ?? "";
 const cardOf = (row) => row.closest(".sec")?.querySelector(":scope > h2")?.textContent.trim() ?? "";
+/* A row drawn hidden (Appearance's pet buttons, data-css="display:none") can be opened but never landed on, so it is not
+   found. The drawing is read before core/dom.js applyCss, so the hiding is still written on the row or around it. */
+const hidden = (row) => !!row.closest('[hidden], [data-css*="display:none"], [data-css*="display: none"]');
 /** A drawn row's identity on its page: its card and its title. */
 export const rowKey = (row) => `${cardOf(row)}\u001f${titleOf(row)}`;
 
@@ -62,7 +65,7 @@ function rowsIn(html) {
   if (read.size > 600) read.clear();
   const box = document.createElement("template");
   box.innerHTML = html;
-  rows = [...box.content.querySelectorAll(ROWS)].map((row) => ({ title: titleOf(row), note: noteOf(row), card: cardOf(row) }))
+  rows = [...box.content.querySelectorAll(ROWS)].filter((row) => !hidden(row)).map((row) => ({ title: titleOf(row), note: noteOf(row), card: cardOf(row) }))
     .filter((row) => row.title);
   read.set(html, rows);
   return rows;
@@ -99,6 +102,21 @@ export function buildIndex(pages) {
     return tabs.size === every && every > 1 ? { ...row, tab: "", tabName: "" } : { ...row, tab, tabName };
   });
 }
+
+/* UP-UI-050: drawing every page at every level took the same work on every key pressed in Settings search and in Ctrl K.
+   One search keeps the index it drew and draws it again only when what it was drawn from may have changed: the caller's
+   key (the engine's state, an engine answer, the language, the level, the page shown) differs, or a search starts afresh
+   (forgetIndex, when the words are cleared). After Hermes Agent's prebuilt settings entries
+   (apps/desktop/src/app/settings/settings-search.ts, MIT); see THIRD_PARTY_NOTICES.md. */
+let kept = null;
+export let builds = 0; // how many times the index was drawn (tests/window-settings-search-once.test.mjs)
+export function indexFor(pages, key) {
+  if (kept && kept.key.length === key.length && kept.key.every((part, i) => part === key[i])) return kept.index;
+  builds += 1;
+  kept = { key, index: buildIndex(pages) };
+  return kept.index;
+}
+export function forgetIndex() { kept = null; }
 
 /** The rows matching every word typed, best first: the title before the card before the note, then the least level. */
 export function search(index, text, limit = Infinity) {
