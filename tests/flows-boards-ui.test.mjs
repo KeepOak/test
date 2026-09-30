@@ -59,15 +59,15 @@ test("the board and the install requests sit in their homes, work from the windo
   await place.locator(`.col15[data-col15='ripe'] [data-orc-card="${id}"]`).waitFor({ timeout: 20000 });
   assert.ok(await wide() <= 0, "no sideways scrolling on the board at 400 px");
 
-  // Inbox › Needs you: the request is there. Allow stays greyed for the security review (inbox.js initInbox, xdo);
-  // Don't declines it in the engine, and nothing is installed either way.
+  // Inbox › Needs you: the request is there. TRUNK-189: Allow is live and only records the owner's answer with a manual
+  // next step (inbox.js answerInstall); Don't declines it in the engine, and nothing is installed either way.
   const inbox = await openPlace(page, "inbox", "needs");
   const row = inbox.locator(".prow", { hasText: "keep notes" });
   await row.waitFor({ timeout: 20000 });
   const [request] = app.flowsBoards.installs.waiting();
   const allow = row.locator(`[data-act="xdo"][data-id="${request.id}"][data-v="allowed"]`);
-  await page.waitForFunction((rid) => document.querySelector(`[data-act="xdo"][data-id="${rid}"]`)?.getAttribute("aria-disabled") === "true", request.id, { timeout: 20000 });
-  assert.equal(await allow.getAttribute("aria-disabled"), "true", "Allow is greyed: installing stays with the security review");
+  await allow.waitFor({ timeout: 20000 });
+  assert.notEqual(await allow.getAttribute("aria-disabled"), "true", "Allow answers the request; installing stays a manual step");
   await row.locator(`[data-act="xdo-no"][data-id="${request.id}"]`).click();
   for (let i = 0; i < 100 && app.flowsBoards.installs.waiting().length; i++) await page.waitForTimeout(50);
   const answered = (await call("/api/flows-boards/installs")).requests.find((r) => r.id === request.id);

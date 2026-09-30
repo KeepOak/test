@@ -300,6 +300,16 @@ function osv(listed) {
   return { asked, fetcher };
 }
 
+test("TRUNK-189: an install answer is for the exact request shown; a changed request is refused", async (t) => {
+  const { app, on } = await fixture(t);
+  on("install-requests");
+  const installs = app.flowsBoards.installs;
+  const asked = await installs.request({ kind: "mcp", name: "notes", server: { transport: "http", url: "https://mcp.example.com/mcp" }, why: "keep notes" }, "chat", "a chat app");
+  const shown = JSON.stringify(installs.list().find((one) => one.id === asked.id));
+  await assert.rejects(installs.answer(asked.id, false, { expectedRequest: shown.replace("keep notes", "something else") }), /changed/);
+  assert.equal((await installs.answer(asked.id, false, { expectedRequest: shown })).status, "declined");
+});
+
 test("R17-075 anyone can ask, the malware list is checked, only the owner answers, and nothing installs", async (t) => {
   const { app, on } = await fixture(t);
   on("install-requests");

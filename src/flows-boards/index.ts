@@ -29,6 +29,7 @@ export interface FlowsBoardsDeps {
   osvEndpoint?: string;
   /** The owner's Trunks now, for Orchard (src/trunks). */
   trunks: () => OrchardTrunk[];
+  requireInstallOwner?: () => void;
 }
 
 const byRuntime = new WeakMap<object, FlowsBoards>();
@@ -57,7 +58,8 @@ export class FlowsBoards {
       lockdown: () => lockdownActive(store, owner) });
     this.widgets = new Widgets(store, owner, deps.registry, deps.asks.surfaces);
     this.waiting = new WaitingLine(runtime, deps.queue);
-    this.installs = new InstallRequests({ store, owner, fetch: deps.fetch, ...(deps.osvEndpoint ? { endpoint: deps.osvEndpoint } : {}) });
+    this.installs = new InstallRequests({ store, owner, fetch: deps.fetch, ...(deps.osvEndpoint ? { endpoint: deps.osvEndpoint } : {}),
+      ...(deps.requireInstallOwner ? { requireOwner: deps.requireInstallOwner } : {}) });
     for (const part of boardParts) this.sync(part);
     byRuntime.set(runtime, this);
     followBoardSwitches(store, (part, input) => this.setMode(part, input));
