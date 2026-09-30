@@ -853,14 +853,23 @@ export class BranchBrowser {
     span?.end('ok', '', { foundBy: way, attempts, healed: way !== 'selector' });
   }
   /** Sends one file from the person's workspace to a file box on the page. */
-  async upload(selector: string, path: string, context: ToolContext) {
+  /**
+   * Sends files from the workspace to a file box on the page, found by selector, by its name, or by its number from
+   * browser.annotate. A box that takes one file is given one; every file is checked inside the workspace first.
+   */
+  async upload(input: { selector?: string | undefined; name?: string | undefined; mark?: number | undefined; paths: string[] }, context: ToolContext) {
     if (!this.files) throw new Error('Sending a file to a website needs the workspace');
     return this.operation(context, async (page, check) => {
       if (this.care(context.owner).blockUploads) throw new Error(uploadsBlocked); // R17-S19
-      const target = await this.files!.checked(path);
+      const targets = [];
+      for (const path of input.paths) targets.push(await this.files!.checked(path));
+      const box = input.selector ? page.locator(input.selector).first() : await this.found(context, page, input);
+      if (targets.length > 1 && !await box.evaluate(node => (node as HTMLInputElement).multiple).catch(() => false))
+        throw new Error('That file box takes one file at a time.');
       check();
-      await page.locator(selector).first().setInputFiles(target);
-      return { uploaded: path, selector };
+      await box.setInputFiles(targets, { timeout: 5000 });
+      return { uploaded: input.paths.length === 1 ? input.paths[0] : input.paths, ...(input.selector ? { selector: input.selector } : {}),
+        ...(input.name ? { name: input.name } : {}), ...(input.mark !== undefined ? { mark: input.mark } : {}) };
     });
   }
   /**
@@ -1553,9 +1562,13 @@ function registerBrowserExtras(registry: ToolRegistry, browser: BranchBrowser,
     description: 'Pull rows out of a table or a repeated block of cards as untrusted data. Give the selector for one row, and optionally a name for each column.',
     parameters: ExtractSchema, execute: (a, c) => browser.extract(a, c) });
   registry.register({ name: 'browser.upload', permission: 'browser.interact',
-    description: 'Send one file from the workspace to a file box on the page. This shares the file with the website.',
-    parameters: z.object({ selector: z.string().min(1).max(300), path: z.string().min(1).max(500) }).strict(),
-    execute: (a, c) => browser.upload(a.selector, a.path, c), target: host });
+    description: 'Send a file (path) or several (paths, when the box takes more than one) from the workspace to a file box on the page, found by selector, by its name, or by its number from browser.annotate. This shares the files with the website.',
+    parameters: z.object({ selector: z.string().min(1).max(300).optional(), name: z.string().min(1).max(300).optional(),
+      mark: z.number().int().min(1).max(500).optional(), path: z.string().min(1).max(500).optional(),
+      paths: z.array(z.string().min(1).max(500)).min(1).max(10).optional() }).strict()
+      .refine(a => [a.selector, a.name, a.mark].filter(v => v !== undefined).length === 1, 'Name one file box: a selector, its name or its number')
+      .refine(a => (a.path === undefined) !== (a.paths === undefined), 'Give path for one file or paths for several'),
+    execute: (a, c) => browser.upload({ selector: a.selector, name: a.name, mark: a.mark, paths: a.paths ?? [a.path!] }, c), target: host });
   registry.register({ name: 'browser.tab', permission: 'browser.interact',
     description: 'List the tabs of this task, open another one, switch to one, or close one.',
     parameters: z.object({ action: z.enum(['list', 'open', 'select', 'close']),
