@@ -130,6 +130,8 @@ export const signInPrefixes: readonly string[] = ["remote-agent:"];
 export const thisComputerSettings: readonly string[] = [
   // RES-600: the phones registered for push here, tied to this computer's pairing keys.
   "mobile-push-devices",
+  // Marketplace source selection belongs to this computer; restoring data must not endorse new remote sources.
+  "skill-marketplace-sources",
   "folder_trust", "folder_trust_mode", "folder-trust-real", "folder-trust-copies", "remote-agent-pairing", "remote-computers",
   "secret-commands", "keychain-entries", "reach-remote-trunks-keys",
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
