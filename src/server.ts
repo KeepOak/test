@@ -116,9 +116,10 @@ import { hiddenToolsText } from "./mcp-policy.js";
 import { listSnapshots } from "./mcp-snapshots.js";
 import { readLifecycleSettings, saveLifecycleSettings } from "./mcp-lifecycle.js";
 import { tryServer } from "./mcp-workbench.js";
+import { lockerSecret } from "./integrations/mcp-config.js";
 // mac3/security-check: the self-check card's routes.
 import { securityCheckApi } from "./security-audit/api.js";
-import { signIn as mcpSignIn } from "./integrations/mcp-oauth.js";
+import { McpSignInSchema, signIn as mcpSignIn } from "./integrations/mcp-oauth.js";
 import { AppResourceSchema, appHeaders, appPage, type AppResource } from "./mcp-apps.js";
 // mac2/fly-core-2: the learning core's owner routes.
 import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "./fly-core-api.js";
@@ -3531,11 +3532,18 @@ async function mcpModeApi(app: Branch, request: IncomingMessage, path: string): 
   }
   if (path === "/api/mcp/signin" && request.method === "POST") {
     app.store.profiles.requireOwner("Signing in to another AI tool's server");
-    // The address to open in the owner's own browser; the key lands in the locker, never here.
-    const started = await mcpSignIn(await readBody(request), {
-      store: app.store, owner: app.runtime.owner, connections: app.oauth, policy: app.web.policy,
+    // The address to open in the owner's own browser; the key lands in the locker, never here. Once it is saved, one of
+    // the owner's own servers with that name is connected again with it.
+    // Only one of the owner's own servers at a web address, at the address saved for it: keys are bound to that address.
+    const asked = McpSignInSchema.parse(await readBody(request));
+    const own = app.ownMcp.saved().find((entry) => entry.id === asked.id);
+    if (!own || own.server.transport !== "http") throw new HttpError(404, "There is no server of yours at a web address by that name.");
+    if (own.server.url !== asked.url) throw new HttpError(400, "That is not the address saved for this server.");
+    const started = await mcpSignIn(asked, {
+      store: app.store, owner: app.runtime.owner, policy: app.web.policy,
+      onSignedIn: (id) => void app.ownMcp.start(id).catch(() => undefined),
     });
-    return { url: started.url, redirectUri: started.redirectUri, expiresInMs: started.expiresInMs };
+    return { url: started.url, redirectUri: started.redirectUri, expiresInMs: started.expiresInMs, signedIn: started.signedIn };
   }
   if (path === "/api/mcp/try" && request.method === "POST") {
     // Trying a server starts a program on this computer, or reaches out to a web address, so it
@@ -3543,7 +3551,7 @@ async function mcpModeApi(app: Branch, request: IncomingMessage, path: string): 
     app.store.profiles.requireOwner("Trying another AI tool's server");
     const trying = await readBody(request, 65536);
     await vetTriedServer(app, trying); // mac3/security-check
-    return tryServer(app.store, app.runtime.owner, trying, process.env, app.web.policy);
+    return tryServer(app.store, app.runtime.owner, trying, process.env, app.web.policy, lockerSecret(app.store, () => app.runtime.owner));
   }
   // The pages outside servers offered during one conversation, newest first. The page itself
   // travels with the answer so the card can hand it straight back for a one-time address; it is

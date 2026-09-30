@@ -92,6 +92,7 @@ import { SessionLock } from "./session-lock.js";
 import { Moderation } from "./moderation.js";
 import { PrivacyGuard } from "./privacy-guard.js";
 import { OAuthConnections } from "./oauth.js";
+import { forgetSignIn, signInProvider } from "./integrations/mcp-oauth.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
 import { registerAttachmentTools } from "./attachment-tools.js";
@@ -1617,11 +1618,15 @@ ${result.output || "(it said nothing)"}`;
     startupTimeoutMs: () => readComfort(store, runtime.owner, "mcp").startupTimeoutSeconds * 1000, // R17-S20
     // mac3/security-check: a server fetched from a package registry is looked up first.
     vetLaunch: (command: string, args: readonly string[]) => security.malware.vet(command, args),
+    secret: lockerSecret("MCP server"),
+    signIn: (id: string, url: string) => signInProvider(store, runtime.owner, id, url),
   };
   // eng-connectors: the owner's own servers (a command asks through the approval gate before it starts), the
   // command-line tools the owner allowed, and replies the owner flagged.
   const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
-    policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+    policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args),
+    saveSecret: async (name, value) => { await store.secrets.put(runtime.owner, "default", name, value); },
+    forgetSignIn: (id) => forgetSignIn(store, runtime.owner, id) });
   const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
   registerBudding(registry, budding);
   scheduler.onTick.add(async () => { void budding.tick().catch(() => undefined); });

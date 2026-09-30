@@ -3438,6 +3438,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 The second model that reviews tool calls in `src/approval-reviewer.ts` — deciding whether a tool that does not say only reads, and checking a risky call against the owner's own rules with its arguments treated as untrusted data — follows the ideas of Goose's `crates/goose/src/permission/permission_judge.rs` and `crates/goose/src/security/adversary_inspector.rs` (https://github.com/block/goose) and Codex's `codex-rs/core/src/guardian/` (https://github.com/openai/codex, Copyright 2025 OpenAI), both licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). It was written afresh; no code was copied.
 
+### Cline, Apache-2.0: asking for an MCP server's secret values
+
+The "Add your own MCP server" form (`secretRow` and `typedSecrets` in `public/app/flows/connectors.js`) asks for each secret's value, as Cline's marketplace install asks for each declared environment variable (`install.env`, https://github.com/cline/cline/blob/fef9de1665d098ef13327656669cc43783151e0b/apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts#L69-L117). The code was written for Branch, which keeps the values in its locker (`withLockerSecrets` in `src/integrations/mcp-config.ts`). Cline is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
 ### Goose (Block, Inc.), Apache-2.0
 
 The malware check on add-ons in `src/security-audit/malware-check.ts` and the command-line reading in `src/security-audit/package-launch.ts` are adapted from Goose's `crates/goose/src/agents/extension_malware_check.rs` (https://github.com/block/goose): the OSV query and its pages, refusing only `MAL-` advisories, and finding the package an `npx` or `uvx` command would fetch. Changes: written in TypeScript, sent through Branch's network policy, `pipx run`, `bunx`, `pnpm dlx` and `uv tool run` added, and answers remembered for a while. Used under the Apache License, Version 2.0:
@@ -3447,6 +3451,10 @@ Copyright 2024 Block, Inc.
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+### Gemini CLI (Google), Apache-2.0: signing in to an MCP server
+
+`LockerAuthProvider` and `signIn` in `src/integrations/mcp-oauth.ts` implement the MCP SDK's `OAuthClientProvider` (`@modelcontextprotocol/sdk` 1.30.0, MIT, notice above; https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/client/src/client/auth.ts#L246-L330) and follow Gemini CLI's MCP sign-in in starting the callback page first and registering with its real port (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/mcp/oauth-provider.ts#L103-L130). The code was written for Branch, which keeps the identity and keys in its locker. Gemini CLI is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 
 ### Ollama, MIT
 
