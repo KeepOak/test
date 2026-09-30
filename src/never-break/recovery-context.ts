@@ -118,8 +118,19 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     const requested = resolve(root, copy), rootReal = await realpath(root).catch(() => refused("the original workspace is unavailable"));
     const copyReal = await realpath(requested).catch(() => null);
     const from = copyReal ? relative(rootReal, copyReal) : "";
+    // Source preparation publishes its clone through this logical directory link. Resolve only
+    // that recorded source prefix; descendants must still match exactly, without nested redirects.
+    let expected = resolve(rootReal, copy);
+    if (copy.startsWith("branch-agent-source/")) {
+      const sourceReal = await realpath(resolve(root, "branch-agent-source")).catch(() => null);
+      const sourceFrom = sourceReal ? relative(rootReal, sourceReal) : "";
+      if (!sourceReal || !sourceFrom || isAbsolute(sourceFrom) || sourceFrom === ".."
+        || sourceFrom.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`))
+        refused("the recorded source checkout is not contained in the workspace");
+      expected = resolve(sourceReal, copy.slice("branch-agent-source/".length));
+    }
     if (!copyReal || !from || isAbsolute(from) || from === ".." || from.startsWith(`..${process.platform === "win32" ? "\\" : "/"}`)
-      || !samePath(copyReal, resolve(rootReal, copy)) || !(await stat(copyReal).catch(() => null))?.isDirectory())
+      || !samePath(copyReal, expected) || !(await stat(copyReal).catch(() => null))?.isDirectory())
       refused("the retained working copy could not be verified inside the workspace");
     if (!branch || !base) refused("the retained copy's branch and baseline are unknown");
     // These are bounded local identity reads through the established hook-disabled Git seam, never a fetch or write.
