@@ -16,12 +16,12 @@ import { esc, render } from "../../core/dom.js";
 import { groupResponseCard, initGroupResponses } from "../group-responses.js";
 import { level, E } from "../../core/state.js";
 import { api } from "../../core/api.js";
-import { toast } from "../../core/ui.js";
+import { toast, openDlg } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
 import { stepsCard, initSteps } from "../chat-steps.js";
 import { phoneAccessCard, initPhoneAccess, loadPhoneAccess } from "../phone-access.js";
 import { logo } from "../../core/logos.js";
-import { sw15, sec15, seg15 } from "../rows15.js";
+import { sw15, sec15, seg15, id15 } from "../rows15.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { nativeFormat, pill17d, stateOf } from "../../flows/chatapps17d.js";
@@ -29,8 +29,12 @@ import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.j
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null, watchdogLog: [] };
 const STEPS = "Show steps in chats";
+/* owner-dm-full: the owner's own verified direct chat runs with the owner's full access (GET /api/channels
+   `permissions.ownerChats`, saved with POST /api/channels/permissions { ownerChats }). On as Branch ships. */
+const OWN_FULL = "Your own chats have your full access";
+const OWN_FULL_SUB = "Your own account, one to one, on an app that vouches for its senders, can do what you can in the window. Groups and other people keep the short list. Lockdown turns it off.";
 const kindOf = (c) => c.kind ?? c.id;
 
 async function loadApps() {
@@ -39,11 +43,13 @@ async function loadApps() {
   const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   A.channels = live?.channels ?? [];
   A.intake = live?.intake ?? null;
+  A.watchdogLog = live?.watchdogLog ?? [];
   A.live = live?.live ?? null;
   A.ownerCommands = live?.ownerCommands ?? null;
   A.ownerNamed = live?.ownerNamed !== false; // owner-dm-signin: no chat account is marked as the owner's yet
   A.approved = live?.approved ?? [];
   A.steps = live?.steps ?? null;
+  A.permissions = live?.permissions ?? null;
   A.apps = setup?.channels ?? [];
   await Promise.all([loadFormats(), loadReplyStyles(), loadPhoneAccess()]);
   render();
@@ -60,6 +66,8 @@ export function draw() {
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>` + stepsCard(A, lv);
+  if (E.profiles?.isOwner !== false && A.permissions)
+    html += `<div class="rows">${sw15(OWN_FULL, OWN_FULL_SUB, A.permissions.ownerChats !== false)}</div>`;
   if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard();
   // Replies in each connected app: quoting your message, and the reaction on it while Branch works.
   const kinds = [...new Set(on.map(kindOf))];
@@ -67,7 +75,19 @@ export function draw() {
   if (kinds.length) html += `<div class="sec x15-sec"><h2>${esc(t("window.chat-reply.title"))}</h2>${kinds.map((id) => replyStyleRows(id, nameOf(id), quotes(id))).join("")}</div>`;
   if (lv >= 1) html += advanced(on);
   if (lv >= 2) html += `<div class="sec x15-sec"><h2>${esc(t("window.p17d.chat-apps-technical"))}</h2><div class="ctl"><b>${esc(t("window.p17d.stalled-after"))}</b><span class="right num15"><input class="inp" id="ca-stall17d" value="${esc(A.intake?.stalledAfterSeconds ?? "")}" aria-label="${esc(t("window.p17d.stalled-after"))}"><small>${esc(t("window.p17d.seconds"))}</small></span><small>${esc(t("window.p17d.stalled-hint"))}</small></div></div>`;
+  if (lv >= 2) html += `<div class="ctl"><b>${esc(t("window.p17d.watchdog-log"))}</b><button type="button" class="btn sm" data-act="ca-watchdog-log">${esc(t("ov.open"))}</button><small>${esc(t("window.p17d.watchdog-log-hint"))}</small></div>`;
   return html + groupResponseCard();
+}
+async function showWatchdogLog() {
+  if (E.profiles?.isOwner === false) return;
+  await loadApps();
+  if (E.profiles?.isOwner === false) return;
+  const rows = [...(A.watchdogLog ?? [])].reverse().map((row) => {
+    const at = new Date(row.at);
+    const outcome = ["stalled", "restarted", "failed"].includes(row.outcome) ? row.outcome : "stalled";
+    return `<div class="prow"><span class="grow"><b>${esc(nameOf(row.kind))}</b><small>${esc(t(`window.p17d.watchdog-log-${outcome}`))}</small></span><time datetime="${esc(row.at)}">${esc(Number.isFinite(at.getTime()) ? at.toLocaleString() : "")}</time></div>`;
+  }).join("");
+  openDlg({ title: t("window.p17d.watchdog-log"), body: `<p class="hint">${esc(t("window.p17d.watchdog-log-hint"))}</p>${rows || `<p class="empty">${esc(t("window.p17d.watchdog-log-empty"))}</p>`}` });
 }
 
 /* Each switch: the field it saves. */
@@ -109,6 +129,11 @@ export function revokedPrompts() {
 /** Customize › Channels: whether a connected app is offline because its token was refused. */
 export const offlineIn = (connected, id) => connected.some((c) => kindOf(c) === id && revoked(c));
 
+/** owner-dm-full: the switch saves the engine's own value, then the page is read again from the engine. */
+async function saveOwnFull(on) {
+  try { await api("channels/permissions", { ownerChats: on }); } catch (error) { toast(error.message); }
+  await loadApps();
+}
 /** The steps switch saves the engine's own value, then the page is read again from the engine. */
 async function saveSteps(on) {
   try { await api("channels/live", { steps: on ? "on" : "off" }); } catch (error) { toast(error.message); }
@@ -117,13 +142,15 @@ async function saveSteps(on) {
 
 export function init() {
   initGroupResponses();
+  on("ca-watchdog-log", showWatchdogLog);
   initFormatting();
   initReplyStyle();
-  markLive(["sw:f15-show-steps-in-chats", "ca-split", "ca-reconnect", "sw:ca-stall17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["sw:f15-show-steps-in-chats", "sw:" + id15(OWN_FULL), "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-watchdog-log", ...Object.keys(SW).map((id) => "sw:" + id)]);
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
   document.addEventListener("change", (e) => {
     if (e.target.id === "f15-show-steps-in-chats") saveSteps(e.target.checked);
+    else if (e.target.id === id15(OWN_FULL)) saveOwnFull(e.target.checked);
     else if (SW[e.target.id]) saveIntake({ [SW[e.target.id]]: e.target.checked });
     else if (e.target.id === "ca-stall17d") {
       const typed = e.target.value.trim();

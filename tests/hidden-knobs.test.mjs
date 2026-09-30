@@ -55,7 +55,7 @@ test("every card ships as today's behaviour (a new limit, messages per conversat
   const store = { get: () => undefined };
   const values = allKnobs(store, owner);
   assert.deepEqual(values.compaction, { autoCompact: true, compactAtPercent: null, keepRecentMessages: 6, contextWindowTokens: null });
-  assert.deepEqual(values.limits, { maxSteps: 60, spendCapDollars: null, apiRetries: null, localFirstReplySeconds: null, maxModelRounds: null, maxTaskTokens: null, messagesPerConversationHour: 60 });
+  assert.deepEqual(values.limits, { maxSteps: null, spendCapDollars: null, apiRetries: null, localFirstReplySeconds: null, maxModelRounds: null, maxTaskTokens: null, messagesPerConversationHour: 60 });
   assert.deepEqual(values.commands, { toolAnswerChars: null, toolTimeoutSeconds: null, commandTimeoutSeconds: null, keptOpenShell: true, passEnvironment: [] });
   assert.deepEqual(values.subtasks, { subtaskModel: null, sideJobModel: null, parallelSubtasks: 4, subtaskTimeoutSeconds: 120 });
   assert.deepEqual(values.reasoning, { effortByModel: {}, showReasoning: true, serviceTier: "standard" });
@@ -395,11 +395,13 @@ test("the knobs route: the owner saves, bad values and loosening from elsewhere 
   };
   const read = await call("GET");
   assert.equal(read.status, 200);
-  assert.equal(read.body.values.limits.maxSteps, 60);
+  assert.equal(read.body.values.limits.maxSteps, null, "auto: no limit on a sign-in, 60 on a key");
   assert.ok(read.body.leakKinds.includes("GitHub token") && !read.body.leakKinds.includes("private key"));
   assert.equal((await call("POST", { card: "limits", values: { maxSteps: 12 } })).body.values.limits.maxSteps, 12);
   assert.equal(readKnobs(app.store, owner, "limits").maxSteps, 12);
-  assert.equal((await call("POST", { card: "limits", reset: true })).body.values.limits.maxSteps, 60);
+  assert.equal((await call("POST", { card: "limits", reset: true })).body.values.limits.maxSteps, null);
+  assert.equal((await call("POST", { card: "limits", values: { maxSteps: "none" } })).body.values.limits.maxSteps, "none");
+  assert.equal((await call("POST", { card: "limits", values: { maxSteps: "lots" } })).status, 400);
   assert.equal((await call("POST", { card: "limits", values: { maxSteps: 0 } })).status, 400);
   const secret = await call("POST", { card: "commands", values: { passEnvironment: ["STRIPE_SECRET"] } });
   assert.equal(secret.status, 400);
