@@ -10606,3 +10606,8 @@ The Gardener extends this record with the following settings when its feature is
 | `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
+
+
+### Thirty-day usage insights
+
+`/insights` reports completed-task tokens, estimated cost, unknown prices, recorded failures, top models and task sources for the last thirty days. It works in the window, phone, terminal, dashboard and supported chat commands, without invoking a model. In chat or with a restricted key, it reports only the current conversation. With the owner key on other surfaces, it reports the owner's conversations; `/insights conversation` narrows it, and `/insights all` explicitly requests the owner aggregate. Household profiles cannot request the owner's aggregate. Costs are estimates rather than bills, and running tasks are excluded.

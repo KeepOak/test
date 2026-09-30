@@ -1,3 +1,4 @@
+import { insightsCommand } from "./insights.js";
 import type { Runtime } from "../runtime.js";
 import type { RunSource } from "../policy.js";
 import type { FeatureMode } from "../feature-switches.js";
@@ -274,7 +275,7 @@ export const HANDLERS: Record<string, Handler> = {
   go: go(""), inbox: go("inbox"), automations: go("automations"), library: go("library"),
   customize: go("customize"), settings: go("settings"),
   theme, default: defaultModel, pane, lockdown,
-  stop, status: (call) => say(statusLines(call).join("\n")), compact, usage, btw: aside, tokens, goal,
+  stop, status: (call) => say(statusLines(call).join("\n")), compact, usage, insights: insightsCommand, btw: aside, tokens, goal,
   whoami: (call) => say(whoamiLines(call).join("\n")),
   version: (call) => say(`Branch Agent ${call.host.version ?? "(version unknown)"}`),
   health,
