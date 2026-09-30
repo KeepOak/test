@@ -73,6 +73,23 @@ test("a Trunk's command that reaches another Trunk's folder is refused, however 
   }
 });
 
+test("a helper a Trunk starts works in the Trunk's folder and is fenced too, whatever name it carries", async (t) => {
+  const f = await fixture(t);
+  const helper = { ...f.as(ada), agent: "researcher", depth: 1 }; // a delegated specialist keeps the folder, not the mark
+  const here = await f.run(helper, ["-e", "process.stdout.write(process.cwd())"]);
+  assert.equal(here.stdout.toLowerCase(), join(f.home, ada).toLowerCase());
+  await assert.rejects(f.run(helper, read(`../${bob}/secret.txt`)), /A Trunk's commands stay in its own folder/);
+  await assert.rejects(f.run({ ...helper, agent: undefined }, [".."]), /A Trunk's commands stay in its own folder/);
+});
+
+test("ordinary script text with slashes runs", async (t) => {
+  const f = await fixture(t);
+  for (const script of ["console.log(4 / 2)", "// a comment\nconsole.log(2)", "console.log('a' + '/' + 'b')"]) {
+    const result = await f.run(f.as(ada), ["-e", script]);
+    assert.equal(result.exitCode, 0, `${script}: ${result.stderr}`);
+  }
+});
+
 test("the owner's own turn, and a Trunk's own subfolder, are not fenced", async (t) => {
   const f = await fixture(t);
   const owner = await f.run(f.base, read(`.branch-agents/${bob}/secret.txt`));
@@ -89,7 +106,7 @@ test("the fence names the other Trunks' folders, for the wall too, and only for 
   assert.ok(fencedFolders(f.as(ada)).some((path) => path.toLowerCase() === join(f.home, bob).toLowerCase()));
   assert.equal(trunkFence(f.base), null, "the owner's turn");
   assert.equal(trunkFence({ ...f.as(ada), workspace: f.workspace }), null, "a Trunk working elsewhere (a coding fork) is not fenced");
-  assert.equal(fenceRefusal(fence, join(f.home, ada), ["hello", "-v", "1/2"]), null, "ordinary words pass");
+  assert.equal(fenceRefusal(fence, join(f.home, ada), ["hello", "-v", "1/2", "4 // 2", "/"]), null, "ordinary words pass");
 });
 
 test("behind the wall a Trunk's program cannot read the other Trunks' folders",
