@@ -2505,6 +2505,9 @@
   "gatewayPower.suspended": "El equipo se suspendió. Branch volverá a conectarse al reanudar.",
   "gatewayPower.title": "Mantener este equipo despierto mientras funciona la pasarela",
   "gatewayPower.waiting": "Guardado como activado; no se ha confirmado una solicitud activa para mantenerlo despierto.",
+  "gatewaySleep.cloud": "Para objetivos largos, ejecuta Branch en un equipo en la nube siempre encendido que controles y vincúlalo aquí con Branch. Configúralo primero con tu proveedor; sus costes y política de suspensión son independientes.",
+  "gatewaySleep.computers": "Equipos y vinculación",
+  "gatewaySleep.pauses": "Suspender este equipo manualmente pausa el trabajo de Branch. Cerrar la tapa también puede suspender un portátil. El gateway no puede seguir trabajando mientras el equipo está suspendido.",
   "glance.almostOut": "Casi agotado en {name}. ¿Pedir a las tareas en marcha que guarden su progreso?",
   "glance.almostOutNote": "{percent}% usado, según lo midió el servicio. Cada tarea en marcha apunta dónde está y qué le falta. No se detiene nada.",
   "glance.checking": "Comprobando…",
@@ -10417,8 +10420,5 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta",
-  "gatewaySleep.pauses": "Suspender este equipo manualmente pausa el trabajo de Branch. Cerrar la tapa también puede suspender un portátil. El gateway no puede seguir trabajando mientras el equipo está suspendido.",
-  "gatewaySleep.cloud": "Para objetivos largos, ejecuta Branch en un equipo en la nube siempre encendido que controles y vincúlalo aquí con Branch. Configúralo primero con tu proveedor; sus costes y política de suspensión son independientes.",
-  "gatewaySleep.computers": "Equipos y vinculación"
+  "wsedit.up": "Subir una carpeta"
 }
