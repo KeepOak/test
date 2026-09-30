@@ -31,7 +31,11 @@ export const WorktreeSettingsSchema = z.object({
   perHelper: z.boolean().default(false),
 }).strict();
 const ForksSchema = z.object({
-  forks: z.array(z.object({ sessionId: z.string().uuid(), name: z.string(), branch: z.string(), folder: z.string(), createdAt: z.string() }).strict()).max(200).default([]),
+  forks: z.array(z.object({ sessionId: z.string().uuid(), name: z.string(), branch: z.string(), folder: z.string(), createdAt: z.string(),
+    /** Captured at creation, never inferred from a later task. Legacy forks may have none. */
+    base: z.string().regex(/^[a-f0-9]{40,64}$/i).optional(),
+    baselineFailed: z.literal(true).optional(),
+  }).strict()).max(200).default([]),
 }).strict();
 const forksKey = "coding-worktree-forks";
 
@@ -53,6 +57,7 @@ const short = (id: string): string => id.replace(/-/g, "").slice(0, 8);
 export class WorktreePlaces {
   /** Sources held by live helpers, including copies that are still being created. */
   private readonly helperSources = new Map<string, string>();
+  private readonly pendingForkReservations = new Set<string>();
   /** Prevents new descendants while this instance is removing their parent copy. */
   private readonly removing = new Set<string>();
   private requireAvailableSource(scope: string): void {
@@ -66,10 +71,11 @@ export class WorktreePlaces {
   }
   forks() {
     const saved = ForksSchema.safeParse(this.deps.store.get("settings", this.deps.owner, forksKey)?.data ?? {});
-    return saved.success ? saved.data.forks : [];
+    if (!saved.success) throw new Error("The saved project-copy assignments could not be read safely. Reconcile them before continuing.");
+    return saved.data.forks;
   }
   private saveForks(forks: z.infer<typeof ForksSchema>["forks"]): void {
-    this.deps.store.save("settings", this.deps.owner, forksKey, { forks: forks.slice(-200) });
+    this.deps.store.save("settings", this.deps.owner, forksKey, ForksSchema.parse({ forks }));
   }
 
   /** Forks a conversation at a message into a new one that works in its own copy of the project. */
@@ -81,16 +87,33 @@ export class WorktreePlaces {
     this.requireAvailableSource(folder);
     const pending = `fork:${input.sessionId}`;
     if (this.helperSources.has(pending)) throw new Error("A project copy is already being created for this conversation.");
+    // Reserve before branching can await: concurrent creations also consume capacity.
+    // Retained assignments are never evicted to make room, even if Git creation later fails.
+    if (this.forks().length + this.pendingForkReservations.size >= 200)
+      throw new Error("All 200 project-copy assignments are retained or being created. Resolve an existing copy before creating another; no conversation was forked.");
+    this.pendingForkReservations.add(pending);
     this.helperSources.set(pending, folder);
     try {
       const branched = await this.deps.branchSession(owner, input);
-      this.requireAvailableSource(folder);
       const name = `fork-${short(branched.sessionId)}`, branch = `branch/fork-${short(branched.sessionId)}`;
+      const identity = { sessionId: branched.sessionId, name, branch, folder, createdAt: new Date().toISOString() };
+      // Bind the conversation before the first creation await: every failure retains its required assignment.
+      this.saveForks([...this.forks(), { ...identity, baselineFailed: true }]);
+      this.pendingForkReservations.delete(pending);
+      this.requireAvailableSource(folder);
       await inWorktree(folder, () => this.deps.git.worktree({ folder: ".", action: "add", name, branch }, signal));
-      const fork = { sessionId: branched.sessionId, name, branch, folder, createdAt: new Date().toISOString() };
-      this.saveForks([...this.forks(), fork]);
-      return { ...fork, path: this.scopeFor(fork.folder, name) };
-    } finally { this.helperSources.delete(pending); }
+      const path = this.scopeFor(folder, name);
+      const head = await this.deps.run(join(this.deps.root, path), ["rev-parse", "--verify", "HEAD^{commit}"], signal).catch(() => null);
+      const base = head?.stdout.trim();
+      if (head?.status !== "completed" || head.exitCode !== 0 || !base || !/^[a-f0-9]{40,64}$/i.test(base)) {
+        // Keep both contents and assignment: the created conversation must never fall back to shared work.
+        signal.throwIfAborted();
+        throw new Error("The new conversation's project copy was preserved, but its initial commit could not be recorded. The conversation cannot work in another folder.");
+      }
+      const fork = { ...identity, base };
+      this.saveForks([...this.forks().filter((entry) => entry.sessionId !== branched.sessionId), fork]);
+      return { ...fork, path };
+    } finally { this.pendingForkReservations.delete(pending); this.helperSources.delete(pending); }
   }
 
   /** Forgets a fork and removes its copy, only when the copy holds no unsaved change (its line of work is kept). */
@@ -262,11 +285,12 @@ export class WorktreePlaces {
     const fork = this.forks().find((entry) => entry.sessionId === run.sessionId);
     if (!fork) return null;
     const scope = this.scopeFor(fork.folder, fork.name), workspace = join(this.deps.root, scope);
+    if (fork.baselineFailed) throw new Error("This conversation's project copy has no safely recorded initial commit, so the task stopped before working in another folder.");
     if (!existsSync(workspace)) {
       this.deps.note(run.id, "worktree.missing", { path: scope });
       throw new Error("This conversation’s project copy is missing, so this task stopped before working in the original project.");
     }
-    this.deps.note(run.id, "worktree.used", { path: scope, branch: fork.branch });
+    this.deps.note(run.id, "worktree.used", { path: scope, branch: fork.branch, ...(fork.base ? { base: fork.base } : {}) });
     return { scope, workspace, release: async () => undefined };
   }
 
