@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { registerMailSending, type MailPreview } from "./mail-send.js";
 import { CalendarCreateSchema, CalendarMoveSchema, CalendarDeleteSchema, googleDayBefore, registerCalendarWrites } from "./calendar-write.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
@@ -88,6 +89,21 @@ export class GoogleConnector {
   constructor(private readonly store: Store, private readonly owner: string, private readonly fetcher: typeof fetch,
     private readonly signIn: SignIn) {}
   private on(): void { requirePersonal(this.store, this.owner, "google"); }
+  registerSending(registry: Pick<ToolRegistry, "register">): void {
+    registerMailSending(registry, "gmail", this.store, this.signIn, (draft, unchanged) => this.sendPreview(draft, unchanged));
+  }
+  private async sendPreview(draft: MailPreview, unchanged: () => void) {
+    this.on();
+    await this.signIn.requireMailSend();
+    const raw = Buffer.from(buildPlainMail(draft), "utf8").toString("base64url");
+    const token = await this.signIn.token();
+    unchanged();
+    this.on();
+    // Token was captured before the identity recheck; never send using a replacement sign-in.
+    const made = z.object({ id: z.string() }).passthrough().parse(await signedCall(this.fetcher,
+      { token: async () => token }, "Gmail", `${gmail}/messages/send`, { method: "POST", json: { raw } }));
+    return { accepted: true, messageId: made.id, delivered: "unverified", note: "Gmail accepted the message. Recipient delivery is not verified." };
+  }
   private call(url: string, init: RequestInit & { json?: unknown } = {}): Promise<unknown> {
     this.on();
     return signedCall(this.fetcher, this.signIn, "Google", url, init);
@@ -188,6 +204,7 @@ export class GoogleConnector {
 }
 
 export function registerGoogle(registry: Pick<ToolRegistry, "register">, google: GoogleConnector): void {
+  google.registerSending(registry);
   registerCalendarWrites(registry, "gcal", (action, input) => google.writeCalendar(action, input));
   const tool = (name: string, permission: string, description: string, parameters: z.ZodType, run: (input: unknown) => Promise<unknown>) =>
     registry.register({ name, permission, description, parameters, execute: async (input) => run(input) });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { registerMailSending, type MailPreview } from "./mail-send.js";
 import { CalendarCreateSchema, CalendarMoveSchema, CalendarDeleteSchema, microsoftDayBefore, registerCalendarWrites } from "./calendar-write.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
@@ -62,6 +63,21 @@ export function vttToText(vtt: string): string {
 export class MicrosoftConnector {
   constructor(private readonly store: Store, private readonly owner: string, private readonly fetcher: typeof fetch,
     private readonly signIn: SignIn) {}
+  registerSending(registry: Pick<ToolRegistry, "register">): void {
+    registerMailSending(registry, "outlook", this.store, this.signIn, (draft, unchanged) => this.sendPreview(draft, unchanged));
+  }
+  private async sendPreview(draft: MailPreview, unchanged: () => void) {
+    requirePersonal(this.store, this.owner, "microsoft");
+    await this.signIn.requireMailSend();
+    const token = await this.signIn.token();
+    unchanged();
+    requirePersonal(this.store, this.owner, "microsoft");
+    await signedCall(this.fetcher, { token: async () => token }, "Outlook", `${graph}/sendMail`, { method: "POST", json: {
+      message: { subject: draft.subject, body: { contentType: "Text", content: draft.text },
+        toRecipients: recipients(draft.to), ccRecipients: recipients(draft.cc) }, saveToSentItems: true,
+    } });
+    return { accepted: true, delivered: "unverified", note: "Outlook accepted the request. Processing and recipient delivery are not verified." };
+  }
   private call(path: string, init: RequestInit & { json?: unknown } = {}): Promise<unknown> {
     requirePersonal(this.store, this.owner, "microsoft");
     return signedCall(this.fetcher, this.signIn, "Microsoft", `${graph}${path}`, init);
@@ -170,6 +186,7 @@ export class MicrosoftConnector {
 }
 
 export function registerMicrosoft(registry: Pick<ToolRegistry, "register">, microsoft: MicrosoftConnector): void {
+  microsoft.registerSending(registry);
   registerCalendarWrites(registry, "outlook", (action, input) => microsoft.writeCalendar(action, input));
   const tool = (name: string, permission: string, description: string, parameters: z.ZodType, run: (input: unknown) => Promise<unknown>) =>
     registry.register({ name, permission, description, parameters, execute: async (input) => run(input) });
