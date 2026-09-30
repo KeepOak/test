@@ -9,6 +9,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolDefinition, ToolContext } from '../contracts.js';
 import { McpConfigSchema, makeTransport, type McpConfig } from './mcp-config.js';
+import { appendMcpUi, mcpUi } from './mcp-app-resource.js';
 
 export const mcpToolName = (id: string, tool: string): string =>
   `mcp.${id}.${createHash('sha256').update(tool).digest('hex').slice(0, 16)}`;
@@ -54,9 +55,10 @@ function redact(result: unknown, secrets: string[]): unknown {
  */
 type CallThrough = (tool: string, args: Record<string, unknown>, context: ToolContext) => Promise<unknown>;
 
-const through = (client: Client): CallThrough =>
-  (tool, args, context) => client.callTool({ name: tool, arguments: args }, undefined,
-    { signal: context.signal, timeout: 30000 });
+const through = (client: Client, tools: readonly Tool[]): CallThrough =>
+  async (tool, args, context) => appendMcpUi(client, tools.find(item => item.name === tool),
+    await client.callTool({ name: tool, arguments: args }, undefined,
+      { signal: context.signal, timeout: 30000 }), context.signal);
 
 function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: string[]): ToolDefinition {
   if (JSON.stringify(redact(tool, secrets)) !== JSON.stringify(tool))
@@ -64,10 +66,12 @@ function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: s
   // The schema checker is made on the first call, so listing a server's tools loads no part of the SDK.
   let validate: ((args: unknown) => { valid: boolean }) | undefined;
   const name = mcpToolName(config.id, tool.name);
+  const ui = mcpUi(tool);
   // Dogfood follow-up: a server's computer-use or screen tool, by its annotations' title, name, description or inputs.
   const screen = describesScreen({ name: tool.name, title: tool.annotations?.title ?? tool.title, description: tool.description, inputSchema: tool.inputSchema });
   return { name, description: tool.description?.slice(0, 2000) ?? tool.name, external: true, ...(screen ? { screen: true } : {}),
-    permission: name, parameters: z.record(z.string(), z.unknown()), inputSchema: tool.inputSchema,
+    permission: name, appCallable: ui.app, modelVisible: ui.model,
+    parameters: z.record(z.string(), z.unknown()), inputSchema: tool.inputSchema,
     execute: async (args: unknown, context: ToolContext) => {
       validate ??= new (await mcpValidator())().getValidator(tool.inputSchema as JsonSchemaType);
       if (!validate(args).valid) throw new Error('MCP arguments do not match the configured tool schema');
@@ -83,7 +87,7 @@ function definition(call: CallThrough, config: McpConfig, tool: Tool, secrets: s
 }
 
 /** What a connected server said its tools are, kept so they can be listed without connecting. */
-export interface CachedMcpTool { name: string; description: string; inputSchema: unknown }
+export interface CachedMcpTool { name: string; description: string; inputSchema: unknown; _meta?: Tool['_meta'] }
 /**
  * A server that is actually open: a way to call it, the credentials it was opened with so they can
  * be kept out of what comes back, and what it says its tools are right now.
@@ -111,7 +115,7 @@ export interface McpToolCache {
 }
 const cacheable = (tools: Tool[]): CachedMcpTool[] =>
   tools.map(tool => ({ name: tool.name, description: tool.description?.slice(0, 2000) ?? tool.name,
-    inputSchema: tool.inputSchema }));
+    inputSchema: tool.inputSchema, ...(tool._meta ? { _meta: tool._meta } : {}) }));
 
 /**
  * Puts a server's tools in the list without starting it. They come from what that server said the
@@ -181,7 +185,8 @@ export async function openMcp(
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
   const { transport, secrets } = await makeTransport(config, env, policy);
-  const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' });
+  const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' }, { capabilities: config.apps
+    ? { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: ['text/html;profile=mcp-app'] } } } : {} });
   try {
     // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.
     await client.connect(transport as Transport, { timeout: startupTimeoutMs });
@@ -193,7 +198,7 @@ export async function openMcp(
     // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
     let alive = true;
     client.onclose = () => { alive = false; };
-    return { config, found, secrets, call: through(client), close: () => client.close(), alive: () => alive };
+    return { config, found, secrets, call: through(client, found), close: () => client.close(), alive: () => alive };
   } catch {
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');

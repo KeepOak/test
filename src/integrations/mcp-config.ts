@@ -7,6 +7,8 @@ const common = {
   id: z.string().regex(/^[a-z][a-z0-9-]{0,29}$/),
   tools: z.array(z.string().min(1).max(200)).min(1).max(64),
   expectedVersion: z.string().min(1).max(100),
+  /** Opt-in extension negotiation; script execution still needs a separate owner confirmation per page. */
+  apps: z.boolean().default(false),
 };
 const stdioShape = {
   transport: z.literal('stdio'), command: z.string().min(1),
