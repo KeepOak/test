@@ -11,7 +11,9 @@ import type { LiveOutcome } from "../hot-update/live-build.js";
 import { buildDev, devStanding, devToolsMissing, prepareBuildFolder, realRun, remoteHead, type DevBuildPlan, type DevBuilt, type DevStage, type DevStanding, type Run } from "./dev-build.js";
 import { removeTree } from "./remove-tree.js";
 import { folderPath, partFolder, pointerFiles, readPointer, sealAppFolder, type Layout } from "./app-folders.js";
-import { failureName, invisibleWaitWords, shellUpMarker, windowsSwitchScript, type SwitchFailure } from "./shell-switch.js";
+import { failureName, invisibleWaitWords, shellUpMarker, type SwitchFailure } from "./shell-switch.js";
+import { SwitchPlanSchema } from "./version-switch.js";
+import { storeMigrations } from "../never-break/migrations.js";
 import { runHostedBuild, type HostedBuild } from "./build-client.js";
 import type { PauseReason } from "./quiet-build.js";
 import { fetchAttestationBundles, isBuildProvenance, verifyAttestationBundle, type AttestationLookup } from "./provenance.js";
@@ -101,6 +103,8 @@ export interface UpdaterOptions {
    * copied over, and the background engine is never stopped for it. Left out: the flat swap, as before.
    */
   appFolders?: Layout | null;
+  /** The saved work's folder: a versioned switch reads its format before it goes back (version-switch.ts). */
+  dataDir?: string;
   /**
    * Versioned app folders: waits for the moment the switch may happen (the window out of sight, or the owner away) and
    * keeps what the window has open for the new version; answers whether the window was hidden, so the new version
@@ -1045,7 +1049,7 @@ export class Updater {
   }
   /**
    * Versioned app folders: the pointers the switch renames, the note the old version reads if the new one does not come
-   * up, and the hidden script that does the switch and watches it (shell-switch.ts). Written only after the window has
+   * up, and the plan the hand-over runner follows to switch and watch it (version-switch.ts). Written only after the window has
    * reached its moment (`handOver`), so the new version starts shown or in the tray exactly as this one was.
    */
   private async writeSwitchScript(stagedDir: string, version: string, release: ReleaseInfo): Promise<string> {
@@ -1061,10 +1065,15 @@ export class Updater {
       message: `Version ${version} did not open its window within two minutes, so Branch went back to ${this.options.currentVersion} by itself. Your conversations and chat apps kept running. The next change is tried as soon as it lands.` };
     await writeFile(join(scratch, `${failureName}.draft`), JSON.stringify(failure));
     await rm(join(scratch, failureName), { force: true });
-    const script = join(scratch, "switch-version.cmd");
-    await writeFile(script, windowsSwitchScript({ root, next: files.next, rollback: folder ? files.rollback : null,
-      newExe: join(stagedDir, exe), oldExe: join(folderPath(root, folder), exe), marker: shellUpMarker(scratch, version),
-      failureDraft: join(scratch, `${failureName}.draft`), failure: join(scratch, failureName), log: join(scratch, "apply-update.log"), minimized }), "utf8");
+    // Read by the hand-over runner (hand-over.ts), which switches from this version's own folder (version-switch.ts).
+    const script = join(scratch, "switch-version.json");
+    const plan = SwitchPlanSchema.parse({ root, next: files.next, rollback: folder ? files.rollback : null,
+      newExe: join(stagedDir, exe), oldExe: join(folderPath(root, folder), exe), pid: process.pid, marker: shellUpMarker(scratch, version),
+      failureDraft: join(scratch, `${failureName}.draft`), failure: join(scratch, failureName), log: join(scratch, "apply-update.log"), minimized,
+      version, kept: this.options.currentVersion, commit: release.commit ?? null,
+      // Going back is refused when the new version has moved the saved work past what this version can read.
+      dataDir: this.options.dataDir ?? null, understood: storeMigrations.at(-1)?.version ?? null });
+    await writeFile(script, JSON.stringify(plan, null, 2), "utf8");
     return script;
   }
   /** macOS and Linux: the shell hand-over from hand-over.ts, written beside the download. */

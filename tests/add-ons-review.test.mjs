@@ -178,15 +178,18 @@ test("review: a list answer is cut off as soon as it is too large, before it is 
   await assert.rejects(lists.install(address, "weather"), /larger than an add-on list may send/);
 });
 
-test("review: a newer version that asks for more arrives switched off and says what grew", async (t) => {
+test("review: a newer code version must be evaluated and its staged request says what grew", async (t) => {
   const { app } = await fixture(t);
   const { lists, state } = webList(t, app, { permissions: ["text.read"] });
   await lists.browse(address);
   await lists.install(address, "weather");
   state.version = "1.1.0";
   state.permissions = ["text.read", "files.read"];
-  const updated = await lists.update("weather");
-  assert.deepEqual([updated.enabled, updated.grew, updated.plugin.permissions], [false, ["files.read"], ["text.read", "files.read"]]);
+  await assert.rejects(lists.update("weather"), /Evaluate and promote/);
+  const staged = await lists.stageUpdate("weather");
+  const candidate = await app.addOns.shelf.look(staged.source);
+  assert.deepEqual(candidate.offer.plugin.permissions, ["text.read", "files.read"]);
+  assert.deepEqual(app.addOns.shelf.record("weather").plugin.permissions, ["text.read"]);
   assert.equal(app.store.get("settings", app.runtime.owner, "plugin:weather"), undefined, "no earlier yes carries over");
 });
 

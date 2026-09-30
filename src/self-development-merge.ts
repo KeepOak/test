@@ -17,6 +17,7 @@ import { currentCaller } from "./caller.js";
 import { canonicalRepo, officialRepo } from "./desktop/repo-pair.js";
 import { throughPairedDoor } from "./people/context.js";
 import type { ToolContext } from "./contracts.js";
+import { recordSourceArrival } from "./self-development-arrival.js";
 
 const ReviewSchema = z.object({ worktree: z.string().regex(/^branch-agent-source\/\.branch-worktrees\/self-[a-z0-9][a-z0-9-]{0,23}$/),
   // The old stabrea/Branch-Agent name is asked for as KeepOak/Branch-Agent: GitHub only redirects it, and Branch refuses redirects.
@@ -129,6 +130,7 @@ export class SelfDevelopmentMerges {
         throw new Error("The review expired or GitHub connection changed before the merge was sent. Review again.");
     });
     this.record(grant, result.merged ? "merged" : "queued");
+    if (result.merged) recordSourceArrival(this.deps.store, this.deps.owner, grant.input.worktree, result.sha);
     return { ...result, repository: grant.input.repo, number: grant.input.number, reviewedHead: snapshot.github.headSha };
   }
   private autoOwner(input: ReviewInput, context: ToolContext): string {
@@ -188,6 +190,7 @@ export class SelfDevelopmentMerges {
       gate();
       if (ownerGitHubConnection(this.deps.registry) !== github) throw new Error("The GitHub connection changed before merge.");
     });
+    if (merged.merged) recordSourceArrival(this.deps.store, this.deps.owner, input.worktree, merged.sha);
     audit(this.deps.store, this.deps.owner, { action: "self_development.merge", actor,
       subject: `${input.repo}#${input.number} ${ready.github.headSha}`, runId: context.runId,
       reason: `Independent read-only task ${result.runId} passed; exact tested protected commit ${merged.merged ? "merged normally" : "joined the base's merge queue"}.`,

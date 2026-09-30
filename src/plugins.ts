@@ -103,6 +103,17 @@ export interface PluginIsolation {
 
 export class Plugins {
   private readonly loaded = new Map<string, Loaded>();
+  private readonly lifecycle = new Set<string>();
+  private readonly lifecycleGeneration = new Map<string, number>();
+  holdLifecycle(id: string): () => void {
+    if (this.lifecycle.has(id)) throw new Error("A plugin lifecycle operation is already running.");
+    this.lifecycle.add(id);
+    this.lifecycleGeneration.set(id, (this.lifecycleGeneration.get(id) ?? 0) + 1);
+    return () => { this.lifecycle.delete(id); };
+  }
+  private checkLifecycle(id: string): void {
+    if (this.lifecycle.has(id)) throw new Error("This plugin is being promoted or restored; enable it after that finishes.");
+  }
   /** Set by the launch when this copy can hold model connections; left unset, plugins bring none. */
   providers?: PluginProviderHost | undefined;
   /** Set by the launch when this copy can host chat services; left unset, plugins bring none. */
@@ -114,6 +125,8 @@ export class Plugins {
   private saved(id: string): { enabled: boolean; summary?: PluginSummary; grant?: ManifestGrant } | undefined {
     return this.store.get("settings", this.owner, this.key(id))?.data as { enabled: boolean; summary?: PluginSummary; grant?: ManifestGrant } | undefined;
   }
+  /** Evaluations may only exercise permissions the owner already granted. */
+  granted(id: string): string[] { return [...(this.saved(id)?.grant?.permissions ?? [])]; }
   /**
    * What the owner allowed: the permissions they named, or — for a plugin switched on before wave 8
    * and for a plain "switch this on" — everything its own manifest declared. A plugin can never
@@ -198,6 +211,10 @@ export class Plugins {
    * reaches the catalog, so nothing can call it — and the owner is told which ones were left out.
    */
   async enable(id: string, allow?: readonly string[]): Promise<PluginSummary> {
+    const generation = this.lifecycleGeneration.get(id) ?? 0;
+    this.checkLifecycle(id);
+    if (this.store.get("settings", this.owner, `plugin-review:${id}`)?.data.pending === true)
+      throw new Error("This newly installed plugin is staged. Run its task fixtures and promote a successful evaluation before switching it on.");
     if (this.loaded.has(id)) return this.loaded.get(id)!.summary;
     // The manifest the owner read binds what runs: code changed since it was installed is not run, and a permission the
     // code asks for that the manifest did not list is never granted (its tools are left out, and said so).
@@ -208,6 +225,9 @@ export class Plugins {
         throw new Error(`${id}.mjs is not what it was when it was installed, so it was not switched on. Install it again to use it.`);
     }
     const plugin = await this.read(id), summary = this.summarize(id, plugin);
+    this.checkLifecycle(id);
+    if ((this.lifecycleGeneration.get(id) ?? 0) !== generation)
+      throw new Error("This plugin changed during activation; enable its current version again.");
     const listed = allow ?? this.saved(id)?.grant?.permissions;
     const grant = this.grantFor(summary, declared
       ? (listed ?? declared.summary.permissions).filter((permission) => declared.summary.permissions.includes(permission)) : listed);
@@ -261,7 +281,8 @@ export class Plugins {
   disable(id: string): { id: string; enabled: false } {
     this.unload(id);
     const saved = this.saved(id);
-    this.store.save("settings", this.owner, this.key(id), { enabled: false, ...(saved?.summary ? { summary: saved.summary } : {}) });
+    this.store.save("settings", this.owner, this.key(id), { enabled: false, ...(saved?.summary ? { summary: saved.summary } : {}),
+      ...(saved?.grant ? { grant: saved.grant } : {}) });
     return { id, enabled: false };
   }
   /** Loads the plugins the owner switched on before, at start-up. A broken one is reported, not fatal. */

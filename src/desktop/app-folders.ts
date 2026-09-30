@@ -172,3 +172,111 @@ export async function sealAppFolder(root: string, version: string, pointer: Poin
   return target;
 }
 
+
+/**
+ * Going back one version: `current.json` names the version before again, in one rename, and forgets it as "the one
+ * before" (the version gone back from is removed by a later tidy once nothing runs from it). When the version before is
+ * the flat copy from before this layout, the pointer is removed instead, as before the first switch. Answers the version
+ * now in use, or null when there is no whole version before to go back to (then nothing is changed).
+ */
+export async function rollBackPointer(root: string, executableName: string, now = new Date()): Promise<Slot | null> {
+  const pointer = await readPointer(root);
+  const back = pointer?.previous;
+  if (!pointer || !back) return null;
+  if (!(await lstat(join(folderPath(root, back.folder), executableName)).catch(() => null))) return null;
+  if (!back.folder) {
+    const aside = join(root, `${pointerName}.${randomBytes(4).toString("hex")}.gone`);
+    await rename(join(root, pointerName), aside);
+    await rm(aside, { force: true });
+    return back;
+  }
+  await writePointer(root, { folder: back.folder, version: back.version, previous: null, at: now.toISOString() });
+  return back;
+}
+
+/** The stable launcher's package name: a flat copy whose app is this has been retired already. */
+export const launcherName = "branch-agent-launcher";
+
+/**
+ * The stable launcher left in the flat copy's place (the Squirrel and VS Code pattern: shortcuts to the top of the
+ * install keep working whichever version is in use). Electron's stock program at the top runs this instead of Branch:
+ * it starts the version `current.json` names, with the same arguments, and ends. Plain CommonJS, nothing to import.
+ */
+export function launcherMain(): string {
+  return `"use strict";
+const { app, dialog } = require("electron");
+const { spawn } = require("node:child_process");
+const { existsSync, readFileSync } = require("node:fs");
+const { basename, dirname, join } = require("node:path");
+const root = dirname(process.execPath);
+app.disableHardwareAcceleration();
+let target = null;
+try {
+  const folder = JSON.parse(readFileSync(join(root, "current.json"), "utf8")).folder;
+  if (${appFolderPattern.toString()}.test(folder)) target = join(root, folder, basename(process.execPath));
+} catch { target = null; }
+if (target && existsSync(target)) {
+  const env = { ...process.env };
+  delete env.ELECTRON_RUN_AS_NODE;
+  spawn(target, process.argv.slice(1), { detached: true, stdio: "ignore", env }).unref();
+  app.exit(0);
+} else {
+  app.whenReady().then(() => {
+    dialog.showErrorBox("Branch Agent", "Branch Agent could not find the version to start. Install it again from its release page; your conversations are kept.");
+    app.exit(1);
+  });
+}
+`;
+}
+
+/**
+ * The one-time move off the flat layout, once the flat copy is neither the version in use nor the one before (so it is
+ * no longer needed to go back): its app (`resources/`, the only part that is its own; its Electron files are the same
+ * files as the versions after it, hard linked) is replaced by the stable launcher above, in two renames. Anything in
+ * use stops it with nothing changed, and a later tidy tries again. The uninstaller, a portable marker, `Branch Data`
+ * and the pointer files are never touched. Answers whether the flat copy was retired now.
+ */
+export async function retireFlatCopy(root: string, pointer: Pointer | null, options: { executableName: string; icon: string | null;
+  /** Whether a process runs from this program path (a gateway started from the flat copy outlives shell switches). */
+  inUse: (program: string) => Promise<boolean> }, deps: { rename?: typeof rename } = {}): Promise<boolean> {
+  if (!pointer || pointer.previous?.folder === "") return false;
+  const program = join(root, options.executableName);
+  if (!(await lstat(program).catch(() => null))) return false;
+  const resources = join(root, "resources");
+  const current = await readFile(join(resources, "app", "package.json"), "utf8").catch(() => null);
+  if (current === null || current.includes(`"${launcherName}"`)) return false;
+  if (await options.inUse(program).catch(() => true)) return false;
+  const hex = randomBytes(4).toString("hex"), next = join(root, `resources.next-${hex}`), trash = join(root, `resources.trash-${hex}`);
+  const app = join(next, "app");
+  await mkdir(app, { recursive: true });
+  await writeFile(join(app, "package.json"), `${JSON.stringify({ name: launcherName, private: true, main: "main.js" }, null, 2)}\n`);
+  await writeFile(join(app, "main.js"), launcherMain());
+  // The shortcuts and the Add or remove programs entry name the icon at the top's resources; it stays there.
+  if (options.icon) {
+    const icon = join(app, "public", "assets", "branch.ico");
+    await mkdir(dirname(icon), { recursive: true });
+    await copyFile(options.icon, icon).catch(() => undefined);
+  }
+  const move = deps.rename ?? rename;
+  try { await move(resources, trash); }
+  catch { await removeTree(next).catch(() => undefined); return false; } // in use: nothing changed
+  try { await move(next, resources); }
+  catch {
+    await move(trash, resources).catch(() => undefined);
+    await removeTree(next).catch(() => undefined);
+    return false;
+  }
+  await removeTree(trash).catch(() => undefined);
+  return true;
+}
+
+/** Leftovers of a retirement cut off part-way (a `resources.next-*` or `resources.trash-*` folder), removed. */
+export async function tidyRetirement(root: string): Promise<void> {
+  if (!(await lstat(join(root, "resources")).catch(() => null))) {
+    // Cut between the two renames: the flat app is put back whole first, so the top still starts something.
+    const trash = (await readdir(root).catch(() => [])).find((name) => /^resources\.trash-[0-9a-f]{8}$/.test(name));
+    if (trash) await rename(join(root, trash), join(root, "resources")).catch(() => undefined);
+  }
+  for (const name of await readdir(root).catch(() => []))
+    if (/^resources\.(next|trash)-[0-9a-f]{8}$/.test(name)) await removeTree(join(root, name)).catch(() => undefined);
+}

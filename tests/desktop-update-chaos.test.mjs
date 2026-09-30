@@ -11,7 +11,7 @@
    throughout, a window back within seconds each time with the owner's draft in it, and no program made.
 
    Isolated: its own APPDATA, LOCALAPPDATA, USERPROFILE, TEMP and data folder, dynamic ports, hidden windows (the tray,
-   never shown), no scheduler (the switch script is started the way the hand-over's own fallback starts it), and every
+   never shown), no scheduler (the hand-over runner is started the way the hand-over's own fallback starts it), and every
    process it started is ended by its id or by a program path or command line inside its own temporary folder. */
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -24,8 +24,10 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { connected, drawn, exe, files, inPage, inspector, listen, progress, sha256, stockDist, until, versionFolder, wait } from "./fixtures/versioned-install.mjs";
 import { pointerFiles, pruneAppFolders, readPointer, writePointer } from "../dist/desktop/app-folders.js";
-import { shellUpMarker, windowsSwitchScript, failureName } from "../dist/desktop/shell-switch.js";
-import { hiddenLauncher } from "../dist/desktop/hand-over.js";
+import { shellUpMarker, failureName } from "../dist/desktop/shell-switch.js";
+import { launchHandOver } from "../dist/desktop/hand-over.js";
+import { SwitchPlanSchema } from "../dist/desktop/version-switch.js";
+import { storeMigrations } from "../dist/never-break/migrations.js";
 import { proveOnce, sessionKey } from "../dist/engine-proof.js";
 
 const tags = ["STREAM-A", "TOOL-B", "CHAT-C", "HELPER-D"];
@@ -232,12 +234,15 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
       const pointers = await pointerFiles(root, { folder: `app-${from}`, version: from }, { folder: `app-${to}`, version: to });
       await mkdir(scratch, { recursive: true });
       await writeFile(join(scratch, `${failureName}.draft`), JSON.stringify({ kept: from, tried: to, commit: null, at: new Date().toISOString(), message: `Version ${to} did not open its window, so Branch went back to ${from} by itself.` }));
-      const script = join(scratch, `switch-${to}.cmd`);
-      await writeFile(script, windowsSwitchScript({ root, next: pointers.next, rollback: pointers.rollback, newExe: join(root, `app-${to}`, exe), oldExe: join(root, `app-${from}`, exe),
-        marker: shellUpMarker(scratch, to), failureDraft: join(scratch, `${failureName}.draft`), failure: join(scratch, failureName), log: join(scratch, "apply-update.log"),
-        minimized: true, upSeconds: 40, args: [inspect(port), "--enable-logging=file", `--log-file=${join(home, `shell-${port}.log`)}`] }));
-      await writeFile(`${script}.launch.vbs`, hiddenLauncher(script, pid));
-      spawn(join(process.env.SystemRoot, "System32", "wscript.exe"), ["//B", "//Nologo", `${script}.launch.vbs`], { env: env(), detached: true, stdio: "ignore", windowsHide: true }).unref();
+      // The plan the updater writes (updater.ts writeSwitchScript), run by the hand-over runner (hand-over.ts) linked from
+      // the running version's folder, started the way the hand-over starts it when the scheduler refuses: no script host.
+      const script = join(scratch, `switch-${to}.json`);
+      await writeFile(script, JSON.stringify(SwitchPlanSchema.parse({ root, next: pointers.next, rollback: pointers.rollback, newExe: join(root, `app-${to}`, exe), oldExe: join(root, `app-${from}`, exe),
+        pid, marker: shellUpMarker(scratch, to), failureDraft: join(scratch, `${failureName}.draft`), failure: join(scratch, failureName), log: join(scratch, "apply-update.log"),
+        minimized: true, upSeconds: 40, args: [inspect(port), "--enable-logging=file", `--log-file=${join(home, `shell-${port}.log`)}`],
+        version: to, kept: from, commit: null, dataDir, understood: storeMigrations.at(-1).version })));
+      await launchHandOver(script, pid, { platform: "win32", runtime: join(root, `app-${from}`), executableName: exe, env: env(),
+        exec: (_file, _args, _options, callback) => callback(new Error("no scheduler in a test")) });
       started.add(pid);
       listeners.set(port, listen(port, `shell ${to}`));
       // Every process running the new version's program, every two seconds for a minute: when it starts, what it is.
@@ -326,7 +331,7 @@ test("three updates back to back while a streaming answer, a tool task, a backgr
     // ---- a broken fourth update: its window never comes; the version before is back by itself and says why ----
     progress("update 4 (broken)");
     await switchTo(versions[3], versions[4], base + 4);
-    await until(`${versions[3]} back`, async () => /the version there was is back; starting it/.test(await readFile(join(scratch, "apply-update.log"), "utf8")), 180_000, 500);
+    await until(`${versions[3]} back`, async () => (await readFile(join(scratch, "apply-update.log"), "utf8")).includes(`${versions[3]} is back; starting it`), 180_000, 500);
     shell = await inspector(base + 4); shells.push(shell);
     await drawn(shell);
     assert.equal(await shell.evaluate("require('electron').app.getVersion()"), versions[3]);

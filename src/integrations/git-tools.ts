@@ -210,6 +210,10 @@ export function ownerGitHubConnection(registry: ToolRegistry): GitHubAccess {
   if (!github || !registry.names().includes("github.checks")) throw new Error("Connect GitHub in Settings before reviewing a merge.");
   return github;
 }
+/** The saved connection a queued publication reconciles through: the one the GitHub tools use, while they are offered. */
+export function githubAccessForPublication(registry: ToolRegistry): GitHubAccess | null {
+  return registry.names().includes("github.open_pull_request") ? githubConnections.get(registry) ?? null : null;
+}
 export function registerGitHubProject(registry: ToolRegistry, github: GitHubAccess, git?: GitTools): void {
   githubConnections.set(registry, github);
   registry.register({

@@ -8,6 +8,8 @@ import type { BranchPlugin, PluginIsolation } from "../plugins.js";
 import { defaultSandboxSpawn, openWall, type SandboxSpawn, type WallDeps } from "../sandbox-backends.js";
 import type { WallContext } from "../sandbox.js";
 import { hostSource, resultMarker } from "./walled-host.js";
+import { scriptWslStart } from "../safety-extras/script-wsl.js";
+import { pluginScratchWall } from "../plugin-scratch-wall.js";
 
 /**
  * Bucket 15: a plugin somebody else wrote runs in its own program, behind the same wall as any
@@ -25,6 +27,8 @@ import { hostSource, resultMarker } from "./walled-host.js";
  * On Windows the wall is Windows' own job object; the program still runs apart from Branch.
  */
 export interface WalledPluginOptions {
+  /** Evaluation always uses the strong, zero-network wall, including the held WSL runner. */
+  evaluation?: boolean;
   /** Whether this plugin must run walled, and what its package was allowed to reach. */
   policy(id: string): WalledPolicy | null;
   /** More places the program may not read (the owner's wall settings, Branch's data folder). */
@@ -179,7 +183,8 @@ export class WalledPlugins implements PluginIsolation {
   async ask(code: string, hosts: readonly string[], request: Record<string, unknown>, handPlaced = false): Promise<z.infer<typeof Answer>> {
     const body = JSON.stringify(request);
     if (Buffer.byteLength(body) > maxRequestBytes) throw new Error("That is more than Branch hands a plugin in one go, so it was not sent.");
-    if (this.platform() === "win32" && !handPlaced && !this.options.weakWallAllowed?.()) throw new Error(weakWallRefusal);
+    if (this.options.evaluation && hosts.length) throw new Error("Plugin evaluations cannot use the network.");
+    if (this.platform() === "win32" && !this.options.evaluation && !handPlaced && !this.options.weakWallAllowed?.()) throw new Error(weakWallRefusal);
     if (this.runsGoing >= maxRunsAtOnce) throw new Error(`${maxRunsAtOnce} plugin runs are already going. Try again when one has finished.`);
     this.runsGoing += 1;
     try { return await this.run(code, hosts, body); }
@@ -195,13 +200,20 @@ export class WalledPlugins implements PluginIsolation {
       const wall = this.wallFor(hosts);
       const env: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin", HOME: staging, TMPDIR: staging, NODE_USE_ENV_PROXY: "1",
         ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}) };
-      const opened = await openWall(wall, { executable: process.execPath, args: ["--no-warnings", join(staging, "host.mjs")], cwd: staging, env },
-        { workspace: staging }, this.options.wallDeps ?? {});
+      const host = { executable: process.execPath, args: ["--no-warnings", join(staging, "host.mjs")], cwd: staging, env };
+      const timeoutMs = this.options.timeoutMs ?? 30_000;
+      const held = this.platform() === "win32" && this.options.evaluation;
+      const opened = held ? { start: await scriptWslStart(staging, timeoutMs, this.options.unreadable(), this.options.wallDeps ?? {}, false, true),
+        finish: async (_run: unknown) => null, close: async () => undefined }
+        : await openWall(wall, host, { workspace: staging }, this.options.wallDeps ?? {});
       try {
-        const timeoutMs = this.options.timeoutMs ?? 30_000;
         const limits = { timeoutMs, maxMemoryMb: 512, maxCpuSeconds: Math.ceil(timeoutMs / 1000), maxOutputBytes: 1_000_000, network: hosts.length > 0, job: true };
-        const run = await (this.options.spawn ?? defaultSandboxSpawn())(opened.start, limits, AbortSignal.timeout(timeoutMs + 5000));
+        const start = this.options.evaluation && !held
+          ? await pluginScratchWall(opened.start, process.execPath, staging, this.platform()) : opened.start;
+        const run = await (this.options.spawn ?? defaultSandboxSpawn())(start, limits, AbortSignal.timeout(timeoutMs + 5000));
         const note = await opened.finish(run);
+        if (run.exitCode !== 0 || run.truncated || run.status !== "completed")
+          throw new Error(`Plugin execution failed (${run.status}): ${(note ?? run.stderr).slice(-300)}`);
         const answer = readAnswerOr(run.stdout, note ?? run.stderr);
         if (!answer.ok) throw new Error(`The plugin said: ${answer.error ?? "it could not do that"}`);
         return answer;

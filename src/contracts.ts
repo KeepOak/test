@@ -311,9 +311,18 @@ export interface Event {
   data: Record<string, unknown>;
   createdAt: string;
 }
-export interface BudgetOptions {
+/** A task's step and token limits. `Infinity` is "no limit" (the owner's choice, or auto on a connection that is not billed). */
+export interface BudgetLimits {
   maxSteps: number;
   maxTokens: number;
+}
+export interface BudgetOptions extends BudgetLimits {
+  /**
+   * The limits that hold while a connection billed per token (an API key) answers. The owner's "auto" is no limit on a
+   * sign-in or a model on this computer, which cost nothing more per token, and these finite figures on a key, which
+   * does; they count only the steps and tokens spent while such a connection answered.
+   */
+  billed?: BudgetLimits;
 }
 export class BudgetError extends Error {
   override name = "BudgetError";
@@ -327,34 +336,66 @@ export class NeedsInputError extends Error {
   spoken?: boolean;
   constructor(readonly question: string) { super(question); }
 }
+const validLimit = (value: number): boolean => value === Infinity || (Number.isInteger(value) && value >= 1);
 export class Budget {
   steps = 0;
   tokens = 0;
+  /** Steps and tokens spent while a connection billed per token answered (see BudgetOptions.billed). */
+  billedSteps = 0;
+  billedTokens = 0;
+  private billedNow = false;
   constructor(
     // The whole prompt (tool catalog included) is charged every round, so a task with several tool
     // calls needs room; the per-run and delegated budgets can still be set lower.
-    readonly limits: BudgetOptions = { maxSteps: 60, maxTokens: 200000 },
+    private readonly options: BudgetOptions = { maxSteps: 60, maxTokens: 200000 },
   ) {
-    if (
-      !Number.isInteger(limits.maxSteps) ||
-      limits.maxSteps < 1 ||
-      !Number.isInteger(limits.maxTokens) ||
-      limits.maxTokens < 1
-    )
+    const all = [options, ...(options.billed ? [options.billed] : [])];
+    if (!all.every((limits) => validLimit(limits.maxSteps) && validLimit(limits.maxTokens)))
       throw new Error("Invalid budget");
+  }
+  /** The limits in force now: the billed ones too while a billed connection answers. */
+  get limits(): BudgetLimits {
+    const billed = this.billedNow ? this.options.billed : undefined;
+    if (!billed) return { maxSteps: this.options.maxSteps, maxTokens: this.options.maxTokens };
+    return {
+      maxSteps: Math.min(this.options.maxSteps, this.steps + billed.maxSteps - this.billedSteps),
+      maxTokens: Math.min(this.options.maxTokens, this.tokens + billed.maxTokens - this.billedTokens),
+    };
+  }
+  /** Says whether the connection answering the next request is billed per token, before it is stepped or charged. */
+  answeredBy(billed: boolean): void {
+    this.billedNow = billed;
   }
   step(signal: AbortSignal): void {
     signal.throwIfAborted();
-    if (++this.steps > this.limits.maxSteps)
+    const limit = this.limits.maxSteps;
+    this.steps++;
+    if (this.billedNow) this.billedSteps++;
+    if (this.steps > limit)
       throw new BudgetError("Step budget exhausted");
   }
   charge(tokens: number): void {
+    const limit = this.limits.maxTokens;
     this.tokens += tokens;
-    if (this.tokens > this.limits.maxTokens)
+    if (this.billedNow) this.billedTokens += tokens;
+    if (this.tokens > limit)
       throw new BudgetError("Token budget exhausted");
   }
   remaining(): number {
     return Math.max(0, this.limits.maxTokens - this.tokens);
+  }
+  /**
+   * One of `parts` equal shares of what is left, for work handed to several helpers at once; `steps` fixes each share's
+   * steps instead. No limit stays no limit, and the billed limits are shared the same way.
+   */
+  share(parts: number, steps?: number): BudgetOptions {
+    const part = (left: number, least: number): number => left === Infinity ? Infinity : Math.max(least, Math.floor(left / parts));
+    const billed = this.options.billed;
+    return {
+      maxSteps: steps ?? part(this.options.maxSteps - this.steps, 2),
+      maxTokens: part(this.options.maxTokens - this.tokens, 1),
+      ...(billed ? { billed: { maxSteps: steps ?? part(billed.maxSteps - this.billedSteps, 2), maxTokens: part(billed.maxTokens - this.billedTokens, 1) } } : {}),
+    };
   }
 }
 export interface ToolContext {

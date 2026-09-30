@@ -8,12 +8,12 @@ import { z } from "zod";
  * this one. The gateway and its engine keep running through it (they belong to the detached gateway, not to this
  * window), and the window comes back where it was, with the draft, caret and scroll the owner left (`HandOver`).
  *
- * The switch is done by a small hidden script (started the way every hand-over is, see hand-over.ts), because it has to
- * outlive this process: it waits for this process to end, renames the new pointer into place, starts the new version
- * and watches for it to say its window is up (`shellUpMarker`). If it does not say so in time, the script ends it by
- * its exact program path (never by name: other Electron programs on this computer are left alone), renames the old
- * pointer back, leaves the reason where the old version finds it (`SwitchFailure`), and starts the old version again,
- * in the same place. So a missing window after an update is always noticed and a window always comes back.
+ * The switch is done by the hand-over runner (hand-over.ts) with version-switch.ts, because it has to outlive this
+ * process: it waits for this process to end, renames the new pointer into place, starts the new version and watches for
+ * it to say its window is up (`shellUpMarker`). If it does not say so in time, it ends that process by its id (never by
+ * name: other Electron programs on this computer are left alone), renames the old pointer back when the old version can
+ * still read the saved work, leaves the reason where the version then in use finds it (`SwitchFailure`), and starts that
+ * version, in the same place. So a missing window after an update is always noticed and a window always comes back.
  */
 
 /** Written by a shell once its window has drawn (or, started hidden, once its page is ready), for the script to see. */
@@ -68,61 +68,3 @@ export function invisibleMoment(state: { visible: boolean; minimized: boolean; f
   return !state.visible || state.minimized || state.idle === "locked" || (state.idle === "idle" && state.focused === false);
 }
 export const invisibleWaitWords = "The new version is ready. It takes over the moment Branch is minimised or in the tray, or when you step away; your conversations and chat apps keep running.";
-
-export interface SwitchScriptPlan {
-  root: string;
-  /** current.next.json: renamed onto current.json to switch. */
-  next: string;
-  /** current.rollback.json: renamed back to go back; null when the old version is a flat copy (then current.json goes). */
-  rollback: string | null;
-  newExe: string; oldExe: string;
-  marker: string;
-  /** The note the old version reads on failure, pre-written, and where it goes. */
-  failureDraft: string; failure: string;
-  log: string;
-  /** Start the new (or old) version in the tray, as the window was. */
-  minimized: boolean;
-  /** How long the new version has to say its window is up (default 120 s). */
-  upSeconds?: number;
-  /** More arguments for the program started, each quoted as given (a test's own inspector port; none in the app). */
-  args?: string[];
-}
-
-/**
- * The switch script's text (Windows batch, run hidden). `%1` is this process's id. Paths are quoted; `%` is doubled so
- * the batch parser keeps it. System tools by full path, as every hand-over script here does.
- */
-export function windowsSwitchScript(plan: SwitchScriptPlan): string {
-  const text = (value: string) => value.replaceAll("%", "%%");
-  const q = (value: string) => `"${text(value)}"`;
-  const sys = "%SystemRoot%\\System32\\";
-  const note = (words: string) => `echo [%date% %time%] ${words} >>${q(plan.log)}`;
-  const sleep = (seconds: number) => `${sys}ping.exe -n ${seconds + 1} 127.0.0.1 >NUL`;
-  const flag = `${plan.minimized ? " --start-minimized" : ""}${(plan.args ?? []).map((arg) => ` ${q(arg)}`).join("")}`;
-  const pointer = join(plan.root, "current.json");
-  const powershell = `${sys}WindowsPowerShell\\v1.0\\powershell.exe`;
-  // By exact program path, through the system's own process list: never by name.
-  const endNew = `${powershell} -NoProfile -NonInteractive -Command "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $env:BRANCH_NEW_EXE } | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName Terminate | Out-Null }" >NUL 2>&1`;
-  // Started only when the program is really there: `start` on a missing file opens an error box on the owner's screen.
-  const launch = (exe: string) => `if exist ${q(exe)} start "" ${q(exe)}${flag}`;
-  const back = plan.rollback ? `move /y ${q(plan.rollback)} ${q(pointer)} >NUL` : `del /q ${q(pointer)} >NUL 2>&1`;
-  return [
-    "@echo off", "setlocal DisableDelayedExpansion", 'set "PID=%~1"', `set "BRANCH_NEW_EXE=${text(plan.newExe)}"`,
-    note("switching to the new version for pid %PID%"),
-    "set WAITED=0", ":wait",
-    `${sys}tasklist.exe /FI "PID eq %PID%" /NH /FO CSV 2>NUL | ${sys}find.exe ",""%PID%""," >NUL`,
-    `if not errorlevel 1 if %WAITED% lss 60 ( set /a WAITED+=1 & ${sleep(1)} & goto wait )`,
-    `if not errorlevel 1 ( ${note("the window was still open after a minute; ending that one process")} & ${sys}taskkill.exe /PID %PID% /F >NUL 2>&1 & ${sleep(2)} )`,
-    `del /q ${q(plan.marker)} >NUL 2>&1`,
-    `move /y ${q(plan.next)} ${q(pointer)} >NUL`,
-    `if errorlevel 1 ( ${note("the new version could not be put in use; starting the one there was")} & ${launch(plan.oldExe)} & exit /b 1 )`,
-    note("new version in use; starting it"), launch(plan.newExe),
-    "set UP=0", ":up", `if exist ${q(plan.marker)} goto done`,
-    `if %UP% lss ${plan.upSeconds ?? 120} ( set /a UP+=1 & ${sleep(1)} & goto up )`,
-    note("the new version did not say its window was up; going back"), endNew, sleep(2),
-    back, `move /y ${q(plan.failureDraft)} ${q(plan.failure)} >NUL`,
-    note("the version there was is back; starting it"), launch(plan.oldExe), "exit /b 1",
-    ":done", note("the new version's window is up"), `del /q ${q(plan.failureDraft)} >NUL 2>&1`,
-    ...(plan.rollback ? [`del /q ${q(plan.rollback)} >NUL 2>&1`] : []), "exit /b 0", "",
-  ].join("\r\n");
-}

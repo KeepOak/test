@@ -5,11 +5,13 @@
  * one line on standard input. Branch reads only the marked last line as the script's answer.
  */
 export const scriptAnswerMarker = "\n@@branch-script-answer@@";
+export const scriptRequestMarker = "@@branch-script-call@@";
 
-export const scriptHostSource = `import { createWriteStream } from "node:fs";
+export const scriptHostSource = scriptHost(false);
+export function scriptHost(framed: boolean): string { return `import { createWriteStream } from "node:fs";
 import { createInterface } from "node:readline";
 const marker = ${JSON.stringify(scriptAnswerMarker)};
-const requests = createWriteStream(null, { fd: 3 });
+const requests = ${framed ? 'process.stdout' : 'createWriteStream(null, { fd: 3 })'};
 const waiting = new Map();
 let next = 0;
 createInterface({ input: process.stdin }).on("line", (line) => {
@@ -25,7 +27,7 @@ const branch = Object.freeze({
     const id = ++next;
     return new Promise((resolve, reject) => {
       waiting.set(id, { resolve, reject });
-      requests.write(JSON.stringify({ id, tool: String(tool), args }) + "\\n");
+      requests.write(${JSON.stringify(framed ? `\n${scriptRequestMarker}` : "")} + JSON.stringify({ id, tool: String(tool), args }) + "\\n");
     });
   },
 });
@@ -42,4 +44,4 @@ try {
 } catch (error) {
   finish({ ok: false, error: String(error && error.message ? error.message : error).slice(0, 500) });
 }
-`;
+`; }
