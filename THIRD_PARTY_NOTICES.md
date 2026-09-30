@@ -1,5 +1,30 @@
 # Third-party notices
 
+## Milvus Node HTTP client and server — native vector REST (Apache-2.0)
+
+`src/vector-store-milvus.ts` adapts actual native v2 request and response helpers:
+
+- Milvus Node SDK, immutable revision `0ee6a627e15c5a327fe12c43419cf4842cd86b9a`:
+  [HttpClient.ts](https://github.com/milvus-io/milvus-sdk-node/blob/0ee6a627e15c5a327fe12c43419cf4842cd86b9a/milvus/HttpClient.ts),
+  [Collection.ts](https://github.com/milvus-io/milvus-sdk-node/blob/0ee6a627e15c5a327fe12c43419cf4842cd86b9a/milvus/http/Collection.ts),
+  [Vector.ts](https://github.com/milvus-io/milvus-sdk-node/blob/0ee6a627e15c5a327fe12c43419cf4842cd86b9a/milvus/http/Vector.ts),
+  `milvus/types/Http.ts` and `milvus/const/defaults.ts` supply native POST paths, database/bearer
+  configuration, quick-collection parameters and request/response field conventions.
+- Milvus server, immutable revision `93af23b066634d5c37ce44cb20dda6c7b96098b4`:
+  [handler_v2.go](https://github.com/milvus-io/milvus/blob/93af23b066634d5c37ce44cb20dda6c7b96098b4/internal/distributed/proxy/httpserver/handler_v2.go),
+  [utils.go](https://github.com/milvus-io/milvus/blob/93af23b066634d5c37ce44cb20dda6c7b96098b4/internal/distributed/proxy/httpserver/utils.go)
+  and `constant.go` supply actual schema/dimension/index/load response fields, ordered query,
+  `count(*)`, numeric serialization and Strong consistency construction. Server source is
+  licensed to the LF AI & Data foundation under contributor license agreements (Apache-2.0).
+
+Modified for Branch: owner/model-version/dimension collection names, strict compatible FloatVector/
+VarChar/COSINE checks, metadata scope validation, bounded native requests and ordered pagination,
+late guarded locker references, no passage text, and owner-filtered entity deletion with verified
+zero counts through the existing cleanup journal. No database/collection drops, server installation
+or SDK dependency is added. Original Apache-2.0 licenses are retained in
+`licenses/milvus-sdk-node-APACHE-2.0.txt` and `licenses/milvus-server-APACHE-2.0.txt`.
+No service calls were run; native compatibility remains unvalidated.
+
 ## Pinecone TypeScript client — native serverless vector data plane (Apache-2.0)
 
 `src/vector-store-pinecone.ts` adapts actual Pinecone TypeScript SDK request construction,
