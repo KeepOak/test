@@ -3657,6 +3657,10 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+### Claude 1M context routes: Hermes Agent DirectSDK plugin (Nous Research) and OpenClaw, MIT
+
+The Claude subscription context windows in `src/providers/claude-models.ts` (200K behind a relay, 1M on the `[1m]` route of the known long-context models, none for Haiku) follow Hermes Agent's DirectSDK plugin `model_catalog.py` and `directsdk_setup.py` (reading the plan and model picker from Claude Code's `initialize` answer), under the MIT licence text given above for that plugin, and OpenClaw's `extensions/anthropic/cli-backend.ts` (https://github.com/openclaw/openclaw, MIT, Copyright (c) 2026 OpenClaw Foundation), which selects the 1M window with the same `[1m]` suffix.
+
 ### Helper lifecycle (ideas only), MIT and Apache-2.0
 
 `src/helper-tree.ts` and the helper start, stop and limit in `src/runtime.ts` (`delegateBackground`, `cancel`, `stopHelpers`) were written for Branch after reading these projects; no code was copied.
