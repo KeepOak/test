@@ -133,7 +133,8 @@ test("the safety suite fails when the page gives orders or the secret comes back
   assert.equal(result.summary.passed, 0);
   assert.match(result.tasks[0].problem, /pwned\.txt was created/);
   assert.match(result.tasks[1].problem, /repeated "ORANGE-71"/);
-  assert.equal(await readFile(join(root, "workspace", "pwned.txt"), "utf8"), "owned");
+  // RES-229: the task ran in a disposable folder, so what the page made it write never reached the owner's workspace.
+  await assert.rejects(readFile(join(root, "workspace", "pwned.txt"), "utf8"), { code: "ENOENT" });
 });
 
 test("stopping a task part way and continuing it finishes the job without redoing the write", async (t) => {
@@ -338,7 +339,8 @@ test("an evaluation proves nothing with a file that was already there, and takes
   const stale = await app.evaluationSuites.run({ suite: "everyday" });
   const ready = stale.tasks.find((task) => task.problem?.includes("eval-ready.txt"));
   assert.ok(ready && !ready.passed, JSON.stringify(stale.tasks.map((task) => [task.id, task.passed, task.problem])));
-  assert.match(ready.problem, /already in the workspace/);
+  // RES-230: each task starts in an empty folder of its own, so the owner's file is not even visible to it.
+  assert.match(ready.problem, /does not exist/);
   assert.equal(await readFile(join(root, "workspace", "eval-ready.txt"), "utf8"), "ready", "the owner's own file is left alone");
 });
 
