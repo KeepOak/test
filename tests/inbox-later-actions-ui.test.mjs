@@ -15,8 +15,10 @@ test("Later shows I've signed it and Finish now for their kinds, and settles the
   const { app, page, errors } = await newWindow(t, { provider });
   // Onboarding creates/adopts the default Trunk. Make the handoffs afterwards so
   // this settlement fixture does not change their saved authority route mid-task.
-  await app.runtime.run({ prompt: "get the lease signed" });
-  await app.runtime.run({ prompt: "leave chapter two for later" });
+  const sessionId = app.trunks.defaultTrunk()?.chatSessionId;
+  assert.ok(sessionId, "onboarding established the default Trunk's session" );
+  await app.runtime.run({ prompt: "get the lease signed", sessionId });
+  await app.runtime.run({ prompt: "leave chapter two for later", sessionId });
   await page.reload();
   const place = await openPlace(page, "inbox", "later");
   const jobs = app.runtime.deferrals.list({ waiting: true });
