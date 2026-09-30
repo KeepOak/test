@@ -1060,6 +1060,29 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path === "/api/maps" || path === "/api/maps/authorize" || path === "/api/maps/revoke" || path === "/api/maps/request") {
+    const requireWindow = () => {
+      app.store.profiles.requireOwner("Exact maps locations and provider billing");
+      if (throughDoor(request) || startedWithShortLivedKey() || currentPerson() || app.sessionLock.locked())
+        throw new HttpError(403, "Use the unlocked owner's local window for maps");
+    };
+    requireWindow(); const maps = app.web.maps;
+    if (!maps) throw new HttpError(503, "Maps connector unavailable");
+    if (request.method === "GET" && path === "/api/maps") return { settings: maps.settings() };
+    if (request.method === "POST") {
+      const input = await readBody(request); requireWindow();
+      if (path === "/api/maps") return { settings: maps.configure(input) };
+      if (path === "/api/maps/revoke") { maps.clear(); return { revoked: true }; }
+      if (path === "/api/maps/request") {
+        const given = z.object({ tool: z.enum(["maps.places", "maps.route", "maps.image"]), requestId: z.string().uuid() }).strict().parse(input);
+        return app.runtime.executeTool(given.tool, { requestId: given.requestId }, { mode: "owner", source: "owner" });
+      }
+      const confirmed = z.object({ request: z.unknown(), ownerEnteredCoordinates: z.literal(true),
+        singleCallBillingAccepted: z.literal(true) }).strict().parse(input);
+      return maps.authorize(confirmed.request);
+    }
+    throw new HttpError(405, "Use GET or POST for maps");
+  }
   if (path === "/api/weather" || path === "/api/weather/forecast") {
     app.store.profiles.requireOwner("Weather location requests");
     if (throughDoor(request) || startedWithShortLivedKey() || currentPerson() || app.sessionLock.locked())

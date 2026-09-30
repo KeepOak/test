@@ -6,6 +6,7 @@ import type { ToolContext } from "../contracts.js";
 import { InjectionPolicySchema, applyContentPolicy, detectInjection, provenance, type ContentWarning, type InjectionPolicy } from "../content-guard.js";
 import { SearchBackendSchema, parseResults, requestFor } from "./web-search.js";
 import type { WeatherAccess } from "./weather.js";
+import type { MapsAccess } from "./maps.js";
 
 /**
  * Web reading for the assistant: search through a configurable HTML search endpoint and fetch
@@ -28,6 +29,7 @@ export interface SearchResult { title: string; url: string; snippet: string }
 
 export class WebAccess {
   weather?: WeatherAccess;
+  maps?: MapsAccess;
   private config: WebConfig;
   /** The network policy every outbound request follows (web, browser and MCP share it). */
   readonly policy: NetworkPolicy;
