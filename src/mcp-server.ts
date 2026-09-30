@@ -320,7 +320,7 @@ export class McpServer {
   /** Sends a message that expects no reply to every open stream. */
   notifyAll(method: string, params: Record<string, unknown>): void {
     for (const listener of this.modernListeners) listener({ jsonrpc: '2.0', method, params });
-    if (method === 'notifications/tools/list_changed') this.modern.notify.toolsListChanged();
+    if (method === 'notifications/tools/list_changed') this.modern.notify.toolsChanged();
     for (const session of this.sessions.values()) this.notifySession(session, method, params);
   }
 

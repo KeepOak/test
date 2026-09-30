@@ -24,7 +24,8 @@ export function modernServer(branch: McpServer, principal: string, stdio = false
   });
   server.setRequestHandler('tools/call', async (request, ctx) => {
     try {
-      const result = await branch.callModernTool(request.params, principal, ctx.mcpReq.signal,
+      const { name, arguments: args } = request.params;
+      const result = await branch.callModernTool({ name, ...(args ? { arguments: args } : {}) }, principal, ctx.mcpReq.signal,
         ctx.mcpReq.requestState());
       if ('requestState' in result) return result;
       return CallToolResultSchema.parse(result);
