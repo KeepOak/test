@@ -57,14 +57,15 @@ test("this test needs a real browser, and says so", () => {
   assert.equal(chromium.name(), "chromium", "this test declares the browser engine it requires");
 });
 
-test("every comfort setting ships as Branch has always behaved, but for a chime and updating by itself", () => {
+test("every comfort setting ships as Branch has always behaved, but for a chime, updating by itself and the browser opening full size", () => {
   const values = allComfort(memoryStore(), "local");
   assert.deepEqual(values, {
     keys: { palette: "Ctrl+K", newConversation: "Ctrl+N", appearance: "Ctrl+,", sidePane: "Ctrl+Shift+K", sideList: "Ctrl+B", newTrunk: "", focusPrompt: "Ctrl+L", stopTask: "Ctrl+Shift+S", searchHistory: "Ctrl+Shift+F", lookInside: "", quickAsk: "Ctrl+Shift+Space", focusMode: "Ctrl+.", talkLive: "Ctrl+Shift+V", openInbox: "Ctrl+I", nextConversation: "Ctrl+Tab", previousConversation: "Ctrl+Shift+Tab", switchPerson: "", vim: false },
     display: { statusLine: null, timestamps: false, hideTimes: false },
     notify: { method: "system", sound: "chime", needsYes: true, taskDone: true, autoUpdate: "install", releaseChannel: "stable" },
     voice: { pushToTalkKey: "", maxRecordingSeconds: null },
-    browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss" },
+    browser: { confirmSensitive: false, blockUploads: false, dialogs: "dismiss", askNewSites: false, openFullSize: true, numberMarks: true,
+      recordTasks: false, downloadsFrom: "anywhere" },
     network: { proxy: null, noProxy: [], caCertificates: [] },
     files: { respectGitignore: true, extraIgnoreFiles: [] },
     mcp: { startupTimeoutSeconds: 10 },

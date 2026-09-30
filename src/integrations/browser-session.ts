@@ -8,7 +8,11 @@ import { PageLog } from './browser-actions.js';
 /** A message box the website put up. It is always dismissed; the words are kept so they can be reported. */
 export interface DialogRecord { kind: string; message: string; at: string }
 /** A file the website sent, after it was saved inside the workspace. */
-export interface DownloadRecord { file: string; bytes: number; from: string }
+export interface DownloadRecord {
+  file: string; bytes: number; from: string;
+  /** Downloads ask each time: the file waits outside the workspace under this id until browser.keep_download is answered. */
+  held?: string | undefined; name?: string | undefined;
+}
 /** A request held before Chromium sends it, including every hop of a redirect. */
 export interface BrowserRequest {
   url: string;

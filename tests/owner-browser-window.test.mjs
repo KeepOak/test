@@ -165,3 +165,28 @@ test("Take over a working task's own window, type, and Hand back: the task carri
   assert.equal(await w.enginePage().textContent("#out"), "from the owner", "the task carried on in the page as the owner left it");
   assert.deepEqual(w.errors, []);
 });
+
+test("a task that starts browsing opens its browser full size once, and a view the owner closes stays closed", async (t) => {
+  const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
+  const thinking = deferred(), gate = deferred();
+  let rounds = 0, origin = "";
+  const provider = { name: "scripted", async complete() {
+    rounds++;
+    if (rounds === 1) return { content: "", toolCalls: [{ id: "open", name: "browser.navigate", arguments: JSON.stringify({ url: `${origin}/` }) }] };
+    if (rounds === 2) { thinking.resolve(); await gate.promise; }
+    return { content: "Done.", toolCalls: [] };
+  } };
+  t.after(() => gate.resolve()); // first, so a failed test never leaves its task waiting while the engine closes
+  const w = await fixture(t, provider);
+  origin = w.origin;
+  const pending = w.app.runtime.run({ prompt: "Look at the page", sessionId: w.sid });
+  await thinking.promise;
+  await w.page.locator("#stage7 .st7-title", { hasText: "browser" }).waitFor({ timeout: 30000 });
+  await w.page.locator('#stage7 [data-act="stage-close"]').click();
+  await w.page.locator("#stage7").waitFor({ state: "detached" });
+  await new Promise((r) => setTimeout(r, 3000));
+  assert.equal(await w.page.locator("#stage7").count(), 0, "closed by the owner, it stays closed for this task");
+  gate.resolve();
+  assert.equal((await pending).status, "completed");
+  assert.deepEqual(w.errors, []);
+});
