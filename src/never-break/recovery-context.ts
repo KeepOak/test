@@ -30,7 +30,6 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
   if (typeof own.parentRunId === "string" && Number(depth) === 0) refused("the helper's original depth is unknown");
 
   let permissions = new Set(deps.runtime.registry.permissions());
-  let copy: string | null = null;
   const seen = new Set<string>(), queue = [runId], links = new Map<string, string[]>();
   while (queue.length) {
     if (seen.size >= 20) refused("the task lineage is too long to establish completely");
@@ -49,14 +48,6 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     permissions = new Set([...permissions].filter((p) => ceiling.includes(p)));
     // The original Trunk account/key scope is not recoverable from Runtime.context alone. Never impersonate it.
     if (events.some((event) => event.kind === "trunk.turn")) refused("the original Trunk context cannot be restored for this retry");
-    if (copy === null) {
-      const kept = [...events].reverse().find((event) => ["worktree.used", "worktree.removed", "worktree.missing", "worktree.skipped"].includes(event.kind));
-      if (kept && kept.kind !== "worktree.used") refused("the original working copy is unavailable or was not established");
-      if (kept) {
-        if (typeof kept.data.path !== "string" || !kept.data.path) refused("the original working-copy path is unavailable");
-        copy = kept.data.path;
-      }
-    }
     const parents: string[] = [];
     for (const key of ["resumedFrom", "parentRunId", "originFrom"]) {
       const next = start[key];
@@ -76,6 +67,44 @@ export async function withRecoveryContext<T>(deps: Deps, runId: string, work: (c
     walking.delete(id); walked.add(id);
   };
   visit(runId);
+  // Parent links constrain authority, but do not prove this task was assigned its parent's copy.
+  // Only same-conversation/project continuations may carry a recorded copy identity forward.
+  let copy: string | null = null, branch: string | null = null;
+  const copySeen = new Set<string>();
+  let id: string | null = runId, requiresCopy = Number(depth) > 0;
+  while (id !== null) {
+    if (copySeen.has(id) || copySeen.size >= 20) refused("the task's copy lineage is incomplete or cyclic");
+    copySeen.add(id);
+    const current = deps.store.run(id), events = deps.store.events(id);
+    if (!current || current.owner !== run.owner || current.sessionId !== run.sessionId || current.project !== run.project
+      || events.length >= 2000) refused("the task's copy lineage changed scope");
+    const start = events.find((event) => event.kind === "run.started")?.data;
+    if (!start) refused("the task's copy assignment was not recorded");
+    requiresCopy ||= start.ownCopy === true;
+    if (events.some((event) => ["worktree.removed", "worktree.missing", "worktree.skipped"].includes(event.kind)))
+      refused("the task's original working copy is unavailable or was not established");
+    for (const event of events.filter((event) => event.kind === "worktree.used")) {
+      const path = event.data.path, assignedBranch = event.data.branch;
+      if (typeof path !== "string" || !path || typeof assignedBranch !== "string" || !assignedBranch)
+        refused("the task's complete working-copy identity is unavailable");
+      if ((copy !== null && copy !== path) || (branch !== null && branch !== assignedBranch))
+        refused("the task's recorded working-copy assignments disagree");
+      copy = path; branch = assignedBranch;
+    }
+    const previous = new Set<string>();
+    for (const key of ["resumedFrom", "originFrom"]) {
+      const from = start[key];
+      if (from === undefined || from === null) continue;
+      if (typeof from !== "string" || !from) refused("the task's recorded continuation is invalid");
+      const prior = deps.store.run(from);
+      if (prior && prior.owner === run.owner && prior.sessionId === run.sessionId && prior.project === run.project) previous.add(from);
+      else if (key === "resumedFrom") refused("the task's continuation changed scope");
+      // originFrom can name a different helper that woke the lead; it is provenance, not copy assignment.
+    }
+    if (previous.size > 1) refused("the task's working-copy continuation is ambiguous");
+    id = previous.size ? [...previous][0]! : null;
+  }
+  if (requiresCopy && copy === null) refused("the helper's own retained working-copy assignment is unknown");
   const root = deps.runtime.context({ permissions: [] }).workspace;
   let workspace = root;
   if (copy !== null) {
