@@ -44,6 +44,9 @@ import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // 
 import { lockedDown } from "../lockdown.js";
 import { requestInstallNow } from "../comfort/update-now.js";
 import { updateStatus, type UpdateFacts } from "../comfort/update-tool.js";
+import { ownerChatMark, setOwnerChatCheck } from "../key-context.js"; // owner-dm-full
+import { conversationModeSettings, looserThan, readConversationMode, type ConversationMode } from "../conversation-mode.js"; // owner-dm-full
+import { readPolicy } from "../policy.js"; // owner-dm-full
 import { commandBytesExact, commandPermission, commandShown, ownerCommands, ownerCommandsHere, saveOwnerCommands, vouchedSenderKinds } from "./owner-commands.js";
 import { ReplyStream, type PlacedReply } from "./reply-stream.js";
 import { nextQuote, quoteState, replyStyle, type QuoteState, type ReplyStyle } from "./reply-style.js";
@@ -484,6 +487,8 @@ export class ChannelRouter {
   constructor(private readonly store: Store, private readonly runtime: Runtime, public pumpMs = 10000) {
     this.deliveries = new Deliveries(store, runtime.owner);
     this.deliveries.splitting = () => this.switches().splitting;
+    // owner-dm-full: the owner's own verified direct chat is the owner along its whole task (src/key-context.ts).
+    setOwnerChatCheck(store, (runId) => this.ownerFullRun(runId));
   }
   async attach(adapter: ChannelAdapter, policy: ChannelPolicy): Promise<void> {
     if (this.adapters.has(adapter.id)) throw new Error(`Channel ${adapter.id} is already attached`);
@@ -861,7 +866,8 @@ export class ChannelRouter {
       ? this.commandYesHere(channel, chatId, asked.runId, read.fingerprint, from)
         && !!read.nonce && this.shownCommands.get(`${channel}\u0000${chatId}\u0000${asked.fingerprint}`) === read.nonce
         && commandShown(asked.bytes) !== null && commandBytesExact(asked.tool, asked.bytes, asked.fingerprint)
-      : chatMayApprove(permission, this.chatApprovals(channel, from));
+      : (!!from?.senderId && this.ownerFullFrom({ channel, senderId: from.senderId, chatKind: from.chatKind ?? "group" }))
+        || chatMayApprove(permission, this.chatApprovals(channel, from));
     if (read.decision === "allow" && !mayApprove)
       return { decision: "in-window", tool: asked.tool, refusal: approveInWindow(asked.label || asked.tool) };
     // PR #289 second review: the yes lands on exactly the question vetted above, so it still answers while another waits.
@@ -901,7 +907,7 @@ export class ChannelRouter {
     if (!adapter) return;
     // A command from the owner's own chat is shown whole, as a code block, before its Yes (src/channels/owner-commands.ts).
     const permission = this.runtime.registry.permissionOf(waiting.tool);
-    const command = permission === commandPermission && this.ownerCommandsFrom(message)
+    const command = permission === commandPermission && (this.ownerCommandsFrom(message) || this.ownerFullFrom(message))
       && commandBytesExact(waiting.tool, waiting.bytes, waiting.fingerprint) ? commandShown(waiting.bytes) : null;
     const asked = command ? `${lead}${waiting.question}\n\n` : lead + waiting.question;
     const checked = await this.outboundGuard(this.hideLeaks(command ? asked + command : asked));
@@ -923,7 +929,7 @@ export class ChannelRouter {
     // with the sentence saying where the yes belongs. mac7/chat-approvals: unless the owner switched
     // that line on for this person on this app, in which case the Yes is theirs to press.
     const mayApprove = permission === commandPermission ? faithful
-      : chatMayApprove(permission, this.chatApprovals(message.channel, message));
+      : this.ownerFullFrom(message) || chatMayApprove(permission, this.chatApprovals(message.channel, message));
     const buttons = approvalButtons(waiting.fingerprint ?? "", canAlways && mayApprove)
       .filter((button) => mayApprove || button.value.startsWith("n"));
     const nonce = permission === commandPermission && faithful ? randomBytes(6).toString("hex") : null;
@@ -1070,10 +1076,15 @@ export class ChannelRouter {
   /**
    * What a task started from a chat may use: the short safe list (src/channels/chat-permissions.ts),
    * plus whatever the owner has allowed this chat app and this person. Everything else is refused,
-   * including any permission added to Branch later. The owner's own paired account is a chat account
-   * like any other — a chat app cannot prove who is typing — so it gets the same list.
+   * including any permission added to Branch later.
+   *
+   * owner-dm-full: the one exception is the owner's own verified direct chat with "Your own chats have your full
+   * access" on (`ownerFullFrom`): that is the owner, so it gets everything a task the owner starts in the window gets,
+   * as OpenClaw's main session does. A paired friend, a household person, a group or an app that cannot vouch for its
+   * senders keeps the short list.
    */
   private chatPermissions(from?: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): string[] {
+    if (from && this.ownerFullFrom(from)) return this.runtime.registry.permissions();
     const settings = chatPermissionSettings(this.store, this.runtime.owner);
     const extra = from ? chatExtraPermissions(settings, from.channel, from.senderId) : [];
     const allowed = chatPermissionsAllowed(this.runtime.registry.permissions(), extra);
@@ -1081,6 +1092,42 @@ export class ChannelRouter {
     // proves who sent it, with the part on (src/channels/owner-commands.ts). Every command still asks.
     return from && this.ownerCommandsFrom(from) && this.runtime.registry.permissions().includes(commandPermission)
       ? [...allowed, commandPermission] : allowed;
+  }
+  /**
+   * owner-dm-full: whether this chat message is the owner's own, with the owner's full access, now (read afresh every
+   * time): the switch on, no Lockdown and no App lock, one of the owner's own named accounts in a direct chat on an app
+   * that vouches for its senders (`ownerDmHere`), still allowed to talk to Branch. A message fetched after a restart is
+   * the same person's (the app vouched for it), so its freshness is not asked, as `ownerDmRun` does.
+   */
+  private ownerFullFrom(from: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): boolean {
+    if (!this.ownerChatsOn()) return false;
+    const kind = this.adapters.get(from.channel)?.adapter.kind ?? "";
+    return ownerDmHere(this.store, this.runtime.owner, kind, { channel: from.channel, senderId: from.senderId, chatKind: from.chatKind, caughtUp: false })
+      && this.senderAllowed(from.channel, from.senderId);
+  }
+  /** owner-dm-full: the same for a whole task, along its chain (src/key-context.ts asks this for `runOrigin`). */
+  ownerFullRun(runId: string): boolean {
+    return this.ownerChatsOn() && this.ownerDmRun(runId);
+  }
+  /**
+   * owner-dm-full: the owner's own chat's conversation starts on what a new conversation in the window starts on
+   * (Settings › Permissions › New conversations, e.g. Full access). A conversation that already exists is given it once,
+   * only when it has no mode of its own and the start is looser than the owner's setting (so it never freezes one on
+   * something stricter); one the owner picked is never changed. Null when it follows the owner's setting, or the
+   * conversation is new (then returned for the task to start it with).
+   */
+  private ownerChatMode(sessionId: string | undefined): ConversationMode | null {
+    const wanted = conversationModeSettings(this.store, this.runtime.owner).newConversation;
+    if (wanted === "follow") return null;
+    if (!sessionId) return wanted;
+    if (!readConversationMode(this.store, this.runtime.owner, sessionId) && looserThan(wanted, readPolicy(this.store, this.runtime.owner).preset))
+      this.runtime.startMode(sessionId, wanted);
+    return null;
+  }
+  /** owner-dm-full: the switch is on and nothing holds the app (Lockdown, the App lock). */
+  private ownerChatsOn(): boolean {
+    return chatPermissionSettings(this.store, this.runtime.owner).ownerChats
+      && !lockedDown(this.store, this.runtime.owner) && !this.appLocked();
   }
   /** Whether this chat message is the owner's own and may ask to run a command, now (read afresh every time). */
   private ownerCommandsFrom(from: Pick<InboundMessage, "channel" | "senderId" | "chatKind" | "caughtUp">): boolean {
@@ -1126,7 +1173,7 @@ export class ChannelRouter {
       seen.add(id);
       const events = this.store.events(id);
       for (const event of events) {
-        if (event.kind !== "channel.inbound") continue;
+        if (event.kind !== "channel.inbound" && event.kind !== ownerChatMark) continue; // owner-dm-full: /bg, /goal
         const came = event.data;
         if (typeof came.channel !== "string" || typeof came.senderId !== "string" || came.chatKind !== "direct") return false;
         const kind = this.adapters.get(came.channel)?.adapter.kind ?? "";
@@ -1148,7 +1195,9 @@ export class ChannelRouter {
   private commandYesHere(channel: string, chatId: string, runId: string, fingerprint: string,
     from?: { senderId?: string; chatKind?: InboundMessage["chatKind"]; caughtUp?: boolean | undefined }): boolean {
     if (!fingerprint || !from?.senderId || from.chatKind !== "direct") return false;
-    if (!this.ownerCommandsFrom({ channel, senderId: from.senderId, chatKind: from.chatKind, ...(from.caughtUp ? { caughtUp: true } : {}) })) return false;
+    // owner-dm-full: the owner's own verified direct chat with full access may press it too, still for these exact bytes.
+    if (!this.ownerCommandsFrom({ channel, senderId: from.senderId, chatKind: from.chatKind, ...(from.caughtUp ? { caughtUp: true } : {}) })
+      && !this.ownerFullFrom({ channel, senderId: from.senderId, chatKind: from.chatKind })) return false;
     const came = this.store.events(runId).find((event) => event.kind === "channel.inbound")?.data;
     return came?.channel === channel && came?.chatId === chatId;
   }
@@ -1247,6 +1296,8 @@ export class ChannelRouter {
     const work = async () => (await executeCommand({ ...this.ownerDmHost!(), lockdownOffRefusal: "Lockdown can only be switched off in the app on this computer." }, {
       surface: "chat", line: message.text, sessionId: this.sessionFor(message.channel, message.chatId), access: "full",
       permissions: this.chatPermissions(message), ownerDm: true,
+      // owner-dm-full: with full access on, what these commands start is the owner's own, as a plain message's task is.
+      ...(this.ownerFullFrom(message) ? { ownerChat: { channel: message.channel, senderId: message.senderId } } : {}),
     }))?.text ?? "I do not know that command.";
     const reply = ["goal", "bg", "health"].includes(dm.name) ? await this.withSlot(work) : await work();
     await this.deliver(message.channel, message.chatId, reply, key, this.quoteFor(message)).catch(() => undefined);
@@ -1500,10 +1551,13 @@ export class ChannelRouter {
           files.push(`${safe}: ${artifact.path}`);
         }
       }
+      // owner-dm-full: the owner's own verified direct chat runs as the owner, with the Access level a conversation
+      // started in the window gets; every other chat cannot prove who is typing, so its task is never the owner's own.
+      const owners = this.ownerFullFrom(message);
+      const mode = owners ? this.ownerChatMode(sessionId) : null;
       const run = await this.runtime.run({
         prompt: [heard.prompt, ...files.map((file) => `[attached file: ${file}]`)].filter(Boolean).join("\n") || "Please inspect the attached picture.", ...(images.length ? { images } : {}), ...(sessionId ? { sessionId } : trunkId ? { trunkId } : {}), permissions: this.chatPermissions(message),
-        // A chat cannot prove who is typing, so its task is never the owner's own (see RunSource).
-        source: "channel",
+        source: owners ? "owner" : "channel", ...(mode ? { conversationMode: mode } : {}),
         // Which app it came in on, for the model's line saying where it runs (src/environment.ts).
         channel: chatAppName(this.adapters.get(message.channel)?.adapter.kind ?? message.channel),
         onStarted: (started) => {
