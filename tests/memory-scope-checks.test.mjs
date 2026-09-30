@@ -214,7 +214,7 @@ async function overnight(t, facts) {
 const tonight = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(3, 0, 0, 0); return d; };
 
 test("the overnight pass never keeps or suggests a fact or quote holding a key", async (t) => {
-  const key = "sk-proj-Ab3dEf6hIj9kLm2nOp5qRs8tUv1w";
+  const key = "sk-proj-Ab3dEf6hIj9kLm2nOp5qRs8tUv1w"; // not-a-real-secret: a fixture shaped like a key
   const app = await overnight(t, [
     { word: "deploy", text: `The owner deploys with the key ${key}` },
     { word: "deploy", text: "The owner deploys on Fridays" },
