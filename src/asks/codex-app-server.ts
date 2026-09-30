@@ -3,6 +3,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, delimiter, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { performance } from "node:perf_hooks";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
 import { cleanChildEnvironment } from "../child-env.js";
 import { agentPromptFrom } from "../providers/cli-agent.js";
@@ -161,6 +162,7 @@ export class CodexAppServerProvider implements Provider {
     private readonly version = "0", private readonly timeoutMs = 300_000, private readonly thread: CodexThreadOptions = {}) {}
 
   complete(request: CompletionRequest): Promise<Completion> {
+    request.signal.throwIfAborted();
     const child = this.thread.env ? this.start(this.command, this.thread.env) : this.start(this.command);
     return new Promise<Completion>((resolve, reject) => {
       let settled = false;
@@ -187,6 +189,7 @@ export class CodexAppServerProvider implements Provider {
       };
       if (silence) { hush(); child.onMessage(hush); }
       request.signal.addEventListener("abort", abort, { once: true });
+      if (request.signal.aborted) { abort(); return; }
       const turn = new Turn(child, request, finish, this.version, this.thread);
       child.onExit((code, missing) => finish(Object.assign(new Error(missing
         ? `"${this.command}" is not on this computer, so Branch cannot use Codex. Install it, or pick another model.`
@@ -265,21 +268,24 @@ class WarmCodex {
     this.waiting.clear();
     for (const waiter of [...this.threads.values()]) waiter({ method: lostMark.description } as Message);
   }
-  stop(): void { this.lost(new Error("Codex was stopped.")); this.child.stop(); }
+  stop(): void { if (this.gone) return; this.lost(new Error("Codex was stopped.")); this.child.stop(); }
   private rest(): void {
     clearTimeout(this.idle);
     if (this.active === 0 && !this.gone) (this.idle = setTimeout(() => this.stop(), idleMs)).unref?.();
   }
   /** One turn: a new thread on Branch's model and folder, the conversation as its request, the words as they come. */
-  async turn(request: CompletionRequest, thread: CodexThreadOptions, timeoutMs: number): Promise<Completion> {
+  async turn(request: CompletionRequest, thread: CodexThreadOptions, timeoutMs: number, started: number): Promise<Completion> {
+    request.signal.throwIfAborted();
+    const key = JSON.stringify([thread.model ?? "", thread.cwd ?? ""]);
     this.active++;
     clearTimeout(this.idle);
     try {
-      await this.ready;
-      const key = JSON.stringify([thread.model ?? "", thread.cwd ?? ""]), spare = this.spare;
-      this.spare = null;
-      const threadId = spare?.key === key ? await spare.id.catch(() => this.open(thread)) : await this.open(thread);
-      const answered = await this.answer(threadId, request, thread.silenceMs ?? 0, timeoutMs);
+      const setupBudget = Math.min(thread.silenceMs || timeoutMs, Math.max(1, timeoutMs - (performance.now() - started)));
+      const threadId = await this.startThread(request, thread, setupBudget);
+      request.signal.throwIfAborted();
+      const remaining = timeoutMs - (performance.now() - started);
+      if (remaining <= 0) { this.stop(); throw new Error("Codex took too long and was stopped. Ask again, or pick another model."); }
+      const answered = await this.answer(threadId, request, thread.silenceMs ?? 0, remaining);
       if (!this.gone && !this.spare) this.spare = { key, id: this.open(thread) }; // the next question's thread, ready
       this.spare?.id.catch(() => { this.spare = null; });
       return answered;
@@ -287,6 +293,35 @@ class WarmCodex {
       this.active--;
       this.rest();
     }
+  }
+  /**
+   * Setup has no turn id to interrupt. A server that does not answer in time is stopped with all its pending RPCs; a
+   * stopped request or a refused thread only ends this turn, since other conversations may be using the same server.
+   */
+  private startThread(request: CompletionRequest, thread: CodexThreadOptions, timeoutMs: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error: Error | null, id?: string, unresponsive = false): void => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        request.signal.removeEventListener("abort", abort);
+        if (unresponsive) this.stop();
+        if (error) reject(error);
+        else resolve(id!);
+      };
+      const abort = (): void => finish(new Error("The request was stopped."));
+      const slow = new Error("Codex took too long to start a conversation and was stopped. Ask again, or pick another model.");
+      const timer = setTimeout(() => finish(slow, undefined, true), timeoutMs);
+      timer.unref?.();
+      request.signal.addEventListener("abort", abort, { once: true });
+      if (request.signal.aborted) { abort(); return; }
+      void this.ready.then(async () => {
+        const key = JSON.stringify([thread.model ?? "", thread.cwd ?? ""]), spare = this.spare;
+        this.spare = null;
+        return spare?.key === key ? await spare.id.catch(() => this.open(thread)) : await this.open(thread);
+      }).then((id) => finish(null, id), (error: Error) => finish(error));
+    });
   }
   private async open(thread: CodexThreadOptions): Promise<string> {
     const opened = await this.ask("thread/start", { approvalPolicy: "never", sandbox: "read-only", ephemeral: true,
@@ -332,6 +367,7 @@ class WarmCodex {
           finish(turn?.status === "completed" ? null : new Error(`Codex stopped without finishing: ${turn?.error?.message ?? turn?.status ?? "no reason given"}`));
         }
       });
+      if (request.signal.aborted) { abort(); return; }
       this.ask("turn/start", { threadId, input: [{ type: "text", text: agentPromptFrom(request), text_elements: [] }] })
         .then((started) => { if (started.error) finish(new Error(`Codex refused the request: ${started.error.message ?? "no reason given"}`)); })
         .catch((error: Error) => finish(error));
@@ -343,6 +379,8 @@ const warmCodex = new Map<StartAppServer, Map<string, WarmCodex>>();
 /** A turn on the warm app-server for this Codex and account folder, started on first use (or again after a crash). */
 export function warmCodexTurn(command: string, start: StartAppServer, request: CompletionRequest,
   thread: CodexThreadOptions & { home?: string }, timeoutMs: number, version = "0"): Promise<Completion> {
+  request.signal.throwIfAborted();
+  const started = performance.now();
   let byKey = warmCodex.get(start);
   if (!byKey) warmCodex.set(start, byKey = new Map());
   const key = JSON.stringify([command, thread.home ?? ""]), keys = byKey;
@@ -351,7 +389,7 @@ export function warmCodexTurn(command: string, start: StartAppServer, request: C
     const made: WarmCodex = new WarmCodex(command, thread.env, start, version, () => { if (keys.get(key) === made) keys.delete(key); });
     keys.set(key, warm = made);
   }
-  return warm.turn(request, thread, timeoutMs);
+  return warm.turn(request, thread, timeoutMs, started);
 }
 /** How many warm Codex app-servers are running (tests, the memory check). */
 export const warmCodexCount = (): number => [...warmCodex.values()].reduce((sum, byKey) => sum + byKey.size, 0);
