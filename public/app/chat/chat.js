@@ -90,6 +90,7 @@ const enginePrompt = (m) => trunkIntro(m) && !!ownTrunk();
    colour is the face's, hex-checked (core/ui.js faceOf). */
 const tint = () => { const tr = ownTrunk(); return tr ? ` data-css="--tint:${faceOf(tr).color}66"` : ""; };
 export function head() {
+  if (isolatedChatActive()) return `<div class="head"><b>Independent profile gateway</b></div>`;
   const working = C.sending, paused = E.trunks.find((tr) => tr.chatSessionId === C.sessionId)?.paused;
   const status = working ? `<small class="head-st17 attn"><i></i>${t("strip.status.working")}</small>` : paused ? `<small class="head-st17">${t("window.chat.head.paused")}</small>` : "";
   return `<div class="head"${tint()}><button class="icon-btn menu-only" type="button" aria-label="${t("window.chat.head.show-conversations")}" data-act="side">${ic("menu")}</button>
@@ -352,6 +353,7 @@ export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S
    the arrows keep scrolling it after a redraw: a click in it makes its part draw anew (main.js touched), and the box the
    browser's keys scrolled was the one taken away. Focused, it is found again by its id (core/dom.js keepFocus). */
 export function draw() {
+  if (isolatedChatActive()) return drawIsolatedChat();
   LINE.now = null;
   /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
      in the composer's place */
@@ -365,9 +367,10 @@ export function draw() {
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
-export const inParts = () => !FIND.on;
+export const inParts = () => !isolatedChatActive() && !FIND.on;
 const heard = new WeakSet();
 export function after(main) {
+  if (isolatedChatActive()) return;
   /* Newest at the bottom stays in view only while the reader is at the bottom; someone reading back keeps their place. */
   const box = $("#scroll", main);
   if (box) {
@@ -412,6 +415,7 @@ async function rereadRoom() {
 
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */
 export async function openConversation(id) {
+  if (isolatedChatActive()) return toast("Use the isolated conversation list, or return to the logical profile first.");
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   openLine();
@@ -449,6 +453,7 @@ export async function rereadOpen(force = false) {
 }
 
 export function startConversation(project = null) {
+  if (isolatedChatActive()) return toast("Use New isolated conversation in this gateway.");
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   leaveLine();
@@ -903,6 +908,7 @@ function putAway(id) {
 }
 
 export function init() {
+  initIsolatedChat();
   initAgent17();
   initTrunkLine();
   document.addEventListener("conv-put-away", (e) => putAway(e.detail));
@@ -978,3 +984,4 @@ export function init() {
     if (JSON.stringify(C.waiting) !== before) render();
   }, 4000);
 }
+import { isolatedChatActive, drawIsolatedChat, initIsolatedChat } from "./isolated.js";

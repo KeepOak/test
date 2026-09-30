@@ -5,6 +5,7 @@ import { on, has } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { toast, openDlg, closeDlg } from "../core/ui.js";
 import { settingsRow } from "./row-kit.js";
+import { enterIsolatedChat } from "../chat/isolated.js";
 
 let selected = null, status = null, problem = "", pending = null, busy = false, revision = 0;
 const choices = { credentials: "fresh", history: "keep-in-original", sharing: "none" };
@@ -34,7 +35,8 @@ export function gatewayRows(id) {
     description: "Keep using the existing profile, or create a fresh independent process, data home, memory and keys. Original conversations stay here; credentials and data are not copied.", control: controls })}
     <p role="status">${esc(problem || `Gateway: ${state}${busy ? " · action in progress" : ""}`)}</p>
     ${current?.running?.ok ? settingsRow({ title: "Set up this gateway's model", description: "Enter a new service key explicitly. Connect checks that service and saves the key only in this profile's isolated locker.", control: button("pg-model", "Add separate model connection", busy) }) : ""}
-    <p class="hint">The regular profile chat keeps its existing history. This gateway's conversations use its dedicated routing API; it shares the same OS account.</p></div>`;
+    ${current?.running?.ok ? button("pg-chat", "Open independent profile chat", busy) : ""}
+    <p class="hint">Opening independent chat explicitly changes this window's conversation context. Original history remains in the logical profile.</p></div>`;
 }
 
 function confirm(action) {
@@ -85,6 +87,11 @@ export function initGatewayRows() {
   on("pg-refresh", () => selectGateway(selected));
   for (const action of ["create", "start", "stop"]) on(`pg-${action}`, () => confirm(action));
   on("pg-confirm", apply); on("pg-model", modelDialog); on("pg-connect", connect);
+  on("pg-chat", async () => {
+    const id = selected;
+    if (!ownerHere() || !id || busy) return;
+    try { await enterIsolatedChat(id, "Selected household profile"); } catch (error) { toast(error.message); }
+  });
   on("pg-cancel", () => { pending = null; closeDlg(); });
-  markLive(["pg-refresh", "pg-create", "pg-start", "pg-stop", "pg-confirm", "pg-model", "pg-connect", "pg-cancel"]);
+  markLive(["pg-refresh", "pg-create", "pg-start", "pg-stop", "pg-confirm", "pg-model", "pg-connect", "pg-cancel", "pg-chat"]);
 }
