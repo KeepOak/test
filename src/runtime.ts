@@ -1449,6 +1449,7 @@ export class Runtime {
       signal: AbortSignal.any([parent.signal, timeout.signal]),
       permissions: new Set(permissions),
       depth: parent.depth + 1,
+      ownCopy: options.ownCopy === true, delegates: options.delegates === true,
       ...(options.agent ? { agent: options.agent } : {}),
     };
     let connection: HelperConnection | undefined;
@@ -4455,6 +4456,9 @@ ${run.output.slice(0, 6000)}`;
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
     const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
+    // A helper's lead controls whether it may hand work on, including a named call omitted from its catalogue.
+    const handOn = handOnRefusal(tool, context);
+    if (handOn) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: handOn };
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
     const screen = reachesScreen(tool, permission, args, this.registry.declaresScreen(tool))
@@ -5273,6 +5277,8 @@ ${run.output.slice(0, 6000)}`;
   }
   /** The registry's own refusal (src/registry.ts execute) for a tool that is not there or not this task's, else null. */
   private outsideReach(name: string, context: ToolContext): string | null {
+    const handOn = handOnRefusal(name, context);
+    if (handOn) return handOn;
     const permission = this.registry.permissionOf(name);
     if (!permission) return `Unknown tool: ${name}`;
     return context.permissions.has(permission) ? null : `Permission denied: ${permission}`;
