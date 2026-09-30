@@ -10,6 +10,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { householdRefusal } from "../dist/household-routes.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -525,7 +526,7 @@ test("branch mcp-serve speaks JSON-RPC on standard input and output", async (t) 
     cwd: projectRoot,
     env: {
       ...process.env,
-      BRANCH_PROVIDER: "demo",
+      ...(await fixtureModel()).env,
       BRANCH_DATA_DIR: join(root, "data"),
       BRANCH_WORKSPACE: join(root, "workspace"),
     },
@@ -568,7 +569,7 @@ test("branch mcp-serve reports a line that is not JSON and keeps going", async (
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const child = spawn(process.execPath, ["dist/cli.js", "mcp-serve"], {
     cwd: projectRoot,
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
+    env: { ...process.env, ...(await fixtureModel()).env, BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
     stdio: ["pipe", "pipe", "pipe"],
   });
   t.after(() => child.kill());

@@ -71,7 +71,7 @@ The application reads environment variables when it starts. It does not automati
 
 | Variable | Meaning |
 | --- | --- |
-| `BRANCH_PROVIDER` | `openai` or `anthropic`. Unset means no model is set up: every task is refused with "No model yet. Choose one in setup or in Settings › Models." until one is added there. (`demo` names the tests' scripted fixture; only tests use it.) |
+| `BRANCH_PROVIDER` | `openai` or `anthropic`. Unset means no model is set up: every task is refused with "No model yet. Choose one in setup or in Settings › Models." until one is added there. There is no demo model. |
 | `BRANCH_ENDPOINT` | API base URL, for example `https://api.openai.com/v1` or `https://api.anthropic.com/v1` |
 | `BRANCH_MODEL` | Model identifier accepted by that endpoint |
 | `BRANCH_API_KEY` | API credential; keep outside source control |

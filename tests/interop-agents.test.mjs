@@ -11,6 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { AcpConnection } from "../dist/acp.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -384,7 +385,7 @@ test("branch acp-serve speaks the protocol on standard input and output", async 
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const child = spawn(process.execPath, ["dist/cli.js", "acp-serve"], {
     cwd: projectRoot,
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
+    env: { ...process.env, ...(await fixtureModel()).env, BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
     stdio: ["pipe", "pipe", "pipe"],
   });
   t.after(() => child.kill());
@@ -406,7 +407,9 @@ test("branch acp-serve speaks the protocol on standard input and output", async 
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: opened.result.sessionId, prompt: [{ type: "text", text: "run the fixture" }] } })}\n`);
   // 0.18.1: an editor's task is held to "Ask before changes" even under "No approvals", so the demo's
   // file write is put to the editor first (the ACP way of asking). The editor says yes and the turn ends.
-  const asked = (await until(3)).find((line) => line.method === "session/request_permission");
+  // The model's words stream to the editor first (session/update), so the question may come some lines later.
+  let asked;
+  for (let i = 0; i < 400 && !asked; i++) { asked = lines().find((line) => line.method === "session/request_permission"); if (!asked) await delay(50); }
   assert.ok(asked, "the editor was not asked before the change");
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: asked.id, result: { outcome: { outcome: "selected", optionId: "allow" } } })}\n`);
   let answered;

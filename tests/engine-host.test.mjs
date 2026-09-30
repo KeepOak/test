@@ -19,6 +19,7 @@ import { EngineHost } from "../dist/desktop/engine-host.js";
 import { EngineConfigSchema, FromEngineSchema, ToEngineSchema } from "../dist/desktop/engine-link.js";
 import { keepRunningThroughErrors } from "../dist/desktop/engine-errors.js";
 import { answerHeader, askHeader, answerMark, newBoot, proveOnce, sessionKey, watchEngine } from "../dist/engine-proof.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const KEY = "a".repeat(64);
 const OTHER_KEY = "b".repeat(64);
@@ -172,7 +173,8 @@ test("ending the engine waits until it has gone, but never longer than asked", a
 const engineEntry = fileURLToPath(new URL("./fixtures/engine-in-node.mjs", import.meta.url));
 
 /** Main's part, played by the test: `home` (kept by the caller) lets a second engine start on the same data. */
-async function realEngine(t, overrides = {}, answers = {}, { home: kept, env = { BRANCH_PROVIDER: "demo" } } = {}) {
+async function realEngine(t, overrides = {}, answers = {}, { home: kept, env: named } = {}) {
+  const env = named ?? (await fixtureModel()).env;
   const home = kept ?? await mkdtemp(join(tmpdir(), "branch-engine-host-"));
   const child = fork(engineEntry, [], {
     stdio: ["ignore", "ignore", "inherit", "ipc"],
