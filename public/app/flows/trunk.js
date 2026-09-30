@@ -95,7 +95,8 @@ async function loadTrunkVoices(id) {
     if (ed?.id !== id) return;
     ed.voiceError = error.message;
   }
-  if (!dialog()?.querySelector(".editor")) return;
+  // Only the Look tab shows the voice list; redrawing another tab would close a list the owner has open there.
+  if (ed.tab !== "look" || !dialog()?.querySelector(".editor")) return;
   keepFields();
   drawEditor();
 }
