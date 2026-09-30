@@ -1,4 +1,4 @@
-import { endChild, startQuietly, windowBytes } from "./mic-capture.js";
+import { endChild, startKeepingErrors, startQuietly, windowBytes } from "./mic-capture.js";
 import { mostWords } from "./voice-dictation.js";
 import type { SoundStreamRunner, SpeechStreamRunner } from "./voice-dictation-run.js";
 import { StreamWords } from "./voice-stream-words.js";
@@ -22,7 +22,9 @@ import { StreamWords } from "./voice-stream-words.js";
  */
 export function speechStreamRunner(): SpeechStreamRunner {
   return (command, onWords, onEnded) => {
-    const child = startQuietly(command);
+    // This upstream microphone example writes numbered final segments to stderr alongside diagnostics.
+    const segmented = command.file.includes("sherpa-onnx-vad-microphone-offline-asr");
+    const child = segmented ? startKeepingErrors(command) : startQuietly(command);
     const words = new StreamWords(onWords);
     let done = false;
     const finish = (why: string | null) => { if (done) return; done = true; words.finish(); endChild(child); onEnded(why); };
@@ -30,10 +32,7 @@ export function speechStreamRunner(): SpeechStreamRunner {
     // Words are handed on where they arrive and never held: nothing here accumulates, and a
     // program that will not stop writing is cut off by the cap rather than piling up in memory.
     child.stdout.on("data", (piece: string) => { if (!done) words.write(piece); });
-    // This upstream microphone example writes numbered final segments to stderr alongside diagnostics.
-    if (command.file.includes("sherpa-onnx-vad-microphone-offline-asr")) {
-      segmentOutput(child, onWords, () => done);
-    }
+    if (segmented) segmentOutput(child as ReturnType<typeof startKeepingErrors>, onWords, () => done);
     child.on("error", (error) => finish(error.message));
     child.on("close", () => finish(null));
     child.stdin.on("error", () => undefined); // a program that has gone is not an unhandled failure
@@ -53,7 +52,7 @@ export function speechStreamRunner(): SpeechStreamRunner {
 }
 
 function segmentOutput(
-  child: ReturnType<typeof startQuietly>, onWords: (text: string, final: boolean) => void, done: () => boolean,
+  child: ReturnType<typeof startKeepingErrors>, onWords: (text: string, final: boolean) => void, done: () => boolean,
 ): void {
   let pending = "";
   child.stderr.setEncoding("utf8");

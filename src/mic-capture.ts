@@ -166,3 +166,8 @@ export function endChild(child: Pick<ChildProcess, "exitCode" | "signalCode" | "
 export function startQuietly(command: RecorderCommand): SpawnedProgram {
   return spawn(located(command.file), [...command.args], { stdio: ["pipe", "pipe", "ignore"], env: {} });
 }
+
+/** The same start, but the error output is kept open for the one program that writes its words there. */
+export function startKeepingErrors(command: RecorderCommand): ChildProcessByStdio<Writable, Readable, Readable> {
+  return spawn(located(command.file), [...command.args], { stdio: ["pipe", "pipe", "pipe"], env: {} });
+}
