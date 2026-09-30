@@ -13,7 +13,7 @@ import type { WorkspaceFiles } from "./files.js";
 import { WalkRules } from "./walk-rules.js"; // mac7/walk-rules
 import { pullRequestPinned, pushRefusal, pushRepositoryRefusal, selfDevelopmentBase, selfDevelopmentBaseWords } from "./self-development-contract.js"; // Q12
 import { githubRepositoryOf } from "./github-address.js";
-import { queueSourcePublication, resumeSourcePublication } from "./self-development-publication-hook.js";
+import { queueSourcePublication, resumeSourcePublication, type PublicationRevision } from "./self-development-publication-hook.js";
 import type { PublicationEntry } from "./self-development-publication.js";
 export { githubRepositoryOf };
 
@@ -90,7 +90,7 @@ export interface PullRequestDeps {
   findPublication?: ((entry: PublicationEntry, signal: AbortSignal) => Promise<unknown | null>) | undefined;
 }
 export interface ComputerPullRequest { repo: string; title: string; body: string; base: string; head: string }
-export interface OpenedPullRequest { repository: string; branch: string; base: string; files: string[]; pullRequest: unknown; publication?: PublicationEntry }
+export interface OpenedPullRequest { repository: string; branch: string; base: string; files: string[]; pullRequest: unknown; publication?: PublicationEntry; revision?: PublicationRevision }
 interface PullRequestInput {
   name: string;
   title: string;
@@ -166,10 +166,14 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   const head = `branch/${input.name}`;
   assertSafeHead(head, where.base, where.defaultBranch);
   if (deps.findPublication && !input.byItself) {
-    const publication = await resumeSourcePublication(deps, { cwd, branch: head, repository: where.repo,
-      base: where.base, title: input.title, summary: input.summary, signal: input.signal });
-    if (publication) return { repository: publication.repository, branch: publication.branch, base: publication.base,
-      files: publication.files, pullRequest: publication.pullRequest ?? null, publication };
+    const resumed = await resumeSourcePublication(deps, { cwd, branch: head, repository: where.repo,
+      base: where.base, title: input.title, summary: input.summary, runId: input.runId ?? input.auditRunId, signal: input.signal });
+    if (resumed) {
+      const { publication, revision } = resumed;
+      return { repository: publication.repository, branch: publication.branch, base: publication.base,
+        files: publication.files, pullRequest: revision?.pullRequest ?? publication.pullRequest ?? null, publication,
+        ...(revision ? { revision } : {}) };
+    }
   }
   const paths = input.paths ?? (await changedPaths(deps, cwd, input.signal));
   const visible = await sendablePaths(deps, cwd, paths);
