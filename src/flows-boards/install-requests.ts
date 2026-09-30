@@ -6,6 +6,7 @@ import { malwareAdvisories, osvEndpoint, type Advisory } from "../security-audit
 import { downloadsWhatItRuns, packageOfLaunch, type PackageRef } from "../security-audit/package-launch.js";
 import type { Store } from "../store.js";
 import { oneLine, partRecord, requirePart } from "./settings.js";
+import { startedWithShortLivedKey } from "../key-context.js";
 
 /**
  * R17-075: Branch asks for a new package or a new tool server (MCP), and the owner answers (NanoClaw's
@@ -60,6 +61,8 @@ export interface InstallDeps {
   /** A fetch that already follows the owner's network rules. */
   fetch: () => typeof fetch;
   endpoint?: string;
+  /** The app's current owner/full-key/lock checks, repeated after the malware lookup. */
+  requireOwner?: () => void;
 }
 
 export class InstallRequests {
@@ -103,17 +106,38 @@ export class InstallRequests {
    * The owner's answer. The caller has already made sure it is the owner, in the window or the owner's
    * terminal. `despiteUnchecked` is the owner saying yes although the list could not be asked.
    */
-  async answer(id: string, yes: boolean, options: { despiteUnchecked?: boolean } = {}): Promise<InstallRequest> {
-    requirePart(this.store, this.owner, "install-requests");
+  async answer(id: string, yes: boolean, options: { despiteUnchecked?: boolean; expectedRequest?: string } = {}): Promise<InstallRequest> {
+    this.requireAnswerer();
     const found = this.list().find((entry) => entry.id === id);
     if (!found || found.status !== "waiting") throw new Error("That request is not waiting for an answer.");
+    if (options.expectedRequest !== undefined && options.expectedRequest !== JSON.stringify(found))
+      throw new Error("That install request changed. Refresh the Inbox before answering.");
     let item = found;
     // Integration review: a yes asks the list again, so a package named as malware since it was asked about is refused.
     if (yes) item = { ...item, check: await this.look(item.ask) };
-    if (yes && item.check.state === "harmful") return this.settle({ ...item, status: "refused" });
+    this.requireAnswerer();
+    if (yes && item.check.state === "harmful") return this.settleCurrent(found, { ...item, status: "refused" });
     if (yes && item.check.state === "unchecked" && !options.despiteUnchecked)
       throw new Error(`The list of harmful packages could not be asked, or did not give a full answer (${item.check.note}). Try again, or approve it anyway on purpose.`);
-    return this.settle({ ...item, status: yes ? "approved" : "declined", nextStep: yes ? nextStep(item.ask) : null });
+    return this.settleCurrent(found, { ...item, status: yes ? "approved" : "declined", nextStep: yes ? nextStep(item.ask) : null });
+  }
+
+  private requireAnswerer(): void {
+    requirePart(this.store, this.owner, "install-requests");
+    this.store.profiles.requireOwner("Answering an install request");
+    if (startedWithShortLivedKey() || this.owner !== this.store.profiles.ownerName)
+      throw new Error("Only the owner's full access can answer an install request.");
+    this.deps.requireOwner?.();
+  }
+
+  private settleCurrent(before: InstallRequest, next: InstallRequest): InstallRequest {
+    return this.store.atomically(() => {
+      this.requireAnswerer();
+      const current = this.list().find((item) => item.id === before.id);
+      if (!current || current.status !== "waiting" || JSON.stringify(current) !== JSON.stringify(before))
+        throw new Error("That install request changed while it was being checked. Refresh the Inbox before answering.");
+      return this.settle(next);
+    });
   }
 
   private settle(item: InstallRequest): InstallRequest {
