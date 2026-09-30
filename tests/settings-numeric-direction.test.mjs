@@ -19,6 +19,11 @@ const numeric = [
   ["round-limit", "maxModelRounds", 12, 60, false, "plain"],
   ["step-limit", "maxSteps", 60, 120, false, "plain"],
   ["task-tokens", "taskAllowance", 200000, 400000, false, "plain"],
+  // Seasons (#943): the night's hours only say when; a shorter idle wait or a smaller gain lets more happen.
+  ["seasons", "nightFrom", 1, 5, false, "plain"],
+  ["seasons", "nightTo", 6, 8, false, "plain"],
+  ["seasons", "idleMinutes", 30, 10, true, "guard"],
+  ["seasons", "minGainPercent", 10, 5, true, "guard"],
 ];
 
 for (const [key, name, from, to, expected, direction] of numeric) {
@@ -28,7 +33,7 @@ for (const [key, name, from, to, expected, direction] of numeric) {
     assert.equal(loosens(field, from, to, spec), expected);
     assert.equal(loosens(field, to, from, spec), false);
     assert.equal(loosens(field, from, from, spec), false);
-    for (const invalid of [NaN, Infinity, "50", field.kind.min - 1, field.kind.max + 1, from + 0.5])
+    for (const invalid of [NaN, Infinity, "50", field.kind.min - 1, field.kind.max + 1, ...(field.kind.fractions ? [] : [from + 0.5])])
       assert.equal(acceptValue(field, invalid), undefined, `${key}: invalid number accepted`);
   });
 }
