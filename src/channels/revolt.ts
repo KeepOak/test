@@ -162,11 +162,6 @@ export class RevoltChannel implements ChannelAdapter {
     return parsed.success ? parsed.data._id : undefined;
   }
   private headers(): Record<string, string> { return { "x-bot-token": this.options.token }; }
-  async edit(chatId: string, messageId: string, text: string): Promise<void> {
-    if (!text.trim()) throw new Error("Revolt edits require non-empty content.");
-    await callJson(this.fetch, "Revolt", `${this.api}/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`,
-      { method: "PATCH", json: { content: text.slice(0, this.maxTextLength) }, headers: this.headers() });
-  }
   async react(chatId: string, messageId: string, emoji: string, previous?: string): Promise<void> {
     const path = `${this.api}/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}/reactions/`;
     if (previous && previous !== emoji) await callJson(this.fetch, "Revolt", `${path}${encodeURIComponent(previous)}`, { method: "DELETE", headers: this.headers() });

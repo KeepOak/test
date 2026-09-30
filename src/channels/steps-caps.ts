@@ -65,7 +65,7 @@ export const STEPS_CAPS: readonly StepsCaps[] = [
   plainApp("mqtt", "MQTT", 3500), plainApp("keybase", "Keybase", 3500), plainApp("simplex", "SimpleX", 3500),
   plainApp("deltachat", "Delta Chat", 3500), plainApp("nostr", "Nostr", 3500, { replies: true }),
   plainApp("vk", "VK", 3500, { replies: true }), plainApp("qq-bot", "QQ bot", 3500, { replies: true }),
-  plainApp("guilded", "Guilded", 3500, { replies: true }), plainApp("revolt", "Revolt", 2000, { replies: true, edit: true, reactions: true }),
+  plainApp("guilded", "Guilded", 3500, { replies: true }), plainApp("revolt", "Revolt", 2000, { replies: true, reactions: true }),
   plainApp("mumble", "Mumble", 3500), plainApp("kook", "KOOK", 4000, { replies: true, reactions: true }),
   plainApp("bluebubbles", "iMessage through BlueBubbles", 3000, { hermes: HERMES_NO_EDIT, openclaw: "final answer only" }),
   plainApp("whatsapp-web", "WhatsApp (personal number)", 4000, { replies: true, hermes: "new through the Baileys bridge", openclaw: "final answer only" }),
