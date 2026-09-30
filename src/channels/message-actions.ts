@@ -10,10 +10,14 @@ export const OwnMessageSchema = z.object({ channel: z.string().min(1).max(64), c
 const EditSchema = OwnMessageSchema.extend({ text: z.string().trim().min(1).max(4096) }).strict();
 export type OwnMessageTarget = z.infer<typeof OwnMessageSchema>;
 
-/** Changing or deleting what other people already read is asked about once, for this exact message, even in Full Access. */
+/**
+ * Outside Full Access, changing or deleting what other people already read is asked about once, for this exact message.
+ * Full Access does not ask (owner ruling 2026-09-30: there only dangerous commands and loosening a protection ask), and
+ * src/runtime.ts consults this hold only outside Full Access.
+ */
 export function ownMessageHold(tool: string): { reason: string; onceOnly: true } | null {
   return tool === "channels.edit_message" || tool === "channels.delete_message"
-    ? { reason: "Changing or deleting a message people may already have read always asks, just this once", onceOnly: true } : null;
+    ? { reason: "Changing or deleting a message people may already have read asks first, just this once", onceOnly: true } : null;
 }
 
 /** Only recorded own deliveries are editable; arbitrary transport message IDs are never enough. */
