@@ -21,6 +21,7 @@ import { markLive } from "../core/features.js";
 import { stepsOf, loadSteps } from "./timeline.js";
 import { said } from "./livesteps.js";
 import { t, language } from "../../i18n.js";
+import { browserProofHTML } from "./browser-proof.js";
 
 const F = { own: new Map(), summaries: new Map(), asked: new Set(), artifacts: null, artAsked: 0, stepsAsked: new Set(), later: new Map(), send: async () => {} };
 
@@ -132,11 +133,11 @@ export const beforeEnd = (run, placed = new Set()) => (run ? decided(steps(run.i
  */
 export const decidedAt = (run, callIds) => (run && callIds.length ? decided(steps(run.id), (s) => !!s.askedCall && callIds.includes(s.askedCall)) : "");
 /** After it: the files the task made, and, for a finished task that did work, how long it took. */
-export function afterEnd(run, worked, face) {
+export function afterEnd(run, worked, face, messages = []) {
   if (!run) return "";
   const secs = (Date.parse(run.updatedAt) - Date.parse(run.createdAt)) / 1000;
   const done = worked && run.status === "completed" && secs > 0 ? `<div class="b"><div class="gut"></div><div><div class="done-line">${face ? av(face, 20) : ""}${esc(t("window.chat.done-in", { time: dur(secs) }))}</div></div></div>` : "";
-  return madeFiles(run) + done;
+  return browserProofHTML(run, messages, F.artifacts ?? []) + madeFiles(run) + done;
 }
 /** The files kept by tasks change as tasks finish: read them again on the next draw. */
 export function forgetMade() { F.artifacts = null; F.artAsked = 0; }

@@ -287,7 +287,7 @@ function replyRow(T, m, i, info, index, marks) {
   const body = choice ? choiceCard(choice, next?.role === "user" ? next.content : null, m.messageId ?? i, face) : replyBubble(T, m, info, index.get(m));
   if (choice) { T.lastRole = "choice"; T.lastWho = null; }
   const run = ends && T.run && !LIVE.includes(T.run.status) ? T.run : null;
-  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked, face) + marks.after(m));
+  T.out.push(marks.before(m) + stampBefore(m, T.prev) + body + checkpointRows(m, C.messages) + selfCard(m, C.messages) + mkCard(m) + afterEnd(run, T.worked, face, C.messages) + marks.after(m));
 }
 
 /* The empty conversation, 1:1 with the prototype's emptyChat() (with pass 11's waving Branch in place of the mark): the

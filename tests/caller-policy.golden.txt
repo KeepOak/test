@@ -218,7 +218,7 @@ owner GET /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok perso
 owner POST /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/artifacts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/artifacts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner GET /api/artifacts/file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner GET /api/artifacts/file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner POST /api/artifacts/file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/artifacts/read | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/artifacts/read | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
@@ -2464,7 +2464,7 @@ owner+lockdown GET /api/approvals/categories | here=ok remote=ok phone=ok legacy
 owner+lockdown POST /api/approvals/categories | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/artifacts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/artifacts | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
-owner+lockdown GET /api/artifacts/file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown GET /api/artifacts/file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/86eff9 run=401/86eff9 nobody=401/40daee
 owner+lockdown POST /api/artifacts/file | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/artifacts/read | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/artifacts/read | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
@@ -4710,7 +4710,7 @@ household GET /api/approvals/categories | here=ok remote=ok read=ok run=ok
 household POST /api/approvals/categories | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/artifacts | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/artifacts | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household GET /api/artifacts/file | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household GET /api/artifacts/file | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household POST /api/artifacts/file | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/artifacts/read | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/artifacts/read | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
@@ -6956,7 +6956,7 @@ household+lockdown GET /api/approvals/categories | here=ok remote=ok read=ok run
 household+lockdown POST /api/approvals/categories | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/artifacts | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/artifacts | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
-household+lockdown GET /api/artifacts/file | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown GET /api/artifacts/file | here=400/f6e21c remote=400/f6e21c read=401/86eff9 run=401/86eff9
 household+lockdown POST /api/artifacts/file | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/artifacts/read | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/artifacts/read | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
