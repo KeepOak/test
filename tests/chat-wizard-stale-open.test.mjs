@@ -6,7 +6,7 @@
    Mutations: drop `dialog() === opened` -> the newer-dialog cases fail; drop the close/Escape count -> the closed-dialog
    cases fail; drop unlocked() from opening() -> the lock cases fail; drop `S.view === view` -> the page case fails; drop
    the check after the setup read -> the first lock and page cases fail; drop unlocked() or the view from currentWizard ->
-   the Save step cases fail. */
+   the Save step cases fail; drop the currentWizard checks in remove() -> the Remove cases fail. */
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -17,11 +17,11 @@ import { discardTemp } from "./temp-dir.mjs";
 
 const stubs = {
   "app/core/dom.js": "export const $ = () => null; export const esc = (s) => String(s ?? \"\");",
-  "app/core/ui.js": `export const openDlg = (o) => globalThis.__cw.openDlg(o); export const closeDlg = () => { globalThis.__cw.dlg = null; };
+  "app/core/ui.js": `export const openDlg = (o) => globalThis.__cw.openDlg(o); export const closeDlg = () => { globalThis.__cw.closed++; globalThis.__cw.dlg = null; };
     export const dialog = () => globalThis.__cw.dlg; export const toast = (m) => globalThis.__cw.toasts.push(m); export const ic = () => "";`,
   "app/core/state.js": `export const S = globalThis.__cw.S; export const E = {}; export const refresh = async () => {};
     export const ownerHere = () => globalThis.__cw.owner; export const activeId = () => globalThis.__cw.profile;`,
-  "app/core/api.js": "export const api = (path, body) => globalThis.__cw.api(path, body);",
+  "app/core/api.js": "export const api = (path, body, method) => globalThis.__cw.api(path, body, method);",
   "app/core/actions.js": "export const on = (name, fn) => { globalThis.__cw.acts[name] = fn; };",
   "app/core/features.js": "export const markLive = () => {};",
   "app/core/logos.js": "export const logo = () => \"\";",
@@ -36,8 +36,8 @@ async function wizardPage(t) {
   await writeFile(join(root, "app", "flows", "chat.js"), await readFile(new URL("../public/app/flows/chat.js", import.meta.url)));
   for (const [file, code] of Object.entries(stubs)) await writeFile(join(root, file), code);
   const held = [], opened = [], listeners = [];
-  const cw = { S: { view: "customize" }, owner: true, profile: null, locked: false, toasts: [], acts: {}, dlg: null,
-    api: (path, body) => new Promise((resolve, reject) => held.push({ path, body, resolve, reject })),
+  const cw = { S: { view: "customize" }, owner: true, profile: null, locked: false, toasts: [], acts: {}, dlg: null, closed: 0,
+    api: (path, body, method = body === undefined ? "GET" : "POST") => new Promise((resolve, reject) => held.push({ path, body, method, resolve, reject })),
     openDlg: (o) => { opened.push(o); cw.dlg = { wizard: o, isConnected: true }; return cw.dlg; } };
   globalThis.__cw = cw;
   globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && cw.locked } } : null),
@@ -45,10 +45,11 @@ async function wizardPage(t) {
   t.after(async () => { delete globalThis.__cw; delete globalThis.document; await discardTemp(root); });
   const page = await import(pathToFileURL(join(root, "app", "flows", "chat.js")).href);
   page.init();
-  const asked = async (path) => { for (let i = 0; i < 50 && !held.some((h) => h.path === path); i++) await Promise.resolve(); };
+  const matches = (h, path) => h.path === path || `${h.method} ${h.path}` === path;
+  const asked = async (path) => { for (let i = 0; i < 50 && !held.some((h) => matches(h, path)); i++) await Promise.resolve(); };
   const settle = async (path, how, value) => {
     await asked(path);
-    const at = held.findIndex((h) => h.path === path);
+    const at = held.findIndex((h) => matches(h, path));
     assert.ok(at >= 0, `the wizard asked for ${path} (waiting: ${held.map((h) => h.path).join(", ")})`);
     held.splice(at, 1)[0][how](value);
   };
@@ -177,4 +178,57 @@ test("a dialog opened and closed with Escape while the setup was read still coun
   await answer("channels", channels());
   await open;
   assert.equal(opened.length, 0);
+});
+
+/* Remove disconnects the app, then closes its wizard: only if that wizard is still the one open, unlocked, on its page. */
+async function openedWizard(t) {
+  const world = await wizardPage(t);
+  const open = world.page.openChatWizard("telegram");
+  await world.answer("channel-setup/telegram", recipe);
+  await world.answer("channels", channels());
+  await open;
+  return world;
+}
+
+test("Remove with nothing changed closes the wizard and says the app was removed", async (t) => {
+  const { cw, answer } = await openedWizard(t);
+  const removing = cw.acts["chw-remove"]();
+  await answer("DELETE channel-setup/telegram", {});
+  await removing;
+  assert.equal(cw.closed, 1);
+  assert.equal(cw.S.chw, null);
+  assert.deepEqual(cw.toasts, ["window.flows.chw.removed"]);
+});
+
+test("a newer wizard opened while Remove was answered is not closed by the late answer", async (t) => {
+  const { page, cw, answer } = await openedWizard(t);
+  const removing = cw.acts["chw-remove"]();
+  const newer = page.openChatWizard("telegram");
+  await answer("GET channel-setup/telegram", recipe);
+  await answer("channels", channels());
+  await newer;
+  const current = cw.S.chw;
+  await answer("DELETE channel-setup/telegram", {});
+  await removing;
+  assert.equal(cw.closed, 0, "the newer wizard's dialog stayed open");
+  assert.equal(cw.S.chw, current, "the newer wizard is still the one open");
+});
+
+test("the App lock came on while Remove was answered: nothing is closed or said over the lock", async (t) => {
+  const { cw, answer } = await openedWizard(t);
+  const removing = cw.acts["chw-remove"]();
+  cw.locked = true;
+  await answer("DELETE channel-setup/telegram", {});
+  await removing;
+  assert.equal(cw.closed, 0);
+  assert.deepEqual(cw.toasts, []);
+});
+
+test("a Remove that fails after the owner moved to another page shows no error there", async (t) => {
+  const { cw, fail } = await openedWizard(t);
+  const removing = cw.acts["chw-remove"]();
+  cw.S.view = "chat";
+  await fail("DELETE channel-setup/telegram", new Error("The engine is not answering"));
+  await removing;
+  assert.deepEqual(cw.toasts, []);
 });
