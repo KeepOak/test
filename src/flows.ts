@@ -11,6 +11,7 @@ import { FlowGraphSchema, FlowGraphError, compileGraph, isGraphDefinition, zodFo
 import { FlowGraphRunner, type GraphRunView } from "./flow-graph-run.js";
 import type { RunSource } from "./policy.js";
 import { heldSource } from "./outside-origin.js"; // mac7/outside-resume
+import { compileToolMacro } from "./tool-macro.js";
 
 /**
  * A flow is a saved workflow seen as a picture: the steps are boxes and the arrows say what happens
@@ -155,6 +156,35 @@ export class Flows {
     const parsed = WorkflowSchema.parse(shaped);
     return this.view(this.workflows.create(this.mine, parsed));
   }
+  checkMacro(input: unknown): { definition: FlowGraphDefinition; tools: string[] } {
+    void this.mine;
+    const definition = compileToolMacro(input, this.runtime.registry.names());
+    return { definition, tools: definition.nodes.map((node) => node.tool!) };
+  }
+  saveMacro(input: unknown): GraphFlowView {
+    if (this.macros().length >= 20) throw new Error("At most 20 imported tool macros; remove one first");
+    const flow = this.saveGraph(this.checkMacro(input).definition);
+    try { this.store.save("settings", this.mine, `tool-macro:${flow.id}`, { flowId: flow.id }); }
+    catch (error) { this.remove(flow.id); throw error; }
+    return flow;
+  }
+  macros(): GraphFlowView[] {
+    return this.graphFlows().filter((flow) => this.store.get("settings", this.mine, `tool-macro:${flow.id}`));
+  }
+  cancelRun(runId: string): GraphRunView {
+    void this.mine;
+    return this.graphs.cancel(runId);
+  }
+  resumeRun(runId: string, input: unknown): GraphRunStart {
+    void this.mine;
+    const said = z.object({ interrupted: z.enum(["again", "past"]).optional(), expectedNode: z.string().max(40).nullable(),
+      expectedQuestion: z.string().max(2000).nullable(), expectedSeq: z.number().int().min(0) }).strict().parse(input);
+    const run = this.graphs.view(runId);
+    if (run.status !== "waiting_approval" && run.status !== "interrupted") throw new Error("This run is not waiting for your answer");
+    if (run.nextNode !== said.expectedNode || run.question !== said.expectedQuestion || (run.nodes.at(-1)?.seq ?? 0) !== said.expectedSeq)
+      throw new Error("The waiting step changed; refresh and review its question again");
+    return this.resumeGraph(run.flowId, { runId, approve: true, ...(said.interrupted ? { interrupted: said.interrupted } : {}) });
+  }
   /**
    * Saves a flow drawn as a graph. It is checked first, all the way through: a box that disagrees
    * with the state about what a value is, a box nothing leads to, or a circle with no way out is
@@ -163,6 +193,8 @@ export class Flows {
   saveGraph(input: unknown): GraphFlowView {
     const owner = this.mine;
     const compiled = compileGraph(input);
+    if (compiled.definition.id && this.store.get("settings", owner, `tool-macro:${compiled.definition.id}`))
+      throw new Error("Imported tool macros are immutable; import a new package instead");
     const id = compiled.definition.id ?? randomUUID();
     this.store.save("flow_graphs", owner, id, { ...compiled.definition, id });
     this.publishTools();
@@ -178,10 +210,14 @@ export class Flows {
   }
   remove(id: string): { removed: boolean } {
     if (this.store.get("flow_graphs", this.mine, id)) {
+      if (this.store.get("settings", this.mine, `tool-macro:${id}`) && this.store.sqlite.prepare(
+        "SELECT run_id FROM flow_graph_runs WHERE owner=? AND flow_id=? AND status IN ('running','waiting_approval','interrupted') LIMIT 1").get(this.mine, id))
+        throw new Error("Cancel this macro's unfinished runs before removing it");
       // mac7/lockdown-fix (integration review): the kept task limits of its runs go with it.
       for (const row of this.store.sqlite.prepare("SELECT run_id FROM flow_graph_runs WHERE owner=? AND flow_id=?").all(this.mine, id))
         this.graphs.forgetLimit(String((row as { run_id: unknown }).run_id));
       const removed = this.store.delete("flow_graphs", this.mine, id);
+      this.store.delete("settings", this.mine, `tool-macro:${id}`);
       this.publishTools();
       return { removed };
     }
@@ -332,6 +368,13 @@ export async function flowsApi(
   body: () => Promise<unknown>,
 ): Promise<unknown | null> {
   const method = request.method ?? "GET";
+  if (method === "GET" && path === "/api/flows/macros") return { macros: flows.macros() };
+  if (method === "POST" && path === "/api/flows/macros/check") return flows.checkMacro(await body());
+  if (method === "POST" && path === "/api/flows/macros") return flows.saveMacro(await body());
+  const cancel = /^\/api\/flows\/runs\/([a-f0-9-]{36})\/cancel$/.exec(path);
+  if (cancel && method === "POST") return flows.cancelRun(cancel[1]!);
+  const resume = /^\/api\/flows\/runs\/([a-f0-9-]{36})\/resume$/.exec(path);
+  if (resume && method === "POST") return flows.resumeRun(resume[1]!, await body());
   if (path === "/api/flows") {
     if (method === "GET") return { flows: flows.list() };
     if (method === "POST") return flows.save(await body());

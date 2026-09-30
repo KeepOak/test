@@ -9,6 +9,7 @@ import * as connectors from "./connectors.js";
 import * as whatsnew from "./whatsnew.js";
 import * as trunk from "./trunk.js";
 import * as flowEditor from "./flow-editor.js";
+import { initToolMacro } from "./tool-macro.js";
 import * as prompts from "./prompts.js";
 import * as computers from "./computers.js";
 import * as skillWrite from "./skill-write.js"; // finish-soon-a
@@ -30,6 +31,7 @@ export function init() {
   whatsnew.init();
   trunk.init();
   flowEditor.init();
+  initToolMacro();
   prompts.init();
   computers.init();
   skillWrite.init();
