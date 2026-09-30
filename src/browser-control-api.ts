@@ -120,9 +120,11 @@ export class BrowserControlApi {
   }
   private async withRun<T>(binding: BrowserBinding, access: RequestAccess, work: (context: ToolContext) => Promise<T>): Promise<T> {
     const run = this.app.store.createRun(binding.owner, 'Owner browser control', binding.conversation, false, 'window');
+    this.app.runtime.ownerDriven.add(run.id);
     let succeeded = false;
     try { const result = await work(this.context(binding, run.id, access.signal)); succeeded = true; return result; }
     finally {
+      this.app.runtime.ownerDriven.delete(run.id);
       this.app.store.finish(run.id, succeeded ? 'completed' : 'failed', 'Owner browser control finished.', { mend: false });
       await this.browser().closeRun({ owner: binding.owner, runId: run.id });
     }
@@ -172,7 +174,7 @@ export class BrowserControlApi {
       if ('status' in permit) return permit;
       this.manualGuard(scope, access, permit, context, 'browser.tab', { action: 'list' })();
       let control: BrowserControl;
-      try { control = this.browser().adoptRun(scope.owner, scope.conversation, runId, input.clientId); }
+      try { control = await this.browser().adoptRun(scope.owner, scope.conversation, runId, input.clientId); }
       catch (error) { throw error instanceof BrowserControlError ? error : new BrowserApiError(409, error instanceof Error ? error.message : String(error)); }
       const binding = control.binding;
       if (binding.profile && isTrunkProfile(binding.profile)
