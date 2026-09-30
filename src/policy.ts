@@ -94,11 +94,13 @@ export const PolicySchema = z
     rules: z.array(PolicyRuleSchema).max(maximumPolicyRules).default([]),
     limits: PolicyLimitsSchema.prefault({}),
     /**
-     * A command on this computer that no rule says anything about: ask first, which is the default,
-     * or let it through the way everything else that nothing matches is let through. A command is
-     * the one thing that can do absolutely anything, so it is the one thing not left to silence.
+     * A command on this computer that no rule says anything about: let it through the way everything else that nothing
+     * matches is let through, or ask first. Owner ruling (2026-09-30): it ships as "allow", as OpenClaw's host exec
+     * (`tools.exec.mode` defaults to full) and Hermes Agent's terminal (only its dangerous-command list asks) do for their
+     * owner. The dangerous commands still ask (src/safety-extras/dangerous-commands.ts), and a task that is not the
+     * owner's own (a household person's, a short-lived key's) is held to "ask" whatever this says (src/runtime.ts).
      */
-    unmatchedCommands: z.enum(["ask", "allow"]).default("ask"),
+    unmatchedCommands: z.enum(["ask", "allow"]).default("allow"),
   })
   .strict();
 export type Policy = z.infer<typeof PolicySchema>;
@@ -399,6 +401,22 @@ export function cappedPolicy(policy: Policy, source: RunSource): Policy {
 }
 
 const policyKey = "policy";
+/**
+ * Owner ruling (2026-09-30): the one step that moves an install saved before commands shipped as "allow". Only a policy
+ * on "No approvals" is moved, since every other preset asks before commands through its own lines anyway and an owner
+ * who picked one chose care. A note records that it ran, so a later choice of "ask" is never undone.
+ */
+export const commandsDefaultMigrationKey = "policy-commands-allow-migration";
+export function migrateUnmatchedCommands(store: Store, owner: string): boolean {
+  if (store.get("settings", owner, commandsDefaultMigrationKey)) return false;
+  store.save("settings", owner, commandsDefaultMigrationKey, { ranAt: new Date().toISOString() });
+  const saved = store.get("settings", owner, policyKey)?.data as { preset?: unknown; unmatchedCommands?: unknown } | undefined;
+  if (!saved || saved.unmatchedCommands !== "ask" || (saved.preset ?? "off") !== "off") return false;
+  store.save("settings", owner, policyKey, { ...saved, unmatchedCommands: "allow" });
+  audit(store, owner, { action: "policy.changed", actor: "branch", subject: "A command no rule mentions: allow",
+    reason: "Commands now run without asking under No approvals, as in Hermes Agent and OpenClaw; dangerous commands still ask", outcome: "saved" });
+  return true;
+}
 /**
  * NAS's adversarial of Q235 (6512883): an older build reads the saved policy with its own list of preset names and
  * falls back to no rules at all when a name is new to it, so a rollback would have dropped every rule under Careful.
