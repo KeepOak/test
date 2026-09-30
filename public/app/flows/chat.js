@@ -132,20 +132,27 @@ function draw() {
   if (cur === "Pair") setTimeout(() => $('.code12 input[value=""]')?.focus(), 30);
 }
 
+/* The window is not behind the App lock. */
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
+
+/* The wizard opens only for what asked for it: the newest open, by the same person, on the same page, with the window
+   unlocked. Checked after every read, so a late setup or health answer never shows over newer work or the lock. */
 export async function openChatWizard(id, at = null) {
-  const profile = activeId(), request = ++wizardRequest;
-  if (!ownerHere()) return;
+  const profile = activeId(), view = S.view, request = ++wizardRequest;
+  const opening = () => request === wizardRequest && ownerHere() && activeId() === profile && unlocked() && S.view === view;
+  if (!opening()) return;
   vals = {};
   let recipe, live;
   try {
     [recipe, live] = await Promise.all([api(`channel-setup/${encodeURIComponent(id)}`), api("channels").catch(() => ({}))]);
-  } catch (error) { toast(error.message); return; }
+  } catch (error) { if (opening()) toast(error.message); return; }
+  if (!opening()) return;
   const here = (live.channels ?? []).find((c) => c.id === id || c.kind === id), connected = !!here;
   const ownerNamed = live.ownerNamed !== false, pinSet = !ownerNamed && (await api("lock").catch(() => ({}))).pinSet === true;
-  if (!ownerHere() || activeId() !== profile || request !== wizardRequest) return;
+  if (!opening()) return;
   // pass 17 part D §8: "Paste a new token" opens a connected app at Paste, saying why.
   const step = at ? Math.max(0, stepsOf(recipe).indexOf(at)) : connected ? stepsOf(recipe).length - 1 : 0;
-  S.chw = { id, recipe, intake: live.intake ?? {}, connected, profile, channelId: here?.id, dmPolicyChoices: live.dmPolicyChoices ?? [], health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
+  S.chw = { id, recipe, intake: live.intake ?? {}, connected, profile, view, channelId: here?.id, dmPolicyChoices: live.dmPolicyChoices ?? [], health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
   draw();
 }
 
@@ -192,8 +199,9 @@ async function next() {
   draw();
 }
 
+/* The open wizard is still the one on screen: same person and page, window unlocked, its own dialog still open. */
 function currentWizard(w, dialog) {
-  return S.chw === w && ownerHere() && activeId() === w.profile && w.dialog === dialog && dialog?.isConnected;
+  return S.chw === w && ownerHere() && activeId() === w.profile && unlocked() && S.view === w.view && w.dialog === dialog && dialog?.isConnected;
 }
 
 async function loadDmPolicies(w) {
