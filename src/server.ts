@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { TeamHandoffs, TeamHandoffRefusedError } from "./team-handoff.js";
 import { quietJobsApi } from "./scheduler.js";
+import { routineUsage, saveRoutineBudget } from "./routine-usage.js";
 import { finishChatGPTSignIn, syncChatGPTPresets } from "./chatgpt-presets.js";
 import { embedSettings, widgetOrigin } from "./embeds.js";
 import { RunInputSchema, errorText, maximumImagesPerTurn, runBodyLimit, type Run } from "./contracts.js";
@@ -2644,6 +2645,21 @@ async function schedulesApi(app: Branch, request: IncomingMessage, path: string)
     // Dogfood: the card shows what the schedule may use, the least its words need, and saving keeps exactly that.
     const permissions = leastPermissions(proposal.schedule.prompt, [...scheduleContext(app).permissions]);
     return { proposal: { ...proposal, schedule: { ...proposal.schedule, permissions }, reach: reachWords(permissions) } };
+  }
+  const usage = /^\/api\/schedules\/([a-f0-9-]{36})\/(usage|budget)$/.exec(path);
+  if (usage) {
+    app.store.profiles.requireOwner("Your routine usage and budget");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Routine budgets belong to the owner at the app.");
+    if (!app.store.get("schedules", owner, usage[1]!)) throw new HttpError(404, "Schedule not found");
+    if (request.method === "GET" && usage[2] === "usage") return routineUsage(app.store, owner, usage[1]!);
+    if (request.method === "POST" && usage[2] === "budget") {
+      const input = await readBody(request);
+      app.store.profiles.requireOwner("Changing a routine budget");
+      if (startedWithShortLivedKey()) throw new HttpError(403, "Routine budgets belong to the owner at the app.");
+      if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing a routine budget.");
+      return saveRoutineBudget(app.store, owner, usage[1]!, input);
+    }
+    throw new HttpError(404, "Endpoint not found");
   }
   const match = /^\/api\/schedules\/([a-f0-9-]{36})(?:\/(trigger|remove))?$/.exec(path);
   if (!match) throw new HttpError(404, "Endpoint not found");

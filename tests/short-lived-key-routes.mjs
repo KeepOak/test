@@ -41,6 +41,8 @@ export const ROUTES = {
   "/api/taste/feedback": "owner POST",
   "/api/taste/correct": "owner POST",
   "/api/taste/forget": "owner POST",
+  "/api/schedules/:id/usage": "owner GET", // routine billing metadata
+  "/api/schedules/:id/budget": "owner POST", // owner-window budget only
   "/a2a": "task POST",
   "/ap/": "prefix",
   "/ap/v1/agent/tasks": "task POST",

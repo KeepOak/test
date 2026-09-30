@@ -80,7 +80,7 @@ import { A2aServer } from "./a2a.js";
 import { RemoteAgents, registerRemoteAgents } from "./a2a-client.js";
 import { createRequire } from "node:module";
 import { z } from "zod";
-import { ModelRouter, type ModelPreset } from "./models.js";
+import { ModelRouter, presetRunsLocally, type ModelPreset } from "./models.js";
 import type { ChatGPTAuth } from "./chatgpt-auth.js";
 import { syncChatGPTPresets } from "./chatgpt-presets.js";
 import { startAccounts } from "./accounts/service.js"; // mac6/accounts
@@ -1260,6 +1260,7 @@ ${result.output || "(it said nothing)"}`;
     store, owner: runtime.owner, models: runtime.models, policy: web.policy, dataDir, userAgent,
     ...(chatgpt ? { chatgpt } : {}),
   });
+  runtime.billingKindFor = (preset) => presetRunsLocally(preset) ? "local" : accounts.poolFor(preset)?.kind ?? null;
   // The account factory may be supplied by a newer Accounts service. An explicit account request
   // still refuses in Runtime when the factory is unavailable; never substitute the parent's account.
   const helperAccounts = accounts as typeof accounts & { resolveHelper?: typeof runtime.resolveHelperModel };
@@ -2562,3 +2563,5 @@ export * from "./flow-yaml.js";
 export * from "./sdk-kit.js";
 export * from "./web-pages-settings.js"; // w911 (A0743, A1452) hook
 export * from "./sdk-starters.js";
+
+export * from "./routine-usage.js";

@@ -89,7 +89,7 @@ export class SuiteRunner {
   constructor(private readonly store: Store, private readonly runtime: Runtime, private readonly version: string) {}
   private get owner(): string { return this.runtime.owner; }
 
-  async run(input: unknown): Promise<SuiteRun> {
+  async run(input: unknown, onStarted?: (run: Run) => void): Promise<SuiteRun> {
     const request = RunSuiteSchema.parse(input);
     const suite = findSuite(this.store, this.owner, request.suite);
     const readOnly = request.readOnly ?? suite.readOnly;
@@ -98,22 +98,22 @@ export class SuiteRunner {
     const choice = this.runtime.models.plan(this.owner, "evaluation", request.preset ? { preset: request.preset } : {}).choice;
     const startedAt = new Date().toISOString();
     const tasks: TaskOutcome[] = [];
-    for (const task of suite.tasks) tasks.push(await this.runTask(task, request, readOnly, choice.model));
+    for (const task of suite.tasks) tasks.push(await this.runTask(task, request, readOnly, choice.model, onStarted));
     const result = this.assemble(suite, choice.presetId, choice.model, startedAt, tasks, request, readOnly);
     if (request.gates) result.gate = applyGates(result, request.gates);
     this.store.save("governance", this.owner, recordId(result.id), { ...result });
     return result;
   }
 
-  private async runTask(task: EvaluationTask, request: z.infer<typeof RunSuiteSchema>, readOnly: boolean, model: string): Promise<TaskOutcome> {
+  private async runTask(task: EvaluationTask, request: z.infer<typeof RunSuiteSchema>, readOnly: boolean, model: string, onStarted?: (run: Run) => void): Promise<TaskOutcome> {
     const missing = task.requires.filter((tool) => !this.runtime.registry.names().includes(tool));
     if (missing.length)
       return { id: task.id, runId: null, status: "skipped", passed: false, skipped: true, score: 0, method: "skipped", problem: `Skipped: ${missing.join(", ")} is not installed`, reason: null, ms: 0, tokens: 0, dollars: null, tags: task.tags };
     const began = Date.now();
     const named = await this.namedFiles(task);
-    const run = await this.execute(task, request, readOnly);
+    const run = await this.execute(task, request, readOnly, onStarted);
     const graded = run.status === "completed"
-      ? await gradeTask(this.runtime, task, run.output)
+      ? await gradeTask(this.runtime, task, run.output, onStarted)
       : { score: 0, passed: false, method: "checks" as const, problem: run.output.slice(0, 200), reason: null };
     const grade = await this.attributed(named, graded);
     const tokens = this.tokensFor(run.id);
@@ -123,7 +123,7 @@ export class SuiteRunner {
       ms: Date.now() - began, tokens: tokens.input + tokens.output,
       dollars: this.costOf(model, tokens).amount, tags: task.tags, costBasis: tokens.basis,
     };
-    const scored = task.scorers?.length ? await this.applyScorers(task, outcome, run.output) : outcome;
+    const scored = task.scorers?.length ? await this.applyScorers(task, outcome, run.output, onStarted) : outcome;
     await this.tidy(named);
     return scored;
   }
@@ -159,9 +159,9 @@ export class SuiteRunner {
     for (const [full, before] of named) if (!before) await rm(full, { force: true }).catch(() => undefined);
   }
   /** Wave 7: the task's own scorers, run over its record. Every one has to pass for the task to. */
-  private async applyScorers(task: EvaluationTask, outcome: TaskOutcome, answer: string): Promise<TaskOutcome> {
+  private async applyScorers(task: EvaluationTask, outcome: TaskOutcome, answer: string, onStarted?: (run: Run) => void): Promise<TaskOutcome> {
     const trajectory = readTrajectory(this.store, outcome.runId, { ms: outcome.ms, tokens: outcome.tokens, dollars: outcome.dollars });
-    const scored = await scoreTrajectory(task.scorers, { workspace: this.runtime.workspace, judge: runtimeJudge(this.runtime), judgeCache: this.judgeCache },
+    const scored = await scoreTrajectory(task.scorers, { workspace: this.runtime.workspace, judge: runtimeJudge(this.runtime, undefined, onStarted), judgeCache: this.judgeCache },
       { id: task.id, prompt: task.prompt, expected: task.expected }, trajectory, answer);
     if (!scored) return outcome;
     const passed = outcome.passed && scored.pass;
@@ -176,10 +176,11 @@ export class SuiteRunner {
   }
 
   /** Runs one task, cutting it short after its first step and continuing it when the task asks for that. */
-  private async execute(task: EvaluationTask, request: z.infer<typeof RunSuiteSchema>, readOnly: boolean): Promise<Run> {
+  private async execute(task: EvaluationTask, request: z.infer<typeof RunSuiteSchema>, readOnly: boolean, onStarted?: (run: Run) => void): Promise<Run> {
     const permissions = readOnly ? this.runtime.registry.permissions().filter(isReadOnlyPermission) : undefined;
     const options = {
       prompt: task.prompt, signal: AbortSignal.timeout(task.timeoutMs),
+      ...(onStarted ? { onStarted } : {}),
       // Wave 7: every evaluation task is a trace of its own, labelled so an export can be filtered
       // down to one suite or one task months later.
       traceAttributes: { "branch.evaluation.suite": request.suite, "branch.evaluation.task": task.id },
@@ -314,10 +315,17 @@ export class SuiteRunner {
    * Runs a suite on a schedule. The result is recorded as an ordinary finished task so it shows up
    * in Activity like anything else, and a regression is announced to whatever is listening.
    */
-  async runScheduled(suiteId: string, preset?: string): Promise<{ run: Run; result: SuiteRun | null }> {
+  async runScheduled(suiteId: string, preset?: string, onStarted?: (run: Run) => void): Promise<{ run: Run; result: SuiteRun | null }> {
     const run = this.store.createRun(this.owner, `Nightly evaluation: ${suiteId}`);
     try {
-      const result = await this.run({ suite: suiteId, ...(preset ? { preset } : {}) });
+      onStarted?.(run);
+      // Engine-only ancestry for evaluated tasks and both judge paths, written before a model round.
+      // This callback is separate from the parsed suite definition and never supplied by a tool.
+      const memberStarted = onStarted ? (member: Run): void => {
+        if (member.owner !== run.owner) throw new Error("Evaluation task owner changed");
+        this.store.event(member.id, "routine.parent", { runId: run.id });
+      } : undefined;
+      const result = await this.run({ suite: suiteId, ...(preset ? { preset } : {}) }, memberStarted);
       const text = summaryLine(result);
       this.store.message(run.sessionId, { role: "assistant", content: text });
       this.store.event(run.id, "evaluation.finished", { suite: result.suiteId, evaluationRunId: result.id, accuracy: result.summary.accuracy, regressions: result.regressions.length });

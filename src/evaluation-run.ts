@@ -6,6 +6,7 @@
 import { z } from "zod";
 import type { Store } from "./store.js";
 import type { Runtime } from "./runtime.js";
+import type { Run } from "./contracts.js";
 import { makeScorer, scoreAll, type Evaluator, type ScoredTask, type ScoredTrajectory, type ScorerContext, type ScoreResult } from "./evaluation-scorers.js";
 import { estimateCost, pricingSettings } from "./pricing.js";
 import { evaluationHelpers } from "./evaluation-helper-receipts.js";
@@ -48,12 +49,13 @@ export function runtimeJudge(
    * and appear nowhere, and a task held to a spending limit would pass a limit it actually broke.
    */
   spent?: (cost: { tokens: number; dollars: number | null }) => void,
+  onStarted?: (run: Run) => void,
 ): ScorerContext["judge"] {
   if (!runtime) return undefined;
   return async (prompt: string): Promise<string> => {
     // mac7/eval-honesty: the grader runs isolated — no memory, no context files, no skills, no
     // standing orders, no documents, no tools — so the task it is grading cannot have primed it.
-    const run = await runtime.run({ prompt, permissions: [], isolated: true, temporary: true, budget: { maxSteps: 2, maxTokens: 20000 } });
+    const run = await runtime.run({ prompt, permissions: [], isolated: true, temporary: true, ...(onStarted ? { onStarted } : {}), budget: { maxSteps: 2, maxTokens: 20000 } });
     if (spent) spent(judgeCost(runtime, run.id));
     return run.status === "completed" ? run.output : `{"score": 0, "reason": "The grader did not finish (${run.status})"}`;
   };
