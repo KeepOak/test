@@ -890,7 +890,7 @@ export class Runtime {
     this.queueGuard(waiting.sessionId);
     // Validate before settling: an unavailable scope leaves the handoff unanswered.
     const scope = this.deferredScope(waiting.runId, waiting.sessionId);
-    this.checkDeferredCredentials(scope.credentials, this.trunkShape({ prompt: "", sessionId: waiting.sessionId }));
+    this.checkDeferredCredentials(scope.credentials, this.trunkShape({ prompt: "", sessionId: waiting.sessionId }), waiting.sessionId);
     const entry = this.deferrals.settle(id, answer);
     if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool, kind: entry.kind, ...(action ? { action } : {}) });
     // mac7/outside-resume: the answer carries the task that handed the step over on, as that task.
@@ -1727,7 +1727,7 @@ ${run.output.slice(0, 6000)}`;
     let trunk = parent ? null : this.trunkShape(options);
     if (options.deferredFrom) {
       const saved = this.deferredScope(options.deferredFrom, options.sessionId);
-      this.checkDeferredCredentials(saved.credentials, trunk);
+      this.checkDeferredCredentials(saved.credentials, trunk, options.sessionId);
       // Bind the validated saved keys, not a mutable current configuration object.
       if (trunk && saved.credentials) trunk = { ...trunk, keys: saved.credentials.keys };
     }
@@ -2142,10 +2142,16 @@ ${run.output.slice(0, 6000)}`;
     }
     return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun, credentials };
   }
-  private checkDeferredCredentials(saved: { trunkId: string; keys: NonNullable<ToolContext["trunkKeys"]> } | null, current: TrunkRunShape | null): void {
+  private checkDeferredCredentials(saved: { trunkId: string; keys: NonNullable<ToolContext["trunkKeys"]> } | null, current: TrunkRunShape | null, sessionId: string | undefined): void {
     // Equality deliberately holds changed scopes: neither a different identity nor newly added
     // accounts/fallbacks/owner access may be installed by answering an existing handoff.
-    if (currentAccountCall()?.trunk || (saved === null ? current !== null
+    // A first ordinary run may precede assignment of its conversation to the designated
+    // default. That owner-equivalent alias adds no account picks or fallback credentials.
+    const ownerAlias = saved === null && current !== null && current.owners === true && !current.roomTurn
+      && !!sessionId && this.ownersDefaultIn(sessionId, current.trunkId)
+      && current.keys.copyFromOwner === true && Object.keys(current.keys.accounts).length === 0
+      && (!current.keys.next || Object.keys(current.keys.next).length === 0);
+    if (currentAccountCall()?.trunk || (saved === null ? current !== null && !ownerAlias
       : !current || current.owners !== true || current.roomTurn || current.trunkId !== saved.trunkId
         || canonicalArguments(JSON.stringify(current.keys)) !== canonicalArguments(JSON.stringify(saved.keys))))
       throw new Error("This handed-over task's original credential identity or key restrictions no longer match. Reconcile its scope before answering; no new credential authority was adopted.");
