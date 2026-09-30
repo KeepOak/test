@@ -122,9 +122,9 @@ export function uploadFile(file, name, onProgress) {
 }
 
 /* POST JSON and answer the bytes the engine sends back (a reply read aloud); throws the engine's own words. */
-export async function apiBlob(path, body) {
-  const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: headers(true), body: JSON.stringify(body) })
-    .catch((error) => { setLink(false); throw unreachable(error); });
+export async function apiBlob(path, body, signal) {
+  const response = await fetch("/api/" + path, { method: "POST", cache: "no-store", headers: headers(true), body: JSON.stringify(body), signal })
+    .catch((error) => { if (error.name === "AbortError") throw error; setLink(false); throw unreachable(error); });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
     throw Object.assign(new Error(data.error || String(response.status)), { status: response.status });
@@ -137,7 +137,7 @@ export async function apiBlob(path, body) {
    while; this opens the next one, so live updates never quietly stop. Calls onEvent(kind, payload) until stopped, and
    onEnd(payload) with the engine's own "end" of each connection (src/streams.ts: { reason: "profile" } when the person at
    the window changed; locking Branch does not end it). */
-export function stream(prefixes, onEvent, onEnd) {
+export function stream(prefixes, onEvent, onEnd, onReady) {
   const controller = new AbortController();
   const wanted = (kind) => !prefixes.length || prefixes.some((p) => kind === p || kind.startsWith(p + "."));
   /* hot-update: a stream opened again asks for what came after the last event it had, so nothing that happened while it
@@ -154,6 +154,10 @@ export function stream(prefixes, onEvent, onEnd) {
       const { done, value } = await reader.read();
       if (done) break;
       buffer = drain(buffer + decoder.decode(value, { stream: true }), (kind, data) => {
+        if (kind === "ready") {
+          if (Number.isInteger(data?.after) && data.after > (last ?? 0)) last = data.after;
+          onReady?.(data); return;
+        }
         const seen = kind === "end" ? data?.after : data?.id;
         if (Number.isInteger(seen) && seen > (last ?? 0)) last = seen;
         if (kind === "end") onEnd?.(data); else if (wanted(kind)) onEvent(kind, data);
@@ -183,7 +187,7 @@ export async function streamOnce(path, onEvent, signal) {
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
-    buffer = drain(buffer + decoder.decode(value, { stream: true }), onEvent);
+    buffer = drain(buffer + decoder.decode(value, { stream: true }), (kind, data) => { if (kind !== "ready") onEvent(kind, data); });
   }
 }
 
@@ -197,7 +201,7 @@ function drain(buffer, onEvent) {
       if (line.startsWith("event:")) kind = line.slice(6).trim();
       else if (line.startsWith("data:")) payload += line.slice(5).trim();
     }
-    if (!payload || kind === "ready") continue;
+    if (!payload) continue;
     try { onEvent(kind, JSON.parse(payload)); } catch { /* a half-written block is ignored */ }
   }
   return rest;
