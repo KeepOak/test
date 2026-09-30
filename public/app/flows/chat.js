@@ -4,7 +4,7 @@
    live only in this module until they are sent, are never drawn back, and are cleared at once. */
 
 import { $, esc } from "../core/dom.js";
-import { openDlg, closeDlg, toast, ic } from "../core/ui.js";
+import { openDlg, closeDlg, dialog, toast, ic } from "../core/ui.js";
 import { S, E, refresh, ownerHere, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -16,6 +16,8 @@ import { manage17d, fixNote17d } from "./chatapps17d.js"; // pass 17 part D §8
 
 let vals = {};
 let wizardRequest = 0;
+/* Dialogs the owner closed (the close button or Escape): a wizard still being read must not open after one. */
+let dialogsClosed = 0;
 /* owner-dm-signin: the App lock PIN typed to name the sender as the owner's own; sent once with the approval, then cleared. */
 let pin = "";
 /* Apps whose servers vouch for who sent each message (src/channels/owner-commands.ts vouchedSenderKinds), as far as the
@@ -116,10 +118,12 @@ function draw() {
 const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
 
 /* The wizard opens only for what asked for it: the newest open, by the same person, on the same page, with the window
-   unlocked. Checked after every read, so a late setup or health answer never shows over newer work or the lock. */
+   unlocked and no dialog opened, closed or replaced since. Checked after every read, so a late setup or health answer
+   never shows over newer work or the lock. */
 export async function openChatWizard(id, at = null) {
-  const profile = activeId(), view = S.view, request = ++wizardRequest;
-  const opening = () => request === wizardRequest && ownerHere() && activeId() === profile && unlocked() && S.view === view;
+  const profile = activeId(), view = S.view, request = ++wizardRequest, opened = dialog(), closed = dialogsClosed;
+  const opening = () => request === wizardRequest && ownerHere() && activeId() === profile && unlocked() && S.view === view
+    && dialog() === opened && dialogsClosed === closed;
   if (!opening()) return;
   vals = {};
   let recipe, live;
@@ -273,5 +277,6 @@ export function init() {
     S.chw.code = digits;
     draw();
   });
-  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) { vals = {}; pin = ""; S.chw = null; } }, true);
+  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) { vals = {}; pin = ""; S.chw = null; dialogsClosed += 1; } }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && dialog()) dialogsClosed += 1; }, true); // main.js closes it on Escape
 }
