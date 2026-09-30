@@ -180,7 +180,7 @@ export class MicrosoftConnector {
     requirePersonal(this.store, this.owner, "microsoft");
     const vtt = await signedText(this.fetcher, this.signIn, "Microsoft",
       `${graph}/onlineMeetings/${encodeURIComponent(meeting.id)}/transcripts/${encodeURIComponent(newest.id)}/content?$format=text/vtt`, 1_000_000);
-    return { meeting: meeting.subject ?? "", recordedAt: newest.createdDateTime ?? null, transcript: clip(vttToText(vtt), 60000),
+    return { meetingId: meeting.id, transcriptId: newest.id, meeting: meeting.subject ?? "", recordedAt: newest.createdDateTime ?? null, transcript: clip(vttToText(vtt), 60000),
       note: `${outsideTextNote} Summarise it for the owner: decisions, actions and who owns them.` };
   }
 }

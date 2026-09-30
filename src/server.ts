@@ -139,6 +139,7 @@ import { handlesTrunksPath, trunksApi, TrunksHttpError } from "./trunks/api.js";
 import { handlesShellLookPath, shellLookApi, ShellLookError } from "./shell-look.js"; // phase2/shell
 import { codingApi, CodingHttpError, handlesCodingPath } from "./coding/api.js"; // mac7/r17-d: coding polish
 import { handlesPersonalPath, personalApi, PersonalHttpError } from "./personal/api.js"; // R17-C
+import { meetingNotesApi } from "./personal/meeting-notes.js";
 import { handlesReachPath, reachApi, ReachHttpError } from "./reach/api.js"; // r17-i
 import { handlesSafetyPath, safetyApi, SafetyHttpError } from "./safety-extras/api.js"; // mac7/r17-g: the safety extras
 import { codesResting, confirmWithCode, restingRefusal } from "./safety-extras/code-approvals.js"; // mac7/r17-g
@@ -4378,6 +4379,13 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         }
         // ---- end phase2/shell ----
         // ---- R17-C: files, voice, devices and personal connectors under /api/personal (src/personal/api.ts). ----
+        if (path.startsWith("/api/personal/meeting-notes/")) {
+          const answer = await meetingNotesApi(app.personal.meetingNotes, request.method ?? "GET", path, () => readBody(request, 32000), () => {
+            if (throughDoor(request) || app.sessionLock.shut() || request.headers["x-branch-origin"] !== "window")
+              throw new HttpError(403, "Use meeting notes in the unlocked owner's app window.");
+          });
+          send(response, 200, answer); return;
+        }
         if (handlesPersonalPath(path)) {
           app.store.profiles.requireOwner("Your personal connectors");
           const answer = await personalApi({ personal: app.personal, runtime: app.runtime, method: request.method ?? "GET",

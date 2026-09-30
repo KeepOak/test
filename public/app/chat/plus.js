@@ -19,6 +19,7 @@ import { asksFirst } from "./askfirst.js"; // parity B1: Ask me questions first
 import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the Skills list
 import { attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
 import { initPractice, loadPractice, practiceMenu, practiceNext } from "./practice-next.js";
+import { initMeetingNotes } from "../flows/meeting-notes.js";
 
 const Q = { temporary: false, who: null, whoFor: null, pending: null, error: null };
 
@@ -139,6 +140,7 @@ function insert(text) {
 }
 
 export function initPlus() {
+  initMeetingNotes();
   markLive(["plusmenu", "attach", "add-folder", "unattach", "insert", "sw:pm-temp", "who", "skills15"]);
   initAttach();
   initPractice();
