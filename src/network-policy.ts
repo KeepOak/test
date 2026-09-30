@@ -166,6 +166,8 @@ export interface ConnectOptions {
   headers?: Record<string, string>;
   what?: string;
   runId?: string | null;
+  /** Asked once the address is allowed, just before dialling: false means the caller has ended or locked since. */
+  proceed?: () => boolean;
 }
 
 /**
@@ -311,6 +313,7 @@ export class NetworkPolicy {
       await this.assertAllowed(httpTwin(url));
       if (this.sockets.size >= this.maxSockets)
         throw new Error(`Branch already has ${this.maxSockets} live connections open, which is as many as it will hold at once`);
+      if (options.proceed && !options.proceed()) throw new Error("The connection was stopped before it opened");
     } catch (e) {
       this.watchSockets(record, "refused", e instanceof Error ? e.message : String(e));
       throw e;
