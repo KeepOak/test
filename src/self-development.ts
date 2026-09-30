@@ -13,8 +13,11 @@ import { audit } from "./audit.js";
 import type { Store } from "./store.js";
 import { ContractTermsSchema, selfDevelopmentBase, selfDevelopmentBaseWords, selfDevelopmentLine, selfDevelopmentLockdownRefusal, sourceFolder, widenToolName, type ContractBook, type ContractTerms, type SelfDevelopmentContract } from "./self-development-contract.js";
 import { lockdownActive } from "./lockdown.js";
+import { canonicalRepo, primaryRepo } from "./desktop/repo-pair.js";
 
-export const branchRepository = "stabrea/Branch-Agent";
+/** Branch's own repository; the old stabrea/Branch-Agent name is read as this one (src/desktop/repo-pair.ts). */
+export const branchRepository = primaryRepo;
+const isBranchRepository = (repo: string): boolean => canonicalRepo(repo) === canonicalRepo(branchRepository);
 const nameSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{0,23}$/, "Use lowercase letters, digits and dashes");
 /**
  * A change to Branch itself starts from, and is proposed back to, one line only: the line Beta builds
@@ -55,7 +58,8 @@ function repositoryAddress(input: string): { repo: string; url: URL } {
     throw new Error("Use the official Branch-Agent repository or your own GitHub fork of it.");
   // Rebuild from the repository name so credentials or other URL parts supplied by a caller can
   // never survive into the clone command. Do not replace this with input sanitising.
-  return { repo: parsed.repo, url: new URL(`https://github.com/${parsed.repo}.git`) };
+  const repo = isBranchRepository(parsed.repo) ? branchRepository : parsed.repo;
+  return { repo, url: new URL(`https://github.com/${repo}.git`) };
 }
 
 function sourceChangeFolder(workspace: string, name: string): string {
@@ -74,9 +78,13 @@ async function ensureSource(deps: SelfDevelopmentDeps, repository: { repo: strin
     try { await run(deps, deps.workspace, ["clone", "--origin", "origin", repository.url.href, sourceFolder], signal, 1_800_000); }
     catch (error) { await rm(source, { recursive: true, force: true, maxRetries: 5 }).catch(() => undefined); throw error; }
   }
-  const origin = repositoryAddress(await run(deps, source, ["remote", "get-url", "origin"], signal));
+  const address = await run(deps, source, ["remote", "get-url", "origin"], signal);
+  const origin = repositoryAddress(address);
   if (origin.repo.toLowerCase() !== repository.repo.toLowerCase())
     throw new Error(`The existing ${sourceFolder} belongs to ${origin.repo}, not ${repository.repo}.`);
+  // A checkout cloned before the move to KeepOak still names stabrea/Branch-Agent: it is pointed at the new name, so
+  // pushes and pull requests go straight there rather than through GitHub's redirect.
+  if (githubRepositoryOf(address).repo !== origin.repo) await run(deps, source, ["remote", "set-url", "origin", origin.url.href], signal);
   return source;
 }
 
@@ -96,7 +104,7 @@ async function ensureUpstream(deps: SelfDevelopmentDeps, source: string, fork: b
   if (!fork) return "origin";
   const official = `https://github.com/${branchRepository}.git`;
   const current = await run(deps, source, ["remote", "get-url", "upstream"], signal).catch(() => "");
-  if (current && githubRepositoryOf(current).repo.toLowerCase() !== branchRepository.toLowerCase())
+  if (current && !isBranchRepository(githubRepositoryOf(current).repo))
     throw new Error(`The existing upstream remote is ${githubRepositoryOf(current).repo}, not ${branchRepository}.`);
   if (!current) await run(deps, source, ["remote", "add", "upstream", official], signal);
   return "upstream";
@@ -162,10 +170,10 @@ async function bindContract(
  */
 async function proposedTo(deps: SelfDevelopmentDeps, source: string, remote: string, signal: AbortSignal): Promise<string[]> {
   const pushes = (await run(deps, source, ["remote", "get-url", "--push", "--all", "origin"], signal)).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const origins = [...new Set(pushes.map((address) => githubRepositoryOf(address).repo.toLowerCase()))];
+  const origins = [...new Set(pushes.map((address) => canonicalRepo(githubRepositoryOf(address).repo)))];
   if (origins.length !== 1) throw new Error("The source checkout's origin does not push to exactly one GitHub repository, so no worktree was made.");
   if (remote !== "upstream") return origins;
-  const upstream = githubRepositoryOf(await run(deps, source, ["remote", "get-url", "upstream"], signal)).repo.toLowerCase();
+  const upstream = canonicalRepo(githubRepositoryOf(await run(deps, source, ["remote", "get-url", "upstream"], signal)).repo);
   return [...new Set([...origins, upstream])];
 }
 
@@ -185,7 +193,7 @@ export async function prepareBranchSourceChange(
       reason: `From ${repository.repo} at ${input.base}. Paths ${terms.allowedPaths.join(", ")}; tools ${terms.permissions.join(", ")}`.slice(0, 500),
       runId: runId ? runId.slice(0, 64) : null, outcome: "pending" });
   const source = await ensureSource(deps, repository, signal);
-  const remote = await ensureUpstream(deps, source, repository.repo.toLowerCase() !== branchRepository.toLowerCase(), signal);
+  const remote = await ensureUpstream(deps, source, !isBranchRepository(repository.repo), signal);
   await run(deps, source, ["fetch", remote, input.base], signal, 900_000);
   const copyName = `self-${input.name}`, branch = `branch/self-${input.name}`;
   const folder = `${sourceFolder}/.branch-worktrees/${copyName}`;

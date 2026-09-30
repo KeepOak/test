@@ -1,11 +1,11 @@
 import type { Store } from "../store.js";
-import type { Message } from "../contracts.js";
+import type { BudgetOptions, Message } from "../contracts.js";
 import type { ContextBudget } from "../catalog.js";
 import type { RetryPolicy } from "../provider-retry.js";
 import type { ReasoningEffort } from "../models.js";
 import { addTokenCounts, estimateCost, formatCost, pricingSettings, tokenCountsOf, type TokenCounts } from "../pricing.js";
 import { askMode, saveAskMode } from "../asks/settings.js";
-import { codingModelRounds, readKnobs } from "./settings.js";
+import { codingModelRounds, noLimit, readKnobs } from "./settings.js";
 
 /**
  * What the runtime asks at each marked hook. Each function reads the owner's saved choice fresh, and
@@ -31,10 +31,24 @@ export function keepRecent(store: Reader, owner: string): number {
   return readKnobs(store, owner, "compaction").keepRecentMessages;
 }
 
-/** R17-S09: the step and token budget a new task of the owner's gets. */
-export function taskBudget(store: Reader, owner: string): { maxSteps: number; maxTokens: number } {
+/** What "auto" is on a connection billed per token (an API key): the figures Branch always had. */
+export const autoTaskLimits = { maxSteps: 60, maxTokens: 200_000 } as const;
+
+/** A saved task limit as a number: a figure is itself, "No limit" is Infinity, and auto (null) is `auto`. */
+export const limitOf = (saved: number | typeof noLimit | null, auto: number): number => saved === noLimit ? Infinity : saved ?? auto;
+
+/**
+ * R17-S09: the step and token budget a new task of the owner's gets. The owner's rule (ship-on, 2026-09-29): limits only
+ * where money is spent. A figure or "No limit" holds on every connection; auto is no limit on a sign-in or a model on
+ * this computer, and the old figures while a key billed per token answers (`billed`, src/contracts.ts Budget). The loop
+ * guard (src/loop-guard.ts) and the spending caps still stop a runaway either way.
+ */
+export function taskBudget(store: Reader, owner: string): BudgetOptions {
   const limits = readKnobs(store, owner, "limits");
-  return { maxSteps: limits.maxSteps, maxTokens: limits.maxTaskTokens ?? 200000 };
+  return {
+    maxSteps: limitOf(limits.maxSteps, Infinity), maxTokens: limitOf(limits.maxTaskTokens, Infinity),
+    billed: { maxSteps: limitOf(limits.maxSteps, autoTaskLimits.maxSteps), maxTokens: limitOf(limits.maxTaskTokens, autoTaskLimits.maxTokens) },
+  };
 }
 
 /** R17-S09: the retry policy, with the owner's count in place of the launch setting's. */
@@ -92,12 +106,14 @@ export function toolLimits(store: Reader, owner: string, launch: { toolResultCha
 
 /**
  * mac7/speed: how many times one task may go back to the model before it gives the best answer it has.
- * The owner's figure wins for every task. Without one, a task working on the project's files gets
- * `codingModelRounds` (never fewer than the launch figure), and any other task the launch figure (12).
+ * The owner's figure (or "No limit", Infinity) wins for every task. On auto, a task answered by a sign-in or a model on
+ * this computer has no limit (it costs nothing more per round); one answered by a key billed per token gets
+ * `codingModelRounds` when it works on the project's files (never fewer than the launch figure), else the launch figure (12).
  */
-export function maxModelRounds(store: Reader, owner: string, launch: { maxModelRounds: number }, coding = false): number {
+export function maxModelRounds(store: Reader, owner: string, launch: { maxModelRounds: number }, coding = false, billed = true): number {
   const own = readKnobs(store, owner, "limits").maxModelRounds;
-  if (own !== null) return own;
+  if (own !== null) return limitOf(own, Infinity);
+  if (!billed) return Infinity;
   return coding ? Math.max(launch.maxModelRounds, codingModelRounds) : launch.maxModelRounds;
 }
 

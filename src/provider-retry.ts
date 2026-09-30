@@ -222,6 +222,19 @@ export function outOfCredit(error: unknown): boolean {
   return error instanceof Error && (error.name === "AccountLimitError" || error.name === "ProgramLimitError");
 }
 
+/**
+ * True when a sign-in's plan has reached its limit (ChatGPT's usage_limit_reached, a pool or an installed program that says
+ * so): the plan's window, not a spent balance. Such a task may move to another plan (src/runtime.ts fallBack).
+ */
+export function planLimitReached(error: unknown): boolean {
+  for (let depth = 0; error instanceof ProviderStreamError && depth < 4; depth++) {
+    if (error.estimatedOutput > 0 || error.usage !== undefined) return false;
+    error = error.cause;
+  }
+  if (error instanceof ProviderHttpError) return error.status === 429 && (error.code === "usage_limit_reached" || error.code === "plan_limit_reached");
+  return error instanceof Error && (error.name === "AccountLimitError" || error.name === "ProgramLimitError");
+}
+
 function retryableHttpError(error: unknown): ProviderHttpError | undefined {
   for (
     let depth = 0;

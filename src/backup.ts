@@ -180,6 +180,9 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // Q230 (NAS eba8bd8): a conversation's live waiting line, whose words run by themselves; this computer's MCP tool
   // cache, plugins and their fingerprints; and a running task's shared notes.
   "followups:", "mcp-tools:", "plugin-catalog:", "plugin:", "scratch:",
+  // #890: this computer's installed plugin and add-on code versions kept for rollback, a staged candidate's local
+  // folder, the evaluation evidence and the "not yet proven" mark: a file must never supply code or clear the mark.
+  "plugin-version:", "plugin-review:", "plugin-evaluation:", "add-on-version:", "add-on-candidate:",
   // workbench (SELF-305): a wake-up set in a conversation, whose words later run as the owner's own task; like the
   // waiting line, a file must never put one in place.
   "wakeup:",
@@ -268,6 +271,8 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
   "channel-session:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
   "skill-origin:", "skill-package:",
+  // #890: an API skill learned from a browser recording names an outside address and the request it sends.
+  "captured-api-skill:",
   // A registry signing key the owner trusted: a file must never make a key trusted by itself.
   "registry-key:",
   // Q230, keys worked out in code: each coding, interop, learning-more, Trunks and model-savings part (they run
