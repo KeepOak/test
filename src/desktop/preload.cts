@@ -25,6 +25,17 @@ contextBridge.exposeInMainWorld("branchDesktop", Object.freeze({
   // The second value is the exact Dev change of another line of work the owner confirmed (updater-ipc.ts refuses it with automatic).
   installUpdate: (automatic?: unknown, confirm?: unknown) =>
     ipcRenderer.invoke("branch:update-install", automatic === true, typeof confirm === "string" ? confirm : undefined),
+  onUpdateCheckpoint: (callback: unknown) => {
+    if (typeof callback !== "function") return;
+    ipcRenderer.on("branch:update-checkpoint", (_event, request: unknown) => {
+      const value = request as { id?: unknown; tag?: unknown; version?: unknown } | null;
+      if (!value || typeof value.id !== "string" || typeof value.tag !== "string" || typeof value.version !== "string") return;
+      void Promise.resolve().then(() => (callback as (request: unknown) => unknown)(value)).then(
+        (opened) => ipcRenderer.invoke("branch:update-checkpoint-ready", value.id, opened === true),
+        () => ipcRenderer.invoke("branch:update-checkpoint-ready", value.id, false),
+      ).catch(() => undefined);
+    });
+  },
   // The update screen: each change to an update under way, as it happens (src/desktop/updater-ipc.ts statusSender).
   onUpdateStatus: (callback: unknown) => {
     if (typeof callback !== "function") return;

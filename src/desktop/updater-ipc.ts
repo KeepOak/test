@@ -19,6 +19,8 @@ import { primaryRepo } from "./repo-pair.js";
 import { watchForOwner, type OwnerWindow } from "./quiet-build.js";
 import { newestGreen } from "./dev-build.js";
 import { OwnerUpdateQueue, updateWorkQuestion } from "./update-work-choice.js";
+import { checkpointQuestion, UpdateCheckpointChoice } from "./update-checkpoint.js";
+import { randomUUID } from "node:crypto";
 
 /** Where an update is downloaded, built and handed over; the new version says it is up there too (selfdev). */
 export const updateScratchDir = (): string => join(app.getPath("temp"), "branch-agent-update");
@@ -47,6 +49,8 @@ const settingsPages = openableSettingsPages(process.platform);
  * joined one that was already working, so an update behaves the same either way.
  */
 export interface UpdateHooks {
+  /** Existing authenticated tool inventory only; taking/sending a checkpoint remains an owner workflow. */
+  githubConnected?: () => Promise<boolean>;
   /** Authenticated current channel and full task count from the local or joined engine. */
   readiness?: () => Promise<Pick<UpdateReadiness, "busyTasks" | "workingTasks" | "autoUpdate"> & { channel: UpdateChannel }>;
   backup: () => Promise<void>;
@@ -160,6 +164,46 @@ export function registerUpdaterIpc(
       throw new Error("Desktop update access denied");
   };
   const installClaim = new UpdateInstallClaim();
+  const checkpoints = new UpdateCheckpointChoice();
+  let composerReceipt: { id: string; receive: (opened: boolean) => void } | null = null;
+  ipcMain.handle("branch:update-checkpoint-ready", (event, id: unknown, opened: unknown) => {
+    authorized(event);
+    if (composerReceipt?.id === id) composerReceipt.receive(opened === true);
+  });
+  const openCheckpointComposer = (shown: BrowserWindow, tag: string, to: string): Promise<boolean> => new Promise((resolve) => {
+    try { if (new URL(shown.webContents.getURL()).origin !== origin) { resolve(false); return; } }
+    catch { resolve(false); return; }
+    const id = randomUUID();
+    const timer = setTimeout(() => finish(false), 5000);
+    const finish = (opened: boolean) => { clearTimeout(timer); if (composerReceipt?.id === id) composerReceipt = null; resolve(opened); };
+    composerReceipt = { id, receive: finish };
+    shown.webContents.send("branch:update-checkpoint", { id, tag, version: to });
+  });
+  const offerCheckpoint = async (automatic: boolean): Promise<boolean> => {
+    const release = updater.status.release;
+    if (!release || !release.available && !release.otherLine) return true;
+    const key = `${updater.selectedChannel}:${release.tag}`;
+    if (automatic && checkpoints.paused(key)) return false;
+    if (!checkpoints.needed(key, automatic)) return true;
+    if (!hooks?.githubConnected) throw new UpdateDeferredError("Branch cannot read its GitHub connection. The update is waiting.");
+    if (!(await hooks.githubConnected())) return true;
+    const shown = open();
+    if (!shown || !shown.isVisible()) throw new UpdateDeferredError("Open Branch to choose whether to keep a GitHub checkpoint before this update.");
+    const { response } = await dialog.showMessageBox(shown, checkpointQuestion(release.latestVersion));
+    checkpoints.decide(key, response);
+    if (response === 1) {
+      updater.recordCheckpointChoice({ tag: release.tag, decision: "skip", composerOpened: false });
+      return true;
+    }
+    queue.stop();
+    updater.waitForTasks(false, "The update is waiting for your checkpoint choice.");
+    const composerOpened = response === 0 && await openCheckpointComposer(shown, release.tag, release.latestVersion);
+    updater.deferCheckpoint({ tag: release.tag, decision: response === 0 ? "prepare" : "cancel", composerOpened },
+      response !== 0 ? "The update was cancelled before any checkpoint, download or handover."
+        : composerOpened ? "An unsent checkpoint request is in your conversation. Review it and send it when ready; this update waits."
+          : "The checkpoint composer did not confirm opening. Nothing was saved or sent; press Update now to try again.");
+    return false;
+  };
   // A new version that did not come up sent the switch back to this one: said now, once (shell-switch.ts).
   if (appFolders) void readSwitchFailure(updateScratchDir(), version).then((failure) => {
     if (!failure) return;
@@ -187,6 +231,7 @@ export function registerUpdaterIpc(
   const installNow = (automatic: boolean, confirmed: string | null, work: "ask" | "wait" = "ask"): Promise<UpdateStatus> =>
     installClaim.run(() => updater.status, () => updater.inProgress, async () => {
       allowWorking = false;
+      if (!(await offerCheckpoint(automatic))) { installClaim.release(); return updater.status; }
       if (!automatic && work === "ask" && hooks?.readiness) {
         const state = await hooks.readiness();
         if (updater.selectedChannel !== state.channel) {

@@ -39,6 +39,15 @@ after each message is handled, and a schedule is claimed in the database before 
 
 ### Desktop gateway draft
 
+Before a desktop install, a connected GitHub account gets a native checkpoint offer for that
+exact release and channel. Prepare pauses the update and opens an unsent request in the owner's
+composer. The owner chooses the project folder, remote and branch, reviews the files, and uses
+the existing Git approval flow before any send. The native updater never commits or pushes.
+The receipt says whether the composer acknowledged opening; it never claims a checkpoint was
+saved. Cancel holds this release; Update without checkpoint allows it for this desktop session.
+A gateway without an open window defers connected-account installs until the owner can choose.
+Choices are session-local, and installed UI/automatic-update acceptance remains pending.
+
 When the owner presses Update now while tasks are busy, the desktop asks **Let them finish
 first**, **Install now**, or **Cancel update** using the authenticated engine's task count.
 Waiting pins the request to that release and channel for the current desktop session. It keeps

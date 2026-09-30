@@ -26,6 +26,7 @@ import { loadDesktopSettings, registerSettingsIpc } from "./settings-ipc.js";
 import { registerUpdaterIpc, updateScratchDir, type UpdateHooks } from "./updater-ipc.js";
 import { markStarted, UpdateDeferredError, UpdateStuckError, type Updater } from "./updater.js";
 import { updatePlanFrom, updateReadiness } from "./update-readiness.js";
+import { updateGitHubConnected } from "./update-checkpoint.js";
 import { logoShare, readTrayUsage, trayBitmap, trayTip, type TrayUsage } from "./tray-ring.js";
 import { crashReporter } from "electron"; // mac7/diagnostics
 import { crashReporterPlan, diagnose } from "../diagnostic-log.js"; // mac7/diagnostics, mac7/coding-next
@@ -398,6 +399,7 @@ async function createWindow(
   const openWindow = () => window ?? null;
   updater = registerUpdaterIpc(openWindow, url, app.getVersion(), () => { quitReason = "update"; app.quit(); },
     { ...update, readiness: async () => updateReadiness(url, key(), client.fetch),
+      githubConnected: () => updateGitHubConnected(url, client.fetch),
       // Update by itself runs in this process, whatever the page is doing (update-loop.ts).
       plan: (facts) => updatePlanFrom(url, key(), facts, client.fetch),
       // Versioned app folders: the switch waits for the window's invisible moment and hands its state over (shell-window.ts).
