@@ -4457,7 +4457,7 @@ ${run.output.slice(0, 6000)}`;
     const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
     // A helper's lead controls whether it may hand work on, including a named call omitted from its catalogue.
-    const handOn = handOnRefusal(tool, context);
+    const handOn = this.handOnReason(tool, args, context);
     if (handOn) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: handOn };
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
@@ -5275,9 +5275,22 @@ ${run.output.slice(0, 6000)}`;
     const outcome = await this.runToolCall(call, context, prepared, shown);
     return ignored.length && outcome && typeof outcome === "object" ? { ...outcome, note: ignoredNote(ignored) } : outcome;
   }
+  /** A lead's ceiling and a specialist's target rule are independent, narrowing restrictions. */
+  private handOnReason(name: string, args: unknown, context: ToolContext): string | null {
+    const ceiling = handOnRefusal(name, context);
+    if (!ceiling) return null;
+    if (name === "delegate.handoff" && args && typeof args === "object" && !Array.isArray(args)) {
+      const specialist = (args as { specialist?: unknown }).specialist;
+      if (typeof specialist === "string") {
+        const target = this.handoffs.refusal(context.agent, specialist);
+        if (target) return `${target} ${ceiling}`;
+      }
+    }
+    return ceiling;
+  }
   /** The registry's own refusal (src/registry.ts execute) for a tool that is not there or not this task's, else null. */
-  private outsideReach(name: string, context: ToolContext): string | null {
-    const handOn = handOnRefusal(name, context);
+  private outsideReach(name: string, context: ToolContext, args: unknown): string | null {
+    const handOn = this.handOnReason(name, args, context);
     if (handOn) return handOn;
     const permission = this.registry.permissionOf(name);
     if (!permission) return `Unknown tool: ${name}`;
@@ -5297,7 +5310,7 @@ ${run.output.slice(0, 6000)}`;
     if (call.name === toolNoteName) return this.noteTool(call, context, args);
     // Q050 follow-up: a tool that does not exist, or one this task was not given, is refused here as the registry would
     // refuse it when run, before any rule, question or yes is weighed: a question about it could never lead anywhere.
-    const outside = this.outsideReach(call.name, context);
+    const outside = this.outsideReach(call.name, context, args);
     if (outside) { this.store.event(context.runId, "tool.failed", { name: call.name, id: call.id, error: outside }); return { ok: false, error: outside }; }
     const blocked = this.reconciliationBlock(context, call);
     if (blocked) { this.store.event(context.runId, "reconciliation.required", { name: call.name, id: call.id }); return { ok: false, error: blocked }; }
