@@ -34,6 +34,7 @@ import {
 } from "./plan-act.js";
 import { secondOpinionSettings, saveSecondOpinionSettings } from "./second-opinion.js";
 import { checkCodexModels, chooseCodexModel, codexModelsView } from "./codex-models-api.js"; // QA 2026-09-28
+import { usageByPerson } from "./usage-by-person.js";
 import { usageByTrunk } from "./usage-by-trunk.js"; // models-ui (MODEL-052)
 import { helperDefaultsView, saveHelperDefault } from "./helper-defaults-api.js"; // models-ui (MODEL-051)
 import { classifyToolEvent } from "./receipts.js";
@@ -2159,7 +2160,11 @@ async function api(
     const stats = app.store.usageStore().getMonthlyStats(budget?.maxMonthlyTokens, overrides);
     // Wave 7: the few numbers that say how it is behaving, beside what it cost.
     const statistics = app.store.usageStore().statistics(app.runtime.owner, range === "7d" ? 7 : range === "90d" ? 90 : 30);
-    return { data, stats, statistics, pricing: pricingTableInUse(app.store, app.runtime.owner) };
+    // The household return above stays scoped; full person attribution is only for the owner window.
+    const byPerson = url.searchParams.get("people") === "1" && !currentPerson() && !startedWithShortLivedKey()
+      ? usageByPerson({ store: app.store, owner: app.runtime.owner, modelCostOf: (id) => runCost(app, id).amount },
+        range === "7d" ? 7 : range === "90d" ? 90 : 30) : null;
+    return { data, stats, statistics, pricing: pricingTableInUse(app.store, app.runtime.owner), byPerson };
   }
   if (request.method === "GET" && path === "/api/pricing")
     return pricingTableInUse(app.store, app.runtime.owner);
