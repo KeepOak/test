@@ -37,7 +37,7 @@
    actions wait, and the view says "You're driving · <name> is paused" until Hand back (POST /api/panels/screen/hand-back).
    Both are the owner's alone, at this computer's own window; the engine refuses anyone else. */
 
-import { $, esc, applyCss, onRender, render } from "../core/dom.js";
+import { $, esc, applyCss, onRender, render, pressIn, whenReleased } from "../core/dom.js";
 import { ic, av, faceOf, toast, app, closePop } from "../core/ui.js";
 import { S, E, refresh, trunkIntro, ownName, chatFace } from "../core/state.js";
 import { api, token } from "../core/api.js";
@@ -49,7 +49,7 @@ import { t } from "../../i18n.js";
 import { pickChip, computersOf, computerNamed, pickFor } from "../flows/computers17.js"; // pass 17 part D §9: the conversation's computer menu
 import { liveOf, liveError, liveLoading, watchLive } from "./stage-live.js";
 import { hasOwnerBrowser, ownerBrowserHTML, ownerBrowserPip, ownerBrowserButtons, ownerBrowserHolder, watchOwnerBrowser,
-  paintOwnerBrowser, initOwnerBrowser } from "./stage-browser-control.js";
+  paintOwnerBrowser, initOwnerBrowser, ownerBrowserNeeds, ownerBrowserState, ownerBrowserToolbar, needsHTML, takeControl, ownerBrowserComposing } from "./stage-browser-control.js";
 import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, setDriving } from "./stage-screen.js";
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
@@ -238,7 +238,8 @@ function top(kind, steps) {
   const title = kind === "browser" ? t("window.chat.stage.browser-of", { name: esc(owner()) }) : t("window.chat.stage.computer-of", { name: esc(owner()) });
   const own = kind === "browser" && (live()?.browser?.frame || hasOwnerBrowser()) ? `<span class="st7-sub">${ic("lock", "s")}${t("window.chat.stage.own-browser")}</span>` : "";
   // Who drives Branch's own browser, when the owner has it open.
-  const driving = kind === "browser" && mine() ? ownerBrowserHolder(owner()) : null;
+  const needs = kind === "browser" && mine() && browserNeeds();
+  const driving = needs ? { cls: "warn", words: t("window.chat.stage.ob.needs-you") } : kind === "browser" && mine() ? ownerBrowserHolder(owner()) : null;
   // A task waiting on a yes says so; the question itself is answered in the conversation, one click back.
   const pill = driving ? `<span class="pill ${driving.cls}"><i></i>${driving.words}</span>`
     : yours ? `<span class="pill you"><i></i>${t("window.chat.stage.you-control")}</span>`
@@ -300,10 +301,28 @@ function stageHTML(kind) {
   const steps = G.plan?.steps ?? [], scr = screen(kind), many = several(kind);
   const chips = steps.map((s, i) => `<button type="button" class="st7-chip ${STEP[s.status] ?? ""}" data-act="stage-step" data-v="${i}"><em>${i + 1}</em>${esc(s.title)}</button>`).join("");
   const liveNow = kind === "browser" && live()?.browser?.live && working();
-  const body = scr ? `<div class="st7-screen"><div class="st7-scale">${scr}</div>${caption(steps)}</div>` : emptyHTML(kind);
+  const over = kind === "browser" && mine() ? browserOverlay() : "";
+  const body = scr ? `<div class="st7-screen"><div class="st7-scale">${scr}</div>${caption(steps)}${over}</div>` : emptyHTML(kind);
   const wrap = many && G.grid ? gridHTML(many, steps) : `<div class="st7-wrap">${body}</div>`;
   return `${top(kind, steps)}${kind === "browser" && scr ? browserNotice() : ""}${many ? compTabs(many, steps) : ""}<div class="st7-body ${G.dock ? "" : "nodock"}">${wrap}${G.dock ? dock(steps, kind) : ""}</div>
     ${steps.length ? `<div class="st7-steps">${chips}<button type="button" class="st7-chip live7" data-act="stage-step" data-v="live">${liveNow ? `<i></i>${t("dashboard.live")}` : t("dashboard.area.now")}</button></div>` : ""}`;
+}
+
+/* A working task's page that waits for a person (a sign-in, a "prove you're a person" check): what it waits for, and on
+   which page, while the task is still going; null otherwise. */
+function browserNeeds() {
+  const run = goingRun();
+  if (!run || !STOPPABLE.has(run.status)) return null;
+  if (hasOwnerBrowser()) { const needs = ownerBrowserNeeds(); return needs ? { needs, url: ownerBrowserState().page?.url ?? "", take: { act: "owner-browser-take" }, run } : null; }
+  const view = live()?.browser;
+  return view?.live && view.needs && view.runId === run.id ? { needs: view.needs, url: view.url, take: { act: "owner-browser-adopt", id: run.id }, run } : null;
+}
+/* Over the page, unscaled: the Needs you sheet, or the owner's in-control tools. */
+function browserOverlay() {
+  const needs = browserNeeds();
+  if (needs) return needsHTML(needs.needs, needs.url, needs.take, needs.run.id);
+  const run = goingRun();
+  return ownerBrowserToolbar(run && STOPPABLE.has(run.status) ? run.id : null, owner());
 }
 
 function pipHTML() {
@@ -330,11 +349,19 @@ const refit = () => { for (const id of ["stage7", "pip7"]) { const el = document
    picture and Watch full size. chat.js draws it under the conversation's messages. */
 export function stageCard() {
   const now = live(), view = now?.browser;
-  if (!S.chat || !view?.live || !view.frame || now.status !== "running" || G.kind === "browser") return "";
-  const sub = now.doing ? `<div class="sub">${esc(now.doing)}</div>` : "";
-  return `<div class="b"><div class="gut"></div><div><div class="card comp7"><div class="card-h"><b>${ic("globe", "s")}${t("window.chat.stage.browser-of", { name: esc(name()) })}</b><span class="pill work ml"><i></i>${t("strip.status.working")}</span></div>${sub}
-    <button type="button" class="comp7-thumb" data-act="stage" data-v="browser" aria-label="${t("window.chat.stage.full-size")}"><span class="st7-scale">${liveWindow(view, view.frame)}</span></button>
-    <div class="acts"><button class="btn pri sm" type="button" data-act="stage" data-v="browser">${ic("monitor", "s")}${t("window.chat.stage.watch-full")}</button></div></div></div></div>`;
+  if (!S.chat || !view?.live || !["running", "needs_input"].includes(now.status) || G.kind === "browser") return "";
+  // Live as it goes: waiting for its first page, working (what it is doing), or waiting for the owner to sign in.
+  const blank = !view.url || view.url === "about:blank", host = (() => { try { return new URL(view.url).hostname; } catch { return ""; } })();
+  const [cls, words] = view.needs ? ["warn", t("window.chat.stage.ob.needs-you")] : ["work", t("strip.status.working")];
+  const line = view.needs ? `${t(view.needs === "captcha" ? "window.chat.stage.ob.needs-captcha" : "window.chat.stage.ob.needs-sign-in")}${host ? ` · ${esc(host)}` : ""}`
+    : blank ? t("window.chat.stage.ob.first-page") : esc(now.doing ?? "");
+  const sub = line ? `<div class="sub">${line}</div>` : "";
+  const thumb = view.frame ? `<button type="button" class="comp7-thumb" data-act="stage" data-v="browser" aria-label="${t("window.chat.stage.full-size")}"><span class="st7-scale">${liveWindow(view, view.frame)}</span></button>` : "";
+  const acts = view.needs && mine()
+    ? `<button class="btn pri sm" type="button" data-act="stage-take-control" data-id="${esc(now.runId)}">${t("window.chat.stage.ob.take-control")}</button><button class="btn ghost sm" type="button" data-act="stage-stop" data-id="${esc(now.runId)}">${t("window.chat.stage.ob.stop-task")}</button>`
+    : `<button class="btn pri sm" type="button" data-act="stage" data-v="browser">${ic("monitor", "s")}${t("window.chat.stage.watch-full")}</button>`;
+  return `<div class="b"><div class="gut"></div><div><div class="card comp7"><div class="card-h"><b>${ic("globe", "s")}${t("window.chat.stage.browser-of", { name: esc(name()) })}</b><span class="pill ${cls} ml"><i></i>${words}</span></div>${sub}
+    ${thumb}<div class="acts">${acts}</div></div></div></div>`;
 }
 /* pane-stage-011: the card for the computer the conversation's newest task used (a desktop.* step since the owner's
    last message), drawn under the conversation like the browser's. Its state is the engine's: You have control while
@@ -384,10 +411,30 @@ export function computerCard(messages) {
     <button type="button" class="comp7-thumb" data-act="stage" data-v="computer" aria-label="${t("window.chat.stage.full-size")}">${pic}</button>
     <div class="acts">${cardActs(state, run)}</div></div></div></div>`;
 }
-const cardKey = (v) => JSON.stringify([v?.runId, v?.status, v?.doing, v?.browser?.live, !!v?.browser?.frame, v?.browser?.url, v?.browser?.title]);
+const cardKey = (v) => JSON.stringify([v?.runId, v?.status, v?.doing, v?.browser?.live, !!v?.browser?.frame, v?.browser?.url, v?.browser?.title, v?.browser?.needs]);
 /* A new answer: the conversation is drawn again when its card changes; otherwise only the view (a frame is painted in). */
+/* Settings › Computer & browser › "Open the browser full size when a task starts" (the owner's comfort card browser,
+   openFullSize): the first time a working task of the conversation on screen has its browser open, the view opens full
+   size, once for each task; closed again by the owner, it stays closed. Read at most every half minute. */
+const WATCH = { on: null, at: 0, opened: new Set() };
+async function readWatch() {
+  if (E.profiles?.isOwner === false || Date.now() - WATCH.at < 30_000) return;
+  WATCH.at = Date.now();
+  try { WATCH.on = (await api("comfort")).values?.browser?.openFullSize === true; } catch (error) { WATCH.on = null; toast(error.message); }
+}
+function watchStart(now) {
+  const view = now?.browser;
+  if (!WATCH.on || !S.chat || S.view !== "chat" || now?.status !== "running" || !view?.live || view.runId !== now.runId) return false;
+  if (WATCH.opened.has(now.runId)) return false;
+  WATCH.opened.add(now.runId);
+  if (G.kind === "browser") return false;
+  openStage("browser");
+  return true;
+}
 function onLive(before, now) {
   void observeGif(now);
+  void readWatch();
+  if (watchStart(now)) return;
   if (cardKey(before) !== cardKey(now)) render(); else drawStage();
 }
 function fitCards() {
@@ -421,13 +468,22 @@ function redraw(el, html) {
 }
 
 /* One region each for the full-size view and the small window, made once and removed when closed; drawn again only
-   when what it shows changed. */
+   when what it shows changed, and never under a press (core/dom.js pressIn): a view read landing between a press and its
+   click replaced the button or picture pressed, so the click was lost (a New tab or a click on the page did nothing). */
+let heldBack = false;
 function region(id, cls, show, html) {
   let el = document.getElementById(id);
   if (!show) { el?.remove(); G.drawn[id] = ""; return; }
   if (!el) { el = Object.assign(document.createElement("div"), { id, className: cls }); app()?.appendChild(el); G.drawn[id] = ""; }
   const next = html();
+  if (next !== G.drawn[id] && pressIn(el)) {
+    if (!heldBack) { heldBack = true; whenReleased(() => { heldBack = false; drawStage(); }); }
+    fit(el);
+    return;
+  }
   if (next !== G.drawn[id]) {
+    // Restoring a textarea's value/focus cannot restore its native IME session. Frames still paint below.
+    if (id === "stage7" && G.kind === "browser" && ownerBrowserComposing(S.chat)) { fit(el); return; }
     redraw(el, next);
     el.classList.toggle("tabs-b2", !!el.querySelector(".st7-tabs"));
     G.drawn[id] = next;
@@ -456,6 +512,7 @@ export function drawStage() {
   // seconds, for the card in the conversation).
   // The frames are the owner's alone (the engine refuses anyone else), so nobody else's window asks for them.
   const going = here && S.view === "chat" && runsHere()[0]?.status === "running";
+  if (going && mine()) void readWatch();
   watchLive(mine() && (browser || going) ? S.chat : null, onLive, browser);
   // The owner's own browser is read while its view shows it, full size or small.
   watchOwnerBrowser(S.chat, here && browser && mine(), (redraw) => (redraw ? drawStage() : paintFrames()));
@@ -554,13 +611,15 @@ async function watchRun(el) {
 }
 
 export function initStage() {
-  markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid", "sw:st-addr"]);
+  markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid", "sw:st-addr", "stage-take-control"]);
   initOwnerBrowser();
   // A computer's tab (or its cell in All screens) picks it for this conversation; All screens is the view's own layout.
   on("comp-view", async (el) => { if (await pickFor(S.chat, el.dataset.v)) { G.grid = false; G.at = 0; drawStage(); } });
   on("comp-grid", () => { G.grid = true; drawStage(); });
   on("stage-gif-start", () => startGif(live()?.browser));
   on("stage", (el) => openStage(el.dataset.v));
+  // The conversation's card: take the page that waits for the owner, and show it full size.
+  on("stage-take-control", (el) => { const sid = S.chat; openStage("browser"); void takeControl(sid, el.dataset.id); });
   on("stage-close", () => { G.kind = null; drawStage(); });
   on("stage-pip", () => { G.pip = { kind: G.kind, chat: S.chat }; G.kind = null; drawStage(); });
   on("pip-x", () => { G.pip = null; drawStage(); });

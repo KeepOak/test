@@ -158,6 +158,7 @@ export class Store {
         UPDATE messages SET created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=new.id; END;`);
     // A conversation's latest task (src/session-library.ts projectOf) is found through this index, not a scan of every task.
     this.db.exec("CREATE INDEX IF NOT EXISTS tasks_session_created ON tasks(session_id, created_at)");
+    this.db.exec("CREATE INDEX IF NOT EXISTS events_run_kind ON events(run_id, kind, id)"); // exact task attribution without repeated history scans
     this.conversations = new ConversationMarks(this.db, () => this.clock());
     ensureThreadTable(this.db); // defaulttrunk: which Trunk each conversation is with (src/trunks/threads.ts), read by history
     ensureForgotten(this.db);
@@ -908,6 +909,15 @@ export class Store {
         data: JSON.parse(String(row.data)),
         createdAt: String(row.created_at),
       }));
+  }
+  /** A bounded event-log snapshot: callers retain this high-water mark across pages. */
+  eventLogEnd(runId: string): number {
+    return Number(this.db.prepare("SELECT MAX(id) AS last FROM events WHERE run_id=?").get(runId)?.last ?? 0);
+  }
+  eventLogPage(runId: string, after: number, through: number): Event[] {
+    return this.db.prepare("SELECT * FROM events WHERE run_id=? AND id>? AND id<=? ORDER BY id LIMIT 500")
+      .all(runId, after, through).map((row) => ({ id: Number(row.id), runId: String(row.run_id),
+        kind: String(row.kind), data: JSON.parse(String(row.data)), createdAt: String(row.created_at) }));
   }
   /** The newest events across all of one owner's tasks, for the diagnostics bundle. */
   recentEvents(owner: string, limit = 200): Event[] {

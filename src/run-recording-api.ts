@@ -16,6 +16,10 @@
 import { readFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname, extname, resolve } from "node:path";
+import { runEventLog } from "./run-event-log.js";
+import { replayRun } from "./replay.js";
+import { parseEventReplay } from "./run-event-replay.js";
+import type { Runtime } from "./runtime.js";
 import { audit } from "./audit.js";
 import { errorText } from "./request-errors.js";
 import { eventLoopSettings, eventLoopWatch, saveEventLoopSettings } from "./event-loop-watch.js";
@@ -32,7 +36,7 @@ import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 
 export interface RecordingApp {
   store: Store;
-  runtime: { owner: string; hideSecrets: <T>(value: T) => T; artifacts: { read(path: string): Promise<Buffer> } | null };
+  runtime: { run?: Runtime["run"]; registry?: Pick<Runtime["registry"], "permissions">; owner: string; hideSecrets: <T>(value: T) => T; artifacts: { read(path: string): Promise<Buffer> } | null };
   workflows: { forOwner(owner: string): string; create(owner: string, input: unknown): { id: string; name: string } };
 }
 export interface RecordingApiOptions {
@@ -41,10 +45,10 @@ export interface RecordingApiOptions {
   readPublic?: (name: string) => Promise<string>;
 }
 
-const runPath = /^\/api\/runs\/([a-f0-9-]{36})\/(recording|recording\/page|recording\/path|recording\/flow|monitor)$/;
+const runPath = /^\/api\/runs\/([a-f0-9-]{36})\/(recording|recording\/events|recording\/page|recording\/path|recording\/flow|monitor)$/;
 
 export function handlesRecordingPath(path: string): boolean {
-  return path === "/api/recordings" || path === "/api/event-loop" || runPath.test(path);
+  return path === "/api/recordings/restart" || path === "/api/recordings" || path === "/api/event-loop" || runPath.test(path);
 }
 
 const defaultReadPublic = (name: string): Promise<string> => readFile(new URL(`../public/${name}`, import.meta.url), "utf8");
@@ -68,6 +72,7 @@ export async function recordingApi(app: RecordingApp, request: IncomingMessage, 
 async function route(app: RecordingApp, request: IncomingMessage, response: ServerResponse, path: string, options: RecordingApiOptions): Promise<unknown> {
   const owner = app.store.profiles.scope();
   const method = request.method ?? "GET";
+  if (path === "/api/recordings/restart") return restartFromLog(app, method, options);
   if (method !== "GET" && method !== "POST") throw Object.assign(new Error("Use GET or POST"), { status: 405 });
   if (path === "/api/event-loop") return eventLoop(app, method, options, new URL(request.url ?? "/", "http://local").searchParams.has("read"));
   if (path === "/api/recordings") {
@@ -86,6 +91,16 @@ async function route(app: RecordingApp, request: IncomingMessage, response: Serv
   const settings = recordingSettings(app.store, owner);
   requireRecordings(settings.mode);
   const scrub = app.runtime.hideSecrets;
+  if (part === "recording/events") {
+    if (method !== "GET") throw Object.assign(new Error("Use GET to export the event log"), { status: 405 });
+    app.store.profiles.requireOwner("Export the complete task event log");
+    const body = runEventLog(app.store, owner, run.id, scrub);
+    audit(app.store, owner, { action: "data.exported", actor: owner, runId: run.id, subject: "task event log" });
+    response.writeHead(200, { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store",
+      "x-content-type-options": "nosniff", "content-disposition": `attachment; filename="task-events-${run.id}.jsonl"` });
+    response.end(body);
+    return undefined;
+  }
   if (part === "monitor") {
     const after = Number(new URL(request.url ?? "/", "http://local").searchParams.get("after") ?? 0);
     return runMonitor(app.store, run.id, { after: Number.isInteger(after) && after > 0 ? after : 0, scrub });
@@ -187,4 +202,28 @@ async function eventLoop(app: RecordingApp, method: string, options: RecordingAp
 /** Called once when the server starts: the watch runs from the start when the owner has it on. */
 export function startEventLoopWatch(app: Pick<RecordingApp, "store" | "runtime">): void {
   try { eventLoopWatch.follow(eventLoopSettings(app.store, app.runtime.owner)); } catch { /* never worth failing a launch */ }
+}
+
+/** Restarts through the normal engine, retaining the original task's outside identity. */
+async function restartFromLog(app: RecordingApp, method: string, options: RecordingApiOptions): Promise<unknown> {
+  if (method !== "POST") throw Object.assign(new Error("Use POST to restart a task"), { status: 405 });
+  app.store.profiles.requireOwner("Restart a task from its event log");
+  const owner = app.store.profiles.scope();
+  const input = await options.readBody() as { confirmed?: unknown; jsonl?: unknown } | null;
+  if (input?.confirmed !== true) throw new Error("Confirm starting a new task with current permissions and approvals");
+  const log = parseEventReplay(input.jsonl);
+  const source = app.store.run(log.run.id);
+  if (!source || source.owner !== owner || source.owner !== app.runtime.owner)
+    throw Object.assign(new Error("The original task is not available in this owner profile"), { status: 404 });
+  const current = parseEventReplay(runEventLog(app.store, owner, source.id, app.runtime.hideSecrets));
+  if (JSON.stringify(log.run) !== JSON.stringify(current.run) || JSON.stringify(log.events) !== JSON.stringify(current.events)
+    || log.throughEventId !== current.throughEventId) throw new Error("The log no longer matches its retained source task");
+  const execute = app.runtime.run?.bind(app.runtime), registry = app.runtime.registry;
+  if (!execute || !registry) throw new Error("Task execution is unavailable");
+  app.store.profiles.requireOwner("Restart a task from its event log");
+  if (app.store.profiles.scope() !== owner) throw new Error("The active profile changed");
+  const done = await replayRun({ run: (options) => execute({ ...options,
+    permissions: (options.permissions ?? []).filter((permission) => registry.permissions().includes(permission)),
+  }) }, app.store, source.id);
+  return { original: done.original, replay: done.replay, status: done.run.status };
 }

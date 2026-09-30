@@ -396,6 +396,10 @@ for a Google Cloud project.
 
 **Settings → Models → On this computer** sets a model up with one click, through Ollama, LM Studio, llama.cpp's `llama-server` or (on a Mac with Apple silicon) MLX's `mlx_lm.server`, so a model can answer without anything leaving this machine and without any charge.
 
+**Installed vLLM on Linux:** the owner can also start an already installed compatible vLLM GPU runtime with an existing Hugging Face model directory through `POST /api/local-models/setup`, for example `{ "runtime": "vllm", "name": "/absolute/path/to/model", "found": true, "toolParser": "hermes" }`. Choose the parser that matches the model: `hermes`, `llama3_json`, `qwen3_coder` or `qwen3_xml`. Branch reads a bounded local `config.json`, limits context to at most 8,192 tokens and the model's declared maximum, starts one local multiprocess engine on a fresh `127.0.0.1` port, waits for its model list, and registers a connection only after its ordinary small-question check succeeds. One vLLM setup runs at a time. The owner/profile, local-model switch and Lockdown checks apply; chat apps, household people, Trunks and short-lived keys cannot request this setup.
+
+This vLLM path installs and downloads nothing, leaves the model directory where the owner put it, disables Hugging Face online loading, general vLLM plugins and usage telemetry, and does not opt into remote model code. Its process inherits the existing stripped runtime environment. These options are not an operating-system network sandbox. Memory/GPU fit, parser compatibility and complete model weights are the owner's responsibility; startup or the check can fail. No curated GGUF/MLX package is offered as a vLLM model. Use runtime Stop or model Unload to end the server Branch started; Branch refuses to delete the owner-selected vLLM files. After restart, the connection sends nothing until the directory is set up again on a fresh port. Automatic installers, a dedicated directory/parser picker and managed LocalAI remain separate work. Live runtime, tool-call and cancellation acceptance have not been run for this addition.
+
 **The switch** (`settings/local-models`, `mode`): `off` (every route that changes something refuses in one sentence, and nothing is restored at start), `when-needed` (the default: one click works; at start Branch rebuilds the local connections and carries on setups that were interrupted), `on` (the same, and at start Branch also starts Ollama or LM Studio for your local connections when it is installed and not already running; this one is yours to pick).
 
 **What one click does** (`POST /api/local-models/setup`, with `{ "model": "qwen3-8b", "quant": "Q4_K_M" }` from the list, or `{ "name": "qwen3:8b" }`, and an optional `runtime`):
@@ -908,6 +912,26 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 
 Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
 
+### The home chat, what is working, and naming a conversation (the chat-parity build)
+
+Three commands Hermes Agent and OpenClaw have, on the one command table:
+
+- **`/sethome`** (Hermes). The home chat is the one chat that results sent "home" go to: a schedule, heartbeat,
+  watch or morning brief whose `deliverTo` is `{"channel": "home", "chatId": "home"}`. Home is read when each
+  one is sent, so moving it moves them all; with no home a delivery fails with "No chat is set as home yet".
+  Choosing it is the owner's. At the window, phone or terminal, `/sethome` says where home is,
+  `/sethome <chat app> [chat]` chooses a chat that has talked to Branch (the latest one on that app when no chat
+  is named), and `/sethome off` forgets it. In a chat, `/sethome` (or `/sethome off`) is taken only in a direct
+  chat from one of your own chat accounts (the exact list `/platform` uses, or the paired accounts marked as yours
+  under Settings › Chat apps › Commands from your own chat, whether or not running commands is on), and before any other command
+  is read; from anybody else, or in a group, it is an ordinary message, and one sent while Branch was closed is
+  let go.
+- **`/agents`** (`/tasks`, `/subagents`; Hermes `/agents`, OpenClaw `/subagents` and `/tasks`): every task working
+  now, with the helpers each one started listed under it. In a chat, only that chat's own tasks.
+- **`/title <name>`** (`/name`, `/rename`; Hermes `/title`, OpenClaw `/name`): names the conversation it is typed
+  in, as renaming it from the window's menu does, from a chat too.
+- **`/commands`**: every command the surface can use, as `/help all`.
+
 ### The window's commands from your own chat (CHAT-185)
 
 From one of your own chat accounts (the `/platform` list, or the paired accounts marked as yours under Settings ›
@@ -932,8 +956,8 @@ task a chat message starts is marked as coming from a chat (`source: "channel"` 
 record), and so is everything it starts: a helper it hands work to, a side question (`/btw`, `/compact`,
 `/help <question>`), a prompt step of a workflow it runs, and the same task carried on after a restart
 (with the same tools it had). No setting makes a chat account count as you. The one list of your own
-chat accounts (under reach, for `/platform pause|resume|status`) is used only for that command and
-lends those accounts nothing else. What that means:
+chat accounts (under reach, for `/platform pause|resume|status` and `/sethome`) is used only for those
+two commands and lends those accounts nothing else. What that means:
 
 - **Your approval rules are held to "Ask before changes"**, as they are for a schedule or another AI
   tool: your standing yeses do not reach a chat's task, so a change it wants waits for a yes. The chat
@@ -978,6 +1002,8 @@ files and house are all outside it. So are pushing to a remote and acting on Git
 to be able to change your local copy but never publish it, and now it cannot do either unless a line
 below allows it — unlike commands and your devices, which a line can never allow. This is a change: before, a chat's task was given everything except
 a named few, so anything nobody had thought of was handed over. It is now the other way round.
+
+**Who may message Branch.** The owner's `GET /api/channels/allowlist` and `POST /api/channels/allowlist` read and change the shared sender list. `unknown: "pair"` offers unapproved senders a code; `"block"` refuses them with a private-assistant reply; `"ignore"` refuses them and leaves unauthorized direct chats unanswered, without creating a pairing request. Groups keep the existing refusal reply. Existing approved pairings and allow rules still work, and explicit block rules win. For example, `{"unknown":"ignore"}` changes only that choice; rules not supplied stay as they are. The default remains `"pair"`. Changing the list requires the owner's full app access; no chat command changes it.
 
 **Your own chats have your full access.** One chat counts as you: an account you named as your own
 (Customize → Chat apps → Commands from your own chat, or `/platform`), writing to Branch one to one, on an
@@ -1140,6 +1166,8 @@ Save the mailbox password as `EMAIL_PASSWORD` and give both servers:
 ```
 
 Built on Node's own TLS with no mail library: a small IMAP4rev1 reader (`LOGIN`, `SELECT INBOX`, `SEARCH UNSEEN`, `FETCH`, `STORE \Seen`) looks for unread mail every `pollSeconds`, answers it, and marks it read so it is never answered twice; a small SMTP sender (implicit TLS, `AUTH PLAIN` then `AUTH LOGIN`, `8BITMIME`) sends the reply threaded onto the original with `In-Reply-To` and `References` and a `Re:` subject. `allowlist` holds sender addresses. `tls: false` on a server connects in the clear and upgrades with `STARTTLS` when the server offers it, which is only sensible for a mail server on this computer. **Plain text only**: attachments, HTML mail and multipart bodies are not read or sent, and quoted history below an "On … wrote:" line is trimmed from the question. An address longer than 60 characters is shortened to a stable `who:<hash>` handle, because a chat id may hold 64 characters; such an address therefore cannot be put on the `allowlist` by address, and has to pair with a code instead. The first look at the inbox does not hold up starting, so a mail server that is unreachable shows as **reconnecting** with the reason rather than stopping Branch.
+
+Email channels require authenticated sender domains by default (`requireAuthenticatedSender: true`). The first `Authentication-Results` header must report DMARC pass, or SPF/DKIM pass with an exactly matching From domain. Missing, malformed or ambiguous results are ignored before pairing, approvals or task dispatch. Your receiving provider must remove forged authentication headers and prepend its own verdict; set `trustedAuthservIds` to its exact authentication server names, for example `["mx.example.com"]`. Only the first header is considered, even with pins. `requireAuthenticatedSender: false` explicitly opts out for a mailbox whose sender identity is established separately. These checks authenticate the sender domain; the existing address allowlist and pairing still control who may use Branch. Messages ignored by this check are marked read by the ordinary inbox poll and receive no reply. Hosted mailbox proof is still required before relying on a configuration.
 
 ## Connections: the other chat services
 
@@ -1654,8 +1682,8 @@ means this wave added it (behind its switch, off); **not built** gives the reaso
 
 ## Setting up a chat app in one command
 
-*mac7/connect.* For every chat app Branch supports (55 of them, counted from the code: the nine with a
-type of their own, the ten team-chat services in `data/channels.json`, and the 36 wave mac3 services in
+*mac7/connect.* For every chat app Branch supports (56 of them, counted from the code: the nine with a
+type of their own, the ten team-chat services in `data/channels.json`, and the 37 added services in
 `src/channels/connectors.ts`), one command gets the official app, opens the page that makes the bot,
 takes the token without showing it, checks it with the app's own service, keeps it in the locker, and
 switches the app on if you say so:
@@ -1831,6 +1859,7 @@ says so.
 | KOOK (`kook`) | yes; switched on from it | Windows: download page; Mac: download page; Linux: download page | `https://developer.kookapp.cn/app/index` | `KOOK_BOT_TOKEN` | GET `https://www.kookapp.cn/api/v3/user/me` |
 | WeChat Official Account (`wechat-mp`) | yes; switched on from it | Windows: winget `Tencent.WeChat`; Mac: cask `wechat`; Linux: download page | `https://mp.weixin.qq.com/` | `WECHAT_MP_APP_SECRET`, `WECHAT_MP_TOKEN`, `WECHAT_MP_AES_KEY`; plus appId | none |
 | WeCom app (`wecom-app`) | yes; switched on from it | Windows: winget `Tencent.WeCom`; Mac: download page; Linux: download page | `https://work.weixin.qq.com/wework_admin/frame#apps` | `WECOM_APP_SECRET`, `WECOM_APP_TOKEN`, `WECOM_APP_AES_KEY`; plus corpId, agentId | none |
+| WhatsApp (personal number) (`whatsapp-web`) | yes; switched on from it | Windows: download page; Mac: cask `whatsapp`; Linux: download page | none (plain steps) | `WAHA_API_KEY`; plus server | none |
 
 <!-- channel-setup-table:end -->
 
@@ -3312,6 +3341,8 @@ Two switches, both saved in `settings/reflection` (`src/reflection/`). Looking b
 
 - `reflection` (`off`, `when-needed`, `on`). With `on`, once `everyTurns` of your turns (5–500, default 25) have passed in a conversation, and whenever a long conversation is shortened, the assistant rereads only the turns since its last look, beside what it remembers and which skills are on, and asks the model once, with no tools, for corrections, merges, facts to set aside and notes on skills. With `when-needed` it looks only when a conversation is shortened, or when you press *Look back now* (`POST /api/reflection/look-back { sessionId? }`). Every answer is a suggestion in the usual queue, grouped as one batch; a suggestion naming a fact or skill it was not shown, or reading like an order slipped in from outside, is dropped. `POST /api/reflection/batches/:id/accept|reject` decides a whole batch. Temporary conversations are never read.
 - `newSkills` (`off`, `when-needed`, `on`). With `when-needed` a skill is drafted only when asked: typing `/learn` (with anything to add after it) in a conversation, `POST /api/reflection/learn { sessionId, notes? }`, or accepting a skill idea from the learning core. The assistant also has one short tool, `skills.learn` (`skills.manage`), for the same request in plain words. With `on` it may also draft after a finished task that used three or more different tools without a skill (once per conversation), and a look back may suggest skill ideas. A draft is installed switched off, tried as a practice run on the task it came from and up to two like it, once without any skill and once with it, and waits: `POST /api/reflection/new-skills/try|accept|reject { skillId }`. Keeping one that was not tried, or did worse, needs `force: true` with the words shown in the app, and is written to the record. Throwing one away removes it, since nothing used it.
+For a video or tutorial, first use the ordinary permitted `media.watch`, `media.captions`, `web.fetch` or `files.read` tool. When asked to keep its procedure as a skill, `skills.learn { sourceCallId, notes? }` selects that completed read from the same task. It keeps up to 10,000 characters of source text, marks missing portions, removes embedded instruction lines, and records the source call. This does not fetch anything again or turn a draft on; the usual trial and owner decision still apply.
+
 - Accepting a **skill note** in the queue now changes the skill: a note on an installed skill is written into a new, switched-off version, tried on the last tasks that used the skill, and listed under *Suggested better versions* with its diff, where a second yes switches it on. A skill idea with no skill becomes a new-skill draft as above, and is only noted while `newSkills` is `off`.
 - `retireAfterDays` (7–365, default 60). *Look for skills nobody uses* (`POST /api/reflection/retire`) offers to set aside each switched-on skill that no task has read in that time, once. It looks at the last 100 tasks only and says so; when those go back less far than the setting, it offers nothing. A skill a schedule names is left alone. Accepting switches the skill off; it stays installed.
 
@@ -4209,6 +4240,8 @@ Local HTTP authorization is single-owner access, not a multi-user tenancy system
 record (`PreferencesSchema` in `src/preferences.ts`) holds `appearance` (`forest` or `daylight`),
 `followSystem`, `accent` (`copper`, `leaf`, `earth`, `slate`, `ink`), `textSize`
 (`small`/`medium`/`large`), `density` (`comfortable`/`compact`), `font` (`geist`/`system`),
+`readingFont` (a reading face for replies, used only when it is installed on this computer: `Atkinson Hyperlegible`,
+`OpenDyslexic`, `Lexend`, `Arial`, `Georgia`, `Verdana` or `Segoe UI`; `null`, the default, keeps the theme's font),
 `reduceMotion`, `showAcorn` (the pixel acorn in the rail's bottom corner, off by default), `showEverything`
 and `showVoice`. Every field has a default, so a record saved by an older version still loads.
 Settings → Appearance changes all of them; each choice shows at once and Save keeps it.
@@ -6136,6 +6169,29 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
   sentence the settings screen shows.
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
+
+### WhatsApp with a personal number, through a bridge you run
+
+The official WhatsApp Business Cloud API (the WhatsApp card) needs a business number and Meta's app review. For a
+personal number Branch talks to **WAHA** (github.com/devlikeapro/waha, Apache-2.0), a WhatsApp Web bridge you install
+and run yourself with Docker on this computer, the way Signal works through signal-cli: Branch ships none of it.
+**This automates a personal number through an unofficial client, which WhatsApp's terms do not allow, so the number
+can be banned.** Use a spare number; the official Cloud API has no such risk. It is off until you set it up.
+
+The setup (WhatsApp (personal number) in Customize › Channels) says the risk first, then:
+installing Docker (Docker Desktop needs administrator rights), running
+`docker run -d --restart unless-stopped -p 127.0.0.1:3000:3000 -e WAHA_API_KEY=… --name waha devlikeapro/waha`,
+typing its address and pasting the key, and a **Link** step that shows the code the bridge makes, to scan with
+WhatsApp › Settings › Linked devices (`POST /api/channel-setup/whatsapp-web/link`: owner only, this computer only,
+never returns the key). Only a loopback address is accepted for the bridge (127.0.0.1, localhost, ::1): it is a
+program on this computer, so the network settings are not asked about that one address. Messages arrive over the
+bridge's socket (`/ws?session=…&events=message`) and replies go out with `POST /api/sendText`; a direct chat is always
+answered, a group when the assistant's number is @mentioned or one of its messages is replied to, and its own
+messages and status updates are never read. Pairing codes and the allowlist apply as on every app.
+Pictures, videos, files and voice notes sent to the number come in too: the bridge downloads them, and Branch fetches
+each one from the bridge alone (same address, with its key, no redirects, at most 20 MB) only once the message has
+earned an answer; a voice note is transcribed as on the other apps. Files go out through the bridge's `sendImage`
+(JPEG and PNG) and `sendFile`, and a spoken reply through `sendVoice` as a voice note, at most 16 MB each.
 
 ### Files and voice in the other chat apps (CHAT-094, 104, 105)
 
@@ -10682,3 +10738,12 @@ The Gardener extends this record with the following settings when its feature is
 | `archiveAfterDays` | `30` | 2–730: set unused adopted skills aside after this many days. |
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
+
+
+### Agent-written scheduled dashboards
+
+In Scheduled → Describe it, the owner can choose Keep the result as a dashboard before confirming an ordinary assistant task. A task/check can also declare `dashboard: { title: "My dashboard" }` through its existing authorized schedule creation API. This adds a structured-output instruction, no tool permission or source connection. Each scheduled task refreshes up to eight columns and forty rows with values, source identifiers, retrieval timestamps and freshness status, plus up to twelve attention notes. Dashboard jobs default to notifying only on material value, source, freshness, layout or attention changes; timestamp-only refreshes and repeated invalid-refresh errors do not alert again. Explicit `notify: "always"` retains the owner's digest choice. The table and fifty recent field-change notes persist in owner governance, separate from editable schedule definitions.
+
+A stale source preserves that cell's previous good value and provenance when its row/field labels still agree; without one, the cell reads Unknown. An incomplete task, oversized response, invalid structure or future timestamp keeps the prior valid dashboard and records a generic refresh failure. Sources/timestamps are reported by the model's task, not independently verified; the renderer does no source/auth/provider read. Choosing sources and permissions remains the task's existing contract. Omitted rows are removals, not failed source reads, so the task must mark a failed field stale explicitly.
+
+The owner's Dashboard button reads the latest valid page in an opaque sandboxed, script-free frame with a no-network/no-forms CSP. Read latest page reads the retained snapshot; it neither starts a task nor schedules polling. English page/locale fallback. `GET /api/schedules/<id>/dashboard` requires the current owner and an unlocked app and rejects short-lived script keys. Removing the schedule removes its saved projection. Branch's existing profile/App-lock watcher clears open dialogs on observed ownership/lock changes. No public link, source-login automation, arbitrary HTML/scripts, automatic download or verified live source refresh is implied. Trunk-routine dashboards and automatic open-page repaint remain separate.

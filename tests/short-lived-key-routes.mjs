@@ -167,10 +167,12 @@ export const ROUTES = {
   "/api/channel-setup/": "prefix",
   "/api/channel-setup/sample": "look",
   "/api/channel-setup/sample/check": "owner POST",
+  "/api/channel-setup/sample/link": "owner POST", // a bridge on this computer: its pairing code (WhatsApp, personal number)
   "/api/channels": "look",
   "/api/channels/addresses": "secret-read",
   "/api/channels/addresses/rotate": "owner POST",
   "/api/channels/addresses/settings": "owner POST",
+  "/api/channels/allowlist": "owner POST", // CHAT-156: who may message Branch; a short-lived key cannot read it either
   "/api/channels/catalog": "look",
   "/api/channels/deliveries/sample/retry": "other POST",
   "/api/channels/link": "owner POST",
@@ -484,6 +486,7 @@ export const ROUTES = {
   "/api/trunks/:id/retire": "owner POST",
   "/api/trunks/:id/avatar": "owner POST",
   "/api/trunks/:id/export": "look",
+  "/api/trunks/:id/inbox": "look",
   "/api/trunks/:id/keys": "look",
   "/api/trunks/:id/routines": "owner POST",
   "/api/trunks/:id/watch": "owner POST",
@@ -800,6 +803,7 @@ export const ROUTES = {
   "/api/mcp/servers/sample/remove": "owner POST",
   "/api/mcp/servers/sample/start": "owner POST",
   "/api/mcp/servers/sample/stop": "owner POST",
+  "/api/mcp/servers/sample/timeout": "owner POST",
   "/api/mcp/settings": "owner POST",
   "/api/mcp/signin": "owner POST",
   "/api/mcp/snapshots": "look",
@@ -1010,6 +1014,7 @@ export const ROUTES = {
   "/api/remove-branch": "owner POST",
   "/api/remove-branch/plan": "owner POST",
   "/api/recordings": "owner POST",
+  "/api/recordings/restart": "owner POST", // RES-512: a new task from a checked event log, after the owner's yes
   "/api/recipes/:id/steps": "owner POST", // finish-soon-a: a saved recipe's steps moved or taken out, a new version to verify
   "/api/reflection": "look",
   "/api/reflection/batches/:id/accept": "other POST",
@@ -1073,6 +1078,7 @@ export const ROUTES = {
   "/api/runs/:id/plan": "task POST",
   "/api/runs/:id/receipts": "look",
   "/api/runs/:id/recording": "look",
+  "/api/runs/:id/recording/events": "look", // RES-512: the same task's retained events as JSONL, scrubbed as the recording is
   "/api/runs/:id/result": "look", // Q52: what a finished task made and how it was checked, like its receipts (classified in Q64)
   // mac7/smoke-fixes (B4): one task's steps, for `branch trace`. "look" on purpose, not an
   // oversight — it carries none of the task's words, and `inspect` beside it already shows a
@@ -1099,6 +1105,7 @@ export const ROUTES = {
   "/api/schedules": "other POST",
   "/api/schedules/": "prefix",
   "/api/schedules/:id": "look",
+  "/api/schedules/:id/dashboard": "secret-read", // RES-189: the owner's retained dashboard; no short-lived key reads it
   "/api/schedules/:id/gate": "owner POST",
   "/api/schedules/:id/remove": "other POST",
   "/api/schedules/:id/trigger": "task POST",

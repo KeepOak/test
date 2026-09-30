@@ -62,7 +62,7 @@ import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { holdTaskBrowser } from "./browser-hold.js";
 import { MiniAppSessions } from "./miniapp/sessions.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
-import { runOrigin } from "./key-context.js";
+import { runOrigin, startedWithShortLivedKey } from "./key-context.js";
 import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
 import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
@@ -150,6 +150,10 @@ import { LiveConversations } from "./realtime-voice.js";
 import { liveRefusal } from "./live-refusal.js"; // phase2/rooms
 import { registerModelSwitch } from "./model-switch.js";
 import { registerSettingsTools } from "./settings-kit/tools.js";
+import { registerUpdateTool } from "./comfort/update-tool.js";
+import { newestPassing } from "./comfort/update-now.js";
+import { ownBuild } from "./hot-update/window-files.js";
+import { primaryRepo } from "./desktop/repo-pair.js"; // the repository updates come from
 import { registerHelpSearch } from "./help-search.js";
 import { settingsKitWriters } from "./settings-kit/writers.js";
 import { GitTools } from "./integrations/git.js";
@@ -713,7 +717,7 @@ export async function createBranch(options: {
     (tool) => { const permission = registry.permissionOf(tool); return permission !== "" && !isReadOnlyPermission(permission); });
   runtime.turnStarted = (run) => rewinds.turnStarted(run);
   const goals = new GoalMode(runtime, store);
-  registerSkills(registry, store);
+  registerSkills(registry, store, () => skillPackages);
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
   runtime.attachmentsFiled = async (session, owner, refs) => {
@@ -1631,6 +1635,11 @@ ${result.output || "(it said nothing)"}`;
   // ── end mac7/r17-g ──
   // ── r17-h: flows and boards (src/flows-boards/). Every part ships off. ──
   const flowsBoards = new FlowsBoards({ runtime, registry, flows, knowledge, queue: runQueue, asks,
+    requireInstallOwner: () => {
+      store.profiles.requireOwner("Answering an install request");
+      if (startedWithShortLivedKey()) throw new Error("Answer install requests with the owner's full access.");
+      if (sessionLock.locked()) throw new Error("Unlock Branch before answering an install request.");
+    },
     fetch: () => web.policy.guard(globalThis.fetch), ...(process.env.BRANCH_OSV_ENDPOINT ? { osvEndpoint: process.env.BRANCH_OSV_ENDPOINT } : {}) });
   // ── end r17-h ──
   // ── R17-F: learning, deeper (src/learning-more/). Every part ships off. ──
@@ -2092,6 +2101,11 @@ ${result.output || "(it said nothing)"}`;
   };
   // Changing Branch's own settings by asking, saved through the same writers as the window's (src/settings-kit/tools.ts).
   registerSettingsTools(registry, store, () => settingsKitWriters(branch));
+  // Branch's own updates, asked about or asked for by the owner (src/comfort/update-tool.ts).
+  const updateFacts = { version: String(createRequire(import.meta.url)("../package.json").version), commit: ownBuild,
+    newestPassing: newestPassing(primaryRepo) };
+  registerUpdateTool(registry, store, updateFacts);
+  channels.updateFacts = updateFacts;
   registerHelpSearch(registry); // what Branch knows about itself, from its own handbook
   // Wave 9: a graph flow left working when the app closed picks up at the box after the last one
   // that finished, with the state exactly as that box left it. Nothing is started again from the
@@ -2577,3 +2591,5 @@ export * from "./flow-yaml.js";
 export * from "./sdk-kit.js";
 export * from "./web-pages-settings.js"; // w911 (A0743, A1452) hook
 export * from "./sdk-starters.js";
+
+export * from "./scheduled-dashboards.js";

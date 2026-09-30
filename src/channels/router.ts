@@ -12,12 +12,12 @@ import type { PolicyRemember } from "../policy.js";
 import { Deliveries } from "./deliveries.js";
 import { audit } from "../audit.js";
 import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifacts.js";
-import { decide, readSenderAllowlist } from "./allowlist.js";
+import { decide, groupAllowed, readSenderAllowlist, saveSenderAllowlist, type SenderAllowlist } from "./allowlist.js";
 import type { Run } from "../contracts.js";
 import { LiveStatus, defaultLiveTiming, statusEmoji, type LiveTiming, type StepsSource } from "./live-status.js";
 import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatStepsView, type RichSpan } from "./progress-render.js";
 import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
-import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
+import { saveStepsSettings, stepsDisplayFor, stepsInChat, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
 import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
@@ -32,6 +32,8 @@ import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
 import { platformGate, platformSettings } from "../reach/platform.js"; // r17-i
+import { homeGate, noHome, resolveHome } from "./home-chat.js"; // CHAT-190
+import { chatVoiceMode, speaksHere } from "./chat-voice.js"; // CHAT-096
 import { ownerAccountNamed, ownerDmCommand, ownerDmHere, ownerDmRefusal } from "./owner-dm-commands.js"; // CHAT-185
 import { chatFailureLine } from "./failure-reason.js"; // owner-dm-signin
 import { executeCommand } from "../commands/execute.js";
@@ -39,7 +41,12 @@ import type { CommandHost } from "../commands/handlers.js";
 import { hostname } from "node:os";
 import { assistantIdentity } from "../identity.js";
 import { freshThread, saveChatThread, type ChatThread } from "./threads.js"; // defaulttrunk
+import { expireChatThread } from "./thread-lifecycle.js";
+import { recordChatPersonality } from "./personality-settings.js";
+import { startedWithShortLivedKey } from "../key-context.js";
 import { lockedDown } from "../lockdown.js";
+import { requestInstallNow } from "../comfort/update-now.js";
+import { updateStatus, type UpdateFacts } from "../comfort/update-tool.js";
 import { ownerChatMark, setOwnerChatCheck } from "../key-context.js"; // owner-dm-full
 import { conversationModeSettings, looserThan, readConversationMode, type ConversationMode } from "../conversation-mode.js"; // owner-dm-full
 import { readPolicy } from "../policy.js"; // owner-dm-full
@@ -105,11 +112,14 @@ const pairingCodeMs = 60 * 60_000;
 /** owner-dm-signin: the task sources a chat's chain may hold and still be the owner's own (never MCP, ACP or A2A). */
 const ownersOrChat = new Set(["owner", "channel", "schedule", "trigger"]);
 const pairingCodeFresh = (pair: { requestedAt?: string }): boolean => Date.now() - Date.parse(pair.requestedAt ?? "") <= pairingCodeMs;
+interface WatchdogLogEntry { at: string; kind: string; outcome: "stalled" | "restarted" | "failed" }
 export interface ChannelAdapter {
   readonly id: string;
   readonly kind: string;
   /** Longest single message this channel accepts; the ledger splits replies to fit. */
   readonly maxTextLength?: number;
+  /** Create a private topic only for a vouched live owner-DM command; return its separate chat address. */
+  createDirectTopic?(chatId: string, name: string): Promise<string>;
   /** A transport may reserve space for literal-text escaping in its message limit. */
   configureFormatting?(mode: () => "native" | "plain"): void;
   /**
@@ -146,6 +156,8 @@ export interface ChannelAdapter {
    * notification sound. An app that cannot show code differently leaves it out and sends the words as they are.
    */
   send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  /** Ephemeral private-chat preview, with no message id. The final answer must still use `send`. */
+  sendDraft?(chatId: string, draftId: number, text: string): Promise<void>;
   /**
    * The app's own command picker (Discord's slash commands; Telegram's "/" menu in #590), filled from the same catalog
    * every surface reads. An empty list clears it. Absent means the app keeps its commands elsewhere (Slack's are in the
@@ -223,6 +235,8 @@ export interface ChannelAdapter {
   // ---- A picture kept up to date in place (the live browser in a chat, SCREEN-103/104) -------------
   // Both or neither. A failure must throw. `buttons` go under the picture and come back as a press, like sendButtons'.
   /** Sends a picture (shown inline, not as a document) with its caption and buttons; returns its message id. */
+  /** This adapter shows pictures without inline owner controls. */
+  readonly pictureViewOnly?: boolean;
   sendPicture?(chatId: string, file: OutgoingFile, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
   /** Replaces the picture, caption and buttons of a message `sendPicture` made. */
   editPicture?(chatId: string, messageId: string, file: OutgoingFile, buttons: ApprovalButton[]): Promise<void>;
@@ -313,6 +327,8 @@ export const ChannelPolicySchema = z.object({
   activation: z.enum(["mention", "always"]).default("mention"),
   pairing: z.boolean().default(true),
   allowlist: z.array(z.string().min(1).max(64)).max(64).default([]),
+  /** Which groups may use this connection: absent preserves existing behavior; [] refuses all. */
+  groupAllowlist: z.array(z.string().trim().min(1).max(64)).max(200).optional(),
 }).strict();
 export type ChannelPolicy = z.infer<typeof ChannelPolicySchema>;
 export type Outcome = "replied" | "ignored" | "pairing" | "rejected" | "failed";
@@ -331,6 +347,7 @@ interface TurnNote { text: string; message: InboundMessage; passed?: boolean; la
 interface ChatTurnState extends ChatTurn {
   phase: "gathering" | "running";
   dropped: boolean;
+  sessionResetReason?: string;
   messages: InboundMessage[];
   notes: TurnNote[];
   waiters: ((outcome: Outcome) => void)[];
@@ -487,6 +504,7 @@ export class ChannelRouter {
   /** The newest message each chat sent that was let in, so an answer knows a newer one came in before it went out. */
   private readonly latest = new Map<string, string>();
   private readonly turns = new Map<string, ChatTurnState>();
+  private readonly trunkCommands = new Map<string, ChatTurn & { dropped: boolean }>();
   /** How many chats may have a task working at the same time. */
   maxChatTasks = 4;
   private chatTasks = 0;
@@ -561,7 +579,7 @@ export class ChannelRouter {
   async wake(): Promise<void> {
     await Promise.allSettled([...this.adapters].map(async ([id, { adapter }]) => {
       if (!adapter.restart) return;
-      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null, log: undefined };
       this.watch.set(id, state);
       try { await adapter.restart(this.handlerFor()); state.lastRestartAt = Date.now(); state.problem = null; }
       catch (error) { state.problem = `${adapter.kind} could not reconnect after this computer woke: ${error instanceof Error ? error.message : String(error)}`; }
@@ -573,10 +591,12 @@ export class ChannelRouter {
     for (const [id, { adapter }] of this.adapters) {
       const last = adapter.lastContact?.();
       if (last === undefined || !adapter.restart) continue;
-      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null, log: undefined };
       this.watch.set(id, state);
       const stalledMs = intake.stalledAfterSeconds * 1000, quiet = now - last, stalled = quiet >= stalledMs;
-      if (!intake.watchdog || !stalled) { state.problem = null; continue; }
+      if (!intake.watchdog || !stalled) { state.problem = null; state.log = undefined; continue; }
+      // One retained line per stall episode; later attempts update its outcome instead of adding a line every beat.
+      const log = state.log ??= this.recordStall(adapter.kind);
       // "Reconnect after" counts from when it became stalled, not from its last contact.
       const wait = intake.reconnectMinutes * 60_000;
       if (quiet < stalledMs + wait || now - state.lastRestartAt < wait) continue;
@@ -585,8 +605,9 @@ export class ChannelRouter {
       state.lastRestartAt = now;
       const today = Date.now(); // the count on the card is by the wall clock
       state.restarts = [...state.restarts.filter((at) => today - at < 86_400_000), today];
-      try { await adapter.restart(this.handlerFor()); }
+      try { await adapter.restart(this.handlerFor()); log.outcome = "restarted"; }
       catch (error) {
+        log.outcome = "failed";
         state.problem = `${adapter.kind === "telegram" ? "Telegram" : adapter.kind} stopped receiving, and Branch could not start it again: ${error instanceof Error ? error.message : String(error)}`;
       }
       // Taken out (its token replaced, or Branch stopping) while it was being started again: stop what the restart
@@ -597,7 +618,15 @@ export class ChannelRouter {
   /** How often the watchdog looks. */
   watchdogMs = 15_000;
   private watchdog: ReturnType<typeof setInterval> | undefined;
-  private readonly watch = new Map<string, { restarts: number[]; lastRestartAt: number; problem: string | null }>();
+  private readonly watchdogLog: WatchdogLogEntry[] = [];
+  private readonly watch = new Map<string, { restarts: number[]; lastRestartAt: number; problem: string | null;
+    log?: WatchdogLogEntry | undefined }>();
+  private recordStall(kind: string): WatchdogLogEntry {
+    const row: WatchdogLogEntry = { at: new Date().toISOString(), kind, outcome: "stalled" };
+    this.watchdogLog.push(row);
+    if (this.watchdogLog.length > 100) this.watchdogLog.shift();
+    return row;
+  }
   /** The connected channel with this id, for routes that must hand a request to one. */
   adapter(id: string): ChannelAdapter | undefined { return this.adapters.get(id)?.adapter; }
   /** Stops one channel and takes it out, so it can be connected again (a Telegram bot token replaced on its card). */
@@ -651,6 +680,7 @@ export class ChannelRouter {
       chats: this.chats(owner),
       live: this.switches(),
       intake: this.intake(), // Settings › Chat apps: what the Trunk sees, staying connected
+      watchdogLog: this.watchdogLog.map((row) => ({ ...row })),
       // mac7/chat-allowlist: what a chat's task may use beyond talking, for the Chat apps card.
       permissions: this.permissionSettings(),
       ownerCommands: ownerCommands(this.store, owner),
@@ -697,11 +727,23 @@ export class ChannelRouter {
   setOwnerCommandSettings(input: unknown) {
     return saveOwnerCommands(this.store, this.runtime.owner, input);
   }
+  senderAllowlist(): SenderAllowlist {
+    this.store.profiles.requireOwner("Who may message Branch");
+    return readSenderAllowlist(this.store, this.runtime.owner);
+  }
+  setSenderAllowlist(input: unknown): SenderAllowlist {
+    this.store.profiles.requireOwner("Who may message Branch");
+    return saveSenderAllowlist(this.store, this.runtime.owner, input);
+  }
   /**
    * Queues text for a chat and sends it if the channel is up. The key makes a repeat call a no-op,
    * so a task finished while the channel was down is delivered once, in order, after reconnect.
    */
   async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
+    // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
+    const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
+    if (!home) throw new Error(noHome);
+    ({ channel, chatId } = home);
     const target = this.adapters.get(channel);
     if (!target) throw new Error(`Channel ${channel} is not connected`);
     const checked = await this.outboundGuard(text);
@@ -744,9 +786,11 @@ export class ChannelRouter {
     if (!entry) return "ignored";
     if (message.edited && !this.intake().edited) return "ignored"; // Settings › Chat apps › Edited messages, off
     const { adapter, policy } = entry;
+    // Reject an unselected group before pairing codes, approval answers, platform commands or task dispatch.
+    if (message.chatKind === "group" && !groupAllowed(policy.groupAllowlist, adapter.kind, message.chatId)) return "ignored";
     if (message.chatKind === "group" && policy.activation === "mention" && !message.addressed) return "ignored";
     // ---- r17-i: a chat app the owner paused, and /platform from the owner's own account (src/reach/platform.ts) ----
-    const held = platformGate(this.store, this.runtime.owner, message);
+    const held = platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message); // CHAT-190
     if (held) {
       if (held.reply) await adapter.send(message.chatId, held.reply, this.quoteFor(message)).catch(() => undefined);
       return "ignored";
@@ -755,6 +799,7 @@ export class ChannelRouter {
     const access = this.access(message, policy);
     if (access !== "allowed") {
       if (message.caughtUp) return "ignored"; // mac6/bucket-16 integration
+      if (message.chatKind === "direct" && readSenderAllowlist(this.store, this.runtime.owner).unknown === "ignore") return "ignored";
       const text = access === "pairing"
         ? `I don't know you yet. Ask my owner to approve code ${this.pairingCode(message)} under Settings → Channels, then message me again.`
         : "This assistant is private.";
@@ -1065,6 +1110,10 @@ export class ChannelRouter {
     // Starting a fresh conversation is part of the thread model, even when optional slash commands are off.
     if (!message.voice && /^\/(?:new|reset|clear)(?:@[a-z0-9_]+)?\s*$/i.test(message.text.trim()))
       return { name: "new", argument: "" };
+    // Branch's own updates: the router's own command, answered only in the owner's own paired chat (updateCommand),
+    // whatever the commands switch says, and not one of the shared table's (src/commands/catalog.ts).
+    const update = message.voice ? null : /^\/update(?:@[a-z0-9_]+)?(?:\s+(install))?\s*$/i.exec(message.text.trim());
+    if (update) return { name: "update", argument: (update[1] ?? "").toLowerCase() };
     const setting = this.switches().commands;
     // As shipped, the owner's own paired direct chat reads commands even with the switch off (chat-live-settings.ts).
     // Only an account the owner named as their own (Commands from your own chat, or /platform's owners) counts:
@@ -1077,7 +1126,7 @@ export class ChannelRouter {
     if (!command || setting === "on" || pairedDm) return command;
     // "When needed": only the commands for a task that is working, and only while one is; and, at any time, "/new"
     // (or "/reset"), which starts a fresh thread in this chat and keeps the one before (defaulttrunk, src/channels/threads.ts).
-    const busy = this.turns.has(chatKey(message));
+    const busy = this.turns.has(chatKey(message)) || this.trunkCommands.has(chatKey(message));
     return (busy && chatCommandSpec(command.name).whileWorking) || command.name === "new" ? command : null;
   }
   /**
@@ -1218,29 +1267,106 @@ export class ChannelRouter {
   }
   // ---- chat-live (wave mac2): one task per chat, notes steer it, commands control it ----------
   /** Carries out a chat command and sends its answer back. */
+  /** Branch's own version and updates, for `/update` (src/comfort/update-tool.ts); set by createBranch. */
+  updateFacts: UpdateFacts | null = null;
+  /**
+   * `/update`: which Branch runs, the newest version that passed its checks and why an update waits, with an "Install
+   * now" button; `/update install` asks for the update (src/comfort/update-now.ts). Only the owner's own paired direct
+   * chat, and never under Lockdown or while the app is locked.
+   */
+  private async updateCommand(message: InboundMessage, argument: string): Promise<Outcome> {
+    const { channel, chatId } = message, owner = this.runtime.owner;
+    const own = message.chatKind === "direct" && message.caughtUp !== true && this.pair(channel, message.senderId)?.status === "approved"
+      && this.ownAccount(channel, message.senderId) && this.senderAllowed(channel, message.senderId);
+    const key = `update:${chatId}:${message.messageId}`;
+    const say = (text: string) => this.deliver(channel, chatId, text, key, message.messageId).catch(() => undefined);
+    if (!own) { await say("Only the owner, in their own paired chat, can ask about Branch's updates here."); return "replied"; }
+    if (lockedDown(this.store, owner) || this.appLocked()) { await say("Branch's updates are not asked about from a chat while Lockdown is on."); return "replied"; }
+    if (!this.updateFacts) { await say("This copy of Branch cannot say anything about its updates."); return "replied"; }
+    if (argument.trim().toLowerCase() === "install") {
+      requestInstallNow(this.store, owner, `chat:${channel}`);
+      const now = await updateStatus(this.store, owner, this.updateFacts);
+      await say(`Asked: Branch installs the newest version at the next safe moment, checked on a copy of your work first. ${now.words}`);
+      return "replied";
+    }
+    const now = await updateStatus(this.store, owner, this.updateFacts);
+    const adapter = this.adapters.get(channel)?.adapter;
+    const checked = await this.outboundGuard(now.words);
+    if (adapter?.sendButtons && !checked.blocked && !now.installRequested) {
+      const sent = await adapter.sendButtons(chatId, checked.text, [{ label: "Install now", value: "/update install" }], message.messageId).then(() => true, () => false);
+      if (sent) return "replied";
+    }
+    await say(adapter?.sendButtons ? now.words : `${now.words} Send /update install to install it now.`);
+    return "replied";
+  }
   private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
     const { channel, chatId } = message;
+    if (command.name === "update") return this.updateCommand(message, command.argument);
+    // A chat's steps level lasts beyond the conversation and can show more (files, commands), so, as /session and
+    // /personality, only the owner's own direct chat sets it; a group or a paired friend keeps the owner's settings.
+    if (command.name === "verbose" && !ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message)) {
+      await this.deliver(channel, chatId, "Only the owner's own direct chat sets its steps; this chat keeps the owner's settings.", `verbose-refused:${message.messageId}`, this.quoteFor(message));
+      return "replied";
+    }
     if (command.name === "model" && !command.argument.trim() && await this.offerModels(message)) return "replied";
     const turn = this.turns.get(chatKey(message));
+    const side = this.trunkCommands.get(chatKey(message));
     // CHAT-192: /steer is a note to the working task, by the same path as typing while it works: named as its sender's,
     // held back when the owner turned steering off, and answered as the next turn if the task never read it.
     if (command.name === "steer" && turn && command.argument.trim()) return this.joinTurn(turn, { ...message, text: command.argument.trim() });
-    // A side question, folding and a question for the handbook all ask the model, so they count
-    // against the chats working at once (`/help` and `/help all` only list).
+    // Side questions, folding, handbook questions and workspace diffs count against the chats
+    // working at once (`/help` and `/help all` only list).
     const question = command.name === "help" && !["", "all"].includes(command.argument.trim().toLowerCase());
-    const asks = command.name === "btw" || command.name === "compact" || question;
-    const work = () => runChatCommand(command, {
-      runtime: this.runtime, channel, chatId, turn,
+    const asks = command.name === "btw" || command.name === "compact" || command.name === "trunk" || command.name === "diff" || question;
+    const named = command.name === "trunk" && !turn && !side && /\S+\s+\S/.test(command.argument)
+      ? { runId: null as string | null, startedAt: Date.now(), passed: 0, dropped: false } : undefined;
+    if (named) this.trunkCommands.set(chatKey(message), named);
+    const work = () => named?.dropped ? Promise.resolve("Dropped that. Nothing was started.") : runChatCommand(command, {
+      runtime: this.runtime, channel, kind: this.adapters.get(channel)?.adapter.kind ?? channel, chatId, turn: turn ?? side,
       sessionId: this.sessionFor(channel, chatId), permissions: this.chatPermissions(message),
+      ownerDm: ownerDmHere(this.store, this.runtime.owner, this.adapters.get(channel)?.adapter.kind ?? "", message),
+      trunkRefusal: (id) => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "trunk", command.argument)
+        ?? this.trunkIdReach(channel, id),
+      onTrunkStarted: (id) => {
+        if (!named) return;
+        named.runId = id; named.startedAt = Date.now();
+        this.store.event(id, "channel.inbound", { channel, chatId, messageId: message.messageId, senderId: message.senderId,
+          chatKind: message.chatKind, caughtUp: message.caughtUp === true, command: "trunk" });
+        if (named.dropped) this.runtime.cancel(id);
+      },
+      branchRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "branch", command.argument),
+      bindBranch: (parent, sessionId) => {
+        if (this.sessionFor(channel, chatId) !== parent || this.turns.has(chatKey(message))) return false;
+        this.link(this.runtime.owner, { channel, chatId, sessionId });
+        this.shownInChat.delete(`${channel}\u0000${chatId}`);
+        return true;
+      },
+      diffRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "diff", command.argument),
+      maxReplyChars: this.adapters.get(channel)?.adapter.maxTextLength ?? 3500,
+      topicRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "topic", command.argument),
+      ...(this.adapters.get(channel)?.adapter.kind === "telegram" && this.adapters.get(channel)?.adapter.createDirectTopic ? {
+        createTopic: async (name: string) => {
+          const checked = await this.outboundGuard(name);
+          if (checked.blocked) throw new Error("The topic name was held by your outgoing-message rules.");
+          return this.adapters.get(channel)!.adapter.createDirectTopic!(chatId, checked.text);
+        },
+      } : {}),
+      sessionRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "session", command.argument),
+      personalityRefusal: () => ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "personality", command.argument),
       from: { senderId: message.senderId, senderName: message.senderName, messageId: message.messageId },
+      // As for the owner's commands from a chat (#727): only on an app whose servers vouch for who sent it.
+      ownAccount: vouchedSenderKinds.includes(this.adapters.get(channel)?.adapter.kind ?? "") && this.ownAccount(channel, message.senderId),
       dropWaiting: () => {
-        if (!turn || turn.runId) return false;
-        turn.dropped = true;
+        const active = turn ?? side;
+        if (!active || active.runId) return false;
+        active.dropped = true;
         return true;
       },
       forget: () => this.forgetSession(channel, chatId),
     });
-    const reply = asks ? await this.withSlot(work) : await work();
+    let reply: string;
+    try { reply = asks ? await this.withSlot(work) : await work(); }
+    finally { if (named) this.trunkCommands.delete(chatKey(message)); }
     await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
     return "replied";
   }
@@ -1480,6 +1606,15 @@ export class ChannelRouter {
       if (kind === "model.started") turn.reply?.round();
     });
     try {
+      // CHAT-082: only a live owner DM may detach its expired route, never running or approval-waiting work.
+      const previousSession = this.sessionFor(message.channel, message.chatId);
+      if (this.store.profiles.isOwner() && !startedWithShortLivedKey()
+        && ownerDmHere(this.store, this.runtime.owner, this.adapters.get(message.channel)?.adapter.kind ?? "", message)
+        && (!previousSession || !this.trunkReach(message.channel, previousSession))
+        && !ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "session", "")) {
+        const reason = expireChatThread(this.store, this.runtime.owner, message.channel, message.chatId);
+        if (reason) turn.sessionResetReason = reason;
+      }
       const sessionId = this.sessionFor(message.channel, message.chatId);
       // defaulttrunk: a chat with no conversation yet starts its one thread with the Trunk it is routed to.
       const trunkId = sessionId ? null : this.chatTrunk(message.channel, message.chatId);
@@ -1535,6 +1670,10 @@ export class ChannelRouter {
           this.store.event(started.id, "channel.inbound", { channel: message.channel, chatId: message.chatId, messageId: message.messageId,
             senderId: message.senderId, chatKind: message.chatKind, caughtUp: message.caughtUp === true,
             waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
+          if (this.store.profiles.isOwner() && !startedWithShortLivedKey()
+            && ownerDmHere(this.store, this.runtime.owner, this.adapters.get(message.channel)?.adapter.kind ?? "", message)
+            && !ownerDmRefusal(this.store, this.runtime.owner, this.appLocked(), "personality", ""))
+            recordChatPersonality(this.store, this.runtime.owner, started.id, message.channel, message.chatId);
           turn.runId = started.id;
           turn.startedAt = Date.now();
           live?.thinking();
@@ -1546,7 +1685,8 @@ export class ChannelRouter {
           turn.reply?.text(delta);
         },
       }));
-      const outcome = await this.finishTurn(turn, run, heard.quoted);
+      const reset = turn.sessionResetReason ? `Started a fresh conversation because this chat reached its ${turn.sessionResetReason}. The earlier conversation is kept in history.\n\n` : "";
+      const outcome = await this.finishTurn(turn, run, reset + heard.quoted);
       this.store.event(run.id, "channel.sent", { ms: Date.now() - receivedAt });
       return outcome;
     } catch (error) {
@@ -1616,8 +1756,10 @@ export class ChannelRouter {
     await live?.finish(ok ? "done" : "error");
     const delivered = await this.sendReply(message, run.id, text, await turn.reply?.finish(text) ?? null, turn);
     // The owner's "remove the steps message after a good answer"; a failed task keeps it as the record.
-    if (ok && delivered && this.stepsDisplay(message.channel).cleanup) await live?.remove();
-    if (message.voice) await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
+    if (ok && delivered && this.stepsDisplay(message.channel, message.chatId).cleanup) await live?.remove();
+    // CHAT-096: this chat's /voice choice says when a reply is spoken too (a voice note, every reply, or never).
+    if (speaksHere(chatVoiceMode(this.store, this.runtime.owner, message.channel, message.chatId), !!message.voice))
+      await this.voiceReply(message, said, this.quoteIn(turn)).catch(() => undefined);
     return ok ? "replied" : "failed";
   }
   /**
@@ -1794,12 +1936,12 @@ export class ChannelRouter {
     const adapter = this.adapters.get(message.channel)?.adapter, switches = this.switches(), setting = switches.liveStatus;
     // An app with none of typing, reactions or edits still gets a message per step when the owner chose that for it.
     const eachStep = !!adapter && !adapter.edit && !adapter.paidPerMessage && message.chatKind === "direct" && switches.steps !== "off"
-      && this.stepsDisplay(message.channel).noEdit === "each" && this.stepsDisplay(message.channel).detail !== "off";
+      && this.stepsDisplay(message.channel, message.chatId).noEdit === "each" && this.stepsDisplay(message.channel, message.chatId).detail !== "off";
     if (!adapter || setting === "off" || !this.liveOn() || (!adapter.sendTyping && !adapter.react && !adapter.edit && !eachStep)) return null;
     // A group shares one bot with other people: Telegram lets a bot post about 20 messages a minute there, edits included.
     const timing = message.chatKind === "group" ? { ...this.liveTiming, editEveryMs: Math.max(this.liveTiming.editEveryMs, this.groupEditEveryMs) } : this.liveTiming;
     // The steps name files and commands, so only a direct chat is shown them: this message already passed the sender check.
-    const display = this.stepsDisplay(message.channel);
+    const display = this.stepsDisplay(message.channel, message.chatId);
     const steps = switches.steps !== "off" && message.chatKind === "direct" && display.detail !== "off"
       && (adapter.edit || eachStep) ? this.stepsOf(runOf, display, !adapter.edit) : undefined;
     // A group gets counts of kinds of step, or (the owner's "no steps in groups") no progress message at all.
@@ -1807,7 +1949,7 @@ export class ChannelRouter {
     const progress = switches.steps === "off" || (message.chatKind === "group" ? display.groups !== "off" : display.detail !== "off");
     // Pictures of Branch's browser while the task works in it: a direct chat only, where the owner has them on.
     const pictures = message.chatKind === "direct" && switches.steps !== "off" && display.pictures !== "off" && !!adapter.sendFile && !adapter.paidPerMessage;
-    const pictureButtons = pictures && this.browserHold && adapter.sendPicture ? () => this.holdButtons(runOf(), adapter.kind === "telegram") : undefined;
+    const pictureButtons = pictures && this.browserHold && adapter.sendPicture && !adapter.pictureViewOnly ? () => this.holdButtons(runOf(), adapter.kind === "telegram") : undefined;
     const picture = pictures ? async () => {
       const runId = runOf(), seen = runId ? await this.browserPicture(runId) : null;
       if (!seen) return null;
@@ -1818,6 +1960,11 @@ export class ChannelRouter {
     } : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
       allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress, react: this.style(message).react, picture, pictureButtons,
+      milestones: adapter.kind === "whatsapp" && message.chatKind === "direct" ? () => {
+        const current = this.stepsDisplay(message.channel), toggles = this.switches();
+        return this.senderAllowed(message.channel, message.senderId) && toggles.liveStatus !== "off" && toggles.steps !== "off"
+          && current.detail !== "off" && current.noEdit !== "each";
+      } : undefined,
       ...(turn ? { quote: () => this.quoteIn(turn, "status"), adopt: () => turn.reply?.surrender() ?? Promise.resolve(null) } : {}) },
     (text) => this.outboundGuard(this.hideLeaks(text)), timing, setting === "when-needed", steps, true);
   }
@@ -1837,7 +1984,7 @@ export class ChannelRouter {
    */
   private stepsLine(message: InboundMessage, run: Run, ok: boolean): string | null {
     const adapter = this.adapters.get(message.channel)?.adapter;
-    const display = this.stepsDisplay(message.channel);
+    const display = this.stepsDisplay(message.channel, message.chatId);
     if (!adapter || adapter.edit || adapter.paidPerMessage || message.chatKind !== "direct" || this.switches().steps === "off"
       || display.detail === "off" || display.noEdit !== "summary") return null;
     if (Date.parse(run.updatedAt) - Date.parse(run.createdAt) < this.liveTiming.progressAfterMs) return null;
@@ -1877,9 +2024,10 @@ export class ChannelRouter {
     };
   }
   /** The steps knobs for one connected app (Settings › Chat apps, src/channels/steps-display.ts). */
-  stepsDisplay(channel: string): StepsDisplay {
+  stepsDisplay(channel: string, chatId?: string): StepsDisplay {
     const adapter = this.adapters.get(channel)?.adapter;
-    return stepsDisplayFor(stepsSettings(this.store, this.runtime.owner), { id: channel, kind: adapter?.kind ?? channel });
+    const display = stepsDisplayFor(stepsSettings(this.store, this.runtime.owner), { id: channel, kind: adapter?.kind ?? channel });
+    return chatId ? stepsInChat(this.store, this.runtime.owner, channel, chatId, display) : display;
   }
   stepsSettings(): StepsSettings { return stepsSettings(this.store, this.runtime.owner); }
   setStepsSettings(input: unknown): StepsSettings { return saveStepsSettings(this.store, this.runtime.owner, input); }
@@ -1897,7 +2045,7 @@ export class ChannelRouter {
     if (said === "allow") return "allowed";
     if (policy.allowlist.includes(message.senderId)) return "allowed";
     if (this.pair(message.channel, message.senderId)?.status === "approved") return "allowed";
-    if (list.unknown === "block") return "rejected";
+    if (list.unknown !== "pair") return "rejected";
     return policy.pairing ? "pairing" : "rejected";
   }
   private pairingCode(message: InboundMessage): string {
