@@ -137,7 +137,7 @@ function save(app: KnobsApp, body: unknown) {
   };
   // The round limit and a task's token allowance are also Settings settings (src/settings-kit/catalogue.ts), so what
   // this card moves of them is recorded.
-  if (input.card === "limits") recordedWrite(store, owner, byCard("round-limit"), ["round-limit", "task-tokens"], write);
+  if (input.card === "limits") recordedWrite(store, owner, byCard("round-limit"), ["round-limit", "step-limit", "task-tokens"], write);
   else write();
   if (input.memoryProvider) saveMemoryProvider(store, owner, input.memoryProvider);
   return view(app);

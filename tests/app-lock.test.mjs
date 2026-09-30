@@ -53,6 +53,24 @@ async function withPin(t) {
   return it;
 }
 
+test('fresh screen PIN confirmation shares backoff without unlocking or refreshing activity', async (t) => {
+  const it = await withPin(t), lock = it.app.sessionLock;
+  const activeAt = lock.state().lastActiveAt; it.step(1000);
+  assert.equal(lock.confirmScreenPin({ pin: PIN }), true);
+  assert.equal(lock.state().lastActiveAt, activeAt);
+  for (let i = 0; i < 4; i++) assert.throws(() => lock.confirmScreenPin({ pin: '000000' }), /not right/);
+  assert.throws(() => lock.confirmScreenPin({ pin: '000000' }), /Too many/);
+  assert.throws(() => lock.confirmScreenPin({ pin: PIN }), /Too many/);
+  it.step(5 * 60_000 + 1); await it.call('POST', '/api/lock');
+  assert.equal(lock.confirmScreenPin({ pin: PIN }), false, 'screen confirmation never unlocks Branch');
+  assert.equal(lock.locked(), true);
+});
+
+test('without a saved PIN a screen must be confirmed in the owner window', async (t) => {
+  const it = await served(t);
+  assert.equal(it.app.sessionLock.confirmScreenPin({ pin: '000000' }), false);
+});
+
 // Mutation: in SessionLock.checkPin, make the hash comparison always true (accept any PIN) → the wrong PIN unlocks, red.
 test("a wrong PIN is refused, and the right one unlocks", async (t) => {
   const { call } = await withPin(t);

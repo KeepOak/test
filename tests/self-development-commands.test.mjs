@@ -134,8 +134,10 @@ test("the stand-in sandbox: available holds the command to the worktree, missing
   const yes = await guardWith(t, async () => true);
   const held = await yes.guard("shell.execute", { cwd: `${worktree}/src` }, { runId: "r" });
   assert.equal(held.writesConfinedTo, join(yes.workspace, worktree, "src"), "held to the folder it runs in");
-  for (const name of ["code.run", "process.start"])
-    await assert.rejects(yes.guard(name, { cwd: worktree }, { runId: "r" }), /cannot hold the program it starts to one folder/, name);
+  await assert.rejects(yes.guard("code.run", { cwd: worktree }, { runId: "r" }), /cannot hold the program it starts to one folder/);
+  // SELF-304: a program left running is walled by the shell the same way, so it is held to the folder it runs in too.
+  const left = await yes.guard("process.start", { cwd: `${worktree}/src` }, { runId: "r" });
+  assert.equal(left.writesConfinedTo, join(yes.workspace, worktree, "src"));
   const no = await guardWith(t, async () => false);
   await assert.rejects(no.guard("shell.execute", { cwd: `${worktree}/src` }, { runId: "r" }),
     /commands are refused on this computer: it has no sandbox that can hold a command's writes to one folder/);

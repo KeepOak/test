@@ -16,6 +16,31 @@
  * ":id" stands for any task, conversation or item id.
  */
 export const ROUTES = {
+  "/api/taste": "prefix",
+  "/api/panels/browser/demonstration": "owner POST",
+  "/api/panels/browser/network": "owner POST",
+  "/api/plugin-catalog/add-ons/lists/stage-update": "owner POST",
+  "/api/plugin-catalog/evaluate": "owner POST",
+  "/api/plugin-catalog/status": "owner POST",
+  "/api/plugin-catalog/promote": "owner POST",
+  "/api/plugin-catalog/restore": "owner POST",
+  "/api/reach/continuity": "secret-read",
+  "/api/reach/continuity/start": "owner POST",
+  "/api/reach/continuity/prepare": "owner POST",
+  "/api/reach/continuity/preview": "owner POST",
+  "/api/reach/continuity/retry": "owner POST",
+  "/api/reach/continuity/inspect": "owner POST",
+  "/api/reach/continuity/reclaim": "owner POST",
+  "/api/reach/continuity/receive": "task POST",
+  "/api/reach/continuity/status": "task POST",
+  "/api/reach/continuity/release": "task POST",
+  "/api/self-development/publications": "secret-read",
+  "/api/self-development/publications/cancel": "owner POST",
+  "/api/self-development/publications/retry": "owner POST",
+  "/api/taste/preferences": "secret-read",
+  "/api/taste/feedback": "owner POST",
+  "/api/taste/correct": "owner POST",
+  "/api/taste/forget": "owner POST",
   "/a2a": "task POST",
   "/ap/": "prefix",
   "/ap/v1/agent/tasks": "task POST",
@@ -153,6 +178,7 @@ export const ROUTES = {
   "/api/channels/intake": "owner POST", // Settings › Chat apps: what the Trunk sees, staying connected
   "/api/channels/steps": "owner POST", // Settings › Chat apps › Show steps in chats: the steps knobs
   "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
+  "/api/channels/routes": "owner POST", // Settings › Chat apps: which Trunk answers each app or chat
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
   "/api/channels/reply-style": "owner POST", // Per-app quoting of the person's message and the reaction on it
   "/api/channels/pairings/": "prefix",
@@ -293,6 +319,9 @@ export const ROUTES = {
   "/api/heartbeat": "owner POST",
   "/api/heartbeat/": "prefix",
   "/api/heartbeat/check": "owner POST",
+  // A check-in's proposal: accepting starts it as the owner's own task, so only the owner answers one.
+  "/api/heartbeat/proposals/:id/accept": "owner POST",
+  "/api/heartbeat/proposals/:id/dismiss": "owner POST",
   "/api/heartbeat/switches": "owner POST",
   "/api/help": "look",
   "/api/help/": "prefix",
@@ -914,6 +943,8 @@ export const ROUTES = {
   "/api/plugin-catalog/add-ons/pipelines/valves": "owner POST",
   "/api/plugin-catalog/add-ons/remove": "owner POST",
   "/api/plugin-catalog/add-ons/settings": "owner POST",
+  "/api/plugin-catalog/add-ons/inside": "owner POST", // RES-251: one plugin inside Branch or walled
+  "/api/plugin-catalog/add-ons/kept": "owner POST", // RES-251: keep the plugins kept running as before
   "/api/plugin-catalog/add-ons/switch": "owner POST",
   "/api/plugin-catalog/forget": "owner POST",
   "/api/plugin-catalog/inspect": "owner POST",
@@ -1257,7 +1288,17 @@ export const ROUTES = {
   "/api/panels/work": "secret-read", // phase2/panels: commands the owner's tasks ran and what they printed
   "/api/panels/live": "secret-read", // live-stage: frames of the owner's tasks' browser, the pages' addresses and titles
   "/api/panels/screen": "secret-read", // parity-b2: a frame of this computer's screen, taken as it is asked for
+  "/api/panels/screen/shot": "owner POST", // computer-control: the owner's own screenshot from the + menu, to attach
+  "/api/panels/screen/device": "secret-read", // computer-control: a paired computer's screen, live, to the owner's window only
+  "/api/panels/screen/device/drive": "owner POST", // computer-control: the owner takes over a paired computer from the view, or hands it back
+  "/api/panels/screen/device/input": "owner POST", // computer-control: the owner's click, words, key or wheel on a paired computer
+  "/api/panels/screen/control": "owner POST", // the owner takes or hands back control of the chosen view (src/local-screen.ts)
   "/api/panels/screen/hand-back": "owner POST", // the owner hands this computer's screen back to the tasks
+  "/api/panels/screen/input": "owner POST", // a click, words, a key or the wheel into the chosen app window
+  "/api/panels/screen/painted": "owner POST", // the window says which frame it painted, before control or input
+  "/api/panels/screen/stop": "owner POST", // the owner stops the chosen view
+  "/api/panels/screen/target": "owner POST", // the owner chooses a display or app window to see
+  "/api/panels/screen/targets": "secret-read", // the displays and app windows open now: their titles are private
   "/api/panels/screen/take-over": "owner POST", // the owner drives this computer's screen; tasks wait
   "/api/panels/browser": "secret-read",
   "/api/panels/browser/start": "owner POST",
@@ -1321,14 +1362,14 @@ export const OUTBOUND = [
   /^src\/channels\/(?!parity-api\.ts)/, /^src\/providers\//,
   /^src\/(local-models|tracing-export|voice|provider-batch)\.ts$/,
   // Callers of our own routes, and the route description, rather than the routes themselves.
-  /^src\/(cli|cli-attach|api-openapi|short-lived-keys|household-routes)\.ts$/, /^src\/install\//, /^src\/desktop\//,
+  /^src\/(cli|cli-program|cli-attach|api-openapi|short-lived-keys|household-routes)\.ts$/, /^src\/install\//, /^src\/desktop\//,
   // FQ-collaboration.unified-search: builds links to already-classified routes (/api/sessions/:id,
   // /api/workflows/:id, /api/audit), not a route of its own beyond /api/search, which src/server.ts defines.
   /^src\/unified-search\.ts$/,
   /^src\/never-break\/gateway\.ts$/, /^src\/commands\/catalog\.ts$/,
   /^src\/channel-setup\/cli\.ts$/, // mac7/connect: `branch connect` calls the Set up routes of the running Branch
   // r17-i: callers of other computers' routes and of the relay's, not routes of this one.
-  /^src\/reach\/(machines|remote-trunks|relay)\.ts$/,
+  /^src\/reach\/(machines|remote-trunks|relay|continuity)\.ts$/,
   // mac7/usage-bar: OpenRouter's own documented /api/v1/key, called outwards; not a route of ours.
   /^src\/usage-limits-openrouter\.ts$/,
   // selfdev: GitHub Enterprise's own /api/v3 and /api/graphql addresses, called outwards; not routes of ours.

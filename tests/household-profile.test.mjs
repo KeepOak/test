@@ -22,7 +22,6 @@ import { runOrigin } from "../dist/key-context.js";
 import { removalGuard, removePersonRefusal } from "../dist/remove-branch.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
-import { liveScreenViews } from "../dist/live-screen.js";
 
 const concrete = (path) => path.replaceAll(":id", SAMPLE_ID);
 const rows = Object.entries(ROUTES).map(([path, value]) => ({ path, ...entry(value) }));
@@ -156,8 +155,8 @@ test("generated over HTTP: the window switched to a household profile meets the 
     if (answer.status !== 400 || answer.body.error !== householdRefusalFor(path)) through.push(`${method} ${path} → ${answer.status} ${answer.body.error ?? ""}`.slice(0, 160));
   }
   assert.deepEqual(through, [], "a household profile got through");
-  // Refused before anything is captured: the household pass above pressed panels/screen too, and no view was opened.
-  assert.equal(liveScreenViews(), 0, "a household person's request opened no view of the screen");
+  // Refused before anything is captured: the household pass above pressed panels/screen too (src/local-screen.ts refuses
+  // anyone but the owner before it lists or opens anything; tests/local-screen-http.test.mjs holds that).
   assert.equal(app.store.profiles.isOwner(), false, "something switched the window back on the way");
   // The way out still works, with no PIN, and locking the window is still theirs.
   assert.equal((await call("POST", "/api/lock")).status, 200);

@@ -16,6 +16,8 @@ import { closeDlg, ic, openDlg, toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { demonstrationButtons, forgetDemonstration, initDemonstrations } from './browser-demonstrations.js';
+import { networkLearningButtons, initNetworkLearning } from './network-learning.js';
 
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
@@ -91,6 +93,7 @@ function applyView(answer) {
   const redraw = B.meta !== meta; B.meta = meta; changed(redraw);
 }
 function disconnect() {
+  forgetDemonstration();
   clearTimeout(B.timer); B.timer = 0;
   B.reading?.abort(); B.reading = null; clearFrame();
   if (B.pending) { B.pending = null; closeDlg(); }
@@ -125,7 +128,7 @@ export function ownerBrowserButtons(runId, name) {
   const back = task && (owned() || !B.control.writer)
     ? btn("owner-browser-handback", t("window.chat.stage.hand-back-to", { name: esc(name) }), "btn pri sm", task) : "";
   const take = owned() || free() ? "" : btn("owner-browser-take", t("action.take-over"), back ? "btn sm" : "btn pri sm");
-  return back + take + stop;
+  return back + take + demonstrationButtons() + networkLearningButtons() + stop;
 }
 /** Who is driving, in words, for the stage's pill. */
 export function ownerBrowserHolder(name) {
@@ -318,6 +321,9 @@ function pointerUp(event) {
 const inPage = (event) => event.target.closest?.("#stage7 .owner-browser7-page");
 
 export function initOwnerBrowser() {
+  initNetworkLearning({ bound: () => ({ ...bound(), tabId: B.tabId }), available: owned, onChange: changed });
+  initDemonstrations({ bound: () => ({ ...bound(), tabId: B.tabId }), available: owned, onChange: changed,
+    inOrder: work => { flushText(); return inOrder(work); } });
   markLive(["owner-browser-adopt", "owner-browser-stop", "owner-browser-take", "owner-browser-handback",
     "owner-browser-tab", "owner-browser-tab-close", "owner-browser-new-tab", "owner-browser-back", "owner-browser-forward",
     "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys"]);

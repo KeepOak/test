@@ -28,6 +28,28 @@ export interface DiscordOptions {
 }
 /** GUILDS, GUILD_MESSAGES, DIRECT_MESSAGES and MESSAGE_CONTENT: what reading a message needs. */
 const intents = (1 << 0) | (1 << 9) | (1 << 12) | (1 << 15);
+/**
+ * Who a message Branch posts may ping: the people it names and the author of the message it answers, never
+ * @everyone, @here or a role, whatever the words say. The same default as Hermes Agent's `_build_allowed_mentions`
+ * (plugins/platforms/discord/adapter.py, https://github.com/NousResearch/hermes-agent, MIT).
+ */
+const allowedMentions = { parse: ["users"], replied_user: true };
+/**
+ * Gateway close codes that no reconnect will cure, with what the owner has to do. The split into fatal and
+ * start-a-new-session codes follows OpenClaw's extensions/discord/src/internal/gateway-close-codes.ts
+ * (https://github.com/openclaw/openclaw, MIT). Only Message Content among the intents Branch asks for is privileged.
+ */
+const fatalCloses: Record<number, string> = {
+  4004: "Discord would not accept the bot token. Check the token saved in the locker.",
+  4010: "Discord refused the connection's shard setting. Reconnect the app from Settings › Chat apps.",
+  4011: "Discord says this bot is in too many servers for one connection. Remove it from some servers, then reconnect.",
+  4012: "Discord no longer accepts the gateway version Branch uses. Update Branch, then reconnect.",
+  4013: "Discord refused the gateway intents Branch asked for. Update Branch, then reconnect.",
+  4014: "Discord turned the connection away: enable the Message Content intent for this bot (Discord Developer Portal › Bot › Privileged Gateway Intents), then reconnect.",
+};
+/** Closes after which the old session is gone: connect again with a fresh identify, waiting longer each time. */
+const freshSessionCloses = new Set([4003, 4005, 4007, 4009]);
+class FatalClose extends Error {}
 const userSchema = z.object({ id: z.string(), username: z.string().optional(), bot: z.boolean().optional() }).passthrough();
 const createSchema = z.object({
   id: z.string(), channel_id: z.string(), guild_id: z.string().optional(), content: z.string().default(""),
@@ -69,7 +91,11 @@ export class DiscordAdapter implements ChannelAdapter {
   private readonly fetch: typeof fetch;
   private readonly connect: WebSocketConnect;
   private socket: WebSocketConnection | undefined;
-  private heartbeat: ReturnType<typeof setInterval> | undefined;
+  private heartbeat: ReturnType<typeof setTimeout> | undefined;
+  /** False from a heartbeat until Discord acknowledges it (op 11). */
+  private acked = true;
+  /** A wait Discord asked for (op 9, invalid session) before the next connection. */
+  private holdMs = 0;
   private state: ChannelHealth = { state: "reconnecting", reason: "Connecting to Discord" };
   private user: { id: string; name: string } | null = null;
   private session: { id: string; url: string } | null = null;
@@ -106,12 +132,15 @@ export class DiscordAdapter implements ChannelAdapter {
   }
   async stop(): Promise<void> {
     this.stopping = true;
-    if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.heartbeat) clearTimeout(this.heartbeat);
     if (this.keepalive) clearInterval(this.keepalive);
     this.socket?.close();
     await this.loop?.catch(() => undefined);
   }
-  /** Reconnects for as long as the channel is attached, resuming where Discord lets us. */
+  /**
+   * Reconnects for as long as the channel is attached, resuming where Discord lets us. A close code no reconnect
+   * can fix ends the loop with the reason on the card; the watchdog or the owner starts it again.
+   */
   private async run(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     for (let attempt = 0; !this.stopping; attempt++) {
       try {
@@ -119,12 +148,15 @@ export class DiscordAdapter implements ChannelAdapter {
         attempt = 0;
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
+        if (error instanceof FatalClose) { this.state = { state: "needs attention", reason }; return; }
         this.state = reason.includes("token")
           ? { state: "needs attention", reason: "Discord would not accept the bot token. Check the token saved in the locker." }
           : { state: "reconnecting", reason: `Lost the Discord connection: ${reason}` };
       }
       if (this.stopping) return;
-      await new Promise((resolve) => setTimeout(resolve, reconnectDelay(attempt + 1, this.options.reconnectBaseMs ?? 1000)));
+      const wait = Math.max(this.holdMs, reconnectDelay(attempt + 1, this.options.reconnectBaseMs ?? 1000));
+      this.holdMs = 0;
+      await new Promise((resolve) => setTimeout(resolve, wait));
     }
   }
   /** One socket, from handshake to close. Returns when the socket ends. */
@@ -143,9 +175,18 @@ export class DiscordAdapter implements ChannelAdapter {
     // close, and the loop then waited for a close nobody would ask for. Let it go straight away.
     if (this.stopping) socket.close();
     await socket.closed;
-    if (this.heartbeat) clearInterval(this.heartbeat);
+    if (this.heartbeat) clearTimeout(this.heartbeat);
     if (this.keepalive) clearInterval(this.keepalive);
-    if (!this.stopping) this.state = { state: "reconnecting", reason: "Discord closed the connection; reconnecting" };
+    if (this.stopping) return;
+    // Gateway close codes: https://discord.com/developers/docs/topics/opcodes-and-status-codes#gateway-gateway-close-event-codes
+    const code = socket.closeCode;
+    if (code !== undefined && fatalCloses[code]) throw new FatalClose(fatalCloses[code]);
+    if (code !== undefined && freshSessionCloses.has(code)) {
+      this.session = null;
+      this.sequence = null;
+      throw new Error(`Discord ended the session (${code}); starting a new one`);
+    }
+    this.state = { state: "reconnecting", reason: "Discord closed the connection; reconnecting" };
   }
   private async gateway(): Promise<string> {
     const response = await this.fetch(`${this.base}/gateway/bot`, { headers: this.headers(), signal: AbortSignal.timeout(20000) });
@@ -159,8 +200,9 @@ export class DiscordAdapter implements ChannelAdapter {
     if (typeof payload.s === "number") this.sequence = payload.s;
     if (payload.op === 10) return this.hello(payload.d);
     if (payload.op === 1) return this.beat();
+    if (payload.op === 11) { this.acked = true; return; }
     if (payload.op === 7) { this.socket?.close(); return; }
-    if (payload.op === 9) { this.session = null; this.socket?.close(); return; }
+    if (payload.op === 9) return this.invalidSession(payload.d === true);
     if (payload.op !== 0) return;
     if (payload.t === "READY") return this.ready(payload.d);
     if (payload.t === "INTERACTION_CREATE")
@@ -236,16 +278,46 @@ export class DiscordAdapter implements ChannelAdapter {
     this.noteLimits(response);
     if (!response.ok) throw new Error(`Discord refused the command list (${response.status})`);
   }
+  /**
+   * Heartbeats as Discord asks: the first after a random part of the interval, then one per interval. A beat still
+   * unacknowledged when the next is due means the connection is a zombie, so it is closed and resumed. The timing
+   * follows OpenClaw's GatewayHeartbeatTimers (extensions/discord/src/internal/gateway-lifecycle.ts) and
+   * startHeartbeat (extensions/discord/src/internal/gateway.ts), https://github.com/openclaw/openclaw, MIT.
+   */
   private hello(data: unknown): void {
-    const interval = this.options.heartbeatMs ?? z.object({ heartbeat_interval: z.number() }).passthrough().parse(data).heartbeat_interval;
-    if (this.heartbeat) clearInterval(this.heartbeat);
-    this.heartbeat = setInterval(() => this.beat(), Math.max(20, interval));
-    this.heartbeat.unref();
+    const interval = Math.max(20, this.options.heartbeatMs ?? z.object({ heartbeat_interval: z.number() }).passthrough().parse(data).heartbeat_interval);
+    if (this.heartbeat) clearTimeout(this.heartbeat);
+    this.acked = true;
+    const socket = this.socket;
+    const cycle = (after: number, first: boolean) => {
+      this.heartbeat = setTimeout(() => {
+        if (socket !== this.socket) return;
+        if (!first && !this.acked) { socket?.close(); return; }
+        this.beat();
+        cycle(interval, false);
+      }, after);
+      this.heartbeat.unref();
+    };
+    cycle(Math.floor(interval * Math.random()), true);
     this.socket?.send(JSON.stringify(this.session
       ? { op: 6, d: { token: this.options.token, session_id: this.session.id, seq: this.sequence } }
       : { op: 2, d: { token: this.options.token, intents, properties: { os: process.platform, browser: "Branch Agent", device: "Branch Agent" } } }));
   }
-  private beat(): void { this.socket?.send(JSON.stringify({ op: 1, d: this.sequence })); }
+  private beat(): void {
+    this.acked = false;
+    this.socket?.send(JSON.stringify({ op: 1, d: this.sequence }));
+  }
+  /**
+   * Op 9: the session is not valid. Its flag says whether it can still be resumed; either way Discord asks for a wait
+   * of one to five seconds first (one to five times the reconnect base, jittered, so tests stay quick). As OpenClaw's
+   * InvalidSession handling in extensions/discord/src/internal/gateway.ts (https://github.com/openclaw/openclaw, MIT).
+   */
+  private invalidSession(resumable: boolean): void {
+    if (!resumable) { this.session = null; this.sequence = null; }
+    const base = this.options.reconnectBaseMs ?? 1000;
+    this.holdMs = base + Math.floor(Math.random() * 4 * base);
+    this.socket?.close();
+  }
   private ready(data: unknown): void {
     const parsed = readySchema.parse(data);
     this.user = { id: parsed.user.id, name: parsed.user.username ?? parsed.user.id };
@@ -308,7 +380,7 @@ export class DiscordAdapter implements ChannelAdapter {
     const wait = this.readyAt - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
     // flags 4096: SUPPRESS_NOTIFICATIONS, for a progress message; the reply after it is the one that notifies.
-    const body = JSON.stringify({ content: this.content(text, format), ...(format?.quiet ? { flags: 4096 } : {}),
+    const body = JSON.stringify({ content: this.content(text, format), allowed_mentions: allowedMentions, ...(format?.quiet ? { flags: 4096 } : {}),
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}) });
     const response = await this.fetch(`${this.base}/channels/${encodeURIComponent(chatId)}/messages`, {
       method: "POST", headers: { ...this.headers(), "content-type": "application/json" }, body, signal: AbortSignal.timeout(20000),
@@ -342,6 +414,7 @@ export class DiscordAdapter implements ChannelAdapter {
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
     const body = JSON.stringify({
       content: this.content(text, format),
+      allowed_mentions: allowedMentions,
       components: DiscordAdapter.components(buttons),
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}),
     });
@@ -362,6 +435,7 @@ export class DiscordAdapter implements ChannelAdapter {
     const form = new FormData();
     form.append("payload_json", JSON.stringify({
       ...(file.caption ? { content: file.caption.slice(0, this.maxTextLength) } : {}),
+      allowed_mentions: allowedMentions,
       attachments: [{ id: 0, filename: file.name }],
       ...(replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {}),
     }));
@@ -393,7 +467,7 @@ export class DiscordAdapter implements ChannelAdapter {
     const wait = this.readyAt - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
     const form = new FormData();
-    form.append("payload_json", JSON.stringify({ content: (file.caption ?? "").slice(0, this.maxTextLength),
+    form.append("payload_json", JSON.stringify({ content: (file.caption ?? "").slice(0, this.maxTextLength), allowed_mentions: allowedMentions,
       attachments: [{ id: 0, filename: file.name }], components: buttons.length ? DiscordAdapter.components(buttons) : [], ...extra }));
     form.append("files[0]", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
     const response = await this.fetch(`${this.base}${path}`, { method, headers: this.headers(), body: form, signal: AbortSignal.timeout(60000) });
@@ -414,7 +488,7 @@ export class DiscordAdapter implements ChannelAdapter {
   }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
     await this.rest("PATCH", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`,
-      { content: this.content(text, format) });
+      { content: this.content(text, format), allowed_mentions: allowedMentions });
   }
   async deleteMessage(chatId: string, messageId: string): Promise<void> {
     await this.rest("DELETE", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`);

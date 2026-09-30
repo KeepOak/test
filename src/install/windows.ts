@@ -19,7 +19,8 @@ export function systemTool(name: string, systemRoot = process.env.SystemRoot ?? 
 export const runTool: RunTool = (file, args) =>
   new Promise((resolve, reject) =>
     execFile(file, args, { windowsHide: true, timeout: 30000, maxBuffer: 1048576 }, (error, stdout, stderr) =>
-      error ? reject(new Error(`${file} failed: ${(stderr || error.message).trim().slice(0, 300)}`)) : resolve(stdout)));
+      // The cause keeps the exit code and whether the tool was stopped for taking too long (src/install/gateway-task.ts).
+      error ? reject(new Error(`${file} failed: ${(stderr || error.message).trim().slice(0, 300)}`, { cause: error })) : resolve(stdout)));
 
 export interface ShortcutSpec {
   /** Full path of the .lnk file to write. */
