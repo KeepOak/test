@@ -9304,7 +9304,8 @@ Estimates count completed runtime rounds from when the owner enables the guard, 
 start of each UTC month. Turning it off and on starts a new counting period; changing rules while
 it is on retains that period. Prices are the current catalogue or owner correction and tokens use
 the larger of Branch's estimate and the service's reported count. Kept answers cost nothing.
-Unknown prices or unreadable receipts stop an enabled matching guard instead of counting as zero.
+Unknown prices or unreadable receipts stop an enabled matching guard instead of counting as zero. `activatedAt` is when the guard
+was last switched on; Branch writes it, and it is where the current counting period starts.
 
 Only the owner's explicitly named fallback is considered, and its own thresholds, known price,
 tool/picture/JSON capabilities, local-only routing and Trunk sign-in rules still apply. A pinned
