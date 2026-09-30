@@ -147,6 +147,8 @@ export interface ChannelAdapter {
    * notification sound. An app that cannot show code differently leaves it out and sends the words as they are.
    */
   send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined>;
+  /** Ephemeral private-chat preview, with no message id. The final answer must still use `send`. */
+  sendDraft?(chatId: string, draftId: number, text: string): Promise<void>;
   /**
    * The app's own command picker (Discord's slash commands; Telegram's "/" menu in #590), filled from the same catalog
    * every surface reads. An empty list clears it. Absent means the app keeps its commands elsewhere (Slack's are in the

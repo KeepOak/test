@@ -3728,6 +3728,12 @@ The getMe capability check and 120-character topic title sanitizer in `src/chann
 
 Neutral-name resolution and selecting a persisted name without rewriting personality files in `src/channels/personality-settings.ts` follow and adapt NousResearch/hermes-agent `hermes_cli/personality.py` and `gateway/slash_commands_model.py`, https://github.com/NousResearch/hermes-agent/blob/main/hermes_cli/personality.py and https://github.com/NousResearch/hermes-agent/blob/main/gateway/slash_commands_model.py (MIT). Branch uses its own per-chat setting and task snapshot; its fixed tone instructions are original. Hermes channel override configuration was inspected but not copied.
 
+## Hermes Agent Telegram draft streaming
+
+The private-chat draft eligibility/payload and draft-to-edit fallback in src/channels/telegram.ts and src/channels/reply-stream.ts are adapted from NousResearch/hermes-agent plugins/platforms/telegram/adapter.py (supports_draft_streaming and send_draft), MIT licensed. Branch retains its own plain-text preview, outbound guard, throttling and final delivery.
+
+Source: https://github.com/NousResearch/hermes-agent/blob/main/plugins/platforms/telegram/adapter.py
+
 MIT License
 
 Copyright (c) 2025 Nous Research
