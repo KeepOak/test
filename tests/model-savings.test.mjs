@@ -140,6 +140,13 @@ test("R17-046 OpenRouter preferences go only to openrouter.ai, and only when swi
   assert.deepEqual(openRouterBodyPart("https://openrouter.ai/api/v1", routing), { provider: routing });
   assert.deepEqual(openRouterBodyPart(local, routing), {});
   assert.deepEqual(openRouterBodyPart("https://openrouter.ai/api/v1", undefined), {});
+  // MODEL-091: the free router asks only for zero-priced endpoints that take every requested parameter (tools included),
+  // keeping the owner's company preferences; a paid model is untouched, and no other address is ever told.
+  const free = { require_parameters: true, max_price: { prompt: 0, completion: 0, request: 0 } };
+  assert.deepEqual(openRouterBodyPart("https://openrouter.ai/api/v1", undefined, "openrouter/free"), { provider: free });
+  assert.deepEqual(openRouterBodyPart("https://openrouter.ai/api/v1", routing, "openrouter/free"), { provider: { ...routing, ...free } });
+  assert.deepEqual(openRouterBodyPart("https://openrouter.ai/api/v1", routing, "anthropic/claude-opus-5-5"), { provider: routing });
+  assert.deepEqual(openRouterBodyPart(local, routing, "openrouter/free"), {});
 
   const store = { saved: {}, get(kind, who, key) { return this.saved[key] ? { data: this.saved[key] } : undefined; }, save(kind, who, key, data) { this.saved[key] = data; } };
   assert.equal(openRouterRouting(store, owner), null);

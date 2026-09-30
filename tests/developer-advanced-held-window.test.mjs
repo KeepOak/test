@@ -1,0 +1,68 @@
+/* Settings › Developer and Settings › Advanced: controls held back for a security review, now live where the engine
+   guards them.
+   - Tool scripts and WebAssembly: the safety extras' two parts at once; drawn on as they ship, turned off and on again.
+   - Tools that join over a WebSocket: the interop part client-tools, off as it ships.
+   - "From now on" for a specialist: one standing instruction for one Trunk, listed with Remove in the same dialog.
+   Mutation: in public/app/settings/pages/developer.js drop the two WIRES entries, or in advanced.js drop
+   specialistOrderLive from markLive, and the matching case goes red. */
+import test from "node:test";
+import assert from "node:assert/strict";
+import { settingsWindow, openSettingsPage, setLevel, isSoon } from "./settings-window.mjs";
+
+const until = async (check, what) => {
+  for (let tries = 0; tries < 100; tries++) { if (await check()) return; await new Promise((done) => setTimeout(done, 100)); }
+  assert.fail(what);
+};
+
+test("Developer: tool scripts and WebAssembly, and tools that join over a WebSocket, change the engine", async (t) => {
+  const { page, errors, call } = await settingsWindow(t, { name: "held-developer" });
+  await openSettingsPage(page, "general");
+  await setLevel(page, "technical");
+  await openSettingsPage(page, "developer");
+  const scripts = page.locator("#f15-tool-scripts-and-webassembly");
+  await until(() => scripts.isChecked(), "drawn on, as both parts ship");
+  assert.equal(await isSoon(scripts), false, "live");
+  await scripts.click();
+  await until(async () => { const m = (await call("/api/safety-extras")).modes; return m["tool-scripts"] === "off" && m["wasm-add-ons"] === "off"; },
+    "both parts off in the engine");
+  await page.locator("#f15-tool-scripts-and-webassembly").click();
+  await until(async () => { const m = (await call("/api/safety-extras")).modes; return m["tool-scripts"] !== "off" && m["wasm-add-ons"] !== "off"; },
+    "both on again");
+
+  const socket = page.locator("#f15-tools-that-join-over-a-websocket");
+  assert.equal(await socket.isChecked(), false, "off, as it ships");
+  assert.equal(await isSoon(socket), false, "live");
+  await socket.click();
+  const mode = async () => (await call("/api/interop")).parts.find((p) => p.part === "client-tools").mode;
+  await until(async () => (await mode()) !== "off", "a program on this computer may now lend tools");
+  await page.locator("#f15-tools-that-join-over-a-websocket").click();
+  await until(async () => (await mode()) === "off", "and off again");
+  assert.deepEqual(errors, []);
+});
+
+test("Advanced: a standing instruction for one Trunk is kept, listed and removed", async (t) => {
+  const { page, errors, call } = await settingsWindow(t, { name: "held-fno", before: (app) => { app.trunks.create({ name: "Scout" }); } });
+  await openSettingsPage(page, "general");
+  await setLevel(page, "advanced");
+  await openSettingsPage(page, "advanced");
+  const add = page.locator('[data-act="ad-fno"]');
+  assert.equal(await isSoon(add), false, "Add one is live");
+  await add.click();
+  // Other Trunks may be listed too (the default one); this is kept for Scout alone.
+  await page.locator(".dlg #fno-trunk").click();
+  await page.locator('.gsel-pop [role="option"]', { hasText: "Scout" }).click();
+  await page.locator(".dlg #fno-text").fill("Always cite the source page.");
+  await page.locator('.dlg [data-act="ad-fno-save"]').click();
+  await page.locator(".toast", { hasText: "Kept for Scout" }).waitFor();
+  const kept = (await call("/api/autonomy/instructions")).instructions;
+  assert.equal(kept.length, 1);
+  assert.match(kept[0].scope, /^specialist:trunk:/, "kept for that Trunk alone");
+  assert.equal(kept[0].text, "Always cite the source page.");
+  await add.click();
+  const row = page.locator(".dlg .prow", { hasText: "Always cite the source page." });
+  await row.waitFor();
+  assert.match(await row.innerText(), /Scout/, "listed with its Trunk");
+  await row.locator('[data-act="ad-fno-rm"]').click();
+  await until(async () => (await call("/api/autonomy/instructions")).instructions.length === 0, "Remove takes it away");
+  assert.deepEqual(errors, []);
+});

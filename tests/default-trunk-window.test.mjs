@@ -35,12 +35,24 @@ test("the window uses the default face, edits live files, changes default and li
   await page.locator('[data-act="view"][data-v="customize"]').first().click();
   await page.locator(`[data-act="edit"][data-id="${home.id}"]`).click();
   await page.getByRole("tab", { name: "Files", exact: true }).click();
+  // TRUNK-021: the Files tab follows the level chosen in Settings: Regular shows SOUL and USER, and says where the rest are.
+  const shownFiles = () => page.locator("[data-personality-file]").evaluateAll((nodes) => nodes.map((node) => node.dataset.personalityFile));
+  await page.locator('[data-personality-file="USER.md"]').waitFor();
+  assert.deepEqual(await shownFiles(), ["SOUL.md", "USER.md"]);
+  assert.equal(await page.getByText("More personality files are available in Advanced and Technical.").count(), 1);
   const file = page.locator('[data-personality-file="USER.md"]');
   await file.fill("Window preferences TEST-WINDOW-6512");
   const saved = page.waitForResponse((response) => response.url().endsWith(`/api/trunks/${home.id}/files`) && response.request().method() === "POST");
   await page.locator('[data-act="trunk-file-save"][data-name="USER.md"]').click();
   assert.equal((await saved).status(), 200);
   assert.equal(app.trunks.files.view(home.id).files.find((entry) => entry.name === "USER.md").text, "Window preferences TEST-WINDOW-6512");
+  // Technical shows all seven, and what was saved at Regular is still there.
+  await page.evaluate(() => import("/app/core/state.js").then((state) => { state.S.level = "technical"; }));
+  await page.getByRole("tab", { name: "Look", exact: true }).click();
+  await page.getByRole("tab", { name: "Files", exact: true }).click();
+  await page.locator('[data-personality-file="HEARTBEAT.md"]').waitFor();
+  assert.equal((await shownFiles()).length, 7);
+  assert.equal(await page.locator('[data-personality-file="USER.md"]').inputValue(), "Window preferences TEST-WINDOW-6512");
   await page.locator('[data-act="dlg-close"]').last().click();
   const changed = page.waitForResponse((response) => response.url().endsWith(`/api/trunks/${other.id}/default`));
   await page.locator(`[data-act="trunk-default"][data-id="${other.id}"]`).click();

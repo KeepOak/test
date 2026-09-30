@@ -337,6 +337,8 @@ import { handlesOtherPath, otherApi, OtherApiError } from "./other-api.js";
 import { handlesSdkKitPath, sdkKitApi, SdkKitError } from "./sdk-kit.js"; // bucket 21
 import { gitlabApi, GitLabApiError, handlesGitLabPath } from "./gitlab-connection.js"; // RES-719
 import { webPagesApi, WebPagesApiError } from "./web-pages.js"; // w911 (A0743, A1452) hook
+import { autoArchiveApi, AutoArchiveApiError } from "./memory-auto-archive.js"; // wire-greyed
+import { webSearchApi, WebSearchApiError } from "./web-search-choice.js"; // wire-greyed
 import { audit, csvCell } from "./audit.js";
 import { AppLockRefusal } from "./session-lock.js";
 import { unifiedSearch } from "./unified-search.js";
@@ -1114,6 +1116,13 @@ async function api(
     return webPagesApi({ store: app.store, owner: app.runtime.owner, requireOwner: (what) => app.store.profiles.requireOwner(what) },
       request.method ?? "GET", () => readBody(request)).catch((error: unknown) => {
       throw error instanceof WebPagesApiError ? new HttpError(error.status, error.message) : error;
+    });
+  // wire-greyed: where "search the web" goes, picked in Settings › Advanced (owner-only change).
+  if (path === "/api/web-search")
+    return webSearchApi({ store: app.store, owner: app.runtime.owner, launch: () => app.web.settings().search,
+      hasSecret: (name) => { try { return app.store.secrets.list(app.runtime.owner, app.store.projects.active(app.runtime.owner).id).some((entry) => entry.name === name); } catch { return false; } },
+      requireOwner: (what) => app.store.profiles.requireOwner(what) }, request.method ?? "GET", () => readBody(request, 4 * 1024)).catch((error: unknown) => {
+      throw error instanceof WebSearchApiError ? new HttpError(error.status, error.message) : error;
     });
   // RES-719: GitLab set up in the window: its switch, the token checked and kept in the locker, and taking it out.
   if (handlesGitLabPath(path))
@@ -2530,6 +2539,14 @@ async function memoryApi(app: Branch, request: IncomingMessage, path: string): P
     const { staged, review } = app.memory.hygiene.suggest(owner);
     return { suggested: staged.length, proposals: staged, review };
   }
+  // wire-greyed: Settings › Advanced › Archive facts unused for (owner only).
+  if (path === "/api/memory/auto-archive")
+    return autoArchiveApi({ store: app.store, owner: app.runtime.owner, retrieval: app.memory.retrieval,
+      requireOwner: (what) => app.store.profiles.requireOwner(what),
+      requireUnlocked: () => { if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch before changing how unused facts are set aside."); },
+    }, request.method ?? "GET", () => readBody(request, 1024)).catch((error: unknown) => {
+      throw error instanceof AutoArchiveApiError ? new HttpError(error.status, error.message) : error;
+    });
   if (request.method === "POST" && path === "/api/memory/hygiene") return app.store.memoryHygiene(owner, await readBody(request));
   if (request.method === "GET" && path === "/api/memory/archive") return { archived: app.store.archivedMemory(owner), total: app.store.archivedMemoryCount(owner) };
   // Purge all: every archived fact removed for good, the owner's alone. The confirm step is the word and how

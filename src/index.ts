@@ -43,6 +43,7 @@ import { Rings } from "./seasons/rings.js"; // Seasons
 import { Gardener } from "./seasons/gardener.js"; // Seasons
 import { Budding, registerBudding } from "./seasons/budding.js";
 import { MemoryRetrieval } from "./memory-retrieval.js";
+import { autoArchiveTick } from "./memory-auto-archive.js"; // wire-greyed
 import { MemoryHygiene } from "./memory-hygiene.js";
 import { chooseForInjection } from "./memory-layers.js";
 import { MemoryTidy, registerMemoryTidy, shipTidyProcedure } from "./memory-tidy.js";
@@ -184,6 +185,7 @@ import { GitLabConnection } from "./gitlab-connection.js"; // RES-719
 import { gitlabLaunch } from "./gitlab-switch.js"; // RES-719
 import { registerGitLab } from "./integrations/gitlab.js"; // RES-719
 import { WebPages, registerWebPages } from "./web-pages.js"; // w911 (A0743, A1452) hook
+import { savedSearchChoice } from "./web-search-choice.js"; // wire-greyed: web search picked in the window
 import { PluginCatalog } from "./plugin-catalog.js";
 import { AddOns } from "./add-ons/index.js"; // bucket-15: add-ons other people wrote
 import { SkillRevisions, registerSkillSync } from "./skill-revisions.js";
@@ -843,6 +845,8 @@ export async function createBranch(options: {
       reason: "Searching the web needed it", outcome: "handed over" });
     return value;
   };
+  // wire-greyed: the service picked in Settings › Advanced › Web search wins over the launch settings file's.
+  web.searchChoice = () => savedSearchChoice(store, runtime.owner);
   // Batch 19 (wave 7): the model services the owner added from the catalog are built again from
   // what was written down, with each key taken out of the locker, so they survive a restart.
   await restoreConnections({
@@ -1410,6 +1414,8 @@ ${result.output || "(it said nothing)"}`;
   rings.gardener = gardener;
   rings.problems = sourceRequests;
   scheduler.onTick.add(async (now) => { rings.tick(now); });
+  // wire-greyed: facts unused for the owner's chosen days set aside by themselves, once a day (off: "never").
+  scheduler.onTick.add(async (now) => { autoArchiveTick(store, memory.retrieval, runtime.owner, now.getTime()); });
   // Wave 7: the month's usage written out as a spreadsheet, into a folder of the owner's own
   // workspace, on the schedule they set. Nothing leaves this computer.
   scheduler.onTick.add(async (now) => {

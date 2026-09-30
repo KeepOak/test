@@ -8,7 +8,7 @@ import { openSettingsPage, settingsWindow } from "./settings-window.mjs";
 const sans = (page) => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--sans").trim());
 async function choose(page, words) {
   await page.locator("#reading-font").click();
-  await page.locator('.gsel-pop [role="menuitemradio"]', { hasText: words }).click();
+  await page.locator('.gsel-pop [role="option"]', { hasText: words }).click();
 }
 
 test("UP-UI-060: a reading font goes in front of the theme's fonts, is kept, and can be taken off", { timeout: 180000 }, async (t) => {

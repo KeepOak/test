@@ -719,8 +719,22 @@ const HOOKS = {
   followRoom: (info) => followRoom(info),
   /* Answer aloud, for a message said to a Trunk in its own conversation: where the replies stood, then the new one. */
   mark: () => replyMark(C.messages),
-  readAloud: (before) => readNewReply(before, C.messages),
+  readAloud: (before) => readReplies(before),
 };
+
+/* Use the same author history as the reply's face, including rooms and conversations that changed Trunks. */
+async function readReplies(before, info = null) {
+  const sessionId = C.sessionId, messages = C.messages;
+  if (!info) {
+    await loadWho();
+    if (C.sessionId !== sessionId || C.messages !== messages) return;
+    info = whoHere();
+  }
+  return readNewReply(before, messages, (m) => replyWords(m, info), (m) => {
+    const index = messages.slice(0, messages.indexOf(m)).filter(countsAsReply).length;
+    return authorOf(m, index, info)?.voice ?? "";
+  });
+}
 
 /* A new conversation's box, typed in while its first message was answered, becomes the conversation's own. The caret it
    had is put back once, on the redraw that follows; a later call does nothing, so a caret the person moves after the
@@ -751,7 +765,7 @@ async function adopt(sessionId, before, keepDraft) {
   if (C.seat !== seat) return;
   C.messages = got.messages ?? C.messages;
   C.project = got.project ?? C.project;
-  readNewReply(before, C.messages);
+  readReplies(before);
 }
 
 /* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
@@ -865,7 +879,7 @@ async function followRoom(info) {
     }
     try { C.messages = (await api("sessions/" + encodeURIComponent(info.sessionId))).messages ?? C.messages; } catch { /* the next second tries again */ }
     if (heard !== null && C.sessionId === info.sessionId && replyMark(C.messages) !== heard) {
-      readNewReply(heard, C.messages, (m) => replyWords(m, info));
+      readReplies(heard, info);
       heard = replyMark(C.messages);
     }
     renderNow();
@@ -985,7 +999,7 @@ async function follow(id) {
   watchThinking(false);
   forgetMade();
   renderNow();
-  if (before !== null && C.sessionId === id) readNewReply(before, C.messages);
+  if (before !== null && C.sessionId === id) readReplies(before);
 }
 
 /* trunk-one-row: a conversation archived or deleted from its line: the timeline moves on to its Trunk's newest one. */

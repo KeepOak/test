@@ -803,6 +803,7 @@ export const ROUTES = {
   "/api/mcp/connections": "owner POST",
   "/api/mcp/preflight": "look",
   "/api/mcp/servers": "owner POST",
+  "/api/mcp/registry/search": "owner POST",
   "/api/mcp/servers/sample/remove": "owner POST",
   "/api/mcp/servers/sample/start": "owner POST",
   "/api/mcp/servers/sample/stop": "owner POST",
@@ -822,6 +823,7 @@ export const ROUTES = {
   "/api/memory": "prefix",
   "/api/memory/": "prefix",
   "/api/memory/archive": "look",
+  "/api/memory/auto-archive": "owner POST", // wire-greyed: archive facts unused for 90 or 180 days, by itself
   "/api/memory/archive/purge": "owner POST", // Purge all removes archived facts for good: the owner's alone
   "/api/memory/archive/sample/restore": "other POST",
   "/api/memory/capacity": "owner POST",
@@ -1320,6 +1322,7 @@ export const ROUTES = {
   "/api/voice/transcribe": "task POST",
   "/api/voice/voices": "look",
   "/api/web-pages": "owner POST", // w911 (A0743, A1452) hook: the switch for reading and crawling web pages
+  "/api/web-search": "owner POST", // wire-greyed: where web searches go (Settings › Advanced › Web search)
   // mac7/wake-pins: the word that starts a turn. Reading says what this computer could do; changing is the owner's.
   "/api/voice/wake": "secret-read",
   // mac7/live-voice: speaking and seeing the words. Reading says which speech program is here and

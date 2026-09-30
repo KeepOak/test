@@ -30,6 +30,8 @@ test("GitLab in Settings › Advanced: a live switch, Connect keeps a checked to
   const box = page.locator("#f15-gitlab");
   await box.waitFor();
   assert.equal(await box.getAttribute("aria-disabled"), null, "the switch is live");
+  // The page draws before every one of its reads is back; the switch shows the engine's mode once GitLab's read arrives.
+  await page.waitForFunction(() => document.querySelector("#f15-gitlab")?.checked === true, null, { timeout: 10000 }).catch(() => {});
   assert.equal(await box.isChecked(), true, "it ships when needed");
 
   const row = page.locator("#gl-row");

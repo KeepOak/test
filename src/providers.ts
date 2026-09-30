@@ -416,7 +416,7 @@ export class OpenAIProvider implements Provider {
     // R17-S12 (integration review): the tier goes only to OpenAI's own address or Azure.
     const { service_tier: _tier, ...plain } = openaiBody(request, this.options.model, rule);
     const body = { ...plain, ...serviceTierPart(this.options.endpoint, request.serviceTier),
-      ...openRouterBodyPart(this.options.endpoint, request.providerRouting) };
+      ...openRouterBodyPart(this.options.endpoint, request.providerRouting, this.options.model) };
     if (request.onTextDelta) {
       // mac7/empty-completion: thinking goes to its own listener, never to the page.
       const stream = new OpenAIStream(request.onTextDelta, request.onReasoningDelta);

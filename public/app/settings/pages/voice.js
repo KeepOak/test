@@ -121,7 +121,7 @@ function listeningMore() {
 function answerAloud() {
   const cur = !V.settings ? null : !V.settings.autoReadAloud ? "never" : V.settings.readAloudWhen === "spoken" ? "talk" : "always";
   const opt = (v, l, act) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}">${esc(l)}</button>`;
-  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "aloud15")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small></small></div>`;
+  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "aloud15")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small>${t("settings-kit.field.read-aloud-when")}</small></div>`;
 }
 /* Voice: a computer voice reads replies aloud in that voice; Off stops reading aloud. */
 async function saveVoice(v) {

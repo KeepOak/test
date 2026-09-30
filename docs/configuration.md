@@ -72,6 +72,7 @@ The application reads environment variables when it starts. It does not automati
 | Variable | Meaning |
 | --- | --- |
 | `BRANCH_PROVIDER` | `openai` or `anthropic`. Unset means no model is set up: every task is refused with "No model yet. Choose one in setup or in Settings › Models." until one is added there. (`demo` names the tests' scripted fixture; only tests use it.) |
+| `BRANCH_MODEL_CATALOG_FILE` | Optional absolute path to a checked model-metadata JSON bundle. Load new model choices and prices at startup without replacing Branch. It can update existing services' `defaultModel`, `recommendedModels` and `prices`, but cannot change addresses, authentication, capabilities or terms. Nothing is downloaded automatically. A missing or invalid selected bundle is an error; remove this variable to use the shipped catalogue. |
 | `BRANCH_ENDPOINT` | API base URL, for example `https://api.openai.com/v1` or `https://api.anthropic.com/v1` |
 | `BRANCH_MODEL` | Model identifier accepted by that endpoint |
 | `BRANCH_API_KEY` | API credential; keep outside source control |
@@ -80,6 +81,30 @@ The application reads environment variables when it starts. It does not automati
 | `BRANCH_PORT` | Local web port, default `3210`; `0` selects an available port |
 | `BRANCH_INTEGRATIONS` | Path to a trusted integration configuration JSON file |
 | `BRANCH_MODEL_PRESETS` | Optional JSON list of named model presets (see below); overrides the single-provider variables |
+
+### Model catalogue metadata updates
+
+`BRANCH_MODEL_CATALOG_FILE` selects a local JSON file in this format. Prices are US dollars per million tokens;
+the bundle's explicit prices take precedence over Branch's shipped tables, while your saved price overrides still win.
+Only list fields you want to replace; unlisted services retain their shipped model choices and prices. A model's price
+takes `input` and `output`, and optionally `cached`, `cacheWrite` and `cacheWrite1h`; a rate it leaves out keeps the
+shipped one, so a known cache-write premium is not lost.
+
+```json
+{
+  "version": 1,
+  "pricedAt": "2026-09-29",
+  "services": [
+    { "id": "openai", "defaultModel": "your-model-id", "recommendedModels": ["your-model-id"],
+      "prices": { "your-model-id": { "input": 1, "output": 4 } } }
+  ]
+}
+```
+
+Obtain model ids and prices from the service's published catalogue, then restart Branch after replacing the file.
+This is an owner-managed metadata update, with no background download or hot reload. Addresses, credentials,
+provider shapes, capabilities and service terms remain those shipped with Branch. Unknown or repeated service ids
+and extra fields are rejected. Removing `BRANCH_MODEL_CATALOG_FILE` restores the shipped catalogue on the next start.
 
 ### Model presets
 
@@ -177,7 +202,7 @@ by hand; edit the data file and run that command.
 
 <!-- providers:start -->
 
-Branch knows 44 model services (36 online, 7 that run on this computer, and one address of your own). Every one of them has been tested against a fake of the
+Branch knows 45 model services (37 online, 7 that run on this computer, and one address of your own). Every one of them has been tested against a fake of the
 service, not against the real one, so treat this as "Branch speaks the right language", not as
 "this was tried on a live account". Addresses and prices were last checked on 2026-09-16.
 
@@ -214,6 +239,7 @@ service, not against the real one, so treat this as "Branch speaks the right lan
 | OpenAI | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types, compare passages, speech, pictures out, live conversation | just a key | [Your own API key](https://openai.com/policies/services-agreement/) |
 | OpenAI (Responses API) | in the cloud | OpenAI Responses | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key (Responses route)](https://openai.com/policies/services-agreement/) |
 | OpenRouter | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key](https://openrouter.ai/terms) |
+| OpenRouter · Free models with tools | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key · free model router](https://openrouter.ai/terms) |
 | Perplexity | in the cloud | Perplexity Agent | conversation, pictures in, tools, as it types | just a key | [Your own API key, Agent API](https://www.perplexity.ai/hub/legal/perplexity-api-terms-of-service) |
 | Portkey | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key](https://portkey.ai/terms) |
 | Qwen (Alibaba DashScope) | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types, compare passages | just a key | [Your own API key](https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-product-terms-of-service) |
@@ -508,9 +534,11 @@ The free fallback reads a public results page rather than an interface meant for
 
 `searchEndpoint` still sets the address the free fallback uses, so anything already set up keeps working.
 
+The window can pick the service too, under Settings › Advanced › Web search (`GET`/`POST /api/web-search`, owner only). Once the owner picks one there, that pick wins over the launch settings file; until then the file decides. Without a `keySecret`, a paid service looks for its usual secret name (`BRAVE_SEARCH_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY` or `SERPER_API_KEY`), and the row says whether that secret is saved.
+
 ### Pinned skills and memory retention
 
-Above the composer, **Pinned skill** keeps one enabled skill's full instructions in every turn of that conversation until unpinned (`GET|POST /api/sessions/:id/skill`). `POST /api/memory/hygiene {olderThanDays, action: "preview"|"archive"|"purge"}` reports or removes facts not updated within the period; archived facts are listed by `GET /api/memory/archive` and restored with `POST /api/memory/archive/:id/restore`.
+Above the composer, **Pinned skill** keeps one enabled skill's full instructions in every turn of that conversation until unpinned (`GET|POST /api/sessions/:id/skill`). `POST /api/memory/hygiene {olderThanDays, action: "preview"|"archive"|"purge"}` reports or removes facts not updated within the period; archived facts are listed by `GET /api/memory/archive` and restored with `POST /api/memory/archive/:id/restore`. Settings › Advanced › **Archive facts unused for** (90 days, 180 days or never; never is where Branch starts) sets aside by itself, once a day, the facts nobody changed or drew on for that long (`GET`/`POST /api/memory/auto-archive { afterDays: 90 | 180 | null }`, owner only): each goes into the archive with a note, keeps its versions and can be restored.
 
 ## Browser tools
 
@@ -10048,7 +10076,10 @@ rules every round). The registry asks them after every call (`src/registry.ts`).
 Formatters are programs you already have (`formatters`, at most 16): give each one's full address,
 its endings and its arguments (`{file}` is the file). After tidying, Branch waits up to `waitMs`
 (1.5 seconds by default, at most 10) for the language server's error report. A copy per helper
-(`perHelper`, off by default) gives every helper a task starts its own worktree too. Branch never installs one, refuses one that sits inside the
+(`perHelper`, on by default) gives every helper a task starts its own worktree in a Git project, removed when the
+helper finishes with nothing in it. Forking a conversation into its own copy (`forks`) is off by default, because each
+fork keeps a whole copy on disk. The worktrees switch starts at when needed; a saved off choice or `perHelper: false`
+keeps helpers in the shared folder. Branch never installs one, refuses one that sits inside the
 workspace (a task could rewrite it), starts it with an argument array and the clean environment
 (`src/child-env.ts`), and never on one of Branch's own files (`src/never-break/protected.ts`). A
 formatter reads the project's own settings (a `.prettierrc` can load plugins from the project), so it

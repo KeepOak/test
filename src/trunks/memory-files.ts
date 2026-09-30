@@ -5,6 +5,7 @@ import type { Store } from "../store.js";
 import { helperParent } from "../helper-control.js";
 import { memoryFileName, memoryTypes, type TrunkFiles } from "./files.js";
 import type { TrunkRecords } from "./record.js";
+import { registerFileProposals } from "./file-proposals.js";
 
 /**
  * The lead's workbench (SELF-311): the memory a Trunk keeps for itself, read at the start of every turn and edited by the
@@ -33,6 +34,7 @@ export function registerTrunkMemoryFiles(registry: ToolRegistry, store: Store, t
     return id;
   };
   const actor = (id: string) => `trunk:${id}`;
+  registerFileProposals(registry, trunks.files, trunkFor);
   registry.register({
     name: "memory.files", permission: "memory.read", group: "memory-extra",
     description: "Your MEMORY.md and the list of your memory files (name, type, one-line description). Both are also given to you at the start of every turn.",
