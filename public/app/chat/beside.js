@@ -7,7 +7,7 @@
      engine keeps no per-Trunk list for it; the hops note stays greyed because the engine does not say its limit. */
 
 import { $, esc, render } from "../core/dom.js";
-import { S, E, ownName, chatFace, trunkIntro } from "../core/state.js";
+import { S, E, ownName, chatFace, trunkIntro, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run, has } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, toast } from "../core/ui.js";
@@ -16,20 +16,17 @@ import { text } from "./markdown.js";
 import { mediaRows } from "./media.js";
 import { t } from "../../i18n.js";
 import { shareMenu } from "../flows/share.js";
+import { initBesidePicker, openBesidePicker, rememberBesidePick, pickedBesideName } from "./beside-picker.js";
 
-const V = { id: null, messages: [], loaded: null };
+const V = { id: null, messages: [], loaded: null, version: null, scope: null, pending: null, timer: null, at: 0, dirty: false };
 const sid = (s) => s.sessionId ?? s.id;
+const profile = () => JSON.stringify([activeId(), E.profiles?.isOwner ?? null]);
 /* A Trunk's or a room's own conversation by its name and face, as the list's rows are (core/state.js). */
-const nameOf = (id) => ownName(id) || E.sessions.find((s) => sid(s) === id)?.opening || "";
+const nameOf = (id) => ownName(id) || E.sessions.find((s) => sid(s) === id)?.opening || pickedBesideName(id) || "";
 
 /* ---------- the conversation beside ---------- */
 export function chatMenuTop() {
   return mi("beside15", "cols15", S.beside15 ? t("window.chat.beside.change") : t("window.chat.beside.open-another")) + shareMenu() + mi("roster10", "spark", t("window.chat.beside.who-it-knows")) + "<hr>";
-}
-
-function besidePop() {
-  const rows = E.sessions.filter((s) => sid(s) !== S.chat).slice(0, 8).map((s) => `<button class="mi" type="button" data-act="beside15" data-v="${esc(sid(s))}">${av(chatFace(sid(s)), 22)}<span><span class="mi-t">${esc(nameOf(sid(s)))}</span><span class="mi-s">${esc(String(s.lastMessage || "").slice(0, 44))}</span></span></button>`).join("");
-  return `<div class="ph">${t("window.chat.beside.open-beside")}</div>${rows}`;
 }
 
 function thread(messages, session) {
@@ -45,29 +42,51 @@ function thread(messages, session) {
 
 /* Only the newest pick's answer is kept: a slower read for a conversation picked earlier is dropped when it returns. */
 async function load(id) {
+  const who = profile(), request = new AbortController(), initial = V.id !== id;
+  V.pending = request; V.at = Date.now();
   V.loaded = id;
-  let messages = [];
-  try { messages = (await api("sessions/" + encodeURIComponent(id))).messages ?? []; } catch (error) { if (V.loaded === id) toast(error.message); }
-  if (V.loaded !== id) return;
-  V.messages = messages;
-  V.id = id;
-  render();
+  try {
+    const got = await api("sessions/" + encodeURIComponent(id), undefined, "GET", request.signal);
+    if (V.pending !== request || S.beside15 !== id || profile() !== who) return;
+    const changed = V.id !== id || JSON.stringify(V.messages) !== JSON.stringify(got.messages ?? []);
+    V.messages = got.messages ?? []; V.id = id;
+    if (changed) render();
+  } catch (error) { if (initial && V.pending === request && S.beside15 === id && profile() === who && error.name !== "AbortError") toast(error.message); }
+  finally { if (V.pending === request) { V.pending = null; if (V.dirty) scheduleLoad(id); } }
+}
+
+function scheduleLoad(id) {
+  V.dirty = true;
+  if (V.pending || V.timer) return;
+  V.timer = setTimeout(() => {
+    V.timer = null;
+    if (S.view !== "chat" || S.beside15 !== id || profile() !== V.scope) return;
+    V.dirty = false; void load(id);
+  }, Math.max(0, 1000 - (Date.now() - V.at)));
+}
+function clearBeside() {
+  clearTimeout(V.timer); V.pending?.abort();
+  Object.assign(V, { id: null, messages: [], loaded: null, version: null, scope: profile(), pending: null, timer: null, at: 0, dirty: false });
 }
 
 /* Wraps the conversation's scroll area in the split when another conversation is open beside it. */
 export function besideWrap(scroll) {
   const id = S.beside15;
-  if (!id || id === S.chat) return scroll;
-  if (V.loaded !== id) load(id);
+  if (!id || id === S.chat) { if (V.loaded || V.pending || V.timer) clearBeside(); return scroll; }
+  if (V.scope !== profile() || (V.loaded && V.loaded !== id)) clearBeside();
+  // main.js refreshes this snapshot after engine events; no second stream or periodic poll is needed.
+  const version = E.state;
+  if (V.loaded !== id || V.version !== version) { V.version = version; scheduleLoad(id); }
   const body = V.id === id ? thread(V.messages, id) : "";
   const name = esc(nameOf(id));
   return `<div class="split15">${scroll}<aside class="beside15" aria-label="${t("window.chat.beside.label", { name })}"><div class="bs-h15">${av(chatFace(id), 26)}<span class="grow"><b>${name}</b><small></small></span><button class="btn ghost sm" type="button" data-act="chat" data-id="${esc(id)}">${t("ov.open")}</button><button class="icon-btn" type="button" aria-label="${t("window.chat.beside.close")}" data-act="beside15" data-v="">${ic("x", "s")}</button></div><div class="bs-body15"><div class="thread">${body}</div></div></aside></div>`;
 }
 
 function beside(el) {
-  if (el.dataset.v == null) { openPop($('[data-act="chatmenu"]') || el, besidePop(), { right: true, force: true }); return; }
+  if (el.dataset.v == null) { openBesidePicker($('[data-act="chatmenu"]') || el); return; }
   S.beside15 = el.dataset.v || null;
-  V.loaded = null;
+  rememberBesidePick(S.beside15);
+  clearBeside();
   closePop();
   render();
   if (S.beside15 && innerWidth < 1000) toast(t("window.chat.beside.wider"));
@@ -122,6 +141,7 @@ function connectAgent() {
 }
 
 export function initBeside() {
+  initBesidePicker();
   markLive(["beside15", "roster10", "roster10h", "t9-kind-roster"]);
   on("t9-kind-roster", () => connectAgent());
   on("beside15", (el) => beside(el));

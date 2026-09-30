@@ -6615,6 +6615,7 @@
   "window.chat.beside.knows": "{name} connaît et peut parler à",
   "window.chat.beside.label": "{name}, à côté",
   "window.chat.beside.may-talk": "{who} peut parler à {name}",
+  "window.chat.beside.no-matches": "Aucune conversation ne correspond.",
   "window.chat.beside.open-another": "Ouvrir une autre conversation à côté",
   "window.chat.beside.open-beside": "Ouvrir à côté de celle-ci",
   "window.chat.beside.other-computers": "Sur d’autres ordinateurs",

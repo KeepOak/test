@@ -111,3 +111,28 @@ test("the conversation beside keeps its own messages when the one picked before 
 
 /* ---------------------------------------------------------------- Escape closes only the picker */
 
+
+/* ---------------------------------------------------------------- UP-UI-013: live and searchable */
+
+test("UP-UI-013: the conversation beside stays live, and its picker finds any conversation, not only the newest eight", async (t) => {
+  const f = await newWindow(t);
+  const oldest = seedTopic(f.app, "quinces");
+  for (const thing of ["apples", "figs", "grapes", "kiwis", "limes", "mangos", "melons", "olives", "peaches", "pears", "lemons"]) seedTopic(f.app, thing);
+  const plums = seedTopic(f.app, "plums");
+  const { page, errors } = await signIn(f);
+  await page.locator(`#side [data-act="chat"][data-id="${plums}"]`).click();
+  await page.locator("#conversation").getByText("Here is what I know about plums.").waitFor();
+  await page.locator('[data-act="chatmenu"]').first().click();
+  await page.locator('.pop [data-act="beside15"]:not([data-v])').click();
+  await page.locator("#beside-query").fill("quinces");
+  const hit = page.locator(`.pop [data-act="beside15"][data-v="${oldest}"]`);
+  await hit.waitFor();
+  assert.equal(await page.locator('.pop [data-act="beside15"][data-v]').count(), 1, "only the match is listed");
+  await hit.click();
+  const aside = page.locator("aside.beside15");
+  await aside.getByText("Here is what I know about quinces.").waitFor();
+  // Work goes on in the conversation beside; its new answer shows there without picking it again.
+  await f.app.runtime.run({ prompt: "One more thing about quinces", sessionId: oldest });
+  await aside.getByText("Here is a short answer.").waitFor({ timeout: 30000 });
+  assert.deepEqual(errors, []);
+});
