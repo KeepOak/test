@@ -247,6 +247,9 @@ function onDisk(path: string): string {
  */
 function sourceSpelling(path: string): string {
   const parts = path.split("/");
+  // Unpublished and abandoned attempt clones are protected too, but cannot confer a worktree contract.
+  if (/^branch-agent-source\.preparing-/i.test(parts[0] ?? ""))
+    return [sourceFolder, ".preparation", ...parts].join("/");
   if ((parts[0] ?? "").replace(/[. ]+$/, "").toLowerCase() !== sourceFolder) return path;
   return [sourceFolder, ...parts.slice(1)].join("/");
 }
@@ -269,9 +272,21 @@ export function workspacePath(workspace: string, scope: string, path: string, pl
   const plain = platform === "win32" ? windowsPlain : (value: string) => value;
   const root = real(paths.resolve(plain(workspace)));
   const full = real(paths.resolve(plain(workspace), plain(scope), plain(path)));
-  const inside = paths.relative(root, full);
-  if (inside.startsWith("..") || paths.isAbsolute(inside)) return null;
-  return sourceSpelling(tidy(inside));
+  const within = (base: string, target: string): string | null => {
+    const part = paths.relative(base, target);
+    return part === ".." || part.startsWith(`..${paths.sep}`) || paths.isAbsolute(part) ? null : part;
+  };
+  // Map the complete published clone, including its physical spelling and missing descendants,
+  // back to the existing logical contract layout. No staging path gains this identity without the link.
+  const source = real(paths.resolve(plain(workspace), sourceFolder));
+  const inSource = within(source, full);
+  if (within(root, source) !== null && inSource !== null) return sourceSpelling(tidy(paths.join(sourceFolder, inSource)));
+  const logical = sourceSpelling(tidy(paths.relative(paths.resolve(plain(workspace)), paths.resolve(plain(workspace), plain(scope), plain(path)))));
+  // A link escaping a protected logical path cannot turn a source write into an ordinary workspace write.
+  // Refuse it as the protected checkout, never grant the escaped path a worktree's contract.
+  if (insideSource(logical)) return `${sourceFolder}/.untrusted-link`;
+  const inside = within(root, full);
+  return inside === null ? null : sourceSpelling(tidy(inside));
 }
 const insideSource = (path: string): boolean => path === sourceFolder || path.startsWith(`${sourceFolder}/`);
 /** The self-development worktree a workspace path is in, or "" for the protected checkout itself. */
@@ -505,7 +520,7 @@ function startsProgram(deps: ContractGuardDeps, name: string, args: unknown): bo
 
 /** Whether Branch's own source is checked out in this workspace, under any spelling of its folder. */
 export function sourceCheckedOut(workspace: string): boolean {
-  try { return readdirSync(workspace).some((entry) => sourceSpelling(entry) === sourceFolder); } catch { return false; }
+  try { return readdirSync(workspace).some((entry) => insideSource(sourceSpelling(entry))); } catch { return false; }
 }
 
 /**
