@@ -49,7 +49,7 @@ async function fakeGit(root) {
 while [ $# -gt 0 ]; do case "$1" in -c) shift 2;; --no-pager) shift; break;; *) break;; esac; done
 echo "$*" >> '${log}'
 case "$1" in
-  remote) for last; do :; done; [ "$2" = get-url ] && [ "$last" = origin ] && { echo https://github.com/stabrea/Branch-Agent.git; exit 0; }; exit 1;;
+  remote) for last; do :; done; [ "$2" = get-url ] && [ "$last" = origin ] && { echo https://github.com/stabrea/Branch-Agent.git; exit 0; }; [ "$2" = set-url ] && [ "$3" = origin ] && exit 0; exit 1;;
   fetch) [ -e '${root}/fail-fetch' ] && { echo "fatal: couldn't find remote ref $3" >&2; exit 128; }; exit 0;;
   rev-parse) echo ${sha}; exit 0;;
   worktree) [ "$2" = add ] && mkdir -p "$5" && exit 0; exit 1;;
