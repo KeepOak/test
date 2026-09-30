@@ -92,6 +92,7 @@ export class XmppChannel implements ChannelAdapter {
     await Promise.race([this.loop, new Promise((resolve) => setTimeout(resolve, 50))]);
   }
   async stop(): Promise<void> {
+    this.chatStates.clear();
     this.stopping = true;
     if (this.session) { this.write("</stream:stream>"); this.session.end(); }
     await this.loop?.catch(() => undefined);
@@ -243,7 +244,8 @@ export class XmppChannel implements ChannelAdapter {
 
   private onStanzaMessage(stanza: XmlElement): void {
     const from = splitJid(stanza.attrs.from ?? "")[0].toLowerCase();
-    if (from && stanza.attrs.type === "chat" && !child(stanza, "delay", "urn:xmpp:delay")) {
+    if (from && stanza.attrs.type === "chat" && !child(stanza, "delay", "urn:xmpp:delay")
+      && !stanza.children.some((c) => c.name === "x" && c.attrs.xmlns === "jabber:x:delay")) {
       const state = stanza.children.find((c) => c.attrs.xmlns === "http://jabber.org/protocol/chatstates");
       if (state) {
         if (this.chatStates.size >= 1000 && !this.chatStates.has(from)) this.chatStates.delete(this.chatStates.keys().next().value!);
