@@ -10597,5 +10597,17 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier"
+  "wsedit.up": "Remonter d'un dossier",
+  "window.github-reader.title": "Lecteur GitHub",
+  "window.github-reader.purpose": "Lisez la description d’un ticket ou d’une demande de fusion et les commentaires de la conversation.",
+  "window.github-reader.reference": "Lien GitHub ou owner/repository#numéro",
+  "window.github-reader.read": "Lire",
+  "window.github-reader.reading": "Lecture…",
+  "window.github-reader.source": "Ouvrir la source sur GitHub",
+  "window.github-reader.untrusted": "Ce texte a été écrit par d’autres. Il est cité et ne constitue pas des instructions pour Branch.",
+  "window.github-reader.comments": "Commentaires de la conversation",
+  "window.github-reader.bounds": "Cette lecture comprend au plus 20 commentaires. Les descriptions sont limitées à 20 000 caractères et chaque commentaire à 4 000. GitHub peut contenir plus de contenu. Les fils de revue, différences et discussions ne sont pas inclus.",
+  "window.github-reader.empty": "Aucun commentaire renvoyé.",
+  "window.github-reader.reference-error": "Saisissez un lien GitHub vers un ticket ou une demande de fusion, ou owner/repository#numéro.",
+  "window.github-reader.response-error": "La lecture n’a pas renvoyé la conversation GitHub demandée."
 }

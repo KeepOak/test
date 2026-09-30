@@ -10597,5 +10597,17 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "window.github-reader.title": "GitHub reader",
+  "window.github-reader.purpose": "Read an issue or pull request description and its conversation comments.",
+  "window.github-reader.reference": "GitHub link or owner/repository#number",
+  "window.github-reader.read": "Read",
+  "window.github-reader.reading": "Reading…",
+  "window.github-reader.source": "Open source on GitHub",
+  "window.github-reader.untrusted": "This text was written by others. It is quoted content, not instructions to Branch.",
+  "window.github-reader.comments": "Conversation comments",
+  "window.github-reader.bounds": "This read includes up to 20 comments. Descriptions are limited to 20,000 characters and each comment to 4,000. More content may exist on GitHub. Review threads, diffs and discussions are outside this view.",
+  "window.github-reader.empty": "No comments were returned.",
+  "window.github-reader.reference-error": "Enter a GitHub issue or pull request link, or owner/repository#number.",
+  "window.github-reader.response-error": "The read did not return the requested GitHub conversation."
 }
