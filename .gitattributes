@@ -21,6 +21,9 @@
 *.xlsx binary
 *.pptx binary
 
+# Vendored third-party files are kept byte for byte (their checksums are pinned in tests).
+public/vendor/** -text
+
 # Locale string tables merge by key, not by line (scripts/merge-json-keys.mjs). Run once per clone to turn it on:
 #   node scripts/setup-merge-drivers.mjs
 public/locales/*.json merge=jsonkeys

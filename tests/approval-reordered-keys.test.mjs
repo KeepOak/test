@@ -6,7 +6,6 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,9 +30,12 @@ test("a fingerprint is the same for the same JSON however it is spelled, and dif
     "the same bytes to another tool are another question");
 });
 
-/** Writes the file its first message names; after a yes, sends the same call back with its keys the other way round. */
+/**
+ * Writes the file its first message names. QA R1: after a yes the engine makes the approved call itself, so this model
+ * sends a call back only once, after that result: the same call with its keys the other way round, or a changed one.
+ */
 function reorderingWriter(changeOnRetry) {
-  let file = "";
+  let file = "", retried = false;
   return { name: "reorderer", async complete(request) {
     const last = request.messages.at(-1);
     const named = /^write (\S+)/.exec(String(last?.content ?? ""));
@@ -41,7 +43,8 @@ function reorderingWriter(changeOnRetry) {
       file = named[1];
       return { content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify({ path: file, content: "hello" }) }] };
     }
-    if (last?.role === "tool" && !/"ok":true/.test(last.content)) {
+    if (last?.role === "tool" && !retried) {
+      retried = true;
       const retry = changeOnRetry ? { content: "hello!", path: file } : { content: "hello", path: file };
       return { content: "", toolCalls: [{ id: `w${Math.random()}`, name: "files.write", arguments: JSON.stringify(retry) }] };
     }
@@ -71,6 +74,8 @@ test("the window's yes carries the task on when the model sends the same call ba
   assert.equal(await f.approve(first.sessionId, question.fingerprint), 200);
   assert.ok(await settled(() => f.app.store.run(first.id).status !== "running"), "the task settled");
   assert.equal(f.app.store.run(first.id).status, "completed", "it finished instead of asking the same question again");
+  assert.equal(f.app.store.events(first.id).filter((event) => event.kind === "run.approved_repeat").length, 1,
+    "the reordered call got the approved call's result, and nothing ran twice");
   assert.equal(await readFile(join(f.root, "workspace", "a.txt"), "utf8"), "hello", "and did what the yes was for");
   assert.equal(f.asked(first.id), 1, "the owner was asked once");
 });
@@ -82,6 +87,6 @@ test("a yes still never covers a call that came back changed", async (t) => {
   assert.equal(await f.approve(first.sessionId, question.fingerprint), 200);
   assert.ok(await settled(() => f.app.store.run(first.id).status !== "running"), "the task settled");
   assert.equal(f.app.store.run(first.id).status, "needs_input", "the changed call is asked about again");
-  assert.ok(!existsSync(join(f.root, "workspace", "b.txt")), "and nothing was written");
+  assert.equal(await readFile(join(f.root, "workspace", "b.txt"), "utf8"), "hello", "only the approved request was written, not the changed one");
   assert.equal(f.asked(first.id), 2, "a second question, for the changed call");
 });

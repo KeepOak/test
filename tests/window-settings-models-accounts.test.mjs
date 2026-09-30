@@ -105,6 +105,23 @@ test("Edit Trunk › Accounts: an account picked for a connection is saved, reac
   await openAccounts(page, trunk.id);
   assert.equal(await page.locator(`.dlg [data-tk-pool="${POOL}"]`).getAttribute("value"), second);
 
+  /* Where it goes when its pick runs out: saved as keys.next, with the pick and "Use my accounts too" kept. */
+  const then = page.locator(`.dlg [data-tk-next="${POOL}"]`);
+  assert.deepEqual((await gselChoices(then)).map((c) => c.value), ["", "primary"], "only the connection's other accounts");
+  await pickGsel(then, "primary");
+  await waitFor(async () => (await call(`/api/trunks/${trunk.id}`)).trunk.keys.next?.[POOL]?.[0] === "primary");
+  assert.deepEqual((await call(`/api/trunks/${trunk.id}`)).trunk.keys, { copyFromOwner: true, accounts: { [POOL]: second }, next: { [POOL]: ["primary"] } });
+  await page.keyboard.press("Escape");
+
+  /* When its work moves on at a limit, the owner is told which account took it. */
+  accountsServiceFor(app.runtime.models).trunkMoves.unshift({ sessionId: saved.chatSessionId, pool: POOL, name: "OpenAI test",
+    from: "Second key", to: "Your key", why: "Second key reached its plan limit.", at: new Date().toISOString() });
+  const moving = app.store.createRun(owner, "hello");
+  app.store.event(moving.id, "model.account_moved", {}); // the window reads its state again on the engine's events, as when it moves
+  const card = page.locator(".notif");
+  await card.waitFor({ timeout: 30000 });
+  assert.match(await card.innerText(), /Ada[\s\S]*Moved to Your key on OpenAI test: Second key reached its limit\./);
+
   /* A paused account is listed but cannot be taken. */
   await call("/api/accounts/update", { pool: POOL, account: "primary", disabled: true });
   await reload(page);
@@ -146,7 +163,7 @@ test("Settings › Models › Second opinion is live: the switch, who checks and
   assert.equal(await sw.getAttribute("aria-disabled"), null, "not greyed");
   await sw.click();
   await waitFor(async () => (await call("/api/second-opinion")).advisor === true);
-  await page.locator(`[data-act="m-second-by"][data-v="${POOL}"]`).click();
+  await pickGsel(page.locator("#m-second-by"), POOL); // a glass list: one choice per connection (QA pass 2)
   await waitFor(async () => (await call("/api/second-opinion")).advisorPreset === POOL);
   await page.locator("#m-second-max").fill("9000");
   await page.locator("#m-second-max").press("Tab");
@@ -166,7 +183,7 @@ test("Settings › Models › Second opinion is live: the switch, who checks and
   await reload(page);
   await openModels(page, "second");
   assert.ok(await page.locator("#m-second").isChecked());
-  assert.equal(await page.locator(`[data-act="m-second-by"][data-v="${POOL}"]`).getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator("#m-second-by").getAttribute("value"), POOL);
   assert.equal(await page.locator("#m-second-max").inputValue(), "9000");
   /* The note the switch promises: Look inside reads it from the task's own record (chat/messages.js inspect). */
   const run = await app.runtime.run({ prompt: "hello" });

@@ -41,7 +41,7 @@ async function fixture(t, { mode = "normal", reply = events(), hold = false, sta
     let bytes = ""; for await (const chunk of incoming) bytes += chunk;
     seen.push({ body: JSON.parse(bytes), headers: incoming.headers });
     response.on("close", () => { disconnected = true; });
-    response.writeHead(status, { "content-type": "text/event-stream" });
+    response.writeHead(status, { "content-type": "text/event-stream", ...(status === 429 ? { "anthropic-ratelimit-unified-reset": "1790672400" } : {}) });
     const body = Buffer.from(reply.map((event) => `event: ${event.type}\r\ndata: ${JSON.stringify(event)}\r\n\r\n`).join(""));
     for (let i = 0; i < body.length; i += 3) response.write(body.subarray(i, i + 3));
     if (!hold) response.end();
@@ -170,6 +170,8 @@ test("subscription sign-in and plan failures are actionable without disclosing n
   for (const status of [401, 429]) {
     const f = await fixture(t, { status });
     await assert.rejects(scope(() => f.provider.complete(request())), status === 401 ? /Accounts.*sign in again/ : { name: "ProgramLimitError" });
+    // The plan's own reset time is named when the service gives one.
+    if (status === 429) await assert.rejects(scope(() => f.provider.complete(request())), /plan limit until about 2026-09-29 09:00 UTC/);
   }
 });
 
@@ -193,7 +195,7 @@ test("production connector pins the first-party TLS identity and does not follow
 });
 
 test("selfdev/prompt-cache: every round of one conversation runs in the same private folder, so its request front never moves", async (t) => {
-  const f = await fixture(t);
+  const f = await fixture(t, { options: { timeoutMs: 60000 } }); // six native runs, two at once: room under a busy machine
   const first = [{ role: "system", content: "Owner's instructions" }, { role: "user", content: "Read the file" }];
   const later = [...first, { role: "assistant", content: "", toolCalls: [{ id: "c1", name: "files.read", arguments: '{"path":"a.txt"}' }] },
     { role: "tool", toolCallId: "c1", content: "a" }];

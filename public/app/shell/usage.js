@@ -10,7 +10,7 @@ import { $, esc, render, renderNow, pressIn, whenReleased } from "../core/dom.js
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
 import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -77,13 +77,22 @@ function windowRow(w, estimated) {
 }
 
 /* A sign-in never measured yet says so, and offers Measure now (POST /api/usage/limits/measure): one tiny real message. */
+/* models-ui (owner 2026-09-27, per-Trunk subscriptions): the Trunks that answer with this very account (their pick in
+   Edit Trunk › Accounts, keys.accounts). A Trunk that copies the owner's accounts and picked none follows the owner's
+   order, so it is named under no account in particular. */
+const rowAccount = (r) => r.account ?? "primary";
+const trunksOn = (r) => (E.trunks ?? []).filter((tr) => tr.keys?.accounts?.[r.connection] === rowAccount(r));
+function trunkLine(r) {
+  const names = trunksOn(r).map((tr) => tr.name);
+  return names.length ? `<small class="lim-trunks">${esc(t("glance.trunksOn", { names: names.join(", ") }))}</small>` : "";
+}
 function limitRow(r) {
   const busy = checking.has(rowKey(r)), said = busy ? t("glance.checking") : updatedWords(r);
   const measure = r.signIn && !r.windows?.length && !busy ? `<small>${esc(t("glance.measureNote"))}</small><button class="btn sm" type="button" data-act="limmeasure" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "primary")}">${esc(t("glance.measureNow"))}</button>` : "";
   const body = r.windows?.length
     ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}${r.note ? ` ${esc(r.note)}` : ""}</small>`
     : `<small>${esc(busy ? said : r.note)}</small>${measure}`;
-  return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}${offerBlock(r)}</div></div>`;
+  return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${trunkLine(r)}${body}${offerBlock(r)}</div></div>`;
 }
 
 /* ---------- more usage, where the service offers it (src/usage-offers.ts) ----------
@@ -200,10 +209,17 @@ function countDown(el) {
    Settings › Data & usage, or the window is not the owner's. It is read again every 20 seconds and whenever the engine's
    state is read again (each event), and the bar is drawn again only when the line changed. */
 let glance = null, readFor = null, reading = false, again = false;
+let identityTimer = null;
 const STALE_MS = 15 * 60_000, METER_EVERY_MS = 5 * 60_000;
+/* In a Trunk's own conversation the meter is that Trunk's: its own model (else the owner's), and the account it picked
+   for that connection (else the one used next), so its own window and reset are what the bar says. */
+const trunkHere = () => (S.chat ? (E.trunks ?? []).find((tr) => tr.chatSessionId === S.chat) ?? null : null);
 const inUseRow = (g) => {
-  const id = E.state?.activeModel?.presetId;
-  return id ? (g?.rows ?? []).find((r) => (r.presets ?? [r.connection]).includes(id) && r.inUse) ?? null : null;
+  const tr = trunkHere(), id = tr?.model || E.state?.activeModel?.presetId;
+  if (!id) return null;
+  const rows = (g?.rows ?? []).filter((r) => (r.presets ?? [r.connection]).includes(id));
+  const picked = tr ? rows.find((r) => tr.keys?.accounts?.[r.connection] === rowAccount(r)) : null;
+  return picked ?? rows.find((r) => r.inUse) ?? null;
 };
 function planOf(g) {
   if (!g?.available || g.settings?.ring === "hidden") return null;
@@ -213,7 +229,9 @@ function planOf(g) {
   for (const w of row.windows ?? []) { const pct = pctLeft(w); if (pct !== null && (!best || pct < best.pct)) best = { pct, w }; }
   /* Nothing measured yet: the plan's name and an empty ring, never the model's name. */
   if (!best && row.state === "not_published" && !row.signIn && !/No limit/.test(row.note ?? "")) return null;
-  return { name: row.connectionName, signIn: row.signIn, ...(best ?? { pct: null, w: null }) };
+  const tr = trunkHere(), own = tr && tr.keys?.accounts?.[row.connection] === rowAccount(row);
+  const name = own ? t("glance.trunkMeter", { name: row.connectionName, trunk: tr.name, account: row.accountLabel ?? "" }) : row.connectionName;
+  return { name, signIn: row.signIn, ...(best ?? { pct: null, w: null }) };
 }
 function ringSVG(pct, dashed) {
   if (pct === null) return `<svg width="18" height="18" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="9" fill="none" stroke="var(--line-2)" stroke-width="3"/></svg>`;
@@ -241,8 +259,17 @@ async function readGlance() {
 }
 function keep(g) {
   const before = JSON.stringify(planOf(glance));
+  const rowsBefore = JSON.stringify(glance?.rows);
   glance = g;
   if (JSON.stringify(planOf(glance)) !== before) render();
+  if (JSON.stringify(g?.rows) !== rowsBefore) redrawPop(looks);
+  hydrateIdentities();
+}
+function hydrateIdentities() {
+  clearTimeout(identityTimer);
+  const visible = () => ownerHere() && !document.querySelector(".lockscreen") && document.querySelector(".pop .lims");
+  if (!glance?.identitiesPending || !visible()) return;
+  identityTimer = setTimeout(() => { if (visible()) readGlance(); }, 1000);
 }
 
 /* The status bar's own cadence: a ChatGPT plan in use is read again every five minutes while this window is in front (and
@@ -327,6 +354,7 @@ export function initUsage() {
   setInterval(checkLimits, 20000);
   setInterval(meterCheck, 60_000);
   window.addEventListener("focus", meterCheck);
+  for (const event of ["click", "keydown"]) document.addEventListener(event, () => queueMicrotask(hydrateIdentities));
   on("limcheck", () => checkRows(glance?.rows ?? []));
   on("updmenu", (el) => openUpdates(el));
   on("upd-snooze", (el) => { closePop(); snoozeUpdate(el.dataset.v); });
@@ -345,6 +373,7 @@ export function initUsage() {
     if (g) keep(g);
     openPop(el, popHTML(g), { right: true });
     if (!g || !document.querySelector(".pop .lims")) return;
+    hydrateIdentities();
     checkRows(g.rows ?? []);
     const look = looks;
     api("usage/limits/look", {}).then((next) => { keep(next); redrawPop(look); }).catch((error) => toast(error.message));

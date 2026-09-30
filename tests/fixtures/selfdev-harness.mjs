@@ -5,13 +5,15 @@
  * real GitHub for scripts/selfdev-proof.mjs --github).
  */
 import { execFile } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { request } from "node:http";
 import { promisify } from "node:util";
 import { createBranch } from "../../dist/index.js";
 import { startServer } from "../../dist/server.js";
 import { loadIntegrations } from "../../dist/integrations/bootstrap.js";
+import { saveKnobs } from "../../dist/knobs/settings.js";
+import { ChatGPTAuth, FileTokenVault } from "../../dist/chatgpt-auth.js";
 
 const run = promisify(execFile);
 const git = async (cwd, ...args) => (await run("git", args, { cwd, windowsHide: true })).stdout.trim();
@@ -77,6 +79,24 @@ async function gitIdentity(root) {
   process.env.HOME = home;
 }
 
+/** Room for a long piece of work, set as the owner would in Settings: more rounds and a longer tool wait for checks. */
+export function roomToWork(app) {
+  saveKnobs(app.store, app.runtime.owner, "limits", { maxSteps: 400, maxModelRounds: 300, maxTaskTokens: 20_000_000 });
+  saveKnobs(app.store, app.runtime.owner, "commands", { toolTimeoutSeconds: 1800, commandTimeoutSeconds: 1800 });
+}
+
+/** The owner's designated default Trunk ("Ada"), introduced, with its conversation in Full Access; its session id. */
+export async function defaultTrunkConversation(engine) {
+  const { trunks } = engine.app;
+  trunks.setMode("trunks", { mode: "on" });
+  const ada = trunks.create({ name: "Ada" });
+  trunks.setDefault(ada.id);
+  await trunks.introduced();
+  const mode = await engine.api("conversation-mode", { sessionId: ada.chatSessionId, mode: "full" });
+  if (mode.status !== 200) throw new Error(`Full Access was not selected: ${JSON.stringify(mode.body)}`);
+  return ada.chatSessionId;
+}
+
 /** Where git, node and npm live on this computer, for the command aliases. */
 async function executablePath(name) {
   const finder = process.platform === "win32" ? "where.exe" : "which";
@@ -101,6 +121,7 @@ export async function startEngine(root, options) {
     ...(options.npm ? { npm: process.platform === "win32"
       ? { path: process.execPath, args: [join(dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js")] }
       : { path: await executablePath("npm"), args: [] } } : {}),
+    ...(options.python ? { python: { path: await executablePath("python"), args: [] } } : {}),
   };
   const integrations = {
     shell: { executables, timeoutMs: 1_800_000, maxCpuSeconds: 7200, maxOutputBytes: 8192, useJobObject: false,
@@ -110,9 +131,14 @@ export async function startEngine(root, options) {
   };
   const file = join(root, "integrations.json");
   await writeFile(file, JSON.stringify(integrations, null, 2));
+  // `chatgptAuth`: a bench ChatGPT sign-in (Branch's own chatgpt-auth.json from `branch login` on a bench folder, never
+  // another program's) is copied in, and copied back on close, so its refreshed tokens stay one chain.
+  const chatgptFile = join(dataDir, "chatgpt-auth.json");
+  if (options.chatgptAuth) { await mkdir(dataDir, { recursive: true }); await copyFile(options.chatgptAuth, chatgptFile); }
+  const chatgpt = () => options.chatgptAuth ? { chatgpt: new ChatGPTAuth(new FileTokenVault(chatgptFile), { userAgent: "BranchAgent" }) } : {};
   // `connect(app)` saves a model connection and asks for a restart, as the owner's app does when one is added.
-  let app = await createBranch({ workspace, dataDir, ...(options.provider ? { provider: options.provider } : {}) });
-  if (options.connect && await options.connect(app)) { await app.close(); app = await createBranch({ workspace, dataDir }); }
+  let app = await createBranch({ workspace, dataDir, ...chatgpt(), ...(options.provider ? { provider: options.provider } : {}) });
+  if (options.connect && await options.connect(app)) { await app.close(); app = await createBranch({ workspace, dataDir, ...chatgpt() }); }
   let loaded;
   try {
     await options.ready?.(app);
@@ -134,5 +160,8 @@ export async function startEngine(root, options) {
     return { status: answer.status, body: parsed };
   };
   return { app, server, api, workspace, dataDir,
-    close: async () => { await server.close().catch(() => undefined); await loaded.close().catch(() => undefined); await app.close(); } };
+    close: async () => {
+      await server.close().catch(() => undefined); await loaded.close().catch(() => undefined); await app.close();
+      if (options.chatgptAuth) await copyFile(chatgptFile, options.chatgptAuth).catch(() => undefined);
+    } };
 }

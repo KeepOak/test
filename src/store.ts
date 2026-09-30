@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import type { Event, Message, Run, RunStatus } from "./contracts.js";
 import { reconcileTranscript } from "./transcript.js";
+import { notRunMark, notRunResult } from "./approved-call.js"; // QA R1
 import { SessionHistory } from "./history.js";
 import { SessionBranches, type ConversationFiles } from "./sessions.js";
 import { SessionLibrary } from "./session-library.js";
@@ -193,7 +194,8 @@ export class Store {
       .prepare("PRAGMA table_info(usage)")
       .all()
       .map((row) => row.name);
-    for (const column of ["attempts", "unreported_calls", "incomplete_calls"])
+    // Prompt-cache reads and writes, as parts of reported_input, so each can be priced at its own rate (src/pricing.ts).
+    for (const column of ["attempts", "unreported_calls", "incomplete_calls", "reported_cached_input", "reported_cache_write", "reported_cache_write_hour"])
       if (!usageColumns.includes(column))
         this.db.exec(
           `ALTER TABLE usage ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`,
@@ -617,6 +619,11 @@ export class Store {
       .all(owner)
       .map((row) => this.toRun(row));
   }
+  /** models-ui: this person's task ids started since then, newest first, at most `limit` (Settings › Data & usage, by Trunk). */
+  taskIdsSince(owner: string, since: string, limit: number): string[] {
+    return this.db.prepare("SELECT id FROM tasks WHERE owner=? AND created_at >= ? ORDER BY created_at DESC LIMIT ?")
+      .all(owner, since, limit).map((row) => String(row.id));
+  }
   /** Settings › Permissions › Messages per conversation per hour: how many tasks a conversation started since then. */
   sessionTasksSince(sessionId: string, since: string): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS n FROM tasks WHERE session_id=? AND created_at >= ?").get(sessionId, since) as { n: number }).n);
@@ -674,7 +681,11 @@ export class Store {
     const run = this.run(id);
     if (!run) throw new Error("Run not found");
     // unhold-control: a run that wrote nothing into its conversation (a command pressed by hand) leaves the transcript alone.
-    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status, status === "needs_input" ? this.askedCall(id) : undefined);
+    const known = status === "needs_input" ? this.askedCall(id) : undefined;
+    const added = options.mend === false ? 0 : this.reconcileMessages(run.sessionId, status, known);
+    // QA R1: an approved call the engine ran that then asked the person in words itself: its earlier "not run" result
+    // gives way to the question's, so the model reads what is true now.
+    if (options.mend !== false) for (const [callId, content] of known ?? []) if (content !== notRunResult) this.replaceNotRun(run.sessionId, callId, content);
     if (added) this.event(id, "session.reconciled", { added, reason: status });
     // NAS 3fd7700: where the conversation stood when this task stopped to ask, so a yes carries it on only while
     // nothing else (a heartbeat's note, a Trunk routine's report) has been written there since.
@@ -759,11 +770,12 @@ export class Store {
     const callId = events.filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
     if (typeof callId !== "string") return new Map();
     if (events.some((event) => event.kind === "policy.execution_unknown" && event.data.id === callId)) return new Map();
-    const approval = events.some((event) => event.kind === "policy.ask" && event.data.id === callId);
-    return new Map([[callId, JSON.stringify(approval
-      ? { ok: false, status: "interrupted", outcome: "not_run", error: "Not run: Branch stopped at this call to ask the person. When the task "
-        + "carries on after a yes (or after a restart), make this same call again, exactly as before; after a no, do not make it." }
-      : { ok: false, status: "waiting", outcome: "asked", error: "The question was put to the person. Their answer is their next message." })]]);
+    // QA R1: the engine runs an approved call again under its own id, so only a policy question after the call last
+    // started is the one it stopped on; one before it was answered, and the call then asked in words itself.
+    const lastStart = events.filter((event) => event.kind === "tool.started" && event.data.id === callId).at(-1)?.id ?? 0;
+    const approval = events.some((event) => event.kind === "policy.ask" && event.data.id === callId && event.id > lastStart);
+    return new Map([[callId, approval ? notRunResult
+      : JSON.stringify({ ok: false, status: "waiting", outcome: "asked", error: "The question was put to the person. Their answer is their next message." })]]);
   }
   /**
    * After the person answers, the asking call's "not run" result says what they answered, so the model reads the same
@@ -782,6 +794,30 @@ export class Store {
       return true;
     }
     return false;
+  }
+  /**
+   * QA R1: the stored result of one call, replaced with what the engine now knows (the approved call it ran itself after the
+   * owner's yes). Only the newest result for that call is written; false when the conversation holds none.
+   */
+  setToolResult(sessionId: string, callId: string, content: string): boolean {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
+      this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return true;
+    }
+    return false;
+  }
+  /** QA R1: the newest result of `callId`, replaced with `content` only while it is still the "not run" placeholder. */
+  private replaceNotRun(sessionId: string, callId: string, content: string): void {
+    const rows = this.db.prepare("SELECT id, body FROM messages WHERE session_id=? ORDER BY id DESC").all(sessionId);
+    for (const row of rows) {
+      const body = JSON.parse(String(row.body)) as Message;
+      if (body.role !== "tool" || body.toolCallId !== callId) continue;
+      if (String(body.content ?? "").includes(notRunMark)) this.db.prepare("UPDATE messages SET body=? WHERE id=?").run(JSON.stringify({ ...body, content }), Number(row.id));
+      return;
+    }
   }
   reconcileMessages(sessionId: string, reason: string, known?: ReadonlyMap<string, string>): number {
     const rows = this.db.prepare("SELECT id,body,source_id,created_at FROM messages WHERE session_id=? ORDER BY id").all(sessionId);
@@ -899,18 +935,21 @@ export class Store {
     runId: string,
     estimatedInput: number,
     estimatedOutput: number,
-    reported?: { input: number; output: number },
+    reported?: { input: number; output: number; cachedInput?: number | undefined; cacheWrite?: number | undefined; cacheWrite1h?: number | undefined },
     completed = true,
   ): void {
     this.db
       .prepare(
-        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
+        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reported_cached_input=reported_cached_input+?,reported_cache_write=reported_cache_write+?,reported_cache_write_hour=reported_cache_write_hour+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
       )
       .run(
         estimatedInput,
         estimatedOutput,
         reported?.input ?? 0,
         reported?.output ?? 0,
+        reported?.cachedInput ?? 0,
+        reported?.cacheWrite ?? 0,
+        reported?.cacheWrite1h ?? 0,
         reported ? 1 : 0,
         reported ? 1 : 0,
         completed ? 1 : 0,
@@ -924,6 +963,9 @@ export class Store {
       estimatedOutput: Number(r?.estimated_output ?? 0),
       reportedInput: Number(r?.reported_input ?? 0),
       reportedOutput: Number(r?.reported_output ?? 0),
+      reportedCachedInput: Number(r?.reported_cached_input ?? 0),
+      reportedCacheWrite: Number(r?.reported_cache_write ?? 0),
+      reportedCacheWrite1h: Number(r?.reported_cache_write_hour ?? 0),
       reports: Number(r?.reports ?? 0),
       attempts: Number(r?.attempts ?? 0),
       unreportedCalls: Number(r?.unreported_calls ?? 0),

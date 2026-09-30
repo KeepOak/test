@@ -10,6 +10,7 @@ import { effortFor } from "./knobs/apply.js"; // R17-S12
 import { thinkingLevels } from "./thinking-levels.js"; // phase2/accounts
 import { noModelPreset } from "./no-model.js";
 import { chatgptModels } from "./chatgpt-provider.js"; // dogfood B25
+import { claudeSubscriptionModels } from "./providers/claude-models.js";
 import { isSignInConnection, trunkSignInRefusal } from "./accounts/trunk-guard.js"; // stress test B008, trunks-use-subscriptions
 import { startedWithShortLivedKey } from "./key-context.js";
 import { currentPerson } from "./people/context.js";
@@ -100,13 +101,14 @@ export interface CapabilityPlan extends ModelPlan {
 }
 
 /** mac5/providers: true for a saved connection whose service has ended the route it used. */
-function isRetiredConnection(preset: ModelPreset | undefined): boolean {
+export function isRetiredConnection(preset: ModelPreset | undefined): boolean {
   return (preset?.provider as { retired?: unknown } | undefined)?.retired === true;
 }
 
 /** A model's own display name where Branch has a catalogue of them (the ChatGPT route's list), or null for its id. */
 export function modelDisplayName(provider: string, model: string): string | null {
   if (provider === "chatgpt") return chatgptModels.find((one) => one.id === model)?.label ?? null;
+  if (provider === "claude-subscription") return claudeSubscriptionModels.find((one) => one.id === model)?.label ?? null;
   // QA Q071: a model on this computer is named as itself, not as the copy Branch sized for it.
   if (provider === "ollama" && unsizedModelName(model) !== model) return unsizedModelName(model);
   return null;
@@ -312,6 +314,7 @@ export class ModelRouter {
   summary(owner: string) {
     const settings = this.settings(owner);
     // trunks-use-subscriptions: whoever is asking may put a Trunk on a sign-in only when it is the owner (Runtime.trunkSignIns).
+    // Only the window and its keys ask this; a chat's task is judged in Runtime.trunkSignIns (owner-dm-signin), never here.
     const ownerAsking = this.store.profiles.isOwner() && !currentPerson() && !startedWithShortLivedKey();
     return {
       ...settings,

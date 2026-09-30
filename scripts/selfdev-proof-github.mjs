@@ -1,4 +1,4 @@
-// The real-GitHub half of scripts/selfdev-proof.mjs: Branch changes its own source (stabrea/Branch-Agent) from an
+// The real-GitHub half of scripts/selfdev-proof.mjs: Branch changes its own source (KeepOak/Branch-Agent) from an
 // isolated engine, proposing only to a selfdev-proof/base-<stamp> scratch line made here from redesign/window. Beta
 // never builds that line and nothing is proposed to redesign/window. The pull request is closed afterwards if it is
 // still open; the scratch branches are left for the lead to remove.
@@ -7,7 +7,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { startEngine } from "../tests/fixtures/selfdev-harness.mjs";
 
-const repo = "stabrea/Branch-Agent";
+const repo = "KeepOak/Branch-Agent";
 const gh = (...args) => execFileSync("gh", args, { encoding: "utf8", windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }).trim();
 
 /** The knob the owner names for this run, and the test file that proves it. */
@@ -53,7 +53,8 @@ export async function githubProof({ root, model, stamp, log, connection, roomToW
     summary = { mode: "github", model, base, status: run?.status ?? `http ${started.status}`, output: run?.output?.slice(0, 2000),
       elapsedSeconds: Math.round((Date.now() - began) / 1000), ...(run ? evidence(engine, runId) : {}), pulls,
       health: { checks: results.length, allOk: results.every((status) => status === 200) } };
-    for (const pull of pulls) if (pull.state === "open") { gh("pr", "close", String(pull.number), "--repo", repo); pull.closedAfterwards = true; }
+    // REST only: GitHub's GraphQL allowance is shared by every lane.
+    for (const pull of pulls) if (pull.state === "open") { gh("api", "-X", "PATCH", `repos/${repo}/pulls/${pull.number}`, "-f", "state=closed"); pull.closedAfterwards = true; }
   } finally {
     clearInterval(poller);
     await engine.close();

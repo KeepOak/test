@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, realpathSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { rm } from "node:fs/promises";
@@ -8,23 +8,29 @@ import { z } from "zod";
 import { errorText, type ToolContext } from "../contracts.js";
 import { refuseAnyTrunk } from "../accounts/context.js";
 import { primaryAccount, savedAccountsSettings } from "../accounts/settings.js";
-import { accountHomeVariables, strippedEnvironment } from "../providers/cli-agent.js";
+import { accountHomeVariables, codexDefaultModel, strippedEnvironment } from "../providers/cli-agent.js"; // codexDefaultModel: QA 2026-09-28
+import { codexChosen, codexModelSettings } from "../codex-models.js";
+import { codexBinary } from "../asks/codex-app-server.js";
+import { killProcessGroup, killWindowsTree } from "../integrations/shell-process.js";
 import type { ToolRegistry } from "../registry.js";
 import { globFits, worktreeOf, type ContractBook } from "../self-development-contract.js";
 import type { Store } from "../store.js";
 import type { GitOutcome, GitRunOptions } from "../integrations/git-run.js";
 import { startCall } from "../windows-command.js";
+import { CommandDoor, type DoorAnswer, type DoorCommand } from "./hand-off-door.js";
 
 /**
  * Handing a coding job to Claude Code or Codex, the programs the owner signed in to with their own plans, so the
- * work is done by the program itself inside one folder: it reads and edits there (Codex may also run its checks), and Branch gets
+ * work is done by the program itself inside one folder: it reads and edits there and runs its checks, and Branch gets
  * back what it did. Elsewhere Branch only asks these programs for words (src/providers/cli-agent.ts,
  * src/asks/codex-app-server.ts, both read-only); this is the one door where they may change files, and it is
  * held three ways:
  * - Each program's own limits: Codex runs with `--sandbox workspace-write` in the folder; Claude Code runs with
- *   `--permission-mode acceptEdits` in the folder and runs no commands at all (no allowed commands, Bash refused, and
- *   none of the folder's own settings, hooks or MCP servers loaded), since nothing walls its commands in the way Codex's
- *   sandbox does (NAS 22aa6e3, 454af77, Mac mini 2e70eda). The checks are run afterwards through Branch's own held tools.
+ *   `--permission-mode acceptEdits` in the folder, with its own Bash refused and none of the folder's own settings, hooks
+ *   or MCP servers loaded, since nothing walls its own commands in the way Codex's sandbox does (NAS 22aa6e3, 454af77,
+ *   Mac mini 2e70eda). SELF-083: its commands go through Branch instead. When the task may run commands, Claude Code
+ *   gets one door (src/coding/hand-off-door.ts) whose every command Branch weighs and runs as its own held
+ *   `shell.execute`, with writes held to the folder.
  * - Branch's own check afterwards: every file the job changed is listed against where it started, and inside
  *   Branch's own source (a self-development worktree) anything outside the contract's allowed paths is put back
  *   and named, so the contract holds whatever the program did. Sending still goes through the contract's push check.
@@ -55,13 +61,13 @@ export type HandOffInput = z.infer<typeof HandOffInputSchema>;
 /**
  * The commands Claude Code may run by itself in the folder: none. A build or test runs the folder's own scripts,
  * which the job may just have edited, with the owner's account and outside any wall; and Git reads the folder's own
- * settings, which the job may edit too. Claude Code edits; Branch runs the checks afterwards.
+ * settings, which the job may edit too. Its commands go through Branch's door instead (SELF-083, `HandOffCommands`).
  */
 export const claudeAllowedCommands: readonly string[] = [];
 
 /** Handing a job over is asked every time, just this once: the program works with the owner's own sign-in. */
 export const handOffReason = "Your Claude Code or Codex would change files in that folder with your own sign-in, so this is asked every time. "
-  + "Claude Code runs without that folder's own settings, hooks or MCP servers, and runs no commands.";
+  + "Claude Code runs without that folder's own settings, hooks or MCP servers, and runs commands only through Branch's own held shell, inside that folder.";
 export function handOffHold(tool: string): { reason: string; onceOnly: true } | null {
   return tool === "code.hand_off" ? { reason: handOffReason, onceOnly: true } : null;
 }
@@ -71,8 +77,11 @@ export const claudeIsolation: readonly string[] = ["--setting-sources", "user", 
   "--settings", JSON.stringify({ disableAllHooks: true }), "--disallowedTools", "Bash"];
 
 export interface ProgramCall { command: string; args: string[]; cwd: string }
-export function programCall(program: HandOffProgram, folder: string, model?: string, effort?: string): ProgramCall {
-  const chosen = model ? ["--model", model] : [];
+/** `door`: SELF-083, the arguments that give Claude Code Branch's command door (CommandDoor.claudeArgs), when it has one. */
+export function programCall(program: HandOffProgram, folder: string, model?: string, effort?: string, door: readonly string[] = []): ProgramCall {
+  // QA 2026-09-28: Codex is always told its model, so the owner's own Codex settings never pick one its sign-in refuses.
+  const named = model ?? (program === "codex" ? codexDefaultModel : undefined);
+  const chosen = named ? ["--model", named] : [];
   if (program === "claude-code")
     return { command: "claude", cwd: folder, args: ["-p", "--output-format", "stream-json", "--verbose", ...chosen,
       ...(effort ? ["--effort", effort] : []),
@@ -80,7 +89,9 @@ export function programCall(program: HandOffProgram, folder: string, model?: str
       // NAS 454af77 / 4b4812a: hooks in the folder's own .claude/settings*.json, and servers in its .mcp.json, would run
       // programs outside every permission and wall, and an earlier job could have left them there. Only the account's
       // own settings are read, no MCP server from the folder, no hook at all, and Bash is refused whatever allows it.
-      ...claudeIsolation] };
+      ...claudeIsolation,
+      // SELF-083: Branch's own door, the one MCP server allowed (--strict-mcp-config), and its one tool.
+      ...door] };
   return { command: "codex", cwd: folder, args: ["exec", "--json", "--sandbox", "workspace-write", "--cd", folder, ...chosen,
     ...(effort ? ["-c", `model_reasoning_effort="${effort}"`] : []), "-"] };
 }
@@ -89,11 +100,36 @@ export interface ProgramRun { code: number | null; lines: string[]; stderr: stri
 export type RunProgram = (call: ProgramCall, prompt: string, env: NodeJS.ProcessEnv, signal: AbortSignal,
   timeoutMs: number, onLine: (line: string) => void) => Promise<ProgramRun>;
 
+/**
+ * How a handed-off program is started. P0 (self-build): npm's Codex launcher (`bin/codex.js`) starts `codex.exe` with its
+ * own standard streams and only passes signals on, and on Windows ending Node passes nothing on: a stopped or timed-out
+ * job left what `codex.exe` had started (a command, its tool servers) running on in the folder after Branch had checked
+ * it. Codex is started as its own program instead, the way the app-server is (src/asks/codex-app-server.ts codexBinary),
+ * with what the launcher adds to its environment, and a stop ends its whole tree (`endProgram`).
+ */
+export function programStart(call: ProgramCall, env: NodeJS.ProcessEnv): { command: string; args: string[]; env: NodeJS.ProcessEnv } {
+  const binary = call.command === "codex" ? codexBinary(call.command, env) : null;
+  if (binary) return { command: binary.path, args: call.args, env: { ...env, CODEX_MANAGED_PACKAGE_ROOT: binary.packageRoot, CODEX_MANAGED_BY_NPM: "1" } };
+  return { ...startCall(call.command, call.args, env), env };
+}
+
+/** Ends a handed-off program and everything it started: the whole tree on Windows, its own process group elsewhere. */
+async function endProgram(child: ChildProcess): Promise<void> {
+  const pid = child.pid;
+  try {
+    if (pid && process.platform === "win32") { if (await killWindowsTree(pid)) return; }
+    else if (pid) { await killProcessGroup(pid); return; }
+  } catch { /* the plain kill below */ }
+  child.kill("SIGKILL");
+}
+
 export const runProgram: RunProgram = (call, prompt, env, signal, timeoutMs, onLine) => new Promise((done) => {
-  const start = startCall(call.command, call.args, env);
-  const child = spawn(start.command, start.args, { cwd: call.cwd, env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false });
+  const start = programStart(call, env);
+  // Its own process group on macOS and Linux, so a stop reaches whatever it started.
+  const child = spawn(start.command, start.args, { cwd: call.cwd, env: start.env, stdio: ["pipe", "pipe", "pipe"], windowsHide: true, shell: false,
+    detached: process.platform !== "win32" });
   const lines: string[] = [];
-  let pending = "", stderr = "", timedOut = false, settled = false;
+  let pending = "", stderr = "", timedOut = false, settled = false, stopping = false;
   const finish = (code: number | null, missing = false): void => {
     if (settled) return;
     settled = true;
@@ -102,9 +138,19 @@ export const runProgram: RunProgram = (call, prompt, env, signal, timeoutMs, onL
     if (pending.trim()) { lines.push(pending); onLine(pending); }
     done({ code, lines, stderr, timedOut, missing });
   };
-  const stop = (): void => { child.kill(); finish(null); };
+  // P0 (self-build): the job is over only once the program and everything it started have ended, so the after-check
+  // never runs while something is still editing the folder. Its streams closing says so; a bounded wait covers a stray.
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+  const stop = (): void => {
+    if (stopping || settled) return;
+    stopping = true;
+    void endProgram(child)
+      .then(() => Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 1500).unref())]))
+      .finally(() => finish(null));
+  };
   const timer = setTimeout(() => { timedOut = true; stop(); }, timeoutMs);
   signal.addEventListener("abort", stop, { once: true });
+  if (signal.aborted) stop();
   child.stdout.on("data", (chunk: Buffer) => {
     pending += chunk.toString("utf8");
     const parts = pending.split("\n");
@@ -112,8 +158,8 @@ export const runProgram: RunProgram = (call, prompt, env, signal, timeoutMs, onL
     for (const line of parts) if (line.trim() && lines.length < 20_000) { lines.push(line); onLine(line); }
   });
   child.stderr.on("data", (chunk: Buffer) => { if (stderr.length < 4000) stderr += chunk.toString("utf8"); });
-  child.on("error", (error: NodeJS.ErrnoException) => finish(1, error.code === "ENOENT"));
-  child.on("close", (code) => finish(code));
+  child.on("error", (error: NodeJS.ErrnoException) => { if (!stopping) finish(1, error.code === "ENOENT"); });
+  child.on("close", (code) => { if (!stopping) finish(code); });
   child.stdin.on("error", () => undefined);
   child.stdin.end(prompt);
 });
@@ -177,7 +223,13 @@ export interface HandOffDeps {
   book: ContractBook;
   git: (options: GitRunOptions, signal: AbortSignal) => Promise<GitOutcome>;
   run?: RunProgram;
+  /**
+   * SELF-083: how Branch weighs and runs one command a handed-off Claude Code sends through its door, held to the
+   * job's folder (src/index.ts). Without it, or for a task that may not run commands, Claude Code gets no door.
+   */
+  commands?: HandOffCommands;
 }
+export type HandOffCommands = (command: DoorCommand, folder: { absolute: string; fromWorkspace: string }, context: ToolContext) => Promise<DoorAnswer>;
 
 export interface HandOffResult {
   program: HandOffProgram;
@@ -420,8 +472,16 @@ export class HandOff {
     const onLine = (line: string): void => {
       if (shown++ < 200) this.deps.store.event(context.runId, "code.hand_off.step", { program: input.program, line: line.slice(0, 500) });
     };
-    const ran = await (this.deps.run ?? runProgram)(programCall(input.program, folder.absolute, input.model, input.effort), input.task, env,
-      context.signal, input.minutes * 60_000, onLine);
+    // QA 2026-09-28: with no model named, Codex gets the one chosen in Settings › Models, never its own settings' pick.
+    const model = input.model ?? (input.program === "codex" ? codexChosen(codexModelSettings(this.deps.store, this.deps.owner)) : undefined);
+    const door = await this.doorFor(input.program, folder, context);
+    // SELF-083: one command through the door may take as long as the whole job, so Claude Code does not give up on it sooner.
+    if (door) env.MCP_TOOL_TIMEOUT = String(input.minutes * 60_000);
+    let ran: ProgramRun;
+    try {
+      ran = await (this.deps.run ?? runProgram)(programCall(input.program, folder.absolute, model, input.effort, door?.claudeArgs()),
+        input.task, env, context.signal, input.minutes * 60_000, onLine);
+    } finally { await door?.close(); }
     if (ran.missing) throw new Error(`"${programCall(input.program, folder.absolute).command}" is not installed on this computer.`);
     const report = input.program === "codex" ? readCodex(ran.lines) : readClaude(ran.lines);
     // A job could have written the folder's own `.git` settings (its config, attributes or hooks) so that the
@@ -438,6 +498,22 @@ export class HandOff {
       changed: [...changed.tracked, ...changed.added].filter((file) => !undone.includes(file)), undone };
     this.deps.store.event(context.runId, "code.hand_off", { ...result, summary: result.summary.slice(0, 500) });
     return result;
+  }
+
+  /**
+   * SELF-083: Claude Code's door to Branch's held shell, for a task that may run commands itself. Each command is
+   * shown on the task as it comes and is weighed and run by `commands`; the door closes with the job.
+   */
+  private async doorFor(program: HandOffProgram, folder: { absolute: string; fromWorkspace: string }, context: ToolContext): Promise<CommandDoor | null> {
+    const commands = this.deps.commands;
+    if (program !== "claude-code" || !commands || !context.permissions?.has("shell.execute")) return null;
+    return CommandDoor.open(async (command, stop) => {
+      // A command still running when the job ends is stopped with the door (CommandDoor.close).
+      const answer = await commands(command, folder, { ...context, signal: AbortSignal.any([context.signal, stop]) });
+      this.deps.store.event(context.runId, "code.hand_off.command", { program: command.program, args: command.args.slice(0, 20).map((arg) => arg.slice(0, 200)),
+        cwd: command.cwd, ok: !answer.isError });
+      return answer;
+    });
   }
 
   /**
@@ -487,7 +563,9 @@ export function registerHandOff(registry: ToolRegistry, handOff: HandOff): void 
     name: "code.hand_off", permission: "code.handoff", group: "code",
     description: "Give a coding job to the owner's Claude Code or Codex, signed in with the owner's own plan, to do inside one "
       + "folder of the workspace that is a Git repository: the program reads and edits there, and this answers "
-      + "with what it did and which files changed. Choose the account from Settings › Accounts, or leave it out for the usual one. "
+      + "with what it did and which files changed. When this task may run commands, Claude Code also runs builds, tests "
+      + "and read-only Git there, each through Branch's own held shell and your rules for commands, with its writes held to "
+      + "the folder; a command your rules would ask about does not run. Choose the account from Settings › Accounts, or leave it out for the usual one. "
       + "When the answer says the plan's limit was reached, try another account. Inside Branch's own source, anything the job "
       + "changed outside the contract's allowed paths is put back and named. A job that makes a link out of its folder, or "
       + "writes next to it, ends as \"left its folder\" and nothing from it is kept.",

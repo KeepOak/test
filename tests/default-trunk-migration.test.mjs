@@ -164,10 +164,11 @@ test("an install whose Trunks were all made by hand gets a default of its own; i
   for (const run of stray) assert.equal(firstStart[run.sessionId], `${home.id}:migrated`, "a stray conversation goes to the new default");
   assert.equal(firstStart[answered.sessionId], `${kite.id}:claimed`, "a conversation a Trunk answered in stays with it");
   assert.equal(firstStart[kite.chatSessionId], undefined);
-  // The one new conversation is the new default's own chat, empty; every other one is exactly as it was.
+  // The one new conversation is the new default's own chat, holding only its written greeting; every other one is exactly as it was.
   const without = (snap) => ({ ...snap, sessions: snap.sessions.filter((s) => s.id !== home.chatSessionId),
+    messages: snap.messages.filter((m) => m.session_id !== home.chatSessionId),
     unread: Object.fromEntries(Object.entries(snap.unread).filter(([id]) => id !== home.chatSessionId)) });
-  assert.equal(copy.store.messages(home.chatSessionId).length, 0, "made quietly, with no introduction");
+  assert.deepEqual(copy.store.messages(home.chatSessionId).map((m) => m.role), ["assistant"], "made quietly: a written greeting, no model call");
   assert.deepEqual(without(snapshot(copy)), before, "no conversation, message, time or read mark changed");
   const trunks = copy.trunks.records.list().length, written = copy.store.audit.list(owner, { action: "trunk.default" }).length;
   await copy.close();

@@ -19,14 +19,15 @@ const EditSchema = z.object({
   weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).optional(),
   monthDay: z.number().int().min(1).max(31).optional(),
   intervalMs: z.number().int().min(60_000).max(31_536_000_000).optional(),
-}).strict();
+  dueAt: z.iso.datetime().optional(),
+}).strict().refine((value) => !value.dueAt || ![value.dailyAt, value.intervalMs, value.weekdays, value.monthDay].some((one) => one !== undefined), "A one-time run cannot also repeat");
 export const ProposeScheduleSchema = z.object({
   text: z.string().trim().min(1).max(2000).optional(),
   edit: EditSchema.optional(),
   timezone: z.string().min(1).max(64).optional(),
 }).strict().refine((body) => (body.text === undefined) !== (body.edit === undefined), "Send either the words or the edited schedule");
 
-export interface Recurrence { dailyAt?: string; weekdays?: number[]; monthDay?: number; intervalMs?: number }
+export interface Recurrence { dailyAt?: string; weekdays?: number[]; monthDay?: number; intervalMs?: number; dueAt?: string }
 /** Whether the words said the time, only hinted at it ("every evening"), or said none (nine is filled in). */
 export type TimeSaid = "said" | "guessed" | "none";
 export interface ReadWords { prompt: string; recurrence: Recurrence; time: TimeSaid }
@@ -144,6 +145,7 @@ export function cronOf(r: Recurrence): string | null {
 
 /** When it comes round, in plain words. */
 export function recurrenceWords(r: Recurrence): string {
+  if (r.dueAt) return "Once";
   if (r.intervalMs !== undefined) {
     const minutes = Math.round(r.intervalMs / minuteMs);
     if (minutes % 1440 === 0) return minutes === 1440 ? "Every day" : `Every ${minutes / 1440} days`;
@@ -169,13 +171,25 @@ function firstRunWords(iso: string, timezone: string): string {
 export function proposalFrom(read: ReadWords, timezone: string, now: Date, source: ScheduleProposal["source"]): ScheduleProposal {
   const recurrence = read.recurrence;
   const base = { prompt: read.prompt, kind: "task" as const, timezone, ...recurrence };
-  const firstRunAt = nextTurn(base as Record<string, unknown>, now);
+  const firstRunAt = recurrence.dueAt ?? nextTurn(base as Record<string, unknown>, now);
+  if (recurrence.dueAt && new Date(firstRunAt).getTime() <= now.getTime()) throw new Error("Choose a future date and time for this one-time run.");
   const schedule = ScheduleSchema.parse({ ...base, dueAt: firstRunAt });
   return { schedule, firstRunAt, source, time: read.time, cron: cronOf(recurrence),
     words: `${recurrenceWords(recurrence)} (${timezone}), first on ${firstRunWords(firstRunAt, timezone)}` };
 }
 
 /* ---------- the model, only for words the reader above cannot read ---------- */
+
+/** A relative one-time run is read without a model; its absolute due time survives edits and confirmation. */
+function readOnce(text: string, now: Date): ReadWords | null {
+  const match = new RegExp(`\\b(?:once\\s+)?in\\s+(${COUNT})\\s+(minutes?|mins?|hours?|hrs?|days?)\\b`, "i").exec(text);
+  if (!match) return null;
+  const amount = count(match[1]), unit = match[2]!.toLowerCase();
+  const delay = amount * (unit.startsWith("d") ? 1440 : unit.startsWith("h") ? 60 : 1) * minuteMs;
+  const prompt = (text.slice(0, match.index) + text.slice(match.index + match[0].length)).replace(/\s{2,}/g, " ").replace(/^[\s,;:.]+|[\s,;:.]+$/g, "").trim();
+  if (!prompt || delay < minuteMs || delay > 31_536_000_000) return null;
+  return { prompt, recurrence: { dueAt: new Date(now.getTime() + delay).toISOString() }, time: "said" };
+}
 
 /** Flat on purpose: no unions, nothing but what to do and when. No delivery, webhook, script or permission can come back. */
 export const ModelReadingSchema = z.object({
@@ -223,7 +237,8 @@ export async function proposeSchedule(input: unknown, deps: { now: Date; default
     const recurrence = Object.fromEntries(Object.entries(when).filter(([, value]) => value !== undefined)) as Recurrence;
     return proposalFrom({ prompt, recurrence, time: "said" }, timezone, deps.now, "edit");
   }
-  const read = readScheduleWords(text!);
+  // Repeating words first: "every weekday at 8, summarise the news in 5 minutes" repeats, it is not a one-time run.
+  const read = readScheduleWords(text!) ?? readOnce(text!, deps.now);
   if (read) return proposalFrom(read, timezone, deps.now, "words");
   if (!deps.askModel) throw new Error(notASchedule);
   const answer = await deps.askModel(modelQuestion(text!), readingShape);

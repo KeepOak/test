@@ -2,6 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams, type SpawnOptionsWithoutStd
 import { createInterface } from "node:readline";
 import { killProcessGroup, killWindowsTree } from "../integrations/shell-process.js";
 import { startCall } from "../windows-command.js";
+import { assertRealAgentAllowed } from "./real-agent-guard.js"; // owner-dm-signin: never the real program from a test
 import { boundedNativeJson, type NativeFrame } from "./claude-subscription-history.js";
 
 export interface NativeInvocation { command: string; args: string[]; env: NodeJS.ProcessEnv; cwd: string }
@@ -18,6 +19,7 @@ export class NativeProcess {
   private stopping: Promise<void> | null = null;
   private readonly rates: string[] = [];
   constructor(invocation: NativeInvocation, start: NativeSpawn = spawn) {
+    if (start === spawn) assertRealAgentAllowed(invocation.command, invocation.env);
     const call = startCall(invocation.command, invocation.args, invocation.env);
     this.child = start(call.command, call.args, { env: invocation.env, cwd: invocation.cwd, shell: false, windowsHide: true, detached: true });
     this.closed = new Promise((resolve) => {

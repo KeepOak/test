@@ -1,9 +1,13 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFile, chmod, lstat, mkdir, readFile, readdir, readlink, rename, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { removeTree } from "./remove-tree.js";
+import { setPriority } from "node:os";
+import { activeDeadline, quietPriority, type BuildGate } from "./quiet-build.js";
 import { join, relative, sep } from "node:path";
+import { useBuiltOutput } from "./build-output.js";
+import { linkRuntime, partFolder, readPointer, runtimeVersion, sealAppFolder } from "./app-folders.js";
 
 /**
  * The Beta update channel: like Hermes Desktop, Branch follows one line of work and builds the newest merged change
@@ -19,13 +23,21 @@ import { join, relative, sep } from "node:path";
 /** The line of work Beta builds. Named here only, and never chosen by anyone, so it can move to main later. */
 export const betaLine = "redesign/window";
 
+export interface RunOptions {
+  cwd?: string; timeoutMs: number; env?: Record<string, string>;
+  /**
+   * The program only computes and writes files (compiling, packaging), so a paused build may suspend it in place.
+   * Anything that holds a network connection (git fetch, npm ci) is left to finish, and the next program waits.
+   */
+  pausable?: boolean;
+}
 export interface Run {
-  (file: string, args: string[], options: { cwd?: string; timeoutMs: number; env?: Record<string, string> }): Promise<string>;
+  (file: string, args: string[], options: RunOptions): Promise<string>;
 }
 /** The build's own stages, in order; the updater shows each with its time. "installing" is skipped when nothing changed. */
 export type DevStage = "fetching" | "installing" | "building";
 
-const minutes = (count: number) => count * 60_000;
+export const minutes = (count: number) => count * 60_000;
 const quietGit = ["-c", "credential.helper=", "-c", "core.askPass="];
 
 /** An error from a program the build ran: the words say what did not finish, `detail` is its output's key line. */
@@ -47,27 +59,61 @@ export function keyLine(output: string): string | null {
   return line ? line.slice(0, 300) : null;
 }
 
-/** The real runner: hidden, no prompts, npm through the command shell Windows needs for `npm.cmd`; output to `log`. */
-export function realRun(platform: NodeJS.Platform = process.platform, log?: string): Run {
+/**
+ * The real runner: hidden, no prompts, npm through the command shell Windows needs for `npm.cmd`; output to `log`.
+ * With a gate (the build's own process, build-host.ts), each program waits while the build is paused, a pausable one
+ * is suspended in place, its time limit counts only the time it ran, and one that runs out is ended with everything it
+ * started (npm's own children too).
+ */
+export function realRun(platform: NodeJS.Platform = process.platform, log?: string, gate?: BuildGate): Run {
   const env = buildEnv(process.env, platform);
-  return (file, args, options) => new Promise((resolve, reject) => {
+  return async (file, args, options) => {
+    await gate?.ready();
     const [program, programArgs] = platform === "win32" && file === "npm"
       ? [join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cmd.exe"), ["/d", "/s", "/c", "npm", ...args]]
       : [file, args];
     const started = Date.now();
-    execFile(program, programArgs, { cwd: options.cwd, env: options.env ? { ...env, ...options.env } : env, windowsHide: true, timeout: options.timeoutMs, maxBuffer: 64 << 20 },
-      (error, stdout, stderr) => {
-        const output = `${String(stdout)}\n${String(stderr)}`;
-        const written = log
-          ? appendFile(log, `$ ${file} ${args.join(" ")}  (${Math.round((Date.now() - started) / 1000)} s${error ? ", failed" : ""})\n${output.trim()}\n\n`).catch(() => undefined)
-          : Promise.resolve();
-        void written.then(() => {
-          if (!error) return resolve(String(stdout));
-          const lastLine = String(stderr).trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
-          reject(new RunError(`${file} ${args[0] ?? ""} did not finish${error.killed ? " in time" : ""}${lastLine ? `: ${lastLine.slice(0, 300)}` : "."}`,
-            keyLine(output)));
-        });
-      });
+    const { code, stdout, stderr, timedOut, failed } = await runProgram(program, programArgs, {
+      cwd: options.cwd, env: options.env ? { ...env, ...options.env } : env, timeoutMs: options.timeoutMs,
+      pausable: options.pausable === true, group: platform !== "win32" && gate !== undefined }, gate);
+    const output = `${stdout}\n${stderr}`, error = failed || code !== 0;
+    if (log) await appendFile(log, `$ ${file} ${args.join(" ")}  (${Math.round((Date.now() - started) / 1000)} s${error ? ", failed" : ""})\n${output.trim()}\n\n`).catch(() => undefined);
+    if (!error) return stdout;
+    const lastLine = ((timedOut ? null : failed) ?? stderr).trim().split(/\r?\n/).filter(Boolean).at(-1) ?? "";
+    throw new RunError(`${file} ${args[0] ?? ""} did not finish${timedOut ? " in time" : ""}${lastLine ? `: ${lastLine.slice(0, 300)}` : "."}`, keyLine(output));
+  };
+}
+
+interface Finished { code: number | null; stdout: string; stderr: string; timedOut: boolean; failed: string | null }
+const outputLimit = 64 << 20;
+/** One program, hidden; its output kept up to 64 MB. `group`: in a process group of its own, so it is held and ended whole. */
+function runProgram(program: string, args: string[], options: { cwd: string | undefined; env: NodeJS.ProcessEnv; timeoutMs: number; pausable: boolean; group: boolean },
+  gate?: BuildGate): Promise<Finished> {
+  return new Promise((resolve) => {
+    const out: Buffer[] = [], err: Buffer[] = [];
+    let size = 0, timedOut = false, failed: string | null = null;
+    const child = spawn(program, args, { cwd: options.cwd, env: options.env, windowsHide: true, detached: options.group, stdio: ["ignore", "pipe", "pipe"] });
+    const pid = child.pid;
+    // Everything it started first (npm's own children too), through the gate, while it is still there to be followed.
+    const end = () => { void (pid !== undefined && gate ? gate.end(pid) : Promise.resolve()).then(() => child.kill()); };
+    const keep = (into: Buffer[]) => (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > outputLimit) { failed ??= "its output was larger than 64 MB"; end(); return; }
+      into.push(chunk);
+    };
+    child.stdout!.on("data", keep(out));
+    child.stderr!.on("data", keep(err));
+    if (pid !== undefined) gate?.started(pid, options.pausable);
+    // Outside the build's own process (the updater's quick looks at GitHub), each program is lowered as it starts.
+    if (pid !== undefined && !gate) try { setPriority(pid, quietPriority); } catch { /* it has already ended */ }
+    const stop = activeDeadline(options.timeoutMs, () => (pid !== undefined && gate ? gate.heldMs(pid) : 0), () => { timedOut = true; end(); });
+    const done = (code: number | null, why: string | null) => {
+      stop();
+      if (pid !== undefined) gate?.ended(pid);
+      resolve({ code, stdout: Buffer.concat(out).toString(), stderr: Buffer.concat(err).toString(), timedOut, failed: failed ?? why ?? (timedOut ? "it ran out of time" : null) });
+    };
+    child.once("error", (error) => done(null, error.message));
+    child.once("close", (code, signal) => done(code, code === null && !timedOut && !failed ? `it was ended by ${signal ?? "the system"}` : null));
   });
 }
 
@@ -100,6 +146,30 @@ export async function devToolsMissing(run: Run): Promise<string | null> {
 }
 
 /** The newest commit on Beta's line of work, read with git (not GitHub's rate-limited web API). */
+/** The whole-suite workflow a Beta change must have passed, on a push to Beta's line, before it is taken. */
+export const wholeSuiteWorkflow = "checks.yml";
+/**
+ * Beta takes the newest change whose whole suite passed on GitHub, not simply the newest change: runs on the line are
+ * batched, so its tip is often not checked yet, or was cancelled for a newer one. GitHub is asked only when the tip
+ * moved (one small request, unauthenticated); when it cannot answer, the last passing change found is kept. Null when
+ * none is known yet, and the tip is taken as before.
+ */
+export function newestGreen(fetchImpl: typeof fetch = globalThis.fetch): (repo: string, tip: string) => Promise<string | null> {
+  let lastTip: string | null = null, green: string | null = null;
+  return async (repo, tip) => {
+    if (tip === lastTip && green) return green;
+    try {
+      const url = `https://api.github.com/repos/${repo}/actions/workflows/${wholeSuiteWorkflow}/runs?branch=${encodeURIComponent(betaLine)}&event=push&status=success&per_page=1`;
+      const response = await fetchImpl(url, { headers: { accept: "application/vnd.github+json", "user-agent": "Branch-Agent-updater" }, signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) return green;
+      const body = await response.json() as { workflow_runs?: { head_sha?: unknown; head_branch?: unknown }[] };
+      const sha = body.workflow_runs?.[0]?.head_sha;
+      if (typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha) && body.workflow_runs?.[0]?.head_branch === betaLine) { green = sha; lastTip = tip; }
+    } catch { /* offline or refused: the last passing change found stands */ }
+    return green;
+  };
+}
+
 export async function remoteHead(run: Run, repo: string): Promise<string> {
   const out = await run("git", [...quietGit, "ls-remote", `https://github.com/${repo}.git`, `refs/heads/${betaLine}`], { timeoutMs: 60_000 });
   // ls-remote matches the end of ref names, so only the line naming exactly Beta's ref counts.
@@ -276,17 +346,43 @@ export interface DevBuildPlan {
    * (a copy built from another line of work). Only then is the never-go-back step left out; the updater checks it.
    */
   otherLineConfirmed?: boolean;
+  /**
+   * Where GitHub publishes its own build of each Beta change (build-output.ts): taken, once checked, instead of compiling
+   * here. Left out (tests, a runner handed in), the change is always compiled here.
+   */
+  builtOutput?: { repo: string; waitMs?: number };
+  /** A line for the build's log (what was waited for, why GitHub's build was not used). */
+  note?: (line: string) => void;
+  /**
+   * Windows, versioned app folders (app-folders.ts): the new version is laid out as `<root>/app-<version>/` beside the
+   * running one (`running`, its program folder), sharing its Electron runtime by hard links; nothing is packaged.
+   */
+  appFolder?: { root: string; running: string; executableName: string };
 }
-/** Windows: the app folder itself (nothing to zip and unzip again). macOS and Linux: the download, as a release has. */
-export type DevBuilt = { version: string; reusedPackages: boolean } & ({ folder: string } | { archive: string; checksumFile: string });
+/**
+ * Windows: the app folder itself (nothing to zip and unzip again), or with versioned app folders the new version's own
+ * folder, already in place beside the running one. macOS and Linux: the download, as a release has.
+ */
+export type DevBuilt = { version: string; reusedPackages: boolean } & ({ folder: string } | { appFolder: string } | { archive: string; checksumFile: string });
+
+/** The source of one change, checked out and shown to be on Beta's line (see `fetchSource`). */
+export interface FetchedSource {
+  source: string;
+  git: (args: string[], timeoutMs?: number) => Promise<string>;
+  /** package-lock.json's hash, read before anything is stamped. */
+  lock: string;
+  committedAt: number;
+  version: string;
+}
 
 /**
- * Builds exactly `commit` of Beta's line in the build folder. Returns the app (or its download) and the version it
- * was stamped with. A failure leaves the installed app untouched.
+ * The first half of every Beta build, packaged or live (src/hot-update/live-build.ts): exactly `commit` is fetched from
+ * Beta's own line, shown to be on it, checked out whole, shown to go forward from the running change, and its version
+ * read. Nothing is installed or built yet.
  */
-export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> {
-  const { repo, buildDir, commit, running, assetName } = plan;
-  const platform = plan.platform ?? process.platform, arch = plan.arch ?? process.arch;
+export async function fetchSource(run: Run, plan: Pick<DevBuildPlan, "repo" | "buildDir" | "commit" | "running" | "platform" | "onStage" | "onVersion" | "otherLineConfirmed">): Promise<FetchedSource> {
+  const { repo, buildDir, commit, running } = plan;
+  const platform = plan.platform ?? process.platform;
   const source = join(buildDir, "source"), url = `https://github.com/${repo}.git`;
   if (!/^[0-9a-f]{40}$/.test(commit)) throw new Error("The Beta build is not set up on this computer, so nothing was changed.");
   await prepareBuildFolder(buildDir, platform);
@@ -315,6 +411,44 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   // build made each compile a full one (about 40 s instead of a few).
   const version = await devVersion(source, committedAt, commit);
   plan.onVersion?.(version);
+  return { source, git, lock, committedAt, version };
+}
+
+/**
+ * The change's compiled output: GitHub's own build of it when the plan names where to find it and it checks out in full
+ * (build-output.ts), otherwise `npm run build` here, as before. Answers where it came from.
+ */
+export async function compileChange(run: Run, plan: Pick<DevBuildPlan, "builtOutput" | "note" | "buildDir" | "commit">, source: string): Promise<"github" | "here"> {
+  if (plan.builtOutput) {
+    const got = await useBuiltOutput({ repo: plan.builtOutput.repo, commit: plan.commit, source,
+      ...(plan.builtOutput.waitMs !== undefined ? { waitMs: plan.builtOutput.waitMs } : {}), ...(plan.note ? { log: plan.note } : {}) });
+    if (got.used) { plan.note?.(`Used GitHub's build of this change (sha256 ${got.digest}), checked in ${Math.round(got.ms / 1000)} s; nothing was compiled here.`); return "github"; }
+    plan.note?.(`Compiling here: ${got.why}.`);
+  }
+  await run("npm", ["run", "build"], { cwd: source, timeoutMs: minutes(30), env: quietEnv(plan.buildDir), pausable: true });
+  return "here";
+}
+
+/** npm ci only when needed, and the stale outputs of removed sources taken out of dist/, before a build (live or packaged). */
+export async function readyToCompile(run: Run, plan: Pick<DevBuildPlan, "buildDir" | "onStage" | "platform" | "arch">, fetched: FetchedSource): Promise<boolean> {
+  const platform = plan.platform ?? process.platform, arch = plan.arch ?? process.arch;
+  const now = { lock: fetched.lock, ...(await toolVersions(run)), platform, arch };
+  await removeTree(join(plan.buildDir, "tmp"));
+  await mkdir(join(plan.buildDir, "tmp"), { recursive: true });
+  const reused = await packages(run, plan, fetched.source, now);
+  const sources = (await listFiles(join(fetched.source, "src"))).filter((name) => /\.c?ts$/.test(name) && !/\.d\.c?ts$/.test(name));
+  for (const stale of staleOutputs(await listFiles(join(fetched.source, "dist")), sources)) await rm(join(fetched.source, "dist", stale), { force: true });
+  return reused;
+}
+
+/**
+ * Builds exactly `commit` of Beta's line in the build folder. Returns the app (or its download) and the version it
+ * was stamped with. A failure leaves the installed app untouched.
+ */
+export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> {
+  const { buildDir, commit, assetName } = plan;
+  const platform = plan.platform ?? process.platform, arch = plan.arch ?? process.arch;
+  const { source, lock, committedAt, version } = await fetchSource(run, plan);
   const now = { lock, ...(await toolVersions(run)), platform, arch };
   // The packager empties the whole of %TEMP%\electron-packager when it starts, so two builds at once (another copy of
   // Branch, a developer's own packaging) wiped each other's app on 2026-09-27. Each build has a temporary folder of its own.
@@ -326,18 +460,23 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   const sources = (await listFiles(join(source, "src"))).filter((name) => /\.c?ts$/.test(name) && !/\.d\.c?ts$/.test(name));
   for (const stale of staleOutputs(await listFiles(join(source, "dist")), sources)) await rm(join(source, "dist", stale), { force: true });
   // Windows: the app folder is what the update swaps in, so the zip and its checksum are left out.
-  const release = platform === "win32" ? [] : ["--release"], env = ownTemp(buildDir), timeoutMs = minutes(30);
+  const release = platform === "win32" ? [] : ["--release"], env = quietEnv(buildDir), timeoutMs = minutes(30), pausable = true;
   const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+  if (plan.appFolder && platform === "win32" && await lstat(join(source, "scripts", "assemble-app.mjs")).then((found) => found.isFile(), () => false)) {
+    const appFolder = await intoAppFolder(run, plan, plan.appFolder, { source, committedAt, version });
+    await recordPackages(buildDir, source, now);
+    return { version, reusedPackages, appFolder };
+  }
   if (manifest?.scripts?.["package:desktop"] === packageSteps) {
     // The same three steps the commit's own `npm run package:desktop` runs, with the version stamped after compiling.
-    await run("npm", ["run", "build"], { cwd: source, timeoutMs, env });
+    await compileChange(run, plan, source);
     await stampDevVersion(source, committedAt, commit);
-    await run("node", ["scripts/dependency-notices.mjs"], { cwd: source, timeoutMs, env });
-    await run("node", ["scripts/package-desktop.mjs", ...release], { cwd: source, timeoutMs, env });
+    await run("node", ["scripts/dependency-notices.mjs"], { cwd: source, timeoutMs, env, pausable });
+    await run("node", ["scripts/package-desktop.mjs", ...release], { cwd: source, timeoutMs, env, pausable });
   } else {
     // A commit that packages differently is built its own way, whole.
     await stampDevVersion(source, committedAt, commit);
-    await run("npm", ["run", "package:desktop", ...(release.length ? ["--", ...release] : [])], { cwd: source, timeoutMs, env });
+    await run("npm", ["run", "package:desktop", ...(release.length ? ["--", ...release] : [])], { cwd: source, timeoutMs, env, pausable });
   }
   // The built app must say which change it is, or the next check could not tell it is current and could not see
   // going back from it (a change older than the Dev channel itself has no such record).
@@ -350,6 +489,37 @@ export async function buildDev(run: Run, plan: DevBuildPlan): Promise<DevBuilt> 
   return platform === "win32"
     ? { version, reusedPackages, folder: out }
     : { version, reusedPackages, archive: join(out, assetName), checksumFile: join(out, `${assetName}.sha256`) };
+}
+
+/**
+ * Versioned app folders: the change compiled (or GitHub's build of it taken), stamped, and laid out beside the running
+ * version as `<root>/app-<version>/`, with no packager and no new program. Its Electron runtime is the running one's, by
+ * hard links, when Electron did not change; otherwise Electron's own stock folder, copied and checked by the change's
+ * own script. The app (resources/app) is the change's own script's too, pruned as packaging prunes it. The folder is
+ * made as `app-<version>.part` and renamed only once whole, so a cut-off build is never taken for a version.
+ */
+async function intoAppFolder(run: Run, plan: DevBuildPlan, target: NonNullable<DevBuildPlan["appFolder"]>,
+  built: { source: string; committedAt: number; version: string }): Promise<string> {
+  const { source, version } = built, env = quietEnv(plan.buildDir), timeoutMs = minutes(30), pausable = true;
+  await compileChange(run, plan, source);
+  await stampDevVersion(source, built.committedAt, plan.commit);
+  await run("node", ["scripts/dependency-notices.mjs"], { cwd: source, timeoutMs, env, pausable });
+  await writeFile(join(source, "dist", "build-info.json"), `${JSON.stringify({ commit: plan.commit, builtAt: new Date().toISOString() })}
+`);
+  const part = partFolder(target.root, version);
+  await removeTree(part);
+  const electron = await readFile(join(source, "node_modules", "electron", "package.json"), "utf8").then((text) => String(JSON.parse(text)?.version), () => null);
+  if (electron && electron === await runtimeVersion(target.running)) {
+    const linked = await linkRuntime(target.running, part, target.executableName);
+    plan.note?.(`Shared the running version's Electron ${electron} (${linked.files} files, ${linked.copied} copied): no program was made.`);
+  } else {
+    await run("node", ["scripts/assemble-app.mjs", "--runtime", part, "--name", target.executableName], { cwd: source, timeoutMs, env, pausable });
+    plan.note?.(`Electron changed (${await runtimeVersion(target.running) ?? "unknown"} to ${electron ?? "unknown"}): Electron's own stock program was copied and checked, not built.`);
+  }
+  await run("node", ["scripts/assemble-app.mjs", "--app", join(part, "resources", "app")], { cwd: source, timeoutMs, env, pausable });
+  const stamped = await readFile(join(part, "resources", "app", "dist", "build-info.json"), "utf8").then((text) => JSON.parse(text)?.commit, () => null);
+  if (stamped !== plan.commit) throw new Error("The new version's folder does not record which change it was made from, so nothing was changed.");
+  return sealAppFolder(target.root, version, await readPointer(target.root));
 }
 
 /**
@@ -366,23 +536,28 @@ export async function clearStaleLocks(gitDir: string, now = Date.now()): Promise
 }
 
 /** npm ci only when the record says it is needed; the record is gone while an install runs, so a cut one is redone. */
-async function packages(run: Run, plan: DevBuildPlan, source: string, now: Omit<PackagesRecord, "tree">): Promise<boolean> {
+async function packages(run: Run, plan: Pick<DevBuildPlan, "buildDir" | "onStage">, source: string, now: Omit<PackagesRecord, "tree">): Promise<boolean> {
   const recordPath = join(plan.buildDir, packagesRecordName);
   const record = await readFile(recordPath, "utf8").then(packagesRecord, () => null);
   const needed = packagesNeeded(record, now, record ? await folderDigest(join(source, "node_modules")) : null);
   if (!needed) { plan.onStage("installing", "skipped"); return true; }
   plan.onStage("installing", "running");
   await rm(recordPath, { force: true });
-  await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: source, timeoutMs: minutes(30), env: ownTemp(plan.buildDir) });
+  await run("npm", ["ci", "--no-audit", "--no-fund"], { cwd: source, timeoutMs: minutes(30), env: quietEnv(plan.buildDir) });
   await recordPackages(plan.buildDir, source, now);
   return false;
 }
 
-/** The build's own temporary folder, for every program that writes temporary files (npm, the packager). */
-const ownTemp = (buildDir: string): Record<string, string> => {
+/**
+ * The build's own temporary folder, for every program that writes temporary files (npm, the packager), and fewer
+ * things at once: Node's file and hashing threads down to two (from four) and npm's downloads to four at a time (from
+ * fifteen), so the build takes one or two cores and a trickle of the disk rather than all of both.
+ */
+export const quietEnv = (buildDir: string): Record<string, string> => {
   const tmp = join(buildDir, "tmp");
-  return { TEMP: tmp, TMP: tmp, TMPDIR: tmp };
+  return { TEMP: tmp, TMP: tmp, TMPDIR: tmp, UV_THREADPOOL_SIZE: "2", npm_config_maxsockets: "4" };
 };
+export const ownTemp = quietEnv;
 
 async function toolVersions(run: Run): Promise<{ node: string; npm: string }> {
   const [node, npm] = await Promise.all([run("node", ["--version"], { timeoutMs: 20_000 }), run("npm", ["--version"], { timeoutMs: 20_000 })]);

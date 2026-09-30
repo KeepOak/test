@@ -1,4 +1,6 @@
+import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
+import { EditedWords } from "./edited-words.js";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
@@ -32,7 +34,7 @@ const createSchema = z.object({
   author: userSchema, mentions: z.array(userSchema).default([]),
   referenced_message: z.object({ author: userSchema.optional() }).passthrough().nullish(),
   attachments: z.array(z.object({
-    url: z.string().min(1).max(2000), content_type: z.string().max(100).optional(),
+    url: z.string().min(1).max(2000), content_type: z.string().max(100).optional(), filename: z.string().max(300).optional(),
     size: z.number().nonnegative().optional(), duration_secs: z.number().nonnegative().optional(),
   }).passthrough()).default([]),
 }).passthrough();
@@ -54,6 +56,8 @@ const interactionSchema = z.object({ id: z.string().min(1).max(64), token: z.str
 
 export class DiscordAdapter implements ChannelAdapter {
   readonly kind = "discord";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
   readonly listButtons = true;
   readonly id: string;
@@ -75,6 +79,8 @@ export class DiscordAdapter implements ChannelAdapter {
   /** Empty until a rate-limit header tells us to hold off; the next send waits for it. */
   private readyAt = 0;
   private readonly pressed = new Set<string>();
+  /** Settings › Chat apps › Edited messages: the words each recent message had, so an edit that changed none is not one. */
+  private readonly edits = new EditedWords();
   constructor(private readonly options: DiscordOptions) {
     this.id = options.id;
     this.base = (options.apiBase ?? "https://discord.com/api/v10").replace(/\/$/, "");
@@ -159,8 +165,18 @@ export class DiscordAdapter implements ChannelAdapter {
     if (payload.t === "READY") return this.ready(payload.d);
     if (payload.t === "INTERACTION_CREATE")
       return (payload.d as { type?: unknown } | undefined)?.type === 2 ? this.slash(payload.d, onMessage) : this.button(payload.d, onMessage);
+    if (payload.t === "MESSAGE_UPDATE") {
+      // A person's edit carries its edit time; an embed unfolding under a link does not, and changes no words.
+      const update = createSchema.extend({ edited_timestamp: z.string().min(1) }).safeParse(payload.d);
+      if (!update.success || !this.edits.changed(update.data.id, update.data.content)) return;
+      const edited = this.inbound(update.data);
+      if (edited) await onMessage({ ...edited, edited: true }).catch(() => undefined);
+      return;
+    }
     if (payload.t !== "MESSAGE_CREATE") return;
-    const inbound = this.inbound(createSchema.parse(payload.d));
+    const created = createSchema.parse(payload.d);
+    this.edits.changed(created.id, created.content);
+    const inbound = this.inbound(created);
     if (inbound) await onMessage(inbound).catch(() => undefined);
   }
   /** Gateway-authenticated component events retain Discord's actual sender and DM context. */
@@ -243,7 +259,9 @@ export class DiscordAdapter implements ChannelAdapter {
   }
   private inbound(message: z.infer<typeof createSchema>): InboundMessage | null {
     const spoken = message.attachments.find((file) => (file.content_type ?? "").startsWith("audio/"));
-    if ((!message.content && !spoken) || message.author.bot || message.author.id === this.user?.id) return null;
+    // CHAT-104: pictures, videos and files come in as the task's material, fetched only once the message is answered.
+    const files = message.attachments.filter((file) => file !== spoken).slice(0, 10);
+    if ((!message.content && !spoken && !files.length) || message.author.bot || message.author.id === this.user?.id) return null;
     const direct = !message.guild_id;
     const mentioned = message.mentions.some((mention) => mention.id === this.user?.id);
     const repliedTo = message.referenced_message?.author?.id === this.user?.id;
@@ -253,6 +271,12 @@ export class DiscordAdapter implements ChannelAdapter {
       ...(message.guild_id ? { chatTitle: `channel ${message.channel_id}` } : {}),
       senderId: message.author.id, senderName: message.author.username ?? message.author.id,
       text: text || message.content, addressed: direct || mentioned || repliedTo, messageId: message.id,
+      ...(files.length ? { attachments: files.map((file, index) => {
+        const mediaType = file.content_type?.split(";")[0] ?? "application/octet-stream";
+        return { name: file.filename ?? `attachment-${index + 1}`, sourceId: `${message.id}:${index}`, mediaType, kind: attachmentKind(mediaType),
+          ...(file.size !== undefined ? { size: file.size } : {}),
+          bytes: () => fetchCapped(this.fetch, file.url, {}, /(^|\.)(discordapp\.(com|net)|discord\.com)$/i, "file", file.size ?? 0) };
+      }) } : {}),
       ...(spoken ? { voice: {
         mediaType: spoken.content_type ?? "audio/ogg",
         seconds: spoken.duration_secs,
@@ -352,6 +376,32 @@ export class DiscordAdapter implements ChannelAdapter {
     return parsed.success ? parsed.data.id : undefined;
   }
   // ---- end R17-C ----
+  /** CHAT-094: a spoken reply, as an audio file Discord plays in the chat. */
+  async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
+    return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio }, replyToMessageId);
+  }
+  /** The live browser in a chat: an attachment with buttons, then the same message's attachment replaced. */
+  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    return this.pictureMessage("POST", `/channels/${encodeURIComponent(chatId)}/messages`, file, buttons,
+      replyToMessageId ? { message_reference: { message_id: replyToMessageId, fail_if_not_exists: false } } : {});
+  }
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string }[]): Promise<void> {
+    await this.pictureMessage("PATCH", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`, file, buttons, {});
+  }
+  private async pictureMessage(method: "POST" | "PATCH", path: string, file: OutgoingFile, buttons: { label: string; value: string }[],
+    extra: Record<string, unknown>): Promise<string | undefined> {
+    const wait = this.readyAt - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 10000)));
+    const form = new FormData();
+    form.append("payload_json", JSON.stringify({ content: (file.caption ?? "").slice(0, this.maxTextLength),
+      attachments: [{ id: 0, filename: file.name }], components: buttons.length ? DiscordAdapter.components(buttons) : [], ...extra }));
+    form.append("files[0]", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    const response = await this.fetch(`${this.base}${path}`, { method, headers: this.headers(), body: form, signal: AbortSignal.timeout(60000) });
+    this.noteLimits(response);
+    if (!response.ok) throw new Error(`Discord refused the picture (${response.status})`);
+    const parsed = z.object({ id: z.string() }).passthrough().safeParse(await response.json().catch(() => ({})));
+    return parsed.success ? parsed.data.id : undefined;
+  }
   /** "typing…" for about ten seconds; the router asks again while the task works. */
   async sendTyping(chatId: string): Promise<void> {
     await this.rest("POST", `/channels/${encodeURIComponent(chatId)}/typing`);

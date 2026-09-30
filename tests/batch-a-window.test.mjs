@@ -7,6 +7,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { crc32, deflateSync } from "node:zlib";
 import { newWindow, openPlace, openSettings } from "./new-window-places.mjs";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const until = async (fn, ms = 15000) => {
   const end = Date.now() + ms;
@@ -16,7 +17,7 @@ const until = async (fn, ms = 15000) => {
     await new Promise((r) => setTimeout(r, 150));
   }
 };
-const chat = async (page, sid) => { await page.locator(`#side [data-act="chat"][data-id="${sid}"]`).first().click(); await page.locator("#prompt").waitFor(); };
+const chat = async (page, sid) => { await openChat(page, sid); await page.locator("#prompt").waitFor(); };
 
 test("+ › Run it in the background is offered and starts its own task; Take a screenshot says why it waits", async (t) => {
   // Nothing switched on first: /bg's own part ("session-commands") ships on since #467.

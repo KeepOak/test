@@ -96,7 +96,7 @@ The first preset is the default. **Settings → Models** chooses the workspace d
 
 ### ChatGPT plan sign-in
 
-`node dist/cli.js login` (or **Settings → ChatGPT account** in the app) starts OpenAI's device-code sign-in: open the shown page, enter the code, and Branch receives tokens that are stored in `chatgpt-auth.json` inside the data directory, protected with the device key in the desktop app. Signing in registers `ChatGPT (unofficial) · GPT-5.6 Sol (light)`, `GPT-5.6 Terra`, `GPT-5.6 Luna` and `GPT-5.5` presets (models `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`; plain `gpt-5.6` and `gpt-5.4` are refused for a ChatGPT account) and makes ChatGPT the default, with Sol first and the others as fallbacks, when no other model was chosen yet. Requests carry the `originator: branch-agent` header and a `BranchAgent/<version>` user agent. Access through a ChatGPT plan is provided by OpenAI for its own tools and may change without notice. **This route is unofficial**; see [ChatGPT plan sign-in and OpenAI's terms](#chatgpt-plan-sign-in-and-openais-terms).
+`node dist/cli.js login` (or **Settings → ChatGPT account** in the app) starts OpenAI's device-code sign-in: open the shown page, enter the code, and Branch receives tokens that are stored in `chatgpt-auth.json` inside the data directory, protected with the device key in the desktop app and otherwise sealed (AES-256-GCM) with the locker's key, `locker.key` beside it, never kept as readable or reversible text. Signing in registers `ChatGPT (unofficial) · GPT-5.6 Sol (light)`, `GPT-5.6 Terra`, `GPT-5.6 Luna` and `GPT-5.5` presets (models `gpt-5.6-sol`, `gpt-5.6-terra`, `gpt-5.6-luna`, `gpt-5.5`; plain `gpt-5.6` and `gpt-5.4` are refused for a ChatGPT account) and makes ChatGPT the default, with Sol first and the others as fallbacks, when no other model was chosen yet. Requests carry the `originator: branch-agent` header and a `BranchAgent/<version>` user agent. Access through a ChatGPT plan is provided by OpenAI for its own tools and may change without notice. **This route is unofficial**; see [ChatGPT plan sign-in and OpenAI's terms](#chatgpt-plan-sign-in-and-openais-terms).
 
 ### Several accounts per connection (mac6)
 
@@ -907,6 +907,23 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 ### What every channel shares
 
 Delivery to a chat is at-least-once: a message is marked sent only after the chat service took it, so if Branch stops in that very moment the message is sent again after the restart. `activation`, `pairing` and `allowlist` mean the same on every channel, and every channel uses the same delivery ledger, the same pairing codes and `POST /api/channels/link { channel, chatId, sessionId }`. Every credential is read from an environment variable of that name first, then from a secret of that name in the **default project's** locker; nothing is ever written into the connections file. Every outbound request goes through the network settings in `web`, including the chat sockets (checked as the matching `https://` address) and the mail servers (checked by host name). `GET /api/channels` reports each channel's `health` as `connected`, `reconnecting` or `needs attention` with a plain reason; **Settings → Channels** shows the same line and a **Check the connection** button. A secret never appears in that output, in an error message or in the log.
+
+### The window's commands from your own chat (CHAT-185)
+
+From one of your own chat accounts (the `/platform` list, or the paired accounts marked as yours under Settings ›
+Chat apps › Commands from your own chat), in a direct chat, on Telegram, Discord, Slack or Matrix (whose servers
+vouch for who sent a message; never email, SMS or a posted webhook), these also work: `/goal`, `/subgoal`, `/bg`,
+`/memory`, `/skills`, `/health`, `/sessions`, `/queue`, `/busy`, `/lockdown` and `/lockdown on`, and the looking,
+pausing and stopping half of `/loop`, `/heartbeat`, `/suggestions` and `/blueprint`. They are read whether or not
+the chat commands switch is on, because naming the account is the owner's choice. What they hold to:
+
+- a task `/goal` or `/bg` starts is that chat's task, not yours: the chat's short list of permissions, and your
+  approval rules held to "Ask before changes", every round of a goal included (below);
+- nothing that keeps running is made from a chat (starting a `/loop` or `/heartbeat`, accepting a suggestion, making
+  a blueprint), and Lockdown is switched off only in the app on this computer;
+- under Lockdown or the App lock only `/lockdown` and `/lockdown on` are read, and nothing is sent back until it is
+  off; a command sent while Branch was closed is never carried out;
+- from anybody else, in a group, or on another app, the same line is an ordinary message.
 
 ### Who a chat message's task counts as (mac7/chat-source)
 
@@ -1769,6 +1786,7 @@ says so.
 | Twitch chat (`twitch`) | yes; switched on from it | nothing to install | `https://dev.twitch.tv/console/apps/create` | `TWITCH_CHAT_TOKEN`; plus login, channel | GET `https://id.twitch.tv/oauth2/validate` |
 | Gotify (`gotify`) | yes; switched on from it | nothing to install | `<server>/#/applications` | `GOTIFY_APP_TOKEN`; plus server | none |
 | iMessage (`imessage`) | yes; switched on from it | nothing to install | none (plain steps) | nothing | none |
+| iMessage through BlueBubbles (`bluebubbles`) | yes; switched on from it | nothing to install | none (plain steps) | `BLUEBUBBLES_PASSWORD`; plus server | none |
 | Microsoft Teams (bot) (`msteams-bot`) | yes; switched on from it | Windows: winget `Microsoft.Teams`; Mac: cask `microsoft-teams`; Linux: download page | `https://dev.teams.microsoft.com/bots` | `MSTEAMS_APP_PASSWORD`; plus appId | POST `https://login.microsoftonline.com/botframework.com/oauth2/v2.0/token` |
 | Webex (`webex`) | yes; switched on from it | Windows: winget `Cisco.Webex`; Mac: cask `webex`; Linux: download page | `https://developer.webex.com/docs/bots` | `WEBEX_BOT_TOKEN`, `WEBEX_WEBHOOK_SECRET` | GET `https://webexapis.com/v1/people/me` |
 | Synology Chat (`synology-chat`) | yes; switched on from it | Windows: winget `Synology.ChatClient`; Mac: download page; Linux: download page | `https://kb.synology.com/en-global/DSM/help/Chat/chat_integration` | `SYNOLOGY_CHAT_INCOMING_URL`, `SYNOLOGY_CHAT_TOKEN`; plus server | none |
@@ -1840,7 +1858,7 @@ Speech-to-text transcription requires an OpenAI-compatible provider with an API 
 
 **Talk** next to the message box is hold-to-talk: hold it, speak, let go. What you said is written out, put in the message box so you can see it, sent as an ordinary message, and the answer is read back to you. Press Talk again while it is talking and it stops. The four states it moves through (waiting, listening, working, reading aloud) live in `src/voice-talk.ts` and are tested on their own.
 
-Three services can write out what you say, and Branch picks whichever one your settings point at: an OpenAI-shaped `/audio/transcriptions` (the Whisper shape, which most providers speak), Gemini's own route (the sound goes inline with the request), or **a speech program already installed on this computer** — whisper.cpp or faster-whisper. Branch never downloads a speech model for you: you point it at the program and its model file, and it checks the program is there before it tries. The transcript is read from what the program prints, using the flags whisper.cpp's and faster-whisper's own command lines document; this has not been run against a real installation, so a build that names its flags differently will refuse in plain words rather than silently return nothing. Three can read text aloud: the OpenAI-shaped `/audio/speech`, Gemini's speech route, and **the voices that come with Windows**, which need no key, no account and no internet. The Windows voice is driven by a short PowerShell script written to a temporary file and run with `-File` and no console window; the words are put in as a quoted string, so nothing in a reply can be run as a command.
+Three services can write out what you say, and Branch picks whichever one your settings point at: an OpenAI-shaped `/audio/transcriptions` (the Whisper shape, which most providers speak), Gemini's own route (the sound goes inline with the request), or **a speech program already installed on this computer** — whisper.cpp or faster-whisper. Branch never downloads a speech program or model for you. **faster-whisper is found by itself** (RES-709): installed with `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli`, with a model it already fetched once (`faster-whisper --model_size_or_path base.en` on any recording), Branch runs it as a small worker that keeps the model loaded, offline (`HF_HUB_OFFLINE=1`, `local_files_only`), and writes nothing to disk. Left on **auto**, that free route is used before any paid service, and Telegram voice notes go through it too. With dictation switched on (it ships off), the window's microphone button uses it for push-to-talk with live captions: hold it to talk, or press it once and press Done; the words land in the message box and nothing is sent until you send it. whisper.cpp is still run the old way: you point Branch at the program and its model file, and the transcript is read from what it prints. Three can read text aloud: the OpenAI-shaped `/audio/speech`, Gemini's speech route, and **the voices that come with Windows**, which need no key, no account and no internet. The Windows voice is driven by a short PowerShell script written to a temporary file and run with `-File` and no console window; the words are put in as a quoted string, so nothing in a reply can be run as a command.
 
 - **Keep audio on this computer**: nothing containing sound may leave. Both cloud routes then refuse in plain words instead of sending anyway, and the refusal lives in the service itself, so the `voice.say` tool cannot go around it. The two sound tools in the media toolbox (`media.transcribe` and `media.speak`) read the same setting straight from your settings and refuse the same way, so a workspace sound file is not a way round it either. It also wins over "answer a voice note with a voice note": a spoken reply would be uploaded to the chat app, so with this on the words are sent instead.
 - **Who writes out what you say** / **Who reads replies aloud**: pick a service, or leave it on "whatever suits".
@@ -2039,6 +2057,8 @@ The command's environment is built from nothing: only the variables named in `in
 
 **The wall around programs (macOS and Linux).** Settings → Computer → *The wall around programs* is a three-way switch that ships **off**. When it is on (or "when needed", for the commands your rules ask about or hold in a box), `shell.execute`, `code.run` and `process.start` start the program behind the system's own sandbox: on macOS `/usr/bin/sandbox-exec` (always that exact file) with a profile that refuses everything by default; on Linux the system's own `bwrap`, which Branch never installs or ships (install the `bubblewrap` package yourself; if your system has switched off unprivileged user namespaces, Branch says so and starts nothing). Behind the wall a program can read the disk but not `~/.ssh`, `~/.aws`, `~/.gnupg`, the keychains, Branch's own data folder or any place you add; it can write only inside the workspace and the temporary folder (on Linux a private, empty one); `.git`, `.branch` and `.agents`, and Branch's own program, gateway settings and updater, stay read-only; and on Linux it cannot trace other programs or reach the desktop session's message bus or Docker. *Anywhere* means internet addresses and the system's name lookup, never a local socket file such as Docker's or the ssh agent's. What it may reach is one of *nothing*, *only reading from sites you allow* (GET and HEAD, no secure tunnels), *sites you allow*, or *anywhere*. With sites you allow, the program is pointed at Branch's own door on this computer (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY` as SOCKS5, each carrying a secret made for that one command, without which the door answers nobody), the wall lets it reach nothing else, and a new site pauses the task with "let programs behind the wall reach this site" on the ordinary approval card; your blocked sites still apply, the door never reaches this computer, a private network or a cloud metadata address whatever your rules say, and it connects to the very address it checked. When the wall stops a write and the output names the file, the task asks once whether the next try may write to that one file, named as the system names it; startup places (`~/Library/LaunchAgents`, shell start-up files, `/etc`, `/usr`) are never offered. Every saved key a call asks for reaches a program behind the wall only as a stand-in (`branch_…`). For keys you tie to a site (`GITHUB_TOKEN api.github.com`) Branch swaps the real key in on the way out for that exact site (a key with no site is never sent anywhere), sends the request on over a secure connection, and takes the key and anything key-shaped back out of the answer. A secure tunnel the program opens itself cannot be read, so a stand-in inside one stays a stand-in. A program left running (`process.start`) gets no door: with *sites you allow* or *only reading* it has no network at all. The switch is saved by `GET`/`POST /api/os-sandbox` `{ mode, network, keySites, unreadable }`; the assistant has no tool that changes it, a short-lived key is refused, and every change is written in the record of what the assistant was allowed to do. On Windows the switch changes nothing: the job object and Windows Sandbox work exactly as before. Separately, and whatever the switch says, the voice and media programs (ffmpeg, yt-dlp, the reading-aloud program, the system voice) start with a clean environment: only `PATH`, `HOME`, `USER`, `LANG`/`LC_*`, `TZ`, the temporary-folder variables, the Linux sound-session variables and the variables Windows needs to start a program (`src/child-env.ts`). No model-service key or vault variable reaches them.
 
+**Commands for someone other than the owner are always walled.** Whatever that switch says, a command a household person's task, a key (a script, another assistant paired by link) or another program (MCP, A2A, ACP) asks for runs held to the workspace with no network: behind bubblewrap on Linux, macOS's own sandbox on a Mac, and on Windows inside WSL behind bubblewrap (node, npm, npx and git only). Where none of those can run, the command is refused with a sentence saying what is missing, never run unwalled. `code.run` and `process.start` are refused for them, since only a command can be held to one folder. The task's record carries `sandbox.outside_caller`. The owner's own work (their window, Trunks, schedules, triggers and paired chat) keeps Full Access as before, except a Trunk whose `reach.sandboxed` the owner switched on (off by default): its commands are walled the same way. The owner's other computers over SSH (`remote.list`, `remote.files`, `remote.read`, `remote.run`) are refused to all of them, and to a Trunk set to run sandboxed, because nothing on this computer can hold back what goes over SSH.
+
 ## MCP tools
 
 MCP supplies external tools through the official SDK. Configure exact server versions and explicit tool names:
@@ -2225,6 +2245,10 @@ The design, the threat list and the test for each threat are in [never-break.md]
 **What a task can never touch.** Whatever the rules, a standing yes, a hook, Lockdown or any switch say, a task cannot change the program's own folder (`BRANCH_INSTALL_ROOT`, or the folder `dist/` was loaded from; only `dist/`, `node_modules/`, `package.json`, `resources/` and `app.asar` when the workspace lives inside it), the data folder (only its database, key, gateway and updater files when the workspace lives inside it), or read the database and key files. Every word of a command is checked, `rm`-like commands naming a parent folder are refused, and so are commands that stop, reinstall or update Branch's own service (`src/never-break/protected.ts`). The refusal is written as `policy.denied`. A command that hides a path from plain reading (built at run time, encoded) is not caught by this check; the operating-system sandbox (`settings:computer`) is the layer for that.
 
 **The gateway.** `gateway.json` in the data folder, `GatewayConfigSchema` in `src/never-break/gateway-config.ts`: `mode` (`off`, the default; `when-needed`; `on`), `startSeconds` (90), `holdSeconds` (20), `maxQuickCrashes` (4), `gapSeconds` (300), `watchSeconds` (300) and `workerEnv` (only `BRANCH_*` names, never the data folder). With the mode not off, `branch start` runs the gateway on `BRANCH_PORT`, which runs the engine on a private loopback port and passes requests (and connection upgrades) through, checking the address exactly as the engine does. `GET /gateway/health` is answered by the gateway itself. An engine that stops is started again after 0.5, 1, 2 … 30 seconds; crashes chained less than `gapSeconds` apart, `maxQuickCrashes` times, slow it to once every five minutes and stop interrupted work carrying on by itself. Settings are promoted to `gateway.good.json` after a worker has stayed up; a broken `gateway.json`, or settings the engine fails to start with twice, are replaced by the good copy. `GET|POST /api/never-break { mode }` reads and sets the switch (the window offers one on/off switch that saves `on` or `off`; a file saved as `when-needed` still loads and reads as on there); `POST /api/never-break/proposal/accept|discard` answers a change the assistant suggested with the `gateway.propose` tool (offered only when the switch was on at launch), which is always tried on a throwaway gateway first. A short-lived key can do none of this.
+
+**Window-close preference.** Settings › General “Keep working when the window closes”, Settings › Gateway’s gateway switch and the footer popover save the same `gateway.json.mode`. They call `POST /api/never-break`, not `/api/deployment/daemon`; they do not create or remove a Windows scheduled task. The switch shows the saved choice, while the status and footer use `underGateway` to say whether this engine actually runs behind the gateway. A saved On with `underGateway: false` is shown as waiting for the next Branch launch. Saving Off while the retained gateway is running starts its shutdown after the API response; until that finishes, the status still reports it as running. Start with Windows and the separately managed CLI daemon remain distinct controls. If saving fails, the original choice and failure message remain visible.
+
+**Desktop awake choice.** `gateway.json.keepAwake` defaults to `false`. The owner can change it under Settings › Gateway or with `POST /api/never-break { "keepAwake": true | false }`. This choice is excluded from the assistant's timing proposals and their rollback. `GET /api/never-break` shows the saved choice in `config.keepAwake`; `keepAwakeRuntime` is a separate trusted desktop broker report (`requested`, `active`, `suspended`, `error`) or `null` when unavailable. A saved `true` is not proof that a desktop blocker is active. The running desktop gateway applies the choice without an engine restart; it may let the screen turn off. Lid closure, battery limits and OS policy may still suspend the computer; normal gateway reconnect handles resume.
 
 **Work that survives a restart.** Every model turn and tool call is written to `journal.sqlite` in the data folder (`src/never-break/journal.ts`, `synchronous=FULL`) before it runs, with an idempotency key, a side-effect class (`none` for tools with a reading permission; `idempotent` for `files.write`, `files.restore`, `files.mkdir`, `memory.forget`, `todos.done`, `git.branch`; `external` for everything else, MCP and plugin tools included) and, for file and git tools, what the file or the repository looked like just before. A step that cannot be written down is not run: the task stops with a sentence saying the disk may be full. This is not switchable. A task cut off because Branch closed is now marked `interrupted` rather than `cancelled`. On a real start (the app window, the background engine, or an engine under the gateway) with the switch not off, `recoverOnStart` (`src/never-break/resume.ts`) settles every task interrupted in the last day: an in-flight step with no side effects, or an idempotent one, is done again (only if the approval rules allow it without asking); a file or git step is checked (`verified` or done now); anything else is put to the owner as a question and the task waits (`needs_input`, event `attention.needed` with `afterRestart`). Then the task carries on by itself (**on**, event `run.auto_resumed`) or is offered (**when needed**, `run.can_continue`). After a crash loop (`BRANCH_RESUME=ask`, set by the gateway) nothing carries on by itself. A task a chat message started (`channel.inbound`) is left for the chat app (`run.left_for_channel`): Telegram's read position is kept in settings (`channel-position:<id>`) and saved only after a message is handled, so a message a crash cut off is fetched and answered again, and one already answered is not. The position is saved with the bot's id and never used for another bot: Telegram numbers each bot's updates on their own, and asking with a higher offset confirms the lower updates, so a new bot (or a position saved before bots were named) starts from Telegram's earliest unconfirmed update. Telegram numbers a bot's next update afresh after a week without any, possibly below the saved position, so once nothing has arrived for a day (and nothing is being handled) the bot asks from its earliest unconfirmed update and reads on in the new numbering; Telegram keeps an update for 24 hours at most, so nothing already answered comes back. A repeating timed job cut off by a restart goes back to `pending` for its next turn (`lastInterruption`); a turn missed while Branch was down runs once, with `late` in its history and a `schedule.caught_up` event. Other chat apps keep their own delivery rules (webhook services resend by themselves; Discord, Slack and Matrix do not replay missed messages yet).
 
@@ -3287,7 +3311,7 @@ Two switches, both saved in `settings/reflection` (`src/reflection/`). Looking b
 
 **Receipts.** Each successful tool result is hashed and signed with a key derived from the locker key. `GET /api/runs/:id/receipts` classifies every tool event (success, modified, forged, unsigned, failed, blocked, stalled). `POST /api/receipts/verify` with `{ runId, data }` (the event's data) says whether a result is still the one the runtime observed.
 
-**Web content.** `web.fetch` returns `provenance` (source, url, fetchedAt, trust: untrusted) and `warnings` for lines that read like instructions to the assistant; `web.search` checks snippets the same way. The web setting `injection` is `warn` (keep the text, add warnings), `redact` (replace flagged lines with a notice) or `block` (refuse the page or drop the result). Every detection is a `content.flagged` event.
+**Web content.** `web.fetch` returns `provenance` (source, url, fetchedAt, trust: untrusted) and `warnings` for lines that read like instructions to the assistant; `web.search` checks snippets the same way. The web setting `injection` is `redact` by default (replace flagged lines with a notice), or `warn` (keep the text, add warnings) or `block` (refuse the page or drop the result). Every detection is a `content.flagged` event. What the browser reads off a page (`browser.snapshot`, `browser.extract`, `browser.shape`) always has such lines taken out, with a `note` saying how many, and a file read with `files.read` does the same.
 
 **Exit criteria for delegated tasks.** `specialists.delegate` and fan-out tasks accept `checks` (same shape as a run's checks); a miss fails the child with the reason and the parent sees it as unresolved with that evidence.
 
@@ -3749,7 +3773,7 @@ These tools come in three groups so you can allow them separately.
 
 - `git.read` — `git.status` (what changed, which line of work, ahead or behind), `git.diff` (the changed lines, capped, either in the working folder or between two points such as `main..mine`), `git.log` (recent saved versions, bounded).
 - `git.write` — `git.branch` (list, start or switch a line of work), `git.commit` (save a version; a message is required, it saves everything that changed unless you name paths, it refuses when nothing has changed, and it never rewrites a version you already saved), `git.worktree_add` and `git.worktree_remove` (a parallel copy for an experiment, only ever inside `.branch-worktrees` in the repository, so experiments cannot spread elsewhere; `git.worktree_list` reads them and needs only `git.read`). Both groups are available as soon as Branch starts.
-- `git.remote` — `git.clone`, `git.push` and `git.pull`. **These are off until you turn them on.** `git.clone` brings a repository onto this computer for the first time, into a new workspace folder, from its `https://` address (no sign-in details in it) or a repository folder given as a full path; hooks never run, submodules are not fetched, and Branch's own source is never cloned this way (that is `branch.prepare_source_change`). Add a `git` block to the integrations file:
+- `git.remote` — `git.clone`, `git.push` and `git.pull`. **These are off until you turn them on, or until GitHub is connected: with a `github` block they are on unless `"remote": false` says otherwise.** `git.clone` brings a repository onto this computer for the first time, into a new workspace folder, from its `https://` address (no sign-in details in it) or a repository folder given as a full path; hooks never run, submodules are not fetched, and Branch's own source is never cloned this way (that is `branch.prepare_source_change`). Add a `git` block to the integrations file:
 
 ```json
 { "git": { "remote": true } }
@@ -3763,15 +3787,30 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 { "git": { "remote": true, "github": { "tokenSecret": "GITHUB_TOKEN" } } }
 ```
 
-That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
+That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (300 by default, at most 600, looking again every `checksPollSeconds`, 15 by default, 1 to 120; it only looks, so one call may wait past the owner's tool time limit, and the loop guard treats it as a polled tool), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators and leaves required reviews to GitHub. When the base takes changes only through GitHub's merge queue, the checked commit joins the queue instead (GitHub's `enqueuePullRequest`, pinned to that commit), the tool says it is queued, not merged, and `github.wait_for_checks` stays pending until GitHub says merged, or failed if the queue took it out. It refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
-**GitLab** can be read in the same way, with its own token saved as `GITLAB_TOKEN`:
+**GitLab (RES-719)** is a connection of its own, set up in the window: **Settings › Advanced › GitLab**. Its switch
+ships "when needed"; the row under it says whether GitLab is connected. **Connect** asks for your GitLab's address
+(gitlab.com, or your own server; https only, plain http only for one on this computer) and a personal access token with
+the `api` scope. Branch checks the token with GitLab first (`GET /user`) and keeps it only if GitLab accepts it, in the
+locker of the project that is active at that moment, as `GITLAB_TOKEN`, where Settings › Secrets lists it. The token is
+never read back into the window. **Disconnect** takes it out of the locker again, after a yes.
 
-```json
-{ "git": { "gitlab": { "tokenSecret": "GITLAB_TOKEN" } } }
-```
+Once connected (and while the switch is not off) these tools reach the index:
 
-That registers `gitlab.issues`, `gitlab.releases` and `gitlab.pipelines` behind `gitlab.read`. Reading only: GitLab's endpoints for changing things are shaped differently enough from GitHub's that offering half of them would mislead you about what Branch can actually do. The token is read from whichever project is active at the moment of the call, is sent only in the request header, is never written into a web address, and is scrubbed out of anything reported back — it cannot appear in Activity, in a receipt, or in an error message. Every GitHub address goes through the same network policy as web reading, so an address that is blocked there is refused here too. Nothing is installed on your account; your own GitHub App can be used instead of a token (below).
+- `gitlab.issues`, `gitlab.issue` (one in full, with what people wrote under it), `gitlab.merge_requests`,
+  `gitlab.merge_request` (its description, comments and how its pipeline went), `gitlab.pipelines` and
+  `gitlab.releases`, behind `gitlab.read`, which only looks;
+- `gitlab.create_issue`, `gitlab.comment` (under an issue or a merge request), `gitlab.open_merge_request` (a draft when
+  you say so: "Draft: " is put in front of the title) and `gitlab.create_project` (private unless you say otherwise),
+  behind `gitlab.manage`, which asks you first, like `github.manage`.
+
+Routes: `GET /api/gitlab` (the switch, whether it is connected and to whom), `POST /api/gitlab` `{ mode }`,
+`POST /api/gitlab/connect` `{ token, apiBase? }` and `POST /api/gitlab/disconnect` `{}`, each change the owner's only.
+An older launch settings file that names GitLab (`{ "git": { "gitlab": { "tokenSecret": "GITLAB_TOKEN" } } }`) still
+works: its address and token name are handed to the same connection, and the token is read from the active project at
+each call, until you connect in the window. The token is sent only in the request header, is never written into a web
+address, and is scrubbed out of anything reported back. Every GitHub address goes through the same network policy as web reading, so an address that is blocked there is refused here too. Nothing is installed on your account; your own GitHub App can be used instead of a token (below).
 
 **Your own GitHub App instead of a personal token (A2227).** Save the app's private key (the `.pem`
 GitHub gave you) in your secrets, then name it, the app number and the installation number:
@@ -3913,12 +3952,17 @@ the checks itself on the exact head commit rather than relying on GitHub enforci
 every check run, commit status and Actions workflow run must have finished and passed (skipped or neutral is
 accepted only for checks the base does not require), every check the base requires through classic
 protection or an active ruleset must have passed from its configured app, and the head must contain the exact
-base commit. Queued, running, missing or not-yet-registered checks are pending and never count as passed.
-Required approving reviews, merge queues and other rules Branch cannot satisfy by checking are left to
-GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
+base commit (unless the base has a merge queue, which tests the head on the newest base itself). Queued, running,
+missing or not-yet-registered checks are pending and never count as passed, and so is GitHub's "blocked" while
+they run. On a base with a merge queue (KeepOak/Branch-Agent's `redesign/window` has one) the checked commit joins
+the queue rather than merging directly, and the change is merged only when GitHub says so. Required approving
+reviews and other rules Branch cannot satisfy by checking are left to GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
 force-merges or bypasses a rule; the merge request names the checked head SHA, so a later push is refused by
 GitHub itself. `github.wait_for_checks` waits for the checks; in the owner's selected Full Access,
-`branch.finish_source_change` then gets an independent read-only review and merges without asking.
+`branch.finish_source_change` then gets an independent read-only review and merges without asking (or joins
+the merge queue). `branch.run_contract_tests` runs a worktree's contract tests the one way that counts as
+evidence (`node scripts/review.mjs --jobs 1` with its `expectedTests`, behind the command wall) and says whether
+they passed, with counts, or failed and why; a failed run is kept too, never as evidence.
 
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
@@ -4613,9 +4657,24 @@ files open as the window, so a hand-over would hit a locked file. Before the han
 written, the window reads `running.json`, asks that process to close (`taskkill /PID <pid> /T`, then
 `/T /F` if it will not), waits a bounded time for it to go and removes the note. An engine that
 still refuses is not treated as a failure: the hand-over script waits for the engine's process id
-as well as the window's, and ends it itself before mirroring anything. Nothing new is started: the
-hand-over still runs through the same hidden Windows Script Host launcher, and every tool is run
-with no window.
+as well as the window's, and ends it itself before mirroring anything. Every tool is run with no
+window.
+
+**How Windows installs an update (versioned folders).** Each version sits in a folder of its own,
+`<install>\app-<version>\`, beside the others; `current.json` names the one in use and the one
+before it. A new version is made beside the one running (Electron's own program is hard linked from
+it, never made anew), tried on a copy of the work, and put in use by one rename of `current.json`,
+so there is never a half-copied program. The version before is kept whole for going back; older
+ones are removed once nothing runs from them, so two are kept. Going back is the same rename the
+other way, and it is refused when the new version has already moved the saved work to a format the
+older one cannot read (then the new version is started again and the owner is told why). A start
+of an older version's program (an old shortcut, say) starts the version in use instead. A copy
+installed before this layout is the version before on its first update, and on the update after,
+when it is no longer needed to go back, its app is replaced by a small launcher that starts the
+version in use, so shortcuts to the top of the install keep working. The switch is run by a small
+runner: Electron's own program, linked with its files beside the update's scratch files, which runs
+the switch with no window and no Windows Script Host. A portable copy keeps its data beside the
+program, so it keeps the older swap, run by the same runner.
 
 **Checking a computer is ready.** `branch doctor --fix`, and the *Check and repair what I can*
 button, look for Git, the private browser Branch uses to read pages, a free address on this
@@ -6064,6 +6123,15 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
 
+### Files and voice in the other chat apps (CHAT-094, 104, 105)
+
+Pictures, videos and files sent to the assistant come in as the task's material on Telegram, Discord, Slack (a
+`file_share` message, fetched with the bot token), Matrix (`m.image`, `m.video`, `m.file`, fetched from the
+homeserver's authenticated media) and WhatsApp (image, video, document, with the caption as the words). Each file is
+fetched only once its message has earned an answer, only from that app's own file host over https, and never past
+20 MB. A Matrix audio message is a voice note to transcribe, as on the others. Spoken replies go out on Discord and
+Slack as an audio file, on Matrix as an audio message marked as voice, and on WhatsApp as an audio message.
+
 ### Branch's commands in each app's own picker (CHAT-161, CHAT-164)
 
 The commands a chat can send are listed in the app's own command picker, from the same table every surface reads,
@@ -6160,14 +6228,18 @@ The spreadsheet at `GET /api/usage/export.csv` carries `estimatedCostUsd`, `cost
 had no price leaves the money cells empty rather than writing a zero.
 
 ### Keeping a usage spreadsheet on a schedule (metering)
-Branch can keep a spreadsheet of this month's usage in a folder of your own workspace and write it
-again at an interval you choose. It is off until you ask for it, and it is written on this computer
-only — nothing is sent anywhere.
+Usage is always counted in Branch's own data (the Usage page reads it); nothing here switches that. A spreadsheet is
+written into your workspace only when you ask: Settings › Usage › Open the report › **Save as a spreadsheet** writes the
+report's 7, 30 or 90 days (in the desktop app into the `usage` folder, and it says where; a browser downloads it).
+Branch can also keep a spreadsheet of this month's usage there and write it again at an interval you choose. That
+schedule is off until you switch it on (a file written into every project by itself is clutter, not a feature), and it
+is written on this computer only — nothing is sent anywhere.
 
 - `GET /api/usage/metering` / `POST /api/usage/metering` — `{ enabled, folder, every }`, where
   `every` is `hourly`, `daily` or `weekly` and `folder` is a plain name inside the workspace. A
   folder that would climb out of the workspace is refused when you save it, not later.
-- `POST /api/usage/metering/now` — writes it straight away and says where it went.
+- `POST /api/usage/metering/now` — writes it straight away and says where it went. With `{ "range": "7d" | "30d" |
+  "90d" }` it writes those days instead, as `usage-report-<range>-<date>.csv` (the report's Save as a spreadsheet).
 
 The file is named after the month (`usage-2026-09.csv`) and holds the same money columns as the
 export above. The scheduler's existing beat writes it; a folder it cannot write to is passed over
@@ -6343,7 +6415,7 @@ changes unless Yes is pressed. In order of how much they matter:
 **Updates** in Settings is now three choice cards instead of a list: *Install updates by myself*,
 *Tell me when there's an update*, and *Keep Branch up to date by itself* (marked Recommended). Picking
 a card saves it at once. It is the same `autoUpdate` setting (`off`, `check`, `install`), and it ships
-as `install`: an update is installed by itself when no task is working. An `off` you chose stays off.
+as `install`: an update is installed by itself when no task is working and Lockdown is off. An `off` you chose stays off; under Lockdown a ready update waits, and the Update button still installs it.
 
 **Quitting while work runs.** Closing the window keeps Branch in the tray (or the dock), so work goes
 on. Quitting stops it, so when a task is running and no background engine would carry on with it,
@@ -6823,6 +6895,12 @@ same budget, the same approval rules and the same record as any other delegated 
   for somebody else rather than being lost.
 - **`delegate.route`** — works out which one of several specialists a request belongs to, from a
   short description of what each one is for, then hands it straight to that one.
+- **`delegate.teams`** (RES-721) — small groups, each with its own lead, over your saved teams (Team › Teams of
+  specialists). A team's lead is its member whose role says "lead" (else its first member); the others are its
+  helpers. A head (a specialist you name, or the first team's lead) splits the job between two to four teams, each
+  team's lead shares its part among its own helpers as `delegate.supervise` does, the teams work at the same time, and
+  the head writes the one answer, saying where a part failed. "Teams" is also a choice under Customize › Specialists ›
+  how Trunks work together; chosen, a task is told to work that way, and another way waits for your yes.
 
 **Handing work on.** `delegate.handoff` now takes a reason, and the handover is written into the
 conversation — "Handed over from X to Y: why" — so a person reading it afterwards can see the work
@@ -7909,7 +7987,12 @@ the "ask before changes" rules ask about it every time whatever the rule for com
 `GET /api/remotes` lists them, `POST /api/remotes` adds one, `POST /api/remotes/remove` takes one
 off. Each computer is `RemoteComputerSchema` (`src/remote/ssh-workspace.ts`): `alias` the short name
 from your SSH config, `root` the folder on that computer everything is kept inside, `label` a name
-you will recognise, `executables` the programs it may run, and `addedAt` when you added it.
+you will recognise, `executables` the programs it may run, `trunks` the Trunks you lent it to, and `addedAt`
+when you added it.
+
+Your own conversations may use every computer you added. A Trunk may use one only once you lend it to
+that Trunk (`trunks`); `remote.list` shows a Trunk only what it was lent, and the other tools refuse the
+rest by name.
 
 ## A way back to before a change (batch 26, wave 8)
 
@@ -8038,6 +8121,7 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | Setting | What it is |
 | --- | --- |
 | `autoReadAloud` | Read every reply aloud as it arrives. |
+| `readAloudWhen` | With `autoReadAloud` on: `always` (the default) reads every reply the owner is watching; `spoken` only the reply to a message dictated in the window (Settings › Voice › Answer aloud › When I talk). |
 | `voiceId` | Which voice reads aloud. Which ones exist depends on this computer. |
 | `speechRate` | How fast it reads, from 0.5 to 2 times normal speed. |
 | `useProviderVoice` | Prefer the connected service's higher-quality voice over the browser's. |
@@ -8047,9 +8131,9 @@ Every field of `VoiceSettingsSchema` (`src/voice.ts`), which is what **Settings 
 | `ttsModel` | The model name to use for reading aloud, when the route wants one. |
 | `keepAudioOnThisComputer` | Nothing containing sound may leave. Both cloud routes then refuse in plain words, and so does a live conversation. |
 | `replyWithVoiceOnChannels` | Answer a voice note on a chat app with a voice note back. Telegram only, today. |
-| `localSpeechExecutable` | The full path to whisper.cpp or faster-whisper, if you have one. Branch downloads nothing. |
-| `localSpeechModel` | The model file that program should use. |
-| `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`, so the right flags are used. |
+| `localSpeechExecutable` | The full path to whisper.cpp, or to the Python that has faster-whisper. Empty: Branch looks for faster-whisper where `uv tool install faster-whisper-cli` or `pipx install faster-whisper-cli` put it. Branch downloads nothing. |
+| `localSpeechModel` | The model file whisper.cpp should use; for faster-whisper a model name (`base.en`) or folder. Empty: the fastest faster-whisper model already on this computer. |
+| `localSpeechKind` | Which of the two it is: `whisper-cpp` or `faster-whisper`. faster-whisper runs as a small worker kept loaded while it is used, offline. |
 | `localSpeechStream` | The full path to a streaming speech program that is handed sound on its standard input and writes words out as it hears them, for live dictation. Empty means none, and Branch looks for `whisper-stream` or sherpa-onnx on your search path instead. Branch downloads nothing. |
 | `liveMaxMinutes` | How many minutes one live conversation may last. 10 by default. |
 | `liveMaxDollars` | How much one live conversation may cost. $1.00 by default. |
@@ -8559,6 +8643,12 @@ With several accounts per connection switched on (`src/accounts/`), the account 
 the one it uses first; with "copy from owner" on it may go on to your other accounts, with it off a
 connection with no pick refuses the Trunk rather than using your default. A Trunk never hands a job to
 your Claude Code or Codex (`refuseAnyTrunk`).
+**A Trunk's own secrets (RES-260).** A Trunk can keep secrets of its own (`GET/POST /api/trunks/<id>/secrets`,
+`{ name, value }` or `{ name, remove: true }`; names and dates come back, never a value). When a command it runs asks
+for a secret by name, its own turns get its own first; a name it does not keep comes from your active project only
+while it copies your keys, and is refused by name otherwise. A helper it sets going, another Trunk and your own
+conversations never read them, a short-lived key cannot reach them, and they are removed with the Trunk
+(`src/trunks/secrets.ts`).
 The same holds for everything a Trunk's turn sets going: a summary or document read one of its tools asks
 for, a workflow or flow it starts, a mixture of models and the keep-alive ping. Each sign-in connection
 refuses work marked as a Trunk's that somebody else is behind, whichever way the call arrives
@@ -9430,13 +9520,19 @@ authors who test their plugin against Branch before shipping it. A tool with `se
   their names: this computer, numbers and private-network names (`localhost`, `.local`, `.lan`, `.internal`,
   `.home.arpa`) are refused in the package. A hand-placed plugin walled by the tick is pinned to the code it
   had when it was loaded. One question to a plugin is at most 1 MB, and at most 4 plugin runs go at once.
-- **Windows.** Windows has no file and network wall, only a job object, so add-on code is refused there unless
-  the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships off); a plugin run
-  that way says so instead of claiming a wall. Nothing else on Windows changes.
-- **Hand-placed plugins stay in-process by default (decided).** "Also run plugin files I put in the plugins
-  folder myself in their own walled program" (`wallEveryPlugin`) keeps shipping off: those files are the owner's own, the switch
-  would change how existing plugins behave (Windows included), and a walled plugin loses model connections and
-  chat services. Add-ons from a package, list or draft are walled whatever the tick says.
+- **Windows.** Windows has no file and network wall, only a job object, so add-on code other people wrote is
+  refused there unless the owner ticks "Run add-on code on Windows without the wall" (`windowsWithoutWall`, ships
+  off; turning it on needs the owner's yes and is refused under Lockdown); a plugin run that way says so instead of
+  claiming a wall. A plugin the owner placed themselves runs there as its own program with the job object's limits.
+- **Hand-placed plugins run as their own program too (RES-251).** "Also run plugin files I put in the plugins folder
+  myself in their own walled program" (`wallEveryPlugin`) ships on: no plugin runs inside Branch unless the owner
+  chose that. Hand-placed plugins already switched on when this first started keep running as before, each recorded
+  (`grandfathered`, and `add-ons-plugin-wall-kept` on this computer), and Customize › Tools › Plugins lists them once
+  with **Wall it** beside each. A walled plugin brings no model connections or chat services, since those live inside
+  Branch; the owner lets one plugin run inside (`insideBranch`, set by `POST /api/plugin-catalog/add-ons/inside { id, inside }`, its row
+  "Where it runs") or switches the wall off for all. Either is less careful, so it needs the owner's yes
+  (`confirmLoosening`) and is refused under Lockdown; walling a plugin always goes through. A walled plugin is held to the same add-on
+  interface version as one inside. Add-ons from a package, list or draft are walled whatever the tick says.
 - **Branch as a plugin.** A `.branch-export.json` file is trusted only for folders Branch remembers writing, so a
   record planted in a folder cannot make Branch remove or overwrite the owner's files. A folder with a file the
   owner changed stays Branch's until everything it wrote is gone.
@@ -9865,7 +9961,7 @@ through your network rules.
 
 | Part | Tools | What it does |
 | --- | --- | --- |
-| Sending files into your chats | `chat.send_file` | Sends a workspace file into a Telegram, Slack or Discord chat as that app's own attachment. Only to a chat that has already talked to the assistant; never from a chat-started task; within your size limit (20 MB unless you change it) and the app's own (Telegram 50 MB, Discord 10 MB, Slack 100 MB); refused if its words hold anything key-shaped or one of your saved secrets; the caption passes the same last look as every reply, so Lockdown stops it. Each send is written in the record of what the assistant was allowed to do. |
+| Sending files into your chats | `chat.send_file` | Sends a workspace file into a Telegram, Slack, Discord, Matrix or WhatsApp chat as that app's own attachment (a JPEG, PNG or WebP picture up to 10 MB goes to Telegram as a photo, anything else as a file; Matrix uploads to the homeserver first and sends a picture, video, audio or file; WhatsApp uploads first and sends a picture, video, audio or document, inside its 24-hour reply window). Only to a chat that has already talked to the assistant; never from a chat-started task; within your size limit (20 MB unless you change it) and the app's own (Telegram 50 MB, Discord 10 MB, Slack 100 MB, Matrix 50 MB, WhatsApp 5 MB for pictures, 16 MB for video and audio, 100 MB for documents); refused if its words hold anything key-shaped or one of your saved secrets; the caption passes the same last look as every reply, so Lockdown stops it. Each send is written in the record of what the assistant was allowed to do. |
 | Home Assistant | `home.states`, `home.call` | Looks at devices, and calls a service on one device — only for the kinds of device you list (lights, switches, scenes, scripts, media players, climate and fans to begin with; locks and alarms are not on it, and are always asked about if you add them). Uses a long-lived access token saved as `HOMEASSISTANT_TOKEN`. A Home Assistant on your home network needs private addresses allowed under Settings → Computer → Network reach. |
 | A spoken daily briefing | `brief.spoken`, `brief.send_voice` | Today's events and unread mail from Google and Outlook (whichever is on and signed in) and the morning brief, read with your voice settings. "Play my briefing" plays it in the window; `brief.send_voice` sends it to a linked chat as a voice note, only while *Sending files into your chats* is on and after the same checks as a file, and like every sending tool it is never given to a task a chat started. |
 | Saying yes aloud | — | Beside each waiting question, "Answer aloud" listens for four seconds, only when you press it. Your words are written out by your own speech settings and must be just a yes or a no (English or French). The answer is bound to that exact request, used once, and runs out after two minutes; a spoken yes is always "just this once", and a risky request also needs a press. |
@@ -10424,24 +10520,35 @@ Settings fields (`learn`): `mode` (off, when-needed, on -- when-needed at first)
 a tour may have (3 to 12, default 8). Tools: `learn.map`, `learn.tour`, `learn.cost`, all under the
 permission for reading documents.
 
-## The desktop app's engine process
+## Desktop engine startup contract
 
-The desktop app runs the engine in a process of its own and hands it what it needs when it starts (`EngineConfigSchema`, src/desktop/engine-link.ts). None of these is set by hand; they are listed so every declared field is written down.
+These internal fields in `EngineConfigSchema` (`src/desktop/engine-link.ts`) are sent by
+the desktop host over its private process channel. They are not editable user preferences.
 
-- `dataDir`, `workspace`: the data folder and workspace, the same ones the app would use itself.
-- `providerEnv`: the saved model connection as provider variables, or none.
-- `version`: the app's version.
-- `executable`, `installRoot`, `packaged`: the installed program file and folder (none when run from source), and whether this is a packaged app.
-- `loginItem`: on macOS, the app's own login item as it is now; none elsewhere.
-- `appPid`: the window's main process, so the engine knows when the app is gone.
-- `testHooks`: test builds only, never in a packaged app.
+| Field | Meaning |
+| --- | --- |
+| `dataDir`, `workspace` | Saved-work and workspace directories chosen by the desktop. |
+| `providerEnv` | Saved model connection variables, or null; keys travel through the private channel. |
+| `version` | Desktop version reported by the engine. |
+| `executable`, `installRoot` | Installed executable and program folder, or null when running from source. |
+| `packaged` | Whether this desktop is a packaged installation. |
+| `loginItem` | macOS login-item enabled/approval state, or null elsewhere. |
+| `appPid` | Desktop host process named in the running-engine record. |
+| `testHooks` | Unpackaged test-launch hooks; never enabled in a packaged app. |
+| `gateway` | Trusted desktop startup flag: a detached gateway owns the public address and running record, while the worker listens internally. |
+| `port` | Optional exact port retained during an engine handover. |
+| `holdHandedOver` | Keeps checkpointed tasks waiting until the replacement engine passes its check. |
+| `appRoot` | Program folder containing checked live builds. |
+| `liveWindow` | Checked live window build: commit, digest, version and adoption time. |
 
-## Long work: carrying on after a restart or a limit
+## Carrying long tasks on
 
-Two switches, both on as shipped (`LongWorkSettingsSchema`, src/long-work.ts):
+These booleans are saved under `settings/long_work` (`src/long-work.ts`) and both default to true.
 
-- `resumeAfterRestart`: a task cut off by a restart carries on by itself from its last step.
-- `waitForLimits`: a task that met a plan or rate limit waits for it to reset and carries on, instead of ending.
+| Field | Meaning |
+| --- | --- |
+| `resumeAfterRestart` | Carries interrupted work on from its last recorded step even without the gateway. Existing approvals still apply; uncertain external effects follow the journal's recovery rules. A gateway configured to resume work has its own resume mode. |
+| `waitForLimits` | When no next account or fallback model can continue after a plan or rate limit, waits for the service's retry/reset time and carries on instead of ending the task. |
 
 ## Seasons: overnight learning
 

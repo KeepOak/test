@@ -26,9 +26,10 @@ export const shortcutDefaults = {
   sidePane: "Ctrl+Shift+K",
   sideList: "Ctrl+B",
   newTrunk: "",
-  focusPrompt: "",
+  /** UI-106: the message box, and the list's own search (Telegram-style), each one key away. */
+  focusPrompt: "Ctrl+L",
   stopTask: "Ctrl+Shift+S",
-  searchHistory: "",
+  searchHistory: "Ctrl+Shift+F",
   lookInside: "",
   /** Pass 17: the small ask box from any app. The desktop app registers it system-wide; ⌥ Space on a Mac. */
   quickAsk: "Ctrl+Shift+Space",
@@ -37,6 +38,9 @@ export const shortcutDefaults = {
   talkLive: "Ctrl+Shift+V",
   openInbox: "Ctrl+I",
   nextConversation: "Ctrl+Tab",
+  /** UI-106: the conversation before the one open, and "Who is using Branch" (the person menu). */
+  previousConversation: "Ctrl+Shift+Tab",
+  switchPerson: "",
 } as const;
 export type ShortcutAction = keyof typeof shortcutDefaults;
 export const shortcutActions = Object.keys(shortcutDefaults) as ShortcutAction[];
@@ -73,6 +77,8 @@ export const ComfortKeysSchema = z.preprocess(defaultsGiveWay, z.object({
   talkLive: keyCombo.default(shortcutDefaults.talkLive),
   openInbox: keyCombo.default(shortcutDefaults.openInbox),
   nextConversation: keyCombo.default(shortcutDefaults.nextConversation),
+  previousConversation: keyCombo.default(shortcutDefaults.previousConversation),
+  switchPerson: keyCombo.default(shortcutDefaults.switchPerson),
   /** Esc leaves typing for moving (h j k l, w b, 0 $, x, dd, i a o), as in vim. */
   vim: z.boolean().default(false),
 }).strict().superRefine((value, context) => {
@@ -105,7 +111,7 @@ export const ComfortNotifySchema = z.object({
    */
   needsYes: z.boolean().default(true),
   taskDone: z.boolean().default(true),
-  /** off: manual only; check: daily for Stable, every five minutes for Beta; install: also install when idle. Read through `readComfort`, which ships "install". */
+  /** off: manual only; check: daily for Stable, every minute for Beta; install: also install when idle. Read through `readComfort`, which ships "install". */
   autoUpdate: z.enum(["off", "check", "install"]).default("off"),
   /**
    * Stable (the default) installs published releases; Beta builds every merged change on this computer. Dev was
@@ -192,21 +198,18 @@ type Reader = Pick<Store, "get">;
 export const comfortShipsOn: Partial<Record<ComfortCard, Record<string, unknown>>> = { notify: { sound: "chime", autoUpdate: "install" } };
 
 /**
- * What a saved card ships as. Installing by itself ships on Stable only: on Beta it builds every merged change on this
- * computer, heavy work (e) running code nobody released, so a record that names Beta keeps its own autoUpdate.
+ * What a saved card ships as. Installing by itself ships on for Beta too (the owner's standing rule: they never press
+ * Update, and Beta is how each merged fix reaches them). An "off" the owner chose is kept (ship-on.ts chosenFields).
  */
-function shipsFor(card: ComfortCard, saved: Record<string, unknown>): Record<string, unknown> | undefined {
-  const ships = comfortShipsOn[card];
-  if (card !== "notify" || !ships || saved.releaseChannel === "stable") return ships;
-  const { autoUpdate: _stable, ...rest } = ships;
-  return rest;
+function shipsFor(card: ComfortCard): Record<string, unknown> | undefined {
+  return comfortShipsOn[card];
 }
 
 export function readComfort<K extends ComfortCard>(store: Reader, owner: string, card: K): ComfortValues[K] {
   const schema = comfortCards[card] as unknown as z.ZodType<ComfortValues[K]>;
   const saved = schema.safeParse(store.get("settings", owner, keyOf(card))?.data ?? {});
   if (!saved.success) return schema.parse({});
-  const ships = shipsFor(card, saved.data as Record<string, unknown>);
+  const ships = shipsFor(card);
   return ships ? shippedUnlessChosen(store, owner, keyOf(card), saved.data as Record<string, unknown>, ships) as ComfortValues[K] : saved.data;
 }
 

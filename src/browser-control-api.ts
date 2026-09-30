@@ -12,11 +12,13 @@ import { readPolicy } from './policy.js';
 import { runOrigin, startedWithShortLivedKey } from './key-context.js';
 import { currentPerson } from './people/context.js';
 import { lockdownActive, onLockdownChange } from './lockdown.js';
+import type { Page } from 'playwright';
+import { BrowserDemonstrations, DemonstrationError, prepareDemonstratedInput, finishDemonstratedInput, type DemonstrationScope } from './browser-demonstrations.js';
 
 type Branch = Awaited<ReturnType<typeof createBranch>>;
 export const browserApiPath = '/api/panels/browser';
 export const browserApiPaths = ['/api/panels/browser', '/api/panels/browser/start', '/api/panels/browser/control',
-  '/api/panels/browser/action', '/api/panels/browser/disconnect', '/api/panels/browser/stop'] as const;
+  '/api/panels/browser/action', '/api/panels/browser/disconnect', '/api/panels/browser/stop', '/api/panels/browser/demonstration'] as const;
 export const handlesBrowserApiPath = (path: string): boolean => browserApiPaths.some(value => value === path);
 const ScopeSchema = z.object({ sessionId: z.string().uuid(), profile: profileNameSchema.nullable(), clientId: z.string().uuid() }).strict();
 const BoundSchema = ScopeSchema.extend({ id: z.string().uuid(), epoch: z.number().int().min(1) });
@@ -25,6 +27,8 @@ const StartSchema = ScopeSchema.extend({ confirmToken: z.string().uuid().optiona
 const ControlSchema = BoundSchema.extend({ operation: z.enum(['takeover', 'handback']), runId: z.string().uuid().optional(), confirmToken: z.string().uuid().optional() });
 const ActionSchema = BoundSchema.extend({ frameId: z.string().uuid(), sequence: z.number().int().min(1), tabId: z.string().uuid(),
   tool: z.enum(['browser.navigate', 'browser.tab', 'browser.owner_input']), arguments: z.record(z.string(), z.unknown()), confirmToken: z.string().uuid().optional() });
+const DemonstrationSchema = BoundSchema.extend({ tabId: z.string().uuid(), operation: z.enum(['start', 'preview', 'save', 'cancel']),
+  name: z.string().trim().min(1).max(80).default('Learned browser workflow'), previewToken: z.string().uuid().optional() });
 type Scope = z.infer<typeof ScopeSchema>;
 type Bound = z.infer<typeof BoundSchema>;
 interface RequestAccess { authorize(): void; signal: AbortSignal }
@@ -50,7 +54,10 @@ export class BrowserControlApi {
   private leases = new Map<string, { clientId: string; timer: ReturnType<typeof setTimeout> }>();
   private closed = false;
   private stopLockdown: () => void;
+  private readonly demonstrations: BrowserDemonstrations;
+  private readonly acting = new Set<string>();
   constructor(private readonly app: Branch) {
+    this.demonstrations = new BrowserDemonstrations(value => app.store.secrets.scrubber.deep(value));
     this.stopLockdown = onLockdownChange((store, owner, on) => { if (store === app.store && owner === app.runtime.owner && on) this.revoke(); });
     app.channelHost.onLock(async () => { if (!this.closed) this.revoke(); });
     this.share();
@@ -64,6 +71,7 @@ export class BrowserControlApi {
     };
   }
   revoke(): void {
+    this.demonstrations.clear();
     this.app.browser?.controls.revokeAll(); this.frames.clear(); this.approvals.clear();
     for (const { timer } of this.leases.values()) clearTimeout(timer);
     this.leases.clear();
@@ -139,7 +147,7 @@ export class BrowserControlApi {
     const view = control.view();
     if (view.writer?.kind !== 'owner' || view.writer.id !== input.clientId) return;
     const had = this.leases.get(view.id); if (had) clearTimeout(had.timer);
-    const timer = setTimeout(() => { control.disconnect(input.clientId); this.changed(view.id); this.leases.delete(view.id); }, duration);
+    const timer = setTimeout(() => { control.disconnect(input.clientId); this.demonstrations.clear(view.id); this.changed(view.id); this.leases.delete(view.id); }, duration);
     timer.unref?.(); this.leases.set(view.id, { clientId: input.clientId, timer });
   }
   private async start(input: z.infer<typeof StartSchema>, access: RequestAccess) {
@@ -212,6 +220,7 @@ export class BrowserControlApi {
       const { confirmToken, ...payload } = input, permit = this.permit(payload, context, 'browser.tab', { action: 'select', index: 0 }, confirmToken);
       if ('status' in permit) { if (permit.status === 'asked') this.lease(input, control, 60_000); return permit; }
       const check = this.manualGuard(binding, access, permit, context, 'browser.tab', { action: 'select', index: 0 }); check(); this.changed(input.id);
+      this.demonstrations.clear(input.id);
       if (input.operation === 'takeover') {
         const view = await control.takeOver(input.epoch, input.clientId);
         try { check(); } catch (error) { control.disconnect(input.clientId); throw error; }
@@ -240,10 +249,23 @@ export class BrowserControlApi {
     if (!target || target.page !== frame.page || target.url !== frame.url)
       throw new BrowserApiError(409, 'The browser page changed; refresh before using this approval.');
   }
+  /**
+   * One input, answered with the page as it is afterwards: the window draws that picture at once instead of asking for
+   * it in a second request (tests/owner-browser-speed.test.mjs measures click and key to picture).
+   */
   private async action(input: z.infer<typeof ActionSchema>, access: RequestAccess) {
+    const answer = await this.act(input, access);
+    if (!('control' in answer)) return answer;
+    const { id, epoch: _epoch, frameId: _frame, sequence: _sequence, tabId: _tab, tool: _tool, arguments: _args, confirmToken: _token, ...scope } = input;
+    const view = await this.view({ ...scope, id, epoch: answer.control.epoch }, access).catch(() => null);
+    return view?.status === 'ready' ? { ...answer, view } : answer;
+  }
+  private async act(input: z.infer<typeof ActionSchema>, access: RequestAccess) {
     const { binding, control } = this.bound(input, access); this.frame(input, control);
     const frame = this.frames.get(input.id)!;
     const args = this.app.registry.runArgs(input.tool, input.arguments);
+    if (this.acting.has(input.id)) throw new BrowserApiError(409, 'A browser action is still running.');
+    this.acting.add(input.id);
     return this.withRun(binding, access, async context => {
       this.browser().bindControlledRun(binding, input.id, context);
       const { confirmToken, ...payload } = input, permit = this.permit(payload, context, input.tool, args, confirmToken);
@@ -251,6 +273,8 @@ export class BrowserControlApi {
       let effectStarted = false;
       const check = this.manualGuard(binding, access, permit, context, input.tool, args,
         () => { if (!effectStarted) this.sameTarget(binding, input.id, frame); });
+      check(); this.frame(input, control);
+      const capture = await this.prepareDemonstration(input, binding, args as Record<string, unknown>);
       check(); this.frame(input, control); this.changed(input.id);
       const result = await this.browser().ownerCommand(binding, input.id, { epoch: input.epoch, sequence: input.sequence,
         writer: { kind: 'owner', id: input.clientId }, tabId: input.tabId }, context, scoped =>
@@ -258,8 +282,43 @@ export class BrowserControlApi {
           () => ({ id: context.runId, done: () => undefined })), check, () => { effectStarted = true; });
       try { this.manualGuard(binding, access, permit, context, input.tool, args)(); }
       catch (error) { control.disconnect(input.clientId); throw error; }
+      if (result.status === 'ran' && capture) await capture();
       this.lease(input, control); return { ...result, control: control.view() };
-    });
+    }).finally(() => this.acting.delete(input.id));
+  }
+  private demonstrationScope(input: Bound & { tabId: string }, binding: BrowserBinding): DemonstrationScope {
+    return { owner: binding.owner, conversation: binding.conversation, control: input.id, client: input.clientId, tab: input.tabId, epoch: input.epoch, profile: binding.profile };
+  }
+  private async prepareDemonstration(input: z.infer<typeof ActionSchema>, binding: BrowserBinding, args: Record<string, unknown>) {
+    const scope = this.demonstrationScope(input, binding);
+    if (!this.demonstrations.active(scope)) return null;
+    if (input.tool === 'browser.navigate') return async () => this.demonstrations.append(scope, this.demonstrations.navigation(String(args.url)));
+    if (input.tool === 'browser.tab') throw new BrowserApiError(409, 'Preview or cancel this single-tab demonstration before changing tabs.');
+    const target = this.browser().controlledPageTarget(binding, input.id, input.tabId);
+    if (!target) throw new BrowserApiError(409, 'The demonstration page is no longer available.');
+    const page = target.page as Page, prepared = await prepareDemonstratedInput(page, args);
+    return async () => {
+      const entry = await finishDemonstratedInput(page, prepared).catch(() => ({ omission: 'This action could not be recorded reliably. Record a new demonstration.' }));
+      this.demonstrations.append(scope, entry);
+    };
+  }
+  private demonstration(input: z.infer<typeof DemonstrationSchema>, access: RequestAccess) {
+    if (this.acting.has(input.id)) throw new BrowserApiError(409, 'Wait for the current browser action to finish.');
+    const { binding, control } = this.bound(input, access), view = control.view();
+    if (view.state !== 'owner' || view.writer?.kind !== 'owner' || view.writer.id !== input.clientId || !view.tabs.includes(input.tabId))
+      throw new BrowserApiError(409, 'Take control of this browser before recording a demonstration.');
+    const scope = this.demonstrationScope(input, binding);
+    if (input.operation === 'cancel') { this.demonstrations.clear(input.id); return { status: 'cancelled' }; }
+    if (input.operation === 'start') {
+      const target = this.browser().controlledPageTarget(binding, input.id, input.tabId);
+      this.demonstrations.start(scope, target?.url ?? 'about:blank'); return { status: 'recording' };
+    }
+    if (input.operation === 'preview') return { status: 'preview', ...this.demonstrations.preview(scope, input.name) };
+    const definition = this.demonstrations.saved(scope, input.previewToken ?? '', input.name);
+    const trunk = this.app.trunks.trunkForConversation(binding.conversation)?.trunkId;
+    const workflow = this.app.workflows.create(this.app.workflows.forOwner(binding.owner), definition, trunk ? { given: trunk } : {});
+    this.demonstrations.clear(input.id);
+    return { status: 'saved', workflow };
   }
   async handle(method: string, path: string, body: unknown, access: RequestAccess): Promise<unknown> {
     if (this.closed) throw new BrowserApiError(503, 'Browser controls are closed.');
@@ -272,9 +331,11 @@ export class BrowserControlApi {
     if (path === `${browserApiPath}/start`) return this.start(StartSchema.parse(body), access);
     if (path === `${browserApiPath}/control`) return this.transfer(ControlSchema.parse(body), access);
     if (path === `${browserApiPath}/action`) return this.action(ActionSchema.parse(body), access);
+    if (path === `${browserApiPath}/demonstration`) return this.demonstration(DemonstrationSchema.parse(body), access);
     const input = BoundSchema.parse(body), { binding, control } = this.bound(input, access); this.changed(input.id);
-    if (path === `${browserApiPath}/disconnect`) { control.disconnect(input.clientId); return { status: 'ready', control: control.view() }; }
+    if (path === `${browserApiPath}/disconnect`) { this.demonstrations.clear(input.id); control.disconnect(input.clientId); return { status: 'ready', control: control.view() }; }
     if (path === `${browserApiPath}/stop`) {
+      this.demonstrations.clear(input.id);
       await this.browser().stopControlled(binding, input.id); this.guard(binding, access)();
       const lease = this.leases.get(input.id); if (lease) clearTimeout(lease.timer);
       this.leases.delete(input.id); this.revisions.delete(input.id);
@@ -288,6 +349,7 @@ export class BrowserControlApi {
     this.leases.clear(); this.frames.clear(); this.approvals.clear(); this.revisions.clear();
   }
   error(error: unknown): BrowserApiError {
+    if (error instanceof DemonstrationError) return new BrowserApiError(error.status, error.message);
     return error instanceof BrowserApiError ? error : error instanceof BrowserControlError
       ? new BrowserApiError(409, error.message) : new BrowserApiError(500, 'Browser control did not finish. Refresh before continuing.');
   }

@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 async function dataPage(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-data-usage-"));
@@ -47,7 +48,7 @@ test.skip("DG-081 the monthly limit still saves from its new place, and the head
   const { page, errors, call } = await dataPage(t);
   await page.locator("#usage-costs-card #max-dollars").fill("42");
   await page.locator("#usage-costs-card #save-budget").click();
-  await page.waitForFunction(async () => {
+  await waitInPage(page, async () => {
     const response = await fetch("/api/usage/budget", { headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") } });
     return (await response.json()).budget?.maxMonthlyDollars === 42;
   }, null, { timeout: 10000 });

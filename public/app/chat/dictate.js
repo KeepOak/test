@@ -12,8 +12,12 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { recordInWindow } from "./dictate-window.js";
+import { heardSpeech } from "./aloud.js";
 
-const D = { state: null, reading: false, on: false, timer: null, base: "", heard: "" };
+const D = { state: null, reading: false, on: false, timer: null, base: "", heard: "", rec: null, pressAt: 0, pointer: false };
+/* RES-709: no streaming speech program, but a free one is here, so the window records with its own microphone. */
+const inWindow = () => D.state?.engine?.kind === "window-mic";
 
 /* The engine's picture of dictation, read once the window is signed in (and again on each press). */
 async function read() {
@@ -42,7 +46,7 @@ export function micButton() {
   return `<button class="c-btn" type="button" aria-label="${t("window.chat.dict.label")}" data-act="dict">${ic("mic")}</button>`;
 }
 
-export const dictRow = () => `<div class="dict"><span class="wave" aria-hidden="true">${"<i></i>".repeat(9)}</span><span>${t("window.chat.dict.listening")}</span><span class="tb-grow"></span><button class="btn sm" type="button" data-act="dict-done">${t("first-run-steps.done")}</button></div>`;
+export const dictRow = () => `<div class="dict"><span class="wave" aria-hidden="true">${"<i></i>".repeat(9)}</span><span class="dict-cap" aria-live="polite">${D.heard ? esc(D.heard) : t("window.chat.dict.listening")}</span><span class="tb-grow"></span><button class="btn sm" type="button" data-act="dict-done">${t("first-run-steps.done")}</button></div>`;
 
 /* The words go after what was in the box when Dictate was pressed, as typed words would, and follow the engine's words
    as they come (the box stays in the composer, hidden behind the listening row, so a redraw keeps them); the box tells
@@ -51,7 +55,33 @@ function put(words) {
   const box = $("#prompt");
   if (!box) return;
   box.value = D.base + words;
+  if (words) heardSpeech(); // the message is spoken, for Answer aloud › When I talk (chat/aloud.js)
   box.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+/* The live caption over the box, drawn in place so the recording is not disturbed by a redraw. */
+function caption(words) {
+  D.heard = words;
+  put(words);
+  const cap = document.querySelector(".composer .dict-cap");
+  if (cap) cap.textContent = words || t("window.chat.dict.listening");
+}
+
+/* RES-709: the window's own microphone, opened on this press and let go of when the recording stops. */
+async function startInWindow(state) {
+  if (state.refusal) { toast(state.refusal); return; }
+  const typed = $("#prompt")?.value ?? "";
+  Object.assign(D, { on: true, heard: "", base: typed.trim() ? typed.replace(/\s*$/, " ") : "" });
+  renderNow();
+  try {
+    D.rec = await recordInWindow({ onWords: caption, onFail: (error) => toast(error.message) });
+  } catch (error) {
+    D.rec = null;
+    toast(error.name === "NotAllowedError" ? t("window.chat.dict.mic-refused") : error.message);
+    finish("");
+    return;
+  }
+  if (!D.on) D.rec.stop(); // let go before the microphone finished opening
 }
 
 /* The engine's settled words when it gave them, else the last words it heard. */
@@ -59,6 +89,7 @@ function finish(words) {
   clearInterval(D.timer);
   D.timer = null;
   D.on = false;
+  D.rec = null;
   countDictation();
   renderNow();
   put(typeof words === "string" ? words.trim() : D.heard);
@@ -70,6 +101,7 @@ function finish(words) {
 async function start() {
   const state = await read();
   if (!state || state.canDictate === false) { renderNow(); return; }
+  if (inWindow()) { await startInWindow(state); return; }
   let said;
   try { said = await api("voice/dictation/listen", { on: true }); } catch (error) { toast(error.message); return; }
   if (said.state) D.state = said.state;
@@ -90,6 +122,14 @@ async function start() {
 
 async function done() {
   if (!D.on) return;
+  if (D.rec || inWindow()) {
+    const rec = D.rec;
+    D.on = false;
+    if (!rec) { finish(""); return; }
+    rec.stop();
+    finish(await rec.settled);
+    return;
+  }
   clearInterval(D.timer);
   try { await api("voice/dictation/listen", { on: false }); } catch (error) { toast(error.message); }
   let now = null;
@@ -130,7 +170,22 @@ async function answerWake(yes) {
 
 export function initDictate() {
   markLive(["dict", "dict-done", "wake16"]);
-  on("dict", () => { if (!D.on) start(); });
+  on("dict", () => {
+    if (D.pointer) { D.pointer = false; return; } // a press of the pointer was handled where it went down
+    if (!D.on) start(); else if (inWindow()) done();
+  });
+  // RES-709: hold Dictate to talk. Pressed and let go quickly it stays open until Done; held, letting go ends it.
+  document.addEventListener("pointerdown", (event) => {
+    if (!inWindow() || !event.target.closest?.('.composer [data-act="dict"]')) return;
+    D.pointer = true;
+    D.pressAt = Date.now();
+    if (!D.on) start();
+  });
+  document.addEventListener("pointerup", () => {
+    if (D.on && D.pressAt && inWindow() && Date.now() - D.pressAt > 450) done();
+    D.pressAt = 0;
+    setTimeout(() => { D.pointer = false; }); // after the click this press makes, if it makes one
+  });
   on("dict-done", () => done());
   on("wake16", (el) => answerWake(el.dataset.v === "yes"));
 }

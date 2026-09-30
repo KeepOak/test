@@ -7,5 +7,5 @@ export const PARITY_KINDS = [
   "irc", "twitch", "gotify", "imessage", "msteams-bot", "webex", "synology-chat", "zalo", "flock", "pumble",
   "mastodon", "bluesky", "reddit", "discourse", "x-dm", "twist", "nextcloud-talk", "sms", "ntfy", "pushover",
   "threema", "homeassistant", "xmpp", "mqtt", "keybase", "simplex", "deltachat", "nostr", "vk", "qq-bot",
-  "guilded", "revolt", "mumble", "kook", "wechat-mp", "wecom-app",
+  "guilded", "revolt", "mumble", "kook", "wechat-mp", "wecom-app", "bluebubbles",
 ] as const;

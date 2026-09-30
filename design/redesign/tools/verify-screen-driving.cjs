@@ -10,7 +10,7 @@
 // A safety belt: with this set, Branch's real-screen guard (src/integrations/real-screen-guard.ts) refuses the real screen
 // to anything in this process that is not the stand-in.
 process.env.NODE_TEST_CONTEXT ??= "verify-screen-driving";
-const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const { mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
 const { join } = require("node:path");

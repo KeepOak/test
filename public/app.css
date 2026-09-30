@@ -428,6 +428,8 @@ details.adv summary::-webkit-details-marker{display:none}
 .brow .track{height:8px;border-radius:4px;background:var(--fill);overflow:hidden}
 .brow .track u{display:block;height:100%;background:var(--ink-2);border-radius:4px}
 .brow .v{font:12px var(--mono);text-align:right;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.brow.spend-row{grid-template-columns:minmax(90px,160px) 1fr auto}
+.brow .spend-sub{grid-column:1/-1;margin-top:-4px;font-size:12px;color:var(--ink-3)}
 .filelist{display:grid;gap:0}
 .frow{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}
 .frow code{font:500 12px var(--mono);background:var(--fill);border-radius:6px;padding:4px 8px}
@@ -550,7 +552,9 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .lh-btn:hover{color:var(--ink)}
 .side{position:relative}
 .side>*{position:relative;z-index:1}
-.side>.scenery{position:absolute;z-index:0;left:0;bottom:0;width:100%;height:120px;pointer-events:none;image-rendering:pixelated;opacity:.5}
+/* Drawn at its own size in the list's bottom right, so the tree stands behind the pet and never behind the owner's row
+   or its Settings gear, whatever the list's width (QA pass 2). */
+.side>.scenery{position:absolute;z-index:0;right:0;bottom:0;width:146px;height:60px;pointer-events:none;image-rendering:pixelated;opacity:.5}
 .ov{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:12px;margin-top:18px}
 .ov .tile h2{margin:0;font-size:13px;font-weight:600;color:var(--ink-3)}
 .big-n{font-size:28px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
@@ -2273,6 +2277,7 @@ img.pet-vid11.still13{object-fit:contain}
 /* side by side: two columns with a hairline between them */
 .split15{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border-top:0}
 .split15>#scroll{min-width:0}
+#scroll:focus,#scroll:focus-visible{outline:none} /* focused only to keep the keys scrolling it (chat.js draw) */
 .beside15{display:flex;flex-direction:column;min-height:0;border-left:1px solid var(--line);background:var(--bg)}
 .bs-h15{flex:none;display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
 .bs-h15 .grow{display:grid;min-width:0;line-height:1.2}
@@ -3241,7 +3246,9 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .tbl-b17{width:100%;border-collapse:collapse;font-size:13px}
 .tbl-b17 th{text-align:left;font-size:11.5px;font-weight:600;color:var(--ink-3);padding:6px 8px;border-bottom:1px solid var(--line-2)}
 .tbl-b17 td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.side-ans-b17{white-space:pre-wrap;word-break:break-word;max-height:160px;overflow:auto;margin:6px 0 0;font:12px/1.45 var(--mono,ui-monospace,monospace);color:var(--ink-2)}
 .tbl-b17 td:not(:first-child),.tbl-b17 th:not(:first-child){text-align:right;white-space:nowrap}
+.tbl-b17.side-b17 td,.tbl-b17.side-b17 th{text-align:left;white-space:normal;min-width:160px}
 .warn-b17{display:block;font-size:11.5px;color:var(--warn)}
 .chart-b17{width:100%;height:auto;display:block}
 .chart-b17 text{font-size:11px;fill:var(--ink-2)}
@@ -3303,6 +3310,7 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 .tbl-b17 th{text-align:left;font-size:11.5px;font-weight:600;color:var(--ink-3);padding:6px 8px;border-bottom:1px solid var(--line-2)}
 .tbl-b17 td{padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 .tbl-b17 td:not(:first-child),.tbl-b17 th:not(:first-child){text-align:right;white-space:nowrap}
+.tbl-b17.side-b17 td,.tbl-b17.side-b17 th{text-align:left;white-space:normal;min-width:160px}
 .test-b17{display:flex;gap:8px;align-items:center}
 .test-b17 .inp{flex:1;min-width:0}
 .res-line-b17{display:flex;align-items:flex-start;gap:10px;padding:11px 12px;border-radius:12px;background:var(--fill)}
@@ -4099,6 +4107,8 @@ html.still18 .zz11::after{animation-play-state:paused!important}
 .hf18a.open .hfb18a{grid-template-rows:1fr}
 .hfb18a > div{overflow:hidden;min-height:0}
 .hf18a.open .hfr18a{display:none}
+/* The lead's workbench: wake-ups and programs left running are listed in the opened roster too, as rows. */
+.hf18a.open .roster18a .hfr18a{display:grid;border:1px solid var(--line);border-radius:10px}
 .roster18a{display:flex;flex-direction:column;gap:8px;padding:10px 12px;border-top:1px solid var(--line);background:var(--bg);max-height:340px;overflow:auto}
 .card18a{background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;animation:rise18 .16s ease-out}
 .card18a.wait18{border-color:var(--accent)}
@@ -4414,6 +4424,17 @@ audio.docread18m{width:100%}
 .hb18c .b18c{position:absolute;right:-2px;bottom:-2px;width:calc(var(--s) * .42);height:calc(var(--s) * .42);min-width:12px;min-height:12px;border-radius:50%;display:grid;place-items:center;background:var(--raise);color:var(--ink-2);box-shadow:0 0 0 1.5px var(--raise)}
 .hb18c .b18c svg.i{width:70%;height:70%}
 
+/* area: mermaid diagrams */
+/* The prototype's diagram card: the drawing on the card's fill, the text that drew it folded under it. The drawing is a
+   sealed frame (chat/diagram.js); its height comes back from the frame. */
+.dwrap17c{overflow-x:auto;border-radius:12px;background:var(--fill);padding:10px 8px}
+.dwrap17c[hidden]{display:none}
+.dmm-frame{display:block;width:100%;height:160px;border:0;background:transparent;color-scheme:normal}
+.dmm-frame.big{height:min(60vh,520px)}
+.dia17c .note{color:var(--mute17c)}
+.dia17c details summary{font-size:12.5px;color:var(--mute17c);cursor:pointer;list-style:none;display:inline-flex;gap:6px;align-items:center}
+.dia17c details summary::-webkit-details-marker{display:none}
+
 /* area: the Trunk's cursor on this computer's live screen */
 /* The real cursor sits where the engine says the Trunk last clicked (never the prototype's roaming path), and glides there. */
 .ag7.real-ag{--c:var(--accent);animation:none;transform:translate(-3px,-2px)}
@@ -4479,3 +4500,19 @@ audio.docread18m{width:100%}
 /* area: a conversation with no Trunk (the mascot is the logo only): a neutral chat tile in rows, replies and quick-ask */
 .av.none18c{border-radius:30%;background:var(--fill-2);color:var(--ink-3)}
 .av.none18c>svg.i{width:56%;height:56%}
+
+/* trunk-one-row: a Trunk's one timeline (chat/trunkline.js): each conversation starts under a quiet line, with its own
+   menu (Rename, Archive, Delete) beside it on hover; older conversations sit in the thread as its own messages do */
+.tl-block19{display:contents}
+.tl-sep19{align-self:stretch;display:flex;align-items:center;gap:8px;margin:10px 0 0;font-size:11.5px;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.tl-sep19::before,.tl-sep19::after{content:"";flex:1;height:1px;background:var(--line)}
+.tl-sep19>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:70%}
+.tl-mb19{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;color:var(--ink-3);opacity:0;flex:none}
+.tl-sep19:hover .tl-mb19,.tl-mb19:focus-visible,.tl-mb19[aria-expanded="true"]{opacity:1}
+.tl-mb19:hover{background:var(--fill-2);color:var(--ink)}
+@media (hover:none){.tl-mb19{opacity:1}}
+.tl-more19{height:1px;flex:none}
+.tl-past19{padding-bottom:0}
+.tl-past19+#conversation{padding-top:16px}
+#conversation:has(+.tl-after19){padding-bottom:0}
+.tl-after19{padding-top:16px}

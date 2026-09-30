@@ -1,0 +1,2 @@
+/* RES-709: the live caption in the Dictate row keeps to one line, showing the latest words. */
+.dict .dict-cap{flex:1 1 auto;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}

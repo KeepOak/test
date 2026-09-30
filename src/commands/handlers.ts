@@ -22,6 +22,7 @@ import { REACH_HANDLERS } from "../reach/commands.js"; // r17-i
 import { learnCommand } from "../learn/commands.js"; // mac7/learn
 import { adaptCommand } from "../adapt/commands.js"; // mac7/adapt
 import { householdHere, mayUseConversation, runsHere } from "./household.js"; // Q259
+import { skill, steer } from "./steer-skill.js"; // CHAT-192, CHAT-205
 import { conversationHolder } from "../household-approvals.js"; // Q261
 
 /**
@@ -41,13 +42,16 @@ export type ClientAction =
   // bucket 12: send the finished text as the next message, or only put it in the message box
   | { do: "send"; text: string } | { do: "fill"; text: string }
   // r17-h: focus view on, off, or switched (public/flows-boards.js)
-  | { do: "focus"; on: boolean | null };
+  | { do: "focus"; on: boolean | null }
+  // CHAT-187: the sidebar's search, with these words in it (public/app/shell/search.js)
+  | { do: "search"; text: string };
 export interface Reply { text: string; client?: ClientAction }
 
 interface GoalView { status: string; round: number; maxRounds: number; objective: string; reason?: string; sessionId: string }
 /** The goal feature (mac2/goal-undo), when this copy has it. */
 export interface GoalHost {
-  start(input: { objective: string; maxRounds?: number; sessionId?: string }): Promise<GoalView>;
+  /** `origin`: a goal set from a chat, whose rounds are the chat's tasks (its source and its short list of permissions). */
+  start(input: { objective: string; maxRounds?: number; sessionId?: string }, origin?: { source: "channel"; permissions: string[] }): Promise<GoalView>;
   status(sessionId: string): GoalView | null;
   pause(sessionId: string): GoalView;
   resume(sessionId: string): Promise<GoalView>;
@@ -225,7 +229,8 @@ async function goal(call: Call): Promise<Reply> {
     if (!call.sessionId) return say(needSession);
     return say(goalLine(await goals[word](call.sessionId)));
   }
-  const state = await goals.start({ ...parseGoal(call.argument), ...(call.sessionId ? { sessionId: call.sessionId } : {}) });
+  const state = await goals.start({ ...parseGoal(call.argument), ...(call.sessionId ? { sessionId: call.sessionId } : {}) },
+    call.surface === "chat" ? { source: "channel", permissions: call.permissions ?? [] } : undefined); // CHAT-185
   return say(goalLine(state), state.sessionId && state.sessionId !== call.sessionId ? { do: "open-session", id: state.sessionId } : undefined);
 }
 async function health(call: Call): Promise<Reply> {
@@ -252,6 +257,11 @@ function sessions(call: Call): Reply {
   const found = id.length >= 6 ? runsHere(store, owner, call.surface).map((run) => run.sessionId).find((sessionId) => sessionId.startsWith(id)) : undefined;
   return found && mayUseConversation(store, owner, call.surface, found) ? say("Opening that conversation.", { do: "open-session", id: found }) : say("No conversation has that id.");
 }
+/** helper-lifecycle: starting afresh stops the helpers the conversation left working (read-only access stops nothing). */
+function freshConversation(call: Call): Reply {
+  if (call.sessionId && call.access !== "read") call.host.runtime.stopHelpers(call.sessionId);
+  return say("Starting a fresh conversation.", { do: "new" });
+}
 function pane(call: Call): Reply {
   const tab = ["activity", "plan", "files", "memory"].includes(call.argument) ? call.argument : undefined;
   return say("Showing or hiding the side pane.", { do: "toggle", what: "pane", on: tab ? true : null, ...(tab ? { tab } : {}) });
@@ -264,7 +274,7 @@ export const HANDLERS: Record<string, Handler> = {
   attach: () => say("Choose a file to send with your next message.", { do: "attach" }),
   export: exportConversation,
   history: (call) => say(historyLines(call.host.runtime, call.sessionId).join("\n")),
-  new: () => say("Starting a fresh conversation.", { do: "new" }),
+  new: freshConversation,
   sessions,
   go: go(""), inbox: go("inbox"), automations: go("automations"), library: go("library"),
   customize: go("customize"), settings: go("settings"),
@@ -282,4 +292,9 @@ export const HANDLERS: Record<string, Handler> = {
   ...REACH_HANDLERS, // r17-i: /platform
   ...BOARD_HANDLERS, // r17-h: /queue, /busy, /focus, /installs
   learn: learnCommand, // mac7/learn
+  steer, skill, // CHAT-192, CHAT-205
+  // CHAT-187: the terminal's own /team, /find and /channels, in the window too (the terminal keeps its own runners).
+  team: go("team"), channels: go("customize channels"),
+  find: (call) => (call.argument.trim() ? say(`Searching for "${call.argument.trim().slice(0, 200)}".`, { do: "search", text: call.argument.trim().slice(0, 200) })
+    : say("Send /find and the words to look for.")),
 };

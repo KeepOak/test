@@ -26,6 +26,8 @@ export interface SummaryDeps {
   now?: () => Date;
   running?: (dataDir: string) => Promise<RunningInstance | null>;
   disk?: (path: string) => Promise<{ free: number; total: number } | null>;
+  /** selfdev: this engine runs under the desktop app's own engine host, which starts it again whenever it stops. */
+  hosted?: boolean;
 }
 
 const ACTIVITY_KINDS = new Set(["run.started", "run.finished", "model.started", "model.completed", "tool.started",
@@ -153,8 +155,11 @@ export const restartWords = {
 export type RestartReason = keyof typeof restartWords;
 
 /** Whether something outside Branch would start this engine again after it stops on purpose. */
-export function restartPlan(input: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; pid: number; running: RunningInstance | null }):
+export function restartPlan(input: { platform: NodeJS.Platform; env: NodeJS.ProcessEnv; pid: number; running: RunningInstance | null; hosted?: boolean | undefined }):
   { possible: boolean; reason: RestartReason } {
+  // selfdev: under the desktop app's engine host or the gateway, whatever stops the engine is followed by a new start,
+  // on every system (Windows included), so a restart there is always possible.
+  if (input.hosted || input.env.BRANCH_GATEWAY_CHILD === "1") return { possible: true, reason: "restart.ready" };
   if (input.platform === "win32")
     return { possible: false, reason: "restart.windows" };
   if (input.running?.mode !== "daemon" || input.running.pid !== input.pid)
@@ -166,7 +171,7 @@ export function restartPlan(input: { platform: NodeJS.Platform; env: NodeJS.Proc
 
 async function engineHealth(app: Branch, dataDir: string, deps: SummaryDeps) {
   const running = await (deps.running ?? readRunning)(dataDir);
-  const plan = restartPlan({ platform: deps.platform ?? process.platform, env: deps.env ?? process.env, pid: deps.pid ?? process.pid, running });
+  const plan = restartPlan({ platform: deps.platform ?? process.platform, env: deps.env ?? process.env, pid: deps.pid ?? process.pid, running, hosted: deps.hosted });
   const firstStart = await readFirstStart(dataDir);
   const copies = await listUpdateBackups(dataDir);
   return {

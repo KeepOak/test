@@ -22,7 +22,7 @@
 const https = require("node:https");
 const { createHash } = require("node:crypto");
 const { readFileSync } = require("node:fs");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT, TOKEN, CERT, KEY } = process.env;
 if (!PORT || !TOKEN || !CERT || !KEY) { console.error("Set PORT, TOKEN, CERT and KEY (see the setup above)"); process.exit(2); }

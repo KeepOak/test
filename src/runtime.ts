@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { assertContinuitySession } from "./reach/continuity-store.js";
+import type { TasteLearning } from "./taste/learning.js";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { handOffHold } from "./coding/hand-off.js"; // code.hand_off: asked every time
@@ -67,6 +69,7 @@ import type { WebhookNotifier } from "./webhooks.js";
 import type { HookDecision } from "./hooks.js";
 import { environmentFacts, environmentLine } from "./environment.js"; // where Branch runs, for the model
 import { assistantIdentity, identityInstructions } from "./identity.js";
+import { adaptiveInstructions, adaptiveTools, capabilityActionRequested, capabilityDiscoveryFailure, capabilityDiscoveryNudge, uncheckedCapabilityClaim } from "./adaptive-capabilities.js";
 import { contextFileInstructions } from "./context-files.js";
 import type { CodingHooks, RoundNotes } from "./coding/hooks.js"; // mac7/r17-d
 import { steerMessage, steerNote } from "./steer.js";
@@ -74,9 +77,12 @@ import { supportsImages, unofferedMark, unnamedModels, wireName } from "./provid
 import { pinnedSkillInstructions, skillInstructions } from "./skill-tools.js";
 import { readContextModes } from "./tool-context-modes.js";
 import type { ModelPlan, ModelPreset, ModelRouter, ReasoningEffort, RunModelOverride } from "./models.js";
-import { keepOnThisComputer, nothingHere, presetRunsLocally } from "./models.js"; // mac7/coding-next
+import { isRetiredConnection, keepOnThisComputer, nothingHere, presetRunsLocally } from "./models.js"; // mac7/coding-next
+import { chatgptPresetPrefix } from "./chatgpt-presets.js";
+import { claudeCodePool } from "./providers/claude-models.js";
 import { ownerTidyRemainder } from "./owner-folders.js";
 import { billedRoom, learnWindow, modelWindow, overflowOf, rememberPublished, windowKey } from "./model-context.js"; // dogfood D22
+import { boundSummaryInput, ownerWordsMaxTokens, ownerWordsSection, transcriptLine } from "./compaction-input.js"; // P0 (self-build)
 import { contractHold, sourceSendHold } from "./self-development-contract.js"; // Q12
 import { nobodyToAskAboutPlan, projectTestsTool } from "./coding/project-tests.js"; // mac7/coding-next, mac7/smoke-fixes
 import { ownerFolderIn } from "./owner-folders.js"; // QA (first task)
@@ -86,6 +92,7 @@ import { helperDefaultFor, withHelperDefault } from "./helper-defaults.js"; // m
 import { checkResult, fanoutWaves, helperRoute, helperRouteWords, keepHelperRoute, HelperSelectionSchema, type HelperSelection, type HelperConnection, type FanoutTask, type ResultCheck } from "./delegation.js";
 import { describeToolCall, filePathOf, helperJobs } from "./activity.js";
 import { canonicalArguments } from "./loop-guard.js";
+import { alreadyRunResult, approvedWork, notRunResult, type ApprovedWork } from "./approved-call.js"; // QA R1
 // Wave mac2 (guards): loop guard and folder trust; see src/run-guards.ts.
 import { RunGuards } from "./run-guards.js";
 import { browserConfirmationHold, holdsBrowserStep, withBrowserConfirmation } from "./comfort/browser-safety.js"; // R17-S19
@@ -98,6 +105,7 @@ import { privateConversationRoute, routeForTask, routingSettings } from "./local
 import { routeByProfile } from "./model-profiles.js";
 import { profileScope, type Profile } from "./profiles.js"; // household-followups
 import { memoryScope } from "./memory.js";
+import { keyWords, ownerFactsBlock, ownersLastMessage, personalQuestion, relevantFacts, type OwnerFact } from "./owner-facts.js"; // QA R1 follow-up (recall)
 import { mergeSummaries, parseSessionSummary, statedLists, summaryText, type SessionSummary } from "./session-summary.js";
 import { chatEngineSettings, condenseMessages, earlierTurns, shouldCondense, standaloneQuestion } from "./chat-engine.js"; // w911 (A0847)
 import {
@@ -126,6 +134,7 @@ import { Tracer } from "./tracing.js";
 import { audit, auditSources, type AuditSource } from "./audit.js";
 import {
   outOfCredit,
+  planLimitReached,
   parseRetryPolicy,
   planRetry,
   waitForRetry,
@@ -145,13 +154,16 @@ import {
 import type { RunToolEmbedder, ToolEmbedder } from "./tool-index.js";
 import { mcpAppIn } from "./mcp-apps.js";
 import { NoteInputSchema } from "./tool-usage.js";
-import { estimateCost, formatCost, pricingSettings } from "./pricing.js";
+import { estimateCost, formatCost, pricingSettings, tokenCountsOf } from "./pricing.js";
 // --- R17-S-B: the owner's knobs, read fresh at each marked hook (src/knobs/apply.ts) ---
 import * as knobs from "./knobs/apply.js";
 import { thinkingFilter, withoutThinking } from "./knobs/thinking.js";
 import { loadWords, type Words } from "./terminal-words.js"; // the workspace's language, for a stopped task's sentences
 import { lookLanguage, readLook } from "./terminal-theme.js";
 import { produced, producedNothing, silentAfterWork, thinkingTokens } from "./empty-answer.js"; // mac7/empty-completion
+import { fromHelper } from "./helper-messages.js"; // selfdev (SELF-303)
+import { HelperTree, handOnRefusal, mayHandOn, nestedHelperRefusal } from "./helper-tree.js"; // helper-lifecycle
+import { helperParent } from "./helper-control.js"; // helper-lifecycle
 import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- end R17-S-B ---
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
@@ -188,7 +200,7 @@ import { underProject } from "./project-scope.js"; // dogfood-ux-2
 import { defaultProjectId } from "./projects.js"; // dogfood-ux-2
 import { posix, resolve as resolvePath } from "node:path"; // mac7/walk-rules
 import { finishSetupOnFirstAnswer } from "./onboarding.js"; // dogfood B7
-import { PausedError, isNetworkDrop, limitResetsAt, longWorkSettings, maxLimitWaitMs, maxLimitWaits, networkDelaysMs, waitFor } from "./long-work.js"; // long-work
+import { HandedOverError, PausedError, isNetworkDrop, limitResetsAt, longWorkSettings, maxLimitWaitMs, maxLimitWaits, networkDelaysMs, waitFor } from "./long-work.js"; // long-work
 
 // R17-S11: sub-tasks at once is the owner's `parallelSubtasks` setting (shipped as 4, src/knobs/settings.ts).
 /** What the approval policy says about one tool call, before anything is done about it. */
@@ -223,7 +235,7 @@ interface GateOutcome {
   backend: SandboxBackendName | null; paths: readonly string[] | null;
 }
 /** `model` (from HelperSelection) also carries the connection Seasons' overnight work chose. */
-export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
+export interface DelegateOptions extends HelperSelection { timeoutMs?: number; resultSchema?: Record<string, unknown>; /** The shape this task wants back, declared in zod. A reply that misses it is re-asked once. */ shape?: AnswerShape; checks?: CompletionCheck; background?: boolean; /** workbench (SELF-303): its finishing wakes the lead's conversation (Runtime.onBackgroundFinished). */ tellsLead?: boolean; /** workbench (SELF-303): a helper's own conversation to carry on in, with what it already did in front of it. */ sessionId?: string; /** workbench (SELF-302): the helper works in its own copy of the project (a git worktree). */ ownCopy?: boolean; /** helper-lifecycle: the helper may start helpers of its own (src/helper-tree.ts). */ delegates?: boolean; /** Specialist id: limits memory reads to shared facts and its own. */ agent?: string; /** The specialist's working style; it changes how the loop runs. */ style?: SpecialistStyle }
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
@@ -254,7 +266,9 @@ export const unkeyedAlwaysRefusal = "This request does not say what it is target
  */
 const keyedOnDeclaredTargets: ReadonlySet<string> = new Set(["browser.flow"]);
 export interface FollowUpCarry { originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
-export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string }
+export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string;
+  /** workbench (SELF-303): a helper the lead started with helpers.start, whose finishing wakes the lead's conversation. */
+  tellsLead?: boolean }
 export interface FanoutOutcome { waves: string[][]; tasks: Record<string, { runId: string; status: string; output: string; result: ResultCheck }> }
 /** Every reply may be this long; a run whose model runs out of room thinking may double it twice. */
 const baseReplyCeiling = 2048, maxReplyCeiling = 8192;
@@ -496,6 +510,27 @@ const namesNoModel = (preset: Pick<ModelPreset, "model"> & { provider?: { name: 
   unnamedModels.has(preset.model) || preset.provider?.name === mixtureProviderName
   || /^(cli-agent|app-server|retired):/.test(preset.provider?.name ?? "");
 /** Dogfood B18: the first system message, with the line that says which model and connection are answering. */
+/**
+ * selfdev (SELF-314): a task carried on after a restart starts again with a fresh catalog, and a model that had loaded
+ * its tools by name (tools.describe) would find its next call "not offered". So the carried-on task starts with the
+ * tools its conversation had been calling or had named, newest last, at most 24; only ones this task is offered.
+ */
+export function carriedOnTools(store: Pick<Store, "events">, runId: string, messages: readonly Message[],
+  tools: readonly { name: string }[], hidden: ReadonlySet<string> | readonly string[]): { name: string; reason: string }[] {
+  const resumed = store.events(runId).find((event) => event.kind === "run.started")?.data.resumedFrom;
+  if (typeof resumed !== "string") return [];
+  const offered = new Set(tools.map((tool) => tool.name)), off = new Set(hidden);
+  const lastSeen = new Map<string, number>(); // each name at its newest mention
+  let at = 0;
+  for (const message of messages) for (const call of message.toolCalls ?? []) {
+    let named: unknown[] = [];
+    if (call.name === "tools.describe") try { named = (JSON.parse(call.arguments) as { names?: unknown[] }).names ?? []; } catch { /* not a list */ }
+    for (const name of [call.name, ...named]) if (typeof name === "string") lastSeen.set(name, at++);
+  }
+  const newestLast = [...lastSeen.entries()].sort((a, b) => a[1] - b[1]).map(([name]) => name);
+  return newestLast.filter((name) => offered.has(name) && !off.has(name)).slice(-24)
+    .map((name) => ({ name, reason: "used before Branch was restarted" }));
+}
 export function withModelIdentity(messages: Message[], preset: Pick<ModelPreset, "name" | "model"> & { provider?: { name: string } }): Message[] {
   const first = messages[0];
   if (first?.role !== "system") return messages;
@@ -536,6 +571,10 @@ interface ModelRoute {
   reasoning: ReasoningEffort | null;
   candidates: ModelPreset[];
 }
+/** The plan a sign-in draws on: ChatGPT's models and Codex share the ChatGPT plan, Claude's models the Claude one. */
+const planOf = (preset: ModelPreset): string =>
+  preset.id.startsWith(chatgptPresetPrefix) || preset.id === "cli-codex" ? "chatgpt"
+    : preset.id.startsWith(claudeCodePool) ? "claude" : preset.id;
 export interface RunOptions {
   prompt: string;
   sessionId?: string;
@@ -555,6 +594,8 @@ export interface RunOptions {
   timeoutMs?: number;
   budget?: BudgetOptions;
   onStarted?: (run: Run) => void;
+  /** helper-lifecycle: the task exists and its start is written, before any slow setup (its own copy of the project). */
+  onCreated?: (run: Run) => void;
   onTextDelta?: (text: string) => void;
   /** FQ-surfaces: the id of the user message this run saved, for playback clip matching. */
   onUserMessageId?: (id: number) => void;
@@ -652,8 +693,12 @@ export const lockdownStandingYes = "Lockdown is on, so a yes cannot be kept for 
 const ownerSources = new Set(["owner", "schedule", "trigger"]);
 export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOwner() && !startedWithShortLivedKey();
 
+/** helper-lifecycle: a background helper not created within this long is stopped and reported as not started. */
+const helperStartMs = 30_000;
+const helperNotStarted = "The background specialist did not start";
 export class Runtime {
   private readonly controllers = new Map<string, AbortController>();
+  taste: TasteLearning | null = null;
   /** long-work: tasks the owner paused; each stops after the step it is on (or at once while it only waits). */
   private readonly pausing = new Map<string, AbortController>();
   /**
@@ -664,6 +709,8 @@ export class Runtime {
    */
   private readonly replyCeilings = new Map<string, number>();
   private readonly children = new Map<string, number>();
+  /** helper-lifecycle: which live task started which, and background helpers at once (src/helper-tree.ts). */
+  private readonly helperTree = new HelperTree();
   private readonly helperModels = new Map<string, ModelPreset>();
   /** Accounts owns final authorization and binds an immutable provider without changing defaults. */
   resolveHelperModel = async (preset: ModelPreset, accountRef: HelperSelection["accountRef"], _parentSessionId: string): Promise<HelperConnection> => {
@@ -685,6 +732,10 @@ export class Runtime {
   private readonly spendMembers = new Map<string, Set<string>>();
   /** Results of background specialists that finished after their parent, newest first. */
   readonly backgroundResults: BackgroundResult[] = [];
+  /** selfdev (SELF-303): told when a background helper finishes, so its lead hears without checking (src/helper-messages.ts). */
+  onBackgroundFinished: ((result: BackgroundResult) => void) | null = null;
+  /** workbench (SELF-307): what a conversation still has going, sent with every round and never stored (src/open-work.ts). */
+  openWork: ((sessionId: string) => string | null) | null = null;
   /** Per session: write tool calls whose outcome is unknown after an interruption, until a read has checked the state. */
   private readonly unreconciled = new Map<string, { name: string; arguments: string }[]>();
   /** Dogfood B7: set once a real model has answered and the first-run card is done with. */
@@ -862,6 +913,8 @@ export class Runtime {
       allowProjectTests?: boolean;
       /** FQ-routing.isolated-agents: the agent executing this context, for scope-aware memory and fact writes. */
       agent?: string;
+      /** helper-lifecycle: a helper carried on keeps its lead's leave to hand work on (src/helper-tree.ts). */
+      delegates?: boolean;
     } = {},
   ): ToolContext {
     // FQ-routing.isolated-agents: work a Trunk set going (a workflow or flow step, a procedure it replays)
@@ -884,6 +937,7 @@ export class Runtime {
       ...(options.unattended ? { unattended: true } : {}),
       ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
       ...(options.agent ? { agent: options.agent } : {}),
+      ...(options.delegates ? { delegates: true } : {}),
       ...(trunkWork ? { trunk: trunkWork } : {}),
       // Q123 (NAS 24f2b9c): and with that Trunk's keys, so every guard that knows a Trunk by them (a saved sign-in
       // filled, Branch removed, a program installed, a sign-in connection) knows its work too, not only its turn.
@@ -898,7 +952,27 @@ export class Runtime {
   cancel(id: string): boolean {
     const controller = this.controllers.get(id);
     controller?.abort(new Error("Cancelled by user"));
+    // helper-lifecycle: a stop reaches every helper this task started, and theirs, even after the task itself ended.
+    // The answer still says only whether this task itself was working (callers go on to stop a waiting one otherwise).
+    for (const child of this.helperTree.descendants(id))
+      this.controllers.get(child)?.abort(new Error("Stopped with the task that started it"));
     return !!controller;
+  }
+  /** helper-lifecycle: a child task joins its parent's tree; one started after its parent was stopped stops at once. */
+  private adoptChild(parentId: string, runId: string, controller: AbortController): void {
+    this.helperTree.adopt(parentId, runId);
+    if (this.controllers.get(parentId)?.signal.aborted) controller.abort(new Error("Stopped with the task that started it"));
+  }
+  /** helper-lifecycle: /new and reset stop the helpers a conversation's tasks started, and theirs; answers how many. */
+  stopHelpers(sessionId: string): number {
+    let stopped = 0;
+    for (const lead of this.helperTree.parents())
+      if (this.store.run(lead)?.sessionId === sessionId)
+        for (const helper of this.helperTree.descendants(lead)) {
+          const working = this.controllers.get(helper);
+          if (working && !working.signal.aborted) { working.abort(new Error("Stopped: its conversation started afresh")); stopped++; }
+        }
+    return stopped;
   }
   /**
    * long-work: the owner's Pause. The task stops after the step it is on (a wait for a limit or a connection ends at
@@ -912,16 +986,47 @@ export class Runtime {
     this.store.event(id, "run.pause_asked", { message: "Paused after this step. Nothing is lost." });
     return true;
   }
+  /** hot-update: set once a newer engine is taking over: the tasks that were working then (any other stops at its first step). */
+  private handingOverFrom: Set<string> | null = null;
+  /** hot-update: a newer engine takes over; tasks working now may drain, a task started from now on is carried on there. */
+  beginHandOver(): void { this.handingOverFrom ??= new Set(this.controllers.keys()); }
+  /** hot-update: the tasks working in this engine now. */
+  workingRuns(): string[] { return [...this.controllers.keys()]; }
+  /**
+   * hot-update: every task working here stops after the step it is on, to be carried on by a newer engine. Answers the
+   * tasks it asked; a task that finished before its next step simply finished.
+   */
+  handOver(): string[] {
+    const asked: string[] = [];
+    for (const id of this.controllers.keys()) {
+      let pausing = this.pausing.get(id);
+      if (!pausing) this.pausing.set(id, pausing = new AbortController());
+      if (!pausing.signal.aborted) {
+        pausing.abort(new HandedOverError());
+        this.store.event(id, "run.handover_asked", { message: "Branch is updating its engine; this task carries on in the new one after this step." });
+        asked.push(id);
+      }
+    }
+    return asked;
+  }
+  /** Resolves once no task works here, or after `ms`; answers whether none does. */
+  async idle(ms: number): Promise<boolean> {
+    const until = Date.now() + ms;
+    while (this.controllers.size > 0 && Date.now() < until) await new Promise((done) => setTimeout(done, Math.min(50, Math.max(1, until - Date.now()))));
+    return this.controllers.size === 0;
+  }
   /** Throws once the owner has paused this task; called between steps. */
   private checkPaused(runId: string): void {
-    if (this.pausing.get(runId)?.signal.aborted) throw new PausedError();
+    if (this.handingOverFrom && !this.handingOverFrom.has(runId)) throw new HandedOverError();
+    const pausing = this.pausing.get(runId)?.signal;
+    if (pausing?.aborted) throw pausing.reason instanceof PausedError ? pausing.reason : new PausedError();
   }
   /** A wait that ends early when the task is stopped or paused. */
   private async waitOrPause(runId: string, ms: number, signal: AbortSignal): Promise<void> {
     let pausing = this.pausing.get(runId);
     if (!pausing) this.pausing.set(runId, pausing = new AbortController());
     try { await waitFor(ms, AbortSignal.any([signal, pausing.signal])); } catch (error) {
-      if (pausing.signal.aborted && !signal.aborted) throw new PausedError();
+      if (pausing.signal.aborted && !signal.aborted) throw pausing.signal.reason instanceof PausedError ? pausing.signal.reason : new PausedError();
       throw error;
     }
   }
@@ -936,21 +1041,30 @@ export class Runtime {
    * Q050: carries on a task that stopped to ask, as that same task, after a yes to its exact request (the person's reply
    * to its own question reaches it through replyToAsk). No second task is started, and a task no longer waiting is refused. Every refusal comes before the first await, as a new task's does (see execute).
    */
-  async continueAsked(runId: string): Promise<Run> {
+  async continueAsked(runId: string, hooks: CarryOnHooks = {}): Promise<Run> {
     const waiting = this.store.run(runId);
     if (!waiting) throw new Error(nothingToContinue);
     return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
-      continuing: { runId, allowed: true } }));
+      ...this.carriedAs(runId, hooks), continuing: { runId, allowed: true } }));
+  }
+  /**
+   * QA R1 follow-up: a task carried on from where it came (a chat app, an editor, the terminal, a room) is held as it
+   * started: its recorded source, never the owner's own, and the caller's live hooks for its words and its start.
+   */
+  private carriedAs(runId: string, hooks: CarryOnHooks): Partial<RunOptions> {
+    const source = runOrigin(this.store, runId).source as RunSource;
+    return { ...(source !== "owner" ? { source } : {}), ...(hooks.onStarted ? { onStarted: hooks.onStarted } : {}),
+      ...(hooks.onTextDelta ? { onTextDelta: hooks.onTextDelta } : {}), ...(hooks.signal ? { signal: hooks.signal } : {}) };
   }
   /**
    * Dogfood D5: carries on a task that stopped to ask, as that same task, after the owner said No to its exact request:
    * told of the No, it replies with what it can do instead. Refused, like continueAsked, before the first await.
    */
-  async continueRefused(runId: string, fingerprint: string): Promise<Run> {
+  async continueRefused(runId: string, fingerprint: string, hooks: CarryOnHooks = {}): Promise<Run> {
     const waiting = this.store.run(runId);
     if (!waiting) throw new Error(nothingToContinue);
     return this.track(() => this.execute({ prompt: waiting.prompt, sessionId: waiting.sessionId, onTextDelta: () => undefined,
-      continuing: { runId, refused: { fingerprint } } }));
+      ...this.carriedAs(runId, hooks), continuing: { runId, refused: { fingerprint } } }));
   }
   /** Messages waiting for a busy conversation, in order. */
   queued(sessionId: string): FollowUp[] {
@@ -1013,28 +1127,75 @@ export class Runtime {
    */
   async delegateBackground(prompt: string, parent: ToolContext, permissions: string[], instructions: string, options: DelegateOptions = {}): Promise<{ childRunId: string; sessionId: string }> {
     if (parent.depth >= 3) throw new Error("Delegation depth limit reached");
+    // helper-lifecycle: a helper starts no helpers of its own unless its lead let it (src/helper-tree.ts).
+    if (!mayHandOn(parent)) throw new Error(nestedHelperRefusal);
     if (permissions.some((p) => !parent.permissions.has(p))) throw new Error("Delegation permission escalation denied");
     const sub = knobs.subtaskLimits(this.store, this.owner); // R17-S11
     const timeoutMs = options.timeoutMs ?? sub.timeoutMs;
-    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000) throw new Error("Child timeout must be 1 to 120 seconds");
+    // selfdev (SELF-303): a background helper may be given up to two hours; one in the foreground keeps its two minutes.
+    if (!Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 7_200_000) throw new Error("A background helper may work 1 second to 2 hours");
     if (!parent.runId) return this.auditOperation(parent, "Delegate", (audited) => this.delegateBackground(prompt, audited, permissions, instructions, options));
-    const context = { ...parent, signal: AbortSignal.timeout(timeoutMs), permissions: new Set(permissions), depth: parent.depth + 1,
+    // workbench (SELF-303): only a helper's own conversation (one with a pinned helper route) is carried on in, and only
+    // on the model and account it was pinned to, so a lead cannot pour a helper into any other conversation.
+    const resumed = options.sessionId ? helperRoute(this.store, this.owner, options.sessionId) : null;
+    if (options.sessionId && !resumed) throw new Error("That conversation is not a helper's own, so it cannot be carried on as one.");
+    parent.signal.throwIfAborted();
+    // helper-lifecycle: no more background helpers at once in a conversation than its sub-tasks at once; the place is
+    // reserved before anything is awaited, so helpers asked for in one step cannot all pass the check.
+    const home = this.helperTree.homeFor(parent.runId, this.store.run(parent.runId)?.sessionId ?? parent.runId);
+    const release = this.helperTree.reserve(home, sub.atOnce);
+    if (!release) throw new Error(`Helper limit reached: ${sub.atOnce} helpers already work at once in this conversation. Wait for one to finish, or stop one, and start it then.`);
+    // helper-lifecycle: stopping the helper before it exists (its lead stopped, or it never started) stops it all the same.
+    const stop = new AbortController();
+    const context = { ...parent, signal: AbortSignal.any([AbortSignal.timeout(timeoutMs), stop.signal]), permissions: new Set(permissions), depth: parent.depth + 1,
+      ownCopy: options.ownCopy === true, delegates: options.delegates === true,
       budget: new Budget(knobs.taskBudget(this.store, this.owner)), ...(options.agent ? { agent: options.agent } : {}) };
-    const connection = await this.helperConnection(parent, options);
-    context.signal.throwIfAborted();
-    let started: Run | undefined;
-    const startedAt = new Promise<Run>((resolve) => { started = undefined; void resolve; });
-    void startedAt;
-    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onStarted: (r) => { started = r; }, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+    let connection: HelperConnection | undefined;
+    try {
+      connection = await this.helperConnection(parent, resumed ? { model: resumed.model, ...(resumed.accountRef ? { accountRef: resumed.accountRef } : {}) } : options);
+      context.signal.throwIfAborted();
+      parent.signal.throwIfAborted(); // helper-lifecycle: a lead stopped while its helper's connection was chosen starts none
+      return await this.startHelper(prompt, parent, context, instructions, connection, options, { home, release, stop });
+    } catch (error) {
+      release();
+      connection?.release?.(); // MODEL-050: its account lease (released once, however often it is called)
+      throw error;
+    }
+  }
+  /**
+   * helper-lifecycle: the background helper exists, is in its lead's tree and is on the lead's record (so helpers.list
+   * and helpers.stop reach it) as soon as its task is created, before any slow setup such as its own copy of the project.
+   * One that does not start in time is stopped rather than left running where nothing can see it.
+   */
+  private async startHelper(prompt: string, parent: ToolContext, context: ToolContext, instructions: string, connection: HelperConnection,
+    options: DelegateOptions, held: { home: string; release: () => void; stop: AbortController }): Promise<{ childRunId: string; sessionId: string }> {
+    let created!: (run: Run) => void;
+    const exists = new Promise<Run>((resolve) => { created = resolve; });
+    const onCreated = (run: Run) => {
+      this.helperTree.setHome(run.id, held.home);
+      this.store.event(parent.runId, "delegation.background_started", { childRunId: run.id, prompt: prompt.slice(0, 200), sessionId: run.sessionId });
+      created(run);
+    };
+    const child = this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, onCreated, ...(options.sessionId ? { sessionId: options.sessionId } : {}), ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+    void child.then(held.release, held.release);
     void child.then((run) => {
-      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString() };
+      const result: BackgroundResult = { childRunId: run.id, parentRunId: parent.runId, status: run.status, output: run.output.slice(0, 4000), finishedAt: new Date().toISOString(),
+        ...(options.tellsLead ? { tellsLead: true } : {}) };
       this.backgroundResults.unshift(result); this.backgroundResults.splice(20);
-      if (parent.runId) this.store.event(parent.runId, "delegation.background_finished", { ...result });
-    }, () => undefined);
-    for (let i = 0; i < 200 && !started; i++) await new Promise((r) => setTimeout(r, 5));
-    if (!started) throw new Error("The background specialist did not start");
-    if (parent.runId) this.store.event(parent.runId, "delegation.background_started", { childRunId: started.id, prompt: prompt.slice(0, 200) });
-    return { childRunId: started.id, sessionId: started.sessionId };
+      this.store.event(parent.runId, "delegation.background_finished", { ...result });
+      try { this.onBackgroundFinished?.(result); } catch { /* telling the lead never breaks the helper's result */ }
+    }, () => { connection.release?.(); }); // MODEL-050: a helper that failed before it settled gives its account back too
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(helperNotStarted)), helperStartMs); });
+    try {
+      const run = await Promise.race([exists, child.then(() => { throw new Error(helperNotStarted); }), late]);
+      return { childRunId: run.id, sessionId: run.sessionId };
+    } catch (error) {
+      held.stop.abort(error);
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
   /**
    * Continues a task that was interrupted (for example by a restart) from its saved transcript.
@@ -1289,11 +1450,14 @@ export class Runtime {
       depth: parent.depth + 1,
       ...(options.agent ? { agent: options.agent } : {}),
     };
+    let connection: HelperConnection | undefined;
     try {
-      const connection = await this.helperConnection(parent, options);
+      connection = await this.helperConnection(parent, options);
       context.signal.throwIfAborted();
-      return await this.track(() => this.execute({ prompt, signal: context.signal, model: connection.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, connection));
+      const chosen = connection;
+      return await this.track(() => this.execute({ prompt, signal: context.signal, model: chosen.preset.id, ...(options.checks ? { checks: options.checks } : {}), ...(options.style ? { style: options.style } : {}) }, context, instructions, chosen));
     } finally {
+      connection?.release?.(); // MODEL-050: the helper's account lease, also when it never started
       clearTimeout(timer);
       const left = (this.children.get(parent.runId) ?? 1) - 1;
       if (left > 0) this.children.set(parent.runId, left); else this.children.delete(parent.runId);
@@ -1402,14 +1566,25 @@ ${run.output.slice(0, 6000)}`;
    * may answer it as they answer the owner. Not when a household person (their key, their profile in the
    * window, their lent conversation or their room message), a short-lived key (another computer), a chat
    * app or another program (MCP, ACP, A2A: a Trunk message from another computer) is anywhere along the
-   * task's chain: a sign-in is one person's own. Without a task to read, no. Worked out once here and
-   * carried on the account-call mark.
+   * task's chain: a sign-in is one person's own. The one chat that counts is the owner's own verified
+   * direct chat (owner-dm-signin, below). Without a task to read, no. Worked out once here and carried on
+   * the account-call mark.
    */
   trunkSignIns(runId: string | undefined): boolean {
     if (currentPerson() || startedWithShortLivedKey() || !runId) return false;
     const origin = runOrigin(this.store, runId);
-    return !origin.shortLivedKey && !origin.personProfileId && !origin.lentTo && ownerSources.has(origin.source);
+    if (origin.shortLivedKey || origin.personProfileId || origin.lentTo) return false;
+    if (ownerSources.has(origin.source)) return true;
+    // owner-dm-signin: a chat's task counts as the owner's only when every chat message along its chain came from an
+    // account the owner named as their own, in a direct chat, on an app that vouches for its senders (the router's
+    // ownerDmHere, the same check its owner-only commands use). Without the router to ask, no.
+    return origin.source === "channel" && this.ownerChatRun?.(runId) === true;
   }
+  /**
+   * owner-dm-signin: whether a chat's task came only from the owner's own verified direct chat. createBranch connects the
+   * chat router's check (ChannelRouter.ownerDmRun); on its own nothing is, and a chat is never the owner.
+   */
+  ownerChatRun: ((runId: string) => boolean) | null = null;
   /**
    * mac7/pooling-review: the conversation whose account choice a task's model calls follow: the one
    * at the top of its tree, so a helper or a background sub-task answers through the account its
@@ -1503,6 +1678,8 @@ ${run.output.slice(0, 6000)}`;
   ): Promise<Run> {
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
+    assertContinuitySession(this.store, this.owner,
+      options.sessionId ?? this.store.run(options.resumeFrom ?? options.continuing?.runId ?? "")?.sessionId, parent?.runId, options.continuing?.runId);
     // An interrupted practice task keeps its simulation flag when resumed, even if availability was switched off.
     if (options.resumeFrom && this.startedAsDryRun(options.resumeFrom)) options = { ...options, dryRun: true };
     if (!parent && !options.resumeFrom && !options.continuing && options.dryRun && !practiceRunsEnabled(this.store, this.owner))
@@ -1588,6 +1765,9 @@ ${run.output.slice(0, 6000)}`;
     const controller = new AbortController();
     this.controllers.set(run.id, controller);
     this.activeSessions.add(run.sessionId);
+    // helper-lifecycle: a helper carried on after a question or a restart stays in its lead's tree.
+    const lead = parent?.runId ?? helperParent(this.store, options.continuing?.runId ?? options.resumeFrom ?? run.id);
+    if (lead) this.adoptChild(lead, run.id, controller);
     if (!parent) this.restoreCarried(run);
     // Answering a question resumes this same task with the time it originally received, as resume() does.
     const carriedDeadline = options.continuing
@@ -1611,9 +1791,13 @@ ${run.output.slice(0, 6000)}`;
           ...(options.source ? { source: options.source } : {}),
           ...(options.unattended ? { unattended: true } : {}),
           ...(options.allowProjectTests ? { allowProjectTests: true } : {}),
+          ...this.carriedHelper(options), // helper-lifecycle
         }), trunk);
-    if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom);
-    if (options.continuing) instructions += this.continueNote(run, options.continuing);
+    // QA R1: the call a yes was given for (or, carried on after a restart, the call whose question was lost) is run by the
+    // engine itself, through the same gate, before the model's next turn; the model never has to make it again.
+    const approved = this.approvedFor(run, options);
+    if (options.resumeFrom) instructions += this.resumeNote(run, options.resumeFrom) + (approved ? resumedAskNote : "");
+    if (options.continuing) instructions += this.continueNote(run, options.continuing, approved !== null);
     if (context.dryRun) instructions += "\nThis task is a practice run. Read-only tools may really read; changes are simulated. Describe what would change and never claim a simulated action happened. Model use still counts.\n";
     if (!options.resumeFrom && !options.continuing?.allowed && !options.continuing?.refused) {
       // The files themselves are kept first: a message may only carry a reference to something real.
@@ -1663,11 +1847,15 @@ ${run.output.slice(0, 6000)}`;
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
+      ...(context.depth ? { depth: context.depth } : {}),
+      ...(context.delegates ? { delegates: true } : {}),
       // Q050 follow-up: a practice run stays one when it is taken up again after its question is answered.
       ...(context.dryRun ? { dryRun: true } : {}),
       ...(options.channel ? { channel: options.channel.slice(0, 64) } : {}),
     });
     this.recordedSources.delete(run.id); // mac7/outside-resume: read again now that the start is written
+    options.onCreated?.(run); // helper-lifecycle: before placeTask, which may take a while (git worktree add)
     // ── mac2/fly-core: the learning core ranks what worked before as the task starts, and learns from
     // the outcome once it has settled (src/fly-core/hook.ts). Advice only; it never fails a task. ──
     // P17-D §3: a learning task's conversation is sealed: nothing of the owner's goes in, and nothing it read is learned from.
@@ -1682,17 +1870,23 @@ ${run.output.slice(0, 6000)}`;
     let output: string;
     // ── mac7/r17-d: a forked conversation or a helper may work in its own copy of the project (src/coding/worktrees.ts). ──
     const place = this.coding ? await this.coding.placeTask(run, context, parent).catch(() => null) : null;
+    let pinnedHelper: HelperConnection | undefined; // MODEL-050: its account lease is given back when the run settles
     try {
+      // owner-dm-signin: the caller writes down where the task came from here (a chat's `channel.inbound`), before a
+      // pinned helper's connection is chosen, so Runtime.trunkSignIns reads the whole origin; without it, it says no.
+      options.onStarted?.(run);
       const pinned = helperRoute(this.store, run.owner, run.sessionId);
       if (pinned) {
         const connection = helper ?? await this.asTrunk(context, () => this.resolveHelperModel(this.models.presets.get(pinned.model)!, pinned.accountRef, run.sessionId));
+        pinnedHelper = connection;
         context.signal.throwIfAborted();
         keepHelperRoute(this.store, run.owner, run.sessionId, connection);
         this.helperModels.set(run.id, connection.preset);
         this.store.event(run.id, "helper.selected", { model: pinned.model, ...(pinned.accountRef ? { accountRef: pinned.accountRef } : {}) });
       }
-      options.onStarted?.(run);
-      const work = (working: ToolContext) => this.loop(run, working, instructions, options.onTextDelta, {
+      const work = async (working: ToolContext) => {
+        if (approved) await this.runApproved(run, working, approved); // QA R1
+        return this.loop(run, working, instructions, options.onTextDelta, {
         ...(options.model !== undefined ? { preset: options.model } : {}),
         ...(options.reasoning !== undefined ? { reasoning: options.reasoning } : {}),
       }, options.checks, options.images, {
@@ -1702,6 +1896,7 @@ ${run.output.slice(0, 6000)}`;
         ...(context.depth > 0 || (context.agent && (!trunk || trunk.roomTurn)) ? { delegated: true } : {}),
         ...(options.continuing ? { continuing: true } : {}),
       }, options.style);
+      };
       output = place && this.coding ? await this.coding.inPlace(place.scope, () => work({ ...context, workspace: place.workspace })) : await work(context);
     } catch (error) {
       status = this.failureStatus(context, error);
@@ -1711,7 +1906,9 @@ ${run.output.slice(0, 6000)}`;
       // technical text stays in the events and the log, where it belongs.
       output = this.plainEnding(run, error);
       // long-work: said in the record, so the step list, the Inbox and a restart all know the owner paused it.
-      if (error instanceof PausedError) this.store.event(run.id, "run.paused", { message: error.message });
+      // hot-update: a task handed to a newer engine is carried on there by itself, never shown as paused.
+      if (error instanceof HandedOverError) this.store.event(run.id, "run.handed_over", { message: error.message });
+      else if (error instanceof PausedError) this.store.event(run.id, "run.paused", { message: error.message });
       if (error instanceof NeedsInputError) {
         // Dogfood B21: the assistant's own question sat only in the banner at the top; it is its message, under the
         // last one, where the owner reads and answers.
@@ -1736,10 +1933,12 @@ ${run.output.slice(0, 6000)}`;
     // running — so every task lets go of its ids here, child runs included.
     this.tracer.forget(run.id);
     this.guards.forget(run.id); // wave mac2 (guards)
+    this.engineRan.delete(run.id); // QA R1
     this.recordedSources.delete(run.id); // mac7/outside-resume
     safetyExtras.forgetProgress(this.store, run.id); // mac7/r17-g
     this.leaveSpend(run.id); // R17-S09
     this.helperModels.delete(run.id);
+    pinnedHelper?.release?.(); helper?.release?.(); // MODEL-050: the helper's account is free for the next one
     if (!parent && !options.isolated && !sealed && !helperRoute(this.store, run.owner, run.sessionId) && settled.status === "completed" && !options.resumeFrom && !options.continuing) this.scheduleReview(run, context);
     // ── mac3/reflection-skills: once a task of the owner's has settled, the learning loop may look back
     // over the conversation or draft a skill (src/reflection/hook.ts). Its one model question is
@@ -1839,10 +2038,7 @@ ${run.output.slice(0, 6000)}`;
   private spentOnRun(runId: string, model: string): string {
     const usage = this.store.usage(runId);
     const { overrides } = pricingSettings(this.store, this.owner);
-    const estimate = estimateCost(model, {
-      input: usage.reportedInput || usage.estimatedInput || 0,
-      output: usage.reportedOutput || usage.estimatedOutput || 0,
-    }, overrides);
+    const estimate = estimateCost(model, tokenCountsOf(usage), overrides); // cache parts at their own rates
     return estimate.amount === null ? "" : ` So far this task has used about ${formatCost(estimate)}.`;
   }
   /**
@@ -1883,15 +2079,17 @@ ${run.output.slice(0, 6000)}`;
    * uncertain outcome. The yes holds for those exact bytes only (a changed request is asked about again). A reply is the
    * person's newest message in the conversation.
    */
-  private continueNote(run: Run, continuing: { allowed?: boolean; refused?: { fingerprint: string } }): string {
+  private continueNote(run: Run, continuing: { allowed?: boolean; refused?: { fingerprint: string } }, engineRuns = false): string {
     const asked = this.store.events(run.id).filter((event) => event.kind === "attention.needed").at(-1)?.data.callId;
     const unknown = this.store.events(run.id).some((event) => event.kind === "policy.execution_unknown" && event.data.id === asked);
     if ((continuing.allowed || continuing.refused) && typeof asked === "string" && !unknown) {
       this.store.event(run.id, "run.call_not_run", { id: asked });
-      // The asking call's result says the answer too (Store.answerAskedCall), so the model is told one thing.
-      this.store.answerAskedCall(run.sessionId, asked, Boolean(continuing.allowed));
+      // The asking call's result says the answer too (Store.answerAskedCall), so the model is told one thing. QA R1: after a
+      // yes the engine runs it, and its real result takes the placeholder's place (runApproved).
+      if (!engineRuns) this.store.answerAskedCall(run.sessionId, asked, Boolean(continuing.allowed));
     }
     if (continuing.refused) return this.refusalNote(run, continuing.refused, unknown); // dogfood D5
+    if (continuing.allowed && engineRuns) return approvedRanNote; // QA R1
     if (continuing.allowed && unknown) return " The person allowed the blocked step. The outer call may already have changed something: check its actual state before repeating any action. The approval does not prove the outer call never ran." + this.resumeNote(run, run.id);
     return continuing.allowed
       ? " The person has now answered your question: they allowed the request, just this once. The call you asked about did not run. Make that same call again, exactly as before, and carry on with the task. A different request is asked about again."
@@ -1909,6 +2107,62 @@ ${run.output.slice(0, 6000)}`;
     const unknown = unknownIds.size;
     this.store.event(run.id, "run.resumed", { from, unknownToolOutcomes: unknown });
     return " This task was interrupted and is now continuing from its saved transcript. A tool result marked outcome unknown may or may not have taken effect: check the actual state before repeating any action that changes something.";
+  }
+  /**
+   * QA R1: what the engine runs itself as this task carries on: after a yes to its exact request, the call that asked; after
+   * a restart cut off its question (Continue), the call that was never run, which the gate then asks about again or lets
+   * through on a yes still standing. Null when there is nothing (a reply, a No, a step asked from inside a tool after it
+   * started, or a call that has already run).
+   */
+  private approvedFor(run: Run, options: RunOptions): ApprovedWork | null {
+    if (!options.continuing?.allowed && !options.resumeFrom) return null;
+    const from = options.continuing?.runId ?? options.resumeFrom!;
+    const events = this.store.events(from);
+    const kind = options.continuing ? "attention.needed" : "run.call_not_run";
+    const last = events.filter((event) => event.kind === kind).at(-1)?.data;
+    const asked = options.continuing ? last?.callId : last?.id;
+    if (typeof asked !== "string") return null;
+    const work = approvedWork(events, this.store.messages(run.sessionId), asked);
+    return work.run.length || work.finished ? work : null;
+  }
+  /**
+   * QA R1: runs the approved call as the model asked for it (the same id and the very same bytes, so the yes still binds
+   * it), through oneCall: the journal, the loop guard, the gate with its rules and remembered answers, receipts and
+   * events. Its result replaces the "not run" placeholder. A gate that asks again stops the task on the same call.
+   */
+  private async runApproved(run: Run, context: ToolContext, work: ApprovedWork): Promise<void> {
+    if (work.finished) {
+      const { call, outcome } = work.finished;
+      this.store.event(run.id, "run.approved_call", { id: call.id, name: call.name, ranBefore: true });
+      this.store.setToolResult(run.sessionId, call.id, this.clipped(run, call, JSON.stringify(outcome)));
+    }
+    for (const [at, call] of work.run.entries()) {
+      // A later call of the same reply never started: until it runs, it is a call that has not run, not one that may have.
+      if (at > 0) this.store.setToolResult(run.sessionId, call.id, notRunResult);
+      this.store.event(run.id, "run.approved_call", { id: call.id, name: call.name, ...(at > 0 ? { sameReply: true } : {}) });
+      this.noteWork(run, call);
+      this.rememberToolWork(run.id, call.name, 0);
+      const outcome = await this.oneCall(run, context, call);
+      this.store.setToolResult(run.sessionId, call.id, this.clipped(run, call, JSON.stringify(outcome)));
+      const ran = this.engineRan.get(run.id) ?? [];
+      ran.push({ id: call.id, name: call.name, canon: canonicalArguments(call.arguments), outcome });
+      this.engineRan.set(run.id, ran);
+    }
+  }
+  /** QA R1: calls the engine ran itself after a yes, by task, so a model that makes one again is handed its result. */
+  private readonly engineRan = new Map<string, { id: string; name: string; canon: string; outcome: unknown }[]>();
+  /**
+   * QA R1: a model that makes the approved call again anyway (the same tool and the same arguments, in any key order) is
+   * handed the result of the one the engine ran, once, and nothing runs a second time.
+   */
+  private approvedRepeat(runId: string, call: ToolCall): Record<string, unknown> | null {
+    const ran = this.engineRan.get(runId);
+    const canon = canonicalArguments(call.arguments);
+    const at = ran?.findIndex((one) => one.name === call.name && one.canon === canon) ?? -1;
+    if (!ran || at < 0) return null;
+    const [first] = ran.splice(at, 1);
+    this.store.event(runId, "run.approved_repeat", { id: call.id, name: call.name, of: first!.id });
+    return alreadyRunResult(first!.outcome);
   }
   /**
    * Dogfood D5: what a task carrying on after the owner's No is told (like a yes, the request is not quoted back: its
@@ -1976,11 +2230,18 @@ ${run.output.slice(0, 6000)}`;
       output = `Run cleanup failed: ${errorText(error)}. Work result before cleanup: ${output}`;
     } finally {
       this.controllers.delete(run.id);
+      this.helperTree.release(run.id); // helper-lifecycle
       this.pausing.delete(run.id); // long-work
       this.turnPictures.delete(run.id);
       this.activeSessions.delete(run.sessionId);
       this.trunkRuns.delete(run.id); // eng-trunk-controls
+      // selfdev (SELF-303): a helper's note that arrived as its lead finished is not lost: it goes to the lead's
+      // conversation as a new message, labelled as the helper's words. The owner's own late note is dropped as before.
+      const late = (this.steers.get(run.id) ?? []).filter((one) => one.from !== undefined && /^helper /.test(one.from));
       this.steers.delete(run.id);
+      if (late.length) queueMicrotask(() => {
+        for (const one of late) try { this.followUp(run.sessionId, fromHelper(one.from!, one.note), null, { originFrom: run.id }); } catch { /* the conversation is gone */ }
+      });
       this.recordToolWork(run, context, status);
       // What this conversation is carrying is written down at the end of every task, so closing the
       // app between one task and the next changes nothing about what the next one starts with. Only
@@ -2258,6 +2519,7 @@ ${run.output.slice(0, 6000)}`;
     let droppedNudged = false; // Q066: an empty reply that spent tokens, most likely a call the model service dropped
     let unofferedRounds = 0; // Q066: rounds in a row whose every call named a tool that was not offered
     let announcedNudged = false; // Q067: a reply that said what it would do next and then stopped
+    let capabilityNudged = false;
     let tidyNudges = 0;
     let textCallNudged = false; // qa-fixes-4: a reply that was a tool call written out as text
     let knownTools = this.registry.version;
@@ -2265,9 +2527,12 @@ ${run.output.slice(0, 6000)}`;
     // back (the stall watch still runs) while an outlet filter applies to any connection this round may
     // fall back to, so filtered words never reach the page before the whole answer is filtered. ──
     const namesOf = (preset: ModelPreset | undefined): string[] => preset ? [preset.name, preset.id, preset.model, preset.provider.name] : [];
-    // mac7/speed: the owner's figure, or the launch one (12; 40 for work on the project's files). A planned task gets more on top.
-    const ceiling = knobs.maxModelRounds(this.store, this.owner, this.reliability, coding);
-    for (let round = 0; round < conductor.maxRounds(ceiling); round++) {
+    // mac7/speed: the owner's figure, or on auto no limit while a sign-in or a model here answers and the launch one (12; 40
+    // for work on the project's files) while a key billed per token does. Asked each round: a route may fall back. A
+    // planned task gets more on top.
+    const ceiling = (): number => knobs.maxModelRounds(this.store, this.owner, this.reliability, coding,
+      this.billedPerToken(this.helperModels.get(run.id) ?? route.candidates[route.index]));
+    for (let round = 0; round < conductor.maxRounds(ceiling()); round++) {
       // With no step left for the next question to the model, the task ends with the step limit's sentences, unasked.
       if (context.budget.steps >= context.budget.limits.maxSteps) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
       this.checkPaused(run.id); // long-work: the owner's Pause takes effect between steps
@@ -2287,6 +2552,10 @@ ${run.output.slice(0, 6000)}`;
       // ── mac7/r17-d: @ mentions once, and the task's checklist and folder rules fresh every round (src/coding/). ──
       const notes = this.coding ? await this.coding.roundNotes(run, context, round).catch((): RoundNotes => ({})) : {} as RoundNotes;
       if (notes.once) { messages.push(notes.once); ids.push(null); }
+      // workbench (SELF-307): the conversation's open work rides with the checklist, so folding never loses its numbers.
+      let open: string | null = null;
+      if (context.depth === 0) try { open = this.openWork?.(run.sessionId) ?? null; } catch { /* never breaks a round */ }
+      if (open) notes.every = { role: "system", content: [notes.every?.content, open].filter(Boolean).join("\n\n") };
       // Q066: the tools this request offers (the catalog's plan is fixed within a round), named back to a model that
       // called one it was not offered.
       const offered = new Set(this.toolsFor(context).map((tool) => tool.name));
@@ -2311,7 +2580,10 @@ ${run.output.slice(0, 6000)}`;
       // qa-fixes-4: a tool call written out as text, naming one of Branch's tools, is neither an answer nor a call. Its
       // words are never streamed on, kept or posted (a room would post them as a Trunk's). Beside real calls, the calls
       // go on without it; alone, the model is asked once to make the call, and a second one ends the task in plain words.
-      const isBranchTool = (name: string): boolean => this.isToolName(name);
+      // QA retest 2026-09-28 pass 2: qwen2.5:7b answered "Tell me my favourite colour…" with nothing but
+      // {"name": "user.fact", "arguments": {}}, a tool Branch does not have in its own "user." family, and the window
+      // showed the JSON as the answer. A made-up name in one of Branch's tool families counts as Branch's too.
+      const isBranchTool = (name: string): boolean => this.isToolName(name) || this.inToolFamily(name);
       // An answer that ends with a call written out (see endsWithToolCallAsText) counts too, unless the person asked how
       // something would be done, where showing the call is the answer.
       const callText = writesToolCallAsText(withoutThinking(spoken), isBranchTool)
@@ -2384,6 +2656,14 @@ ${run.output.slice(0, 6000)}`;
       this.store.message(run.sessionId, assistant);
       if (!runnable.length) {
         unofferedRounds = 0; // an answer ends a streak of calls to tools that were not offered
+        if (!usedTools && offered.has(toolSearchName) && conductor.lastStep() && !context.dryRun && !context.isolated && !this.learningOf(run.id)
+          && capabilityActionRequested(run.prompt) && uncheckedCapabilityClaim(withoutThinking(spoken))) {
+          this.store.event(run.id, "model.capability_unchecked", { round: round + 1, nudged: capabilityNudged });
+          if (capabilityNudged) throw new CheckError(capabilityDiscoveryFailure);
+          capabilityNudged = true;
+          this.add(run, messages, ids, { role: "user", from: "branch", content: capabilityDiscoveryNudge });
+          continue;
+        }
         const remainder = conductor.lastStep() && !context.dryRun ? ownerTidyRemainder(this.store, run.id, run.prompt) : null;
         if (remainder) {
           this.store.event(run.id, "model.folder_unfinished", { round: round + 1, nudges: tidyNudges });
@@ -2441,7 +2721,7 @@ ${run.output.slice(0, 6000)}`;
       this.orchestration.milestone(run, round + 1);
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
-    return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling));
+    return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /**
    * mac7/speed: one tool call, from the journal entry to the result. This is exactly the path a
@@ -2450,6 +2730,8 @@ ${run.output.slice(0, 6000)}`;
    * waited on at once. Nothing is shared between two calls but the clock.
    */
   private oneCall(run: Run, context: ToolContext, call: ToolCall): Promise<unknown> {
+    const repeat = this.approvedRepeat(run.id, call); // QA R1
+    if (repeat) return Promise.resolve(repeat);
     // mac3/never-break: each call is written to the task journal, flushed, before it runs.
     return this.journal.around({ runId: run.id, sessionId: run.sessionId, call, workspace: context.workspace, signal: context.signal,
       permission: this.registry.permissionOf(call.name) }, () => {
@@ -2574,6 +2856,11 @@ ${run.output.slice(0, 6000)}`;
   }
   /** Adds a message to the working context and to the stored transcript, so nothing is lost later. */
   /** qa-fixes-4: a name that is one of Branch's tools, as written or as it travels to a model (`wireName`). */
+  /** A name shaped like one of Branch's (family.verb) whose family is one Branch's tools belong to. */
+  private inToolFamily(name: string): boolean {
+    const family = /^([a-z][a-z0-9_-]{0,30})\.[a-z][a-z0-9_]{0,40}$/.exec(name)?.[1];
+    return !!family && this.registry.names().some((tool) => tool.startsWith(`${family}.`));
+  }
   private isToolName(name: string): boolean {
     return this.registry.names().some((tool) => tool === name || wireName(tool) === name || wireName(tool, "local") === name);
   }
@@ -2809,6 +3096,9 @@ ${run.output.slice(0, 6000)}`;
     // Read under whoever is using the app: with a household profile switched on, their task is
     // given their own remembered facts and never the owner's.
     const snapshot = this.store.review.sessionSnapshot(memoryScope(this.store, context), run.sessionId, memoryAgent(context));
+    const taste = this.taste?.context({ memoryOwner: memoryScope(this.store, context), agent: memoryAgent(context) ?? null,
+      project: run.project ?? null, temporary: this.store.sessionTemporary(run.sessionId) });
+    if (taste) messages.push(taste);
     if (snapshot.count) messages.push({ role: "system", content: `What you remember about the person (snapshot taken when this conversation started; use memory.search for anything newer):\n${snapshot.text}` });
     const aboutYou = knobs.aboutYouMessage(this.store, memoryScope(this.store, context)); // R17-S13
     if (aboutYou) messages.push(aboutYou);
@@ -2818,10 +3108,54 @@ ${run.output.slice(0, 6000)}`;
     if (working.summary) messages.push(summaryMessage(working.summary));
     // Where Branch is running, where the message came from and the local time: last of the system text, after
     // everything that stays the same between turns, so a service's prompt cache keeps the rest (src/environment.ts).
-    messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id))) });
+    const available = this.offered(run, context).map(tool => tool.name);
+    const hidden = switchedToolTiers(this.store, context.owner, available).hidden;
+    messages.push({ role: "system", content: environmentLine(environmentFacts(this.channelOf(run.id)))
+      + adaptiveInstructions(run.prompt, available.filter(name => !hidden.includes(name))) });
     const ids: (number | null)[] = messages.map(() => null);
     for (const row of working.rows) { messages.push(row.message); ids.push(row.id); }
+    this.groundInOwnerFacts(run, context, messages, ids); // QA R1 follow-up (recall)
     return { messages, ids };
+  }
+  /**
+   * QA R1 follow-up (recall): the saved facts that bear on the owner's newest message, in a short labelled block right
+   * before it (src/owner-facts.ts). For a personal question the engine looks them up itself. Only this computer's own
+   * memory is read, as the owner's (or the Trunk's) own scope sees it; nothing is written.
+   */
+  private groundInOwnerFacts(run: Run, context: ToolContext, messages: Message[], ids: (number | null)[]): void {
+    if (context.depth > 0 || !context.permissions.has("memory.read")) return;
+    // A group chat's message may be anybody's: "my" there is not the owner's, so a group is never grounded this way.
+    const chat = this.store.events(run.id).find((event) => event.kind === "channel.inbound")?.data;
+    if (chat && chat.chatKind !== "direct") return;
+    const at = ownersLastMessage(messages);
+    const question = at >= 0 ? String(messages[at]!.content ?? "") : "";
+    if (!question.trim()) return;
+    const scope = memoryScope(this.store, context), agent = memoryAgent(context);
+    const personal = personalQuestion(question);
+    const found = new Map<string, OwnerFact>();
+    const words = (question.toLowerCase().match(/[\p{L}\p{N}']+/gu) ?? []).filter((word) => word.length > 2);
+    for (const query of ["", ...new Set([...words, ...keyWords(question)])].slice(0, 12)) {
+      for (const record of this.store.searchMemory(scope, query, agent)) {
+        if (record.data.kind === "task-scratch" || found.has(record.id)) continue;
+        found.set(record.id, { id: record.id, text: String(record.data.text ?? ""), updatedAt: record.updatedAt });
+      }
+    }
+    const facts = relevantFacts(question, [...found.values()], personal);
+    if (!facts.length) return;
+    // For a personal question just asked, the engine's own lookup follows it as a memory.search step that already ran:
+    // a small model answers from a tool's result far more readily than from a note above the question. Shown to the
+    // model only; the conversation keeps no such call.
+    const lookedUp = personal && at === messages.length - 1 && this.registry.permissionOf("memory.search") === "memory.read";
+    messages.splice(at, 0, { role: "system", content: ownerFactsBlock(facts) });
+    ids.splice(at, 0, null);
+    if (lookedUp) {
+      const call = { id: `lookup-${run.id.slice(0, 8)}`, name: "memory.search", arguments: JSON.stringify({ query: question.slice(0, 200) }) };
+      messages.push({ role: "assistant", content: "", toolCalls: [call] },
+        { role: "tool", toolCallId: call.id, content: JSON.stringify({ ok: true, result: facts.map((fact) => ({ id: fact.id, data: { text: fact.text } })), // as memory.search returns them
+          note: "Branch looked up what the owner asked you to remember, for this question. Answer from these facts." }) });
+      ids.push(null, null);
+    }
+    this.store.event(run.id, "memory.lookup", { personal, step: lookedUp, facts: facts.map((fact) => fact.id) });
   }
   /**
    * Passages from the person's own documents, added before their task the way the memory snapshot
@@ -2981,6 +3315,8 @@ ${run.output.slice(0, 6000)}`;
     const learned = this.store.toolUsage, notes = learned.noteMap(context.owner);
     // mac2/desktop-ui: the owner's three-way switches — "on" loads a feature's tools, "off" hides them.
     const switched = switchedToolTiers(this.store, context.owner, tools.map((tool) => tool.name));
+    const adaptive = context.isolated || this.learningOf(run.id) ? []
+      : tools.map(tool => tool.name).filter(name => !switched.hidden.includes(name));
     const catalog = new ToolLoader(tools, {
       expanded: [...alwaysOpenGroups, ...guessed, ...opened], signals,
       // mac2/fly-core-2: with the learning core "on", its top tools join this pre-load (src/fly-core/apply.ts).
@@ -2988,10 +3324,12 @@ ${run.output.slice(0, 6000)}`;
       // mac7/speed: with "fewer rounds" on, a coding task starts with the tools it always needs, so
       // it never spends a whole round trip searching for files.edit before it can begin.
       preload: [...advisedPreload(run.id, learned.preload(context.owner, run.prompt), tools, switched.hidden), ...switched.preload,
+        ...adaptiveTools(run.prompt, adaptive),
         ...codingPreload(this.store, context.owner, [...guessed, ...opened], tools.map((tool) => tool.name), run.prompt)],
       demoted: [...learned.stale(context.owner), ...(fileTask ? tools.map((tool) => tool.name).filter((name) => this.registry.groupOf(name) === "memory") : [])],
       // A learning task may use only its own few tools (P17-D §3): none of these is pinned for it unless it is one of them.
-      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) ? coreMemoryTools : [])]
+      // QA R1 follow-up (recall): a personal question ("what's my…") is memory work too, so it is offered memory.search.
+      pinned: [...coreFileTools, ...(memoryAskWords.test(run.prompt) || personalQuestion(run.prompt) ? coreMemoryTools : [])]
         .filter((name) => this.learningOf(run.id)?.tools.has(name) ?? true),
       // mac7/speed: a feature the owner switched off refuses; its tools are not offered at all.
       hidden: switched.hidden,
@@ -3010,6 +3348,9 @@ ${run.output.slice(0, 6000)}`;
       // nothing about the request ever leaves this computer.
       ...this.meaningOption(run.id),
     });
+    // selfdev (SELF-314): a task carried on after a restart has its tools loaded again, as it had named them.
+    const carried = carriedOnTools(this.store, run.id, messages, tools, switched.hidden).map((entry) => entry.name);
+    if (carried.length) catalog.describe(carried);
     this.catalogs.set(run.id, catalog);
     // Only the owner's own task, read from what the task recorded at its start, never from whoever is at the window
     // now: never a household person's (or one in a conversation lent from them), a short-lived key's, a chat app's or
@@ -3028,7 +3369,7 @@ ${run.output.slice(0, 6000)}`;
    * in a toolbox for anything else (a web page's cookie wall included).
    */
   private offered(run: Run, context: ToolContext): ToolDescription[] {
-    const tools = this.registry.descriptions(context.permissions);
+    const tools = this.visibleTools(context);
     if (this.screenWanted(run, context)) return tools;
     return tools.filter((tool) => !screenTool(tool.name, this.registry.permissionOf(tool.name), this.registry.declaresScreen(tool.name)));
   }
@@ -3120,7 +3461,22 @@ ${run.output.slice(0, 6000)}`;
    */
   private toolsFor(context: ToolContext): ToolDescription[] {
     if (!context.permissions.size) return [];
-    return this.catalogs.get(context.runId)?.descriptions() ?? this.registry.descriptions(context.permissions);
+    return this.catalogs.get(context.runId)?.descriptions() ?? this.visibleTools(context);
+  }
+  /** helper-lifecycle: the tools this task may use, less those a helper may not hand work on with (src/helper-tree.ts). */
+  private visibleTools(context: ToolContext): ToolDescription[] {
+    return this.registry.descriptions(context.permissions).filter((tool) => !handOnRefusal(tool.name, context));
+  }
+  /**
+   * helper-lifecycle: a helper carried on after a question or a restart runs with no lead's context in hand, so it keeps
+   * the depth and the leave to hand work on that its first start recorded (an older record: depth 1 when it had a lead).
+   */
+  private carriedHelper(options: RunOptions): { depth?: number; delegates?: boolean } {
+    const from = options.continuing?.runId ?? options.resumeFrom;
+    const started = from ? this.store.events(from).find((event) => event.kind === "run.started")?.data : undefined;
+    if (!started) return {};
+    const depth = Number.isInteger(started.depth) ? Number(started.depth) : typeof started.parentRunId === "string" ? 1 : 0;
+    return { ...(depth > 0 ? { depth } : {}), ...(started.delegates === true ? { delegates: true } : {}) };
   }
   /** What this round costs and what is left, so compaction can be decided on the conversation alone. */
   private budgetOf(messages: Message[], context: ToolContext, preset?: ModelPreset): ContextBudget {
@@ -3147,6 +3503,10 @@ ${run.output.slice(0, 6000)}`;
    * window, up to 12,000 tokens): a coding task then sees its command, Git and GitHub tools together. A connection
    * billed per token, and a model on this computer, keep the launch figure.
    */
+  /** True for a connection billed per token (an API key): not a sign-in and not a model on this computer. */
+  private billedPerToken(preset: ModelPreset | undefined): boolean {
+    return !!preset && !presetRunsLocally(preset) && !isSignInConnection(preset);
+  }
   /** selfdev: where a reply's token ceiling starts and how far it may grow, by the kind of connection. */
   private replyCeiling(preset: ModelPreset): { base: number; max: number } {
     return !presetRunsLocally(preset) && isSignInConnection(preset) ? { base: signInReplyCeiling, max: signInMaxReplyCeiling }
@@ -3246,11 +3606,12 @@ ${run.output.slice(0, 6000)}`;
     if (from < 1 || to - from < 2) return;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!);
     const room = Math.max(2000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4);
-    const transcript = messages.slice(from, to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n");
+    const transcript = messages.slice(from, to).map(transcriptLine).join("\n");
     this.store.event(run.id, "context.folding_task", { messages: to - from });
     const summariser: Message[] = [
       { role: "system", content: taskFoldInstructions },
-      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${transcript.slice(-room)}` },
+      // P0 (self-build): the start and the end of the work, as a conversation's fold reads it (src/compaction-input.ts).
+      { role: "user", content: `What you were asked to do:\n${run.prompt.slice(0, 2000)}\n\nYour work so far:\n${boundSummaryInput(transcript, room)}` },
     ];
     const summary = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim().slice(0, 6000);
     if (!summary) return;
@@ -3286,13 +3647,8 @@ ${run.output.slice(0, 6000)}`;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!); // R17-S11
     // dogfood D22: the summariser's own question fits the room of the model that answers it.
     const room = Math.max(2000, Math.min(60000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4));
-    const transcript = messages.slice(split.from, split.to).map((m) => `${m.role}: ${m.content}${m.toolCalls ? " [requested tools: " + m.toolCalls.map((c) => c.name).join(", ") + "]" : ""}`).join("\n").slice(0, room);
     const previous = messages.slice(1, split.from).filter((m) => m.role === "system").map((m) => m.content).join("\n");
-    const summariser: Message[] = [
-      { role: "system", content: compactionInstructions },
-      { role: "user", content: (previous ? previous + "\n\n" : "") + transcript },
-    ];
-    const answer = (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+    const answer = await this.summariseRange(run, context, preset, previous, messages.slice(split.from, split.to).map(transcriptLine), room);
     const reply = answer.slice(0, 6000);
     // long-work: what earlier folds kept is merged in, never left to the model to remember, and the record's own
     // files touched and open to-dos are added; a reply that is not the shape asked for is kept beside them. The whole
@@ -3303,15 +3659,54 @@ ${run.output.slice(0, 6000)}`;
     const summary = [summaryText(structured), parsed ? "" : reply].filter(Boolean).join("\n\n").slice(0, 8000);
     const throughId = ids[split.to - 1]!;
     this.store.saveSessionSummary(context.owner, run.sessionId, structured, summary);
-    this.store.saveCompaction(run.sessionId, throughId, summary);
+    // P0 (self-build): the owner's own words stay word for word beside the summary, up to a share of the room.
+    const words = ownerWordsSection(this.ownerWordsThrough(run.sessionId, throughId),
+      Math.min(ownerWordsMaxTokens, Math.floor(budget.threshold / 10)) * 4);
+    const working = words ? `${summary}\n\n${words}` : summary;
+    this.store.saveCompaction(run.sessionId, throughId, working);
     const kept = this.keepAfterCompaction(run.sessionId, messages, ids, split);
-    messages.splice(1, messages.length - 1, summaryMessage(summary), ...kept.messages);
+    messages.splice(1, messages.length - 1, summaryMessage(working), ...kept.messages);
     ids.splice(1, ids.length - 1, null, ...kept.ids);
     this.store.event(run.id, "context.compacted", {
       droppedMessages: split.to - split.from - kept.pinned, keptMessages: kept.messages.length, summaryChars: summary.length,
-      pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold,
+      pinnedKept: kept.pinned, structured: structured !== null, threshold: budget.threshold, ownerWordsChars: words?.length ?? 0,
       estimatedBefore: before, estimatedAfter: estimateTokens(messages.map(textOnly)), throughMessageId: throughId,
     });
+  }
+  /**
+   * P0 (self-build): the summariser's answer for a folded range, its input held to `room` with the start and the end
+   * kept (src/compaction-input.ts). A summariser that is itself refused as too long is asked again without the oldest
+   * part, as Codex does (openai/codex, codex-rs/core/src/compact.rs, Apache-2.0), until one part is left.
+   */
+  private async summariseRange(run: Run, context: ToolContext, preset: ModelPreset, previous: string, lines: string[], room: number): Promise<string> {
+    const prefix = previous ? previous + "\n\n" : "";
+    for (let first = 0; ; first++) {
+      const summariser: Message[] = [
+        { role: "system", content: compactionInstructions },
+        { role: "user", content: prefix + boundSummaryInput(lines.slice(first).join("\n"), Math.max(2000, room - prefix.length)) },
+      ];
+      try {
+        return (await this.complete(run, summariser, { ...context, permissions: new Set() }, preset, null)).content.trim();
+      } catch (error) {
+        const overflow = overflowOf(error).overflow || (error instanceof BudgetError && error.message === tooLong);
+        if (!overflow || first >= lines.length - 1) throw error;
+        this.store.event(run.id, "context.compaction_trimmed", { dropped: first + 1 });
+      }
+    }
+  }
+  /** P0 (self-build): the owner's own messages up to a fold, newest first; Branch's own notes, pinned and left-out ones are not. */
+  private ownerWordsThrough(sessionId: string, throughId: number): string[] {
+    const pinned = this.store.pinnedMessageIds(sessionId);
+    const rows = this.store.sqlite.prepare(`SELECT id, body FROM messages WHERE session_id=? AND id<=?
+      AND COALESCE(source_id,id) NOT IN (SELECT source_id FROM session_left_out WHERE session_id=?) ORDER BY id DESC LIMIT 200`)
+      .all(sessionId, throughId, sessionId);
+    const words: string[] = [];
+    for (const row of rows) {
+      if (pinned.has(Number(row.id))) continue;
+      const message = JSON.parse(String(row.body)) as Message;
+      if (message.role === "user" && !message.from && message.content.trim()) words.push(message.content);
+    }
+    return words;
   }
   /** long-work: what the record itself says a summary must keep — the files this conversation's tools touched, its open to-dos. */
   private recordedForSummary(sessionId: string): Partial<SessionSummary> {
@@ -3484,12 +3879,14 @@ ${run.output.slice(0, 6000)}`;
    * Moves to the next configured preset after an eligible failure; records the cooldown and switch. An account out of
    * credit or at its plan limit (outOfCredit) is not a passing failure: it moves only to the first model on this computer
    * in the owner's fallback order (Settings › Accounts › Fall back to this computer), never to another paid connection.
+   * A sign-in whose plan ran out may also move to another sign-in on a different plan (afterPlanLimit).
    */
   private fallBack(run: Run, context: ToolContext, route: ModelRoute, error: unknown): boolean {
     const failed = route.candidates[route.index]!;
     const cooldownUntil = this.models.markFailure(context.owner, failed.id, error);
     const to = cooldownUntil ? route.index + 1
-      : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
+      : planLimitReached(error) && isSignInConnection(failed) ? this.afterPlanLimit(run, context, route, failed)
+        : outOfCredit(error) ? route.candidates.findIndex((candidate, at) => at > route.index && presetRunsLocally(candidate)) : -1;
     const next = to > route.index ? route.candidates[to] : undefined;
     if (!next) return false;
     route.index = to;
@@ -3498,6 +3895,25 @@ ${run.output.slice(0, 6000)}`;
       reason: errorText(error), cooldownUntil,
     });
     return true;
+  }
+  /**
+   * A sign-in whose plan ran out (the owner's ChatGPT plan at 0% left, 2026-09-29): the work goes on with a model on this
+   * computer or a sign-in on a different plan (the Claude subscription), which cost nothing more per token, rather than
+   * stopping. The route's own order comes first, then the owner's other sign-ins; a key billed per token is never
+   * chosen, nor a model on the same spent plan (ChatGPT's other models, Codex). A Trunk keeps its sign-in rule.
+   * The index to move to, or -1.
+   */
+  private afterPlanLimit(run: Run, context: ToolContext, route: ModelRoute, failed: ModelPreset): number {
+    const spent = planOf(failed), signIns = !context.trunkKeys || this.trunkSignIns(run.id);
+    const otherPlan = (preset: ModelPreset): boolean => signIns && isSignInConnection(preset) && planOf(preset) !== spent;
+    const inRoute = route.candidates.findIndex((candidate, at) => at > route.index && (presetRunsLocally(candidate) || otherPlan(candidate)));
+    if (inRoute >= 0) return inRoute;
+    const tried = new Set(route.candidates.map((candidate) => candidate.id));
+    const other = [...this.models.presets.values()].find((preset) => !tried.has(preset.id) && !presetRunsLocally(preset) && otherPlan(preset)
+      && !this.models.coolingDown(preset.id) && !isRetiredConnection(preset));
+    if (!other) return -1;
+    route.candidates.push(other);
+    return route.candidates.length - 1;
   }
   /** The connection here that answers instead of `wanted` for a task that must stay on this computer. */
   private keptHere(run: Run, wanted: ModelPreset): ModelPreset {
@@ -3530,6 +3946,14 @@ ${run.output.slice(0, 6000)}`;
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
+    // The owner's "auto" limits are no limit on a sign-in or a model here, and finite on a key billed per token; a key's
+    // request also stops at this month's budget, so a task on no limit cannot run past it (src/knobs/apply.ts taskBudget).
+    const billed = this.billedPerToken(preset);
+    context.budget.answeredBy(billed);
+    if (billed) {
+      const monthly = this.monthlyBudgetRefusal();
+      if (monthly) throw new BudgetError(monthly);
+    }
     context.budget.step(context.signal);
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
@@ -4828,7 +5252,9 @@ ${run.output.slice(0, 6000)}`;
     await this.pace(context, "tool", this.policy().limits.toolCallsPerMinute);
     const gated = await this.gate(call, seen, context, shown);
     if (gated.refusal) return gated.refusal;
-    const limitMs = knobs.toolLimits(this.store, this.owner, this.reliability).toolTimeoutMs, timeout = AbortSignal.timeout(limitMs); // R17-S10
+    // R17-S10; selfdev (SELF-022): a look-only waiting tool may wait longer than the owner's limit (ToolDefinition.waitsUpToMs).
+    const limitMs = Math.max(knobs.toolLimits(this.store, this.owner, this.reliability).toolTimeoutMs, this.registry.registered(call.name)?.waitsUpToMs ?? 0);
+    const timeout = AbortSignal.timeout(limitMs);
     // How tightly a program this call starts is held travels with the call, so a tool that starts
     // one can honour the owner's rule without knowing anything about the policy.
     // wave mac3 (os-sandbox, integration review): the wall comes only from wallContextFor below, never
@@ -4837,7 +5263,8 @@ ${run.output.slice(0, 6000)}`;
     // Q250: a model's own call is always held to read-before-edit, whatever context it was started from.
     const scoped: ToolContext = { ...unwalled, askable: true, readFirstExempt: false, signal: AbortSignal.any([context.signal, timeout]),
       // selfdev: the owner's selected Full Access reaches a held command too: the network, never wider writes.
-      ...(call.name === "shell.execute" && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
+      // SELF-304: and a held program left running (process.start), walled the same way.
+      ...((call.name === "shell.execute" || call.name === "process.start") && this.ownerFullAccessFor(context) !== null ? { ownerFullAccess: true } : {}),
       ...(gated.sandbox ? { sandbox: gated.sandbox } : {}),
       ...(gated.backend ? { sandboxBackend: gated.backend } : {}),
       ...(gated.paths?.length ? { sandboxPaths: gated.paths } : {}),
@@ -4941,6 +5368,20 @@ const aloneTools = [expandToolName, toolSearchName, toolDescribeName, toolNoteNa
 function safeArguments(text: string): unknown {
   try { return JSON.parse(text); } catch { return {}; }
 }
+
+/** QA R1 follow-up: what a caller that carries a waiting task on (a chat app, an editor, the terminal, a room) may watch. */
+export interface CarryOnHooks {
+  onStarted?: (run: Run) => void;
+  onTextDelta?: (text: string) => void;
+  signal?: AbortSignal;
+}
+/** QA R1: what a task carrying on after a yes is told, once the engine has run the approved call itself. */
+const approvedRanNote = " The person has now answered your question: they allowed the request. Branch has now carried out that exact"
+  + " call itself (it had not run before), and what came of it is in the conversation as that call's result. Do not make that"
+  + " call again: carry on with the task from that result.";
+/** QA R1: added to the resume note when a call whose question was lost has been put through again by Branch itself. */
+const resumedAskNote = " A call that had stopped to ask the person was put through again by Branch itself; what came of it is in"
+  + " the conversation as that call's result. Do not make that call again.";
 
 /** mac7/speed: the room the one last question gets, its own, so a long task still gets an answer. */
 const lastWordTokens = 16000;

@@ -25,6 +25,11 @@ export class ReactionAnswers {
     this.watched.set(messageId, { chatId, senderId, fingerprint, expires: this.now() + this.lifetimeMs });
     while (this.watched.size > 200) this.watched.delete(this.watched.keys().next().value!);
   }
+  /** Whether a reaction on this message may still answer a question. */
+  watching(messageId: string): boolean {
+    const watched = this.watched.get(messageId);
+    return !!watched && watched.expires > this.now();
+  }
   /** The answer a reaction gives, as the router reads it ("y:<fingerprint>"), or null; each question answers once. */
   read(messageId: string, chatId: string, senderId: string, emoji: string): string | null {
     const watched = this.watched.get(messageId), answer = reactionAnswer(emoji);

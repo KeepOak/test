@@ -12,6 +12,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 const quiet = { name: "scripted", async complete() { return { content: "Here is a short answer.", toolCalls: [] }; } };
 
@@ -42,7 +43,7 @@ async function fixture(t, width, { everything = false } = {}) {
   void everything; // Redesign: replaced by the new window (no "Show everything"; every control is always drawn)
   // The conversation is opened from its row in the list (on a narrow window the menu button slides the list in).
   if (width <= 760) await page.locator('[data-act="side"]').filter({ visible: true }).first().click();
-  await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).click();
+  await openChat(page, run.sessionId);
   await page.locator("#conversation .b").first().waitFor();
   return { page, errors };
 }

@@ -171,7 +171,7 @@ test("a refused token saves nothing and says why; an unknown app lists the real 
   const unknown = fakeIo();
   assert.equal(await runConnect("myspace", unknown.io, backend), 2);
   assert.match(unknown.printed[0], /Usage: branch connect <chat app>\nChat apps: telegram, discord, slack/);
-  assert.equal(connectUsage().split(", ").length, 55);
+  assert.equal(connectUsage().split(", ").length, 56);
 });
 
 /* ---------- integration review (adversarial pass) ---------- */

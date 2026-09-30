@@ -278,6 +278,11 @@ test("the card, the three-field create, Edit Trunk, a room, the roster and @ in 
   assert.equal(await page.locator(".pop .ph").first().textContent(), "Call a Trunk", "the list is headed as the prototype's");
   await page.locator("#prompt").press("Enter");
   assert.equal(await page.locator("#prompt").inputValue(), "@Ada ", "the prototype's mention-pick puts in the name");
+  /* One read of the Trunks refused on the way (a busy engine): the window keeps the Trunks it had, so "@Ada" still finds
+     Ada. It used to empty them, and the words went out as an ordinary message in a new conversation (seen on CI).
+     Mutation: in core/state.js refresh(), set E.trunks and E.trunkModes from a failed read again, and this goes red. */
+  await page.route("**/api/trunks", (route) => route.request().method() === "GET" ? route.fulfill({ status: 503, json: { error: "busy" } }) : route.continue(), { times: 1 });
+  await page.evaluate(async () => (await import("/app/core/state.js")).refresh());
   await page.locator("#prompt").pressSequentially("hello there");
   await page.locator("#prompt").press("Enter");
   await until(async () => app.store.messages(ada.chatSessionId).some((m) => m.content === "hello there"));

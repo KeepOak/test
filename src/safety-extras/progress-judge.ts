@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Message } from "../contracts.js";
-import { LoopGuard } from "../loop-guard.js";
+import { LoopGuard, canonicalArguments } from "../loop-guard.js";
 import { LoopStoppedError } from "../run-guards.js";
 import type { Store } from "../store.js";
 import { safetyMode, type SafetyMode } from "./settings.js";
@@ -9,9 +9,14 @@ import { safetyMode, type SafetyMode } from "./settings.js";
  * mac7/r17-g (R17-065): two more ways of noticing that a task is not getting anywhere, beside the
  * loop guard's watch on repeated tool calls (src/loop-guard.ts, reused here for whole answers).
  *
- *  - Repeated text: the same answer again and again (the loop guard counts it like a repeated
- *    call), or one answer that keeps saying the same passage (a fifty-character window seen ten
- *    times, on average no more than five windows apart). Code and table rules are not counted.
+ *  - Repeated rounds: the same round again and again (the loop guard counts it like a repeated call). A round is judged
+ *    on what it did, not only its words (QA 2026-09-28: a task saying "Let me look at the next file." while reading a
+ *    different file each time was stopped as stuck): each call's name and exact arguments and the results it was
+ *    answering, and its words only when it made no call. Repeated words with new calls or new results are progress; the
+ *    same call with the same arguments after the same result is being stuck, however it is worded.
+ *  - Repeated text: one answer that keeps saying the same passage (a fifty-character window seen ten times, on average
+ *    no more than five windows apart). Code and table rules are not counted, nor are the words of a round that acts, so a
+ *    sentence said before each new step is not a loop.
  *  - A cheap judge: every few rounds of a long task the model is asked, with no tools, whether the
  *    work is moving. Only a confident "stuck" ends the task; a judge that fails is ignored.
  *
@@ -106,6 +111,19 @@ function watchFor(store: object, runId: string): Watch {
 }
 export function forgetProgress(store: object, runId: string): void { watches.get(store)?.delete(runId); }
 
+/**
+ * What one round did, as one comparable text: its calls (name and arguments in one order) and the results of the calls it
+ * was answering (the tool messages since the round before); its words count only for a round that does nothing else, so
+ * the same call after the same result is the same round however it is worded. `messages` ends with this round's answer.
+ */
+export function roundSignature(text: string, messages: readonly Message[]): string {
+  const answer = messages.at(-1);
+  const calls = (answer?.role === "assistant" ? answer.toolCalls ?? [] : []).map((call) => [call.name, canonicalArguments(call.arguments)]);
+  const results: string[] = [];
+  for (let i = messages.length - 2; i >= 0 && messages[i]!.role === "tool"; i--) results.unshift(messages[i]!.content);
+  return JSON.stringify(calls.length ? { calls, results } : { text: text.trim(), results });
+}
+
 export interface RoundSeen { runId: string; round: number; text: string; messages: readonly Message[] }
 const stopWords = (why: string): string => `Stopped: the assistant was not getting anywhere (${why}). Try asking in a different way, or break the task into smaller parts.`;
 
@@ -114,11 +132,13 @@ export async function watchProgress(store: Store, owner: string, seen: RoundSeen
   const mode = safetyMode(store, owner, "progress-judge");
   if (mode === "off") return;
   const watch = watchFor(store, seen.runId);
-  if (seen.text.trim()) {
-    const verdict = watch.answers.check("answer.text", JSON.stringify(seen.text.trim()));
+  const acts = (seen.messages.at(-1)?.toolCalls ?? []).length > 0;
+  if (seen.text.trim() || acts) {
+    const verdict = watch.answers.check("round", roundSignature(seen.text, seen.messages));
     if (verdict.kind === "stop") throw stopped(store, seen.runId, "it gave the same answer again and again");
-    if (watch.text.add(seen.text)) throw stopped(store, seen.runId, "it kept writing the same passage");
   }
+  // Only words said without acting are watched for one passage repeating: a sentence said before each new step is not.
+  if (!acts && seen.text.trim() && watch.text.add(seen.text)) throw stopped(store, seen.runId, "it kept writing the same passage");
   const timing = judgeAfter[mode];
   if (seen.round < timing.first || (seen.round - timing.first) % timing.every !== 0) return;
   const answer = await ask(judgeMessages(seen.messages)).catch(() => "");

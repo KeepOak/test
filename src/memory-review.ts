@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
-import { MemoryDataSchema, reworded, takeBackFact, visibleTo, type MemoryFacts, type MemoryRecord, type OutsideMemoryProvider } from "./memory.js";
+import { isCurrentFact, MemoryDataSchema, reworded, takeBackFact, visibleTo, type MemoryFacts, type MemoryRecord, type OutsideMemoryProvider } from "./memory.js";
 import { FactKindSchema } from "./memory-layers.js";
 import { binnedRuns, learnedInBin } from "./conversation-actions.js";
 import { detectInjection } from "./content-guard.js";
@@ -340,7 +340,7 @@ export class MemoryReview {
     const lines: string[] = []; let chars = 0;
     const binned = binnedRuns(this.db); // a fact a conversation in Recently Deleted taught is not handed to a new one
     const ordered = (this.orderFacts?.(owner, agent, sessionId) ?? this.memories.list(owner).filter((r) => visibleTo(r, agent)))
-      .filter((r) => !learnedInBin(binned, r.data));
+      .filter((r) => !learnedInBin(binned, r.data) && isCurrentFact(r)); // SELF-202: a fact a newer one ended is not current
     const limits = this.snapshotLimits?.(owner) ?? memorySnapshotLimits; // R17-S13
     for (const record of ordered.slice(0, limits.facts)) {
       const line = `- ${String(record.data.text).replace(/\s+/g, " ").trim()}`;

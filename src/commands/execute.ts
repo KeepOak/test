@@ -4,6 +4,7 @@ import { HANDLERS, type Access, type Call, type CommandHost, type Reply } from "
 import { promptsLine, runSavedCommand } from "./saved.js";
 import { householdCommandRefusal, householdHere } from "./household.js"; // Q259
 import { householdRefusal } from "../household-routes.js"; // Q259
+import { ownerDmCommand } from "../channels/owner-dm-commands.js"; // CHAT-185
 
 /**
  * Carries out one typed command for a surface (wave mac3, commands). The rules, in order:
@@ -23,6 +24,11 @@ export interface Invocation {
   permissions?: string[];
   /** This computer's own window, with its own key and not through a door (settings.ts `windowShipsAs`). */
   ownWindow?: boolean;
+  /**
+   * CHAT-185: a line from the owner's own account in a direct chat, already checked by the router
+   * (src/channels/owner-dm-commands.ts). Only the commands named there, and only after their own refusals.
+   */
+  ownerDm?: boolean;
 }
 export interface Outcome extends Reply { command: string; refused?: true }
 
@@ -30,8 +36,8 @@ const rank: Record<Level, number> = { look: 0, run: 1, owner: 2 };
 const allows: Record<Access, number> = { read: 0, run: 1, full: 2 };
 
 /** Why this key may not do this, or null when it may. */
-export function refusalFor(level: Level, access: Access, surface: Surface): string | null {
-  if (surface === "chat" && level === "owner") return "That can only be changed in the Branch app, not from a chat.";
+export function refusalFor(level: Level, access: Access, surface: Surface, ownerDm = false): string | null {
+  if (surface === "chat" && level === "owner" && !ownerDm) return "That can only be changed in the Branch app, not from a chat.";
   if (allows[access] >= rank[level]) return null;
   return level === "owner"
     ? "Only the key of this computer can change that. Do it in the app window on this computer."
@@ -47,7 +53,8 @@ export function commandFor(host: CommandHost, surface: Surface, line: string, ow
 }
 
 export async function executeCommand(host: CommandHost, input: Invocation): Promise<Outcome | null> {
-  const parsed = commandFor(host, input.surface, input.line, input.ownWindow === true);
+  const dm = input.ownerDm === true && input.surface === "chat" ? ownerDmCommand(input.line) : null;
+  const parsed = dm ? parseLine(input.line, false, "chat") : commandFor(host, input.surface, input.line, input.ownWindow === true);
   // ---- bucket 12: the owner's own saved commands, only when the shipped table did not know the line ----
   // Q259: they are the owner's, so for a household person at the window such a line is no command at all (which says
   // nothing about what the owner saved), and `/prompts` typed while the shipped table is off is refused as it is on.
@@ -57,7 +64,7 @@ export async function executeCommand(host: CommandHost, input: Invocation): Prom
   // ---- end of the bucket 12 hook ----
   const { command, argument } = parsed, name = command.name;
   const level = levelFor(command, argument);
-  const refused = refusalFor(level, input.access, input.surface);
+  const refused = refusalFor(level, input.access, input.surface, dm !== null);
   if (refused) return { command: name, text: refused, refused: true };
   // Q259: a household person at the window sends only the commands that work on their own things (./household.ts).
   const notTheirs = householdCommandRefusal(host.runtime.store, input.surface, name, argument);

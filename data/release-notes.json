@@ -2,6 +2,28 @@
   "format": 1,
   "releases": [
     {
+      "version": "0.19.4",
+      "date": "2026-09-28",
+      "items": [
+        {
+          "icon": "user",
+          "title": "Your Claude account by its email",
+          "text": "Claude plan usage shows the verified email of the account it measures, loaded without holding the usage view open.",
+          "act": "view",
+          "data": { "v": "settings" },
+          "group": "better"
+        },
+        {
+          "icon": "spark",
+          "title": "Choose your Claude model",
+          "text": "A Claude subscription can use Opus 5.5, Sonnet 5 or Haiku 4.5, or the latest Opus, Sonnet and Haiku; a new Claude connection starts on Opus 5.5.",
+          "act": "view",
+          "data": { "v": "settings" },
+          "group": "new"
+        }
+      ]
+    },
+    {
       "version": "0.19.3",
       "date": "2026-09-26",
       "items": [

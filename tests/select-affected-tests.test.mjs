@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
-import { describe, FULL_MATRIX, laneSources, parseNameStatus, planMatrix, platformLanes, selectImpact } from "../scripts/select-affected-tests.mjs";
+import { describe, FULL_LABEL, FULL_MATRIX, laneSources, lightRun, lightSelection, nearTests, parseNameStatus, plan as planRun, planMatrix,
+  platformLanes, selectImpact, VOICE_TEST } from "../scripts/select-affected-tests.mjs";
 import { buildGraph, reachedTests } from "../scripts/test-graph.mjs";
 
 const checkedIn = JSON.parse(readFileSync(new URL("test-impact.json", import.meta.url), "utf8"));
@@ -124,6 +125,9 @@ test("Windows and macOS run for their own code, the files their own tests use, a
   assert.deepEqual(lanesFor("tests/windows-helpers.test.mjs"), { windows: true, macos: false });
   assert.deepEqual(lanesFor("src/win-only.ts"), { windows: true, macos: false });
   assert.deepEqual(lanesFor("src/a.ts", "public/app.js", "docs/x.md"), { windows: false, macos: false });
+  // A change to how the suite is built or run (workflows, packages, the runner) runs every system's lane.
+  for (const file of [".github/workflows/checks.yml", "package-lock.json", "package.json", "scripts/run-tests.mjs"])
+    assert.deepEqual(lanesFor(file), { windows: true, macos: true }, file);
   // The window's own buttons are drawn by the page and proved on Windows by tests/desktop-window.test.mjs.
   assert.deepEqual(lanesFor("public/app/shell/controls.js"), { windows: true, macos: false });
 });
@@ -164,4 +168,114 @@ test("a change to the ledger picks up the guard that reads it", () => {
     assert.equal(result.mode, "partial", path);
     assert.deepEqual(result.tests, ["tests/leak-guard.test.mjs", "tests/settings-page-count.test.mjs"], path);
   }
+});
+
+test("a pull request labelled ci-full runs the whole suite on every system; without it, the diff decides", () => {
+  const full = planRun("pull_request", "redesign/window", "HEAD", "HEAD", ["ui", FULL_LABEL]);
+  assert.equal(full.mode, "full");
+  assert.deepEqual(full.tests, []);
+  assert.deepEqual(full.platforms, { windows: true, macos: true });
+  assert.match(full.reasons.join(" "), /ci-full/);
+  // The same pull request without the label: an empty diff (HEAD..HEAD) is not planned as the whole suite for that reason.
+  const plain = planRun("pull_request", "redesign/window", "HEAD", "HEAD", ["ui"]);
+  assert.doesNotMatch(plain.reasons.join(" "), /ci-full/);
+});
+
+/* A pull request's light run: `always`, then the changed tests, what the change reaches, the tests near a src/ change
+   and browser tests, lightest first within each group, while two shares' time fits. Mutations: drop `always`, skip the
+   budget, or reorder the groups → red. */
+test("a light run keeps always, fills groups in order, lightest first, and names what it left for the merge queue", () => {
+  const weights = { a: 50, b: 10, c: 30, d: 5, keep: 20 };
+  const pick = lightSelection([["c", "b"], ["a", "d", "b"]], ["keep"], weights, 70);
+  assert.deepEqual(pick.tests, ["b", "c", "d", "keep"], "keep 20 + b 10 + c 30 + d 5 = 65; a (50) does not fit");
+  assert.deepEqual(pick.dropped, ["a"]);
+  assert.equal(pick.predictedSeconds, 65);
+  assert.deepEqual(lightSelection([["a"]], ["keep"], weights, 0).tests, ["keep"], "always runs even past the budget");
+});
+
+test("the tests near a src/ change skip hub files, which reach nearly every test", () => {
+  const files = {
+    "src/leaf.ts": "", "src/mid.ts": 'import "./leaf.js";', "src/hub.ts": 'import "./leaf.js";',
+    "tests/mid.test.mjs": 'import "../dist/mid.js";', "tests/leaf.test.mjs": 'import "../dist/leaf.js";',
+  };
+  for (let index = 0; index < 3; index += 1) files[`tests/h${index}.test.mjs`] = 'import "../dist/hub.js";';
+  const small = buildGraph(Object.keys(files), (file) => files[file]);
+  assert.deepEqual([...nearTests(small, ["src/leaf.ts"], 2)].sort(), ["tests/leaf.test.mjs", "tests/mid.test.mjs"]);
+  assert.deepEqual([...nearTests(small, ["src/hub.ts"], 2)], [], "a changed hub adds nothing of its own");
+  assert.deepEqual([...nearTests(small, ["src/leaf.ts"], 2, 1)], ["tests/leaf.test.mjs"], "one step out: direct users only");
+});
+
+/* The regression: a pull request touching src/ ran eight Linux shares, two Windows, one macOS and voice. Mutations:
+   run the whole lane for a src/ change, or plan more than prLinuxShards Linux shares → red. */
+test("a pull request's src/ change runs the tests near it on at most two Linux shares, never the whole lane", () => {
+  const change = [{ status: "M", paths: ["src/a.ts"] }];
+  const result = selectImpact(change, { config, graph, groups, weights });
+  assert.equal(result.mode, "full");
+  const light = lightRun(result, { config: { ...config, prLinuxShards: 2 }, graph, groups, weights, files: ["src/a.ts"], wholeSeconds: 80 });
+  assert.equal(light.mode, "partial");
+  assert.deepEqual(light.tests, ["tests/index.test.mjs", "tests/leak-guard.test.mjs"]);
+  assert.match(light.reasons.join("\n"), /merge queue runs the whole suite/);
+  assert.equal(light.voice, false);
+  const rows = planMatrix(light.mode, { ...light, wholeSeconds: 80, platforms: { windows: false, macos: false } });
+  assert.ok(rows.length >= 1 && rows.length <= 2, "at least one share, so the build (the type-check) always runs");
+  assert.ok(rows.every((row) => row.lane === "linux" && row.selected));
+  // A big selection is cut to two shares' time, and what is left is said.
+  const heavy = Object.fromEntries(Object.keys(weights).map((file) => [file, 40]));
+  const cut = lightRun(selectImpact([{ status: "M", paths: ["public/app/state.js"] }], { config, graph, groups, weights: heavy }),
+    { config: { ...config, prLinuxShards: 2 }, graph, groups, weights: heavy, files: ["public/app/state.js"], wholeSeconds: 280 });
+  assert.ok(cut.predictedSeconds <= 70, `two of eight shares of 280 s: ${cut.predictedSeconds}`);
+  assert.ok(cut.left > 0);
+  assert.match(cut.reasons.join("\n"), /left for the merge queue/);
+  assert.equal(planMatrix("partial", { tests: ["a", "b", "c", "d"], predictedSeconds: 100, wholeSeconds: 100, maxLinux: 2,
+    platforms: { windows: false, macos: false } }).length, 2);
+  const docs = lightRun(selectImpact([{ status: "M", paths: ["docs/x.md"] }], { config, graph, groups, weights }), { config, graph, groups, weights, files: ["docs/x.md"], wholeSeconds: 70 });
+  assert.equal(docs.mode, "docs");
+  assert.equal(docs.voice, false);
+});
+
+test("local voice runs on a pull request only when its light run reaches the voice test", () => {
+  const files = { "src/voice.ts": "", [VOICE_TEST]: 'import "../dist/voice.js";', "tests/leak-guard.test.mjs": "" };
+  const small = buildGraph(Object.keys(files), (file) => files[file]);
+  const smallGroups = { shared: [VOICE_TEST, "tests/leak-guard.test.mjs"], browser: [] };
+  const result = selectImpact([{ status: "M", paths: ["src/voice.ts"] }], { config, graph: small, groups: smallGroups, weights: {} });
+  const light = lightRun(result, { config, graph: small, groups: smallGroups, weights: {}, files: ["src/voice.ts"], wholeSeconds: 1 });
+  assert.equal(light.voice, true);
+  assert.equal(planRun("push", "redesign/window").voice, true, "off a pull request the voice proof always runs");
+});
+
+/* Windows computer control (src/computer/windows*, src/integrations/desktop-script*.ts, tests/windows-computer-* and
+   their helper tests/windows-proof-kit.mjs) keeps its Windows shares on a pull request, while a central file that one
+   Windows test happens to import (src/runtime.ts: 15 test importers) no longer turns Windows on. */
+test("Windows computer control runs Windows on a pull request; a file most tests share does not", () => {
+  const files = {
+    "tests/windows-proof-kit.mjs": "export const kit = 1;",
+    "tests/windows-computer-proof.test.mjs": 'import "./windows-proof-kit.mjs";',
+  };
+  const small = buildGraph(Object.keys(files), (file) => files[file]);
+  const laneTests = { windows: new Set(["tests/windows-computer-proof.test.mjs"]), macos: new Set() };
+  const helperOnly = reachedTests(small, ["tests/windows-proof-kit.mjs"]).tests;
+  assert.deepEqual(platformLanes(["tests/windows-proof-kit.mjs"], checkedIn, laneTests, {}, helperOnly), { windows: true, macos: false });
+  assert.deepEqual(platformLanes(["tests/windows-proof-kit.mjs"], checkedIn, laneTests, {}, []), { windows: false, macos: false });
+  for (const file of ["src/computer/windows-capture.ts", "src/integrations/desktop-script.ts", "src/integrations/desktop-script-posix.ts"])
+    assert.equal(platformLanes([file], checkedIn).windows, true, file);
+  assert.deepEqual(platformLanes(["tests/windows-computer-proof.test.mjs"], checkedIn, laneTests), { windows: true, macos: false });
+  assert.ok(checkedIn.platformSourceTests >= 1 && checkedIn.platformSourceTests < checkedIn.hubTests);
+  assert.equal(checkedIn.prLinuxShards, 2);
+});
+
+/* A script sends the whole lane in selectImpact, so its own tests were missing from a pull request's light run
+   (scripts/run-tests.mjs ran only leak-guard). Mutation: drop the script reach group → red. */
+test("a changed script runs the tests that import or run it on a pull request", () => {
+  const files = {
+    "scripts/run-tests.mjs": "export const lanes = 1;",
+    "tests/run-tests.test.mjs": 'import { lanes } from "../scripts/run-tests.mjs";',
+    "tests/other.test.mjs": "",
+    "tests/leak-guard.test.mjs": "",
+  };
+  const small = buildGraph(Object.keys(files), (file) => files[file]);
+  const smallGroups = { shared: ["tests/run-tests.test.mjs", "tests/other.test.mjs", "tests/leak-guard.test.mjs"], browser: [] };
+  const result = selectImpact([{ status: "M", paths: ["scripts/run-tests.mjs"] }], { config, graph: small, groups: smallGroups, weights: {} });
+  assert.equal(result.mode, "full");
+  const light = lightRun(result, { config, graph: small, groups: smallGroups, weights: {}, files: ["scripts/run-tests.mjs"], wholeSeconds: 1 });
+  assert.deepEqual(light.tests, ["tests/leak-guard.test.mjs", "tests/run-tests.test.mjs"]);
 });

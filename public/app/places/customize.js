@@ -6,6 +6,7 @@
    A better version is tried, kept or thrown away through POST /api/skill-revisions/try|accept|reject; a suggested skill
    you have switched off is switched on through POST /api/skills/{id}/activate. */
 
+import { setupNeeds } from "../core/setup-needs.js";
 import { esc, renderNow, paint } from "../core/dom.js";
 import { S, E, refresh } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg } from "../core/ui.js";
@@ -22,6 +23,8 @@ import { LEARN_ID, learnItem, learnTile, learnDetail, initLearn17d } from "./lea
 import { offlineIn } from "../settings/pages/chatapps.js"; // pass 17 part D §8
 import { liveLine18, empty18 } from "../core/p18.js"; // pass 18: live lines under faces, and empty lists
 import { lockdownOn } from "../chat/approvals.js";
+import { initPluginLifecycle, pluginLifecycleButton } from "./plugin-lifecycle.js";
+import { insideSection, initPluginInside, pluginInsideLive } from "./plugin-inside.js"; // RES-251
 
 function tabBar(tabs, place, current) {
   return `<div class="tabs" role="tablist">${tabs.map(([id, label, count]) =>
@@ -35,6 +38,8 @@ let mcpServers = [];
 let ownServers = [];
 let clis = { programs: [], launch: [] };
 let plugins = [];
+/* RES-251: the add-on settings (GET /api/plugin-catalog/add-ons settings): where each hand-placed plugin runs. */
+let addOnSettingsNow = null;
 let agents = [];
 let suggestions = [];
 let revisions = [];
@@ -151,7 +156,7 @@ function agentRules(x) {
     <div class="sec"><h2>${t("window.places.customize.rules")}</h2><dl class="kv"><dt>${t("window.places.customize.tasks-it-sends-in")}</dt><dd>${t("window.places.customize.held-to-ask-before-changes")}</dd><dt>${t("window.places.customize.what-it-gets")}</dt><dd>${t("window.places.customize.the-words-of-the-task-only")}</dd></dl></div>`;
 }
 /* What a plugin holds: the tools its inspected summary names. */
-const packOf = (x) => (x.tools.length ? `<div class="sec"><h2>${t("window.places.customize.in-this-pack")}</h2><p data-css="margin:0">${x.tools.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p></div>` : "");
+const packOf = (x) => (x.tools.length ? `<div class="sec"><h2>${t("window.places.customize.in-this-pack")}</h2><p data-css="margin:0">${x.tools.map((n) => `<code>${esc(n)}</code>`).join(" ")}</p></div>` : "") + pluginLifecycleButton(x.id);
 /* Load tools only when needed, per server, plugin or skill: on (the engine's default) it waits in a short index until a
    task needs it; off, it goes with every request. The count is what it costs a request now, as the engine measures it.
    Changing it saves through POST /api/tools/context {source, mode} and reaches a working task from its next step. */
@@ -180,7 +185,7 @@ function detail(k, x) {
      it. A launch-file server's stays greyed under its own name. */
   const onOff = k === "mcp" ? `<input type="checkbox" class="sw" data-sw="${x.own ? "tool9g" : "tool9g-launch"}" data-k="${k}" data-id="${esc(x.id)}" ${x.own?.on ? "checked" : ""} aria-label="${t("window.places.customize.name-on-or-off", { name: esc(x.name) })}">` : "";
   return `<div class="t9-detail"><div class="t9-dh"><span class="ico-tile t9i" data-css="width:40px;height:40px">${ic(KINDS.find(([id]) => id === k)[2], 's')}</span><span class="grow"><b>${esc(x.name)}</b><small>${esc(x.sub)}</small></span>${onOff}</div>
-    ${startProblem(x)}${who}${contextRow(k, x)}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
+    ${startProblem(x)}${who}${contextRow(k, x)}${k === "mcp" ? toolPerms(x) : ""}${k === "skills" ? skillDoc(x) : ""}${k === "plugins" ? packOf(x) + insideSection(x, addOnSettingsNow, itemsOf("plugins"), reloadShown) : ""}${k === "agents" ? agentRules(x) : ""}${detailActs(k, x)}</div>`;
 }
 
 /* A server that did not start says so on its row; anything else shows whether it is on. The learning card has neither. */
@@ -200,8 +205,8 @@ const specWhat = (s) => String(s.data?.definition?.instructions ?? "").split("\n
 
 /* The prototype's patterns. The one checked is the engine's (GET /api/state orchestration.pattern); "auto", its default,
    leaves it to Branch per job, so none is checked. Choosing one saves it (POST /api/orchestration {pattern}); choosing the
-   checked one again gives it back to Branch. Teams has no engine form (src/team-pattern.ts teamPatterns), so its card
-   keeps its own greyed act and says why (window.why.pat15-teams). */
+   checked one again gives it back to Branch. Teams runs over the owner's saved teams, each with its own lead
+   (RES-721, src/team-groups.ts delegate.teams). */
 const PATTERNS = [
   ["one", "One at a time", "A Trunk calls a specialist, waits, carries on.", "M30 14v14M30 38v10", [[30, 10], [30, 33], [30, 52]]],
   ["super", "A lead and helpers", "One Trunk plans and hands out the parts.", "M30 14L14 42M30 14v28M30 14l16 28", [[30, 10], [14, 46], [30, 46], [46, 46]]],
@@ -228,18 +233,18 @@ function specialistsTab() {
   const specs = E.state.specialists || [];
   const rows = specs.map((s) => `<div class="prow"><span class="ico-tile">${ic('bolt', 's')}</span><span class="grow"><b>${esc(specName(s))}</b><small>${esc(specWhat(s))}</small>${specLine(s)}</span><button class="btn sm" type="button" data-act="specb17" data-id="${esc(s.id ?? "")}">${t("prompts.action.edit")}</button></div>`).join('');
   const chosen = E.state.orchestration?.pattern;
-  const pats = PATTERNS.map((p) => `<button type="button" role="radio" class="pat15" aria-checked="${chosen === p[0]}" data-act="${p[0] === "teams" ? "pat15-teams" : "pat15"}" data-v="${p[0]}">${patSvg(p)}<b>${esc(say(p[1]))}</b><small>${esc(say(p[2]))}</small></button>`).join("");
+  const pats = PATTERNS.map((p) => `<button type="button" role="radio" class="pat15" aria-checked="${chosen === p[0]}" data-act="pat15" data-v="${p[0]}">${patSvg(p)}<b>${esc(say(p[1]))}</b><small>${esc(say(p[2]))}</small></button>`).join("");
   return `<div class="rows">${rows ? `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.customize.helpers-a-trunk-calls-in-for")}</p>${rows}` : empty18("customize:specialists", { off: true })}</div>
     <div class="sec x15-sec">${fleet(specs)}<h2 data-css="margin-top:22px">${t("window.places.customize.how-trunks-work-together")}</h2><p class="hint" data-css="margin:0 0 10px">${t("window.places.customize.the-pattern-a-room-or-a")}</p>
     <div class="pats15" role="radiogroup" aria-label="${t("window.places.customize.how-trunks-work-together")}">${pats}</div></div>${codingAgentsSection()}`;
 }
 
-const FAM_WORDS = { core: "Two minutes to set up", chat: "Text through a webhook" };
+const FAM_WORDS = { chat: "Text through a webhook" };
 function channelGrid() {
   const q = CH.q.trim().toLowerCase();
   const on = new Set(connected.map((c) => c.id ?? c.kind));
   const list = channelSetup.filter((c) => (CH.fam === "all" || c.family === CH.fam) && (!q || [c.name, say(c.name)].some((n) => String(n).toLowerCase().includes(q))));
-  return list.map((c) => `<button type="button" class="ch12 ${on.has(c.id) ? "on12" : ""}" data-act="ch-open" data-v="${esc(c.id)}">${logo(c.id, c.name, 32)}<span><b>${esc(say(c.name))}</b><small>${offlineIn(connected, c.id) ? t("window.p17d.offline-token-revoked") : on.has(c.id) ? t("window.places.customize.connected-reaches-branch") : say(FAM_WORDS[c.family]) ?? t("addons.switch.on")}</small></span>${on.has(c.id) ? `<i class="dot12${offlineIn(connected, c.id) ? " off17d" : ""}"></i>` : ""}</button>`).join("");
+  return list.map((c) => `<button type="button" class="ch12 ${on.has(c.id) ? "on12" : ""}" data-act="ch-open" data-v="${esc(c.id)}">${logo(c.id, c.name, 32)}<span><b>${esc(say(c.name))}</b><small>${offlineIn(connected, c.id) ? t("window.p17d.offline-token-revoked") : on.has(c.id) ? t("window.places.customize.connected-reaches-branch") : c.needsMac ? t("window.places.customize.needs-a-mac") : setupNeeds(c) ?? say(FAM_WORDS[c.family]) ?? t("addons.switch.on")}</small></span>${on.has(c.id) ? `<i class="dot12${offlineIn(connected, c.id) ? " off17d" : ""}"></i>` : ""}</button>`).join("");
 }
 
 function channelsTab() {
@@ -304,6 +309,7 @@ async function readTools() {
   // finish-soon-a: a plugin installed as an add-on package can be removed through the add-on shelf; one you put in the folder yourself cannot.
   const fromShelf = new Set(listOf(shelf, "installed").filter((r) => r.plugin).map((r) => r.id));
   return { mcpServers: listOf(mcp, "servers"), ownServers: listOf(own, "servers"), clis: { programs: listOf(cl, "programs"), launch: listOf(cl, "launch") },
+    addOnSettingsNow: shelf?.settings ?? null,
     plugins: listOf(plugs, "plugins").map((p) => ({ ...p, fromShelf: fromShelf.has(p.id ?? p.name) })), agents: listOf(ag, "agents"), suggestions: listOf(sug, "suggestions"), revisions: listOf(rev, "revisions"), policyRules: listOf(pol?.policy, "rules"), contextModes: listOf(ctx, "sources") };
 }
 /* The picked skill's SKILL.md, once. */
@@ -318,14 +324,14 @@ async function readDoc() {
 }
 /* Another area (an add dialog) reads the tool lists again after it added something. */
 export async function reloadTools() {
-  ({ mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes } = await readTools());
+  ({ mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, addOnSettingsNow } = await readTools());
 }
 
 /* The other Branch computers are read once, the first time Specialists is opened. */
 let nodesRead = false;
 export async function after() {
   const tab = S.tabs.customize || "trunks";
-  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices]);
+  const before = JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices, addOnSettingsNow]);
   if (tab === "tools") { await reloadTools(); await readDoc(); }
   else if (tab === "channels") {
     const [setup, live] = await Promise.all([read("channel-setup"), read("channels")]);
@@ -339,7 +345,7 @@ export async function after() {
     if (dash) renderNow(); // parity B6: the dashboard's switch (places/dashsw.js)
   }
   else if (tab === "specialists" && !nodesRead) { nodesRead = true; nodes = listOf(await owners("asks/nodes"), "nodes"); }
-  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices]))) renderNow();
+  if (!same(before, JSON.stringify([mcpServers, ownServers, clis, plugins, agents, suggestions, revisions, policyRules, contextModes, channelSetup, connected, nodes, devices, addOnSettingsNow]))) renderNow();
 }
 
 /* Removing a skill (POST /api/skills/{id}/remove, naming the revision it was shown at), one of your own servers
@@ -441,7 +447,13 @@ function redrawGrid() {
   if (grid) greyOut(paint(grid, channelGrid()));
 }
 
+/* RES-251: after a plugin's place changed, the lists are read again and drawn. */
+async function reloadShown() { await reloadTools(); renderNow(); }
+
 export function init() {
+  initPluginLifecycle();
+  markLive(pluginInsideLive);
+  initPluginInside(reloadShown);
   markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
   on("tool-retry", (el) => retryServer(el));
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "tool9g") switchServer(e.target); });

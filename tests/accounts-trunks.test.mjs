@@ -366,3 +366,41 @@ test("owner priority 2026-09-27: one Trunk answers with the owner's second Codex
   assert.equal(own.output, "from claude");
   assert.deepEqual(seen.at(-1), { program: "claude-code", home: "primary" }, "the owner's own work keeps the owner's first account");
 });
+
+test("models-ui: a Trunk at its account's limit goes on to its own next account, never the owner's when it does not copy them, and the owner is told", async (t) => {
+  const fx = await fixture(t);
+  const { app, service, owner } = fx;
+  const seen = [];
+  let limited = new Set();
+  const spawn = async (_row, _prompt, _signal, _limits, home) => {
+    const who = home ? home.path.split(/[\\/]/).pop() : "primary";
+    seen.push(who);
+    if (limited.has(who)) return { code: 1, stdout: "", stderr: "Claude usage limit reached. Your limit resets at 3pm." };
+    return { code: 0, stdout: JSON.stringify({ result: `from ${who}` }), stderr: "" };
+  };
+  registerCliAgent(app.runtime.models, { id: "claude-code" }, {}, spawn);
+  service.deps.spawnAgent = spawn;
+  app.runtime.models.configure(owner, { activePreset: "cli-claude-code" });
+  setMode(service, { mode: "on" });
+  const work = (await addAccount(service, { pool: "cli-claude-code", label: "Work" })).accounts.at(-1).id;
+  const spare = (await addAccount(service, { pool: "cli-claude-code", label: "Spare" })).accounts.at(-1).id;
+  const ed = app.trunks.create({ name: "Ed" });
+  app.trunks.edit(ed.id, { keys: { copyFromOwner: false, accounts: { "cli-claude-code": work }, next: { "cli-claude-code": [spare] } } });
+  await app.trunks.introduced();
+
+  limited = new Set([work]);
+  const moved = await app.runtime.run({ prompt: "hello", sessionId: ed.chatSessionId });
+  assert.equal(moved.status, "completed", moved.output);
+  assert.equal(moved.output, `from ${spare}`, "its own next account took it");
+  assert.ok(!seen.includes("primary"), "the owner's own account is never spent for a Trunk that does not copy it");
+  const told = service.trunkMoves[0];
+  assert.deepEqual({ from: told.from, to: told.to, session: told.sessionId }, { from: "Work", to: "Spare", session: ed.chatSessionId });
+  assert.match(told.why, /plan limit|limit/i);
+
+  // Both of its own at their limit: it stops and says so, still without touching the owner's.
+  limited = new Set([work, spare]);
+  const before = seen.length;
+  const stopped = await app.runtime.run({ prompt: "hello again", sessionId: ed.chatSessionId });
+  assert.equal(stopped.status, "failed");
+  assert.ok(!seen.slice(before).includes("primary"));
+});

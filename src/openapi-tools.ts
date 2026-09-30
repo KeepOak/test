@@ -21,15 +21,22 @@ import {
 export const openApiPermission = "api.call";
 const groupName = z.string().regex(/^[a-z][a-z0-9_]{0,29}$/, "Use a short lowercase name such as notion");
 const maxAnswerBytes = 64 * 1024;
+/** The most of a description sent as text (it comes through POST /api/tools/try, whose body limit leaves room for it). */
+export const openApiDocumentChars = 900 * 1024;
 
 export const FromOpenApiSchema = z.object({
   /** A short name for this service; every tool it brings is called api.<name>.<operation>. */
   name: groupName,
-  /** Where the description is: an address, or a file in the workspace. Give one of them. */
+  /** Where the description is: an address, a file in the workspace, or the description itself (a file the owner chose
+      in the window, Settings › Developer). Give one of them. */
   url: z.string().url().max(2000).optional(),
   file: z.string().min(1).max(500).optional(),
-  /** The operations that may be used, by their operationId. Nothing else is registered. */
-  allowlist: z.array(z.string().min(1).max(120)).min(1).max(50),
+  document: z.string().min(2).max(openApiDocumentChars).optional(),
+  /** The name of the file the description came from, for the question and the card. */
+  label: z.string().min(1).max(200).optional(),
+  /** The operations that may be used, by their operationId. Nothing else is registered. A dry run may leave it out: it
+      then lists every operation the description has, so the owner can choose. */
+  allowlist: z.array(z.string().min(1).max(120)).min(1).max(50).optional(),
   /** The address to call, when the document's own is wrong or missing. */
   baseUrl: z.string().url().max(500).optional(),
   /** The name of a secret in the active project, sent as the key. */
@@ -39,7 +46,9 @@ export const FromOpenApiSchema = z.object({
   header: z.string().regex(/^[A-Za-z][A-Za-z0-9-]{0,39}$/).default("Authorization"),
   /** Say what the tools would be without registering any of them. */
   dryRun: z.boolean().default(false),
-}).strict().refine((input) => !!input.url !== !!input.file, "Give either an address or a file, not both");
+}).strict()
+  .refine((input) => [input.url, input.file, input.document].filter(Boolean).length === 1, "Give one of an address, a file or the description itself")
+  .refine((input) => input.dryRun || !!input.allowlist, "Name the operations that may be used (allowlist); a dry run lists them");
 export type FromOpenApiInput = z.infer<typeof FromOpenApiSchema>;
 
 export interface OpenApiHost {
@@ -123,7 +132,7 @@ export class OpenApiTools {
     const text = await this.fetchDocument(input);
     const source = parseOpenApiText(text);
     const document = readOpenApi(source);
-    const wanted = new Set(input.allowlist);
+    const wanted = new Set(input.allowlist ?? []);
     const chosen = document.operations.filter((operation) => wanted.has(operation.id));
     const missing = [...wanted].filter((id) => !chosen.some((operation) => operation.id === id));
     const base = this.baseFor(input, document.servers);
@@ -132,15 +141,18 @@ export class OpenApiTools {
       tool: toolNameFor(input.name, operation.id), operation: operation.id,
       method: operation.method, path: operation.path, description: operation.summary,
     }));
-    if (input.dryRun) return { dryRun: true, service: document.title, base, tools: preview, missing };
+    if (input.dryRun) return { dryRun: true, service: document.title, base, tools: preview, missing,
+      // Every operation the description has, so a choice can be made; nothing of it is registered.
+      available: document.operations.slice(0, 500).map((operation) => ({ operation: operation.id, method: operation.method, path: operation.path, description: operation.summary })) };
+    const allowlist = input.allowlist ?? [];
     this.remove(input.name);
     const names = chosen.map((operation) => this.registerOne(input, source, operation, base));
     this.services.set(input.name, { name: input.name, base, tools: names, title: document.title });
     // Written down so the tools are there again after a restart. The key is not part of this: it
     // stays in the locker and is fetched at the moment of each call, exactly as before.
     this.host.store.save("settings", context.owner, savedKey(input.name), SavedServiceSchema.parse({
-      name: input.name, allowlist: input.allowlist, auth: input.auth, header: input.header,
-      from: input.url ?? input.file ?? "", document: text,
+      name: input.name, allowlist, auth: input.auth, header: input.header,
+      from: input.url ?? input.file ?? input.label ?? "", document: text,
       ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}), ...(input.secret ? { secret: input.secret } : {}),
     }));
     if (context.runId) this.host.store.event(context.runId, "tools.from_openapi", { service: input.name, base, tools: names.length });
@@ -155,6 +167,7 @@ export class OpenApiTools {
 
   /** The document itself, from the web through the network rules, or from the workspace. */
   private async fetchDocument(input: FromOpenApiInput): Promise<string> {
+    if (input.document) return input.document;
     if (input.file) return (await this.host.files.read(input.file)).content;
     const url = new URL(input.url!);
     await this.host.policy.assertAllowed(url, "OpenAPI description address");
@@ -249,9 +262,9 @@ export function cleanAnswer(text: string, status: number, secrets: Record<string
 export function registerOpenApiTools(registry: ToolRegistry, tools: OpenApiTools): void {
   registry.register({
     name: "tools.from_openapi", reach: "outbound", permission: "skills.write", group: "skills",
-    description: "Turn a service's own OpenAPI description into tools, one for each operation you allow. Say where the description is, which operations may be used, and which saved secret holds the key. Use dryRun first to see what you would get.",
+    description: "Turn a service's own OpenAPI description into tools, one for each operation you allow. Say where the description is, which operations may be used, and which saved secret holds the key. Use dryRun first to see what you would get; a dry run with no allowlist lists every operation it has.",
     parameters: FromOpenApiSchema,
-    target: (args) => `tools from ${args.url ?? args.file} as api.${args.name}`,
+    target: (args) => `tools from ${args.url ?? args.file ?? args.label ?? "a chosen file"} as api.${args.name}`,
     execute: async (args, context) => {
       if (startedFromChat(context, tools.host.store)) throw chatOwnerOnly("Adding a service's tools");
       return tools.add(args, context);

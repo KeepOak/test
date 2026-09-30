@@ -7,7 +7,7 @@
      PORT=<port> TOKEN=<hex> [LIST=1] node design/redesign/tools/audit-dead-controls.cjs
    LIST=1 also prints each "Coming soon"-only or vague control's action or id and its text. WORDS=de (or es, fr) runs
    the window in that language, which catches a reason keyed by a translated title (it would fall back to "Coming soon"). */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, LIST = process.env.LIST === "1", WORDS = process.env.WORDS || "en";
 const LOCALE = require(`${__dirname}/../../../public/locales/${WORDS}.json`);

@@ -1,5 +1,7 @@
 import { readFile, writeFile, rename, rm } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { FileLockerKey, type LockerKeySource } from "./locker.js";
 import { z } from "zod";
 
 /**
@@ -75,9 +77,18 @@ const deviceResponse = z.object({
 });
 const pollResponse = z.object({ authorization_code: z.string().min(1), code_verifier: z.string().min(1) });
 
-/** Plain or protected JSON file; the plain form is only for headless setups without device key storage. */
+/**
+ * The ChatGPT sign-in, kept in one JSON file. With the device's own key storage (Electron's safeStorage) it is protected
+ * by that; without it (the terminal, or a Linux desktop with no keyring) it is sealed with AES-256-GCM under the locker's
+ * key (src/locker.ts, `locker.key` beside it), never kept as reversible base64 (RES-250). A file written plain by an
+ * older Branch is still read, and sealed again straight away.
+ */
+const EnvelopeSchema = z.object({ protected: z.boolean(), sealed: z.literal(true).optional(), value: z.string() }).strict();
 export class FileTokenVault implements TokenVault {
-  constructor(private readonly path: string, private readonly protection?: ValueProtection) {}
+  private readonly seal: LockerKeySource;
+  constructor(private readonly path: string, private readonly protection?: ValueProtection, seal?: LockerKeySource) {
+    this.seal = seal ?? new FileLockerKey(join(dirname(path), "locker.key"));
+  }
   async read(): Promise<ChatGPTTokens | null> {
     let raw: Buffer;
     try { raw = await readFile(this.path); } catch (error) {
@@ -85,23 +96,39 @@ export class FileTokenVault implements TokenVault {
       throw error;
     }
     if (raw.length > 131072) throw new Error("ChatGPT sign-in file is too large");
-    const envelope = z.object({ protected: z.boolean(), value: z.string() }).parse(JSON.parse(raw.toString("utf8")));
-    const text = envelope.protected
-      ? this.protection!.decrypt(Buffer.from(envelope.value, "base64"))
-      : Buffer.from(envelope.value, "base64").toString("utf8");
-    return tokenSchema.parse(JSON.parse(text));
+    const envelope = EnvelopeSchema.parse(JSON.parse(raw.toString("utf8")));
+    const bytes = Buffer.from(envelope.value, "base64");
+    const text = envelope.protected ? this.protection!.decrypt(bytes)
+      : envelope.sealed ? await this.open(bytes) : bytes.toString("utf8");
+    const tokens = tokenSchema.parse(JSON.parse(text));
+    if (!envelope.protected && !envelope.sealed) await this.write(tokens); // an older plain file is sealed now
+    return tokens;
   }
   async write(tokens: ChatGPTTokens): Promise<void> {
     const text = JSON.stringify(tokenSchema.parse(tokens));
     const protectedValue = this.protection?.available() ?? false;
-    const value = protectedValue ? this.protection!.encrypt(text).toString("base64") : Buffer.from(text).toString("base64");
+    const envelope = protectedValue
+      ? { protected: true, value: this.protection!.encrypt(text).toString("base64") }
+      : { protected: false, sealed: true, value: (await this.close(text)).toString("base64") };
     const temporary = `${this.path}.${randomUUID()}.tmp`;
     try {
-      await writeFile(temporary, JSON.stringify({ protected: protectedValue, value }), { mode: 0o600, flag: "wx" });
+      await writeFile(temporary, JSON.stringify(envelope), { mode: 0o600, flag: "wx" });
       await rename(temporary, this.path);
     } finally { await rm(temporary, { force: true }); }
   }
   async clear(): Promise<void> { await rm(this.path, { force: true }); }
+  /** iv (12) + tag (16) + ciphertext. */
+  private async close(text: string): Promise<Buffer> {
+    const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", await this.seal.key(), iv);
+    const ciphertext = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+    return Buffer.concat([iv, cipher.getAuthTag(), ciphertext]);
+  }
+  private async open(bytes: Buffer): Promise<string> {
+    if (bytes.length < 29) throw new Error("ChatGPT sign-in file is damaged");
+    const decipher = createDecipheriv("aes-256-gcm", await this.seal.key(), bytes.subarray(0, 12));
+    decipher.setAuthTag(bytes.subarray(12, 28));
+    return Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString("utf8");
+  }
 }
 
 export function jwtClaims(token: string | undefined): Record<string, unknown> {

@@ -84,8 +84,12 @@ async function inRoom(sessionId) {
 }
 /* The newest finished run that is not a room's turn. */
 async function cheerLatest(done) {
-  for (const run of done.reverse()) if (!(await inRoom(run.sessionId))) return cheer(run);
+  for (const run of done.reverse()) if (!hidden(run) && !(await inRoom(run.sessionId))) return cheer(run);
 }
+/* QA retest 2026-09-28 (m4): the engine's own work that no list shows (reading a schedule's words is set aside and kept out
+   of Recent) is not cheered as "New conversation is done". A Trunk introducing itself is set aside too, but its
+   conversation is listed, so it still is. */
+const hidden = (run) => run.aside === true && !E.sessions.some((s) => (s.sessionId ?? s.id) === run.sessionId);
 
 /* What each run was at the last look; nothing is cheered on the first one, so opening the window never cheers. */
 let before = null;

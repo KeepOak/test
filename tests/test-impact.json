@@ -1,9 +1,12 @@
 {
+  "prSlots": 3,
+  "prLinuxShards": 2,
   "partialBases": [
     "redesign/window"
   ],
   "partialCeiling": 0.75,
   "hubTests": 25,
+  "platformSourceTests": 5,
   "always": [
     "tests/leak-guard.test.mjs"
   ],
@@ -39,6 +42,8 @@
   "platforms": {
     "windows": [
       "src/desktop/**",
+      "src/computer/**",
+      "src/integrations/desktop-script*.ts",
       "packaging/**",
       "**/*.ps1",
       "**/*.cts",
@@ -47,7 +52,15 @@
       "src/**/*win32*",
       "src/**/*uninstall*",
       "src/**/*console*",
-      "public/app/shell/controls.js"
+      "public/app/shell/controls.js",
+      ".github/workflows/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "scripts/run-tests.mjs",
+      "scripts/build-ts.mjs",
+      "scripts/select-affected-tests.mjs",
+      "scripts/test-graph.mjs"
     ],
     "macos": [
       "src/desktop/**",
@@ -56,7 +69,15 @@
       "**/*.plist",
       "**/*.entitlements",
       "src/**/*macos*",
-      "src/**/*darwin*"
+      "src/**/*darwin*",
+      ".github/workflows/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "scripts/run-tests.mjs",
+      "scripts/build-ts.mjs",
+      "scripts/select-affected-tests.mjs",
+      "scripts/test-graph.mjs"
     ]
   },
   "mappings": [

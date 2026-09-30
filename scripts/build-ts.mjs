@@ -8,6 +8,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { pruneDist } from "./prune-dist.mjs";
 
 const info = resolve(".build-cache/tsc.tsbuildinfo");
 const src = resolve("src");
@@ -46,6 +47,9 @@ function stale() {
   return null;
 }
 
+// Outputs of sources that are gone (deleted or renamed since dist/ was built, here or in the CI build cache).
+const orphans = pruneDist(dist, src);
+if (orphans.length) console.log(`build-ts: removed ${orphans.length} built file(s) whose source is gone, e.g. ${orphans[0]}`);
 const reason = stale();
 if (reason) {
   console.log(`build-ts: full build (${reason})`);

@@ -4,7 +4,7 @@
    Credential Manager first in the engine's list (GET /api/credentials/settings services[0]), keeping the other; choosing
    Bitwarden again puts that first. Only Branch's own setting changes: nothing asks Windows Credential Manager anything
    (a sign-in is read only when one is filled). On another system the choice stays greyed with its reason. */
-const PW = process.env.PLAYWRIGHT ?? "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright";
+const PW = process.env.PLAYWRIGHT ?? "playwright";
 const { chromium } = require(PW);
 
 const BASE = `http://127.0.0.1:${process.env.PORT}`, TOKEN = process.env.TOKEN;

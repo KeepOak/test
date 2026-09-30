@@ -59,6 +59,9 @@ const pluginFile = (reply) => `export default {
 
 test("a plugin switched on is callable in the very next turn; updated, the next turn runs the new code; switched off, it is gone", async (t) => {
   const pid = process.pid, { app, api, turn, offered, dataDir } = await engine(t);
+  // RES-251: a hand-placed plugin runs walled as shipped (tests/add-ons-review.test.mjs); this is about the next turn seeing a plugin, so the owner
+  // lets plugins run inside Branch, as a Linux build machine without bubblewrap could not start the wall.
+  app.addOns.save({ wallEveryPlugin: false, confirmLoosening: true });
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   await writeFile(join(dataDir, "plugins", "weather.mjs"), pluginFile("sunny"));
   const before = await turn("What is the weather?", [say("I cannot tell.")]);
@@ -82,6 +85,9 @@ test("a plugin switched on is callable in the very next turn; updated, the next 
 
 test("a plugin switched on while a task works is usable in that task's next round", async (t) => {
   const { app, api, turn, dataDir } = await engine(t);
+  // RES-251: a hand-placed plugin runs walled as shipped (tests/add-ons-review.test.mjs); this is about the next round seeing a plugin, so the owner
+  // lets plugins run inside Branch, as a Linux build machine without bubblewrap could not start the wall.
+  app.addOns.save({ wallEveryPlugin: false, confirmLoosening: true });
   await mkdir(join(dataDir, "plugins"), { recursive: true });
   // A permission no tool had when the task started: the plugin declares its own.
   await writeFile(join(dataDir, "plugins", "weather.mjs"), pluginFile("sunny").replaceAll('"files.read"', '"weather.read"'));
@@ -129,5 +135,34 @@ test("a skill installed is read in the very next turn; a new version activated i
   await api(`skills/${installed.id}/remove`, { expectedRevision: active.revision });
   const third = await turn("Help me pack.", [say("No list.")]);
   assert.equal(third.first.system.includes("packing-list"), false, "removed: gone from the next turn");
+  assert.equal(process.pid, pid, "no restart");
+});
+
+test("an MCP server added to the launch file is in the very next turn; taken out, it is gone; nothing restarts", async (t) => {
+  const pid = process.pid, { app, turn, offered, dataDir } = await engine(t);
+  const { loadIntegrations } = await import("../dist/integrations/bootstrap.js");
+  const file = join(dataDir, "..", "integrations.json");
+  const server = (id) => ({ id, transport: "stdio", command: process.execPath, args: [slowServer, "--delay", "0"], tools: ["echo", "ping"], expectedVersion: "1.0.0" });
+  await writeFile(file, JSON.stringify({ mcp: [server("first")] }));
+  const integrations = await loadIntegrations(app.registry, file, process.env);
+  t.after(() => integrations.close());
+  const has = (id) => app.registry.names().some((name) => name.startsWith(`mcp.${id}.`));
+  const waitFor = async (check) => { const end = Date.now() + 20000; while (!check() && Date.now() < end) await sleep(100); return check(); };
+  assert.ok(has("first"), "the file's server is there at start");
+  // The file changes while Branch runs: a new server in, the first one out.
+  await sleep(1100); // a modification time the watcher can tell apart
+  await writeFile(file, JSON.stringify({ mcp: [server("second")] }));
+  assert.ok(await waitFor(() => has("second") && !has("first")), "the change is followed with no restart");
+  const tool = app.registry.names().find((name) => name.startsWith("mcp.second."));
+  await app.store.save("settings", app.runtime.owner, "policy", { rules: [{ tool, decision: "allow" }] });
+  const next = await turn("Use the new server.", [call(toolDescribeName, { names: [tool] }), call(tool, {}), say("Done.")]);
+  assert.ok(offered(next.first, tool), "offered in the next turn");
+  assert.equal(next.ran.filter(([name]) => name === tool).length, 1, "and called");
+  assert.equal(offered(next.first, "mcp.first.echo"), false, "the one taken out is gone");
+  // A file that does not read changes nothing.
+  await sleep(1100);
+  await writeFile(file, "{ half written");
+  await sleep(2500);
+  assert.ok(has("second"), "a broken save leaves what runs alone");
   assert.equal(process.pid, pid, "no restart");
 });

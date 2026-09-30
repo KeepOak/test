@@ -9,7 +9,7 @@ test("a quietly created default Trunk does not make untouched setup count as use
   const db = app.store.sqlite;
   const trunk = app.trunks.defaultTrunk();
   assert.ok(trunk, "window setup quietly created its default Trunk");
-  assert.equal(app.store.messages(trunk.chatSessionId).length, 0, "no introduction or owner message was requested");
+  assert.deepEqual(app.store.messages(trunk.chatSessionId).map((m) => m.role), ["assistant"], "only its written greeting: no introduction was asked of a model, no owner message");
   const setup = setupTrunks(db);
   assert.notEqual(setup, null, "untouched engine setup should restore");
   const { app: source } = await newWindow(t);

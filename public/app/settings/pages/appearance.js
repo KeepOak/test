@@ -11,6 +11,7 @@ import { ic, toast, openDlg, closeDlg } from "../../core/ui.js";
 import { L, lookOf, lookEF, wornId, effMode, more, swatch, looks, savePrefs } from "../../shell/look.js";
 import { ACCENTS } from "../../shell/themes.js";
 import { D, W, loadDelight, saveDelight, saveWindow, showsBackground, bgChoice, drawBackground, pickScene, sceneCards, petCard, petChoices, petNow, pickPet, noticed } from "../../shell/scene.js";
+import { DRAWN } from "../../shell/procbg.js";
 import { OWN, LIMITS, kindOf, keep, forget } from "../../shell/ownbg.js";
 import { appearance17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
@@ -67,9 +68,11 @@ function ownRows() {
 
 function backgroundSection() {
   const on = showsBackground(), choice = bgChoice(), scrim = D.settings?.background?.scrim ?? 60;
-  const kinds = [["none", t("comfort.placeholder.none")], ["painted", t("window.settings.appearance.painted-grove")], ["grove", t("window.settings.appearance.the-grove"), "bgset-grove"], ["oak3d", t("window.settings.appearance.the-oak-in-3d"), "bgset-oak3d"], ["rings", t("window.settings.appearance.growth-rings"), "bgset-rings"], ["own", t("window.settings.appearance.your-own")]];
+  const kinds = [["none", t("comfort.placeholder.none")], ["painted", t("window.settings.appearance.painted-grove")], ["grove", t("window.settings.appearance.the-grove")], ["oak3d", t("window.settings.appearance.the-oak-in-3d")], ["rings", t("window.settings.appearance.growth-rings")], ["own", t("window.settings.appearance.your-own")]];
   const scenes = sceneCards("scene-set", (v) => choice === "painted" && W.scene === v);
-  const season = choice === "painted" ? segAct(t("look.seasonRow"), t("window.settings.appearance.spring-greens-autumn-copper-winter-snow"), [["auto", t("window.settings.appearance.by-the-date")], ["spring", t("look.season.spring")], ["autumn", t("look.season.autumn")], ["winter", t("look.season.winter")]], W.season, "season") : "";
+  const byDate = ["auto", t("window.settings.appearance.by-the-date")], [sp, su, au, wi] = ["spring", "summer", "autumn", "winter"].map((v) => [v, t(`look.season.${v}`)]);
+  const season = choice === "painted" ? segAct(t("look.seasonRow"), t("window.settings.appearance.spring-greens-autumn-copper-winter-snow"), [byDate, sp, au, wi], W.season, "season")
+    : choice === "grove" ? segAct(t("look.seasonRow"), t("window.settings.appearance.fireflies-in-summer-petals-in-spring"), [byDate, sp, su, au, wi], W.season, "season") : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.background")}</h2>${segAct(t("window.settings.appearance.behind-the-glass"), t("window.settings.appearance.the-grove-and-the-oak-wear"), kinds, choice, "bgset")}${season}${choice === "own" ? ownRows() : ""}<div class="fld"><span>${t("window.settings.appearance.painted-scenes")}</span><div class="scenes12">${scenes}</div></div>
     <div class="ctl"><b>${t("window.settings.appearance.how-much-the-theme-covers-it")}</b><span class="right"><input class="range" type="range" id="scrim6" min="20" max="90" step="5" value="${scrim}" aria-label="${t("window.settings.appearance.how-much-the-theme-covers-the")}" ${choice === "none" ? "disabled" : ""}><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${scrim}%</span></span><small>${t("window.settings.appearance.more-keeps-text-calmer-less-shows")}</small></div>
     <div class="ctl"><b>${t("window.settings.appearance.see-through-panels")}</b><span class="right"><input class="range" type="range" id="see" min="0" max="60" step="5" value="${prefs().seeThrough ?? ""}" aria-label="${t("window.settings.appearance.see-through-panels")}" ${choice === "none" ? "disabled" : ""}><span data-css="font:12px var(--mono);color:var(--ink-3);width:34px">${prefs().seeThrough ?? ""}%</span></span><small>${t("window.settings.appearance.panels-blur-whats-behind-them")}</small></div>
@@ -87,19 +90,21 @@ function petSection() {
   const pets = D.settings?.pets, kind = petNow(), all = petChoices();
   const row = segAct(t("window.settings.appearance.pet"), t("window.settings.appearance.it-walks-along-the-foot-of"), all, kind, "petset").replace('<div class="ctl">', '<div class="ctl" data-css="display:none">');
   const cards = all.map(([v, l]) => petCard(v, l, kind)).join("");
-  const where = pets?.on ? segAct(t("window.settings.appearance.where-it-walks"), t("window.settings.appearance.it-keeps-out-of-the-way"), [["side", t("window.settings.appearance.the-list")], ["status", t("window.settings.appearance.status-bar")], ["dock", t("window.settings.appearance.by-the-message-box"), "petwhere15-dock"]], W.petWhere, "petwhere15") : "";
+  const where = pets?.on ? segAct(t("window.settings.appearance.where-it-walks"), t("window.settings.appearance.it-keeps-out-of-the-way"), [["side", t("window.settings.appearance.the-list")], ["status", t("window.settings.appearance.status-bar")], ["dock", t("window.settings.appearance.by-the-message-box")]], W.petWhere, "petwhere15") : "";
   const name = pets ? `<div class="ctl"><b>${t("accounts.field.name")}</b><span class="right"><input class="inp" id="pet-name" value="${esc(pets.name ?? "")}" aria-label="${t("window.settings.appearance.pet-name")}" maxlength="20" data-sw="set" data-css="width:140px"></span><small>${t("window.settings.appearance.pat-it-for-a-tip")}</small></div>` : "";
   return `<div class="sec"><h2>${t("window.settings.appearance.the-pet")}</h2><div class="pets12">${cards}</div>${row}${where}${name}</div>`;
 }
 
 /* Each switch names a part of the window the engine keeps in preferences.hidden. */
 const HIDES = [["h-usage", "usage", "The usage ring"], ["h-gateway", "gateway", "The gateway in the status bar"], ["h-pet", "pet", "The pet"], ["h-projects", "projects", "Projects in the list"], ["h-notes", "notes", "The Guide button"], ["h-statusbar", "statusbar", "The whole status bar"]];
+/** The parts that can be hidden, by the key preferences.hidden keeps (shell/notices.js: all of them hidden is "lonely"). */
+export const HIDEABLE = HIDES.map(([, k]) => k);
 function shownSection() {
   const hidden = prefs().hidden ?? [];
   const rows = HIDES.map(([id, k, l]) => `<div class="ctl"><b>${say(l)}</b><input class="sw" type="checkbox" id="${id}" ${hidden.includes(k) ? "" : "checked"} aria-label="${say(l)}" data-sw="hide" data-k="${k}"><small>${k === "statusbar" ? t("window.settings.appearance.lockdowns-banner-and-stop-while-a") : t("window.settings.appearance.right-click-it-anywhere-to-hide")}</small></div>`).join("");
   return `<div class="sec"><h2>${t("window.settings.appearance.whats-shown")}</h2>${rows}
     <div class="ctl"><b>${t("window.settings.appearance.keep-things-still")}</b><input class="sw" type="checkbox" id="a-still" ${prefs().reduceMotion ? "checked" : ""} aria-label="${t("window.settings.appearance.keep-things-still")}" data-sw="still"><small>${t("window.settings.appearance.stops-the-pet-walking-the-working")}</small></div>
-    <div class="ctl"><b>${t("window.settings.appearance.scenery-behind-the-list")}</b><input class="sw" type="checkbox" id="a-scenery" aria-label="${t("window.settings.appearance.scenery-behind-the-list")}" data-sw="scenery"><small>${t("window.settings.appearance.a-small-pixel-oak-at-the")}</small></div></div>
+    <div class="ctl"><b>${t("window.settings.appearance.scenery-behind-the-list")}</b><input class="sw" type="checkbox" id="a-scenery" aria-label="${t("window.settings.appearance.scenery-behind-the-list")}" data-sw="scenery" ${W.scenery ? "checked" : ""}><small>${t("window.settings.appearance.a-small-pixel-oak-at-the")}</small></div></div>
   ${languageSection()}`;
 }
 
@@ -173,12 +178,16 @@ export function init() {
   // "themeset" belongs to the shell, which applies the look and saves it to the engine; the theme controls are shell/themes.js.
   on("widthset", (el) => savePrefsAndDraw({ conversationWidth: el.dataset.v }));
   on("size", (el) => savePrefsAndDraw({ textSize: el.dataset.v }));
-  on("bgset", (el) => { if (el.dataset.v === "painted" || el.dataset.v === "own") { W.bg = el.dataset.v; saveWindow(); } setBackground(el.dataset.v !== "none"); });
+  on("bgset", (el) => { if (["painted", "own", ...DRAWN].includes(el.dataset.v)) { W.bg = el.dataset.v; saveWindow(); } setBackground(el.dataset.v !== "none"); });
   on("bgfit", (el) => setFit(el.dataset.v));
   on("bg-remove", () => removeDlg());
   on("bg-remove-yes", () => removeOwn());
   on("scene-set", async (el) => { await pickScene(el.dataset.v); renderNow(); });
-  on("season", (el) => { W.season = el.dataset.v; saveWindow(); drawBackground(); renderNow(); });
+  on("season", (el) => {
+    const turned = W.season !== el.dataset.v;
+    W.season = el.dataset.v; saveWindow(); drawBackground(); renderNow();
+    if (turned) noticed({ what: "flag", flag: "acorn-turned" }); // "Turn of the season": the old acorn's turn, re-mapped
+  });
   on("bg-peek", () => document.getElementById("app").classList.add("peek"));
   on("petset", async (el) => { await pickPet(el.dataset.v); renderNow(); });
   on("petwhere15", (el) => { W.petWhere = el.dataset.v; saveWindow(); renderNow(); });
@@ -192,6 +201,8 @@ export function init() {
     /* Keep things still: the engine's preference reduceMotion (POST /api/preferences), which the pet and the painted
        scene read (core/pets.js calmPets, shell/scene.js calm). */
     if (tr.id === "a-still") { savePrefsAndDraw({ reduceMotion: tr.checked }); return; }
+    /* Scenery behind the list: this window's, like the painted scene (shell/scene.js W.scenery, drawn by shell/procbg.js). */
+    if (tr.id === "a-scenery") { W.scenery = tr.checked; saveWindow(); renderNow(); return; }
     /* How much the theme covers the background: the engine's background.scrim (POST /api/delight/settings keeps the
        rest), which drawBackground lays on the layer. */
     if (tr.id === "scrim6") { saveDelight({ background: { scrim: Number(tr.value) } }).then(() => { drawBackground(); renderNow(); }); return; }
@@ -232,6 +243,7 @@ export const live = {
   "ag-size": true,
   "sw:ag-show": true,
   "sw:a-still": true,
+  "sw:a-scenery": true,
   "bgfit": true,
   "bg-remove": true,
   "bg-remove-yes": true,

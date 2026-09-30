@@ -5,6 +5,7 @@
    (flows/localpick.js): what Ollama and LM Studio have, the engine's pick for this hardware, its three sizes, and one
    click that installs, downloads with progress, connects and selects. */
 import { esc, renderNow } from "../../core/dom.js";
+import { gsel } from "../../core/gsel.js";
 import { level, E, ownerHere, refresh } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
@@ -22,10 +23,40 @@ import { decisions17d, initDecisions17d, loadDecisions17d } from "../decisions17
 const TABS = [["connections", "Connections"], ["defaults", "Defaults"], ["local", "On this computer"], ["second", "Second opinion"], ["media", "Media"]];
 let tab = "connections";
 
+/* QA 2026-09-28: the model Codex answers with (GET/POST /api/codex-models, src/codex-models.ts), named on every call so
+   the owner's own Codex settings never decide it. The list is the models Codex takes with this sign-in, most capable
+   first; "The best it takes" follows it as it changes. Check asks Codex now, one tiny request per model it takes;
+   a new Codex version is checked by itself. Saved at once. */
+let codex = null;
+async function loadCodex() {
+  if (!ownerHere()) { codex = null; renderNow(); return; }
+  try { codex = await api("codex-models"); } catch { codex = null; }
+  renderNow();
+}
+function codexRow() {
+  if (!codex) return "";
+  const title = t("window.settings.models.codex-model"), cur = codex.chosen ?? "";
+  const options = [["", t("window.settings.models.codex-best", { model: codex.offered[0] ?? codex.inUse })], ...codex.offered.map((m) => [m, m])];
+  const checked = codex.checkedAt ? t("window.settings.models.codex-checked", { when: new Date(codex.checkedAt).toLocaleString(), version: codex.version ?? "" }) : t("window.settings.models.codex-unchecked");
+  const select = ownerHere() ? gsel({ id: "m-codex", label: title, options, value: cur }) : "";
+  return `<div class="ctl codex-model"><b>${esc(title)}</b><span class="right">${select}<button class="btn sm ghost" type="button" data-act="m-codex-check" ${ownerOnly()}>${t("window.settings.models.codex-check")}</button></span><small>${esc(checked)}</small></div>`;
+}
+async function setCodexModel(el) {
+  try { codex = await api("codex-models", { chosen: el.value || null }); } catch (error) { toast(error.message); }
+  renderNow();
+}
+async function checkCodex(el) {
+  el.disabled = true;
+  try { codex = await api("codex-models/check", {}); if (codex.note) toast(codex.note); } catch (error) { toast(error.message); }
+  renderNow();
+}
+
+/* QA retest 2026-09-28 pass 2: "Answers first" and "Next in line" are said only of the list the next answer comes from
+   (GET /api/accounts pools[].answering, #748); a Claude Code list said "Answers first" while qwen on this computer answered. */
 function group(p) {
   const n = p.accounts.length;
-  const rows = p.accounts.map((a) => `<div class="acct-r"><span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, p.name ?? p.pool))}</small></span>${a.ready === true ? p.defaultAccount === a.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.models.next-in-line")}</span>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" data-pool="${esc(p.pool)}" data-id="${esc(a.id)}">${ic("more", "s")}</button></div>`).join("");
-  return `<div class="acct-g"><div class="acct-gh">${logo(p.pool, p.name, 30)}<b>${esc(p.name ?? p.pool)}</b><span class="n6">${n ? `${n} ${n === 1 ? "account" : "accounts"}` : t("vault-autofill.managers.off")}</span></div>${rows}
+  const rows = p.accounts.map((a) => `<div class="acct-r"><span class="grow"><b>${esc(a.label)}</b><small>${esc(accountDetail(a, p.name ?? p.pool))}</small></span>${a.ready === true && p.answering === true ? p.defaultAccount === a.id ? `<span class="pill ok"><i></i>${t("window.settings.models.answers-first")}</span>` : `<span class="pill idle"><i></i>${t("window.settings.models.next-in-line")}</span>` : ""}<button class="icon-btn" type="button" aria-label="${t("window.settings.accounts.more-for-label", { label: esc(a.label) })}" data-act="acct-menu" data-pool="${esc(p.pool)}" data-id="${esc(a.id)}">${ic("more", "s")}</button></div>`).join("");
+  return `<div class="acct-g"><div class="acct-gh">${logo(p.pool, p.name, 30)}<b>${esc(p.name ?? p.pool)}</b><span class="n6">${n ? `${n} ${n === 1 ? "account" : "accounts"}` : t("vault-autofill.managers.off")}</span></div>${rows}${p.pool === "cli-codex" ? codexRow() : ""}
     <button class="add-row" type="button" data-act="addacct" data-v="${esc(p.pool)}" ${ownerOnly()}>${ic("plus", "s")}${n ? t("window.settings.models.add-another-value-account", { value: esc(p.name ?? p.pool) }) : t("window.settings.models.sign-in-to-value", { value: esc(p.name ?? p.pool) })}</button></div>`;
 }
 
@@ -140,10 +171,19 @@ function debateRows() {
     + row(rounds, knobSeg(rounds, "m-debate-rounds", [[1, "1"], [2, "2"], [3, "3"]], X.second?.debateExchanges), t("window.settings.models.debate-rounds-sub"))
     + row(most, tokenBox("debateMaxTokens", "m-debate-max", most), t("window.settings.models.debate-ceiling-sub")) + "</div>";
 }
+/* Who checks: the same model or one of the connections, one choice per connection, so a glass list: as a row of buttons
+   it wrapped onto two lines at 1400 px (QA pass 2). Drawn once the engine has said which it is; a household person
+   sees it greyed with why. */
+function whoChecks(by) {
+  if (by === undefined) return "";
+  const owner = ownerHere(), label = t("window.settings.models.second-who");
+  const options = [["", t("window.settings.models.second-same")], ...(E.state?.models?.presets ?? []).map((p) => [p.id, p.name])]; // gsel escapes them
+  return `<span class="right">${gsel({ id: owner ? "m-second-by" : "m-second-by-owner", label, options, value: by, attrs: owner ? "" : 'data-why="knobs-owner-only"' })}</span>`;
+}
 function secondTab() {
   const by = X.second ? X.second.advisorPreset ?? "" : undefined;
   return swRow("m-second", esc(t("window.settings.models.second-check")), esc(t("window.settings.models.second-check-sub")), SW["m-second"][0]())
-    + row(t("window.settings.models.second-who"), knobSeg(t("window.settings.models.second-who"), "m-second-by", [["", t("window.settings.models.second-same")], ...presetChoices()], by), t("window.settings.models.second-who-sub"))
+    + row(t("window.settings.models.second-who"), whoChecks(by), t("window.settings.models.second-who-sub"))
     + row(t("window.settings.models.second-ceiling"), secondCeiling(), t("window.settings.models.second-ceiling-sub"))
     + debateRows();
 }
@@ -195,19 +235,23 @@ export function draw() {
   return html + sections17(lv, tab) + decisions17d(lv);
 }
 
-/* Most steps in one task: the engine's own limit (GET /api/knobs values.limits.maxSteps), saved with
-   POST /api/knobs { card: "limits", values: { maxSteps } }, which keeps the card's other values. */
+/* A task's limits (GET /api/knobs values.limits: maxSteps, maxModelRounds, maxTaskTokens), each saved alone with
+   POST /api/knobs { card: "limits", values: { field } }, which keeps the card's other values. Each is Auto (null), No limit
+   ("none") or a figure typed in its box. Auto is no limit on a ChatGPT or Claude plan and on this computer, and the old
+   figure on an API key (src/knobs/apply.ts taskBudget). */
 let knobs = null;
+const LIMIT = { "m-steps": "maxSteps", "m-rounds": "maxModelRounds", "m-tokens": "maxTaskTokens" };
 async function loadKnobs() {
   /* Q261: the engine's limits are the owner's, which a household person may not read. */
   if (E.profiles?.isOwner === false) { knobs = null; renderNow(); return; }
   try { knobs = await api("knobs"); } catch (error) { knobs = null; toast(error.message); }
   renderNow();
 }
-async function saveSteps(box) {
-  if (!/^\d+$/.test(box.value.trim())) { renderNow(); return; }
-  try { knobs = await api("knobs", { card: "limits", values: { maxSteps: Number(box.value) } }); } catch (error) { toast(error.message); }
-  renderNow();
+/* A figure typed in a limit's box; an empty box is Auto again, and anything else shows the engine's value again. */
+async function saveLimit(box) {
+  const typed = box.value.trim().replace(/[,\s]/g, "");
+  if (typed !== "" && !/^\d+$/.test(typed)) { renderNow(); return; }
+  await setKnob("limits", { [LIMIT[box.id]]: typed === "" ? null : Number(typed) });
 }
 
 export function init() {
@@ -219,14 +263,16 @@ export function init() {
   loadKnobs();
   loadMore();
   document.addEventListener("change", (e) => {
-    if (e.target.id === "m-steps") saveSteps(e.target);
+    if (LIMIT[e.target.id]) saveLimit(e.target);
     else if (e.target.id === "m-second-max" || e.target.id === "m-debate-max") saveSecondCeiling(e.target);
+    else if (e.target.id === "m-second-by") setSecond({ advisorPreset: e.target.value || null });
     else if (KNOB[e.target.id]) saveKnob(e.target);
     else if (SW[e.target.id]) SW[e.target.id][1](e.target.checked);
   });
   on("mtab", (el) => { tab = el.dataset.v; renderNow(); });
   on("m-hello", (el) => hello(el));
   on("m-par", (el) => setKnob("subtasks", { parallelSubtasks: Number(el.dataset.v) }));
+  on("m-lim", (el) => setKnob("limits", { [LIMIT[el.dataset.k]]: el.dataset.v === "none" ? "none" : null }));
   on("m-sub", (el) => setKnob("subtasks", { subtaskModel: el.dataset.v || null }));
   on("m-tier", (el) => setKnob("reasoning", { serviceTier: el.dataset.v }));
   on("m-effort", (el) => setEffort(el.dataset.v));
@@ -235,18 +281,22 @@ export function init() {
   on("m-orlist", () => { OR.open = true; if (OR.list) renderNow(); else loadCompanies(); });
   on("m-orco", (el) => toggleCompany(el.dataset.v));
   on("m-def", (el) => setDefault(el));
-  on("m-second-by", (el) => setSecond({ advisorPreset: el.dataset.v || null }));
+  on("m-codex-check", (el) => checkCodex(el));
+  document.addEventListener("change", (e) => { if (e.target.id === "m-codex") setCodexModel(e.target); });
+  markLive(["m-codex-check", "sw:m-codex"]);
+  loadCodex();
   on("m-debate-rounds", (el) => setSecond({ debateExchanges: Number(el.dataset.v) }));
   on("m-img", (el) => setPictureModel(el.dataset.v));
   on("m-vid-svc", (el) => setVideoService(el.dataset.v));
-  markLive(["m-second-by", "m-img", "m-vid-svc", "sw:m-second-max", "m-debate-rounds", "sw:m-debate-max"]);
+  markLive(["sw:m-second-by", "m-img", "m-vid-svc", "sw:m-second-max", "m-debate-rounds", "sw:m-debate-max"]);
+  markLive(["m-lim", "sw:m-steps", "sw:m-rounds", "sw:m-tokens"]);
   markLive(["mtab", "m-hello", "m-def", "m-par", "m-sub", "m-tier", "m-effort", "m-planning", "m-openrouter", "m-orlist", "m-orco", ...Object.keys(KNOB).map((id) => "sw:" + id), ...Object.keys(SW).map((id) => "sw:" + id)]);
 }
 
-export function load() { loadAccounts(); loadKnobs(); loadMore(); loadDecisions17d(); return freshPick(); }
+export function load() { loadAccounts(); loadKnobs(); loadMore(); loadCodex(); loadDecisions17d(); return freshPick(); }
 
-export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "m-orco": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
-  "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:m-second": true, "sw:m-second-max": true, "m-second-by": true, "m-debate-rounds": true, "sw:m-debate-max": true, "m-img": true, "m-vid-svc": true, "sw:f15-slow-down-near-a-rate-limit": true };
+export const live = { "sw:f15-mix-models-on-hard-questions": true, "m-orlist": true, "m-orco": true, "m-codex-check": true, "sw:m-codex": true, mtab: true, "m-hello": true, "m-def": true, "sw:f15-pick-the-model-per-task": true, "sw:m-steps": true, "sw:m-rounds": true, "sw:m-tokens": true, "m-lim": true, "m-par": true, "m-sub": true, "m-tier": true, "m-effort": true, "m-planning": true, "m-openrouter": true,
+  "sw:f15-keep-claude-s-cache-warm": true, "sw:f15-fewer-rounds": true, "sw:m-vid": true, "sw:m-second": true, "sw:m-second-max": true, "sw:m-second-by": true, "m-debate-rounds": true, "sw:m-debate-max": true, "m-img": true, "m-vid-svc": true, "sw:f15-slow-down-near-a-rate-limit": true };
 
 /* Q002: the engine's other settings these rows keep, each the owner's: the R17-E cards (GET /api/model-savings: the
    planning model, OpenRouter's picks, keeping Claude's cache warm), each saved alone with POST /api/model-savings
@@ -327,7 +377,7 @@ function toggleCompany(slug) {
    as the box's placeholder (GET /api/knobs launched). */
 const KNOB = {
   "m-spend": ["limits", "spendCapDollars", 1], "m-retries": ["limits", "apiRetries", 1], "m-first": ["limits", "localFirstReplySeconds", 1],
-  "m-rounds": ["limits", "maxModelRounds", 1], "m-tooltime": ["commands", "toolTimeoutSeconds", 1], "m-toolkb": ["commands", "toolAnswerChars", 1000],
+  "m-tooltime": ["commands", "toolTimeoutSeconds", 1], "m-toolkb": ["commands", "toolAnswerChars", 1000],
 };
 const knob = (card, field) => knobs?.values?.[card]?.[field];
 /* A knob's figure in the box's unit: as the engine keeps it when the unit is its own (a $2.50 cap shows 2.5, so retyping it
@@ -368,12 +418,17 @@ const inUse = () => {
   const m = E.state?.models, id = E.state?.activeModel?.presetId ?? m?.activePreset ?? m?.defaultPreset;
   return (m?.presets ?? []).find((p) => p.id === id) ?? null;
 };
-const steps = () => {
-  const value = knobs?.values?.limits?.maxSteps;
-  /* A plain box, as the prototype's num15; nothing is shown until the engine has said what it keeps. */
-  return value == null ? ""
-    : `<span class="right num15"><input class="inp" id="m-steps" value="${esc(value)}" aria-label="${t("knobs.field.maxSteps")}"><small>${t("window.settings.models.steps")}</small></span>`;
+/* A task limit: Auto and No limit, pressed from the engine's value, and a box for a figure of the owner's own. Nothing is
+   shown until the engine has said what it keeps; a household person's controls are greyed with the owner-only reason. */
+const limitCtl = (id, label, unit = "") => {
+  if (!knobs) return "";
+  const value = knobs.values?.limits?.[LIMIT[id]], mode = value === "none" ? "none" : value == null ? "auto" : "own";
+  const [act, why] = ownerHere() ? ["m-lim", ""] : ["seg", ' data-why="knobs-owner-only"'];
+  const pick = (v, words) => `<button type="button" aria-pressed="${mode === v}" data-act="${act}" data-k="${id}" data-v="${v}"${why}>${words}</button>`;
+  return `<span class="right num15"><span class="seg" role="group" aria-label="${label}">${pick("auto", t("window.settings.models.limit-auto"))}${pick("none", t("window.settings.models.no-limit"))}</span>`
+    + `<input class="inp" ${ownerHere() ? `id="${id}"` : 'data-why="knobs-owner-only"'} value="${mode === "own" ? esc(value) : ""}" placeholder="${mode === "none" ? t("window.settings.models.no-limit") : ""}" aria-label="${label}">${unit ? `<small>${unit}</small>` : ""}</span>`;
 };
+const steps = () => limitCtl("m-steps", t("knobs.field.maxSteps"), t("window.settings.models.steps"));
 const row = (b, right, small = "") => `<div class="ctl"><b>${b}</b>${right}<small>${small}</small></div>`;
 /* A switch, checked from the engine's value. One the owner alone changes is greyed for a household person, and one that
    cannot act here is greyed with its reason (off: the reason's key); either is drawn without its id, so it is never live.
@@ -393,11 +448,11 @@ function effortSeg() {
   const words = { low: t("knobs.option.effort-low"), medium: t("appearance.textSize.medium"), high: t("knobs.option.effort-high") };
   return knobSeg(t("window.settings.models.thinking-effort"), levels.length ? "m-effort" : "seg", ["low", "medium", "high"].filter((v) => !levels.length || levels.includes(v)).map((v) => [v, words[v]]), p ? knob("reasoning", "effortByModel")?.[p.id] : null, levels.length ? "" : "m-effort-none");
 }
-const advanced = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.budgets")}</h2>${row(t("knobs.field.maxSteps"), steps(), t("window.settings.models.it-stops-and-asks-when-it"))}${row(t("window.settings.models.spend-cap-per-task"), num(t("window.settings.models.spend-cap-per-task"), "USD", "m-spend"), t("window.settings.models.only-for-accounts-that-bill-per"))}${row(t("window.settings.models.sub-tasks-at-once"), knobSeg(t("window.settings.models.sub-tasks-at-once"), "m-par", [[1, "1"], [3, "3"], [5, "5"]], knob("subtasks", "parallelSubtasks")), t("window.settings.models.parts-of-a-big-task-that"))}</div>`
+const advanced = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.budgets")}</h2>${row(t("knobs.field.maxSteps"), steps(), t("window.settings.models.it-stops-and-asks-when-it"))}${row(t("window.settings.models.tokens-per-task"), limitCtl("m-tokens", t("window.settings.models.tokens-per-task"), t("window.settings.models.tokens")), t("window.settings.models.auto-no-limit-on-a-plan"))}${row(t("window.settings.models.spend-cap-per-task"), num(t("window.settings.models.spend-cap-per-task"), "USD", "m-spend"), t("window.settings.models.only-for-accounts-that-bill-per"))}${row(t("window.settings.models.sub-tasks-at-once"), knobSeg(t("window.settings.models.sub-tasks-at-once"), "m-par", [[1, "1"], [3, "3"], [5, "5"]], knob("subtasks", "parallelSubtasks")), t("window.settings.models.parts-of-a-big-task-that"))}</div>`
   + `<div class="sec x15-sec"><h2>${t("window.settings.models.models-for-smaller-jobs")}</h2>${row(t("knobs.subtasks.title"), knobSeg(t("knobs.subtasks.title"), "m-sub", [["", t("window.settings.models.same-model")], ...presetChoices()], knobs ? knob("subtasks", "subtaskModel") ?? "" : undefined), t("window.settings.models.titles-summaries-and-searches-inside-a"))}${sw("f15-pick-the-model-per-task", "Pick the model per task", "Easy tasks go to a quick model, hard ones to the best you have.", byTask(), X.savings && knobs && (byTask() || byTaskReady()) ? "" : "f15-pick-the-model-per-task")}${row(t("window.settings.models.planning-model"), knobSeg(t("window.settings.models.planning-model"), "m-planning", [["", t("window.settings.models.same-model")], ...presetChoices()], X.savings ? X.savings.values.phases.planModel ?? "" : undefined), t("window.settings.models.writes-the-plan-in-plan-first"))}${sw("f15-mix-models-on-hard-questions", "Mix models on hard questions", "Asks two and merges the best of each. Off until you choose: it doubles the cost.", SW["f15-mix-models-on-hard-questions"][0](), mixReady() ? "" : "f15-mix-models-on-hard-questions")}</div>`
   + `<div class="sec x15-sec"><h2>${t("window.settings.p17-models.compare-models")}</h2>${row(t("reach.arena.title"), `<span class="right"><button class="btn sm" type="button" data-act="arenab17">${t("window.settings.models.open-the-arena")}</button></span>`, t("window.settings.models.the-same-task-to-two-models"))}${ownerHere() ? row(t("window.settings.models.test-suites"), `<span class="right"><button class="btn sm" type="button" data-act="compareb17">${t("window.settings.models.see-history")}</button></span>`, t("window.settings.models.your-own-tasks-with-a-check")) : ""}</div>`; // Q262: the test suites are the owner's
 
-const TECHNICAL = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.retries-and-timeouts")}</h2>${row(t("window.settings.models.retries-when-a-service-fails"), num(t("window.settings.models.retries-when-a-service-fails"), "", "m-retries"))}${row(t("window.settings.models.wait-for-the-first-word"), num(t("window.settings.models.wait-for-the-first-word"), "s", "m-first"), t("window.settings.models.then-it-tries-the-next-account"))}${row(t("window.settings.models.model-rounds-per-step"), num(t("window.settings.models.model-rounds-per-step"), "", "m-rounds"))}${row(t("window.settings.models.tool-and-command-timeout"), num(t("window.settings.models.tool-and-command-timeout"), "s", "m-tooltime"))}${row(t("window.settings.models.largest-tool-answer-kept-whole"), num(t("window.settings.models.largest-tool-answer-kept-whole"), "KB", "m-toolkb"), t("window.settings.models.bigger-answers-are-saved-to-a"))}</div>`
+const TECHNICAL = () => `<div class="sec x15-sec"><h2>${t("window.settings.models.retries-and-timeouts")}</h2>${row(t("window.settings.models.retries-when-a-service-fails"), num(t("window.settings.models.retries-when-a-service-fails"), "", "m-retries"))}${row(t("window.settings.models.wait-for-the-first-word"), num(t("window.settings.models.wait-for-the-first-word"), "s", "m-first"), t("window.settings.models.then-it-tries-the-next-account"))}${row(t("window.settings.models.model-rounds-per-step"), limitCtl("m-rounds", t("window.settings.models.model-rounds-per-step")))}${row(t("window.settings.models.tool-and-command-timeout"), num(t("window.settings.models.tool-and-command-timeout"), "s", "m-tooltime"))}${row(t("window.settings.models.largest-tool-answer-kept-whole"), num(t("window.settings.models.largest-tool-answer-kept-whole"), "KB", "m-toolkb"), t("window.settings.models.bigger-answers-are-saved-to-a"))}</div>`
   + `<div class="sec x15-sec"><h2>${t("window.settings.models.per-connection")}</h2>${row(t("window.settings.models.thinking-effort"), effortSeg(), t("window.settings.models.for-the-connection-in-use-others"))}${row(t("window.settings.models.service-tier"), knobSeg(t("window.settings.models.service-tier"), "m-tier", [["standard", t("window.settings.models.standard")], ["priority", t("window.settings.models.priority")], ["flex", t("window.settings.models.flex")]], knob("reasoning", "serviceTier")), t("window.settings.models.priority-costs-more-flex-is-cheaper"))}${sw("f15-slow-down-near-a-rate-limit", "Slow down near a rate limit", "Spreads requests out instead of hitting the wall.", SW["f15-slow-down-near-a-rate-limit"][0]())}${sw("f15-keep-claude-s-cache-warm", "Keep Claude’s cache warm", "A tiny request every 4 minutes during long tasks, so repeats cost less.", SW["f15-keep-claude-s-cache-warm"][0](), noneKeptWarm() ? "keep-warm-no-claude" : "")}${row(t("window.settings.models.openrouter-picks"), openRouterSeg(), t("window.settings.models.which-provider-serves-an-openrouter-model"))}${companiesRow()}${sw("f15-fewer-rounds", "Fewer rounds", "Groups tool calls that don’t depend on each other.", SW["f15-fewer-rounds"][0]())}</div>`;
 
 /* Settings search (settings/find.js) reads every tab's rows, and a found row opens its tab. */

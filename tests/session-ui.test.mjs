@@ -7,6 +7,7 @@ import { discardTemp } from './temp-dir.mjs';
 import { chromium } from 'playwright';
 import { createBranch } from '../dist/index.js';
 import { startServer } from '../dist/server.js';
+import { openChat } from "./open-chat.mjs"; // trunk-one-row: one row per Trunk
 
 /* Redesign: the new window (public/app/**). A conversation is opened from its row in the sidebar list
    ([data-act="chat"][data-id]); the row of the open one carries aria-current="true". "Branch from here" is one of a
@@ -45,11 +46,10 @@ async function fixture(t, complete) {
   await page.locator('#app #side').waitFor({ state: 'visible', timeout: 120000 });
   return { app, page, source, original, errors };
 }
-const row = (page, id) => page.locator(`#side [data-act="chat"][data-id="${id}"]`);
 const currentId = (page) => page.evaluate(() => document.querySelector('#side [data-act="chat"][aria-current="true"]')?.dataset.id ?? null);
 const message = (page, text) => page.locator('#conversation .b, #conversation .u').filter({ hasText: text }).first();
 async function openConversation(page, id, text) {
-  await row(page, id).click();
+  await openChat(page, id);
   await page.locator('#conversation').getByText(text, { exact: true }).first().waitFor();
 }
 async function branchButton(page, text) {
@@ -150,7 +150,7 @@ test('pending chat disables branching and conversation switching until its respo
   assert.equal(requests, 1, 'a message typed while it works is queued, not sent to the model at once');
   /* Read now, while the answer is pending; asserted last so the other checks still report. */
   const branchHeld = await branchButton(f.page, 'Juniper checkpoint').then(b => b.isDisabled({ timeout: 10000 })).catch(error => error.message);
-  await row(f.page, other.sessionId).click();
+  await openChat(f.page, other.sessionId);
   release.resolve(); await readyConversation(f.page);
   await f.page.waitForFunction(() => !document.querySelector('#conversation .typing, #conversation .think'));
   const shown = await currentId(f.page);

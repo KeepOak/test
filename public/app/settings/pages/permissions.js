@@ -4,12 +4,11 @@
    less careful waits for the engine's own words and the owner's yes). The system sandbox is the kit's os-sandbox switch
    where the engine says the computer has one; elsewhere it stays greyed with the engine's reason under it. This Mac /
    This PC is ../os17.js.
-   Drawn from the engine and greyed, for the security review: scanning for personal details (GET /api/privacy
-   pii.outbound) and the authenticator code (GET /api/safety-extras modes; the window has no step to set up the
-   authenticator app).
-   Greyed, each for its reason: installing without asking (the engine never installs without the owner's yes); when
-   tools are loaded (the engine decides that itself every round; no setting); adding a trusted folder (it loosens what
-   Trunks may change); practice runs (an explicit next-task choice in the window and the terminal's /dry-run); a container per Trunk, sign-ins from outside the
+   Scanning for personal details, the authenticator code and adding a trusted folder go through the engine's own guards
+   (../perm-guards.js).
+   Greyed, each for its reason: installing without asking (no approval kind of its own: shown on only when both running
+   commands and changing settings go without asking); when tools are loaded (the engine decides that itself every round;
+   no setting); practice runs (an explicit next-task choice in the window and the terminal's /dry-run); a container per Trunk, sign-ins from outside the
    sandbox, verifying each release, pinning SSH hosts and where downloads may come from (no engine setting says these).
    Messages per conversation per hour is the engine's limit on the tasks one conversation starts in an hour (rateAttrs). */
 import { level } from "../../core/state.js";
@@ -26,6 +25,7 @@ import { K, kitOn, kitSeg, changed, loadKit } from "../kit17.js";
 import { t } from "../../../i18n.js";
 import { loadPracticeRuns, practiceAttrs, initPracticeRuns } from "../practice-runs.js";
 import { say } from "../../core/words.js";
+import { initGuards, guardsLive, piiOn, codesOn } from "../perm-guards.js";
 
 const HEAD = () => `<h1>${t("settings.page.permissions")}</h1><p class="lede">${t("window.settings.permissions.what-trunks-may-do-without-asking")}</p>`;
 
@@ -34,13 +34,13 @@ const BASE_SWITCHES = () => `@@STATUS@@
       <div class="ctl"><b>${t("window.settings.permissions.read-files-in-documents-and-downloads")}</b><input class="sw" type="checkbox" id="p-read" @@read@@ aria-label="${t("window.settings.permissions.read-files-in-documents-and-downloads")}" data-sw="set"><small>${t("window.settings.permissions.reading-never-changes-a-file")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.use-the-browser-on-this-computer")}</b><input class="sw" type="checkbox" id="p-browse" @@browse@@ aria-label="${t("window.settings.permissions.use-the-browser-on-this-computer")}" data-sw="set"><small>${t("window.settings.permissions.signs-in-with-your-saved-sign")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.send-email-and-messages")}</b><input class="sw" type="checkbox" id="p-send" @@message@@ aria-label="${t("window.settings.permissions.send-email-and-messages")}" data-sw="set"><small>${t("window.settings.permissions.off-means-every-message-waits-for")}</small></div>
-      <div class="ctl"><b>${t("window.settings.permissions.install-tools-and-packages")}</b><input class="sw" type="checkbox" id="p-install" aria-label="${t("window.settings.permissions.install-tools-and-packages")}" data-sw="set"><small>${t("window.settings.permissions.off-means-a-request-shows-up")}</small></div>
+      <div class="ctl"><b>${t("window.settings.permissions.install-tools-and-packages")}</b><input class="sw" type="checkbox" id="p-install" @@install@@ aria-label="${t("window.settings.permissions.install-tools-and-packages")}" data-sw="set"><small>${t("window.settings.permissions.off-means-a-request-shows-up")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.record-tasks-so-you-can-watch")}</b><input class="sw" type="checkbox" id="p-record" @@record@@ aria-label="${t("window.settings.permissions.record-tasks-so-you-can-watch")}" data-sw="set"><small>${t("window.settings.permissions.recordings-stay-on-this-computer")}</small></div>
     </div>
     <details class="adv" @@ADVOPEN@@><summary><svg class="i s chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>${t("settings.page.advanced")}</summary>
       <div class="ctl"><b>${t("window.settings.permissions.when-tools-are-loaded")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.settings.permissions.when-tools-are-loaded")}"><button type="button" aria-pressed="false" data-act="seg" data-why="when-tools-are-loaded">${t("window.settings.advanced.never")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="when-tools-are-loaded">${t("accounts.switch.when-needed")}</button><button type="button" aria-pressed="false" data-act="seg" data-why="when-tools-are-loaded">${t("window.places.automations.always")}</button></span></span><small>${t("window.settings.permissions.when-needed-keeps-a-tool-one")}</small></div>
       <div class="ctl"><b>${t("window.settings.permissions.stop-a-trunk-that-repeats-itself")}</b><input class="sw" type="checkbox" id="p-loop" @@loop@@ aria-label="${t("window.settings.permissions.stop-a-trunk-that-repeats-itself")}" data-sw="set"><small>${t("window.settings.permissions.after-5-identical-steps-it-pauses")}</small></div>
-      <div class="ctl"><b>${t("settings-kit.name.folder-trust")}</b><span class="right"><button class="btn sm" type="button" data-act="soon" data-why="folder-trust">${t("asks.runtimes.add")}</button></span><small></small></div>
+      <div class="ctl"><b>${t("settings-kit.name.folder-trust")}</b><span class="right"><button class="btn sm" type="button" data-act="ft-add8">${t("asks.runtimes.add")}</button></span><small></small></div>
     </details>
     <div class="danger"><div><b>${t("lockdown.label")}</b><p>${t("window.settings.permissions.one-switch-that-stops-every-trunk")}</p></div><button class="btn bad" type="button" data-act="perm-lock">@@LOCK@@</button></div>`;
 
@@ -167,7 +167,7 @@ function fill(html) {
   return html.replace("@@STATUS@@", status).replace("@@PINS@@", pinRows()).replace("@@RULES@@", ruleRows()).replace("@@LOCK@@", P.locked ? t("dashboard.controls.lockdownOff") : t("dashboard.controls.lockdownOn"))
     .replace(/@@(read|browse|message)@@/g, (_, id) => (allowed(id) ? "checked" : ""))
     .replace("@@record@@", onIf(kitOn("run-recording"))).replace("@@loop@@", onIf(kitOn("loop_guard"))).replace("@@scan@@", onIf(kitOn("safety-command-scan")))
-    .replace("@@pii@@", onIf((P.privacy?.pii?.outbound ?? "off") !== "off")).replace("@@code@@", onIf((P.safety?.modes?.["code-approvals"] ?? "off") !== "off"))
+    .replace("@@pii@@", onIf(piiOn(P))).replace("@@code@@", onIf(codesOn(P))).replace("@@install@@", onIf(allowed("commands") && allowed("settings")))
     .replace("@@PRACTICE@@", practiceAttrs()).replace("@@WALL@@", wall()).replace("@@ADVOPEN@@", advOpen ? "open" : "").replace("@@RATE@@", rateAttrs());
 }
 
@@ -193,9 +193,9 @@ export function draw() {
 
 /* Q257: a kind made less strict is refused by the engine (409) until the owner says yes to loosening. The dialog shows
    the engine's own words and asks; anything else refused (Lockdown included) is shown as the engine said it. */
-function askLoosen(error, body) {
+function askLoosen(error, body, path = "approvals/categories") {
   if (error.status !== 409 || !/less careful/.test(error.message)) { toast(error.message); return; }
-  P.loosen = body;
+  P.loosen = { path, body };
   openDlg({ title: t("settings-kit.loosens"), body: `<p>${esc(error.message)}</p>`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("mode.cancel")}</button><button class="btn pri" type="button" data-act="perm-loosen8">${t("settings-kit.confirm")}</button>` });
 }
@@ -224,7 +224,8 @@ const KIT = {
 export function init() {
   markLive(["sw:p-read", "sw:p-browse", "sw:p-send", "perm-lock", "pin-add8", "pin-do8", "pin-rm8",
     "rule-add8", "rule-dec8", "rule-save8", "rule-rm8", "sw:rule-new8", "perm-loosen8",
-    "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17", "sw:p-rate"]);
+    "sw:p-record", "sw:p-loop", "sw:f15-scan-commands-for-hidden-characters", "kitseg17", "sw:p-rate", ...guardsLive]);
+  initGuards({ P, load, askLoosen });
   initOs17();
   initPracticeRuns(load);
   document.addEventListener("change", (e) => { if (KIT[e.target?.id]) changed(e.target, KIT); else if (e.target?.id === "p-rate") saveRate(e.target); });
@@ -257,10 +258,10 @@ export function init() {
   });
   // Q257: sent again with the owner's yes to loosening only from this dialog's own button; Cancel changes nothing.
   on("perm-loosen8", async () => {
-    const body = P.loosen;
+    const held = P.loosen;
     P.loosen = null;
     closeDlg();
-    if (body) try { await api("approvals/categories", { ...body, confirmLoosening: true }); } catch (error) { toast(error.message); }
+    if (held) try { await api(held.path, { ...held.body, confirmLoosening: true }); } catch (error) { toast(error.message); }
     await load();
   });
   load();

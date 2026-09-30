@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { saveReplyStyle } from "../dist/channels/reply-style.js";
 import {
   fixture, until, delay, assertNoSecret, httpService, socketService, pairingWalk, refusalWalk,
 } from "./channels-parity-kit.mjs";
@@ -49,6 +50,7 @@ test("KOOK: a Bot token, a gateway on its own host, a direct message pairs, and 
   const world = await kookWorld(t);
   const channel = world.channel();
   await context.app.channels.attach(channel, policy);
+  saveReplyStyle(context.app.store, context.app.runtime.owner, { channel: "kook", quote: "first" }, ["kook"]); // A one-to-one answer quotes only when needed (reply-style.ts); "first" checks this app's quote on the wire.
   t.after(() => channel.stop());
   const link = await until(() => world.events.connections[0], "a socket");
   assert.match(link.path, /compress=0/);

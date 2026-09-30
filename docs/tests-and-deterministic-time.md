@@ -25,12 +25,38 @@ hand and a pull request into anything but `redesign/window` run the whole suite 
   above `partialCeiling` of the Linux lane's time. A static import graph cannot narrow a `src/` change: most test
   files import `dist/index.js`, which imports nearly all of `src/`.
 
+A pull request into `redesign/window` is then made light, because the merge queue runs the whole suite on every
+system before anything lands: at most `prLinuxShards` (2) Linux shares, filled with `always`, the changed tests, what
+the change reaches by name, mapping or graph, the tests near a `src/` change (`nearTests`: the tests that use a
+changed file or a `src/` file that uses it, never through a hub file that more than `hubTests` tests import), then
+every browser test for a page change, lightest first within each group, while the predicted time fits two shares of
+the whole suite. What does not fit is named in the summary as left for the merge queue. `npm run build` in each
+share is the type-check, and every pull request that is not documentation only plans at least one share.
+
 Windows and macOS run on a pull request only when it touches their own code (`platforms` in
-`tests/test-impact.json`), a `src/` file their own tests import directly, or their own test files. verify-suite is
+`tests/test-impact.json`, Windows computer control included), a `src/` file their own tests import directly that at
+most `platformSourceTests` (5) tests import, their own test files, or a test helper those tests use. Local voice runs
+on a pull request only when the change reaches `tests/voice-local-whisper.test.mjs`. verify-suite is
 red unless the plan ran and every planned share passed, and on a push it also requires the whole suite, so promote
-moves `mac/cross-platform` only to a commit the whole suite passed. The downloads and the phone apps are built only
+moves `mac/cross-platform` only to a commit the whole suite passed. A push to `redesign/window` lands the commit a
+merge-queue group already tested with the whole suite, so it reuses that green run (`scripts/ci-reuse.mjs`: the same
+commit, or a commit with the same tree) instead of running the suite a second time; verify-suite names the run it
+reused, and the push run still ends green, so promote and the Beta updater (`newestGreen` in
+`src/desktop/dev-build.ts`) find the same commit. Without such a run the whole suite runs. The downloads and the phone apps are built only
 for a release tag or by hand (`package.yml`, `mobile.yml`), and release publication still requires the exact
 commit's `Checks` success.
+
+At most `prSlots` pull-request runs (`tests/test-impact.json`) hold runners at once, oldest first
+(`scripts/ci-queue.mjs`). Every unfinished pull-request run holds a slot: an admitted run whose shares all wait for
+runners reports `queued`, not `in_progress`, and counting only `in_progress` runs let about 29 runs in at once on
+2026-09-29. A run asking for a slot counts only the unfinished runs that started before it, so runs that plan at the
+same moment agree, and the oldest is always admitted. A run that must wait says "Waiting for a CI slot, position k of m" in its `plan` job,
+labels its pull request `ci-waiting` and cancels itself: it is waiting, not red. Every run that finishes, a push to
+`redesign/window` included, starts the oldest waiting pull request again. A pull request whose newest run for its
+head was cancelled (held, or parked by hand) is waiting too; drafts and pull requests labelled `hold` are skipped.
+Pushes are never held. Only a rerun the queue itself started goes straight to its slot; a rerun started by a person
+(the Rerun button, or rerunning failed jobs) waits in line like any run. Label a pull request `ci-priority` to put
+it at the front of the line. Do not rerun a cancelled run by hand: the queue does it.
 
 Shared hosted-runner queue time is not controlled by repository code. Never run fork pull-request code on a personal
 NAS or runner with vault, LAN, or signing-secret access.

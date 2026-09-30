@@ -19,7 +19,7 @@ import { voice17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { calls17d } from "../../chat/calls17d.js"; // pass 17 part D §2 (greyed)
 
-const V = { settings: null, comfort: null, dictation: null, wake: null, voices: [], brief: null };
+const V = { settings: null, comfort: null, dictation: null, dictationHow: "", wake: null, voices: [], brief: null };
 
 async function loadVoice() {
   /* Q261: the speech settings, the push-to-talk key and the voices are the owner's; a household person reads only
@@ -41,6 +41,7 @@ async function loadVoice() {
     V.settings = settings;
     V.comfort = comfort.values?.voice ?? null;
     V.dictation = dictation.settings ?? null;
+    V.dictationHow = dictation.engine?.how ?? ""; // RES-709: what the microphone button would really use here
     V.wake = wake.mode ?? wake.settings?.mode ?? null;
     V.brief = personal?.modes?.["spoken-brief"] ?? null;
     V.voices = [...new Set([...(voices.windows ?? []), ...(voices.system ?? [])].filter((n) => typeof n === "string"))];
@@ -50,7 +51,7 @@ async function loadVoice() {
 
 /* Each save sends only the part it changes; the engine merges it and answers what is now in force. */
 async function saveDictation(part) {
-  try { V.dictation = (await api("voice/dictation", part)).settings; } catch (error) { toast(error.message); }
+  try { const r = await api("voice/dictation", part); V.dictation = r.settings; V.dictationHow = r.state?.engine?.how ?? V.dictationHow; } catch (error) { toast(error.message); }
   render();
 }
 async function saveWake(mode) {
@@ -102,7 +103,7 @@ function speakingBack() {
   const voices = [...V.voices.map((n) => [n, n, reads && s.voiceId === n]), ["off", t("accounts.switch.off"), !!V.settings && !reads]];
   const dict = !!V.dictation && V.dictation.mode !== "off";
   return `<div class="sec"><h2>${t("window.settings.voice.speaking-back")}</h2><div class="ctl"><b>${t("field.voice")}</b><span class="right"><span class="seg" role="group" aria-label="${t("field.voice")}">${voices.map(([v, l, p]) => `<button type="button" aria-pressed="${p}" data-act="v-voice" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.settings.voice.read-replies-out-loud-in-this")}</small></div>
-    ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), t("window.settings.voice.the-microphone-button-turns-speech-into"), dict)}</div>`;
+    ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), [t("window.settings.voice.the-microphone-button-turns-speech-into"), V.dictationHow].filter(Boolean).join(" "), dict)}</div>`;
 }
 
 function listeningMore() {
@@ -113,21 +114,21 @@ function listeningMore() {
     ${ctl("f15-spoken-morning-brief", t("window.settings.voice.spoken-morning-brief"), t("window.settings.voice.the-written-brief-read-out"), !!V.brief && V.brief !== "off")}</div>`;
 }
 
-/* Answer aloud is the engine's read-aloud setting (autoReadAloud), which chat/aloud.js acts on: Always reads each new
-   reply aloud, Never none. The engine cannot tell a spoken message from a typed one, so "When I talk" has no setting
-   behind it (greyed). */
+/* Answer aloud is the engine's read-aloud setting (autoReadAloud, readAloudWhen), which chat/aloud.js acts on: Always
+   reads each new reply aloud, When I talk only a reply to a message dictated in the window, Never none. */
 function answerAloud() {
-  const cur = !V.settings ? null : V.settings.autoReadAloud ? "always" : "never";
+  const cur = !V.settings ? null : !V.settings.autoReadAloud ? "never" : V.settings.readAloudWhen === "spoken" ? "talk" : "always";
   const opt = (v, l, act) => `<button type="button" aria-pressed="${cur === v}" data-act="${act}" data-v="${v}">${esc(l)}</button>`;
-  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "seg").replace("data-act=\"seg\"", "data-act=\"seg\" data-why=\"v-when-i-talk\"")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small></small></div>`;
+  return `<div class="ctl"><b>${t("personal.voice.answer")}</b><span class="right"><span class="seg" role="group" aria-label="${t("personal.voice.answer")}">${opt("never", t("window.settings.advanced.never"), "aloud15")}${opt("talk", t("window.settings.voice.when-i-talk"), "aloud15")}${opt("always", t("window.places.automations.always"), "aloud15")}</span></span><small></small></div>`;
 }
 /* Voice: a computer voice reads replies aloud in that voice; Off stops reading aloud. */
 async function saveVoice(v) {
   try { V.settings = await api("voice/settings", v === "off" ? { autoReadAloud: false } : { voiceId: v, autoReadAloud: true }); } catch (error) { toast(error.message); }
   render();
 }
-async function saveAloud(on) {
-  try { V.settings = await api("voice/settings", { autoReadAloud: on }); } catch (error) { toast(error.message); }
+async function saveAloud(v) {
+  const change = v === "never" ? { autoReadAloud: false } : { autoReadAloud: true, readAloudWhen: v === "talk" ? "spoken" : "always" };
+  try { V.settings = await api("voice/settings", change); } catch (error) { toast(error.message); }
   render();
 }
 
@@ -139,7 +140,7 @@ export function draw() {
 export function init() {
   loadVoice();
   on("ptt-key", () => captureKey());
-  on("aloud15", (el) => saveAloud(el.dataset.v === "always"));
+  on("aloud15", (el) => saveAloud(el.dataset.v));
   on("v-voice", (el) => saveVoice(el.dataset.v));
   document.addEventListener("change", (e) => {
     const t = e.target;

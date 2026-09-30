@@ -27,13 +27,11 @@ test("the window uses the default face, edits live files, changes default and li
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible" });
   assert.equal(await page.locator(".empty-chat [src*=branch-wave]").count(), 0);
-  const threadRow = page.locator(`#side [data-act="chat"][data-id="${thread.sessionId}"]`);
+  // trunk-one-row: the thread is the default Trunk's newest conversation, so the Trunk's one row opens it.
+  const threadRow = page.locator(`#side [data-act="chat"][data-line="${home.id}"]`);
   await threadRow.waitFor({ state: "visible" });
-  assert.equal(await threadRow.evaluate((row) => {
-    let previous = row.closest(".rw18").previousElementSibling;
-    while (previous && !previous.classList.contains("lh")) previous = previous.previousElementSibling;
-    return previous?.textContent;
-  }), home.name);
+  assert.equal(await threadRow.getAttribute("data-id"), thread.sessionId);
+  assert.equal(await threadRow.locator("b .ellip14").textContent(), home.name);
   await page.locator('[data-act="view"][data-v="customize"]').first().click();
   await page.locator(`[data-act="edit"][data-id="${home.id}"]`).click();
   await page.getByRole("tab", { name: "Files", exact: true }).click();
@@ -79,20 +77,36 @@ test("after an update, the sidebar lists every stray conversation under the defa
   await page.getByLabel("Session token", { exact: true }).fill(server.token);
   await page.getByRole("button", { name: "Connect", exact: true }).click();
   await page.locator("#app #side").waitFor({ state: "visible" });
-  const headingOf = (sessionId) => page.locator(`#side [data-act="chat"][data-id="${sessionId}"]`).evaluate((row) => {
-    let previous = row.closest(".rw18").previousElementSibling;
-    while (previous && !previous.classList.contains("lh")) previous = previous.previousElementSibling;
-    return previous?.textContent?.trim() ?? null;
-  });
-  for (const run of stray) {
-    await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]`).waitFor({ state: "visible" });
-    assert.equal(await headingOf(run.sessionId), home.name, "a moved conversation is listed under the default Trunk");
-  }
-  assert.equal(await headingOf(kite.chatSessionId), kite.name, "the hand-made Trunk keeps its own chat");
-  assert.equal(await page.evaluate(() => [...document.querySelectorAll('#side [data-act="chat"][data-id]')].filter((row) => {
-    let previous = row.closest(".rw18")?.previousElementSibling;
-    while (previous && !previous.classList.contains("lh")) previous = previous.previousElementSibling;
-    return !previous;
-  }).length), 0, "no conversation is left loose");
+  // trunk-one-row: the moved conversations are the default Trunk's, in its one row and its one timeline.
+  const homeRow = page.locator(`#side [data-act="chat"][data-line="${home.id}"]`);
+  await homeRow.waitFor({ state: "visible" });
+  for (const run of stray) assert.equal(await page.locator(`#side [data-act="chat"][data-id="${run.sessionId}"]:not([data-line])`).count(), 0, "no row of its own");
+  assert.equal(await page.locator(`#side [data-act="chat"][data-line="${kite.id}"]`).getAttribute("data-id"), kite.chatSessionId, "the hand-made Trunk keeps its own chat");
+  assert.equal(await page.locator('#side [data-act="chat"][data-id]:not([data-line])').count(), 0, "no conversation is left loose");
+  await homeRow.click();
+  for (const words of ["hey", "please remember this"]) await page.locator("#scroll .u", { hasText: words }).first().waitFor();
+  assert.deepEqual(errors, []);
+});
+
+test("QA Pass 2: the default Trunk's own conversation opens with its greeting, headed as the list, not by its name twice", async (t) => {
+  const { app, root } = await fixture(t);
+  saveOnboarding(app.store, app.runtime.owner, { done: true });
+  const home = app.trunks.ensureDefault();
+  const server = await startServer(app, { dataDir: root, port: 0 });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await server.close(); });
+  const page = await browser.newPage({ serviceWorkers: "block" });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  const row = page.locator(`#side [data-act="chat"][data-id="${home.chatSessionId}"]`);
+  await row.waitFor({ state: "visible" });
+  // trunk-one-row: the Trunk is its row; no heading repeats its name above it.
+  assert.equal(await row.getAttribute("data-line"), home.id);
+  assert.deepEqual((await page.locator("#side .lh").allTextContents()).map((h) => h.trim()).filter((h) => h === home.name), [], "the heading says what the list is, not the Trunk's name above a row of the same name");
+  await row.click();
+  await page.locator("#main").getByText(`Hi, I'm ${home.name}.`, { exact: false }).first().waitFor();
   assert.deepEqual(errors, []);
 });
