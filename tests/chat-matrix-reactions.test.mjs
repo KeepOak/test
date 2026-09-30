@@ -47,3 +47,31 @@ test('a failed or rate-limited redaction leaves the prior reaction tracked for a
   assert.equal(w.calls.length, 5);
   assert.match(w.calls[3].path, /\/redact\/%24made1%3Amatrix.test\//);
 });
+test('CHAT-169: a Matrix thread is its own conversation, and replies, quotes and edits stay inside it', async () => {
+  const w = world(), root = '$root:matrix.test';
+  const threaded = w.adapter.inbound(room, { type: 'm.room.message', event_id: '$inthread:matrix.test', sender: '@owner:matrix.test',
+    content: { msgtype: 'm.text', body: 'In the thread', 'm.relates_to': { rel_type: 'm.thread', event_id: root } } });
+  const plain = w.incoming(room);
+  assert.match(threaded.chatId, /^thread:[0-9a-f]{32}$/);
+  assert.notEqual(threaded.chatId, plain.chatId, 'the thread is not the room');
+  assert.equal(w.incoming(room, '$again:matrix.test').chatId, plain.chatId, 'room messages keep their address');
+  // A reply in the thread goes into the thread and quotes the person's own message there.
+  const sent = await w.adapter.send(threaded.chatId, 'Answer', threaded.messageId);
+  assert.deepEqual(w.calls[0].body['m.relates_to'], { rel_type: 'm.thread', event_id: root, is_falling_back: false,
+    'm.in_reply_to': { event_id: '$inthread:matrix.test' } });
+  // A room reply never quotes a message from the thread, and stays out of it.
+  await w.adapter.send(plain.chatId, 'Room answer', threaded.messageId);
+  assert.equal(w.calls[1].body['m.relates_to'], undefined);
+  // An edit keeps its m.replace relation; one aimed from another conversation is refused before any network call.
+  await w.adapter.edit(threaded.chatId, sent, 'Answer, better');
+  assert.equal(w.calls[2].body['m.relates_to'].rel_type, 'm.replace');
+  await assert.rejects(w.adapter.edit(plain.chatId, sent, 'x'), /not sent in this conversation/);
+  await assert.rejects(w.adapter.deleteMessage(plain.chatId, sent), /not sent in this conversation/);
+  await assert.rejects(w.adapter.react(plain.chatId, threaded.messageId, '👀'), /not in this thread/);
+  assert.equal(w.calls.length, 3);
+});
+test('CHAT-169: a thread not read since the adapter started is refused, not sent to the room', async () => {
+  const w = world();
+  await assert.rejects(w.adapter.send('thread:0123456789abcdef0123456789abcdef', 'Hello'), /has not been read since reconnecting/);
+  assert.equal(w.calls.length, 0);
+});

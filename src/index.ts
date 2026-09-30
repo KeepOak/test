@@ -151,6 +151,10 @@ import { LiveConversations } from "./realtime-voice.js";
 import { liveRefusal } from "./live-refusal.js"; // phase2/rooms
 import { registerModelSwitch } from "./model-switch.js";
 import { registerSettingsTools } from "./settings-kit/tools.js";
+import { registerUpdateTool } from "./comfort/update-tool.js";
+import { newestPassing } from "./comfort/update-now.js";
+import { ownBuild } from "./hot-update/window-files.js";
+import { primaryRepo } from "./desktop/repo-pair.js"; // the repository updates come from
 import { registerHelpSearch } from "./help-search.js";
 import { settingsKitWriters } from "./settings-kit/writers.js";
 import { GitTools } from "./integrations/git.js";
@@ -193,6 +197,8 @@ import { Research, registerResearch } from "./research.js";
 import { Monitors, registerMonitors, trunksSwitchedOff } from "./monitors.js";
 // Wave 8: watching a rectangle of the screen for a change, off unless the owner asks twice.
 import { ScreenWatches, registerScreenWatches } from "./screen-watch.js";
+import { readScreenText } from "./screen-watch-ocr.js";
+import { registerLocalOcr } from "./local-ocr.js";
 import { MorningBrief, registerBrief } from "./brief.js";
 import { DesktopControl } from "./integrations/desktop.js";
 import { LinuxDesktopSandbox } from "./integrations/linux-desktop.js";
@@ -715,7 +721,7 @@ export async function createBranch(options: {
     (tool) => { const permission = registry.permissionOf(tool); return permission !== "" && !isReadOnlyPermission(permission); });
   runtime.turnStarted = (run) => rewinds.turnStarted(run);
   const goals = new GoalMode(runtime, store);
-  registerSkills(registry, store);
+  registerSkills(registry, store, () => skillPackages);
   registerContextFiles(registry, store);
   documents = new DocumentLibrary(store, runtime.models, files);
   runtime.attachmentsFiled = async (session, owner, refs) => {
@@ -727,6 +733,10 @@ export async function createBranch(options: {
     }
   };
   registerDocuments(registry, documents);
+  registerLocalOcr(registry, files, (context) => {
+    if (context.owner !== runtime.owner) throw new Error("Local OCR is the owner's alone");
+    store.profiles.requireOwner("Local OCR");
+  }, (text) => runtime.hideSecrets(text));
   registerAttachmentTools(registry, store, attachments);
   registry.register(environmentTool((runId) => runtime.channelOf(runId))); // where Branch is running, on request
   runtime.documents = documents;
@@ -1189,7 +1199,8 @@ ${result.output || "(it said nothing)"}`;
   // Wave 8: watching one rectangle of the screen for a change. Off unless the owner switches it on
   // AND has using the screen switched on; the picture is never kept, only a fingerprint of it.
   const screenWatches = new ScreenWatches(store, (region) => desktop.captureRegion(region),
-    () => desktop.enabled(runtime.owner), deliverMessage, watchTrunks);
+    () => desktop.enabled(runtime.owner), deliverMessage, watchTrunks,
+    async (picture) => runtime.hideSecrets(await readScreenText(picture)));
   registerScreenWatches(registry, screenWatches);
   const brief = new MorningBrief(store, monitors, documents, deliverMessage);
   registerBrief(registry, brief);
@@ -2103,6 +2114,11 @@ ${result.output || "(it said nothing)"}`;
   };
   // Changing Branch's own settings by asking, saved through the same writers as the window's (src/settings-kit/tools.ts).
   registerSettingsTools(registry, store, () => settingsKitWriters(branch));
+  // Branch's own updates, asked about or asked for by the owner (src/comfort/update-tool.ts).
+  const updateFacts = { version: String(createRequire(import.meta.url)("../package.json").version), commit: ownBuild,
+    newestPassing: newestPassing(primaryRepo) };
+  registerUpdateTool(registry, store, updateFacts);
+  channels.updateFacts = updateFacts;
   registerHelpSearch(registry); // what Branch knows about itself, from its own handbook
   // Wave 9: a graph flow left working when the app closed picks up at the box after the last one
   // that finished, with the state exactly as that box left it. Nothing is started again from the

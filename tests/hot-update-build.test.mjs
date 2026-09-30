@@ -133,6 +133,18 @@ test("a change the app's main process loads, or new packages, goes the packaged 
   assert.equal((await plan(t, repo, packages)).outcome.tier, "shell");
 });
 
+test("a main-process file that only the running engine has not seen still goes the packaged way", { timeout: 120000 }, async (t) => {
+  // Seen live 2026-09-30: the app was packaged from a newer change than its running engine, so the main-process file was
+  // in the engine's list only. The live update carried a "shell" part its own check refuses, and waited for ever.
+  const repo = await repository(t);
+  const shared = await repo.change({ "src/shared.ts": "export const shared = 2;\n" });
+  const next = await repo.change({ "public/app.css": "body{color:blue}\n" });
+  const { outcome, appRoot } = await plan(t, repo, next, { packaged: shared, running: shared });
+  assert.equal(outcome.tier, "shell");
+  assert.match(outcome.reason, /src\/shared\.ts is loaded by the app's main process/);
+  assert.equal(await exists(join(appRoot, "live")), false, "nothing was staged");
+});
+
 test("the gateway's own code is its own part; a change touching nothing that runs needs nothing", { timeout: 120000 }, async (t) => {
   const repo = await repository(t);
   const gateway = await repo.change({ "src/never-break/gateway.ts": "export const Gateway = 2;\n" });

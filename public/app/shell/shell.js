@@ -47,6 +47,7 @@ import { resizerHTML, toggleSide, initResize, railNow } from "./resize.js";
 import { projectRows, loadProjects } from "../places/project.js"; // area projects: the fold's rows and a project's own page
 import { initWhatCan } from "../flows/whatcan.js"; // the "What can Branch do" gallery
 import { homeButton, initHome } from "./home.js"; // RES-701: the Home panel beside any page
+import { olderConversationsHTML, initSessionPages } from "./session-pages.js";
 import { simpleButton, initSimple } from "./simple.js"; // RES-704: the Simple / Advanced switch
 
 const WIDE = matchMedia("(min-width: 761px)");
@@ -169,7 +170,7 @@ function list() {
   return `<nav class="list" aria-label="${t("people.home.list")}">
     ${hidden("projects") ? "" : `<button class="lh lh-btn" type="button" data-act="projtoggle" aria-expanded="${!!S.projOpen}" data-hide="projects">${ic(S.projOpen ? "down" : "chev", "s")}${t("memory.movein.kind.project")}</button>${S.projOpen ? projectRows() : ""}`}
     ${pinned.length ? `<div class="lh">${t("window.shell.shell.pinned")}</div>${rows(pinned)}` : ""}
-    ${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${rows(recent)}` : ""}${putAwayEntries()}</nav>`;
+    ${recent.length ? `<div class="lh${recentClass()}">${t("window.shell.shell.recent")}${markAllButton()}</div>${rows(recent)}` : ""}${olderConversationsHTML()}${putAwayEntries()}</nav>`;
 }
 
 function side() {
@@ -269,6 +270,7 @@ export function initShell() {
   initAutoUpdate();
   initUpdating(); // the update screen (shell/updating.js)
   initSearch();
+  initSessionPages();
   initThemes();
   initPalette();
   initPerson();

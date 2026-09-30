@@ -475,6 +475,9 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .pop .ph{padding:8px 10px 4px;font-size:11.5px;font-weight:500;color:var(--ink-3)}
 .pop .pt{padding:8px 10px 2px;font-weight:600;font-size:14px}
 .pop .pp{padding:0 10px 8px;font-size:12.5px;color:var(--ink-2);margin:0}
+.pop .gateway-activity14 ol{list-style:none;margin:0;padding:0 10px 8px;max-height:180px;overflow:auto}
+.pop .gateway-activity14 li{display:grid;gap:3px;padding:6px 0;font-size:12.5px;overflow-wrap:anywhere}
+.pop .gateway-activity14 time{font-size:11px;color:var(--ink-3)}
 .mi{display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;border-radius:9px;text-align:left;font-size:13.5px}
 .mi:hover,.mi:focus-visible{background:var(--fill)}
 .mi .ico{color:var(--ink-3);display:grid}
