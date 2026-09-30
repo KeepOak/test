@@ -1,5 +1,5 @@
 {
-  "format": 1,
+  "format": 2,
   "checked": "2026-09-26",
   "connectors": [
     {
@@ -7,14 +7,30 @@
       "name": "GitHub",
       "category": "Work",
       "description": "Repos, issues, pull requests",
-      "needs": "A GitHub account"
+      "needs": "A GitHub account",
+      "server": {
+        "name": "io.branch.catalogue/github",
+        "title": "GitHub",
+        "description": "Repos, issues, pull requests",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "gitlab",
       "name": "GitLab",
       "category": "Work",
       "description": "Projects, merge requests, pipelines",
-      "needs": "A GitLab account"
+      "needs": "A GitLab account",
+      "server": {
+        "name": "io.branch.catalogue/gitlab",
+        "title": "GitLab",
+        "description": "Projects, merge requests, pipelines",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "linear",
@@ -22,7 +38,20 @@
       "category": "Work",
       "description": "Issues and projects",
       "needs": "A sign-in to Linear",
-      "address": "https://mcp.linear.app/mcp"
+      "server": {
+        "name": "io.branch.catalogue/linear",
+        "title": "Linear",
+        "description": "Issues and projects",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.linear.app/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "jira",
@@ -30,7 +59,20 @@
       "category": "Work",
       "description": "Issues, sprints and boards",
       "needs": "A sign-in to Atlassian",
-      "address": "https://mcp.atlassian.com/v2/mcp"
+      "server": {
+        "name": "io.branch.catalogue/jira",
+        "title": "Jira",
+        "description": "Issues, sprints and boards",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.atlassian.com/v2/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "confluence",
@@ -38,7 +80,20 @@
       "category": "Work",
       "description": "Pages and spaces",
       "needs": "A sign-in to Atlassian",
-      "address": "https://mcp.atlassian.com/v2/mcp"
+      "server": {
+        "name": "io.branch.catalogue/confluence",
+        "title": "Confluence",
+        "description": "Pages and spaces",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.atlassian.com/v2/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "asana",
@@ -46,14 +101,35 @@
       "category": "Work",
       "description": "Tasks and projects",
       "needs": "A sign-in to Asana",
-      "address": "https://mcp.asana.com/v2/mcp"
+      "server": {
+        "name": "io.branch.catalogue/asana",
+        "title": "Asana",
+        "description": "Tasks and projects",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.asana.com/v2/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "trello",
       "name": "Trello",
       "category": "Work",
       "description": "Boards and cards",
-      "needs": "A Trello account"
+      "needs": "A Trello account",
+      "server": {
+        "name": "io.branch.catalogue/trello",
+        "title": "Trello",
+        "description": "Boards and cards",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "clickup",
@@ -61,7 +137,20 @@
       "category": "Work",
       "description": "Tasks and docs",
       "needs": "A sign-in to ClickUp",
-      "address": "https://mcp.clickup.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/clickup",
+        "title": "ClickUp",
+        "description": "Tasks and docs",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.clickup.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "monday-com",
@@ -69,7 +158,20 @@
       "category": "Work",
       "description": "Boards and items",
       "needs": "A sign-in to monday.com",
-      "address": "https://mcp.monday.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/monday-com",
+        "title": "Monday.com",
+        "description": "Boards and items",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.monday.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "notion",
@@ -77,7 +179,20 @@
       "category": "Work",
       "description": "Pages and databases",
       "needs": "A sign-in to Notion",
-      "address": "https://mcp.notion.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/notion",
+        "title": "Notion",
+        "description": "Pages and databases",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.notion.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "airtable",
@@ -85,7 +200,20 @@
       "category": "Work",
       "description": "Bases and records",
       "needs": "A sign-in to Airtable",
-      "address": "https://mcp.airtable.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/airtable",
+        "title": "Airtable",
+        "description": "Bases and records",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.airtable.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "todoist",
@@ -93,63 +221,140 @@
       "category": "Work",
       "description": "Tasks and projects",
       "needs": "A sign-in to Todoist",
-      "address": "https://ai.todoist.net/mcp"
+      "server": {
+        "name": "io.branch.catalogue/todoist",
+        "title": "Todoist",
+        "description": "Tasks and projects",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://ai.todoist.net/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "gmail",
       "name": "Gmail",
       "category": "Mail & calendar",
       "description": "Read, search and draft mail",
-      "needs": "A Google account"
+      "needs": "A Google account",
+      "server": {
+        "name": "io.branch.catalogue/gmail",
+        "title": "Gmail",
+        "description": "Read, search and draft mail",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "outlook",
       "name": "Outlook",
       "category": "Mail & calendar",
       "description": "Mail, calendar and contacts",
-      "needs": "A Microsoft account"
+      "needs": "A Microsoft account",
+      "server": {
+        "name": "io.branch.catalogue/outlook",
+        "title": "Outlook",
+        "description": "Mail, calendar and contacts",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "google-calendar",
       "name": "Google Calendar",
       "category": "Mail & calendar",
       "description": "Events and free time",
-      "needs": "A Google account"
+      "needs": "A Google account",
+      "server": {
+        "name": "io.branch.catalogue/google-calendar",
+        "title": "Google Calendar",
+        "description": "Events and free time",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "fastmail",
       "name": "Fastmail",
       "category": "Mail & calendar",
       "description": "Mail and calendars",
-      "needs": "A Fastmail account"
+      "needs": "A Fastmail account",
+      "server": {
+        "name": "io.branch.catalogue/fastmail",
+        "title": "Fastmail",
+        "description": "Mail and calendars",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "proton-mail",
       "name": "Proton Mail",
       "category": "Mail & calendar",
       "description": "Mail through the bridge",
-      "needs": "Proton Mail Bridge on this computer"
+      "needs": "Proton Mail Bridge on this computer",
+      "server": {
+        "name": "io.branch.catalogue/proton-mail",
+        "title": "Proton Mail",
+        "description": "Mail through the bridge",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "google-drive",
       "name": "Google Drive",
       "category": "Files",
       "description": "Docs, sheets and files",
-      "needs": "A Google account"
+      "needs": "A Google account",
+      "server": {
+        "name": "io.branch.catalogue/google-drive",
+        "title": "Google Drive",
+        "description": "Docs, sheets and files",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "onedrive",
       "name": "OneDrive",
       "category": "Files",
       "description": "Files and Office documents",
-      "needs": "A Microsoft account"
+      "needs": "A Microsoft account",
+      "server": {
+        "name": "io.branch.catalogue/onedrive",
+        "title": "OneDrive",
+        "description": "Files and Office documents",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "dropbox",
       "name": "Dropbox",
       "category": "Files",
       "description": "Files and folders",
-      "needs": "A Dropbox account"
+      "needs": "A Dropbox account",
+      "server": {
+        "name": "io.branch.catalogue/dropbox",
+        "title": "Dropbox",
+        "description": "Files and folders",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "box",
@@ -157,7 +362,20 @@
       "category": "Files",
       "description": "Files and shared folders",
       "needs": "A sign-in to Box",
-      "address": "https://mcp.box.com/"
+      "server": {
+        "name": "io.branch.catalogue/box",
+        "title": "Box",
+        "description": "Files and shared folders",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.box.com/",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "files-on-this-computer",
@@ -165,18 +383,55 @@
       "category": "Files",
       "description": "Folders you choose",
       "needs": "Node.js on this computer, and the folders you add to the command",
-      "command": [
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-filesystem"
-      ]
+      "server": {
+        "name": "io.branch.catalogue/files-on-this-computer",
+        "title": "Files on this computer",
+        "description": "Folders you choose",
+        "version": "2026-09-26",
+        "packages": [
+          {
+            "packageArguments": {
+              "isRequired": true,
+              "valueHint": "folder",
+              "type": "positional",
+              "isSecret": false,
+              "format": "filepath"
+            },
+            "registryType": "npm",
+            "transport": {
+              "type": "stdio"
+            },
+            "identifier": "@modelcontextprotocol/server-filesystem",
+            "environmentVariables": [],
+            "runtimeArguments": [
+              {
+                "isRequired": false,
+                "isSecret": false,
+                "type": "positional",
+                "value": "-y"
+              }
+            ],
+            "runtimeHint": "npx",
+            "version": "2026.8.31"
+          }
+        ],
+        "remotes": []
+      }
     },
     {
       "id": "obsidian",
       "name": "Obsidian",
       "category": "Files",
       "description": "Notes in your vault",
-      "needs": "Your Obsidian vault on this computer"
+      "needs": "Your Obsidian vault on this computer",
+      "server": {
+        "name": "io.branch.catalogue/obsidian",
+        "title": "Obsidian",
+        "description": "Notes in your vault",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "slack",
@@ -184,28 +439,65 @@
       "category": "Chat",
       "description": "Channels and messages",
       "needs": "A sign-in to Slack",
-      "address": "https://mcp.slack.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/slack",
+        "title": "Slack",
+        "description": "Channels and messages",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.slack.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "discord",
       "name": "Discord",
       "category": "Chat",
       "description": "Servers and channels",
-      "needs": "A Discord bot token"
+      "needs": "A Discord bot token",
+      "server": {
+        "name": "io.branch.catalogue/discord",
+        "title": "Discord",
+        "description": "Servers and channels",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "microsoft-teams",
       "name": "Microsoft Teams",
       "category": "Chat",
       "description": "Chats and channels",
-      "needs": "A Microsoft account"
+      "needs": "A Microsoft account",
+      "server": {
+        "name": "io.branch.catalogue/microsoft-teams",
+        "title": "Microsoft Teams",
+        "description": "Chats and channels",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "telegram",
       "name": "Telegram",
       "category": "Chat",
       "description": "Chats through your bot",
-      "needs": "A Telegram bot token"
+      "needs": "A Telegram bot token",
+      "server": {
+        "name": "io.branch.catalogue/telegram",
+        "title": "Telegram",
+        "description": "Chats through your bot",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "sentry",
@@ -213,7 +505,20 @@
       "category": "Developer",
       "description": "Errors from your apps",
       "needs": "A sign-in to Sentry",
-      "address": "https://mcp.sentry.dev/mcp"
+      "server": {
+        "name": "io.branch.catalogue/sentry",
+        "title": "Sentry",
+        "description": "Errors from your apps",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.sentry.dev/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "vercel",
@@ -221,7 +526,20 @@
       "category": "Developer",
       "description": "Deployments and logs",
       "needs": "A sign-in to Vercel",
-      "address": "https://mcp.vercel.com/"
+      "server": {
+        "name": "io.branch.catalogue/vercel",
+        "title": "Vercel",
+        "description": "Deployments and logs",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.vercel.com/",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "cloudflare",
@@ -229,7 +547,20 @@
       "category": "Developer",
       "description": "Workers, DNS and pages",
       "needs": "A sign-in to Cloudflare",
-      "address": "https://bindings.mcp.cloudflare.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/cloudflare",
+        "title": "Cloudflare",
+        "description": "Workers, DNS and pages",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://bindings.mcp.cloudflare.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "supabase",
@@ -237,35 +568,80 @@
       "category": "Developer",
       "description": "Database and auth",
       "needs": "A sign-in to Supabase",
-      "address": "https://mcp.supabase.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/supabase",
+        "title": "Supabase",
+        "description": "Database and auth",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.supabase.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "postgres",
       "name": "Postgres",
       "category": "Developer",
       "description": "Query a database",
-      "needs": "The address of your database"
+      "needs": "The address of your database",
+      "server": {
+        "name": "io.branch.catalogue/postgres",
+        "title": "Postgres",
+        "description": "Query a database",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "sqlite",
       "name": "SQLite",
       "category": "Developer",
       "description": "A local database file",
-      "needs": "A database file on this computer"
+      "needs": "A database file on this computer",
+      "server": {
+        "name": "io.branch.catalogue/sqlite",
+        "title": "SQLite",
+        "description": "A local database file",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "docker",
       "name": "Docker",
       "category": "Developer",
       "description": "Containers on this computer",
-      "needs": "Docker on this computer"
+      "needs": "Docker on this computer",
+      "server": {
+        "name": "io.branch.catalogue/docker",
+        "title": "Docker",
+        "description": "Containers on this computer",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "kubernetes",
       "name": "Kubernetes",
       "category": "Developer",
       "description": "Clusters and pods",
-      "needs": "kubectl and a cluster you can reach"
+      "needs": "kubectl and a cluster you can reach",
+      "server": {
+        "name": "io.branch.catalogue/kubernetes",
+        "title": "Kubernetes",
+        "description": "Clusters and pods",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "hugging-face",
@@ -273,7 +649,20 @@
       "category": "Developer",
       "description": "Models and datasets",
       "needs": "A sign-in to Hugging Face",
-      "address": "https://huggingface.co/mcp"
+      "server": {
+        "name": "io.branch.catalogue/hugging-face",
+        "title": "Hugging Face",
+        "description": "Models and datasets",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://huggingface.co/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "playwright",
@@ -281,10 +670,34 @@
       "category": "Developer",
       "description": "Drive a browser",
       "needs": "Node.js on this computer",
-      "command": [
-        "npx",
-        "@playwright/mcp@latest"
-      ]
+      "server": {
+        "name": "io.branch.catalogue/playwright",
+        "title": "Playwright",
+        "description": "Drive a browser",
+        "version": "2026-09-26",
+        "packages": [
+          {
+            "packageArguments": null,
+            "registryType": "npm",
+            "transport": {
+              "type": "stdio"
+            },
+            "identifier": "@playwright/mcp",
+            "environmentVariables": [],
+            "runtimeArguments": [
+              {
+                "isRequired": false,
+                "isSecret": false,
+                "type": "positional",
+                "value": "-y"
+              }
+            ],
+            "runtimeHint": "npx",
+            "version": "0.0.83"
+          }
+        ],
+        "remotes": []
+      }
     },
     {
       "id": "figma",
@@ -292,7 +705,20 @@
       "category": "Design & media",
       "description": "Designs and comments",
       "needs": "A sign-in to Figma",
-      "address": "https://mcp.figma.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/figma",
+        "title": "Figma",
+        "description": "Designs and comments",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.figma.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "canva",
@@ -300,21 +726,50 @@
       "category": "Design & media",
       "description": "Designs and brand kits",
       "needs": "A sign-in to Canva",
-      "address": "https://mcp.canva.com/mcp"
+      "server": {
+        "name": "io.branch.catalogue/canva",
+        "title": "Canva",
+        "description": "Designs and brand kits",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.canva.com/mcp",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "youtube",
       "name": "YouTube",
       "category": "Design & media",
       "description": "Videos and captions",
-      "needs": "A Google account"
+      "needs": "A Google account",
+      "server": {
+        "name": "io.branch.catalogue/youtube",
+        "title": "YouTube",
+        "description": "Videos and captions",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "spotify",
       "name": "Spotify",
       "category": "Design & media",
       "description": "Music and playlists",
-      "needs": "A Spotify account"
+      "needs": "A Spotify account",
+      "server": {
+        "name": "io.branch.catalogue/spotify",
+        "title": "Spotify",
+        "description": "Music and playlists",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "stripe",
@@ -322,77 +777,170 @@
       "category": "Business",
       "description": "Payments and invoices",
       "needs": "A sign-in to Stripe",
-      "address": "https://mcp.stripe.com/"
+      "server": {
+        "name": "io.branch.catalogue/stripe",
+        "title": "Stripe",
+        "description": "Payments and invoices",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": [
+          {
+            "type": "streamable-http",
+            "url": "https://mcp.stripe.com/",
+            "headers": []
+          }
+        ]
+      }
     },
     {
       "id": "shopify",
       "name": "Shopify",
       "category": "Business",
       "description": "Orders and products",
-      "needs": "A Shopify store"
+      "needs": "A Shopify store",
+      "server": {
+        "name": "io.branch.catalogue/shopify",
+        "title": "Shopify",
+        "description": "Orders and products",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "hubspot",
       "name": "HubSpot",
       "category": "Business",
       "description": "Contacts and deals",
-      "needs": "A HubSpot account"
+      "needs": "A HubSpot account",
+      "server": {
+        "name": "io.branch.catalogue/hubspot",
+        "title": "HubSpot",
+        "description": "Contacts and deals",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "salesforce",
       "name": "Salesforce",
       "category": "Business",
       "description": "Accounts and opportunities",
-      "needs": "A Salesforce account"
+      "needs": "A Salesforce account",
+      "server": {
+        "name": "io.branch.catalogue/salesforce",
+        "title": "Salesforce",
+        "description": "Accounts and opportunities",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "quickbooks",
       "name": "QuickBooks",
       "category": "Business",
       "description": "Books and invoices",
-      "needs": "A QuickBooks account"
+      "needs": "A QuickBooks account",
+      "server": {
+        "name": "io.branch.catalogue/quickbooks",
+        "title": "QuickBooks",
+        "description": "Books and invoices",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "zendesk",
       "name": "Zendesk",
       "category": "Business",
       "description": "Tickets and help center",
-      "needs": "A Zendesk account"
+      "needs": "A Zendesk account",
+      "server": {
+        "name": "io.branch.catalogue/zendesk",
+        "title": "Zendesk",
+        "description": "Tickets and help center",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "home-assistant",
       "name": "Home Assistant",
       "category": "Home & web",
       "description": "Lights, sensors and scenes",
-      "needs": "Your Home Assistant address and a long-lived token"
+      "needs": "Your Home Assistant address and a long-lived token",
+      "server": {
+        "name": "io.branch.catalogue/home-assistant",
+        "title": "Home Assistant",
+        "description": "Lights, sensors and scenes",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "brave-search",
       "name": "Brave Search",
       "category": "Home & web",
       "description": "Search the web",
-      "needs": "A Brave Search key"
+      "needs": "A Brave Search key",
+      "server": {
+        "name": "io.branch.catalogue/brave-search",
+        "title": "Brave Search",
+        "description": "Search the web",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "weather",
       "name": "Weather",
       "category": "Home & web",
       "description": "Forecasts where you are",
-      "needs": "Nothing"
+      "needs": "Nothing",
+      "server": {
+        "name": "io.branch.catalogue/weather",
+        "title": "Weather",
+        "description": "Forecasts where you are",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "maps",
       "name": "Maps",
       "category": "Home & web",
       "description": "Places and directions",
-      "needs": "A maps key"
+      "needs": "A maps key",
+      "server": {
+        "name": "io.branch.catalogue/maps",
+        "title": "Maps",
+        "description": "Places and directions",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     },
     {
       "id": "zapier",
       "name": "Zapier",
       "category": "Home & web",
       "description": "Thousands of apps through Zaps",
-      "needs": "Your own Zapier server address"
+      "needs": "Your own Zapier server address",
+      "server": {
+        "name": "io.branch.catalogue/zapier",
+        "title": "Zapier",
+        "description": "Thousands of apps through Zaps",
+        "version": "2026-09-26",
+        "packages": [],
+        "remotes": []
+      }
     }
   ]
 }

@@ -25,6 +25,8 @@ import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { showTool, reloadTools } from "../places/customize.js";
 import { t } from "../../i18n.js";
+import { serverJsonForm, publishedServer, changePublishedOption } from './server-json-form.js';
+import { initPublicRegistry } from "./mcp-registry.js";
 
 const prov = (act, v, icon, name, sub) => `<button class="prov" type="button" data-act="${act}" data-v="${v}">${icon}<b>${name}</b><small>${sub}</small></button>`;
 const tile = (name) => `<span class="ico-tile">${ic(name, "s")}</span>`;
@@ -52,7 +54,7 @@ async function connectorCatalogue() {
     CAT.count = got.count ?? 0;
   } catch (error) { toast(error.message); return; }
   openDlg({ title: t("window.flows.conn.add-connector"), wide: true, body: catalogueBody(),
-    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn" type="button" data-act="t9-own">${t("window.flows.conn.own")}</button>` });
+    foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn" type="button" data-act="mcp-registry-open">${t("action.search")} · MCP Registry</button><button class="btn" type="button" data-act="t9-own">${t("window.flows.conn.own")}</button>` });
 }
 /* Filtering redraws only the list and the tabs, so the search box keeps its caret. */
 function redrawCatalogue() {
@@ -62,18 +64,19 @@ function redrawCatalogue() {
 }
 
 /* ---------- your own server ---------- */
-function ownServer(entry = null) {
+export function ownServer(entry = null) {
   CAT.entry = entry;
-  const web = !entry?.command;
+  const web = !!entry?.server?.remotes?.length;
   const how = [t("window.flows.conn.command"), t("window.flows.conn.web")].map((o, i) => `<button type="button" data-act="mcp-how" data-v="${i ? "web" : "cmd"}" aria-pressed="${entry ? web === (i === 1) : i === 0}">${o}</button>`).join("");
-  const reach = entry?.command ? entry.command.join(" ") : entry?.address ?? "";
+  const reach = '';
   openDlg({ title: t("window.flows.conn.own-mcp"),
-    body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><label class="fld"><span>${t("window.flows.conn.secrets")}</span><input class="inp" id="mcp-secrets"></label><p class="hint" id="mcp-asks" data-css="margin:0" ${entry && web ? "hidden" : ""}>${t("window.flows.conn.asks-before-it-starts")}</p><div id="mcp-test"></div>`,
+    body: `${serverJsonForm(entry)}<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><label class="fld"><span>${t("window.flows.conn.secrets")}</span><input class="inp" id="mcp-secrets"></label><p class="hint" id="mcp-asks" data-css="margin:0">The connector stays off until you switch it on. Declared private inputs accept environment variable names only.</p><div id="mcp-test"></div>`,
     foot: `<button class="btn" type="button" data-act="mcp-test">${t("window.flows.conn.test")}</button><button class="btn pri" type="button" data-act="mcp-save">${t("window.flows.conn.add-server")}</button>` });
 }
 /* Words on one line, a "quoted part" kept whole. */
 const words = (line) => [...line.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
 function typedServer() {
+  if (!($('#mcp-cmd')?.value ?? '').trim()) { const server = publishedServer(); if (server) return server; }
   const web = document.querySelector('.dlg [data-act="mcp-how"][data-v="web"]')?.getAttribute("aria-pressed") === "true";
   const reach = ($("#mcp-cmd")?.value ?? "").trim();
   const secrets = ($("#mcp-secrets")?.value ?? "").split(/[\s,]+/).filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
@@ -84,7 +87,8 @@ function typedServer() {
 async function saveServer() {
   const name = ($("#mcp-name")?.value ?? "").trim();
   try {
-    const added = await api("mcp/servers", { name, server: typedServer(), ...(CAT.entry ? { catalogue: CAT.entry.id } : {}) });
+    if (!confirm('Save this connector switched off? Review its transport and declared inputs before switching it on.')) return;
+    const added = await api("mcp/servers", { name, server: typedServer(), saveOff: true, ...(CAT.entry?.id ? { catalogue: CAT.entry.id } : {}) });
     closeDlg();
     showTool("mcp", added.server.id);
     await reloadTools();
@@ -171,7 +175,8 @@ const ADD = { mcp: connectorCatalogue, skills: addSkill, clis: addCliDialog, age
 const entryOf = (id) => CAT.list.flatMap((g) => g.connectors).find((c) => c.id === id) ?? null;
 
 export function init() {
-  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
+  initPublicRegistry();
+  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card", "sw:mcp-published-option"]);
   on("ag-add", () => agentCard());
   on("ag-go", () => addAgent());
   /* A plugin has no add form the engine backs yet: the button opens that kind in Customize. */
@@ -183,7 +188,7 @@ export function init() {
   on("mcp-save", () => saveServer());
   on("cli-add", (el) => allowCli({ name: el.dataset.v }, el));
   on("sk-src", () => $("#sk-file")?.click());
-  document.addEventListener("change", (e) => { if (e.target.id === "sk-file") installFile(e.target.files?.[0]); });
+  document.addEventListener("change", (e) => { if (e.target.id === "sk-file") installFile(e.target.files?.[0]); if (e.target.id === 'mcp-published-option') changePublishedOption(e.target.value); });
   document.addEventListener("input", (e) => { if (e.target.id === "mcp-q") { CAT.q = e.target.value; redrawCatalogue(); } });
   document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.id === "cli-path" && e.target.value.trim()) allowCli({ path: e.target.value.trim() }, null); });
 }

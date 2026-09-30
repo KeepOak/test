@@ -7,6 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { z } from "zod";
+import { ServerJsonSchema, publicServerJson } from './mcp-server-json.js';
 
 const words = (max: number) => z.string().trim().min(1).max(max);
 const EntrySchema = z.object({
@@ -15,11 +16,10 @@ const EntrySchema = z.object({
   category: words(40),
   description: words(160),
   needs: words(160),
-  address: z.string().url().startsWith("https://").optional(),
-  command: z.array(z.string().min(1).max(200)).min(1).max(10).optional(),
+  server: ServerJsonSchema,
 }).strict();
 export const McpCatalogueSchema = z.object({
-  format: z.literal(1),
+  format: z.literal(2),
   checked: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   connectors: z.array(EntrySchema).min(1).max(200),
 }).strict();
@@ -34,7 +34,9 @@ export function mcpCatalogue(): McpCatalogue {
   for (const source of bundled) {
     let text: string;
     try { text = readFileSync(source, "utf8"); } catch { continue; }
-    return (loaded = McpCatalogueSchema.parse(JSON.parse(text) as unknown));
+    const file = McpCatalogueSchema.parse(JSON.parse(text) as unknown);
+    for (const entry of file.connectors) entry.server = publicServerJson(entry.server);
+    return (loaded = file);
   }
   throw new Error("The connector catalogue (mcp-catalogue.json) is missing from this installation");
 }
