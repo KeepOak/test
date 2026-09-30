@@ -11,6 +11,7 @@ import { killProcessGroup, killWindowsTree } from "./integrations/shell-process.
 import { defaultJobObjects, jobWithin, startedThrough, type Job, type JobObjects } from "./integrations/job-object.js";
 import { PosixProcessGroup, type HeldBySystem } from "./integrations/posix-limits.js";
 import { fromTheTop, netlessEnvironment } from "./integrations/shell-config.js";
+import type { HeldLaunch } from "./integrations/shell.js";
 import { sandboxShape, shapeChoice, type SandboxChoice } from "./sandbox.js";
 import {
   chooseSandboxBackend, defaultSandboxProbe, sandboxBackendSet, sliceFor,
@@ -72,8 +73,11 @@ const heldBy = (job: Job | null): { heldBySystem?: HeldBySystem } => {
   return held ? { heldBySystem: held } : {};
 };
 
+/** How long a program's output may keep coming after it exits before it is settled anyway (Codex's TRAILING_OUTPUT_GRACE). */
+const trailingOutputMs = 100;
+
 /** One program left running, with what it has printed so far. */
-class Running {
+export class Running {
   readonly id = randomUUID();
   readonly startedAt = new Date().toISOString();
   private readonly chunks: Buffer[] = [];
@@ -85,20 +89,37 @@ class Running {
   private timer: NodeJS.Timeout;
   /** Set the moment the owner asks for it to stop, so the kill's own exit code is not read as a failure. */
   private asked = false;
+  /** selfdev: the unfinished last line printed so far, for `wakeOnText`. */
+  private partial = "";
+  /** selfdev: wake-ups left for a matching line. */
+  private wakesLeft: number;
   constructor(
     readonly name: string, readonly program: string, readonly sessionId: string, readonly runId: string,
     private readonly child: ChildProcess, private readonly job: Job | null,
     private readonly bufferBytes: number, maxMinutes: number,
     private readonly onSettled: (view: ProcessView) => void = () => {},
+    readonly wake: ProcessWake = { onExit: false, onText: [], wakes: 0 },
+    private readonly onLine: (view: ProcessView, line: string) => void = () => {},
   ) {
+    this.wakesLeft = wake.onText.length ? wake.wakes : 0;
     child.stdout?.on("data", (chunk: Buffer) => this.keep(chunk));
     child.stderr?.on("data", (chunk: Buffer) => this.keep(chunk));
     child.once("error", () => { this.settle("failed"); });
-    child.once("exit", (code) => { this.exitCode = code; this.settle(code === 0 ? "finished" : "failed"); });
+    // P0 (self-build): settled once its output is in, not the moment it exits, so the wake-up carries its last lines.
+    // A program that leaves something holding its output open is settled a moment later all the same. As Codex's
+    // unified exec does (openai/codex, codex-rs/core/src/unified_exec/async_watcher.rs, TRAILING_OUTPUT_GRACE, Apache-2.0).
+    child.once("exit", (code) => {
+      this.exitCode = code;
+      const done = (): void => { clearTimeout(grace); this.settle(code === 0 ? "finished" : "failed"); };
+      const grace = setTimeout(done, trailingOutputMs);
+      grace.unref();
+      child.once("close", done);
+    });
     this.timer = setTimeout(() => { void this.stop(); }, maxMinutes * 60000);
     this.timer.unref();
   }
   private keep(chunk: Buffer): void {
+    if (this.wakesLeft > 0) this.watch(chunk);
     this.chunks.push(chunk);
     this.bytes += chunk.length;
     while (this.bytes > this.bufferBytes && this.chunks.length > 1) {
@@ -106,8 +127,23 @@ class Running {
       this.dropped = true;
     }
   }
+  /** selfdev: a whole line that contains one of the words asked for wakes the conversation, up to `wakes` times. */
+  private watch(chunk: Buffer): void {
+    const lines = (this.partial + chunk.toString("utf8")).split(/\r?\n/);
+    this.partial = (lines.pop() ?? "").slice(-4000);
+    for (const line of lines) this.match(line);
+  }
+  private match(line: string): void {
+    if (this.wakesLeft <= 0) return;
+    const lower = line.toLowerCase();
+    if (!this.wake.onText.some((word) => lower.includes(word.toLowerCase()))) return;
+    this.wakesLeft--;
+    try { this.onLine(this.view(), line.slice(0, 1000)); } catch { /* a wake-up must never break the program */ }
+  }
   private settle(status: ProcessView["status"]): void {
     if (this.status !== "running") return;
+    // P0 (self-build): a last line printed without a newline still wakes the conversation.
+    if (this.partial) { const last = this.partial; this.partial = ""; this.match(last); }
     // A program the owner stopped counts as stopped, whatever exit code the kill itself produced.
     this.status = this.asked ? "stopped" : status;
     this.endedAt = new Date().toISOString();
@@ -144,17 +180,45 @@ class Running {
 }
 
 export const StartInputSchema = z.object({
-  program: alias.describe("The short name of one of the programs the owner allows to be left running."),
+  program: alias.describe("The short name of a program the owner allows to be left running, or of one shell.execute may run (such as npm, node or git)."),
   args: z.array(z.string().max(500).refine((value) => !value.includes("\0"), "NUL is not permitted")).max(40).default([]),
   cwd: z.string().min(1).max(500).default("."),
   /** A name the owner will see in the list, such as "website preview". */
   name: z.string().trim().min(1).max(60).default("a program"),
+  /** selfdev: wake this conversation when the program ends, with how it ended and its last lines, so nothing polls. */
+  wakeOnExit: z.boolean().default(false),
+  /** selfdev: wake this conversation when a line it prints contains one of these words (any case). */
+  wakeOnText: z.array(z.string().trim().min(1).max(200)).max(5).default([]),
+  /** selfdev: how many times a matching line may wake it. */
+  wakes: z.number().int().min(1).max(20).default(3),
 }).strict();
+/** selfdev: when a program left running wakes its conversation. */
+export interface ProcessWake { onExit: boolean; onText: string[]; wakes: number }
+/** selfdev: what wakes a conversation: its session, the task that started the program, and what to say. */
+export type ProcessWaker = (wake: { sessionId: string; runId: string; text: string }) => void;
 
 export class BackgroundProcesses {
   private readonly running = new Map<string, Running>();
   /** Told once when a program left running finishes, fails or is stopped (the check-in wakes on it). */
   readonly finished = new Set<(view: ProcessView) => void>();
+  /** selfdev: wakes a conversation with a follow-up message (Runtime.followUp); set by createBranch. */
+  waker: ProcessWaker | null = null;
+  /** workbench (SELF-304): the programs `shell.execute` may run (src/own-clis.ts commandPrograms); set by createBranch. */
+  commandPrograms: () => Record<string, { path: string; args: string[] }> = () => ({});
+  /** SELF-304: how a program held to one folder is walled before it starts (BranchShell.launchHeld); set once commands exist. */
+  heldLauncher: ((input: { executable: string; args: string[]; cwd: string }, context: ToolContext, timeoutMs: number) => Promise<HeldLaunch>) | null = null;
+  /**
+   * A program by its short name: the owner's list of programs to leave running first, then, for a task that may run
+   * commands (shell.execute), the ones commands may run. Without a context (a command rule reading the line), both.
+   */
+  private program(name: string, context?: Pick<ToolContext, "permissions" | "writesConfinedTo">): { path: string; args: string[] } | undefined {
+    const own = this.settings().programs;
+    if (Object.hasOwn(own, name)) return own[name];
+    // A task whose writes are held to one folder runs only what it was held with (shell.execute behind the sandbox).
+    if (context && (!context.permissions.has("shell.execute") || context.writesConfinedTo)) return undefined;
+    const commands = this.commandPrograms();
+    return Object.hasOwn(commands, name) ? commands[name] : undefined;
+  }
   constructor(
     private readonly store: Store, private readonly owner: string, private readonly workspace: string,
     private readonly jobs: JobObjects = defaultJobObjects(),
@@ -168,41 +232,69 @@ export class BackgroundProcesses {
    * listed arguments, then the call's. Null for a short name that is not on the list (refused anyway).
    */
   commandLine(input: { program: string; args: readonly string[] }): string | null {
-    const programs = this.settings().programs;
-    const program = Object.hasOwn(programs, input.program) ? programs[input.program] : undefined;
+    const program = this.program(input.program);
     if (!program) return null;
     const name = program.path.replace(/^.*[\\/]/, "").replace(/\.(exe|cmd|bat|com)$/i, "");
     return [name, ...program.args, ...input.args].join(" ").trim();
   }
   /** Starts a program and leaves it running; the tool call is over long before the program is. */
-  async start(input: z.infer<typeof StartInputSchema>, context: ToolContext): Promise<ProcessView & { sandbox: SandboxChoice; backend: SandboxBackendName }> {
+  async start(input: z.infer<typeof StartInputSchema>, context: ToolContext): Promise<ProcessView & { sandbox: SandboxChoice; backend: SandboxBackendName; heldTo?: string }> {
+    // A helper's own conversation is not where anyone listens; it reads the program's output or tells its lead.
+    if ((input.wakeOnExit || input.wakeOnText?.length) && context.depth > 0)
+      throw new Error("A helper cannot be woken by a program. Read its output with process.read, or tell your lead with helpers.tell_lead.");
     const settings = this.settings();
-    const program = Object.hasOwn(settings.programs, input.program) ? settings.programs[input.program] : undefined;
-    if (!program) throw new Error(`"${input.program}" is not one of the programs allowed to be left running. The owner adds those in Settings.`);
+    // SELF-304: while Branch's own source is checked out, a program is left running held to one folder, as a held
+    // shell.execute is (the contract guard sets writesConfinedTo); the owner's own list is not what runs then.
+    const held = !!context.writesConfinedTo;
+    const program = held ? null : this.program(input.program, context);
+    if (!held && !program) throw new Error(`"${input.program}" is not one of the programs allowed to be left running or run as a command. The owner adds those in Settings.`);
+    // Only a task that may run commands may leave one running, held or not.
+    if (held && !context.permissions.has("shell.execute"))
+      throw new Error(`"${input.program}" is not one of the programs allowed to be left running or run as a command. The owner adds those in Settings.`);
+    if (held && !this.heldLauncher) throw new Error("A program held to one folder cannot be left running here: there are no commands in this launch.");
     if (this.list({ active: true }).length >= settings.maxRunning)
       throw new Error(`${settings.maxRunning} programs are already running; stop one before starting another.`);
-    const cwd = await new WorkspaceFiles(this.workspace).checked(input.cwd, true);
     // An approval rule may say how tightly a program left running is held. Without one it is held
     // to its limits and left able to reach the internet, exactly as it was before.
     const shape = sandboxShape(context.sandbox, { job: true, netless: false });
-    const job = shape.job
+    const cwd = held ? "" : await new WorkspaceFiles(this.workspace).checked(input.cwd, true);
+    const launch = held
+      ? await this.heldLauncher!({ executable: input.program, args: input.args, cwd: input.cwd }, context, settings.maxMinutes * 60_000)
+      : null;
+    const job = shape.job || held
       ? await jobWithin(this.jobs, { maxMemoryMb: settings.maxMemoryMb, maxCpuSeconds: settings.maxCpuSeconds }, 1500)
       : null;
     // A rule may also say where it runs. The backend wraps the command — a container run, a call
     // into the Linux side — and the program left running is that wrapper, so stopping it stops
     // what it started. A backend that is not on this computer refuses here, before anything starts.
-    const start = await this.wrapped(context, cwd,
-      { executable: program.path, args: [...program.args, ...input.args] }, shape, settings);
+    const start = launch ? { ...launch.start, cwd: launch.cwd }
+      : await this.wrapped(context, cwd, { executable: program!.path, args: [...program!.args, ...input.args] }, shape, settings);
     // On macOS and Linux the limits are set as the program starts, so the job may change how it starts.
     const argv = startedThrough(job, { executable: start.executable, args: start.args });
-    const child = spawn(argv.executable, argv.args, { cwd: start.cwd, shell: false, windowsHide: true,
-      detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: start.env });
+    let child: ChildProcess;
+    try {
+      child = spawn(argv.executable, argv.args, { cwd: start.cwd, shell: false, windowsHide: true,
+        detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"], env: start.env });
+    } catch (error) {
+      await launch?.cleanup();
+      await job?.close().catch(() => undefined);
+      throw error;
+    }
     if (job && child.pid) await job.assign(child.pid).catch(() => false);
-    const entry = new Running(input.name, input.program, this.sessionOf(context), context.runId, child, job,
-      settings.bufferBytes, settings.maxMinutes, (view) => { for (const listener of this.finished) listener(view); });
+    const wake: ProcessWake = { onExit: input.wakeOnExit ?? false, onText: input.wakeOnText ?? [], wakes: input.wakes ?? 3 };
+    const entry: Running = new Running(input.name, input.program, this.sessionOf(context), context.runId, child, job,
+      settings.bufferBytes, settings.maxMinutes, (view) => {
+        // SELF-304: a held program's wall, scratch folder and any .git it planted go when it does.
+        if (launch) void launch.cleanup().then((swept) => {
+          if (swept.length) this.store.event(view.runId, "process.swept", { id: view.id, removed: swept });
+        });
+        for (const listener of this.finished) listener(view);
+        if (wake.onExit && view.status !== "stopped") this.wakeWith(view, `The program you left running, "${view.name}", ${view.status === "finished" ? "finished" : "failed"}`
+          + ` (exit code ${view.exitCode ?? "none"}). Its last lines:\n${entry.output(1500).text.trim() || "(nothing printed)"}`);
+      }, wake, (view, line) => this.wakeWith(view, `The program you left running, "${view.name}", printed a line you asked to be woken for:\n${line}`));
     this.running.set(entry.id, entry);
-    if (context.runId) this.store.event(context.runId, "process.started", { id: entry.id, name: entry.name, program: entry.program, pid: child.pid ?? null, sandbox: shapeChoice(shape), backend: context.sandboxBackend ?? "job-object" });
-    return { ...entry.view(), sandbox: shapeChoice(shape), backend: context.sandboxBackend ?? "job-object" };
+    if (context.runId) this.store.event(context.runId, "process.started", { id: entry.id, name: entry.name, program: entry.program, pid: child.pid ?? null, sandbox: shapeChoice(shape), backend: context.sandboxBackend ?? "job-object", ...(launch ? { heldTo: context.writesConfinedTo } : {}) });
+    return { ...entry.view(), sandbox: shapeChoice(shape), backend: context.sandboxBackend ?? "job-object", ...(launch ? { heldTo: context.writesConfinedTo! } : {}) };
   }
 
   /**
@@ -222,6 +314,11 @@ export class BackgroundProcesses {
       // wave mac3 (os-sandbox): a program left running goes behind the wall too.
       ...(context.osSandbox ? { wall: shape.netless ? { ...context.osSandbox, network: "none" as const } : context.osSandbox } : {}) });
     return start;
+  }
+  /** selfdev: a wake-up goes to the conversation that started the program, as that task's follow-up. */
+  private wakeWith(view: ProcessView, text: string): void {
+    this.store.event(view.runId, "process.woke", { id: view.id, name: view.name, status: view.status });
+    try { this.waker?.({ sessionId: view.sessionId, runId: view.runId, text }); } catch { /* the program is unaffected */ }
   }
   /** The conversation a task belongs to: what a program is filed under and read back by. */
   sessionOf(context: ToolContext): string {
@@ -269,7 +366,7 @@ export class BackgroundProcesses {
 export function registerProcesses(registry: ToolRegistry, processes: BackgroundProcesses): void {
   registry.register({
     name: "process.start", permission: "process.manage", group: "code",
-    description: "Start one of the programs the owner allows to be left running (a preview server, a watcher) and leave it going after this step is over. What it prints is kept in a rolling buffer you can read later. It stops when this conversation ends or the app closes.",
+    description: "Start one of the programs the owner allows to be left running (a preview server, a watcher, a long build or test run) and leave it going after this step is over. What it prints is kept in a rolling buffer you can read later. Set wakeOnExit to be woken in this conversation when it ends, and wakeOnText to be woken when a line contains one of your words, instead of checking on it. It stops when this conversation ends or the app closes.",
     parameters: StartInputSchema,
     target: (args) => `${args.program} ${args.args.join(" ")}`.trim().slice(0, 300),
     command: (args) => processes.commandLine(args),

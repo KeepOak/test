@@ -41,3 +41,4 @@ release/
 evals/.scratch/
 nightly.local.json
 .nightly-known-hosts
+.hot-test-*/

@@ -103,7 +103,7 @@ async function served(t) {
   const server = await startServer(app, { dataDir, port: 0 });
   t.after(async () => { app.store.profiles.switch({ profileId: null }); await server.close(); await app.close(); await discardTemp(root); });
   const owner = app.runtime.owner;
-  await app.runtime.run({ prompt: "zqowner-prompt please write the file" });
+  const ownerRun = await app.runtime.run({ prompt: "zqowner-prompt please write the file" });
   app.store.save("memory", owner, "zqowner-fact-id", { text: "zqowner-fact", source: "owner" });
   await app.store.secrets.put(owner, "default", "ZQ_TOKEN", secretValue, { expiresInDays: 0 });
   const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
@@ -111,7 +111,11 @@ async function served(t) {
   const asOwner = () => app.store.profiles.switch({ profileId: null });
   const asSam = () => app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
   asSam();
-  await runForCurrentPerson(app, { prompt: "zqsam-prompt hello", onTextDelta: () => undefined });
+  const samRun = await runForCurrentPerson(app, { prompt: "zqsam-prompt hello", onTextDelta: () => undefined });
+  const personal = app.trunks.personDefault();
+  const samSessions = [...new Set([samRun.sessionId, personal.trunk.chatSessionId])];
+  assert.ok(samSessions.every((id) => app.store.ownsSession(`profile:${sam.id}`, id)));
+  assert.equal(app.store.ownsSession(`profile:${sam.id}`, ownerRun.sessionId), false);
   app.store.save("memory", `profile:${sam.id}`, "zqsam-fact-id", { text: "zqsam-fact", source: "sam" });
   asOwner();
   const call = async (method, path, body, key = server.token) => {
@@ -124,7 +128,7 @@ async function served(t) {
     try { json = JSON.parse(bytes.toString("utf8")); } catch { json = {}; }
     return { status: response.status, bytes, body: json };
   };
-  return { app, server, call, asOwner, asSam };
+  return { app, server, call, asOwner, asSam, samSessions, ownerRun };
 }
 const kind = (summary, name) => summary.kinds.find((k) => k.kind === name);
 /** Delete everything, then follow the page's view until its steps have run: the answer, and the page after. */
@@ -157,7 +161,7 @@ async function exportAll(call) {
 }
 
 test("counts: each person sees only their own, and only the owner sees keys, logs and the folder", async (t) => {
-  const { call, asSam } = await served(t);
+  const { call, asSam, samSessions } = await served(t);
   const owner = (await call("GET", "/api/your-data")).body;
   assert.equal(kind(owner, "conversations").count, 1);
   assert.equal(kind(owner, "memory").count, 1);
@@ -166,7 +170,7 @@ test("counts: each person sees only their own, and only the owner sees keys, log
   assert.ok(owner.folder && !JSON.stringify(owner).includes(secretValue), "counted and named, never a value");
   asSam();
   const sam = (await call("GET", "/api/your-data")).body;
-  assert.equal(kind(sam, "conversations").count, 1, "Sam's own conversation, not the owner's");
+  assert.equal(kind(sam, "conversations").count, samSessions.length, "Sam's requested chat and own canonical default, not the owner's");
   assert.equal(kind(sam, "memory").count, 1);
   assert.equal(kind(sam, "keys"), undefined);
   assert.equal(kind(sam, "logs"), undefined);
@@ -194,7 +198,7 @@ test("export: one real .zip of the person's own things, with no secret value in 
 });
 
 test("delete: typed words, never under Lockdown or with a short-lived key, only the person's own, written down", async (t) => {
-  const { app, call, asOwner, asSam } = await served(t);
+  const { app, call, asOwner, asSam, samSessions, ownerRun } = await served(t);
   assert.equal((await call("POST", "/api/your-data/delete", { confirm: "yes" })).status, 400);
   const script = app.sessionTokens.create(app.runtime.owner, { name: "script", scope: "run", minutes: 5 }).token;
   assert.equal((await call("POST", "/api/your-data/delete", { confirm: "delete everything" }, script)).status, 401);
@@ -207,7 +211,9 @@ test("delete: typed words, never under Lockdown or with a short-lived key, only 
   asSam();
   const done = await deleteAndWait(call, " Delete Everything ");
   assert.equal(done.status, 200, JSON.stringify(done.body));
-  assert.deepEqual(done.body.deleted, { conversations: 1, memory: 1 });
+  assert.deepEqual(done.body.deleted, { conversations: samSessions.length, memory: 1 });
+  assert.ok(samSessions.every((id) => !app.store.sqlite.prepare("SELECT 1 FROM sessions WHERE id=?").get(id)), "both of Sam's exact sessions were removed");
+  assert.equal(app.store.ownsSession(app.runtime.owner, ownerRun.sessionId), true, "the exact owner's session survives");
   const sam = (await call("GET", "/api/your-data")).body;
   assert.equal(kind(sam, "conversations").count, 0);
   assert.equal(kind(sam, "memory").count, 0);
@@ -216,7 +222,7 @@ test("delete: typed words, never under Lockdown or with a short-lived key, only 
   assert.equal(kind(owner, "conversations").count, 1, "the owner's conversation stays");
   assert.equal(kind(owner, "memory").count, 1);
   const record = app.store.audit.list(app.runtime.owner, { action: "history.pruned" });
-  assert.ok(record.some((entry) => /Your data: deleted 1 conversations/.test(entry.reason)), "the delete is written down");
+  assert.ok(record.some((entry) => entry.reason.includes(`Your data: deleted ${samSessions.length} conversations`)), "the scoped delete count is written down");
   const again = await deleteAndWait(call);
   assert.equal(again.status, 200, JSON.stringify(again.body));
   assert.equal(kind((await call("GET", "/api/your-data")).body, "conversations").count, 0);

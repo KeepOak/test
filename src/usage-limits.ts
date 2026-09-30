@@ -64,6 +64,20 @@ export interface LimitRow {
   note: string;
   /** Present (true) when Check now reads this row's plan from the service itself (POST /api/usage/limits/refresh). */
   readable?: true;
+  /** The service this row is paid through: a sign-in's list ("chatgpt", "cli-claude-code") or a key's catalogue id. */
+  provider?: string;
+  /** The sign-in said it reached its plan limit, and that limit has not refilled yet. */
+  limited?: true;
+  /** accountLabel is the sign-in's verified email or name. */
+  verified?: true;
+  /** The service refused this key's last request for want of credit (HTTP 402). */
+  outOfCredit?: true;
+  /** This account's list moves the work to its next account when one reaches its limit (src/accounts/pool-provider.ts). */
+  switches?: true;
+  /** At or near its limit, by what the service said (src/usage-offers.ts atOrNearLimit). */
+  limitNear?: true;
+  /** What the service offers for more usage, where it offers any and the row is at or near its limit (src/usage-offers.ts). */
+  offer?: { id: string; url: string; option: string };
 }
 
 export interface LimitsView {
@@ -131,6 +145,10 @@ export interface LimitsConnection {
   signIn?: boolean;
   /** Paid by API key: no reading means "No limit reported". */
   keyed?: boolean;
+  /** The service it is paid through (LimitRow.provider). */
+  provider?: string;
+  /** The service refused its last request for want of credit (HTTP 402). */
+  outOfCredit?: boolean;
 }
 export interface LimitsAccount {
   account: string;
@@ -148,6 +166,12 @@ export interface LimitsAccount {
   readable?: boolean;
   /** Why the last such read gave no figure, in the engine's words. */
   note?: string | null;
+  /** It said it reached its plan limit, and the limit has not refilled yet. */
+  limited?: boolean;
+  /** Its list moves on to the next account at a limit. */
+  switches?: boolean;
+  /** Its label is who the service said the sign-in is (its email or name), not a name Branch or the owner gave it. */
+  verified?: boolean;
 }
 export interface LimitsDeps {
   connections: LimitsConnection[];
@@ -231,6 +255,11 @@ export function limitsView(deps: LimitsDeps): LimitsView {
         state, windows,
         note: polledNote ?? seat?.note ?? noteFor({ local: connection.local, signIn: signIn || (seat?.signIn ?? false), keyed: connection.keyed ?? false, state }),
         ...(seat?.readable ? { readable: true as const } : {}),
+        ...(connection.provider ? { provider: connection.provider } : {}),
+        ...(seat?.limited ? { limited: true as const } : {}),
+        ...(seat?.verified ? { verified: true as const } : {}),
+        ...(seat?.switches ? { switches: true as const } : {}),
+        ...(!seat && connection.outOfCredit ? { outOfCredit: true as const } : {}),
       });
     }
   }

@@ -1,6 +1,12 @@
 {
-  "budgetSeconds": 220,
-  "unknownTestSeconds": 30,
+  "prSlots": 3,
+  "prLinuxShards": 2,
+  "partialBases": [
+    "redesign/window"
+  ],
+  "partialCeiling": 0.75,
+  "hubTests": 25,
+  "platformSourceTests": 5,
   "always": [
     "tests/leak-guard.test.mjs"
   ],
@@ -33,6 +39,47 @@
     "tests/test-impact.json",
     "tsconfig.json"
   ],
+  "platforms": {
+    "windows": [
+      "src/desktop/**",
+      "src/computer/**",
+      "src/integrations/desktop-script*.ts",
+      "packaging/**",
+      "**/*.ps1",
+      "**/*.cts",
+      "scripts/package-desktop*.mjs",
+      "src/**/*windows*",
+      "src/**/*win32*",
+      "src/**/*uninstall*",
+      "src/**/*console*",
+      "public/app/shell/controls.js",
+      ".github/workflows/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "scripts/run-tests.mjs",
+      "scripts/build-ts.mjs",
+      "scripts/select-affected-tests.mjs",
+      "scripts/test-graph.mjs"
+    ],
+    "macos": [
+      "src/desktop/**",
+      "packaging/**",
+      "**/*.swift",
+      "**/*.plist",
+      "**/*.entitlements",
+      "src/**/*macos*",
+      "src/**/*darwin*",
+      ".github/workflows/**",
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "scripts/run-tests.mjs",
+      "scripts/build-ts.mjs",
+      "scripts/select-affected-tests.mjs",
+      "scripts/test-graph.mjs"
+    ]
+  },
   "mappings": [
     {
       "paths": [
@@ -125,7 +172,9 @@
       ],
       "tests": [
         "tests/calm-ui.test.mjs",
-        "tests/shell-ui-1.test.mjs", "tests/shell-ui-2.test.mjs", "tests/shell-ui-3.test.mjs",
+        "tests/shell-ui-1.test.mjs",
+        "tests/shell-ui-2.test.mjs",
+        "tests/shell-ui-3.test.mjs",
         "tests/tool-targets-comprehensive-guard.test.mjs"
       ]
     },
@@ -179,8 +228,12 @@
       ]
     },
     {
-      "paths": ["public/glass-select.js"],
-      "tests": ["tests/glass-select.test.mjs"]
+      "paths": [
+        "public/glass-select.js"
+      ],
+      "tests": [
+        "tests/glass-select.test.mjs"
+      ]
     },
     {
       "paths": [
@@ -192,20 +245,37 @@
       "tests": [
         "tests/grown-up-controls.test.mjs",
         "tests/glass-select.test.mjs",
-        "tests/settings-grown-1.test.mjs", "tests/settings-grown-2.test.mjs", "tests/settings-grown-3.test.mjs"
+        "tests/settings-grown-1.test.mjs",
+        "tests/settings-grown-2.test.mjs",
+        "tests/settings-grown-3.test.mjs"
       ]
     },
     {
-      "paths": ["public/settings-describe.js"],
-      "tests": ["tests/settings-descriptions.test.mjs"]
+      "paths": [
+        "public/settings-describe.js"
+      ],
+      "tests": [
+        "tests/settings-descriptions.test.mjs"
+      ]
     },
     {
-      "paths": ["public/add-ons.js"],
-      "tests": ["tests/add-ons-review.test.mjs"]
+      "paths": [
+        "public/add-ons.js"
+      ],
+      "tests": [
+        "tests/add-ons-review.test.mjs"
+      ]
     },
     {
-      "paths": ["public/approval-reviewer.js"],
-      "tests": ["tests/approvals.test.mjs", "tests/settings-grown-1.test.mjs", "tests/settings-grown-2.test.mjs", "tests/settings-grown-3.test.mjs"]
+      "paths": [
+        "public/approval-reviewer.js"
+      ],
+      "tests": [
+        "tests/approvals.test.mjs",
+        "tests/settings-grown-1.test.mjs",
+        "tests/settings-grown-2.test.mjs",
+        "tests/settings-grown-3.test.mjs"
+      ]
     },
     {
       "paths": [
@@ -214,124 +284,246 @@
         "public/settings-index.js"
       ],
       "tests": [
-        "tests/settings-grown-1.test.mjs", "tests/settings-grown-2.test.mjs", "tests/settings-grown-3.test.mjs"
+        "tests/settings-grown-1.test.mjs",
+        "tests/settings-grown-2.test.mjs",
+        "tests/settings-grown-3.test.mjs"
       ]
     },
     {
-      "paths": ["src/jev-decisions.ts"],
-      "tests": ["tests/jev-decisions.test.mjs"]
+      "paths": [
+        "src/jev-decisions.ts"
+      ],
+      "tests": [
+        "tests/jev-decisions.test.mjs"
+      ]
     },
     {
-      "paths": ["public/autonomy.js"],
-      "tests": ["tests/autonomy-ui.test.mjs"]
+      "paths": [
+        "public/autonomy.js"
+      ],
+      "tests": [
+        "tests/autonomy-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/channel-setup.js"],
-      "tests": ["tests/channel-setup-ui.test.mjs"]
+      "paths": [
+        "public/channel-setup.js"
+      ],
+      "tests": [
+        "tests/channel-setup-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/coding.js"],
-      "tests": ["tests/coding-polish-ui.test.mjs"]
+      "paths": [
+        "public/coding.js"
+      ],
+      "tests": [
+        "tests/coding-polish-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/comfort.js"],
-      "tests": ["tests/comfort-ui.test.mjs", "tests/comfort-update-schedule.test.mjs"]
+      "paths": [
+        "public/comfort.js"
+      ],
+      "tests": [
+        "tests/comfort-ui.test.mjs",
+        "tests/comfort-update-schedule.test.mjs"
+      ]
     },
     {
-      "paths": ["public/commands.js"],
-      "tests": ["tests/commands-ui.test.mjs"]
+      "paths": [
+        "public/commands.js"
+      ],
+      "tests": [
+        "tests/commands-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/dashboard/card.js"],
-      "tests": ["tests/dashboard.test.mjs"]
+      "paths": [
+        "public/dashboard/card.js"
+      ],
+      "tests": [
+        "tests/dashboard.test.mjs"
+      ]
     },
     {
-      "paths": ["public/devices.js"],
-      "tests": ["tests/devices-ui.test.mjs"]
+      "paths": [
+        "public/devices.js"
+      ],
+      "tests": [
+        "tests/devices-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/flows-boards.js"],
-      "tests": ["tests/flows-boards-ui.test.mjs"]
+      "paths": [
+        "public/flows-boards.js"
+      ],
+      "tests": [
+        "tests/flows-boards-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/folder-trust.js"],
-      "tests": ["tests/folder-trust.test.mjs"]
+      "paths": [
+        "public/folder-trust.js"
+      ],
+      "tests": [
+        "tests/folder-trust.test.mjs"
+      ]
     },
     {
-      "paths": ["public/heartbeat.js"],
-      "tests": ["tests/settings-grown-1.test.mjs", "tests/settings-grown-2.test.mjs", "tests/settings-grown-3.test.mjs"]
+      "paths": [
+        "public/heartbeat.js"
+      ],
+      "tests": [
+        "tests/settings-grown-1.test.mjs",
+        "tests/settings-grown-2.test.mjs",
+        "tests/settings-grown-3.test.mjs"
+      ]
     },
     {
-      "paths": ["public/knobs.js"],
-      "tests": ["tests/hidden-knobs-ui.test.mjs"]
+      "paths": [
+        "public/knobs.js"
+      ],
+      "tests": [
+        "tests/hidden-knobs-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/knowledge.js"],
-      "tests": ["tests/knowledge-quality.test.mjs"]
+      "paths": [
+        "public/knowledge.js"
+      ],
+      "tests": [
+        "tests/knowledge-quality.test.mjs"
+      ]
     },
     {
-      "paths": ["public/learning-more.js"],
-      "tests": ["tests/learning-more-ui.test.mjs"]
+      "paths": [
+        "public/learning-more.js"
+      ],
+      "tests": [
+        "tests/learning-more-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/model-savings.js"],
-      "tests": ["tests/model-savings-ui.test.mjs"]
+      "paths": [
+        "public/model-savings.js"
+      ],
+      "tests": [
+        "tests/model-savings-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/never-break.js"],
-      "tests": ["tests/never-break-ui.test.mjs"]
+      "paths": [
+        "public/never-break.js"
+      ],
+      "tests": [
+        "tests/never-break-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/os-sandbox.js"],
-      "tests": ["tests/os-sandbox.test.mjs"]
+      "paths": [
+        "public/os-sandbox.js"
+      ],
+      "tests": [
+        "tests/os-sandbox.test.mjs"
+      ]
     },
     {
-      "paths": ["public/personal.js"],
-      "tests": ["tests/personal-ui.test.mjs"]
+      "paths": [
+        "public/personal.js"
+      ],
+      "tests": [
+        "tests/personal-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/prompt-library.js"],
-      "tests": ["tests/prompt-library-ui.test.mjs"]
+      "paths": [
+        "public/prompt-library.js"
+      ],
+      "tests": [
+        "tests/prompt-library-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/reach.js"],
-      "tests": ["tests/reach-ui.test.mjs"]
+      "paths": [
+        "public/reach.js"
+      ],
+      "tests": [
+        "tests/reach-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/recordings.js"],
-      "tests": ["tests/recordings-ui.test.mjs"]
+      "paths": [
+        "public/recordings.js"
+      ],
+      "tests": [
+        "tests/recordings-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/safety-extras.js"],
-      "tests": ["tests/safety-extras-ui.test.mjs"]
+      "paths": [
+        "public/safety-extras.js"
+      ],
+      "tests": [
+        "tests/safety-extras-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/settings-kit.js"],
-      "tests": ["tests/settings-kit-ui.test.mjs"]
+      "paths": [
+        "public/settings-kit.js"
+      ],
+      "tests": [
+        "tests/settings-kit-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/skill-installs.js"],
-      "tests": ["tests/skills-ui.test.mjs"]
+      "paths": [
+        "public/skill-installs.js"
+      ],
+      "tests": [
+        "tests/skills-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/telegram-setup.js"],
-      "tests": ["tests/never-break-ui.test.mjs"]
+      "paths": [
+        "public/telegram-setup.js"
+      ],
+      "tests": [
+        "tests/never-break-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/trunks.js"],
-      "tests": ["tests/trunks-ui.test.mjs"]
+      "paths": [
+        "public/trunks.js"
+      ],
+      "tests": [
+        "tests/trunks-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["public/usage-report.js"],
-      "tests": ["tests/usage-telemetry.test.mjs"]
+      "paths": [
+        "public/usage-report.js"
+      ],
+      "tests": [
+        "tests/usage-telemetry.test.mjs"
+      ]
     },
     {
-      "paths": ["public/vault-autofill.js"],
-      "tests": ["tests/vault-autofill-ui.test.mjs"]
+      "paths": [
+        "public/vault-autofill.js"
+      ],
+      "tests": [
+        "tests/vault-autofill-ui.test.mjs"
+      ]
     },
     {
-      "paths": ["docs/features.json", "docs/features.md"],
-      "tests": ["tests/settings-page-count.test.mjs"]
+      "paths": [
+        "docs/features.json",
+        "docs/features.md"
+      ],
+      "tests": [
+        "tests/settings-page-count.test.mjs"
+      ]
     }
   ]
 }

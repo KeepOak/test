@@ -63,7 +63,7 @@ export class Gardener {
     report.planted = this.plantFromTriggers().length;
     for (const seed of this.book.seeds().filter((entry) => entry.status === "waiting").slice(0, perNight)) {
       if (!step.stillQuiet()) return report;
-      const grown = await this.grow(seed, step.preset);
+      const grown = await this.grow(seed, step.preset, step.now);
       report[grown.status === "adopted" ? "adopted" : "discarded"]++;
     }
     if (step.stillQuiet() && await this.recheck(step)) report.rolledBack++;
@@ -72,39 +72,43 @@ export class Gardener {
     return report;
   }
 
-  /** Drafts one seed, keeps it short and within the index budget, proves it, and adopts or discards it. */
-  async grow(seed: Seed, preset: ModelPreset): Promise<Seed> {
+  /**
+   * Drafts one seed, keeps it short and within the index budget, proves it, and adopts or discards it. The decision is
+   * dated on the night's own clock (`now`), the clock `recheck` and `prune` read it on: dated on the computer's clock
+   * instead, a night whose clock ran ahead found the skill it had just adopted due for a re-proof that same night.
+   */
+  async grow(seed: Seed, preset: ModelPreset, now: Date = new Date()): Promise<Seed> {
     const settings = this.settings();
     let drafted: Awaited<ReturnType<typeof draftNewSkill>>;
     try {
       drafted = await draftNewSkill(this.store, this.owner, this.runtime,
         { evidence: seed.evidence.slice(0, 12000), notes: "Keep it short: at most 25 lines.", fromRunId: seed.sourceRunIds[0] ?? "" }, { model: preset.id });
-    } catch (error) { return this.discard(seed, `not-drafted: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300), null); }
-    if (!drafted) return this.discard(seed, "nothing-worth-a-skill", null);
+    } catch (error) { return this.discard(seed, `not-drafted: ${error instanceof Error ? error.message : String(error)}`.slice(0, 300), null, now); }
+    if (!drafted) return this.discard(seed, "nothing-worth-a-skill", null, now);
     const withDraft = this.book.saveSeed({ ...seed, skillId: drafted.skillId, name: drafted.name, document: drafted.document });
-    if (drafted.document.length > settings.maxSkillChars) return this.discard(withDraft, "too-long", null);
-    if (this.indexCost() + lineCost(drafted.name, drafted.description) > settings.indexBudget) return this.discard(withDraft, "over-budget", null);
+    if (drafted.document.length > settings.maxSkillChars) return this.discard(withDraft, "too-long", null, now);
+    if (this.indexCost() + lineCost(drafted.name, drafted.description) > settings.indexBudget) return this.discard(withDraft, "over-budget", null, now);
     const proof = await prove(this.store, this.runtime, preset, { tasks: seed.tasks, withDocument: drafted.document, baseline: null, label: drafted.name }, this.parts(preset));
     const proved = this.book.saveSeed({ ...withDraft, proofs: [proof] });
-    if (proof.unreadable) return this.discard(proved, `unreadable: ${proof.unreadable}`, proof);
-    if (proof.gain < settings.minGain) return this.discard(proved, "no-gain", proof);
-    return this.adopt(proved, proof);
+    if (proof.unreadable) return this.discard(proved, `unreadable: ${proof.unreadable}`, proof, now);
+    if (proof.gain < settings.minGain) return this.discard(proved, "no-gain", proof, now);
+    return this.adopt(proved, proof, now);
   }
   private parts(preset: ModelPreset): ProofParts | undefined { return this.proofParts?.(preset); }
 
-  private adopt(seed: Seed, proof: Proof): Seed {
+  private adopt(seed: Seed, proof: Proof, now: Date): Seed {
     const skill = this.store.skills.view(this.owner, seed.skillId!);
     // Never with `acknowledge`: a draft with a scan finding is refused when it is written, and never waved through here.
     this.store.skills.activate(this.owner, skill.id, { version: skill.headVersion, expectedRevision: skill.revision });
     this.book.write({ action: "adopted", seedId: seed.id, name: skill.name, reason: `gain ${proof.gain}`, proof,
       before: [{ skillId: skill.id, activeVersion: null }], after: [{ skillId: skill.id, activeVersion: skill.headVersion }] });
-    return this.book.saveSeed({ ...seed, status: "adopted", reason: null, decidedAt: new Date().toISOString(), checkedAt: new Date().toISOString() });
+    return this.book.saveSeed({ ...seed, status: "adopted", reason: null, decidedAt: now.toISOString(), checkedAt: now.toISOString() });
   }
   /**
    * A draft that did not earn its place. Its switched-off install, which nothing ever used, is taken out of the
    * skills list, and its whole file stays in the seed, so undoing the discard puts it back exactly.
    */
-  private discard(seed: Seed, reason: string, proof: Proof | null): Seed {
+  private discard(seed: Seed, reason: string, proof: Proof | null, now: Date): Seed {
     if (seed.skillId) {
       try {
         const skill = this.store.skills.view(this.owner, seed.skillId);
@@ -112,7 +116,7 @@ export class Gardener {
       } catch { /* not installed: the seed still records the draft */ }
     }
     this.book.write({ action: "discarded", seedId: seed.id, name: seed.name ?? seed.trigger, reason, proof, before: [], after: [] });
-    return this.book.saveSeed({ ...seed, status: "discarded", reason, decidedAt: new Date().toISOString() });
+    return this.book.saveSeed({ ...seed, status: "discarded", reason, decidedAt: now.toISOString() });
   }
 
   /** What the one-line index entries of the skills the Gardener adopted cost, in tokens. */

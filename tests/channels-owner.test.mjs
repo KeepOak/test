@@ -130,6 +130,26 @@ test("CO-2 a household person cannot approve a pairing code, and the owner still
   assert.equal(f.app.store.get("settings", owner, "channel-pair:fake:friend").data.status, "approved");
 });
 
+/* CHAT-159: a pairing is only what was asked, and only for a while. A code older than an hour is refused, a code works
+   once, and approving one sender lets in that sender alone. Mutation: make pairingCodeFresh always true in
+   src/channels/router.ts and the hour-old code is let in. */
+test("CO-2b a pairing code works once, only within the hour, and lets in only the sender who asked", async (t) => {
+  const f = await served(t);
+  const owner = f.app.runtime.owner;
+  const pending = (id, code, minutesAgo) => f.app.store.save("settings", owner, `channel-pair:fake:${id}`,
+    { status: "pending", code, name: id, requestedAt: new Date(Date.now() - minutesAgo * 60_000).toISOString() });
+  pending("old", "111111", 61);
+  pending("fresh", "222222", 5);
+  pending("other", "333333", 5);
+  await f.asOwner();
+  const stale = await f.call("POST", "/api/channels/pairings/approve", { code: "111111" });
+  assert.equal(stale.status, 400, "an hour-old code is refused");
+  assert.equal(f.app.store.get("settings", owner, "channel-pair:fake:old").data.status, "pending");
+  assert.equal((await f.call("POST", "/api/channels/pairings/approve", { code: "222222" })).status, 200);
+  assert.equal((await f.call("POST", "/api/channels/pairings/approve", { code: "222222" })).status, 400, "a code works once");
+  assert.equal(f.app.store.get("settings", owner, "channel-pair:fake:other").data.status, "pending", "only the sender who asked is let in");
+});
+
 test("CO-3 the switches a household person cannot see are the switches they cannot move", async (t) => {
   const f = await served(t);
 

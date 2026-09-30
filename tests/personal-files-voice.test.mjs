@@ -93,15 +93,15 @@ function recorder(answer) {
 }
 const file = { name: "chart.png", mediaType: "image/png", bytes: new Uint8Array([1, 2, 3]), caption: "Here it is" };
 
-test("R17-022: Telegram sends a document, Discord a multipart message, Slack the three-step upload", async () => {
+test("R17-022: Telegram sends a picture as a photo (CHAT-102), Discord a multipart message, Slack the three-step upload", async () => {
   const tg = recorder(() => ({ ok: true, result: { message_id: 5 } }));
   assert.equal(await new TelegramAdapter({ id: "tg", token: "T0K", fetch: tg.fetch }).sendFile("42", file, "3"), "5");
   const form = tg.seen[0].init.body;
-  assert.ok(tg.seen[0].url.endsWith("/botT0K/sendDocument"));
+  assert.ok(tg.seen[0].url.endsWith("/botT0K/sendPhoto"), "a PNG goes as a photo; other files still go as documents (tests/chat-media.test.mjs)");
   assert.equal(form.get("chat_id"), "42");
   assert.equal(form.get("caption"), "Here it is");
   assert.equal(form.get("reply_to_message_id"), "3");
-  assert.equal(form.get("document").name, "chart.png");
+  assert.equal(form.get("photo").name, "chart.png");
 
   const dc = recorder(() => ({ id: "900" }));
   assert.equal(await new DiscordAdapter({ id: "dc", token: "D", fetch: dc.fetch }).sendFile("c1", file), "900");

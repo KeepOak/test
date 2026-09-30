@@ -7,6 +7,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 async function fixture(t, viewport = { width: 1440, height: 950 }, { everything = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-composer-parity-"));
@@ -176,7 +177,7 @@ test("the model chip opens a real model picker without leaving the conversation"
   await menu.waitFor({ state: "visible" });
   assert.deepEqual(await rows(), ["Default connection · configured", "Alternate connection · other-model"].map((r) => r.split(" · ").sort().join(" · ")));
   await menu.locator('[data-act="pick-model"]').nth(1).click();
-  await page.waitForFunction(async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
+  await waitInPage(page, async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
     headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") } })).json()).preset === "alternate", sessionId, { timeout: 10_000 });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(4_000);
@@ -186,7 +187,7 @@ test("the model chip opens a real model picker without leaving the conversation"
   said.push((await chip.locator(".lbl").innerText()).trim());
   await chip.click();
   await menu.locator('[data-act="pick-model"]').first().click();
-  await page.waitForFunction(async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
+  await waitInPage(page, async (id) => (await (await fetch(`/api/sessions/${id}/model`, {
     headers: { authorization: "Bearer " + sessionStorage.getItem("branch-token") } })).json()).preset === "default", sessionId, { timeout: 10_000 });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(600);
@@ -285,5 +286,42 @@ test("typing, focus and selection survive the three-second redraw", async (t) =>
   assert.deepEqual(
     await prompt.evaluate((node) => ({ start: node.selectionStart, end: node.selectionEnd, focused: document.activeElement === node })),
     { start: 8, end: 16, focused: true },
+  );
+});
+
+/* A new conversation's first answer shows before the window has read what the ended task left (its questions, the
+   picture, the extras). A caret the person puts in the box meanwhile stays there: it used to be taken back to where it
+   was when the conversation got its id (chat/chat.js adoptDraft), which lost the caret desktop-hot-update keeps. */
+test("a caret put in the box after a new conversation's first answer shows stays where it was put", async (t) => {
+  const page = await fixture(t);
+  let ran = false, held = false, released;
+  const answered = new Promise((done) => { released = done; });
+  page.on("request", (request) => { if (request.method() === "POST" && new URL(request.url()).pathname === "/api/run") ran = true; });
+  await page.route("**/api/policy", async (route) => {
+    if (ran && !held) { held = true; await new Promise((done) => setTimeout(done, 2000)); await route.continue(); released(); return; }
+    await route.continue();
+  });
+  const prompt = page.locator("#prompt");
+  await prompt.fill("Say hello");
+  await page.locator("#send").click();
+  await page.waitForFunction(() => document.getElementById("conversation")?.textContent.includes("Done."), undefined, { timeout: 20_000 });
+  /* Typed and the caret put in one step on the page, each on the box drawn at that moment. The box is drawn again while
+     the window reads what the task left, and typing can draw it again (Stop turns back into Send), so a box found
+     first and changed later can be one no longer on the page (CI: the caret went to a replaced box, and the live one
+     kept the end of the words, 20). */
+  await page.evaluate(() => {
+    const typed = document.getElementById("prompt");
+    typed.focus();
+    typed.value = "a half-typed thought";
+    typed.dispatchEvent(new Event("input", { bubbles: true }));
+    const box = document.getElementById("prompt");
+    box.focus();
+    box.setSelectionRange(2, 6);
+  });
+  await answered; // the held read is answered; the window then reads the picture and the extras, and its send ends
+  await page.waitForTimeout(1500);
+  assert.deepEqual(
+    await prompt.evaluate((node) => ({ value: node.value, start: node.selectionStart, end: node.selectionEnd, focused: document.activeElement === node })),
+    { value: "a half-typed thought", start: 2, end: 6, focused: true },
   );
 });

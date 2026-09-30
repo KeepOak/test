@@ -46,7 +46,7 @@ export function preferChatGPTAfterSignIn(models: ModelRouter, owner: string, ids
   const settings = models.settings(owner);
   const current = models.presets.get(settings.activePreset ?? models.default.id);
   if (!current || current.provider.name === demoProviderName)
-    models.configure(owner, { activePreset: first, fallbackOrder: ids.slice(1) });
+    models.configure(owner, { activePreset: first, fallbackOrder: ids.slice(1).filter((id) => id !== chatgptPresetId("gpt-6-astra")) });
 }
 
 /** Waits for the browser approval, then registers ChatGPT presets and prefers them over having no model chosen. */

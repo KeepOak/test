@@ -13,6 +13,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { registerCliAgent } from "../dist/providers/cli-agent.js";
+import { accountsServiceFor } from "../dist/accounts/service.js";
 import { openSettings } from "./places.mjs"; // the old window's helper, for the skipped bodies only
 
 const answer = async () => ({ content: "ok", toolCalls: [] });
@@ -22,6 +23,7 @@ async function fixture(t, width = 1440) {
   await mkdir(scratch, { recursive: true });
   const root = await mkdtemp(join(scratch, "accounts-page-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  accountsServiceFor(app.runtime.models).deps.statusRun = async () => ({ code: 0, missing: false });
   const owner = app.runtime.owner;
   app.store.save("settings", owner, "model-connections", { connections: [
     { id: "openai-work", name: "OpenAI", catalogId: "openai", model: "gpt-5.5", extras: {} },

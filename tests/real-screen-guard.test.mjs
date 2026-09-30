@@ -111,7 +111,7 @@ test("every real-screen program start in the engine asks the guard first", () =>
   };
   before(script, "async run(action: DesktopAction", "new ShellProcess(");
   before(script, "const boundedRunner = (standIns: boolean): PosixExec", "new ShellProcess(");
-  before(script, "liveProcess(): LiveScreenProcess | null", "executable: this.executable");
+  before(script, "liveProcess(target?: NativeCaptureTarget", "executable: this.executable");
   before(src("integrations/desktop-banner.ts"), "async show(onStop: () => void)", "spawn(");
   // Only the Mac/Linux runner passes its program, so only there may a test's stand-in run; the Windows places never.
   assert.deepEqual(script.match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()", "assertRealScreenAllowed()", "assertRealScreenAllowed(standIns ? executable : undefined)"]);
@@ -126,6 +126,6 @@ test("every real-screen program start in the engine asks the guard first", () =>
   assert.deepEqual(src("integrations/desktop-banner.ts").match(/assertRealScreenAllowed\([^)]*\)/g), ["assertRealScreenAllowed()"]);
   const spawns = (script.match(/\bspawn\(|new ShellProcess\(/g) ?? []).length;
   assert.equal(spawns, 3, "no other place in the runner starts a program; a new one needs the guard too");
-  const liveStart = script.slice(script.indexOf("private async start(): Promise<ChildProcess>"));
+  const liveStart = script.slice(script.indexOf("private async start(signal: AbortSignal): Promise<ChildProcess>"));
   assert.ok(liveStart.indexOf("await this.command()") < liveStart.indexOf("spawn("), "the live reader starts only the command it was handed, which the guarded factory builds");
 });

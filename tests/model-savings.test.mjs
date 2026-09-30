@@ -54,7 +54,7 @@ test("every card that sends or spends ships off, and a fresh install sends and r
   assert.deepEqual(values, {
     phases: { planModel: null, sideTier: "same" },
     openrouter: { mode: "off", sort: null, order: [], only: [], ignore: [], allowFallbacks: true, dataCollection: "allow" },
-    difficulty: { mode: "off", classifierModel: null, easyModel: null, hardModel: null },
+    difficulty: { mode: "off", classifierModel: null, easyModel: null, hardModel: null, mixHard: false },
     reportedTokens: { mode: "on" },
     roundChart: { mode: "on" },
     keepAlive: { mode: "off", everyMinutes: 4, maxPings: 3, spendCapDollars: 0.05 },
@@ -435,6 +435,51 @@ test("review: difficulty.ts holds no raw NUL bytes, and its kept answers are per
   assert.equal(asked, 1, "the oldest are dropped, so memory stays bounded");
 });
 
+test("R17-047 the easy-or-hard question goes to the owner's pick, else a model on this computer, else the easy connection", async () => {
+  const cardWith = (classifierModel) => ({ get: () => ({ data: { mode: "on", easyModel: "e", hardModel: "h", classifierModel } }) });
+  const askedOf = async (store, prompt, localPreset) => {
+    const asked = [];
+    const choice = await chooseByDifficulty(store, owner, { prompt, toolCount: 3, known: () => true, localPreset,
+      ask: async (preset) => { asked.push(preset); return "EASY"; } });
+    return { asked, reason: choice.reason };
+  };
+  const explicit = await askedOf(cardWith("small"), "explicit pick", "here");
+  assert.deepEqual(explicit.asked, ["small"], "the owner's own pick always wins, even with a model on this computer");
+  assert.match(explicit.reason, /^small called this task easy/);
+
+  const local = await askedOf(cardWith(null), "local model", "here");
+  assert.deepEqual(local.asked, ["here"], "with no pick, the free model on this computer is asked");
+  assert.match(local.reason, /^here called this task easy/);
+
+  const none = await askedOf(cardWith(null), "no local model", null);
+  assert.deepEqual(none.asked, ["e"], "with no model on this computer, the easy connection is asked, as before");
+  assert.match(none.reason, /^e called this task easy/);
+
+  const missing = await chooseByDifficulty(cardWith(null), owner, { prompt: "local not in picker", toolCount: 3,
+    known: (id) => id !== "here", localPreset: "here", ask: async (preset) => { assert.equal(preset, "e"); return "HARD"; } });
+  assert.equal(missing.reason, "e called this task hard", "a local connection missing from the model picker is not asked");
+
+  // The model on this computer is not answering: the easy connection answers, once, and its answer is the one kept.
+  const store = cardWith(null);
+  let asked = [];
+  const localDown = async (preset) => { asked.push(preset); if (preset === "here") throw new Error("local server stopped"); return "HARD"; };
+  const down = (now) => chooseByDifficulty(store, owner, { prompt: "local is down", toolCount: 3, known: () => true, localPreset: "here", ask: localDown, now });
+  const fellBack = await down(1);
+  assert.deepEqual(asked, ["here", "e"], "local throws, so the easy connection is asked once");
+  assert.equal(fellBack.reason, "e called this task hard", "the reason names the model that answered");
+  assert.equal(fellBack.difficulty, "hard");
+  asked = [];
+  assert.equal((await down(2)).reason, "e called this task hard");
+  assert.deepEqual(asked, ["here"], "the kept answer is filed under the easy connection, which is not asked again");
+  const fine = await chooseByDifficulty(store, owner, { prompt: "local is down", toolCount: 3, known: () => true, localPreset: "here",
+    ask: async () => "EASY", now: 3 });
+  assert.equal(fine.reason, "here called this task easy", "nothing was kept under the local model while it was down");
+
+  // An owner's own pick that fails is not retried: the error goes up to the hook, as it always did.
+  await assert.rejects(chooseByDifficulty(cardWith("small"), owner, { prompt: "picked is down", toolCount: 3, known: () => true, localPreset: "here",
+    ask: async (preset) => { if (preset === "small") throw new Error("picked model down"); return "EASY"; } }), /picked model down/);
+});
+
 test("review: reported counts are per app, ignore nonsense, and stay capped at four", () => {
   const on = { get: () => ({ data: { mode: "on" } }) };
   const other = { get: () => ({ data: { mode: "on" } }) };
@@ -535,10 +580,11 @@ test("review: service_tier goes only to OpenAI's own address or Azure, on both O
 
 test("review: current Claude models have prices, so a Claude cache ping can keep its cap", async () => {
   const { tablePrice } = await import("../dist/pricing.js");
-  assert.deepEqual(tablePrice("claude-opus-5"), { input: 5, output: 25, cached: 0.5 });
-  assert.deepEqual(tablePrice("claude-sonnet-4-5-20250929"), { input: 3, output: 15, cached: 0.3 });
-  assert.deepEqual(tablePrice("claude-haiku-4-5"), { input: 1, output: 5, cached: 0.1 });
-  assert.deepEqual(tablePrice("claude-sonnet-5"), { input: 2, output: 10, cached: 0.2 });
+  assert.deepEqual(tablePrice("claude-opus-5"), { input: 5, output: 25, cached: 0.5, cacheWrite: 6.25, cacheWrite1h: 10 });
+  assert.deepEqual(tablePrice("claude-sonnet-4-5-20250929"), { input: 3, output: 15, cached: 0.3, cacheWrite: 3.75, cacheWrite1h: 6 });
+  assert.deepEqual(tablePrice("claude-haiku-4-5"), { input: 1, output: 5, cached: 0.1, cacheWrite: 1.25, cacheWrite1h: 2 });
+  assert.deepEqual(tablePrice("claude-sonnet-5"), { input: 2, output: 10, cached: 0.2, cacheWrite: 2.5, cacheWrite1h: 4 });
+  assert.deepEqual(tablePrice("claude-opus-5-5"), { input: 4, output: 20, cached: 0.2, cacheWrite: 5, cacheWrite1h: 8 });
 });
 
 test("review: a mixture is priced at its dearest known member, and its summed cost meets the task limit and the month", async (t) => {

@@ -16,6 +16,9 @@ import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { trunkCanUse, trunkModelNote } from "../places/switch-on.js"; // stress test B008
 import { itsTab, onChange as computersChanged } from "./computers17.js"; // pass 17 part D §9: Its computers
+import { loadAccounts, poolById } from "./account.js"; // models-ui: account names as Settings › Accounts shows them
+import { logo } from "../core/logos.js";
+import { gsel } from "../core/gsel.js";
 
 /* The prototype's colours and shapes (COLOURS, SHAPES, SHAPE_NAMES) are kept beside av() in core/ui.js. */
 /* The prototype's Bob is the engine's sway (the engine has no bob). */
@@ -59,6 +62,15 @@ function keepFields() {
   const n = $("#st-name"), r = $("#st-role");
   if (n) ed.d.name = n.value;
   if (r) ed.d.title = r.value;
+  for (const box of document.querySelectorAll("[data-personality-file]")) {
+    const file = ed.files?.find((file) => file.name === box.dataset.personalityFile);
+    if (file) file.text = box.value;
+  }
+}
+
+function filesTab() {
+  markLive((ed.files ?? []).map((file) => `sw:personality-${file.name}`));
+  return (ed.files ?? []).map((file) => `<div class="field"><label for="personality-${esc(file.name)}">${esc(file.name)}</label><small class="hint">${esc(file.hint)}</small><textarea class="inp" id="personality-${esc(file.name)}" data-personality-file="${esc(file.name)}" rows="6" maxlength="8000">${esc(file.text)}</textarea><button class="btn sm" type="button" data-act="trunk-file-save" data-name="${esc(file.name)}">${t("action.save")}</button></div>`).join("");
 }
 
 /* The pebble as this editor would save it: the draft's colour, shape, eyes and motion over the saved face. */
@@ -177,8 +189,8 @@ const ctlSeg = (title, sub, opts) => `<div class="ctl"><b>${esc(title)}</b><span
    way to add one it can use underneath (places/switch-on.js); so is the row with none a Trunk can use. */
 function modelSeg(tr) {
   const models = E.state?.models, presets = models?.presets ?? [];
-  const opts = presets.map((p) => `<option value="${esc(p.id)}" ${tr.model === p.id ? "selected" : ""} ${trunkCanUse(p) ? "" : "disabled"}>${esc(p.name)}</option>`).join("");
-  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right"><select class="inp" id="tm-model-sel" data-id="${esc(tr.id)}" aria-label="${t("window.flows.trunk.which-model")}"><option value="" ${tr.model ? "" : "selected"}>${t("voice.default")}</option>${opts}</select></span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
+  const opts = [["", t("voice.default")], ...presets.map((p) => [p.id, p.name, !trunkCanUse(p)])];
+  return `<div class="ctl tm-model18"><b>${t("window.flows.trunk.which-model")}</b><span class="right">${gsel({ id: "tm-model-sel", label: t("window.flows.trunk.which-model"), options: opts, value: tr.model ?? "", attrs: `data-id="${esc(tr.id)}"` })}</span><small>${t("window.flows.trunk.which-model-hint")}</small>${trunkModelNote(models)}</div>`;
 }
 async function setModel(el) {
   const tr = trunkById(el.dataset.id);
@@ -189,6 +201,83 @@ async function setModel(el) {
     await refresh();
     if (ed?.id === tr.id) drawEditor();
   } catch (error) { toast(error.message); }
+}
+
+/* ---------- Accounts: which account of each connection this Trunk answers with ----------
+   The engine's own view (GET /api/trunks/{id}/keys, src/trunks/accounts.ts keyPlan): every connection that can have
+   several accounts, the Trunk's pick for each, and keyPlan's plain notes about what it cannot use yet. An account is
+   named as Settings › Accounts names it (GET /api/accounts, its verified email or name where the engine has one), else
+   by the name the engine keeps. Each change is saved at once: POST /api/trunks/{id} replaces the whole keys object, so the
+   Trunk is read fresh first and the rest of it carried over, as flows/account.js saveTrunks does. "Use my accounts too"
+   is keys.copyFromOwner (on unless the owner turns it off); with it off, a connection with no pick does not answer. */
+async function loadKeys(id) {
+  try {
+    const [keys] = await Promise.all([api(`trunks/${encodeURIComponent(id)}/keys`), loadAccounts()]);
+    if (ed?.id !== id) return;
+    ed.keys = keys;
+    if (ed.tab === "accounts") drawEditor();
+  } catch (error) { toast(error.message); }
+}
+const accountName = (pool, a) => poolById(pool)?.accounts?.find((x) => x.id === a.id)?.label || a.label || a.id;
+/* Whether this connection is the Trunk's own model: a pool is named after its connection (a ChatGPT pool holds its models). */
+const usesPool = (tr, pool) => !!tr.model && (tr.model === pool.id || (pool.id === "chatgpt" && tr.model.startsWith("chatgpt")));
+function poolRow(tr, pool, keys) {
+  const picked = keys.accounts[pool.id] ?? "", known = pool.accounts.some((a) => a.id === picked);
+  const none = keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-none");
+  /* An account the accounts screen says cannot answer now (signed out, a duplicate, paused) is shown but cannot be taken. */
+  const ready = (a) => poolById(pool.id)?.accounts?.find((x) => x.id === a.id)?.ready !== false;
+  const options = [["", none], ...pool.accounts.map((a) => [a.id, ready(a) ? accountName(pool.id, a) : t("window.flows.trunk.acc-not-ready", { name: accountName(pool.id, a) }), !ready(a) && a.id !== picked])];
+  const label = t("window.flows.trunk.acc-pick-for", { name: pool.label });
+  const pick = gsel({ sw: "tk-pool", label, options, value: known ? picked : "", attrs: `data-tk-pool="${esc(pool.id)}" data-id="${esc(tr.id)}"` });
+  /* Where it goes when its pick reaches its limit: one of the connection's other accounts, before the owner's own. */
+  const then = keys.next?.[pool.id]?.[0] ?? "", others = options.filter(([v]) => v && v !== picked);
+  const next = known && others.length ? `<span class="tk-then"><small>${t("window.flows.trunk.acc-then")}</small>${gsel({ sw: "tk-next", label: t("window.flows.trunk.acc-then-for", { name: pool.label }),
+    options: [["", keys.copyFromOwner ? t("window.flows.trunk.acc-yours") : t("window.flows.trunk.acc-then-stop")], ...others], value: then, attrs: `data-tk-next="${esc(pool.id)}" data-id="${esc(tr.id)}"` })}</span>` : "";
+  const using = usesPool(tr, pool) ? `<span class="pill ok tk-uses">${t("window.flows.trunk.acc-answers-with")}</span>` : "";
+  return `<div class="ctl tk-pool"><b>${logo(pool.id, pool.label, 20)} ${esc(pool.label)} ${using}</b><span class="right">${pick}${next}</span><small></small></div>`;
+}
+function accountsTab(tr) {
+  const view = ed.keys;
+  if (!view) return `<p class="hint">${t("window.flows.trunk.acc-reading")}</p>`;
+  const keys = view.keys ?? { copyFromOwner: true, accounts: {} };
+  const copy = `<div class="ctl"><b>${t("window.flows.trunk.acc-copy")}</b><input class="sw" type="checkbox" id="tk-copy" data-id="${esc(tr.id)}" ${keys.copyFromOwner ? "checked" : ""} aria-label="${esc(t("window.flows.trunk.acc-copy"))}"><small>${t("window.flows.trunk.acc-copy-hint")}</small></div>`;
+  const notes = [view.note, ...(view.plan?.notes ?? [])].filter(Boolean).map((n) => `<li>${esc(n)}</li>`).join("");
+  /* The model and its account in one place: which connection it answers with, then each connection's account (the one it
+     answers with first and marked). The same "Which model" as What it may do, saved the same way. */
+  const pools = [...(view.pools ?? [])].sort((a, b) => Number(usesPool(tr, b)) - Number(usesPool(tr, a)));
+  const rows = pools.map((pool) => poolRow(tr, pool, keys)).join("") || `<p class="hint">${t("window.flows.trunk.acc-empty")}</p>`;
+  return `<div class="tk-accounts"><p class="hint" data-css="margin:0 0 8px">${t("window.flows.trunk.acc-lede")}</p>${modelSeg(tr)}${copy}${rows}${notes ? `<ul class="hint tk-notes">${notes}</ul>` : ""}</div>`;
+}
+/* One save at a time: each reads the Trunk afresh, so two quick picks never write over each other. */
+let keysSaving = Promise.resolve();
+const saveKeys = (id, change) => (keysSaving = keysSaving.then(() => saveKeysNow(id, change)));
+async function saveKeysNow(id, change) {
+  try {
+    const { trunk } = await api(`trunks/${encodeURIComponent(id)}`);
+    const had = trunk?.keys ?? { copyFromOwner: true, accounts: {} };
+    await api(`trunks/${encodeURIComponent(id)}`, { keys: change({ copyFromOwner: had.copyFromOwner, accounts: { ...had.accounts }, ...(had.next ? { next: { ...had.next } } : {}) }) });
+    await refresh().catch((error) => console.warn(error.message));
+  } catch (error) { toast(error.message); }
+  await loadKeys(id); // what the engine keeps now, whether or not the change was taken
+}
+function pickAccount(el) {
+  const pool = el.dataset.tkPool, v = el.value;
+  saveKeys(el.dataset.id, (keys) => {
+    if (v) keys.accounts[pool] = v; else delete keys.accounts[pool];
+    return keys;
+  });
+}
+function pickNext(el) {
+  const pool = el.dataset.tkNext, v = el.value;
+  saveKeys(el.dataset.id, (keys) => {
+    const next = { ...(keys.next ?? {}) };
+    if (v) next[pool] = [v]; else delete next[pool];
+    return { ...keys, next };
+  });
+}
+function setCopy(el) {
+  const on = el.checked;
+  saveKeys(el.dataset.id, (keys) => ({ ...keys, copyFromOwner: on }));
 }
 
 /* Drawn as the design has it and greyed, bar Which model: reading files, the browser and sending without asking each loosen
@@ -205,8 +294,8 @@ function drawEditor() {
   if (!tr) { closeDlg(); ed = null; return; }
   const old = dialog()?.querySelector(".editor") ? dialog() : null;
   const kept = [".dlg-b", ".looks-tl"].map((q) => old?.querySelector(q)?.scrollTop ?? 0);
-  const tabs = [["look", t("window.flows.trunk.look")], ["may", t("autonomy.orders.authority")], ["its17d", t("window.p17d.its-computers")]].map(([k, l]) => `<button class="tab" role="tab" type="button" aria-selected="${ed.tab === k}" data-act="st-tab" data-v="${k}">${l}</button>`).join("");
-  const body = ed.tab === "look" ? lookPicker(tr) + emojiRow(tr) + lookTab(tr, ed.d) : ed.tab === "its17d" ? itsTab(tr.id) : mayTab(tr);
+  const tabs = [["look", t("window.flows.trunk.look")], ["may", t("autonomy.orders.authority")], ["its17d", t("window.p17d.its-computers")], ["files", t("pane.files")], ["accounts", t("window.flows.trunk.accounts")]].map(([k, l]) => `<button class="tab" role="tab" type="button" aria-selected="${ed.tab === k}" data-act="st-tab" data-v="${k}">${l}</button>`).join("");
+  const body = ed.tab === "look" ? lookPicker(tr) + emojiRow(tr) + lookTab(tr, ed.d) : ed.tab === "its17d" ? itsTab(tr.id) : ed.tab === "files" ? filesTab() : ed.tab === "accounts" ? accountsTab(tr) : mayTab(tr);
   const el = openDlg({ title: t("trunks.editing", { name: tr.name }), wide: true,
     body: `<div class="editor"><div class="big">${av(draftFace(tr), 84)}<button class="btn sm" type="button" data-act="st-shuffle">${t("studio.shuffle")}</button></div><div data-css="display:grid;gap:14px;min-width:0"><div class="tabs" data-css="margin:0" role="tablist">${tabs}</div>${body}</div></div>`,
     foot: `<button class="btn bad rm-tl" type="button" data-act="remove" data-id="${esc(tr.id)}">${t("window.flows.trunk.remove-trunk")}</button><button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="st-save">${t("action.save")}</button>` });
@@ -491,7 +580,28 @@ export function init() {
   markLive(["sw:st-name", "sw:st-role", "sw:rn-name", "sw:grp-name", "edit", "st-tab", "st-colour", "st-shape", "st-anim", "st-shuffle", "st-save", "emo15", "pin", "rename", "rename-save", "remove", "trunk-remove-yes", "tmpl", "grp-new", "grp-pick", "grp-person", "grp-agent", "grp-make", "new-trunk"]);
   on("new-trunk", () => newTrunk());
   on("edit", (el) => editTrunk(el.dataset.id));
-  on("st-tab", (el) => { keepFields(); ed.tab = el.dataset.v; drawEditor(); });
+  on("st-tab", async (el) => {
+    if (!ed) return; // only while an editor is open (a household person's Edit on the owner's Trunk opens none)
+    keepFields();
+    const id = ed.id;
+    if (el.dataset.v === "files" && !ed.files) {
+      try { const data = await api(`trunks/${id}/files`); if (ed?.id !== id) return; ed.files = data.files; }
+      catch (error) { toast(error.message); return; }
+    }
+    ed.tab = el.dataset.v; drawEditor();
+    if (ed.tab === "accounts") loadKeys(ed.id);
+  });
+  markLive(["trunk-default", "trunk-file-save"]);
+  on("trunk-default", async (el) => {
+    try { await api(`trunks/${el.dataset.id}/default`, {}); await refresh(); }
+    catch (error) { toast(error.message); }
+  });
+  on("trunk-file-save", async (el) => {
+    keepFields();
+    const id = ed.id, file = ed.files.find((file) => file.name === el.dataset.name);
+    try { await api(`trunks/${id}/files`, { name: file.name, text: file.text }); await refresh(); }
+    catch (error) { toast(error.message); }
+  });
   computersChanged(() => { if (ed?.tab === "its17d" && dialog()?.querySelector(".editor")) drawEditor(); }); // only while the editor is open
   on("st-colour", (el) => { keepFields(); ed.d.colour = hex(el.dataset.v); drawEditor(); });
   on("st-shape", (el) => { keepFields(); ed.d.shape = SHAPE_NAMES[+el.dataset.v] ?? null; drawEditor(); });
@@ -499,8 +609,13 @@ export function init() {
   on("st-eyes", (el) => { keepFields(); ed.d.eyes = el.dataset.v; drawEditor(); });
   on("st-photo", () => pickPhoto());
   on("st-photo-x", () => removePhoto());
-  document.addEventListener("change", (e) => { if (e.target.id === "tm-model-sel") setModel(e.target); });
-  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel"]);
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "tm-model-sel") setModel(e.target);
+    else if (e.target.id === "tk-copy") setCopy(e.target);
+    else if (e.target.dataset?.tkPool) pickAccount(e.target);
+    else if (e.target.dataset?.tkNext) pickNext(e.target);
+  });
+  markLive(["st-eyes", "st-photo", "st-photo-x", "sw:tm-model-sel", "sw:tk-copy", "sw:tk-pool", "sw:tk-next"]);
   on("st-shuffle", () => shuffle());
   on("st-save", () => saveEditor());
   on("emo15", (el) => setEmoji(el.dataset.v));

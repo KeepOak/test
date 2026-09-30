@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { AudioProvider } from "./voice.js";
+import type { LocalWhisper } from "./voice-whisper.js";
 
 /**
  * Writing out what someone said, wherever the sound came from: the microphone in the composer, a
@@ -67,7 +68,7 @@ export function estimateAudioCost(model: string, seconds: number | undefined, ro
 
 /** Where a local speech program lives and how it is called. Branch never downloads one. */
 export const LocalSpeechSchema = z.object({
-  /** The whisper.cpp or faster-whisper program the owner already installed. Empty means none. */
+  /** whisper.cpp's program, or the Python that has faster-whisper. Empty means Branch looks for faster-whisper itself. */
   executable: z.string().trim().max(400).default(""),
   /** The model file whisper.cpp needs, or the model name faster-whisper should load. */
   model: z.string().trim().max(400).default(""),
@@ -76,20 +77,13 @@ export const LocalSpeechSchema = z.object({
 export type LocalSpeech = z.infer<typeof LocalSpeechSchema>;
 
 /**
- * The command line for a local speech program. Pure, so the arguments can be read and checked
- * without a program being installed.
- *
- * Both families print the transcript to standard output, which is what is read back here, so no
- * write-a-file flag is passed and nothing is left behind. These are the flags whisper.cpp's own
- * command-line tool and the faster-whisper command line document; a build that names them
- * differently will say so plainly when it refuses, and the owner can install one that matches.
- * Nothing here has been run against a real installation on this machine.
+ * The command line for whisper.cpp. Pure, so the arguments can be read and checked without a
+ * program being installed. It prints the transcript to standard output, which is what is read back
+ * here, so no write-a-file flag is passed and nothing is left behind. faster-whisper is not run this
+ * way: its command line writes a subtitle file rather than printing, so Branch runs it through the
+ * worker in src/voice-whisper.ts instead (RES-709).
  */
 export function localSttArgs(settings: LocalSpeech, wavPath: string, language: string | null): string[] {
-  if (settings.kind === "faster-whisper")
-    return [wavPath,
-      ...(settings.model ? ["--model", settings.model] : []),
-      ...(language ? ["--language", language] : [])];
   return ["-f", wavPath, "--no-timestamps", "--no-prints",
     ...(settings.model ? ["-m", settings.model] : []),
     ...(language ? ["-l", language] : ["-l", "auto"])];
@@ -121,6 +115,8 @@ export class Transcription {
     private readonly fetch: typeof globalThis.fetch = globalThis.fetch,
     /** Runs a local speech program; replaced in tests so no program is ever started. */
     private readonly runLocal: (exe: string, args: string[], signal?: AbortSignal) => Promise<string> = runProgram,
+    /** RES-709: faster-whisper on this computer. Null in tests that start no program. */
+    readonly whisper: LocalWhisper | null = null,
   ) {}
 
   /**
@@ -186,9 +182,23 @@ export class Transcription {
     return { text, route: "gemini", language: options.language ?? null, cost: estimateAudioCost(model, clip.seconds, "gemini") };
   }
 
-  /** A speech program the owner installed. The sound is written to a temporary file and removed. */
+  /**
+   * A speech program the owner installed: faster-whisper through its worker (nothing is written to disk), or
+   * whisper.cpp, whose sound is written to a temporary file and removed.
+   */
   private async local(clip: AudioClip, settings: LocalSpeech, options: TranscribeOptions): Promise<TranscriptionResult> {
-    if (!settings.executable)
+    if (settings.kind === "faster-whisper" || !settings.executable) {
+      const found = this.whisper?.find({ localSpeechExecutable: settings.executable, localSpeechModel: settings.model,
+        localSpeechKind: settings.kind, language: options.language ?? "" });
+      if (found?.available && this.whisper) {
+        const heard = await this.whisper.transcribe(found, clip.bytes, { language: options.language ?? null });
+        if (!heard?.text) throw new Error("The speech program on this computer answered without any words in it");
+        return { text: heard.text, route: "local", language: heard.language ?? options.language ?? null,
+          cost: estimateAudioCost("local", clip.seconds, "local") };
+      }
+      if (found) throw new Error(found.how);
+    }
+    if (!settings.executable || settings.kind === "faster-whisper")
       throw new Error("No speech program is set up on this computer. Point Branch at whisper.cpp or faster-whisper under Settings → Voice; Branch never downloads one for you.");
     await access(settings.executable, constants.X_OK).catch(() => {
       throw new Error(`Branch cannot run ${settings.executable}. Check the path under Settings → Voice.`);

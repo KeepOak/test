@@ -11,6 +11,7 @@ import { openDlg, closeDlg, dialog, ic, toast } from "../core/ui.js";
 import { greyOut } from "../core/features.js";
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
+import { gsel } from "../core/gsel.js";
 import { L, BASE, EF, looks, lookOf, lookEF, wornId, withAccent, effMode, deriveEF, varsFromEF, contrastC, isHex,
   applyLook, setVars, saveLocal, wear, setContrast, swatch } from "./look.js";
 
@@ -86,17 +87,16 @@ function preview(c) {
 function openCed() {
   const d = G.ced, c = d[d.edit];
   const rows = EF.map(([k, l]) => `<label class="crow"><input type="color" id="ce-${k}" value="${c[k]}" aria-label="${esc(say(l))}"><span>${esc(say(l))}</span><input class="inp hexin" id="ceh-${k}" value="${c[k]}" maxlength="7" aria-label="${t("window.shell.themes.value-as-a-hex-code", { value: esc(l) })}" spellcheck="false"></label>`).join("");
-  const bases = looks().filter((x) => !x[3]).map(([id, n]) => `<option value="${esc(id)}">${esc(n)}</option>`).join("");
+  const bases = gsel({ id: "ce-base", label: t("people.admin.provider.preset"), options: looks().filter((x) => !x[3]).map(([id, n]) => [id, n]), value: d.base });
   const dlg = openDlg({ title: d.id ? t("trunks.editing", { name: d.name }) : t("window.shell.themes.make-your-own-theme"), wide: true, body: `<div class="ced">
     <div class="ced-l"><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="ce-name" value="${esc(d.name)}" maxlength="40"></label>
-      <label class="fld"><span>${t("people.admin.provider.preset")}</span><select class="inp" id="ce-base">${bases}</select></label>
+      <div class="fld"><span>${t("people.admin.provider.preset")}</span>${bases}</div>
       <div class="fld"><span>${t("window.shell.themes.you-are-colouring")}</span><span class="seg" role="group" aria-label="${t("window.shell.themes.which-mode-you-are-colouring")}">${[["light", t("appearance.daylight")], ["dark", t("look.moonlight")]].map(([v, l]) => `<button type="button" data-act="ce-mode" data-v="${v}" aria-pressed="${d.edit === v}">${l}</button>`).join("")}</span></div>
       <div class="fld"><span>${t("window.shell.themes.accent")}</span><span class="accs">${ACCENTS.map((a) => `<button type="button" class="acc" data-css="--c:${a}" data-act="ce-acc" data-v="${a}" aria-label="${t("window.settings.appearance.accent-value", { value: a })}" aria-pressed="${c.accent.toUpperCase() === a}"></button>`).join("")}</span></div>
       <div class="crows">${rows}</div>
       <button class="btn sm" type="button" data-act="ce-fill">${ic("spark", "s")}${t("window.shell.themes.fill-in-the-rest-from-background")}</button></div>
     <div class="ced-r"><p class="hint" data-css="margin:0 0 8px">${t("window.shell.themes.changes-show-on-the-whole-window")}</p><div id="ce-prev">${preview(c)}</div></div></div>`,
   foot: `<button class="btn ghost" type="button" data-act="ce-cancel">${t("first-run-steps.restore-no")}</button><button class="btn pri" type="button" data-act="ce-save">${d.id ? t("trunks.save") : t("window.shell.themes.save-theme")}</button>` });
-  dlg.querySelector("#ce-base").value = d.base;
   cedLive();
 }
 function cedLive() { const d = G.ced; if (d) setVars(d[effMode()], effMode()); }

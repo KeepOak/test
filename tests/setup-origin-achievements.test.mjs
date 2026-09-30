@@ -61,6 +61,7 @@ test("once setup is over, the same things count and are celebrated", async (t) =
   await call("POST", "/api/trunks/switch", { part: "trunks", mode: "on" }, true);
   await call("POST", "/api/trunks", { name: "Researcher", description: "Reads the web" }, true);
   await app.trunks.introduced();
+  assert.deepEqual((await call("GET", "/api/delight/achievements")).fresh, [], "the setup introduction earns no Trunk turn");
   // The owner's own requests, without the header, from the same client: setup is over.
   await call("POST", "/api/devices/mode", { mode: "off" });
   await call("POST", "/api/run", { prompt: "Say hello." });
@@ -68,7 +69,7 @@ test("once setup is over, the same things count and are celebrated", async (t) =
   const fresh = view.fresh.map((a) => a.id);
   assert.ok(fresh.includes("audit:policy.changed:1"), "Rule maker, for the owner's own change");
   assert.ok(fresh.includes("tasks:1") && fresh.includes("conversations:1"), "the owner's own task and conversation");
-  assert.equal(fresh.includes("event:trunk.turn:1"), false, "the introduction made in setup still is not counted");
+  assert.equal(fresh.includes("event:trunk.turn:1"), true, "the owner's actual request now reaches the default Trunk and earns its first turn");
   assert.ok((await got()).has("audit:policy.changed:1"));
 });
 

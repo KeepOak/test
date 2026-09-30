@@ -16,6 +16,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
 import { signIn, openPlace, openSettings } from "./new-window-places.mjs";
+import { watchSettled } from "./page-settled.mjs";
 
 /* Redesign (sweep-B): the shell of the new window (public/app/shell/**, design/redesign/prototype.html pass 17). The
    old window's shell (#rail-*, #trunk-strip, #settings-window, body.lx-ready, /appearance.js) is gone; waiting for its
@@ -51,15 +52,8 @@ async function fixture(t, { width = 1440, height = 1000, onboarded = true, provi
   const page = await (await browser.newContext({ viewport: { width, height }, serviceWorkers: "block" })).newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  /* A screen draws what it reads once the engine has answered, so it is read when nothing is in flight (the live event
-     stream aside, which stays open). */
-  const pending = new Set();
-  const api = (request) => new URL(request.url()).pathname.startsWith("/api/") && !request.url().includes("/api/events/stream");
-  page.on("request", (request) => { if (api(request)) pending.add(request); });
-  for (const done of ["requestfinished", "requestfailed"]) page.on(done, (request) => pending.delete(request));
-  page.settled = async () => {
-    for (let quiet = 0; quiet < 3;) { await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 20)))); quiet = pending.size ? 0 : quiet + 1; }
-  };
+  /* A screen draws what it reads once the engine has answered, so it is read when nothing is in flight (page-settled.mjs). */
+  page.settled = watchSettled(page);
   await signIn(page, server);
   return { app, page, server, errors, call };
 }
@@ -171,8 +165,14 @@ test("the Trunks rail stays owner-only", async (t) => {
   const f = await fixture(t);
   await f.page.locator("#prompt").fill("Private owner words");
   await f.page.locator("#send").click();
-  const row = f.page.locator("#side .list").getByText("Private owner words").first();
-  await row.waitFor({ timeout: 30000 });
+  // trunk-one-row: the conversation is its Trunk's, so the list names it by the Trunk's one row, which opens it.
+  let own = null;
+  for (let tries = 0; tries < 100 && !own; tries++) {
+    own = (await (await f.call("/api/sessions?limit=20")).json()).sessions.find((s) => s.opening === "Private owner words")?.sessionId ?? null;
+    if (!own) await f.page.waitForTimeout(100);
+  }
+  assert.ok(own, "control: the owner's conversation was kept");
+  await f.page.locator(`#side .list [data-act="chat"][data-id="${own}"]`).waitFor({ timeout: 30000 });
   await openSettings(f.page, "people");
   await f.page.locator('.set-col [data-act="p-invite"]').first().waitFor({ state: "attached" });
   await leaveSettings(f.page);
@@ -183,6 +183,7 @@ test("the Trunks rail stays owner-only", async (t) => {
   await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await f.page.locator("#side .owner-row").getByText("Sam").first().waitFor();
   assert.equal(await f.page.locator("#side .list").getByText("Private owner words").count(), 0, "the owner's conversation is not named");
+  assert.equal(await f.page.locator(`#side .list [data-id="${own}"]`).count(), 0, "nor offered by any row");
   await openSettings(f.page, "people");
   await f.page.locator(".set-col h1").first().waitFor();
   await f.page.settled();
@@ -357,7 +358,9 @@ test("a Recents row lights up under the pointer in Daylight", async (t) => {
   await f.page.locator("#prompt").fill("Say hello");
   await f.page.locator("#send").click();
   await f.page.locator("#conversation").getByText("Hello from Branch.").first().waitFor({ timeout: 30000 });
-  // A new conversation, so the one just had is a Recents row that is not the open one.
+  // A new conversation, so the one just had is a Recents row that is not the open one. trunk-one-row: New conversation
+  // inside a Trunk's timeline stays in that Trunk's row, so it is begun from a place, where it is a plain new one.
+  await f.page.locator('#side [data-act="view"][data-v="overview"]').click();
   await f.page.locator('#side [data-act="newmenu"]').click();
   await f.page.locator('.pop [data-act="newconv"]').click();
   const row = f.page.locator('#side .list [data-act="chat"]:not([aria-current="true"])').first();

@@ -3,7 +3,7 @@
 
 import { restOf } from "../core/sleep.js";
 import { $, esc, renderNow, render, onRender } from "../core/dom.js";
-import { S, E, refresh, trunkIntro, chatFace, ownerHere, projectName, level } from "../core/state.js";
+import { S, E, refresh, trunkIntro, chatFace, defaultTrunk, threadTrunk, ownerHere, projectName, level } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, toast, faceOf } from "../core/ui.js";
@@ -11,10 +11,11 @@ import { markLive } from "../core/features.js";
 import { text, plain } from "./markdown.js";
 import { chips, loadChips, initChips, startMode, trunkModelRefused, showModelMenu } from "./chips.js";
 import { drawPane, initPane } from "./pane.js";
-import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, readyWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
+import { practiceFlag, practiceSent, refusePracticeRoute } from "./practice-next.js";
 import { initRec } from "./rec.js";
 import { noModelRow } from "./nomodel.js";
-import { binding } from "../shell/keys.js";
+import { binding, spoken } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
 import { selfCard, loadSelfChange, initSelfChange } from "./selfchange.js";
 import { mkCard, initMkTrunk } from "./mktrunk.js";
@@ -23,8 +24,9 @@ import { FIND, findBar, applyFind, initFind } from "./find.js";
 import { initToolsHub } from "./toolshub.js";
 import { initDictate, loadDictation, dictating, micButton, dictRow, wakeOffer } from "./dictate.js";
 import { initTalkLive } from "./talklive.js";
-import { replyMark, readNewReply } from "./aloud.js";
+import { replyMark, readNewReply, sentMessage } from "./aloud.js";
 import { dockRow, initBg } from "./bg.js";
+import { sendInBackground, roomAway } from "./bgsend.js"; // RES-702: Ctrl+Enter starts a new conversation in the background
 import { fileRows, mediaRows, pictureCards, initMedia } from "./media.js";
 import { besideWrap, rosterButton, initBeside } from "./beside.js";
 import { msgActs, pinnedClass, pinsBar, queueRow, loadExtras, initMessages } from "./messages.js";
@@ -56,30 +58,31 @@ import { timeLine, initComfort } from "./comfort.js"; // Settings › General: v
 import { media17, sized, look17 } from "../core/art17.js";
 import { stillOutOfSight } from "../core/still.js";
 import { liveRun as engineRun } from "./timeline.js"; // household: the task the engine says works here
+import { lineHTML, lineAfter, openLine, freshLine, leaveLine, lineTrunk, trunkOfId, currentOf, dropFromLine, freshIn, firstTimed, keepRead, initTrunkLine } from "./trunkline.js"; // trunk-one-row
 
-const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null };
+/* seat: counts each conversation opened or started, so a send whose answer comes back after the person went to another
+   conversation leaves that one on screen (chat/chat.js sendPlain). */
+const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null, seat: 0 };
+const LINE = { now: null }; // trunk-one-row: the timeline drawn around the open conversation (draw, thread)
+const routingSends = new Set();
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
 const exactAsk = (q) => /^[a-f0-9]{32}$/.test(String(q.fingerprint ?? ""));
 
 const current = () => E.sessions.find((s) => (s.sessionId ?? s.id) === C.sessionId);
 /* A Trunk's own conversation (its chat now, or one it retired). */
 const ownTrunk = (sid = C.sessionId) => E.trunks.find((tr) => tr.chatSessionId === sid || (tr.retiredChats ?? []).includes(sid));
-const speaker = () => ownTrunk() ?? (whoHere()?.trunk ? E.trunks.find((tr) => tr.id === whoHere().trunk.id) : null);
+const speaker = () => ownTrunk() ?? (whoHere()?.trunk ? E.trunks.find((tr) => tr.id === whoHere().trunk.id) : threadTrunk(C.sessionId) ?? defaultTrunk());
 /* The face of whoever answers here: the conversation's Trunk (or room); Branch's own only where Branch itself answers. */
 const answerer = () => speaker() ?? chatFace(C.sessionId);
 /* The face of whoever wrote reply `m`: its author, else the conversation's own Trunk, room, or Branch. */
 const faceFor = (m, info, index) => authorOf(m, index, info) ?? chatFace(C.sessionId);
 /* The prototype's renderChat names a Trunk's or a room's conversation by the Trunk or room (c.name). */
-const title = () => ownTrunk()?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.title || plain(current()?.opening) || plain(C.messages.find((m) => m.role === "user")?.content).slice(0, 70) || t("comfort.field.newConversation");
+const title = () => ownTrunk()?.name || (C.sessionId ? trunkOfId(C.sessionId) : freshIn() && lineTrunk())?.name || E.rooms.find((r) => r.sessionId === C.sessionId)?.name || current()?.title || plain(current()?.opening) || plain(C.messages.find((m) => m.role === "user")?.content).slice(0, 70) || t("comfort.field.newConversation");
 /* The engine starts a Trunk's own conversation by asking it to introduce itself, a message it marks (core/state.js
    trunkIntro). The prototype's Trunk conversation opens with the Trunk's hello, so that ask is not drawn as the owner's. */
 const enginePrompt = (m) => trunkIntro(m) && !!ownTrunk();
 
 /* Branch on the empty conversation: its idle loop, its sleep once left alone, its still after the long sleep (core/sleep.js). */
-function heroLoop() {
-  const rest = restOf("branch");
-  return rest === "still" ? "" : sized(rest === "doze" ? "/art/anim-sleep.webm" : "/art/anim-idle.webm", look17("branch")?.sizes, 150);
-}
 
 /* Chrome pass (owner's call): the header is the conversation's own buttons in the title-bar row, with no face and no
    visible name; the list's row shows which conversation is open. The name stays as the header's accessible heading, and
@@ -173,12 +176,12 @@ function askCard(q) {
 const shown = (m) => m.role !== "tool" && m.role !== "system" && m.from !== "branch" && !enginePrompt(m);
 const nextShown = (list, i) => list.slice(i + 1).find(shown);
 function thread() {
-  const info = whoHere(), list = C.messages, marks = pathMarks(list);
+  const info = whoHere(), list = C.messages, marks = pathMarks(list), line = LINE.now;
   /* Each reply's place among the replies, counted as the engine counts them for `authors`. */
   const index = new Map();
   let replies = 0;
   for (const m of list) { index.set(m, replies); if (countsAsReply(m)) replies++; }
-  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: null, used: new Set(), decided: new Set(), failed: new Set(), placed: new Set() };
+  const T = { out: [], calls: [], run: null, worked: false, choice: null, lastRole: null, lastWho: null, prev: line ? firstTimed(list) : null, used: new Set(), decided: new Set(), failed: new Set(), placed: new Set() };
   /* A room is drawn as the prototype's group conversation (chat/roomlook.js) once its record is read; its asks still follow. */
   const inRoom = roomThread(info, list, C.sessionId);
   if (inRoom !== null) T.out.push(inRoom);
@@ -292,14 +295,14 @@ function replyRow(T, m, i, info, index, marks) {
    opening its own conversation. The prototype's flight booking names an example city (check-fakes), so it is left out. */
 /* Each starting point is sent as the person's own message, in the words they read (the language in force). */
 const SUGG = ["window.chat.empty.downloads", "window.chat.empty.pdfs", "window.chat.empty.week"];
-const isEmpty = () => !C.sessionId && !C.messages.length && !C.sending;
+const isEmpty = () => !C.sessionId && !C.messages.length && !C.sending && !freshIn();
 /* The product's name, small and quiet, where a new conversation starts (the owner's "small Branch Agent writing"); the
    title-bar row carries no brand. "Branch Agent" is the product's name, the same in every language. */
 const WORDMARK = `<p class="wm17">Branch <span>Agent</span></p>`;
 function emptyChat() {
   const ask = E.trunks.filter((tr) => tr.chatSessionId && tr.name !== "New Trunk").slice(0, 4)
-    .map((tr) => `<button type="button" data-act="chat" data-id="${esc(tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
-  return `<div class="empty-chat"><span class="hero11">${media17("/art/branch-wave.webp", heroLoop(), "pose11 vid11")}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
+    .map((tr) => `<button type="button" data-act="chat" data-id="${esc(currentOf(tr) ?? tr.chatSessionId)}" aria-label="${t("window.chat.empty.ask", { name: esc(tr.name) })}">${av(tr, 28)}</button>`).join("");
+  return `<div class="empty-chat"><span class="hero11">${defaultTrunk() ? av(defaultTrunk(), 84) : ""}</span><h1>${t("window.chat.empty.title")}</h1><div class="chips">${SUGG.map((key) => t(key)).map((x) => `<button class="chipb" type="button" data-act="sugg" data-v="${esc(x)}">${esc(x)}</button>`).join("")}</div><button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button>${ask ? `<div class="askrow">${t("window.chat.empty.or-ask", { trunks: ask })}</div>` : ""}${WORDMARK}</div>`;
 }
 
 /* The box names who it writes to, as the prototype's does: the room, or the Trunk that answers here. */
@@ -312,11 +315,11 @@ function composer() {
   const draft = S.drafts[C.sessionId ?? "new"] ?? "", words = esc(placeholder());
   return `<div class="dock">${helpFrame()}<div id="attached">${attached()}</div>${noModelRow()}${queueRow()}${dockRow()}${steerChip()}${hooked(OUT.dock)}<form class="composer${temporaryNext() ? " temp" : ""}" id="composer" data-form="composer">
     <button class="c-btn" type="button" aria-label="${t("window.chat.composer.plus")}" aria-haspopup="menu" aria-expanded="false" data-act="plusmenu">${ic("plus")}</button><button class="c-btn plug9" type="button" aria-label="${t("window.chat.composer.tools-label")}" data-tip="${t("dashboard.filter.tools")}" aria-haspopup="dialog" data-act="tools9">${ic("puzzle")}</button>
-    ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${costLine(C.sessionId)}</span>`}
+    ${dictating() ? dictRow() : ""}<textarea id="prompt" rows="1" placeholder="${words}" aria-label="${words}"${dictating() ? " hidden" : ""}>${esc(draft)}</textarea>${dictating() ? "" : `<span class="c-flags">${flags(temporaryNext(), asksFirst())}${practiceFlag()}${costLine(C.sessionId)}</span>`}
     ${chips()}
     ${dictating() ? "" : `${micButton()}<button class="c-btn" type="button" aria-label="${t("window.chat.composer.voice")}" data-act="voice">${ic("wave")}</button>`}
     ${!draft.trim() && (C.sending || stoppable()) ? `<button class="c-btn send stop" id="send" type="button" aria-label="${t("dashboard.stop")}" data-act="stop-run">${ic("stop")}</button>`
-      : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}">${ic("up")}</button>`}</form></div>`;
+      : `<button class="c-btn send${draft.trim() || hasFiles() ? " ready" : ""}" id="send" type="submit" aria-label="${t("composer.send")}"${C.sessionId ? "" : ` data-tip="${esc(t("window.chat.bgsend.tip", { keys: spoken("Ctrl+Enter") }))}"`}>${ic("up")}</button>`}</form></div>`;
 }
 
 /* ---------- hook points for other batches (PARITY.md, batch B1's hook tasks) ---------- */
@@ -325,6 +328,10 @@ const OUT = { notes: [], dock: [] };
 export const addThreadNote = (draw) => { OUT.notes.push(draw); };
 /** setup-delight-024 (B5): something drawn by the message box (the pet walking there), from the conversation's id. */
 export const addDockItem = (draw) => { OUT.dock.push(draw); };
+/** RES-701: words that go in front of the next plain message here (the Home panel's "Working on", carried to the full
+    page), from the conversation's id (null for a new one); each answers "" when it has nothing for this conversation. */
+const PREFIX = [];
+export const addSendPrefix = (take) => { PREFIX.push(take); };
 const hooked = (list) => list.map((draw) => { try { return draw(C.sessionId) || ""; } catch (error) { toast(error.message); return ""; } }).join("");
 /** pane-stage-006 (B2): who this conversation is (its Trunk, its room, its name), for the stage's name and dock. */
 export const conversationWho = () => ({ sessionId: C.sessionId, trunk: speaker() ?? null, room: E.rooms.find((r) => r.sessionId === C.sessionId) ?? null, title: title() });
@@ -339,14 +346,24 @@ export const chatKeys = { focusBox: () => $("#prompt")?.focus(), stop: () => (vi
 
 /* The words of the message being sent, so the side panel can follow a new conversation's first task before its id is known. */
 export const sendingPrompt = () => (C.sending && !C.sessionId ? C.prompt : null);
+export const sendingWithoutSession = () => C.sending && !C.sessionId;
 /** Whether the open conversation's message is being answered now. */
 export const sendingHere = () => C.sending && !!C.sessionId && C.sessionId === S.chat;
 
+/* The conversation's box takes focus when it is clicked (tabindex -1: never a Tab stop), so Space, Shift+Space and
+   the arrows keep scrolling it after a redraw: a click in it makes its part draw anew (main.js touched), and the box the
+   browser's keys scrolled was the one taken away. Focused, it is found again by its id (core/dom.js keepFocus). */
 export function draw() {
+  LINE.now = null;
   /* pass 18a/18b: a helper's conversation (its own record) or a room member's (its thread), view only, with one way back
      in the composer's place */
-  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
-  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
+  if (viewingHelper()) return `${besideWrap(`<div class="scroll" id="scroll" tabindex="-1"><div class="thread" id="conversation">${helperThread() || thread()}</div></div>`)}${helperDock()}`;
+  /* trunk-one-row: a Trunk's conversation is drawn inside the Trunk's one timeline (chat/trunkline.js): its older
+     conversations above it, under their own lines, and any written in since below it. #conversation stays the one the
+     message box sends to; its own line names when it began, so its first message carries no stamp of its own. */
+  const line = LINE.now = isEmpty() || whoHere()?.kind === "room" ? null : lineHTML(C.sessionId, C.messages, current());
+  const above = line ? `<div class="thread tl-past19">${line.before}${line.sep}</div>` : "", below = line?.after ? `<div class="thread tl-past19 tl-after19" id="tl-now">${line.after}</div>` : "";
+  return `${lockBanner()}${teachBar(C.sessionId)}${findBar()}${pinsBar()}${pathBar(C.sessionId)}${besideWrap(`<div class="scroll" id="scroll" tabindex="-1">${goalStrip(C.sessionId)}${isEmpty() ? emptyChat() : `${above}<div class="thread" id="conversation">${thread()}${pauseNote(C.sessionId)}</div>${below}`}</div>`)}${composer()}${agentWin(C.sessionId, C.sending)}`;
 }
 /* main.js draws the conversation in parts, keeping those whose markup is unchanged; not while Find is open, whose marks
    are written into the drawn thread and must start from a fresh one each time. */
@@ -358,11 +375,17 @@ export function after(main) {
   if (box) {
     const same = C.readSid === C.sessionId;
     box.scrollTop = !same || C.atBottom !== false ? box.scrollHeight : C.readTop ?? box.scrollHeight;
+    /* trunk-one-row: a conversation opened with newer ones below it in the timeline opens at its own end. */
+    const now = !same && $("#tl-now", box);
+    if (now) box.scrollTop += now.getBoundingClientRect().top - box.getBoundingClientRect().bottom + 24;
     C.readSid = C.sessionId;
-    // A scroll box kept from the last draw already has its listener.
-    if (!heard.has(box)) box.addEventListener("scroll", () => { C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
+    // A scroll box kept from the last draw already has its listener. A box drawn over before the next frame is still sent
+    // the scroll queued on it, and off the page it reads 0 for everything, which looked like a reader at the end: only
+    // the box on screen says where the reader is.
+    if (!heard.has(box)) box.addEventListener("scroll", () => { if (!box.isConnected) return; C.readTop = box.scrollTop; C.atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40; }, { passive: true });
     heard.add(box);
     stillOutOfSight(box);
+    lineAfter(box);
   }
   applyFind();
   frameAfter(); // pass 18a: the helpers frame's clock, and the character window above it
@@ -393,8 +416,10 @@ async function rereadRoom() {
 
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */
 export async function openConversation(id) {
+  C.seat += 1;
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
+  openLine();
   C.sessionId = id;
   S.chat = id;
   C.messages = [];
@@ -429,8 +454,10 @@ export async function rereadOpen(force = false) {
 }
 
 export function startConversation(project = null) {
+  C.seat += 1;
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
+  leaveLine();
   C.sessionId = null;
   S.chat = null;
   C.messages = [];
@@ -439,6 +466,31 @@ export function startConversation(project = null) {
   loadExtras(null);
   renderNow();
   $("#prompt")?.focus();
+}
+
+/* trunk-one-row: "New conversation" (the list's +, Ctrl+N, /new) inside a Trunk's timeline starts a fresh conversation
+   with that Trunk, a new context shown as a new line at the end of the same timeline, never a row of its own. The
+   default Trunk's is begun by its first message (POST /api/run names no conversation, so the engine gives it to the
+   default Trunk); another Trunk's is made at once (POST /api/trunks/conversations). Anywhere else it is a new
+   conversation as before. helper-lifecycle: the helpers the conversation left working are stopped, as typed /new stops
+   them (src/commands/handlers.ts freshConversation); `stopped` says /new already did. */
+export async function startFresh({ stopped = false } = {}) {
+  if (!stopped && C.sessionId) void api("commands/run", { surface: "window", line: "/new", sessionId: C.sessionId }).catch(() => undefined);
+  const trunk = S.view === "chat" ? lineTrunk() : undefined;
+  if (!trunk) return startConversation();
+  keepRead(C.sessionId, C.messages);
+  if (trunk.id === E.defaultTrunkId) {
+    startConversation();
+    freshLine(trunk);
+    renderNow();
+    $("#prompt")?.focus();
+    return;
+  }
+  try {
+    const made = await api("trunks/conversations", { trunkId: trunk.id });
+    await refresh();
+    await openConversation(made.sessionId);
+  } catch (error) { toast(error.message); startConversation(); }
 }
 
 /* Pass 17, Quick ask (chat/quick.js): a new conversation, or the one just made for a Trunk, that starts with these words. */
@@ -489,28 +541,54 @@ async function carryOut(client) {
   if (!client?.do) return;
   if (client.do === "go") { if (goHome(client.home)) renderNow(); }
   else if (client.do === "open-session" && client.id) await openConversation(client.id);
-  else if (client.do === "new") startConversation();
+  else if (client.do === "new") await startFresh({ stopped: true });
   else if (client.do === "fill" && typeof client.text === "string") {
     S.drafts[C.sessionId ?? "new"] = client.text;
     const box = $("#prompt");
     if (box) { box.value = client.text; box.focus(); }
   } else if (client.do === "send" && typeof client.text === "string") await send(client.text);
   else if (client.do === "refresh-model") { await refresh().catch((error) => toast(error.message)); renderNow(); }
+  else if (client.do === "search" && typeof client.text === "string") await searchFor(client.text);
+}
+/* /find: the sidebar's search with these words, as if typed there (loaded when first used, as the shell loads it). */
+async function searchFor(text) {
+  const { SQ, askEngine } = await import("../shell/search.js");
+  SQ.q = text; SQ.f = "all";
+  renderNow();
+  if (await askEngine(text.trim())) renderNow();
 }
 
 /* Sends what is in the box, or `words` when given (an earlier message edited and sent again). While a task works, the
    message joins the conversation's waiting line instead; a message for a room or naming a Trunk goes where the engine
    expects it (rooms.js). */
+async function destinationReady(sid, prompt) {
+  if (sid && ((ownerHere() && E.trunkModes?.trunks !== "off") || E.rooms.some((room) => room.sessionId === sid))) {
+    if (routingSends.has(sid)) return false;
+    routingSends.add(sid);
+    try { await readyWho(); } catch (error) {
+      if (!S.drafts[sid]) S.drafts[sid] = prompt;
+      toast(error.message);
+      if (C.sessionId === sid) renderNow();
+      return false;
+    } finally { routingSends.delete(sid); }
+  }
+  return true;
+}
+
 async function send(words, answered = false) {
   const box = $("#prompt");
   const prompt = (words ?? box?.value ?? "").trim();
   if (viewingHelper()) return; // pass 18a: a helper's conversation is view only
   if (!prompt && !(words === undefined && hasFiles())) return;
+  sentMessage(); // whether these words were said or typed, for Answer aloud › When I talk
+  const busy = C.sending || ["running", "queued"].includes(liveRun()?.status);
+  if (refusePracticeRoute(prompt, busy, !!routeFor(prompt, C.sessionId, whoHere(), HOOKS))) return;
   /* While a task works, words join its waiting line; files wait on their chips for the next message. */
   if (C.sending || ["running", "queued"].includes(liveRun()?.status)) { if (prompt) await queueNext(prompt, words === undefined); return; }
-  /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
-  if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain(""); return; }
   if (prompt.startsWith("/") && (await command(prompt))) return;
+  if (!(await destinationReady(C.sessionId, prompt))) return;
+  /* A message of files only (attach-followups): no command, no questions first, and a room takes words. */
+  if (!prompt) { if (whoHere()?.kind !== "room") await sendPlain("", true); return; }
   /* Stress test B008: a Trunk never answers through a sign-in; the words stay in the box and the model menu says why. */
   if (trunkModelRefused()) { S.drafts[C.sessionId ?? "new"] = prompt; showModelMenu(); return; }
   /* Ask me questions first (chat/askfirst.js): the engine's questions come first, and their dialog sends the words. */
@@ -525,7 +603,7 @@ async function send(words, answered = false) {
     }
     return;
   }
-  await sendPlain(prompt);
+  await sendPlain(prompt, true);
 }
 
 /* A choice card's answer (chat/furniture.js) is this conversation's next message, word for word: an option's title is
@@ -534,6 +612,7 @@ async function send(words, answered = false) {
 async function answerChoice(words) {
   const prompt = String(words ?? "").trim();
   if (!prompt || C.sending) return;
+  if (refusePracticeRoute(prompt, ["running", "queued"].includes(liveRun()?.status), whoHere()?.kind === "room")) return;
   if (["running", "queued"].includes(liveRun()?.status)) { await queueNext(prompt, false); return; }
   const info = whoHere();
   if (info?.kind === "room") {
@@ -579,8 +658,47 @@ const HOOKS = {
   readAloud: (before) => readNewReply(before, C.messages),
 };
 
-async function sendPlain(prompt) {
-  const before = replyMark(C.messages);
+/* A new conversation's box, typed in while its first message was answered, becomes the conversation's own. The caret it
+   had is put back once, on the redraw that follows; a later call does nothing, so a caret the person moves after the
+   answer shows is never taken back to where it was when the conversation got its id (desktop-hot-update on CI). */
+function adoptDraft(sessionId) {
+  if (C.sessionId) return () => undefined;
+  const box = $("#prompt"), words = S.drafts.new;
+  const caret = box ? [box.selectionStart, box.selectionEnd] : null;
+  if (typeof words === "string") { S.drafts[sessionId] = words; delete S.drafts.new; }
+  let done = false;
+  return () => {
+    if (done) return;
+    done = true;
+    const after = $("#prompt");
+    if (S.chat === sessionId && after && caret) after.setSelectionRange(...caret);
+  };
+}
+
+/* The answered conversation becomes the one on screen: its id (a new conversation's first), its draft and its messages,
+   unless another was opened while they were read. */
+async function adopt(sessionId, before, keepDraft) {
+  const seat = C.seat;
+  keepDraft(adoptDraft(sessionId));
+  C.sessionId = sessionId;
+  S.chat = sessionId;
+  teachAdopt(sessionId);
+  const got = await api("sessions/" + sessionId);
+  if (C.seat !== seat) return;
+  C.messages = got.messages ?? C.messages;
+  C.project = got.project ?? C.project;
+  readNewReply(before, C.messages);
+}
+
+/* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
+   card's answer and a room's route are sent word for word. */
+async function sendPlain(said, withLead = false) {
+  const lead = withLead ? PREFIX.map((take) => take(C.sessionId ?? null)).filter(Boolean).join("\n") : "";
+  const prompt = lead ? `${lead}\n\n${said}` : said;
+  const before = replyMark(C.messages), seat = C.seat, from = C.sessionId ?? "new";
+  /* Another conversation opened while this one's answer was on its way (search, the Inbox, a Trunk's row) stays open:
+     the answer is this conversation's, read when it is opened again, never drawn over the one on screen. */
+  const moved = () => C.seat !== seat;
   C.messages.push({ role: "user", content: prompt });
   C.atBottom = true;
   C.prompt = prompt;
@@ -589,21 +707,29 @@ async function sendPlain(prompt) {
   watchThinking(true);
   renderNow();
   let started = false;
+  let restoreDraft = () => undefined;
   try {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
     filesSent();
-    C.sessionId = run.sessionId;
-    S.chat = run.sessionId;
-    teachAdopt(run.sessionId);
-    const got = await api("sessions/" + run.sessionId);
-    C.messages = got.messages ?? C.messages;
-    C.project = got.project ?? C.project;
-    readNewReply(before, C.messages);
+    practiceSent();
+    // Gone and come back to it before the answer came: it is on screen again, so its answer is read here all the same.
+    if (!moved() || C.sessionId === run.sessionId) await adopt(run.sessionId, before, (restore) => { restoreDraft = restore; });
+    /* The task is over once its answer is read back: from here the window only reads what it left (its questions, the
+       picture, the extras). Still "sending" meanwhile, a message sent after the answer showed went to the waiting line of
+       a task that had ended, and in a new conversation, which has no line, it was left unsent in the box (D1 on CI). */
+    C.sending = false;
+    watchThinking(false);
+    renderNow();
+    restoreDraft(); // on this redraw, before the person can type in the box that now shows the answer
     await loadWaiting();
   } catch (error) {
-    if (error.offline && !started) keepForLater(prompt);
-    else C.messages.push({ role: "assistant", content: error.message });
+    if (moved()) { toast(error.message); if (!started) S.drafts[from] = prompt; }
+    else if (error.offline && !started) keepForLater(prompt);
+    else {
+      C.messages.push({ role: "assistant", content: error.message });
+      if (!started) S.drafts[C.sessionId ?? "new"] = prompt;
+    }
   } finally {
     C.sending = false;
     watchThinking(false);
@@ -614,8 +740,31 @@ async function sendPlain(prompt) {
     await loadExtras(C.sessionId);
     renderNow();
     $("#prompt")?.focus();
+    restoreDraft();
   }
   if (C.queued && C.sessionId) { C.queued = false; await follow(C.sessionId); }
+}
+
+/* RES-702: the new conversation's message, started in the background (chat/bgsend.js) with everything Enter would send
+   with it, while the person stays here. A command, a room, Ask me questions first and a refused model go the usual way,
+   which says why; files still arriving wait, as they do for Enter. */
+let away = false;
+async function sendAway() {
+  const box = $("#prompt"), prompt = (box?.value ?? "").trim();
+  if (!prompt || viewingHelper() || away) return;
+  const routed = !!routeFor(prompt, null, whoHere(), HOOKS); // words that call a Trunk by its @name go its way
+  if (prompt.startsWith("/") || asksFirst() || trunkModelRefused() || whoHere()?.kind === "room" || routed) { await send(); return; }
+  if (!roomAway()) return; // before the files, Temporary and the mode pick are taken for it: refused, they all stay
+  away = true; // a second press while files finish arriving starts nothing more
+  let started = false;
+  try { started = sendInBackground(prompt, { ...(await takePending(true)), ...(await startMode()), ...newProject() }); } finally { away = false; }
+  if (!started) return;
+  filesSent();
+  practiceSent(); // a practice task was carried (takePending dryRun); the flag is used once, as Enter uses it
+  clearBox(true);
+  box?.dispatchEvent(new Event("input", { bubbles: true }));
+  renderNow();
+  $("#prompt")?.focus();
 }
 
 /* Q063: a message the engine never got (Branch was not running) goes back in the box, and is sent once the engine
@@ -766,8 +915,18 @@ async function follow(id) {
   if (before !== null && C.sessionId === id) readNewReply(before, C.messages);
 }
 
+/* trunk-one-row: a conversation archived or deleted from its line: the timeline moves on to its Trunk's newest one. */
+function putAway(id) {
+  dropFromLine(id);
+  if (id !== C.sessionId) return;
+  const trunk = lineTrunk(), next = trunk && currentOf(trunk);
+  if (next && next !== id) openConversation(next); else startConversation();
+}
+
 export function init() {
   initAgent17();
+  initTrunkLine();
+  document.addEventListener("conv-put-away", (e) => putAway(e.detail));
   initChips();
   initPane();
   initPlus();
@@ -798,7 +957,7 @@ export function init() {
   initFurniture({ send: (words) => answerChoice(words) });
   initComfort();
   // live steps: a question's card shows the moment it is asked; a stream refused for good gives the reply area back
-  initLive({ onAsk: () => loadWaiting().then(render), onGone: render });
+  initLive({ onAsk: () => loadWaiting().then(render), onGone: render, onShow: render });
   initWork({ onResume: (runId, sessionId) => resumeRun(runId, sessionId) }); // long-work
   initAskFirst({ send: (words) => send(words, true) });
   onRender(drawPane);
@@ -811,7 +970,12 @@ export function init() {
   on("ask-always", (el) => answer(el, "allow", { remember: "always" }));
   on("side", () => document.getElementById("app").classList.toggle("side-open"));
   document.addEventListener("submit", (e) => { if (e.target.id === "composer") { e.preventDefault(); send(); } });
-  document.addEventListener("keydown", (e) => { if (e.target.id === "prompt" && e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+  /* Enter sends; in a new conversation Ctrl+Enter (Cmd+Enter on a Mac) sends it to work in the background (RES-702). */
+  document.addEventListener("keydown", (e) => {
+    if (e.target.id !== "prompt" || e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    if ((e.ctrlKey || e.metaKey) && !C.sessionId && !C.sending) sendAway(); else send();
+  });
   /* Page Up and Page Down with nothing focused move through the conversation, which scrolls inside its own box. */
   document.addEventListener("keydown", (e) => {
     if (S.view !== "chat" || (e.key !== "PageUp" && e.key !== "PageDown") || e.target !== document.body) return;

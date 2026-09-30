@@ -5,7 +5,7 @@ import { join } from "node:path";
 import {
   fixture, until, delay, setSwitch, assertNoSecret, httpService, pairingWalk, refusalWalk,
 } from "./channels-parity-kit.mjs";
-import { parityServices } from "../dist/channels/connectors.js";
+import { parityServices } from "../dist/channels/parity-services.js";
 import { buildParityChannel } from "../dist/channels/parity-config.js";
 import { secretName } from "../dist/channels/parity-common.js";
 import { FlockChannel } from "../dist/channels/flock.js";

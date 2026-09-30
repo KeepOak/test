@@ -46,7 +46,7 @@ export function liveLine18(trunk, { typing = false } = {}) {
 /* [line icon, sentence key, button key, action, extra attributes, held for the separate security review] */
 const EMPTY18 = {
   "team:live": ["users", "window.p18.empty.team-live", "window.p18.start-conversation", "newconv"],
-  "team:people": ["users", "window.p18.empty.team-people", "household.invite", "invite18c", "", true],
+  "team:people": ["users", "window.p18.empty.team-people", "household.invite", "p-invite"],
   "team:groups": ["room", "window.p18.empty.team-groups", "window.p18.make-group", "group18c", "", true],
   "team:shared": ["chat", "window.p18.empty.team-shared", "window.p18.share-conversation", "share18c", "", true],
   "team:agents": ["users", "window.p18.empty.team-agents", "window.p18.make-team", "mkteam18c"],

@@ -44,10 +44,16 @@ export const OpenRouterSettingsSchema = z.object({
 /** R17-047: a small model says whether a task is easy or hard, and the answer picks the connection. */
 export const DifficultySettingsSchema = z.object({
   mode: threeWay.default("off"),
-  /** Which connection answers the easy-or-hard question; null uses the easy connection. */
+  /** Which connection answers the easy-or-hard question; null uses a model on this computer when there is one, else the easy connection. */
   classifierModel: presetId.nullable().default(null),
   easyModel: presetId.nullable().default(null),
   hardModel: presetId.nullable().default(null),
+  /**
+   * Settings › Models › Mix models on hard questions: a hard task is asked of the hard connection and the easy one, and
+   * the hard connection writes the one answer from both (a mixture, src/model-savings/mixture.ts `hardMixture`). Off until
+   * the owner chooses: it asks two models, so it costs more.
+   */
+  mixHard: z.boolean().default(false),
 }).strict();
 
 /** R17-048: also count what the service says a request held when deciding to fold a conversation. */

@@ -60,7 +60,7 @@ test("p17 ask a spreadsheet: one read-only question over a library spreadsheet, 
 test("p17 ask a spreadsheet: a pasted document, a document that is not a spreadsheet and an unknown id say so", async (t) => {
   const { app, workspace } = await fixture(t);
   const pasted = await app.documents.add("local", { name: "pasted.csv", text: CSV });
-  await assert.rejects(ask(app, { document: pasted.id, sql: "SELECT 1" }), /pasted or uploaded, so there is no file to open/);
+  await assert.rejects(ask(app, { document: pasted.id, sql: "SELECT 1" }), /no original file to open/);
   await writeFile(join(workspace, "notes.md"), "# Notes\n\nNothing tabular here.\n");
   const notes = await app.documents.add("local", { path: "notes.md" });
   await assert.rejects(ask(app, { document: notes.id, sql: "SELECT 1" }), /is not a spreadsheet/);

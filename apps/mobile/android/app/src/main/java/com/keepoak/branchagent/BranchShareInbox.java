@@ -1,6 +1,5 @@
 package com.keepoak.branchagent;
 
-import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
@@ -30,7 +29,7 @@ final class BranchShareInbox {
     static void applySwitch(Context context) {
         boolean on = !BranchWords.position(context, "share").equals("off");
         context.getPackageManager().setComponentEnabledSetting(
-            new ComponentName(context, context.getPackageName() + ".ShareTarget"),
+            BranchComponents.component(context, ".ShareTarget"),
             on ? PackageManager.COMPONENT_ENABLED_STATE_ENABLED : PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
             PackageManager.DONT_KILL_APP);
     }

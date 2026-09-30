@@ -1,0 +1,55 @@
+import { z } from 'zod';
+import type { Page } from 'playwright';
+
+const point = { x: z.number().min(0).max(1), y: z.number().min(0).max(1) };
+const keys = new Set(['Enter', 'Tab', 'Escape', 'Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+  'Home', 'End', 'PageUp', 'PageDown', 'Space']);
+const key = z.string().max(80).refine(value => {
+  const parts = value.split('+'), last = parts.pop() ?? '';
+  return parts.length <= 3 && new Set(parts).size === parts.length
+    && parts.every(part => ['Control', 'Meta', 'Alt', 'Shift'].includes(part)) && (keys.has(last) || /^[a-zA-Z0-9]$/.test(last));
+}, 'This page key is not supported.');
+export const OwnerInputSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('click'), ...point, button: z.enum(['left', 'middle', 'right']).default('left'), count: z.number().int().min(1).max(3).default(1) }).strict(),
+  z.object({ kind: z.literal('move'), ...point }).strict(),
+  z.object({ kind: z.literal('drag'), ...point, toX: point.x, toY: point.y }).strict(),
+  z.object({ kind: z.literal('wheel'), dx: z.number().min(-4000).max(4000), dy: z.number().min(-4000).max(4000) }).strict(),
+  z.object({ kind: z.literal('text'), text: z.string().min(1).max(8192) }).strict(),
+  z.object({ kind: z.literal('key'), key }).strict(),
+  z.object({ kind: z.enum(['back', 'forward', 'reload']) }).strict(),
+]);
+export type OwnerInput = z.infer<typeof OwnerInputSchema>;
+
+/** Page input only. A drag is one ordered write, and releases its button even when control is revoked. */
+export async function ownerPageInput(page: Page, input: OwnerInput, check: () => void): Promise<{ done: true }> {
+  const size = page.viewportSize();
+  if (!size) throw new Error('This page has no supported input viewport.');
+  const at = (x: number, y: number) => ({ x: Math.min(size.width - 1, x * size.width), y: Math.min(size.height - 1, y * size.height) });
+  const url = page.url(), liveCheck = (): void => {
+    check();
+    if (page.url() !== url) throw new Error('The page changed while the pointer was moving.');
+  };
+  liveCheck();
+  if (input.kind === 'click' || input.kind === 'move' || input.kind === 'drag') {
+    const from = at(input.x, input.y);
+    await page.mouse.move(from.x, from.y); liveCheck();
+    if (input.kind === 'click') await page.mouse.click(from.x, from.y, { button: input.button, clickCount: input.count });
+    if (input.kind === 'drag') {
+      const to = at(input.toX, input.toY);
+      try {
+        await page.mouse.down(); liveCheck();
+        await page.mouse.move(to.x, to.y, { steps: 8 }); liveCheck();
+        await page.mouse.up();
+      } catch (error) {
+        await page.close({ runBeforeUnload: false }).catch(() => undefined);
+        throw error;
+      }
+    }
+  } else if (input.kind === 'wheel') await page.mouse.wheel(input.dx, input.dy);
+  else if (input.kind === 'text') await page.keyboard.insertText(input.text);
+  else if (input.kind === 'key') await page.keyboard.press(input.key);
+  else if (input.kind === 'back') await page.goBack({ waitUntil: 'domcontentloaded' });
+  else if (input.kind === 'forward') await page.goForward({ waitUntil: 'domcontentloaded' });
+  else await page.reload({ waitUntil: 'domcontentloaded' });
+  return { done: true };
+}

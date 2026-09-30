@@ -8,6 +8,7 @@ import type { ToolRegistry } from "./registry.js";
 import type { Runtime } from "./runtime.js";
 import type { Store } from "./store.js";
 import { gateToolUse } from "./tool-gate.js";
+import { markChosen, sentKeys, shippedUnlessChosen } from "./ship-on.js";
 
 /**
  * w911 (A0374): the execution and debugging loop. A command that failed (a `shell.execute` or
@@ -28,14 +29,21 @@ export const TroubleshootSettingsSchema = z.object({
 export type TroubleshootSettings = z.infer<typeof TroubleshootSettingsSchema>;
 
 const settingsKey = "troubleshoot";
+/**
+ * The owner's ship-on rule (defaults audit, 2026-09-28): "when needed" only lets a task call troubleshoot.run on its own
+ * failed call; every fix and retry goes through the same approval gate as any other call, on the task's own model. None
+ * of (a)–(f). "On" (every failed command looked at straight away) stays the owner's pick.
+ */
+export const troubleshootShipsAs: FeatureMode = "when-needed";
 export function troubleshootSettings(store: Pick<Store, "get">, owner: string): TroubleshootSettings {
   const saved = TroubleshootSettingsSchema.safeParse(store.get("settings", owner, settingsKey)?.data ?? {});
-  return saved.success ? saved.data : TroubleshootSettingsSchema.parse({});
+  return saved.success ? shippedUnlessChosen(store, owner, settingsKey, saved.data, { mode: troubleshootShipsAs }) : TroubleshootSettingsSchema.parse({});
 }
 export function saveTroubleshootSettings(store: Store, owner: string, input: unknown): TroubleshootSettings {
   const given = input && typeof input === "object" && !Array.isArray(input) ? input : {};
   const value = TroubleshootSettingsSchema.parse({ ...troubleshootSettings(store, owner), ...given });
   store.save("settings", owner, settingsKey, value);
+  markChosen(store, owner, settingsKey, sentKeys(given));
   return value;
 }
 export const troubleshootMode = (store: Pick<Store, "get">, owner: string): FeatureMode =>
@@ -360,7 +368,9 @@ export function registerTroubleshoot(registry: ToolRegistry, runtime: Runtime): 
     // demanding `shell.execute` put the command permission on every computer whether a command host
     // was configured or not. The command it is asked to run is checked against the caller instead.
     name: "troubleshoot.run", permission: "code.execute", group: "code",
-    description: "Run a command that failed (shell.execute or code.run) again and work out why: a diagnosis, one fix at a time (write or edit a file, or run a command), each through the approval rules, then another try, up to the owner's limit.",
+    // Worded after the failure, not the running: this is for a call that already failed, and a description that led with
+    // "run a command" ranked it above the real shell for every "run …" search (tests/speed.test.mjs, defaults audit).
+    description: "Fix a failure. After a call has already gone wrong, pass the same tool and arguments here to find out why it failed, try one fix at a time (each through the approval rules) and retry, up to the owner's limit. Not for a first attempt.",
     parameters: TroubleshootInputSchema,
     target: (args) => `${args.tool} again, with fixes`,
     execute: (input, context) => troubleshootTool(runtime, input, context),

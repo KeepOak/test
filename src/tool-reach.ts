@@ -21,7 +21,7 @@ export type ToolReach = "local" | "outbound";
 const outbound: readonly string[] = [
   "web.read", "research.run", "sources.sync", "api.call", "skills.http", "client.tools",
   "personal.read", "personal.write", "home.control", "gitlab.read", "issues.read", "issues.write",
-  "github.manage", "git.remote", "channels.send", "blocks.run", "addons.search",
+  "github.manage", "gitlab.manage", "git.remote", "channels.send", "blocks.run", "addons.search",
   "agents.ask", "agents.manage", "nodes.run", "nodes.read", "remote.execute", "sessions.handoff",
   "devices.act", "devices.capture", "devices.run",
   // The owner's Claude Code or Codex does a job with the owner's plan: the work goes to that program's service.

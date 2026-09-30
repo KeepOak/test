@@ -9,7 +9,7 @@
 //      removing a plugin installed as an add-on package.
 // Page errors must be zero, and nothing in this branch's share may still show "Coming soon".
 // Screenshots: C:/Users/bishi/AppData/Local/Temp/claude-session-files/finish-soon-a/
-const { chromium } = require(process.env.PLAYWRIGHT || "C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || "playwright");
 const { generateKeyPairSync, randomUUID } = require("node:crypto");
 const { mkdtempSync, mkdirSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");

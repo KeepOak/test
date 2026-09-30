@@ -3,7 +3,7 @@
 //   BRANCH_DATA_DIR=<dir> BRANCH_WORKSPACE=<ws> node design/redesign/tools/seed-computer.mjs
 //   BRANCH_DATA_DIR=<dir> BRANCH_WORKSPACE=<ws> BRANCH_PORT=<port> node dist/cli.js start
 // then: PORT=<port> TOKEN=<hex> node design/redesign/tools/verify-computer.cjs
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN;
 const BASE = `http://127.0.0.1:${PORT}`;

@@ -401,3 +401,33 @@ test("a webhook that refuses every delivery never disturbs the task that caused 
   while (app.webhooks.get("local", webhook.id).failureCount === 0) await new Promise((r) => setTimeout(r, 20));
   assert.equal(endpoint.received.length, 3, "three attempts, then it gives up");
 });
+
+test("overlapping deliveries: a late success never undoes a switch-off, an edit, or a newer failure", async (t) => {
+  const { app, context } = await fixture(t);
+  const hook = app.webhooks.create(context, { name: "slow", url: "https://hooks.example/in", events: ["run.completed"] });
+  app.webhooks.retryDelays = [];
+  const gates = [];
+  app.webhooks.send = () => new Promise((resolve) => gates.push(resolve));
+  // One delivery has already failed. Another starts, then the owner edits the webhook and later deliveries fail it until
+  // it switches itself off.
+  const first = app.webhooks.deliver("local", hook.id, "run.completed", {});
+  await new Promise((resolve) => setImmediate(resolve));
+  gates.pop()({ ok: false, message: "refused" });
+  await first;
+  const slow = app.webhooks.deliver("local", hook.id, "run.completed", {});
+  await new Promise((resolve) => setImmediate(resolve));
+  app.store.save("webhooks", "local", hook.id, { ...app.store.get("webhooks", "local", hook.id).data, url: "https://hooks.example/new" });
+  for (let failing = 0; failing < 4; failing++) {
+    const next = app.webhooks.deliver("local", hook.id, "run.completed", {});
+    await new Promise((resolve) => setImmediate(resolve));
+    gates.at(-1)({ ok: false, message: "refused" });
+    await next;
+  }
+  assert.equal(app.webhooks.get("local", hook.id).enabled, false, "it switched itself off");
+  gates[0]({ ok: true, message: "ok" });
+  await slow;
+  const now = app.webhooks.get("local", hook.id);
+  assert.equal(now.enabled, false, "the late success did not switch it back on");
+  assert.equal(now.failureCount, 5, "nor clear the newer failures");
+  assert.equal(now.url, "https://hooks.example/new", "nor put back the address from before the edit");
+});

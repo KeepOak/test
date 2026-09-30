@@ -50,7 +50,7 @@ async function confirm() {
   } catch (error) { toast(error.message); return; } finally { sending = false; }
   T = null;
   const box = $("#nl-in");
-  if (box) box.value = "";
+  if (box) { box.value = ""; box.dispatchEvent(new Event("input", { bubbles: true })); } // the page keeps the box's words (automations.js)
   await refresh().catch((error) => toast(error.message));
   renderNow();
   toast(t("window.places.trigger-card.saved-and-on"));

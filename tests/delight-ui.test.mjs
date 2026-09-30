@@ -14,6 +14,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { closeSettings, openSettingFor } from "./places.mjs"; // the old window's helpers, for the skipped bodies only
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 /** A model that answers at once, or waits for `release()` when asked to sort the Downloads folder. */
 function slowModel() {
@@ -84,6 +85,29 @@ async function ownBackground(page) {
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DAwMDAxMDAwMAAAAwGAQFm2g5eAAAAAElFTkSuQmCC", "base64");
 const stored = (page) => page.evaluate(async () => (await indexedDB.databases()).some((db) => db.name === "branch-delight"));
 const status = (page, words) => page.getByRole("status").filter({ hasText: words }).first().waitFor();
+
+test("a saved mascot pet displays a regular pet without changing its saved preferences", async (t) => {
+  const f = await fixture(t, { reducedMotion: "reduce" });
+  await f.call("/api/delight/settings", {
+    pets: { on: true, kind: "sprout", name: "Maple", talks: false, tips: false },
+    achievements: { on: false, quiet: true }, background: { on: false, scrim: 72 },
+  });
+  const before = (await f.call("/api/delight")).settings;
+  assert.equal(before.pets.kind, "sprout", "the fixture must contain the legacy choice");
+  await f.page.reload();
+  await f.page.locator('#side .petbox[data-kind="fennec"]').waitFor();
+  assert.match(await f.page.locator('#side .petbox img').getAttribute("src"), /\/pets\/fennec\.webp$/);
+  assert.match(await f.page.locator('#side .petbox [data-act="pat"]').getAttribute("aria-label"), /Maple/);
+  await openSettingsPage(f.page, "appearance");
+  assert.equal(await f.page.locator('[data-act="petset"][data-v="sprout"]').count(), 0);
+  await f.page.locator('[data-act="petset"][data-v="fennec"][aria-pressed="true"]').first().waitFor();
+  assert.deepEqual((await f.call("/api/delight")).settings, before);
+  await f.page.locator('[data-act="petset"][data-v="none"]').first().click();
+  await f.page.locator('[data-act="petset"][data-v="none"][aria-pressed="true"]').first().waitFor();
+  const after = (await f.call("/api/delight")).settings;
+  assert.deepEqual(after, { ...before, pets: { ...before.pets, on: false } });
+  assert.deepEqual(f.errors, []);
+});
 
 /** The window looks for what the engine earned when it redraws (shell/celebrate.js check, on each draw, at most every
     10 s). A person using the window redraws it all the time; here the Places fold is pressed twice now and
@@ -422,7 +446,7 @@ test("your own background: a full disk keeps nothing half-kept; choosing None ke
   await f.page.getByRole("button", { name: "Remove", exact: true }).click();
   await ask.getByRole("button", { name: "Remove", exact: true }).click();
   await f.page.locator("#bgLayer .bg-media").waitFor({ state: "detached" });
-  await f.page.waitForFunction(async () => !(await indexedDB.databases()).some((db) => db.name === "branch-delight"));
+  await waitInPage(f.page, async () => !(await indexedDB.databases()).some((db) => db.name === "branch-delight"));
   await status(f.page, "Removed. Nothing is kept.");
   assert.deepEqual(f.errors, []);
 });

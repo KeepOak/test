@@ -9,6 +9,7 @@ import { audit } from "../audit.js";
 import type { Store } from "../store.js";
 import type { ToolContext } from "../contracts.js";
 import type { ToolRegistry } from "../registry.js";
+import { currentAccountCall } from "../accounts/context.js";
 
 /**
  * A workspace on another computer, reached with the OpenSSH client Windows already has. Nothing is
@@ -43,6 +44,11 @@ export const RemoteComputerSchema = z.object({
    * able to hold files and nothing else, and the owner adds what it may run one at a time.
    */
   executables: z.array(remoteProgramSchema).max(32).default([]),
+  /**
+   * Q4: the Trunks the owner lent this computer to, by id. A Trunk's work may use only a computer listed for it; the
+   * owner's own conversations may use every one. Empty means no Trunk may.
+   */
+  trunks: z.array(z.string().trim().min(1).max(80)).max(32).default([]),
   addedAt: z.string().max(40).default(""),
 }).strict();
 export type RemoteComputer = z.infer<typeof RemoteComputerSchema>;
@@ -210,6 +216,17 @@ export class RemoteWorkspaces {
     private readonly run: SshRun, private readonly home: SshHome = defaultSshHome(),
   ) {}
 
+  /** The computers the work may use: every one for the owner's own conversations, a Trunk's only where lent to it. */
+  listFor(trunk: string | null): RemoteComputer[] {
+    return this.list().filter((computer) => trunk === null || computer.trunks.includes(trunk));
+  }
+  /** One computer, refused by name to a Trunk the owner did not lend it to. */
+  getFor(alias: string, trunk: string | null): RemoteComputer {
+    const computer = this.get(alias);
+    if (trunk !== null && !computer.trunks.includes(trunk)) throw new Error(trunkRemoteRefusal(alias));
+    return computer;
+  }
+
   list(): RemoteComputer[] {
     const saved = ListSchema.safeParse(this.store.get("settings", this.owner, remotesKey)?.data ?? {});
     return saved.success ? saved.data.computers : [];
@@ -263,8 +280,8 @@ export class RemoteWorkspaces {
   }
 
   /** What is in a folder on that computer. */
-  async files(alias: string, path: string, signal: AbortSignal): Promise<{ computer: string; path: string; entries: string[] }> {
-    const computer = this.get(alias);
+  async files(alias: string, path: string, signal: AbortSignal, trunk: string | null = null): Promise<{ computer: string; path: string; entries: string[] }> {
+    const computer = this.getFor(alias, trunk);
     const target = remotePath(computer.root, path);
     const listed = await this.ssh(computer, ["ls", "-1A", "--", target], signal);
     return { computer: alias, path: target,
@@ -272,8 +289,8 @@ export class RemoteWorkspaces {
   }
 
   /** One file's text, up to a size that fits in an answer. */
-  async read(alias: string, path: string, signal: AbortSignal): Promise<{ computer: string; path: string; text: string }> {
-    const computer = this.get(alias);
+  async read(alias: string, path: string, signal: AbortSignal, trunk: string | null = null): Promise<{ computer: string; path: string; text: string }> {
+    const computer = this.getFor(alias, trunk);
     const target = remotePath(computer.root, path);
     const text = await this.ssh(computer, ["cat", "--", target], signal);
     return { computer: alias, path: target, text: text.slice(0, 32768) };
@@ -302,10 +319,10 @@ export class RemoteWorkspaces {
    * Runs one of the programs the owner allowed on that computer. Anything else is refused by name,
    * so adding a computer never hands over a command line.
    */
-  async execute(alias: string, executable: string, args: string[], signal: AbortSignal):
+  async execute(alias: string, executable: string, args: string[], signal: AbortSignal, trunk: string | null = null):
     Promise<{ computer: string; program: string; output: string }> {
     const command = remoteExecutionSchema.parse({ program: executable, args });
-    const computer = this.get(alias);
+    const computer = this.getFor(alias, trunk);
     if (!computer.executables.includes(command.program))
       throw new Error(`"${command.program}" is not one of the programs ${alias} is allowed to run. The owner adds those in Settings, one at a time.`);
     const output = await this.ssh(computer, [command.program, ...command.args], signal);
@@ -341,33 +358,39 @@ export const RemoteRunSchema = z.object({
   args: remoteArgumentsSchema.default([]),
 }).strict();
 
+export const trunkRemoteRefusal = (alias: string): string =>
+  `This Trunk may not use "${alias}". The owner lends another computer to a Trunk when adding it, under Settings, Computers.`;
+/** The Trunk whose work this is: its own turn, or work it set going (a helper, a flow). */
+const trunkAtWork = (context: ToolContext): string | null => context.trunk ?? currentAccountCall()?.trunk?.id ?? null;
+
 export function registerRemoteWorkspaces(registry: ToolRegistry, remotes: RemoteWorkspaces): void {
   registry.register({
     name: "remote.list", permission: "files.read", group: "remote",
     description: "List the other computers the owner has set up to work on, and the folder each one keeps its work in.",
     parameters: RemoteListSchema,
     target: () => "the other computers set up",
-    execute: async () => ({ computers: remotes.list().map(({ alias, root, label, executables }) => ({ alias, root, label, executables })) }),
+    execute: async (_args, context: ToolContext) =>
+      ({ computers: remotes.listFor(trunkAtWork(context)).map(({ alias, root, label, executables }) => ({ alias, root, label, executables })) }),
   });
   registry.register({
     name: "remote.files", reach: "outbound", permission: "files.read", group: "remote",
     description: "List what is in a folder on one of the owner's other computers. The folder is given relative to that computer's own working folder.",
     parameters: RemoteFilesSchema,
     target: (args) => `${args.computer}: ${args.path}`,
-    execute: (args, context: ToolContext) => remotes.files(args.computer, args.path, context.signal),
+    execute: (args, context: ToolContext) => remotes.files(args.computer, args.path, context.signal, trunkAtWork(context)),
   });
   registry.register({
     name: "remote.read", reach: "outbound", permission: "files.read", group: "remote",
     description: "Read a text file on one of the owner's other computers.",
     parameters: RemoteReadSchema,
     target: (args) => `${args.computer}: ${args.path}`,
-    execute: (args, context: ToolContext) => remotes.read(args.computer, args.path, context.signal),
+    execute: (args, context: ToolContext) => remotes.read(args.computer, args.path, context.signal, trunkAtWork(context)),
   });
   registry.register({
     name: "remote.run", permission: "remote.execute", group: "remote",
     description: "Run one of the programs the owner has allowed on one of their other computers. Anything not on that computer's own list is refused.",
     parameters: RemoteRunSchema,
     target: (args) => `${args.computer}: ${[args.program, ...args.args].join(" ")}`.slice(0, 300),
-    execute: (args, context: ToolContext) => remotes.execute(args.computer, args.program, args.args, context.signal),
+    execute: (args, context: ToolContext) => remotes.execute(args.computer, args.program, args.args, context.signal, trunkAtWork(context)),
   });
 }

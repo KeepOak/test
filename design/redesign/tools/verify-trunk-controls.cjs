@@ -9,7 +9,7 @@
 //   BRANCH_DATA_DIR=<fresh> BRANCH_PORT=3381 node dist/cli.js start
 // Setup through the API (not window controls): onboarding done, Trunks and rooms switched on, two Trunks and a room made.
 const http = require("node:http");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, STUB_PORT = process.env.STUB_PORT;
 if (!PORT || !TOKEN || !STUB_PORT) { console.error("PORT, TOKEN and STUB_PORT are required"); process.exit(2); }

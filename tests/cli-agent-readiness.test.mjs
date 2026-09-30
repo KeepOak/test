@@ -42,3 +42,34 @@ test("unknown failures keep program output private and say the exit code and nex
     return true;
   });
 });
+
+/* QA retest 2026-09-28: the owner's Codex was set to a model its ChatGPT sign-in cannot use, and one of Codex's own MCP
+   servers logged that its OAuth refresh token was rejected. Branch read that warning as its own sign-in failing and said
+   "sign in again", which could never help. The failed turn is what decides. */
+const mcpWarning = "ERROR codex_rmcp_client::oauth::refresh_transaction: error=failed to refresh OAuth tokens for server cloudflare-api: OAuth refresh token was rejected: Server returned error response: invalid_grant: Grant not found";
+const failedTurn = (message) => [JSON.stringify({ type: "thread.started" }), JSON.stringify({ type: "turn.started" }),
+  JSON.stringify({ type: "turn.failed", error: { message } })].join("\n");
+
+test("Codex's failed turn decides the reason: a model its sign-in cannot use is said, not read as a sign-in failure", async () => {
+  const stdout = failedTurn(JSON.stringify({ type: "error", status: 400, error: { type: "invalid_request_error",
+    message: "The 'gpt-6-sol' model is not supported when using Codex with a ChatGPT account." } }));
+  await assert.rejects(provider("codex", { code: 1, stdout, stderr: mcpWarning }).complete(request()), (error) => {
+    // QA 2026-09-28: Branch names the model it chose and offers the ones Codex takes, never the program's own words.
+    assert.match(error.message, /cannot use gpt-5\.6-terra with this sign-in/);
+    assert.match(error.message, /gpt-5\.6-luna, gpt-5\.6-sol, gpt-5\.5\) in Settings › Models › Connections/);
+    assert.doesNotMatch(error.message, /sign in again|cloudflare|gpt-6-sol|Grant|own settings/i);
+    return true;
+  });
+});
+
+test("an MCP server's OAuth warning in Codex's error output is never read as Branch's sign-in failing", async () => {
+  await assert.rejects(provider("codex", { code: 1, stdout: failedTurn("stream disconnected before completion"), stderr: mcpWarning }).complete(request()), (error) => {
+    assert.doesNotMatch(error.message, /sign in again/i);
+    assert.match(error.message, /exit code 1/);
+    return true;
+  });
+});
+
+test("with no failed turn to go by, a sign-in failure in the error output is still reported as one", async () => {
+  await assert.rejects(provider("codex", { code: 1, stdout: "", stderr: "Error: 401 Unauthorized" }).complete(request()), /sign in again/i);
+});

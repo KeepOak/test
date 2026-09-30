@@ -28,6 +28,8 @@ function addUsage(total: Usage, part: Usage | undefined): void {
   total.input += part.input;
   total.output += part.output;
   if (part.cachedInput !== undefined) total.cachedInput = (total.cachedInput ?? 0) + part.cachedInput;
+  if (part.cacheWrite !== undefined) total.cacheWrite = (total.cacheWrite ?? 0) + part.cacheWrite;
+  if (part.cacheWrite1h !== undefined) total.cacheWrite1h = (total.cacheWrite1h ?? 0) + part.cacheWrite1h;
 }
 
 export function referencesMessage(answers: { name: string; text: string }[]): Message {
@@ -115,10 +117,32 @@ export function mixtureProblem(mixture: Mixture, models: Pick<ModelRouter, "pres
   return null;
 }
 
+/**
+ * Mix models on hard questions (the difficulty card's `mixHard`): the mixture a hard task is asked of. Its members are
+ * the two connections the owner already picked for easy and hard tasks, and the hard one writes the answer; its name is
+ * theirs. None while the card is off, the switch is off, or both picks are one connection.
+ */
+export const hardMixtureId = "hard-questions";
+export const hardMixturePreset = `${mixturePrefix}${hardMixtureId}`;
+export function hardMixture(store: Pick<Store, "get">, owner: string, models: Pick<ModelRouter, "presets">): Mixture | null {
+  const card = readSavings(store, owner, "difficulty");
+  if (!card.mixHard || card.mode === "off" || !card.hardModel || !card.easyModel || card.hardModel === card.easyModel) return null;
+  const hard = models.presets.get(card.hardModel), easy = models.presets.get(card.easyModel);
+  if (!hard || !easy) return null;
+  return { id: hardMixtureId, name: `${hard.name} + ${easy.name}`.slice(0, 60), references: [card.hardModel, card.easyModel], aggregator: card.hardModel, referenceMaxTokens: 1024 };
+}
+
+/** The mixtures the model picker should hold: the saved ones, and the hard-questions one while it is wanted. */
+export function wantedMixtures(store: Pick<Store, "get">, owner: string, models: Pick<ModelRouter, "presets">): Mixture[] {
+  // The hard-questions id is Branch's own: a saved mixture never takes it (api.ts refuses one), and one saved before is left out.
+  const saved = readSavings(store, owner, "mixtures").mixtures.filter((mixture) => mixture.id !== hardMixtureId), hard = hardMixture(store, owner, models);
+  return hard ? [...saved, hard] : saved;
+}
+
 /** Makes the model picker match the saved mixtures: adds, replaces and removes only mixtures. */
 export function syncMixtures(store: Pick<Store, "get">, owner: string, models: ModelRouter): string[] {
   const mine = ownIds(models);
-  const wanted = readSavings(store, owner, "mixtures").mixtures.filter((mixture) => !mixtureProblem(mixture, models));
+  const wanted = wantedMixtures(store, owner, models).filter((mixture) => !mixtureProblem(mixture, models));
   const ids = new Set(wanted.map((mixture) => `${mixturePrefix}${mixture.id}`));
   for (const id of [...mine]) {
     if (ids.has(id)) continue;

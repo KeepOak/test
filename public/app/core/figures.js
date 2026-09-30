@@ -1,6 +1,6 @@
-/* Every Trunk's and Branch's face is its character, moving (the owner, 2026-09-26: "always use animations"): core/ui.js
-   av draws the character a Trunk wears (src/trunks/record.ts character, GET /api/trunks; Branch's own is the engine's
-   "branch" character) as the prototype's figure12 does beside the conversation, acting out what it is doing
+/* Every Trunk's face is its own character, moving (the owner, 2026-09-26: "always use animations"): core/ui.js
+   av draws the character a Trunk wears (src/trunks/record.ts character, GET /api/trunks) beside its conversation,
+   acting out what it is doing. The Branch mascot belongs only in the logo.
    (core/doing.js), with the prototype's Needs-you dot. The prototype's own av (pass 12) draws the character's still;
    the owner asked for the loop everywhere instead.
    Cost: a face's loop loads nothing until it is on screen; only the busiest few on screen play (then the larger, then
@@ -9,6 +9,7 @@
 import { esc } from "./dom.js";
 import { figure17, onGate, calm17 } from "./art17.js";
 import { restOf, justWoke, onRest } from "./sleep.js";
+import { hold17, play17 } from "./held.js";
 
 /* At most this many faces play at once; the rest show their still until one stops. */
 export const PLAY_MAX = 6;
@@ -43,8 +44,9 @@ function choose() {
   for (const v of loops) if (!v.isConnected) { loops.delete(v); onScreen.delete(v); seen.unobserve(v); v.pause(); }
   const play = new Set(document.hidden || calm17() ? [] : [...loops].filter((v) => onScreen.get(v) && !v.closest(".still18")).sort(order).slice(0, PLAY_MAX));
   for (const v of loops) {
-    if (!play.has(v)) { if (!v.paused) v.pause(); }
-    else if (v.paused) v.play().catch((error) => console.warn(error.message));
+    // Hidden, out of view or in the long sleep, a face gives back its decoder; one only waiting its turn is paused.
+    if (!play.has(v)) { if (document.hidden || onScreen.get(v) === false || v.closest(".still18")) hold17(v); else if (!v.paused) v.pause(); }
+    else if (v.paused) play17(v).catch((error) => console.warn(error.message));
   }
 }
 

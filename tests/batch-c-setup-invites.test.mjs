@@ -76,6 +76,10 @@ test("setup's account switch is the engine's, both ways, and a refusal puts it b
   const sw = page.locator(`.ob9 input[data-sw="ob-brain"][data-pool="${POOL}"][data-account="primary"]`);
   await sw.waitFor();
   assert.equal(await sw.isChecked(), true, "an account not switched off may answer");
+  // MODEL-045: the row names the connection as the window does, never by its id.
+  const row = page.locator(".ob9 .prow", { has: page.locator(`input[data-sw="ob-brain"][data-pool="${POOL}"][data-account="primary"]`) });
+  assert.match(await row.innerText(), /OpenAI test/);
+  assert.doesNotMatch(await row.innerText(), /openai-test/);
   assert.equal(await sw.getAttribute("aria-disabled"), null, "the switch is live");
   await sw.uncheck();
   const disabled = async () => (await call("/api/accounts")).pools.find((p) => p.pool === POOL)?.accounts[0]?.disabled;

@@ -1,16 +1,21 @@
 import type { Message, ToolCall } from "./contracts.js";
 
-/** Fill interrupted protocol gaps with uncertainty, without executing any tool. */
-export function reconcileTranscript(messages: Message[], reason: string) {
+/**
+ * Fill interrupted protocol gaps with uncertainty, without executing any tool. `known` gives the result for a call
+ * whose outcome is known after all (the call a task stopped on to ask the person, which never ran): the model is told
+ * what really happened rather than that side effects may have occurred.
+ */
+export function reconcileTranscript(messages: Message[], reason: string, known: ReadonlyMap<string, string> = new Map()) {
   const repaired: Message[] = [];
   let pending: ToolCall[] = [];
   let added = 0;
   const flush = () => {
     for (const call of pending) {
+      const said = known.get(call.id);
       repaired.push({
         role: "tool",
         toolCallId: call.id,
-        content: JSON.stringify({
+        content: said ?? JSON.stringify({
           ok: false,
           status: "interrupted",
           outcome: "unknown",

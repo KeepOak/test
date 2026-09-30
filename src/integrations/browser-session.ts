@@ -3,6 +3,7 @@ import type { ToolContext } from '../contracts.js';
 /** What Chrome says about a tab (CDP Target.TargetInfo), the parts used here. */
 interface TargetInfo { targetId: string; type: string; url: string; openerId?: string }
 import type { StorageState } from './browser-profiles.js';
+import { PageLog } from './browser-actions.js';
 
 /** A message box the website put up. It is always dismissed; the words are kept so they can be reported. */
 export interface DialogRecord { kind: string; message: string; at: string }
@@ -101,10 +102,12 @@ export class BrowserSession {
   private opening: Promise<Page> | undefined;
   private closing: Promise<void> | undefined;
   private closed = false;
-  private busy = false;
+  private operations: Promise<void> = Promise.resolve();
   private readonly pages: Page[] = [];
   private active = 0;
   private dialogs: DialogRecord[] = [];
+  /** What the tabs logged and asked the network for (browser.console, browser.network). */
+  readonly log = new PageLog();
   private downloads: DownloadRecord[] = [];
   private pending: Promise<void>[] = [];
   options: SessionOptions = {};
@@ -408,6 +411,7 @@ export class BrowserSession {
       void (accept ? dialog.accept() : dialog.dismiss()).catch(() => undefined);
     });
     page.on('download', download => this.pending.push(this.collect(download)));
+    this.log.watch(page);
     this.pages.push(page);
     // Only now, when it is one of ours by name, does it stop being the tab being made.
     if (this.creating === creating) this.creating = null;
@@ -503,10 +507,7 @@ export class BrowserSession {
     return events;
   }
   async use<T>(context: ToolContext, action: (page: Page) => Promise<T>, graceMs = 0): Promise<T> {
-    this.checkOpen();
-    if (this.busy) throw new Error('Browser run is already executing an operation');
-    this.busy = true;
-    try {
+    return this.ordered(context.signal, async () => {
       context.signal.throwIfAborted();
       await (this.opening ??= this.open());
       this.checkOpen();
@@ -516,7 +517,19 @@ export class BrowserSession {
       const result = await action(page);
       await this.settle(graceMs);
       return result;
-    } finally { this.busy = false; }
+    });
+  }
+  private ordered<T>(signal: AbortSignal | undefined, action: () => Promise<T>): Promise<T> {
+    this.checkOpen();
+    const result = this.operations.then(async () => {
+      this.checkOpen();
+      signal?.throwIfAborted();
+      const result = await action();
+      signal?.throwIfAborted();
+      return result;
+    });
+    this.operations = result.then(() => undefined, () => undefined);
+    return result;
   }
   /**
    * Files a click started are finished before the result is reported, so they can be named. A click
@@ -539,25 +552,33 @@ export class BrowserSession {
   }
   /** The page of one tab, so what it shows can be scrubbed of what its own boxes hold. */
   tabPage(index: number): Page | undefined { return this.pages[index]; }
-  async openTab(): Promise<number> {
-    this.checkOpen();
-    if (this.pages.length >= 5) throw new Error('This task already has five tabs open, which is the limit');
-    await (this.opening ??= this.open());
-    await this.newPage();
-    this.active = this.pages.length - 1;
-    return this.active;
+  async openTab(signal?: AbortSignal, completed?: (index: number) => void): Promise<number> {
+    return this.ordered(signal, async () => {
+      if (this.pages.length >= 5) throw new Error('This task already has five tabs open, which is the limit');
+      await (this.opening ??= this.open());
+      signal?.throwIfAborted();
+      await this.newPage();
+      this.active = this.pages.length - 1;
+      completed?.(this.active);
+      return this.active;
+    });
   }
-  selectTab(index: number): number {
-    if (!this.pages[index]) throw new Error(`There is no tab ${index} open`);
-    return (this.active = index);
+  async selectTab(index: number, signal?: AbortSignal): Promise<number> {
+    return this.ordered(signal, async () => {
+      if (!this.pages[index]) throw new Error(`There is no tab ${index} open`);
+      return (this.active = index);
+    });
   }
-  async closeTab(index: number): Promise<void> {
-    const page = this.pages[index];
-    if (!page) throw new Error(`There is no tab ${index} open`);
-    if (this.pages.length === 1) throw new Error('The last tab cannot be closed while the task is running');
-    this.pages.splice(index, 1);
-    await page.close().catch(() => undefined);
-    this.active = Math.min(this.active, this.pages.length - 1);
+  async closeTab(index: number, signal?: AbortSignal, completed?: () => void): Promise<void> {
+    return this.ordered(signal, async () => {
+      const page = this.pages[index];
+      if (!page) throw new Error(`There is no tab ${index} open`);
+      if (this.pages.length === 1) throw new Error('The last tab cannot be closed while the task is running');
+      this.pages.splice(index, 1);
+      await page.close().catch(() => undefined);
+      this.active = index < this.active ? this.active - 1 : Math.min(this.active, this.pages.length - 1);
+      completed?.();
+    });
   }
   /** Cookies and site storage as they are now, for saving back into a named sign-in. */
   async storageState(): Promise<StorageState | null> {

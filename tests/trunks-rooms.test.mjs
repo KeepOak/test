@@ -297,6 +297,7 @@ test("trunk.message: checked against the roster, signed by Branch, answered late
   }];
   const { app, provider } = await fixture(t, rules);
   on(app, "messages");
+  app.trunks.ensureDefault(true);
   const ann = app.trunks.create({ name: "Ann" }), ben = app.trunks.create({ name: "Ben", title: "Scheduler" });
   await app.trunks.introduced();
   const asked = await app.runtime.run({ prompt: "ask ben", sessionId: ann.chatSessionId });

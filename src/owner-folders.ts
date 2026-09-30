@@ -26,6 +26,42 @@ import { nobodyToAsk } from "./coding/project-tests.js";
 export const ownerFolderNames = ["Downloads", "Desktop", "Documents"] as const;
 /** The name a folder's question and its answers are kept under. No tool can be registered with it (a capital). */
 export const ownerFolderTool = "files.ownerFolder";
+
+/** A plain whole-folder tidy is checked against real list/move results, not the model's final claim. */
+export function ownerTidyRemainder(store: Pick<Store, "events">, runId: string, prompt: string): string | null {
+  const requested = /^(?:please\s+)?(?:tidy|organize|organise|sort)(?:\s+up)?\s+(?:my\s+)?(?:~\/)?(Downloads|Desktop|Documents)(?:\s+folder)?[.!?]?$/i.exec(prompt.trim());
+  if (!requested) return null; // Qualified requests may intentionally leave other files alone.
+  let folder = "", files = new Map<string, string>(), movedAny = false;
+  const normal = (path: string): string => path.replace(/\\/g, "/");
+  const child = (path: unknown): string | null => {
+    if (typeof path !== "string") return null;
+    const address = normal(path), prefix = folder + "/";
+    if (!address.toLowerCase().startsWith(prefix.toLowerCase())) return null;
+    const name = address.slice(prefix.length);
+    return name && !name.includes("/") ? name : null;
+  };
+  for (const event of store.events(runId)) {
+    if (event.kind !== "tool.completed") continue;
+    const result = event.data.result as { folder?: unknown; entries?: unknown; moved?: unknown } | null;
+    if (!result || typeof result !== "object") continue;
+    if (event.data.name === "files.list" && typeof result.folder === "string" && Array.isArray(result.entries)
+      && normal(result.folder).split("/").at(-1)?.toLowerCase() === requested[1]!.toLowerCase()) {
+      folder = normal(result.folder); files = new Map();
+      for (const entry of result.entries as { name?: unknown; type?: unknown }[])
+        if (entry.type === "file" && typeof entry.name === "string") files.set(entry.name.toLowerCase(), entry.name);
+    }
+    if (folder && event.data.name === "files.move" && Array.isArray(result.moved))
+      for (const move of result.moved as { from?: unknown; to?: unknown }[]) {
+        const from = child(move.from), to = child(move.to);
+        if (from) { files.delete(from.toLowerCase()); movedAny = true; }
+        if (to) files.set(to.toLowerCase(), to);
+      }
+  }
+  if (!movedAny || !files.size) return null;
+  const paths = [...files.values()].slice(0, 20).map((name) => `${folder}/${name}`);
+  return `The folder task is not finished: ${files.size} file(s) are still loose: ${JSON.stringify(paths)}. `
+    + `Use files.move for those remaining files, keeping both paths inside ${folder}. Do not say it is tidied yet.`;
+}
 export interface OwnerFolder { name: (typeof ownerFolderNames)[number]; path: string }
 
 export function ownerFolderRoots(home: string = homedir()): OwnerFolder[] {
@@ -141,7 +177,7 @@ export function requireOwnerFolder(host: OwnerFolderHost, context: ToolContext, 
   if (verdict === "go") return;
   if (verdict === "ask")
     throw new ApprovalRequiredError(ownerFolderTool, folder.path, `Work in your ${folder.name} folder`, "session", undefined,
-      { question: `Let Branch list and move files in ${folder.path}?` });
+      { question: `Let Branch list and move files in ${folder.path}?`, beforeExecution: true });
   throw new Error(verdict.refuse);
 }
 
@@ -160,24 +196,25 @@ async function noLinks(folder: OwnerFolder, parts: string[]): Promise<void> {
 }
 
 /** Up to 200 entries of a folder inside an owner folder, links and secret-looking names left out. */
-export async function listOwnerFolder(place: OwnerPath): Promise<{ folder: string; entries: { name: string; type: string }[]; note: string }> {
+export async function listOwnerFolder(place: OwnerPath): Promise<{ folder: string; entries: { name: string; path: string; type: string }[]; note: string }> {
   await noLinks(place.folder, place.parts);
   const target = join(place.folder.path, ...place.parts);
   const info = await lstat(target).catch(() => null);
   if (!info) throw new Error(`${target} does not exist.`);
   if (!info.isDirectory()) throw new Error(`${target} is a file, not a folder.`);
-  const entries: { name: string; type: string }[] = [];
+  const shown = ["~", place.folder.name, ...place.parts].join("/");
+  const entries: { name: string; path: string; type: string }[] = [];
   for (const entry of (await readdir(target, { withFileTypes: true })).slice(0, 400)) {
     if (entries.length >= 200) break;
     if (entry.isSymbolicLink() || secretPart.test(entry.name)) continue;
-    entries.push({ name: entry.name, type: entry.isDirectory() ? "directory" : "file" });
+    entries.push({ name: entry.name, path: `${shown}/${entry.name}`, type: entry.isDirectory() ? "directory" : "file" });
   }
-  const shown = ["~", place.folder.name, ...place.parts].join("/");
   const loose = entries.filter((entry) => entry.type === "file").length;
   // QA (first task): qwen3:14b listed the folder after the person's yes, then asked the person whether to start.
   return { folder: target, entries, note: `Listing changes nothing. ${loose} loose file(s) here. The person has already allowed `
     + `this folder, so do not ask again whether to go on: to sort a file, use files.move, for example from ${shown}/<file> to `
-    + `${shown}/<subfolder>/<file>.` };
+    + `${shown}/<subfolder>/<file>. For a batch of bare names, include from: "${shown}" beside moves; the destinations `
+    + `then stay under that same folder.` };
 }
 
 /** One move, checked: within one owner folder, a file that exists, to a place that does not. */

@@ -133,13 +133,15 @@ function list(data, steps) {
   return `<ol class="tll17c">${steps.map((s, i) => { const v = view(s, data); return `<li class="k${KIND[s.kind]}17c ${i === T.at ? "on17c" : ""} ${i > T.at ? "later17c" : ""}"><button type="button" data-act="tlgo17c" data-v="${i}"><span class="tli17c">${ic(ICON[s.kind], "s")}</span><span class="grow"><b>${esc(v.title)}</b><small>${esc([v.who, v.detail].filter(Boolean).join(" · "))}${tech && s.hash ? ` · <code>${esc(s.hash.slice(0, 8))}</code>` : ""}</small></span><span class="tlm17c">${v.secs ? dur(v.secs) : ""}${s.cost?.display && v.amount ? `<br>${esc(s.cost.display)}` : ""}</span></button></li>`; }).join("")}</ol>`;
 }
 
-/* "Check the record": the chain's own answer. "Record intact" only when this task's steps are in it and it is unbroken. */
+/* "Check the record": the chain's own answer. "Record intact" only when this task's steps are in it and it is unbroken.
+   The words say what the chain holds (src/safety-extras/activity-chain.ts followActivity): permission answers and
+   refusals always, tool runs only while the chain is "on"; model steps never. */
 function verify(data, steps) {
-  const c = T.check, first = steps.find((s) => s.at)?.at;
-  let msg = `<b>${t("safety.chain.verify")}</b><small>${t("window.chat.tl.check-hint")}</small>`;
+  const c = T.check, first = steps.find((s) => s.at)?.at, asks = data.chain?.mode === "on" ? "" : "-asks";
+  let msg = `<b>${t("safety.chain.verify")}</b><small>${t(`window.chat.tl.check-hint${asks}`)}</small>`;
   if (T.ver === 1) msg = `<b>${t("window.chat.tl.checking")}</b><small>${t("window.chat.tl.checking-hint")}</small>`;
   const intact = T.ver === 2 && c?.ok && data.chain?.entries > 0;
-  if (intact) msg = `<b>${t("window.inbox.intact")}</b><small>${t("window.chat.tl.link-up", { count: data.chain.entries, time: esc(clock(first)) })}${level() >= 2 ? `<br><code>chain head ${esc(String(c.tip).slice(0, 8))}…${esc(String(c.tip).slice(-4))} · sha-256</code>` : ""}</small>`;
+  if (intact) msg = `<b>${t("window.inbox.intact")}</b><small>${t(`window.chat.tl.link-up${asks}`, { count: data.chain.entries, time: esc(clock(first)) })}${level() >= 2 ? `<br><code>chain head ${esc(String(c.tip).slice(0, 8))}…${esc(String(c.tip).slice(-4))} · sha-256</code>` : ""}</small>`;
   else if (T.ver === 2 && c) msg = `<b>${esc(c.reason)}</b>`;
   return `<div class="tlver17c ${intact ? "ok17c" : ""}">${ic(intact ? "check" : "shield", "s")}<span class="grow">${msg}</span>${T.ver === 1 ? "" : `<button type="button" class="btn sm" data-act="tlver17c">${T.ver === 2 ? t("autonomy.readiness.check") : t("safety.scan.run")}</button>`}</div>`;
 }

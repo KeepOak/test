@@ -48,7 +48,7 @@ import { ROUTES, SAMPLE_ID, entry } from "./short-lived-key-routes.mjs";
 /** The reviewed list, as the table writes each address. Adding a read means adding it here, in the same review. */
 const REVIEWED = [
   "/api/state", "/api/profiles", "/api/profiles/:id/about", "/api/profiles/:id/picture", "/api/profiles/owner/picture", "/api/lock", "/api/look", "/api/events/stream", "/api/activity", "/api/commands",
-  "/api/policy", "/api/conversation-mode", "/api/conversation-mode/settings", "/api/usage/glance", "/api/delight",
+  "/api/policy", "/api/practice-runs", "/api/conversation-mode", "/api/conversation-mode/settings", "/api/usage/glance", "/api/delight",
   "/api/deployment/suggestion", "/api/accounts", "/api/adapt", "/api/read-marks", "/api/voice/wake",
   "/api/voice/dictation", "/api/voice/dictation/listen",
   "/api/sessions", "/api/sessions/:id", "/api/sessions/:id/context", "/api/sessions/:id/export",
@@ -57,7 +57,7 @@ const REVIEWED = [
   "/api/attachments/file",
   "/api/runs/:id", "/api/runs/:id/inspect", "/api/runs/:id/steps", "/api/runs/:id/live", "/api/runs/:id/plan", "/api/runs/:id/receipts", "/api/runs/:id/recording",
   "/api/audit", "/api/audit/export.csv", "/api/usage", "/api/prompts", "/api/approvals/categories",
-  "/api/trunks", "/api/trunks/rooms/:id", "/api/trunks/conversations/:id", "/api/collab/events", "/api/teams/:id/handoffs",
+  "/api/trunks", "/api/trunks/:id/files", "/api/trunks/rooms/:id", "/api/trunks/conversations/:id", "/api/collab/events", "/api/teams/:id/handoffs",
   "/api/memory/tidy", "/api/memory/archive", "/api/memory/checkpoints", "/api/memory/export", "/api/memory/learned",
   "/api/memory/proposals", "/api/memory/versions", "/api/labels", "/api/seasons", "/api/seasons/morning",
   "/api/connections/catalog", "/api/mcp/catalogue", "/api/release-notes",

@@ -35,5 +35,6 @@ export function needsYou(app: Branch): number {
   // A Trunk's message waits because the task reading it stopped to ask: counted once, with that task.
   const messages = owner && !startedWithShortLivedKey()
     ? app.trunks.messages.waiting().filter((message) => !sessions.has(message.sessionId)).length : 0;
-  return counted.size + messages;
+  const autonomy = owner && !startedWithShortLivedKey() ? app.autonomy.ledger.pendingCount() : 0;
+  return counted.size + messages + autonomy;
 }

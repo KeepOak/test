@@ -1,4 +1,5 @@
 import type { DatabaseSync } from "node:sqlite";
+import { countedUsageTask } from "./conversation-bootstrap.js";
 
 /**
  * phase2/delight: what the owner has really done, counted from Branch's own records, for achievements.
@@ -56,7 +57,7 @@ const notAside = "id NOT IN (SELECT value FROM json_each(?2))";
 /** One pass over the owner's finished tasks, by local hour and source, added up here. Each row's time is
     turned into local time once, and the pass is reused while the finished tasks are the same ones. */
 function finishedTasks(db: DatabaseSync, owner: string, aside: string): TaskTallies {
-  const done = `FROM tasks WHERE owner=?1 AND status='completed' AND ${notAside}`;
+  const done = `FROM tasks WHERE owner=?1 AND status='completed' AND ${notAside} AND ${countedUsageTask(db)}`;
   const seen = db.prepare(`SELECT COUNT(*) AS n, MAX(updated_at) AS u ${done}`).get(owner, aside) as Row | undefined;
   const mark = `${String(seen?.n ?? 0)}|${String(seen?.u ?? "")}|${aside}`, kept = lastPass.get(db)?.get(owner);
   if (kept?.mark === mark) return kept.tallies;
@@ -80,12 +81,22 @@ function finishedTasks(db: DatabaseSync, owner: string, aside: string): TaskTall
     own first task there later makes it count. */
 const onlySetups = "EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id AND t.id IN (SELECT value FROM json_each(?2)))"
   + " AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id AND t.id NOT IN (SELECT value FROM json_each(?2)))";
+/**
+ * QA retest 2026-09-28 (m4): tasks the engine keeps out of Recent (Store.markAside recent: false, such as reading a
+ * schedule's words): a conversation holding only those is the engine's own, and is no more a conversation of the
+ * owner's than one holding only setup's tasks.
+ */
+function hiddenFromRecent(db: DatabaseSync): string[] {
+  return (db.prepare("SELECT run_id AS id FROM events WHERE kind='run.aside' AND json_extract(data,'$.recent')=0").all() as { id: string }[]).map((row) => row.id);
+}
 function taskTallies(db: DatabaseSync, owner: string, aside: string): Omit<AchievementTallies, "tools" | "events"> {
   const count = (sql: string): number => Number((db.prepare(sql).get(owner, aside) as Row | undefined)?.n ?? 0);
   return {
     ...finishedTasks(db, owner, aside),
     stopped: count(`SELECT COUNT(*) AS n FROM tasks WHERE owner=?1 AND status='cancelled' AND ${notAside}`),
-    conversations: count(`SELECT COUNT(*) AS n FROM sessions s WHERE s.owner=?1 AND s.temporary=0 AND NOT (${onlySetups})`),
+    conversations: Number((db.prepare(`SELECT COUNT(*) AS n FROM sessions s WHERE s.owner=?1 AND s.temporary=0 AND NOT (${onlySetups})
+      AND EXISTS (SELECT 1 FROM tasks t WHERE t.session_id=s.id AND ${countedUsageTask(db, "t")})`)
+      .get(owner, JSON.stringify([...JSON.parse(aside) as string[], ...hiddenFromRecent(db)])) as Row | undefined)?.n ?? 0),
   };
 }
 

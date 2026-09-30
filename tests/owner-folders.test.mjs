@@ -11,6 +11,7 @@ import { createBranch } from "../dist/index.js";
 import { listOwnerFolder, moveInOwnerFolder, ownerFolderVerdict, ownerPathOf, ownerFolderTool } from "../dist/owner-folders.js";
 import { bestRecommendation } from "../dist/local-hardware.js";
 import { savePolicy } from "../dist/policy.js";
+import { ApprovalRequiredError } from "../dist/approvals.js";
 
 const say = (content) => () => ({ content, toolCalls: [] });
 const call = (name, args) => () => ({ content: "", toolCalls: [{ id: "c" + Math.random().toString(36).slice(2, 8), name, arguments: JSON.stringify(args) }] });
@@ -246,10 +247,41 @@ test("a listing leaves out links and names that look like keys or passwords", as
   symlinkSync(join(root, "elsewhere"), join(downloads, "out"), "junction");
   const listed = await listOwnerFolder(ownerPathOf("~/Downloads", home));
   assert.deepEqual(listed.entries.map((entry) => entry.name).sort(), ["a.pdf", "b.jpg"]);
+  assert.deepEqual(listed.entries.map((entry) => entry.path).sort(), ["~/Downloads/a.pdf", "~/Downloads/b.jpg"]);
+  assert.match(listed.note, /include from: "~\/Downloads" beside moves/);
   // A folder reached through a link on the way is refused, not listed.
   mkdirSync(join(root, "elsewhere", "inner"), { recursive: true });
   writeFileSync(join(root, "elsewhere", "inner", "private.txt"), "x");
   await assert.rejects(listOwnerFolder(ownerPathOf("~/Downloads/out/inner", home)), /is a link/);
+});
+
+test("a whole-folder tidy cannot finish after moving only some of the listed files", async (t) => {
+  const { app, downloads, requests } = await fixture(t, [
+    call("files.list", { path: "~/Downloads" }), call("files.list", { path: "~/Downloads" }),
+    call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/Documents/a.pdf" }), say("The folder is tidied."),
+    call("files.move", { from: "~/Downloads/b.jpg", to: "~/Downloads/Pictures/b.jpg" }), say("All files are now sorted."),
+  ]);
+  const run = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  app.runtime.approve(run.sessionId, "allow", "session");
+  const done = await app.runtime.continueAsked(run.id);
+  assert.equal(done.status, "completed", done.output);
+  assert.ok(existsSync(join(downloads, "Pictures", "b.jpg")));
+  assert.equal(events(app, run, "model.folder_unfinished").length, 1);
+  assert.ok(requests.some((request) => request.messages.some((m) => /still loose.*b\.jpg/.test(m.content))));
+});
+
+test("an explicit partial-file request leaves other files alone; a stalled whole-folder tidy fails honestly", async (t) => {
+  for (const prompt of ["Move a.pdf into a Documents subfolder of Downloads", "Tidy my Downloads folder"]) {
+    const { app, downloads } = await fixture(t, [call("files.list", { path: "~/Downloads" }),
+      call("files.list", { path: "~/Downloads" }), call("files.move", { from: "~/Downloads/a.pdf", to: "~/Downloads/Documents/a.pdf" }),
+      say("All files are sorted.")]);
+    const run = await app.runtime.run({ prompt });
+    app.runtime.approve(run.sessionId, "allow", "session");
+    const done = await app.runtime.continueAsked(run.id);
+    assert.equal(done.status, prompt.startsWith("Move") ? "completed" : "failed", done.output);
+    assert.ok(existsSync(join(downloads, "b.jpg")), "no automatic move or expanded request");
+    if (done.status === "failed") assert.match(done.output, /not finished.*b\.jpg/);
+  }
 });
 
 test("a bare name beside a path in the person's folder is in that folder, and a folder ending in a slash takes the file", async (t) => {
@@ -292,4 +324,107 @@ test("the folder question names the call that asked, so after a yes the task is 
   const asked = events(app, first, "policy.ask")[0];
   assert.ok(asked.id);
   assert.equal(events(app, first, "attention.needed")[0].callId, asked.id);
+});
+
+test("the call a task stopped on to ask is recorded as not run, never as 'side effects may have occurred'", async (t) => {
+  // QA (first task): qwen3:14b was told both "side effects may have occurred" and, after the yes, "the call did not run",
+  // and asked the person again whether to start. Mutation: drop the known result in Store.finish → red.
+  // QA R1: the model never makes the call again; after the yes the engine runs it and hands the model its result.
+  const { app, requests } = await fixture(t, [call("files.list", { path: "~/Downloads" }), say("Listed."),
+    call("user.ask", { question: "Which folder next?" }), say("Thanks.")]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  const asked = events(app, first, "policy.ask")[0];
+  const result = app.store.messages(first.sessionId).find((message) => message.role === "tool" && message.toolCallId === asked.id);
+  assert.match(result.content, /"outcome":"not_run"/);
+  assert.match(result.content, /After a yes, Branch runs this exact call itself/);
+  assert.doesNotMatch(result.content, /Side effects may have occurred/);
+  app.runtime.approve(first.sessionId, "allow", "session");
+  // As the window's yes does (POST /api/policy/approve with carryOn): the same task carries on.
+  const second = await app.runtime.continueAsked(first.id);
+  assert.equal(second.status, "completed", second.output);
+  const sent = requests.slice(1).flatMap((request) => request.messages).filter((message) => message.role === "tool");
+  assert.ok(!sent.some((message) => /Side effects may have occurred/.test(message.content)), "the model is told one thing");
+  // QA R1. Mutation: drop runApproved from Runtime.started → the result still only says it has not run, red.
+  const answered = sent.find((message) => message.toolCallId === asked.id);
+  assert.match(answered.content, /"ok":true/, "the engine ran the approved call and its real result took the placeholder's place");
+  assert.equal(events(app, first, "run.approved_call")[0]?.id, asked.id);
+  // A question the model put itself: the result says it was asked, and the answer is the person's next message.
+  const third = await app.runtime.run({ prompt: "and the next one?", sessionId: first.sessionId });
+  assert.equal(third.status, "needs_input");
+  const askedByModel = app.store.messages(first.sessionId).filter((message) => message.role === "tool").at(-1);
+  assert.match(askedByModel.content, /"outcome":"asked"/);
+  assert.doesNotMatch(askedByModel.content, /Side effects may have occurred/);
+});
+
+test("after a no, the asked call's result says so, and the model is not told to make it again", async (t) => {
+  const { app, requests } = await fixture(t, [call("files.list", { path: "~/Downloads" }), say("I will leave it.")]);
+  const first = await app.runtime.run({ prompt: "Tidy my Downloads folder" });
+  const asked = events(app, first, "policy.ask")[0];
+  app.runtime.approve(first.sessionId, "deny", "once");
+  await app.runtime.continueRefused(first.id, asked.fingerprint);
+  const result = app.store.messages(first.sessionId).find((message) => message.role === "tool" && message.toolCallId === asked.id);
+  void requests;
+  assert.match(result.content, /said no to this call/);
+});
+
+test("a yes or no preserves the waiting task's explicit deadline instead of resetting to two minutes", async (t) => {
+  for (const decision of ["allow", "deny"]) {
+    const { app } = await fixture(t, [call("files.list", { path: "~/Downloads" }), say("Finished.")]);
+    const run = await app.runtime.run({ prompt: "Tidy my Downloads folder", timeoutMs: 600000 });
+    const asked = events(app, run, "policy.ask")[0];
+    app.runtime.approve(run.sessionId, decision, "once");
+    if (decision === "allow") await app.runtime.continueAsked(run.id);
+    else await app.runtime.continueRefused(run.id, asked.fingerprint);
+    assert.equal(events(app, run, "run.continued")[0].deadlineMs, 600000);
+  }
+});
+
+test("the preserved short deadline actually cancels an approved tool task", async (t) => {
+  const untilAborted = (request) => new Promise((resolve, reject) => {
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(3000)]);
+    signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+  });
+  const { app } = await fixture(t, [call("files.list", { path: "~/Downloads" }), untilAborted]);
+  const run = await app.runtime.run({ prompt: "Tidy my Downloads folder", timeoutMs: 1200 });
+  assert.equal(run.status, "needs_input");
+  app.runtime.approve(run.sessionId, "allow", "once");
+  const continued = await app.runtime.continueAsked(run.id);
+  assert.equal(continued.status, "cancelled", continued.output);
+});
+
+test("an approval raised after a tool starts preserves uncertain side effects after yes or no", async (t) => {
+  for (const decision of ["allow", "deny"]) {
+    const { app, root, requests } = await fixture(t, [call("files.list", { path: "." }), say("Checked.")]);
+    const execute = app.registry.execute.bind(app.registry);
+    app.registry.execute = async (name, args, context) => {
+      if (name !== "files.list") return execute(name, args, context);
+      writeFileSync(join(root, "partial.txt"), "already changed");
+      throw new ApprovalRequiredError("network.site", "example.com", "Connect to example.com");
+    };
+    const first = await app.runtime.run({ prompt: "List the files in this workspace" });
+    assert.equal(first.status, "needs_input");
+    const asked = events(app, first, "policy.ask")[0];
+    const result = app.store.messages(first.sessionId).find((m) => m.role === "tool" && m.toolCallId === asked.id);
+    assert.match(result.content, /"outcome":"unknown"/);
+    assert.ok(existsSync(join(root, "partial.txt")));
+    app.runtime.approve(first.sessionId, decision, "once");
+    if (decision === "allow") await app.runtime.continueAsked(first.id);
+    else await app.runtime.continueRefused(first.id, asked.fingerprint);
+    assert.equal(events(app, first, "run.call_not_run").length, 0);
+    const transcript = JSON.stringify(requests.at(-1).messages);
+    assert.doesNotMatch(transcript, /The call you asked about did not run|make this same call again now|It did not run and will not/);
+    assert.match(transcript, /may already have changed something/);
+  }
+});
+
+test("an inner owner-folder preflight cannot mark its enclosing tool as never executed", async (t) => {
+  const { app } = await fixture(t, [call("files.read", { path: "list.txt" })]);
+  app.registry.execute = async () => {
+    throw new ApprovalRequiredError("files.ownerFolder", "Downloads", "Work in Downloads", "session", undefined,
+      { beforeExecution: true });
+  };
+  const run = await app.runtime.run({ prompt: "Read list.txt" });
+  assert.equal(run.status, "needs_input");
+  const result = app.store.messages(run.sessionId).filter((m) => m.role === "tool").at(-1);
+  assert.match(result.content, /"outcome":"unknown"/);
 });

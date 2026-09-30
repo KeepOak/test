@@ -248,7 +248,8 @@ export class RemoteAgents {
 
   /**
    * A link the owner can hand to another Branch install so the two can add each other. It carries
-   * this install's card address and its key, so treat it exactly like a password.
+   * this install's card address and a pairing key (SessionTokens.createPairingKey) that reaches only the
+   * A2A door and runs out; it is still a secret, so share it like one.
    */
   pairing(base: string, key: string): { code: string; cardUrl: string; shareUrl: string } {
     const saved = this.store.get("settings", this.owner, "remote-agent-pairing")?.data as { code?: string } | undefined;

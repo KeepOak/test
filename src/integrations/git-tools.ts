@@ -155,6 +155,13 @@ function registerPlanBranches(registry: ToolRegistry, git: GitTools): void {
 /** Sending and receiving work; registered only when the owner has switched remote access on. */
 export function registerGitRemote(registry: ToolRegistry, git: GitTools): void {
   registry.register({
+    name: "git.clone", permission: "git.remote",
+    description: "Clone a repository: bring it onto this computer for the first time, into a new workspace folder, from its https:// address or a repository folder path. Optionally pick the branch to check out.",
+    parameters: z.object({ url: z.string().trim().min(1).max(1000), folder: filePath, branch: branchName.optional() }).strict(),
+    target: (args) => `clone ${String(args.url)} into ${String(args.folder)}`,
+    execute: (input, context: ToolContext) => git.clone(input, context.signal),
+  });
+  registry.register({
     name: "git.push", permission: "git.remote",
     description: "Send saved versions from this computer to the shared server. Sending to the branch everyone shares (main or master) stops and asks you first.",
     parameters: z.object({ folder, remote: remoteName, branch: branchName.optional(), confirmed: z.boolean().default(false) }).strict(),
@@ -196,7 +203,19 @@ async function openPullRequest(
  * The token is the owner's personal access token, or an installation token from the owner's own
  * GitHub App when that is switched on (src/integrations/github-app.ts, bucket 18).
  */
+const githubConnections = new WeakMap<ToolRegistry, GitHubAccess>();
+/** The owner review screen uses the currently offered, authenticated connection, never a model tool. */
+export function ownerGitHubConnection(registry: ToolRegistry): GitHubAccess {
+  const github = githubConnections.get(registry);
+  if (!github || !registry.names().includes("github.checks")) throw new Error("Connect GitHub in Settings before reviewing a merge.");
+  return github;
+}
+/** The saved connection a queued publication reconciles through: the one the GitHub tools use, while they are offered. */
+export function githubAccessForPublication(registry: ToolRegistry): GitHubAccess | null {
+  return registry.names().includes("github.open_pull_request") ? githubConnections.get(registry) ?? null : null;
+}
 export function registerGitHubProject(registry: ToolRegistry, github: GitHubAccess, git?: GitTools): void {
+  githubConnections.set(registry, github);
   registry.register({
     name: "github.issues", permission: "github.manage",
     description: "List the issues on a GitHub repository, newest first, saying which of them are really pull requests.",
@@ -208,6 +227,30 @@ export function registerGitHubProject(registry: ToolRegistry, github: GitHubAcce
     description: "Whether the automatic checks passed on a branch or a saved version, and which ones did not.",
     parameters: z.object({ repo: repositoryPath, ref: revisionRange }).strict(),
     execute: (input) => github.checks(input),
+  });
+  registry.register({
+    name: "github.wait_for_checks", permission: "github.manage",
+    description: "Wait for every check on a pull request's exact latest commit to finish, then say passed, failed, still pending or merged. Queued, running or not-yet-reported checks never count as passed, and a pull request in GitHub's merge queue is pending until the queue merges it. Call again while it says pending; merge only after it says passed.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive(),
+      /** How long to wait in this call, up to ten minutes: CI and a merge queue can each take half an hour. */
+      seconds: z.number().int().min(0).max(600).default(300) }).strict(),
+    // selfdev (SELF-022): it only looks, so one call may wait its ten minutes past the owner's tool time limit.
+    waitsUpToMs: 630_000,
+    execute: (input, context: ToolContext) => github.waitForChecks(input, context.signal),
+  });
+  // selfdev (SELF-306): why a check failed, and running failed jobs again.
+  registry.register({
+    name: "github.check_logs", permission: "github.manage",
+    description: "What each failed check on a pull request's latest commit printed: the lines of its Actions log around the failures. Use it to find why CI is red before changing anything.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive(), lines: z.number().int().min(20).max(400).default(120) }).strict(),
+    execute: (input) => github.checkLogs(input),
+  });
+  registry.register({
+    name: "github.rerun_failed_checks", permission: "github.manage",
+    description: "Run the failed jobs of a pull request's latest commit again, for a check that failed for reasons outside the change (a flaky test, a runner problem). Then wait with github.wait_for_checks.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive() }).strict(),
+    target: (input) => `run the failed checks of ${String(input.repo)} #${String(input.number)} again`,
+    execute: (input) => github.rerunFailedChecks(input),
   });
   registry.register({
     name: "github.release", permission: "github.manage",
@@ -260,6 +303,13 @@ export function registerGitHub(registry: ToolRegistry, github: GitHubAccess, git
       draft: z.boolean().optional(),
     }).strict(),
     execute: (input) => openPullRequest(github, input),
+  });
+  registry.register({
+    name: "github.merge_pull_request", permission: "github.manage",
+    description: "Merge a pull request, only when every check on its exact latest commit has finished and passed (run github.wait_for_checks first). The merge is pinned to that commit. When the base merges only through GitHub's merge queue, the commit joins the queue instead; wait with github.wait_for_checks until it says merged. A change to Branch itself is finished with branch.finish_source_change instead.",
+    parameters: z.object({ repo: repositoryPath, number: z.number().int().positive() }).strict(),
+    target: (args) => `merge pull request #${String(args.number)} on ${String(args.repo)} into its base`,
+    execute: (input) => github.mergeChecked(input.repo, input.number),
   });
   // Listing issues is `github.issues`, registered above: there is one tool for it, not two.
   registry.register({

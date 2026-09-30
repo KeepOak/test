@@ -10,12 +10,13 @@ import { $, esc, render, renderNow, pressIn, whenReleased } from "../core/dom.js
 import { openPop, closePop, mi, toast, app, ic } from "../core/ui.js";
 import { ACT } from "./activity.js";
 import { holdingTasks, lastLook, waitingLine } from "./autoupdate.js";
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { logo } from "../core/logos.js";
 import { waiting } from "../flows/whatsnew.js";
+import { snoozeUpdate } from "../chat/rec.js";
 import { allPaused } from "../flows/pause.js";
 import { t } from "../../i18n.js";
 import { resetWords } from "../core/usage-reset.js";
@@ -76,13 +77,65 @@ function windowRow(w, estimated) {
 }
 
 /* A sign-in never measured yet says so, and offers Measure now (POST /api/usage/limits/measure): one tiny real message. */
+/* models-ui (owner 2026-09-27, per-Trunk subscriptions): the Trunks that answer with this very account (their pick in
+   Edit Trunk › Accounts, keys.accounts). A Trunk that copies the owner's accounts and picked none follows the owner's
+   order, so it is named under no account in particular. */
+const rowAccount = (r) => r.account ?? "primary";
+const trunksOn = (r) => (E.trunks ?? []).filter((tr) => tr.keys?.accounts?.[r.connection] === rowAccount(r));
+function trunkLine(r) {
+  const names = trunksOn(r).map((tr) => tr.name);
+  return names.length ? `<small class="lim-trunks">${esc(t("glance.trunksOn", { names: names.join(", ") }))}</small>` : "";
+}
 function limitRow(r) {
   const busy = checking.has(rowKey(r)), said = busy ? t("glance.checking") : updatedWords(r);
   const measure = r.signIn && !r.windows?.length && !busy ? `<small>${esc(t("glance.measureNote"))}</small><button class="btn sm" type="button" data-act="limmeasure" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "primary")}">${esc(t("glance.measureNow"))}</button>` : "";
   const body = r.windows?.length
     ? r.windows.map((w) => windowRow(w, w.state === "estimated")).join("") + `<small>${esc(said)}${r.note ? ` ${esc(r.note)}` : ""}</small>`
     : `<small>${esc(busy ? said : r.note)}</small>${measure}`;
-  return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${body}</div></div>`;
+  return `<div class="lim">${logo(r.connection, r.connectionName, 28)}<div><div class="lim-h"><b>${esc(r.connectionName)}</b><span class="muted">${esc(r.accountLabel ?? "")}</span>${CHIP()[r.state] ?? ""}${r.inUse ? `<span class="pill ok">${t("glance.usedNext")}</span>` : ""}</div>${trunkLine(r)}${body}${offerBlock(r)}</div></div>`;
+}
+
+/* ---------- more usage, where the service offers it (src/usage-offers.ts) ----------
+   The engine attaches row.offer only where the service sells more usage and this account is at or near its limit, and
+   row.limitNear with row.switches where its list moves on to the next account by itself. The button opens the
+   service's own page in the owner's browser; nothing is bought here, and the owner decides there. */
+const siteOf = (url) => { try { return new URL(url).hostname; } catch { return ""; } };
+function offerBlock(r) {
+  const pool = r.limitNear && r.switches ? `<small class="lim-pool">${esc(t("glance.poolSwitches"))}</small>` : "";
+  const offer = r.offer?.url ? r.offer : null;
+  if (!offer) return pool ? `<div class="lim-offer">${pool}</div>` : "";
+  const key = `glance.offer.${offer.id}`, label = t(key) === key ? offer.option : t(key), site = siteOf(offer.url);
+  // The account is named only when its label is who the service said it is, never a name like "Your sign-in".
+  const note = r.verified && r.accountLabel ? t("glance.offerNoteFor", { site, account: r.accountLabel }) : t("glance.offerNote", { site });
+  return `<div class="lim-offer"><button class="btn sm" type="button" data-act="limoffer" data-id="${esc(r.connection)}" data-v="${esc(r.account ?? "")}">${esc(label)}</button><small>${esc(note)}</small>${pool}</div>`;
+}
+/* The desktop window opens the page in the owner's browser (it accepts only the catalogue's pages); a browser tab opens a new tab. */
+function openOutside(url) {
+  const desktop = globalThis.branchDesktop;
+  if (typeof desktop?.openExternal === "function") return Promise.resolve(desktop.openExternal(url));
+  window.open(url, "_blank", "noopener");
+  return Promise.resolve();
+}
+/* When the owner comes back from the provider's page, that one row is read again, once, and shown in the popover: opened
+   again first if it was closed while the owner was away, so the new state is in front of them. */
+let returning = null;
+function leftForPage() { if (returning) returning.left = true; }
+async function cameBack() {
+  if (!returning?.left || document.visibilityState !== "visible") return;
+  const row = returning.row, at = document.querySelector('#statusbar [data-act="usagepop"]');
+  returning = null;
+  if (at && glance && !document.querySelector(".pop .lims")) openPop(at, popHTML(glance), { right: true });
+  if (row.readable) { checkRows([row]); return; }
+  const look = looks;
+  try { keep(await api("usage/glance")); } catch (error) { toast(error.message); return; }
+  redrawPop(look);
+}
+async function openOffer(el) {
+  const row = (glance?.rows ?? []).find((r) => r.connection === el.dataset.id && (r.account ?? "") === el.dataset.v);
+  if (!row?.offer?.url) return;
+  returning = { row, left: false };
+  try { await openOutside(row.offer.url); toast(t("glance.offerOpened", { site: siteOf(row.offer.url) })); }
+  catch (error) { returning = null; toast(error.message); }
 }
 
 /* A plan signed in on this computer that is not a connection yet (GET/POST glance `addable`, the engine's own sentence):
@@ -110,7 +163,7 @@ function updatePop(plan, next) {
     .map((task) => mi("chat", task.state === "working" ? "spin" : "clock", esc(task.name), "", `data-id="${esc(task.sessionId)}"`)).join("") : "";
   const title = held ?? (next ? t("window.flows.whatsnew.is-ready", { version: next.version }) : `Branch ${version}`);
   const lines = next?.lines.length ? `<ul class="steps-list" data-css="padding:0 10px 8px 28px;font-size:12.5px">${next.lines.slice(0, 3).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>` : "";
-  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${mi("closepop", "clock", t("window.shell.usage.remind-me-tomorrow"), "", 'data-why="update-remind"')}`;
+  return `<div class="pt">${esc(title)}</div><p class="pp">${esc(plan?.reason ?? "")}</p>${problem ? `<p class="pp">${esc(problem)}</p>` : ""}${tasks}${lines}${mi("relnotes17d", "news17d", t("window.flows.whatsnew.read"), "", next ? 'data-v="ready"' : "")}${mi("install", "check", t("window.settings.updates.install-when-nothing-is-running"))}${next ? mi("upd-snooze", "clock", t("window.shell.usage.remind-me-tomorrow"), "", `data-v="${esc(next.version)}" data-why="update-remind"`) : ""}`;
 }
 /* The last look's plan when update by itself has looked (it knows what the updater said); otherwise the engine is asked. */
 async function openUpdates(el) {
@@ -156,10 +209,17 @@ function countDown(el) {
    Settings › Data & usage, or the window is not the owner's. It is read again every 20 seconds and whenever the engine's
    state is read again (each event), and the bar is drawn again only when the line changed. */
 let glance = null, readFor = null, reading = false, again = false;
+let identityTimer = null;
 const STALE_MS = 15 * 60_000, METER_EVERY_MS = 5 * 60_000;
+/* In a Trunk's own conversation the meter is that Trunk's: its own model (else the owner's), and the account it picked
+   for that connection (else the one used next), so its own window and reset are what the bar says. */
+const trunkHere = () => (S.chat ? (E.trunks ?? []).find((tr) => tr.chatSessionId === S.chat) ?? null : null);
 const inUseRow = (g) => {
-  const id = E.state?.activeModel?.presetId;
-  return id ? (g?.rows ?? []).find((r) => (r.presets ?? [r.connection]).includes(id) && r.inUse) ?? null : null;
+  const tr = trunkHere(), id = tr?.model || E.state?.activeModel?.presetId;
+  if (!id) return null;
+  const rows = (g?.rows ?? []).filter((r) => (r.presets ?? [r.connection]).includes(id));
+  const picked = tr ? rows.find((r) => tr.keys?.accounts?.[r.connection] === rowAccount(r)) : null;
+  return picked ?? rows.find((r) => r.inUse) ?? null;
 };
 function planOf(g) {
   if (!g?.available || g.settings?.ring === "hidden") return null;
@@ -169,7 +229,9 @@ function planOf(g) {
   for (const w of row.windows ?? []) { const pct = pctLeft(w); if (pct !== null && (!best || pct < best.pct)) best = { pct, w }; }
   /* Nothing measured yet: the plan's name and an empty ring, never the model's name. */
   if (!best && row.state === "not_published" && !row.signIn && !/No limit/.test(row.note ?? "")) return null;
-  return { name: row.connectionName, signIn: row.signIn, ...(best ?? { pct: null, w: null }) };
+  const tr = trunkHere(), own = tr && tr.keys?.accounts?.[row.connection] === rowAccount(row);
+  const name = own ? t("glance.trunkMeter", { name: row.connectionName, trunk: tr.name, account: row.accountLabel ?? "" }) : row.connectionName;
+  return { name, signIn: row.signIn, ...(best ?? { pct: null, w: null }) };
 }
 function ringSVG(pct, dashed) {
   if (pct === null) return `<svg width="18" height="18" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="9" fill="none" stroke="var(--line-2)" stroke-width="3"/></svg>`;
@@ -197,8 +259,17 @@ async function readGlance() {
 }
 function keep(g) {
   const before = JSON.stringify(planOf(glance));
+  const rowsBefore = JSON.stringify(glance?.rows);
   glance = g;
   if (JSON.stringify(planOf(glance)) !== before) render();
+  if (JSON.stringify(g?.rows) !== rowsBefore) redrawPop(looks);
+  hydrateIdentities();
+}
+function hydrateIdentities() {
+  clearTimeout(identityTimer);
+  const visible = () => ownerHere() && !document.querySelector(".lockscreen") && document.querySelector(".pop .lims");
+  if (!glance?.identitiesPending || !visible()) return;
+  identityTimer = setTimeout(() => { if (visible()) readGlance(); }, 1000);
 }
 
 /* The status bar's own cadence: a ChatGPT plan in use is read again every five minutes while this window is in front (and
@@ -270,7 +341,11 @@ function startInBackground() {
 }
 
 export function initUsage() {
-  markLive(["usagepop", "limmeasure", "limcheck", "limconnect", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
+  markLive(["usagepop", "limmeasure", "limcheck", "limconnect", "limoffer", "updmenu", "ckpt-save", "ckpt-no", "tasks10", "bg-new"]);
+  on("limoffer", (el) => openOffer(el));
+  window.addEventListener("blur", leftForPage);
+  window.addEventListener("focus", cameBack);
+  document.addEventListener("visibilitychange", () => (document.visibilityState === "hidden" ? leftForPage() : cameBack()));
   on("tasks10", (el) => openTasks(el));
   on("bg-new", () => startInBackground());
   on("ckpt-save", saveProgress);
@@ -279,8 +354,10 @@ export function initUsage() {
   setInterval(checkLimits, 20000);
   setInterval(meterCheck, 60_000);
   window.addEventListener("focus", meterCheck);
+  for (const event of ["click", "keydown"]) document.addEventListener(event, () => queueMicrotask(hydrateIdentities));
   on("limcheck", () => checkRows(glance?.rows ?? []));
   on("updmenu", (el) => openUpdates(el));
+  on("upd-snooze", (el) => { closePop(); snoozeUpdate(el.dataset.v); });
   on("limmeasure", async (el) => {
     el.disabled = true;
     try { await api("usage/limits/measure", { connection: el.dataset.id, account: el.dataset.v }); }
@@ -296,6 +373,7 @@ export function initUsage() {
     if (g) keep(g);
     openPop(el, popHTML(g), { right: true });
     if (!g || !document.querySelector(".pop .lims")) return;
+    hydrateIdentities();
     checkRows(g.rows ?? []);
     const look = looks;
     api("usage/limits/look", {}).then((next) => { keep(next); redrawPop(look); }).catch((error) => toast(error.message));

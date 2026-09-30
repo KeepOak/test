@@ -1,5 +1,5 @@
 /* The walkthrough (design doc 6.2), 1:1 with the prototype's: a spotlight on one part of the window, a card beside it
-   with the guide's pose, "n of N", dots, Back, Skip and Next. A stop whose part is not on screen is passed over, so the
+   with the Branch logo, "n of N", dots, Back, Skip and Next. A stop whose part is not on screen is passed over, so the
    tour only ever shows what this window has: when it starts, each stop is tried once (its view drawn, its part looked
    for) and only the stops found are counted in "n of N" and the dots. The prototype's stops for surfaces this window is
    not (the phone, the terminal, keepoak.com, the surface switcher) have no part here and are not listed. */
@@ -101,8 +101,7 @@ function layer() {
 
 function cardHtml(st) {
   const last = T.i === T.stops.length - 1;
-  const pose = last ? "yay" : T.i === 0 ? "wave" : "point";
-  return `<img class="pose11 tour-pt11" src="/art/branch-${pose}.webp" alt="" loading="lazy" decoding="async" draggable="false"><span class="n">${t("window.find.count", { at: T.i + 1, total: T.stops.length })}</span><b>${esc(t(st.title))}</b><p>${esc(t(st.text))}</p><div class="tour-dots" aria-hidden="true">${T.stops.map((_, j) => `<i class="${j === T.i ? "on" : ""}"></i>`).join("")}</div><div class="acts">${T.i > 0 ? `<button class="btn ghost sm" type="button" data-act="tour-back">${t("action.back")}</button>` : ""}<span class="tb-grow"></span><button class="btn ghost sm" type="button" data-act="tour-end">${last ? t("delight.ach.close") : t("window.flows.tour.skip")}</button>${last ? "" : `<button class="btn pri sm" type="button" data-act="tour-next">${t("action.next")}</button>`}</div>`;
+  return `<span class="mark mark-face tour-pt11" data-css="animation:none" aria-hidden="true"></span><span class="n">${t("window.find.count", { at: T.i + 1, total: T.stops.length })}</span><b>${esc(t(st.title))}</b><p>${esc(t(st.text))}</p><div class="tour-dots" aria-hidden="true">${T.stops.map((_, j) => `<i class="${j === T.i ? "on" : ""}"></i>`).join("")}</div><div class="acts">${T.i > 0 ? `<button class="btn ghost sm" type="button" data-act="tour-back">${t("action.back")}</button>` : ""}<span class="tb-grow"></span><button class="btn ghost sm" type="button" data-act="tour-end">${last ? t("delight.ach.close") : t("window.flows.tour.skip")}</button>${last ? "" : `<button class="btn pri sm" type="button" data-act="tour-next">${t("action.next")}</button>`}</div>`;
 }
 
 function place() {

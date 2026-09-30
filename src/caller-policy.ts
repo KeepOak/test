@@ -45,6 +45,7 @@ import { hereOnly } from "./remote/window-key.js";
 import { lockedRefusal } from "./session-lock.js";
 import { phoneLockdownRefusal } from "./phone-app/index.js";
 import { joinLockdownWords } from "./devices/join.js";
+import { selfDevelopmentLockdownRefusal } from "./self-development-contract.js";
 
 export interface CallerRefusal { status: number; message: string }
 
@@ -260,7 +261,7 @@ const outlastsAPhone: readonly RegExp[] = [
  * What a door may not even read, nor change: the address each chat service posts to carries that service's own secret
  * word, which a phone would keep after it is removed, and its settings keep the old addresses without one answered.
  */
-const secretToADoor: readonly RegExp[] = [/^\/api\/channels\/addresses(\/|$)/];
+const secretToADoor: readonly RegExp[] = [/^\/api\/channels\/addresses(\/|$)/, /^\/api\/panels\/browser(\/|$)/];
 /**
  * A coding assistant's own sign-in (src/accounts/sign-ins.ts) opens its page in this computer's browser, so only the
  * person at this computer can start it or paste its code. Checking and stopping stay open to a door.
@@ -273,6 +274,8 @@ const opensOnThisComputer: readonly RegExp[] = [/^\/api\/accounts\/sign-ins\/(st
 const permanentHereOnly: readonly RegExp[] = [/^\/api\/sessions\/[a-f0-9-]{36}\/delete-now$/, /^\/api\/sessions\/put-away\/empty$/, /^\/api\/retention\/prune$/];
 /** Why a door (the paired door, a phone's own key, or a caller beyond this computer) may not send this, or null. */
 export function hereOnlyRefusal(method: string | undefined, path: string): string | null {
+  if (/^\/api\/taste(\/|$)/.test(path) || /^\/api\/self-development\/publications(\/|$)/.test(path)) return hereOnly;
+  if (/^\/api\/self-development\/merge(\/|$)/.test(path)) return hereOnly;
   if (secretToADoor.some((route) => route.test(path))) return hereOnly;
   if (method === "GET" || method === "HEAD") return null;
   return [...outlastsAPhone, ...opensOnThisComputer, ...permanentHereOnly].some((route) => route.test(path)) ? hereOnly : null;
@@ -291,6 +294,10 @@ export const openWhileLocked: ReadonlySet<string> = new Set(["GET /api/lock", "P
  * because the engine reaches the same work without a request too.
  */
 export const lockdownRoutes: readonly { method: string; path: string; status: number; message: string }[] = [
+  { method: "GET", path: "/api/self-development/merge", status: 403, message: selfDevelopmentLockdownRefusal },
+  { method: "GET", path: "/api/self-development/merge/runner", status: 403, message: selfDevelopmentLockdownRefusal },
+  ...["/api/self-development/merge/review", "/api/self-development/merge/approve", "/api/self-development/merge/finish"]
+    .flatMap((path) => ["GET", "POST"].map((method) => ({ method, path, status: 403, message: selfDevelopmentLockdownRefusal }))),
   // Opening the phone download to the home network (src/phone-app/index.ts). Closing it stays open.
   { method: "POST", path: "/api/phone-app/share", status: 403, message: phoneLockdownRefusal },
   // Lending this computer to another Branch, or waiting to be found by one (src/devices/join.ts). Leaving stays open.

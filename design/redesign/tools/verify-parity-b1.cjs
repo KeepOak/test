@@ -16,7 +16,7 @@ const zlib = require("node:zlib");
 const { createHash } = require("node:crypto");
 const { readFileSync, mkdirSync, existsSync } = require("node:fs");
 const { join } = require("node:path");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 
 const { PORT, TOKEN, CERT, KEY } = process.env;
 const SHOTS = process.env.SHOTS || "C:/Users/bishi/AppData/Local/Temp/claude-session-files/parity-b1";

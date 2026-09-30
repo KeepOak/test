@@ -6,17 +6,19 @@
    the engine always does (src/tool-loading.ts), so it shows on and has no switch. Finding Branch on other computers
    happens only while "Add a computer" is open (src/devices/find.ts), so its row opens that dialog (flows/computers.js,
    "addcomp"). Every other greyed row says why (core/why.js). A row of choices or a button with a translated title
-   carries its English title's id as its reason key. The Playground's Open runs one tool by hand through the engine's
+   carries its English title's id as its reason key. Turn an OpenAPI file into tools reads a chosen file and
+   lets the owner pick its operations (../openapi-pick.js). The Playground's Open runs one tool by hand through the engine's
    own approval gate (../playground.js). */
 import { esc, render } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { toast } from "../../core/ui.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
-import { id15, sw15, btn15, code15, seg15, sec15 } from "../rows15.js";
+import { id15, sw15, btn15, code15, sec15 } from "../rows15.js";
 import { developer17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { initPlayground } from "../playground.js";
+import { initOpenApiPick } from "../openapi-pick.js";
 import { say } from "../../core/words.js";
 import { t } from "../../../i18n.js";
 
@@ -41,8 +43,22 @@ const SHOWN = {
 const value = (id) => (WIRES[id]?.[0] ?? SHOWN[id])?.() ?? false;
 const sw = (title, sub) => sw15(title, sub, value(id15(title)));
 
+/* The terminal's status line (the comfort card "display", statusLine): Default is the engine's null (the line as it has
+   always been), Minimal is the model and the room used. My script stays greyed: Branch builds the line from its own
+   pieces and runs no script of yours for it (window.why.f15-status-line-script). */
+const MINIMAL = ["model", "context"];
+function statusRow() {
+  const items = D.comfort?.values?.display?.statusLine, title = t("comfort.field.statusLine");
+  const cur = !D.comfort ? null : items == null ? "default" : JSON.stringify(items) === JSON.stringify(MINIMAL) ? "minimal" : null;
+  const opt = (v, words) => `<button type="button" aria-pressed="${cur === v}" data-act="dv-status" data-v="${v}">${esc(words)}</button>`;
+  return `<div class="ctl"><b>${esc(title)}</b><span class="right"><span class="seg" role="group" aria-label="${esc(title)}">${opt("default", t("voice.default"))}${opt("minimal", t("window.settings.developer.minimal"))}<button type="button" aria-pressed="false" data-act="dv-status-script" data-why="f15-status-line-script">${esc(t("window.settings.developer.my-script"))}</button></span></span><small>${esc(t("window.settings.developer.status-line-where"))}</small></div>`;
+}
+async function setStatusLine(v) {
+  try { await api("comfort", { card: "display", values: { statusLine: v === "minimal" ? MINIMAL : null } }); } catch (error) { toast(error.message); }
+  await loadAll();
+}
+
 export function draw() {
-  const statusLine = D.comfort ? (D.comfort.values?.display?.statusLine == null ? "default" : null) : null;
   let html = `<h1>${t("settings.card.developer")}</h1><p class=\"lede\">${t("settingsGrown.bucket.advanced.dev.line")}</p>`;
   html += `<div class=\"sec\"><h2>${t("window.settings.developer.local-address")}</h2>`;
   html += `<div class="ctl"><b>${esc(location.host)}</b><span class="right"><button class="btn sm" type="button" data-act="dv-copy">${t("asks.examples.copy")}</button></span><small>${t("window.settings.developer.only-this-computer-can-reach-it")}</small></div>`;
@@ -53,7 +69,7 @@ export function draw() {
   html += `<div class="ctl"><b>${t("window.settings.developer.use-a-debugger")}</b><input class="sw" type="checkbox" id="dv-dbg" ${value("dv-dbg") ? "checked" : ""} aria-label="${t("window.settings.developer.use-a-debugger")}" data-sw="set"><small>${t("window.settings.developer.nothing-downloads-and-nothing-runs-until")}</small></div>`;
   html += "</div>";
   html += sec15(t("window.settings.developer.tools-technical"),
-    btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), "", t("delight.bg.choose"), "soon", "f15-turn-an-openapi-file-into-tools")
+    btn15(t("window.settings.developer.turn-an-openapi-file-into-tools"), t("window.settings.openapi.row"), t("delight.bg.choose"), "openapi-pick")
     + sw("Tool scripts and WebAssembly", "Sandboxed JavaScript and .wasm add-ons.")
     + sw("Tools that join over a WebSocket", `ws://${location.host}/api/interop/client-tools/ws`)
     + sw15("Load tools only when needed", "Thousands of tools at the cost of dozens.", true) // state: always, every round (src/tool-loading.ts)
@@ -64,7 +80,7 @@ export function draw() {
   html += sec15(t("window.settings.developer.system"),
     sw("Portable mode", "Data beside the program, for a USB stick.")
     + sw("Send metrics with OpenTelemetry", D.tracing?.endpoint ?? "")
-    + seg15(t("comfort.field.statusLine"), "", [["default", t("voice.default")], ["minimal", t("window.settings.developer.minimal")], ["script", t("window.settings.developer.my-script")]], statusLine, "seg", "f15-status-line")
+    + statusRow()
     + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
     + sw("Save task trajectories", "Every step as JSON Lines, for analysis."));
@@ -85,8 +101,10 @@ async function copyAddress() {
 
 export function init() {
   on("dv-copy", () => copyAddress());
+  on("dv-status", (el) => setStatusLine(el.dataset.v));
   initPlayground();
-  markLive(["dv-copy", "sw:dv-ls", "sw:dv-dbg", "sw:f15-flow-search", "sw:f15-send-metrics-with-opentelemetry", "sw:f15-is-branch-keeping-up"]);
+  initOpenApiPick();
+  markLive(["dv-copy", "dv-status", "sw:dv-ls", "sw:dv-dbg", "sw:f15-flow-search", "sw:f15-send-metrics-with-opentelemetry", "sw:f15-is-branch-keeping-up"]);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];
     if (!wire) return;
@@ -98,4 +116,4 @@ export function init() {
 
 export async function load() { await loadAll(); }
 
-export const live = { "dv-copy": true };
+export const live = { "dv-copy": true, "dv-status": true };

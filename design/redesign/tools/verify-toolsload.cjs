@@ -8,7 +8,8 @@
      saves "when-needed";
    - the engine's process is the same one throughout (ENGINE_PID still running, the same session answering): nothing
      was restarted; zero page errors. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require(process.env.PLAYWRIGHT || require("node:path").join(__dirname, "../../../node_modules/playwright"));
+const { waitInPage } = require("./wait-in-page.cjs");
 
 const { PORT = "3808", TOKEN, ENGINE_PID } = process.env;
 const base = `http://127.0.0.1:${PORT}`;
@@ -51,7 +52,7 @@ const sourceOf = async (source) => (await api("tools/context")).sources.find((s)
   check("with the engine's cost", (await row.locator("small").innerText()) === `${first.tokens.now} tokens`, await row.locator("small").innerText());
 
   await sw.click();
-  await page.waitForFunction(async ({ id, token }) => {
+  await waitInPage(page, async ({ id, token }) => {
     const got = await (await fetch("/api/tools/context", { headers: { authorization: `Bearer ${token}` } })).json();
     return got.sources.find((s) => s.source === `skill:${id}`)?.mode === "always";
   }, { id: skill.id, token: TOKEN }, { timeout: 10000 });
@@ -62,7 +63,7 @@ const sourceOf = async (source) => (await api("tools/context")).sources.find((s)
   check("and shows the engine's new cost", !(await sw.isChecked()), `${always.tokens.now} tokens`);
 
   await sw.click();
-  await page.waitForFunction(async ({ id, token }) => {
+  await waitInPage(page, async ({ id, token }) => {
     const got = await (await fetch("/api/tools/context", { headers: { authorization: `Bearer ${token}` } })).json();
     return got.sources.find((s) => s.source === `skill:${id}`)?.mode === "when-needed";
   }, { id: skill.id, token: TOKEN }, { timeout: 10000 });

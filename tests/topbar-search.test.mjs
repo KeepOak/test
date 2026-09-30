@@ -60,13 +60,14 @@ test("the sidebar's Search box shows the keys that open the finder, and Ctrl K o
 
 test("the key hint is the owner's own binding, and says nothing when there is none", async (t) => {
   const { app, page } = await openApp(t);
-  saveComfort(app.store, "local", "keys", { palette: "Ctrl+Shift+F" });
+  // Ctrl+Shift+P: a combination no shortcut has by default (Ctrl+Shift+F searches the list), so the palette may take it.
+  saveComfort(app.store, "local", "keys", { palette: "Ctrl+Shift+P" });
   // The window reads the owner's keys when it opens (shell/keys.js loadKeys).
   await page.reload();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   const mac = process.platform === "darwin";
-  await page.waitForFunction((shown) => document.querySelector("#side .sq9 kbd")?.textContent === shown, mac ? "Cmd Shift F" : "Ctrl Shift F");
-  await page.keyboard.press("ControlOrMeta+Shift+F");
+  await page.waitForFunction((shown) => document.querySelector("#side .sq9 kbd")?.textContent === shown, mac ? "Cmd Shift P" : "Ctrl Shift P");
+  await page.keyboard.press("ControlOrMeta+Shift+P");
   await page.locator("#pal-in").waitFor({ state: "visible" });
   await closeFinder(page);
 
@@ -76,10 +77,10 @@ test("the key hint is the owner's own binding, and says nothing when there is no
   await page.waitForFunction(() => !document.querySelector("#side .sq9 kbd"));
   assert.equal(await page.locator("#side-q").getAttribute("aria-keyshortcuts"), null, "no keys are promised that do nothing");
   // With keys the box says them to a screen reader too (as the old top-bar box did).
-  saveComfort(app.store, "local", "keys", { palette: "Ctrl+Shift+F" });
+  saveComfort(app.store, "local", "keys", { palette: "Ctrl+Shift+P" });
   await page.reload();
   await page.locator("#app #side").waitFor({ state: "visible", timeout: 120000 });
   await page.locator("#side .sq9 kbd").waitFor();
-  assert.equal(await page.locator("#side-q").getAttribute("aria-keyshortcuts"), mac ? "Meta+Shift+F" : "Control+Shift+F", "a screen reader hears the same keys");
+  assert.equal(await page.locator("#side-q").getAttribute("aria-keyshortcuts"), mac ? "Meta+Shift+P" : "Control+Shift+P", "a screen reader hears the same keys");
 });
 

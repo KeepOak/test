@@ -24,7 +24,6 @@ test("an empty list is a welcome once the engine answered with nothing; Make a t
   await place(page, "inbox");
   await tab(page, "finished");
   assert.match(await said(page.locator("#main .empty18c p")), /^Nothing has finished yet\./);
-  await tab(page, "live").catch(() => {});
   assert.deepEqual(errors, []);
 });
 

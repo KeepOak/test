@@ -48,6 +48,8 @@ const messageSchema = z.object({
 
 export class VkChannel extends PollingChannel {
   readonly kind = "vk";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   private readonly api: string;
   private readonly fetch: typeof fetch;
   private server: { key: string; server: string; ts: string } | null = null;

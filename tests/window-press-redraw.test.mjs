@@ -21,15 +21,15 @@ const quiet = { name: "scripted", async complete() { return { content: "ok", too
 async function signedIn(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-press-redraw-"));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"), provider: quiet });
-  const owner = app.runtime.owner;
   const sessions = [];
+  // trunk-one-row: the side list has one row per Trunk, so each conversation here is a Trunk's own.
   for (const words of ["First conversation", "Second conversation"]) {
-    const run = app.store.createRun(owner, words);
-    app.store.message(run.sessionId, { role: "user", content: words });
-    app.store.message(run.sessionId, { role: "assistant", content: "Done." });
-    app.store.finish(run.id, "completed", "Done.");
-    sessions.push(run.sessionId);
+    const trunk = app.trunks.create({ name: words.split(" ")[0] });
+    app.store.message(trunk.chatSessionId, { role: "user", content: words });
+    app.store.message(trunk.chatSessionId, { role: "assistant", content: "Done." });
+    sessions.push(trunk.chatSessionId);
   }
+  await app.trunks.introduced();
   const server = await startServer(app, { dataDir: join(root, "data"), port: 0 });
   await fetch(new URL("/api/onboarding", server.url), { method: "POST",
     headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: JSON.stringify({ done: true }) });
@@ -123,6 +123,8 @@ test("a tap on a phone leaves no tooltip behind; a mouse still gets one", async 
   // A greyed control ("Coming soon" as its tip): tapping it changes nothing, so nothing redraws the tip away either.
   // Named by what it is (its tag and data-* attributes, and its place among the controls that share them), not by an id
   // written on it: the window draws again as its reads arrive, and the control drawn in its place has no such id.
+  // The window draws its greyed controls as its reads arrive: wait for one on screen before naming it.
+  await page.waitForFunction(() => [...document.querySelectorAll("#app .soon[data-tip]")].some((n) => n.getClientRects().length && n.getBoundingClientRect().top > 0));
   const tipped = await page.evaluate(() => {
     const el = [...document.querySelectorAll("#app .soon[data-tip]")].find((n) => n.getClientRects().length && n.getBoundingClientRect().top > 0);
     const selector = el.tagName.toLowerCase() + ".soon" + [...el.attributes].filter((a) => a.name.startsWith("data-") && a.name !== "data-tip")

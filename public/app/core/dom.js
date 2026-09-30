@@ -15,10 +15,31 @@ export function applyCss(root = document) {
   }
 }
 
+/* Opt-in disclosure state survives a redraw of the same content. */
+function detailState(from) {
+  const openDetails = new Map();
+  for (const details of from.querySelectorAll("details[data-persist]")) {
+    const key = details.dataset.persist;
+    const states = openDetails.get(key) ?? [];
+    states.push(details.open);
+    openDetails.set(key, states);
+  }
+  return openDetails;
+}
+function restoreDetails(openDetails, to) {
+  for (const details of to.querySelectorAll("details[data-persist]")) {
+    const states = openDetails.get(details.dataset.persist);
+    if (states?.length) details.open = states.shift();
+  }
+}
+export function keepDetails(from, to) { restoreDetails(detailState(from), to); }
+
 /* Draws html into a region and applies its styles. Returns the region. */
 export function paint(region, html) {
   if (!region) return region;
+  const previous = detailState(region);
   region.innerHTML = html;
+  restoreDetails(previous, region);
   applyCss(region);
   return region;
 }

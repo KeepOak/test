@@ -73,7 +73,8 @@ export function initFind() {
   document.addEventListener("input", (e) => { if (e.target.id === "find9-q") { FIND.q = e.target.value; FIND.i = 0; render(); } });
   document.addEventListener("keydown", (e) => {
     const mod = e.ctrlKey || e.metaKey;
-    if (mod && e.key.toLowerCase() === "f" && S.view === "chat") { e.preventDefault(); if (!FIND.on) open(); else $("#find9-q")?.focus(); }
+    /* Ctrl+Shift+F is the list's own search (shell/extras.js searchHistory); Ctrl+F alone is Find. */
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "f" && S.view === "chat") { e.preventDefault(); if (!FIND.on) open(); else $("#find9-q")?.focus(); }
     else if (e.target.id === "find9-q" && e.key === "Enter") { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
     else if (e.target.id === "find9-q" && e.key === "Escape") { e.stopPropagation(); FIND.on = false; render(); }
   });

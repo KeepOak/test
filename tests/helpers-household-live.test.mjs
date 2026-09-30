@@ -45,6 +45,7 @@ import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { runForCurrentPerson } from "../dist/collab-server.js";
 import { readPolicy, savePolicy } from "../dist/policy.js";
+import { waitInPage } from "./wait-in-page.mjs";
 
 const say = (content) => ({ content, toolCalls: [] });
 const call = (name, args) => ({ content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 9)}`, name, arguments: JSON.stringify(args) }] });
@@ -121,17 +122,26 @@ async function fixture(t) {
   return { app, api, server, page, errors, person, at, helpersOf, runBy, release: (who) => model.gates.get(who)?.(), ...model };
 }
 
-/** The window opened afresh on conversation `sid` for whoever is at it now. A switch of profile makes the window start
-    again by itself, so an opening that races it is tried again. */
+/** Open only after disposing of the previous profile's document and reading the person now at the engine. Opening
+    #open sets S.chat before that document's profile watcher can reset it; checking the conversation alone therefore
+    lets a queued profile reset put the next message in a new Ask first conversation. */
 async function openAs(f, sid) {
+  const profile = f.app.store.profiles.active()?.id ?? null;
+  const opened = () => waitInPage(f.page, async (id) => (await import("/app/core/state.js")).S.chat === id, sid, { timeout: 15000 });
   for (let tries = 0; ; tries++) {
-    // A fresh address each time: a change of the hash alone would keep the page that was there.
-    try { await f.page.goto(`${f.server.url}/?fresh=${Date.now()}#open=${sid}`, { waitUntil: "load" }); break; } catch (error) {
+    try {
+      await f.page.goto("about:blank", { waitUntil: "load" });
+      await f.page.goto(`${f.server.url}/?fresh=${Date.now()}#open=${sid}`, { waitUntil: "load" });
+      await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
+      const here = await f.page.evaluate(async () => (await import("/app/core/state.js")).E.profiles?.active?.id ?? null);
+      if (here !== profile) throw new Error("The profile reset has not finished.");
+      await opened();
+      return;
+    } catch (error) {
       if (tries >= 3) throw error;
       await f.page.waitForLoadState("load").catch(() => undefined);
     }
   }
-  await f.page.locator("#app #side").waitFor({ state: "visible", timeout: 60000 });
 }
 
 /** The owner's task with two helpers held mid-work, started as the owner. */
@@ -141,6 +151,53 @@ async function ownerAtWork(f) {
   const parent = f.runBy("check the owner's invoices");
   return { done, parent, helpers: f.helpersOf(parent) };
 }
+
+test("a queued profile reset cannot leave a helper message in a new Ask first conversation", async (t) => {
+  const f = await fixture(t);
+  const before = (await f.api("profiles")).body;
+  const dana = f.person("Dana", "4826");
+  f.at(dana);
+  const first = await f.api("run", { prompt: "hello" });
+  let stale = 0, oldDocument;
+  let release;
+  const held = new Promise((done) => { release = done; });
+  t.after(release);
+  await f.page.addInitScript(() => {
+    const ask = window.fetch, id = Math.random().toString(36).slice(2);
+    window.fetch = (url, options = {}) => {
+      const headers = new Headers(options.headers);
+      headers.set("x-profile-reset-fixture", id);
+      return ask(url, { ...options, headers });
+    };
+  });
+  // Hold the previous profile's completed read across opening. This is the stale boot picture which makes the
+  // profile watcher reset the document after #open has already been consumed. Run/approval APIs use the actual server.
+  await f.page.route("**/api/profiles", async (route) => {
+    const document = route.request().headers()["x-profile-reset-fixture"];
+    if (!stale && document) {
+      oldDocument = document;
+      stale += 1;
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(before) });
+    }
+    if (document && document === oldDocument) await held;
+    return route.continue();
+  });
+  await openAs(f, first.body.sessionId);
+  assert.equal(stale, 1, "the controlled stale profile read was delivered");
+  assert.equal(await f.page.evaluate(async () => (await import("/app/core/state.js")).E.profiles?.active?.id), dana.id,
+    "the previous profile's document must be gone before typing");
+  const request = f.page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/run");
+  await f.page.locator("#prompt").fill("check Dana's receipts");
+  await f.page.locator("#prompt").press("Enter");
+  assert.equal((await request).postDataJSON().sessionId, first.body.sessionId, "the message stays in her opened conversation");
+  assert.ok(await until(() => f.gates.has("gamma") && f.gates.has("delta")), "her helpers start without a new conversation's approval");
+  const parent = f.runBy("check Dana's receipts");
+  assert.equal(f.helpersOf(parent).length, 2);
+  assert.ok(!f.app.runtime.approvals.waiting().some((q) => q.runId === parent && q.tool === "delegate.parallel"));
+  for (const release of f.gates.values()) release();
+  assert.ok(await until(() => f.app.store.run(parent).status === "completed"));
+  assert.deepEqual(f.errors, []);
+});
 
 test("a household person sees, stops and steers their own task's helpers live, and never the owner's", async (t) => {
   const f = await fixture(t);
@@ -314,7 +371,13 @@ test("her reply area follows her own task's live steps; nobody else's does, and 
   const { app, page, errors, at, gates } = f;
   const owner = await ownerAtWork(f);
   const { dana, parent, hers } = await danaSends(f, "check Dana's receipts");
-  await page.locator("#conversation li.ls-in").first().waitFor({ timeout: 20000 });
+  // What the window and the engine showed, named in the failure (seen on Linux CI, not reproduced on Windows or WSL).
+  await page.locator("#conversation li.ls-in").first().waitFor({ timeout: 20000 }).catch(async (error) => assert.fail(`${error.message}; `
+    + `steps shown: ${JSON.stringify(await page.locator("#conversation li[class*='ls-']").allInnerTexts().catch((e) => e.message))}; `
+    + `conversation: ${JSON.stringify((await page.locator("#conversation").innerText().catch((e) => e.message)).slice(-600))}; `
+    + `parent: ${JSON.stringify(app.store.run(parent)?.status)}; helpers: ${JSON.stringify(hers.map((id) => app.store.run(id)?.status))}; `
+    + `helper events: ${JSON.stringify(hers.map((id) => app.store.events(id).map((e) => e.kind).slice(-8)))}; `
+    + `live: ${(await readStream(f, `runs/${parent}/live`, (text) => text.includes("event: steps"))).text.slice(0, 800)}`));
   const lines = await page.locator("#conversation li[class*='ls-']").allInnerTexts();
   assert.ok(lines.some((line) => /Reading notes\.txt/.test(line)), `her helpers' steps show live: ${JSON.stringify(lines)}`);
   const own = await readStream(f, `runs/${parent}/live`, (text) => text.includes("event: steps"));
@@ -346,14 +409,19 @@ test("she answers her own helper's question, and nobody else can", async (t) => 
   const first = await api("run", { prompt: "hello" });
   await openAs(f, first.body.sessionId);
   await page.locator("#prompt").waitFor({ timeout: 15000 });
-  const sent = [];
-  page.on("request", (request) => { if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]); });
+  const sent = [], runRequests = [];
+  page.on("request", (request) => {
+    if (request.method() !== "GET" && request.url().includes("/api/")) sent.push(request.url().split("/api/")[1]);
+    if (request.method() === "POST" && new URL(request.url()).pathname === "/api/run") runRequests.push(request.postDataJSON());
+  });
   await page.locator("#prompt").fill("check Dana's receipts");
   await page.locator("#prompt").press("Enter");
   const parentOf = () => f.runBy("check Dana's receipts");
+  assert.ok(await until(() => runRequests.length === 1), "the window submitted exactly one request");
+  assert.equal(runRequests[0].sessionId, first.body.sessionId, `the helper test must use the conversation it opened, not a new Ask first conversation: ${JSON.stringify(runRequests)}`);
   const asks = () => app.runtime.approvals.waiting().filter((q) => parentOf() && f.helpersOf(parentOf()).includes(q.runId));
   const asking = await until(() => asks().length === 2);
-  assert.ok(asking, asking ? "" : `control: each of her helpers asks before reading (window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT id, prompt, status, session_id FROM tasks ORDER BY rowid").all())}; waiting: ${JSON.stringify(app.runtime.approvals.waiting().map(({ runId, sessionId, tool }) => ({ runId, sessionId, tool })))}; page errors: ${JSON.stringify(errors)}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);
+  assert.ok(asking, asking ? "" : `control: each of her helpers asks before reading (window had open: ${await page.evaluate(async () => (await import("/app/core/state.js")).S.chat).catch((error) => error.message)}; window sent: ${sent.join(", ") || "nothing"}; box: "${await page.locator("#prompt").inputValue().catch((error) => error.message)}"; tasks: ${JSON.stringify(app.store.sqlite.prepare("SELECT id, prompt, status, session_id FROM tasks ORDER BY rowid").all())}; waiting: ${JSON.stringify(app.runtime.approvals.waiting().map(({ runId, sessionId, tool }) => ({ runId, sessionId, tool })))}; page errors: ${JSON.stringify(errors)}; toasts: ${await page.evaluate(() => [...document.querySelectorAll(".toast")].map((toast) => toast.textContent).join(" | "))})`);
   const [one, other] = asks();
   const listed = (await api("policy")).body.waiting.map((q) => q.fingerprint);
   assert.ok(listed.includes(one.fingerprint) && listed.includes(other.fingerprint), "her helpers' questions are hers to see");

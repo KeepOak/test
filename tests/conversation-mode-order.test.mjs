@@ -83,14 +83,14 @@ async function modeConversations(app) {
  * `reach: "outbound"` when it goes out, or is added to `local` here when it does not.
  */
 const mixedPermissions = {
-  "files.read": { local: ["artifacts.list","code.definition","code.diagnostics","code.hover","code.map","code.references","context.list","context.read","debug.variables","files.find","files.glob","files.grep","files.history","files.list","files.read","files.read_many","files.search","files.validate","files.verify","notebook.read","output.read","remote.list","rules.for_path","workspace.map"], outbound: ["remote.files","remote.read"] },
-  "memory.read": { local: ["checklist.read","knowledge.list","learning.journey","learning.suggest","lessons.list","memory.at","memory.block_view","memory.find","memory.search","memory.timeline","memory.version_note","memory.versions","project.route","templates.export","todos.list","wiki.history","wiki.read","wiki.search"], outbound: ["hindsight.recall","hindsight.reflect","memory.outside_ask","memory.outside_recall"] },
-  "memory.write": { local: ["checklist.write","memory.block_edit","memory.delete","memory.keep","memory.label","memory.put","memory.tidy","memory.update","todos.add","todos.done","wiki.write"], outbound: ["hindsight.retain","memory.outside_keep"] },
-  "browser.read": { local: ["browser.annotate","browser.extract","browser.notes","browser.pdf","browser.recording","browser.screenshot","browser.shape","browser.site","browser.snapshot","browser.unmark","browser.wait","computer.look"], outbound: ["browser.navigate"] },
+  "files.read": { local: ["artifacts.list","branch.run_contract_tests","code.definition","code.diagnostics","code.hover","code.map","code.references","context.list","context.read","debug.variables","files.find","files.glob","files.grep","files.history","files.list","files.read","files.read_lines","files.read_many","files.search","files.validate","files.verify","notebook.read","output.read","remote.list","rules.for_path","workspace.map"], outbound: ["remote.files","remote.read"] },
+  "memory.read": { local: ["checklist.read","knowledge.list","learning.journey","learning.suggest","lessons.list","memory.at","memory.block_view","memory.files","memory.find","memory.read_file","memory.search","memory.timeline","memory.version_note","memory.versions","project.route","templates.export","todos.list","wiki.history","wiki.read","wiki.search"], outbound: ["hindsight.recall","hindsight.reflect","memory.outside_ask","memory.outside_recall"] },
+  "memory.write": { local: ["checklist.write","memory.block_edit","memory.delete","memory.delete_file","memory.keep","memory.label","memory.put","memory.tidy","memory.update","memory.write_file","todos.add","todos.done","wiki.write"], outbound: ["hindsight.retain","memory.outside_keep"] },
+  "browser.read": { local: ["browser.annotate","browser.console","browser.extract","browser.network","browser.notes","browser.pdf","browser.recording","browser.screenshot","browser.scroll","browser.shape","browser.site","browser.snapshot","browser.unmark","browser.wait","computer.look"], outbound: ["browser.navigate"] },
   "media.write": { local: ["media.convert","media.frames","media.image","media.speak","media.trim","voice.say"], outbound: ["media.download","video.generate"] },
-  "skills.read": { local: ["sdk.route","sdk.routes","sdk.starter","skills.list","skills.read","skills.usage","tools.services"], outbound: ["skills.bundle.preview"] },
+  "skills.read": { local: ["environment.about","sdk.route","sdk.routes","sdk.starter","skills.list","skills.read","skills.usage","tools.services"], outbound: ["skills.bundle.preview"] },
   "skills.write": { local: ["tools.forget_service"], outbound: ["tools.from_openapi"] },
-  "specialists.use": { local: ["delegate.debate","delegate.handoff","delegate.parallel","delegate.route","delegate.supervise","delegate.swarm","mode.task","specialists.delegate","specialists.fanout"], outbound: ["fleet.send","trunks.remote.message"] },
+  "specialists.use": { local: ["delegate.debate","delegate.handoff","delegate.parallel","delegate.route","delegate.supervise","delegate.swarm","delegate.teams","helpers.list","helpers.message","helpers.start","helpers.stop","helpers.tell_lead","mode.task","specialists.delegate","specialists.fanout"], outbound: ["fleet.send","trunks.remote.message"] },
   "specialists.read": { local: ["fleet.status","mode.list"], outbound: ["trunks.remote.roster"] },
   "monitors.manage": { local: ["monitor.remove","monitors.screen.check","monitors.screen.create"], outbound: ["monitor.check","monitor.create"] },
   "data.read": { local: ["data.chart","data.describe","data.query"], outbound: ["data.load"] },
@@ -200,7 +200,7 @@ test("per tool, the whole check agrees: the design's rows hold with real argumen
   assert.deepEqual(table["git.status"], { plan: "allow", ask: "allow", auto: "allow", full: "allow" }, "a repository's status only looks");
   assert.deepEqual(table["browser.snapshot"], { plan: "allow", ask: "allow", auto: "allow", full: "allow" }, "reading the open page is free");
   assert.deepEqual(table["files.write"], { plan: "deny", ask: "ask", auto: "allow", full: "allow" }, "Auto writes in the workspace; Plan refuses");
-  assert.deepEqual(table["shell.execute"], { plan: "deny", ask: "ask", auto: "ask", full: "ask" }, "a command no rule covers asks even under No approvals");
+  assert.deepEqual(table["shell.execute"], { plan: "deny", ask: "ask", auto: "ask", full: "allow" }, "owner-selected Full Access lets an uncovered command run");
   for (const tool of ["web.fetch", "web.search", "x.search", "remote.read", "browser.navigate"])
     assert.deepEqual(table[tool], { plan: "ask", ask: "ask", auto: "ask", full: "allow" }, `${tool} is a web action`);
   for (const tool of ["browser.click", "browser.tab", "media.download"])

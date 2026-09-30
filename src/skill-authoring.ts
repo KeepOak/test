@@ -76,7 +76,7 @@ export async function testSkill(store: Store, owner: string, runtime: Runtime, s
   const results: { example: number; prompt: string; runId: string; status: string; passed: boolean; output: string; ms: number }[] = [];
   for (const [index, example] of examples.entries()) {
     const started = Date.now();
-    const run = await runtime.delegate(example, context, [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage"].includes(p)),
+    const run = await runtime.delegate(example, context, [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage", "gitlab.manage"].includes(p)),
       `Skill under test (v${version}):\n${document}`, { timeoutMs: 120000 });
     results.push({ example: index, prompt: example, runId: run.id, status: run.status, passed: run.status === "completed", output: run.output.slice(0, 600), ms: Date.now() - started });
   }
@@ -256,7 +256,7 @@ export async function trialNewSkill(store: Store, owner: string, runtime: Runtim
     const started = Date.now();
     // A model wrote this skill from conversation turns, so it is tried without the tools that reach
     // outside, as testSkill does, even though a practice run only says what a change would do.
-    const permissions = [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage"].includes(p));
+    const permissions = [...context.permissions].filter((p) => !["shell.execute", "remote.execute", "git.remote", "github.manage", "gitlab.manage"].includes(p));
     const run = await runtime.delegate(task.prompt, context, permissions, instructions[side], { timeoutMs: 120000 }).catch(() => null);
     const usage = run ? store.usage(run.id) as { estimatedInput?: number; estimatedOutput?: number } : {};
     // mac7/eval-honesty: a try that produced no result at all is counted apart from one that

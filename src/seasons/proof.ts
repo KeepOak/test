@@ -16,7 +16,7 @@ import type { Proof, ProofSide, ProofTask } from "./garden-book.js";
 export const judgeInstructions = "You grade how well an answer does what a person asked, from 0 (not at all) to 10 (fully and correctly). "
   + "Judge only the answer against the request. Reply with JSON only: {\"score\": 7}.";
 /** Tools a model-written skill is never tried with, even as practice (as trialNewSkill keeps). */
-const reachesOut = new Set(["shell.execute", "remote.execute", "git.remote", "github.manage"]);
+const reachesOut = new Set(["shell.execute", "remote.execute", "git.remote", "github.manage", "gitlab.manage"]);
 
 export type Replayer = (task: ProofTask, instructions: string, context: ToolContext) => Promise<{ answer: string; finished: boolean; tokens: number } | null>;
 export type Grader = (task: ProofTask, answer: string) => Promise<number | null>;

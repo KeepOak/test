@@ -201,6 +201,6 @@ test("the hooks drive a real Branch Agent: a task started from React finishes wi
   assert.equal(running.result.current.run.output, "Three lines about the meeting.");
   assert.equal(running.result.current.run.events.at(-1).kind, "end");
   await until(() => running.result.current.kit.data, "the switch");
-  assert.equal(running.result.current.kit.data.settings.mode, "off", "building on Branch ships off");
+  assert.equal(running.result.current.kit.data.settings.mode, "when-needed", "building on Branch ships when needed (defaults audit)");
   running.unmount();
 });

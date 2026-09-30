@@ -1,4 +1,5 @@
-import { readdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -18,7 +19,8 @@ import { checkApiVersion } from "./add-ons/sdk.js";
  * A plugin may add tools and may react to events; it may not add screens to the app. Nothing a
  * plugin brings is loaded until the owner switches it on, and every tool it adds still needs the
  * permission the plugin declared, checked the same way every built-in tool is checked. That
- * permission check is the only thing keeping a plugin in bounds: a plugin runs as part of the
+ * permission check keeps a plugin in bounds; RES-251: a plugin runs as its own walled program (src/add-ons/walled-plugin.ts)
+ * unless the owner chose to run hand-placed plugins inside Branch, where it runs as part of the
  * assistant, with the same reach over this computer, so only install files you trust.
  */
 export const pluginId = z.string().regex(/^[a-z][a-z0-9-]{0,39}$/);
@@ -68,7 +70,26 @@ export interface PluginSummary {
   tools: { name: string; description: string; permission: string; search?: string }[]; hooks: string[];
   /** Batch 26 (wave 8): the tools the owner's grant left out, each with the reason, in plain words. */
   leftOut?: string[];
+  /** From inspect: false when the plugin has no manifest to read, so nothing about it is known until it is switched on. */
+  manifest?: boolean;
 }
+/**
+ * What a plugin says about itself without running: the plugin catalog's record from when it was installed (a folder
+ * or zip with branch-plugin.json, or an add-on), else a `<id>.plugin.json` placed beside a hand-placed file.
+ */
+const PluginSidecarSchema = z.object({
+  id: pluginId,
+  name: z.string().trim().min(1).max(80),
+  description: z.string().trim().max(500).default(""),
+  permissions: z.array(z.string().max(100)).max(20).default([]),
+  tools: z.array(z.object({ name: z.string().max(80), description: z.string().max(300).default(""),
+    permission: z.string().max(64), search: z.string().max(60).optional() })).max(50).default([]),
+  hooks: z.array(z.string().max(64)).max(20).default([]),
+  sha256: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+});
+interface Declared { summary: PluginSummary; sha256: string | null }
+const noManifest = (id: string): string =>
+  `${id}.mjs has no manifest (the plugin catalog's record, or ${id}.plugin.json beside it), so what it adds is shown only once you switch it on. Switching it on runs its code.`;
 interface Loaded { summary: PluginSummary; toolNames: string[]; stopHooks: (() => void)[] }
 /**
  * bucket-15: where a plugin that must not run inside Branch is loaded instead — its own walled
@@ -82,6 +103,17 @@ export interface PluginIsolation {
 
 export class Plugins {
   private readonly loaded = new Map<string, Loaded>();
+  private readonly lifecycle = new Set<string>();
+  private readonly lifecycleGeneration = new Map<string, number>();
+  holdLifecycle(id: string): () => void {
+    if (this.lifecycle.has(id)) throw new Error("A plugin lifecycle operation is already running.");
+    this.lifecycle.add(id);
+    this.lifecycleGeneration.set(id, (this.lifecycleGeneration.get(id) ?? 0) + 1);
+    return () => { this.lifecycle.delete(id); };
+  }
+  private checkLifecycle(id: string): void {
+    if (this.lifecycle.has(id)) throw new Error("This plugin is being promoted or restored; enable it after that finishes.");
+  }
   /** Set by the launch when this copy can hold model connections; left unset, plugins bring none. */
   providers?: PluginProviderHost | undefined;
   /** Set by the launch when this copy can host chat services; left unset, plugins bring none. */
@@ -93,6 +125,8 @@ export class Plugins {
   private saved(id: string): { enabled: boolean; summary?: PluginSummary; grant?: ManifestGrant } | undefined {
     return this.store.get("settings", this.owner, this.key(id))?.data as { enabled: boolean; summary?: PluginSummary; grant?: ManifestGrant } | undefined;
   }
+  /** Evaluations may only exercise permissions the owner already granted. */
+  granted(id: string): string[] { return [...(this.saved(id)?.grant?.permissions ?? [])]; }
   /**
    * What the owner allowed: the permissions they named, or — for a plugin switched on before wave 8
    * and for a plain "switch this on" — everything its own manifest declared. A plugin can never
@@ -112,9 +146,28 @@ export class Plugins {
       return { id, file: name, enabled: saved?.enabled === true, loaded: this.loaded.has(id), summary: saved?.summary ?? null };
     });
   }
-  /** Loads one plugin file to show what it would add. This runs the code in that file. */
+  /**
+   * What one plugin would add, read from its manifest only. Nothing in the plugin file is imported or run, walled or
+   * not: its code runs for the first time when the owner switches it on (`enable`).
+   */
   async inspect(id: string): Promise<PluginSummary> {
-    const plugin = await this.read(id);
+    await this.file(id);
+    const declared = await this.declared(id);
+    if (!declared) return { id, name: id, description: "", permissions: [], tools: [], hooks: [], leftOut: [noManifest(id)], manifest: false };
+    return { ...declared.summary, manifest: true };
+  }
+  /** The plugin's manifest, or null when it has none. Reading it never runs the plugin. */
+  private async declared(id: string): Promise<Declared | null> {
+    const recorded = this.store.get("settings", this.owner, `plugin-catalog:${id}`)?.data;
+    const sidecar = recorded ? null : await readFile(join(this.folder, `${id}.plugin.json`), "utf8").catch(() => null);
+    if (!recorded && sidecar === null) return null;
+    const raw = PluginSidecarSchema.parse(recorded ?? JSON.parse(sidecar!));
+    if (raw.id !== id) throw new Error(`The manifest for ${id}.mjs names the plugin "${raw.id}"`);
+    const tools = raw.tools.map((tool) => ({ name: tool.name, description: tool.description, permission: tool.permission, ...(tool.search ? { search: tool.search } : {}) }));
+    return { summary: { id, name: raw.name, description: raw.description, permissions: raw.permissions, tools, hooks: raw.hooks }, sha256: raw.sha256 ?? null };
+  }
+  /** What the loaded code itself declares; only ever asked once the owner has switched the plugin on. */
+  private summarize(id: string, plugin: BranchPlugin): PluginSummary {
     const manifest = PluginManifestSchema.parse({ id: plugin.id, name: plugin.name, description: plugin.description ?? "", permissions: plugin.permissions ?? [] });
     if (manifest.id !== id) throw new Error(`The plugin file is called ${id}.mjs but declares the id "${manifest.id}"`);
     const tools = (plugin.tools ?? []).map((tool) => this.checkTool(manifest, tool));
@@ -130,13 +183,21 @@ export class Plugins {
     return { name: tool.name, description: String(tool.description ?? "").slice(0, 300), permission: tool.permission,
       ...(tool.search?.label ? { search: String(tool.search.label).slice(0, 60) } : {}) };
   }
-  private async read(id: string): Promise<BranchPlugin> {
+  private async file(id: string): Promise<{ file: string; info: { mtimeMs: number } }> {
     pluginId.parse(id);
     const file = join(this.folder, `${id}.mjs`);
     const info = await stat(file).catch(() => null);
     if (!info?.isFile()) throw new Error(`There is no plugin file called ${id}.mjs`);
+    return { file, info };
+  }
+  private async read(id: string): Promise<BranchPlugin> {
+    const { file, info } = await this.file(id);
     // bucket-15: a plugin held elsewhere is never imported into this process.
-    if (this.isolation?.holds(id)) return this.isolation.load(id, file);
+    if (this.isolation?.holds(id)) {
+      const walled = await this.isolation.load(id, file);
+      checkApiVersion(walled.apiVersion, `The plugin ${id}`); // RES-251: a walled plugin is held to the same interface
+      return walled;
+    }
     const module = await import(`${pathToFileURL(file).href}?loaded=${info.mtimeMs}`) as { default?: BranchPlugin };
     if (!module.default || typeof module.default !== "object") throw new Error(`${id}.mjs does not export a plugin as its default export`);
     checkApiVersion(module.default.apiVersion, `The plugin ${id}`); // bucket-15
@@ -150,9 +211,26 @@ export class Plugins {
    * reaches the catalog, so nothing can call it — and the owner is told which ones were left out.
    */
   async enable(id: string, allow?: readonly string[]): Promise<PluginSummary> {
+    const generation = this.lifecycleGeneration.get(id) ?? 0;
+    this.checkLifecycle(id);
+    if (this.store.get("settings", this.owner, `plugin-review:${id}`)?.data.pending === true)
+      throw new Error("This newly installed plugin is staged. Run its task fixtures and promote a successful evaluation before switching it on.");
     if (this.loaded.has(id)) return this.loaded.get(id)!.summary;
-    const plugin = await this.read(id), summary = await this.inspect(id);
-    const grant = this.grantFor(summary, allow ?? this.saved(id)?.grant?.permissions);
+    // The manifest the owner read binds what runs: code changed since it was installed is not run, and a permission the
+    // code asks for that the manifest did not list is never granted (its tools are left out, and said so).
+    const declared = await this.declared(id);
+    if (declared?.sha256) {
+      const code = await readFile(join(this.folder, `${id}.mjs`), "utf8");
+      if (createHash("sha256").update(code, "utf8").digest("hex") !== declared.sha256)
+        throw new Error(`${id}.mjs is not what it was when it was installed, so it was not switched on. Install it again to use it.`);
+    }
+    const plugin = await this.read(id), summary = this.summarize(id, plugin);
+    this.checkLifecycle(id);
+    if ((this.lifecycleGeneration.get(id) ?? 0) !== generation)
+      throw new Error("This plugin changed during activation; enable its current version again.");
+    const listed = allow ?? this.saved(id)?.grant?.permissions;
+    const grant = this.grantFor(summary, declared
+      ? (listed ?? declared.summary.permissions).filter((permission) => declared.summary.permissions.includes(permission)) : listed);
     const { kept, left } = narrowTools(summary.tools, grant);
     const leftOut = [...(summary.leftOut ?? []), ...left.map((tool) => narrowedSentence(tool.name, tool.permission))];
     const wanted = new Set(kept.map((tool) => tool.name));
@@ -193,10 +271,18 @@ export class Plugins {
     this.loaded.delete(id);
   }
   /** Switches a plugin off: its tools leave the catalog, its hooks stop, and it stays off next time. */
+  /** RES-251: loads a switched-on plugin again, with the grant the owner gave, so a change of where it runs takes hold. */
+  async reload(id: string): Promise<void> {
+    const saved = this.saved(id);
+    if (!saved?.enabled || !this.loaded.has(id)) return;
+    this.unload(id);
+    await this.enable(id, saved.grant?.permissions);
+  }
   disable(id: string): { id: string; enabled: false } {
     this.unload(id);
     const saved = this.saved(id);
-    this.store.save("settings", this.owner, this.key(id), { enabled: false, ...(saved?.summary ? { summary: saved.summary } : {}) });
+    this.store.save("settings", this.owner, this.key(id), { enabled: false, ...(saved?.summary ? { summary: saved.summary } : {}),
+      ...(saved?.grant ? { grant: saved.grant } : {}) });
     return { id, enabled: false };
   }
   /** Loads the plugins the owner switched on before, at start-up. A broken one is reported, not fatal. */

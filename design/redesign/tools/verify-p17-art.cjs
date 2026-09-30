@@ -22,7 +22,7 @@
 //   BRANCH_PROVIDER=openai BRANCH_ENDPOINT=http://127.0.0.1:33847/v1 BRANCH_MODEL=stand-in BRANCH_API_KEY=local-test \
 //   BRANCH_DATA_DIR=<fresh> BRANCH_PORT=3247 node dist/cli.js start
 const http = require("node:http");
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { mkdirSync } = require("node:fs");
 
 const PORT = process.env.PORT, TOKEN = process.env.TOKEN, STUB_PORT = process.env.STUB_PORT;

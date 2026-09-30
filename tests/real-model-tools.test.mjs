@@ -516,7 +516,9 @@ test("a local model's room comes from what it was made for, held to this compute
 test("Ollama is told the room, and the task's budget stays inside it", async (t) => {
   const chats = [];
   const fetchImpl = async (url, init) => {
-    if (String(url).endsWith("/api/show")) return new Response(JSON.stringify({ model_info: { "llama.context_length": 9216 } }), { status: 200 });
+    // A sized fixture has a fixed room even while other lanes use this computer's memory.
+    if (String(url).endsWith("/api/show")) return new Response(JSON.stringify({ model_info: { "llama.context_length": 9216 },
+      parameters: "num_ctx 9216" }), { status: 200 });
     chats.push(JSON.parse(init.body));
     return new Response(JSON.stringify({ message: { content: "Hello." }, done: true, prompt_eval_count: 10, eval_count: 3 }), { status: 200 });
   };
@@ -545,4 +547,25 @@ test("the copies Branch makes of a model are neither the person's models nor its
   };
   const inventory = await new LocalRuntimes({ fetch }).inventory();
   assert.deepEqual(inventory.ollama.models.map((model) => model.name), ["qwen2.5:7b"]);
+});
+
+test("a made-up tool in one of Branch's families, written out as text, is not the answer either (QA retest pass 2)", async (t) => {
+  // qwen2.5:7b answered a recall question with only {"name": "user.fact", "arguments": {}}: no such tool, but in the
+  // family of user.ask. Mutation: drop inToolFamily from the runtime's check → the JSON is the task's answer, red.
+  const { requests, provider } = standIn([{ content: '{"name": "user.fact", "arguments": {}}' }, { content: "Your favourite colour is teal." }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "Tell me my favourite colour." });
+  assert.equal(run.status, "completed");
+  assert.equal(run.output, "Your favourite colour is teal.");
+  assert.ok(!branch.store.messages(run.sessionId).some((message) => String(message.content ?? "").includes("user.fact")), "in no message");
+  assert.match(requests[1].messages.at(-1).content, /tool call written out as text/);
+  assert.equal(events(branch, run, "model.text_call").length, 1);
+});
+
+test("a call-shaped answer naming a family Branch has none of is still an answer (QA retest pass 2)", async (t) => {
+  const { provider } = standIn([{ content: '{"name": "weather.today", "arguments": {"city": "Atlanta"}}' }]);
+  const branch = await app(t, provider);
+  const run = await branch.runtime.run({ prompt: "Show me an example of a weather tool call as JSON." });
+  assert.equal(run.status, "completed");
+  assert.match(run.output, /weather\.today/);
 });

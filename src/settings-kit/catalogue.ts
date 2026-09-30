@@ -42,8 +42,10 @@ import { GoalUndoSettingsSchema } from "../goal-mode.js";
 import { reflectionSettings } from "../reflection/settings.js";
 import { contextFileSettings, saveContextFileSettings } from "../context-files.js";
 import { saveVoiceSettings, voiceSettings, VoiceSettingsSchema } from "../voice.js";
-import { codingModelRounds, readKnobs, saveKnobs } from "../knobs/settings.js";
+import { codingModelRounds, noLimit, readKnobs, saveKnobs } from "../knobs/settings.js";
 import { forgetChosen, markChosen, savedFields, shippedUnlessChosen } from "../ship-on.js";
+import { sdkKitMode, sdkKitShipsAs } from "../sdk-kit-switch.js"; // defaults audit
+import { gitlabMode, gitlabShipsAs } from "../gitlab-switch.js"; // RES-719
 
 /**
  * R17-S-A (understandable settings): the settings that can be put back to how they started, set
@@ -187,8 +189,9 @@ export type FieldKind =
   /**
    * `fractions`: the app itself keeps values between whole steps (the dictation wait does, at 1.5 seconds).
    * `unset`: a word the field also takes, meaning the owner has set no figure of their own, so Branch uses its own.
+   * `unlimited`: a word the field also takes, meaning no limit at all (a task limit's "no limit").
    */
-  | { type: "number"; min: number; max: number; fractions?: true; unset?: string };
+  | { type: "number"; min: number; max: number; fractions?: true; unset?: string; unlimited?: string };
 
 export interface FieldSpec {
   /** The field inside the saved record; a dot reaches one level in ("files.soul"). */
@@ -327,6 +330,7 @@ const reach: SettingSpec[] = [
     key: "voice", name: "Voice", t: "settings-kit.name.voice", home: "settings:voice",
     fields: [sw("systemVoice", "Your computer's own voice", "settings-kit.field.system-voice", "reach"),
       yesNo("autoReadAloud", "Read replies aloud automatically", "settings-kit.field.read-aloud", "plain"),
+      { field: "readAloudWhen", label: "Which replies are read aloud", t: "settings-kit.field.read-aloud-when", guard: "plain", initial: "always", kind: { type: "choice", options: ["always", "spoken"] } },
       yesNo("keepAudioOnThisComputer", "Keep audio on this computer", "settings-kit.field.keep-audio", "guard"),
       yesNo("replyWithVoiceOnChannels", "Answer a voice note with a voice note", "settings-kit.field.voice-reply", "reach")],
     ...voiceHooks,
@@ -409,7 +413,10 @@ const reach: SettingSpec[] = [
       { field: "silenceSeconds", label: "How long a quiet room ends it", t: "settings-kit.field.dictation-silence",
         guard: "reach", initial: 4, kind: { type: "number", min: 1, max: 30, fractions: true } }],
   },
-  one("sdk-kit", "Tools for building on Branch", "settings-kit.name.sdk-kit", "settings:advanced", "reach"),
+  // Defaults audit (2026-09-28): ships "when needed" (src/sdk-kit-switch.ts sdkKitShipsAs), read as the module reads it.
+  shipsAs(one("sdk-kit", "Tools for building on Branch", "settings-kit.name.sdk-kit", "settings:advanced", "reach", modeFrom(sdkKitMode)), sdkKitShipsAs),
+  // RES-719: GitLab ships "when needed" (src/gitlab-switch.ts); it does nothing until a token is saved, and each change on GitLab asks first.
+  shipsAs(one("gitlab-connection", "GitLab", "settings-kit.name.gitlab-connection", "settings:advanced", "reach", modeFrom(gitlabMode)), gitlabShipsAs),
   // r17-i integration review: every reach and platform switch reaches further when raised (src/reach/settings.ts).
   // src/server.ts saves them through Reach, so the tools and the relay follow the switch at once.
   // Q65: shown as saved, not as Lockdown reads it (`reachMode`), so a change is weighed against the owner's own switch.
@@ -425,6 +432,13 @@ const reach: SettingSpec[] = [
 
 /** The round limit's word for "no figure of the owner's own": Branch then gives each task its own. */
 const roundsUnset = "auto";
+/** A task limit's word for no limit at all; the knob keeps it as `noLimit`. */
+const unlimitedWord = "no limit";
+/** What a task limit's "auto" is, said once for all three (src/knobs/apply.ts taskBudget). */
+const autoSplit = "no limit while a sign-in (a ChatGPT or Claude plan) or a model on this computer answers, since those cost nothing more per token";
+/** A task limit as the settings tools show it, and back: a figure, "auto" or "no limit". */
+const limitShown = (saved: number | typeof noLimit | null): number | string => saved === noLimit ? unlimitedWord : saved ?? roundsUnset;
+const limitSaved = (value: unknown): number | typeof noLimit | null => value === roundsUnset ? null : value === unlimitedWord ? noLimit : value as number;
 
 const comfort: SettingSpec[] = [
   one("local-models", "Models on this computer", "settings-kit.name.local-models", "settings:models:local", "plain", { keepsEnabled: true,
@@ -507,16 +521,41 @@ const comfort: SettingSpec[] = [
   },
   // The round limit is the owner's own knob (src/knobs/settings.ts, limits.maxModelRounds), so Branch's settings tools
   // can find it and change it on the owner's yes. The knob records stay on the never-touched list: this reads and
-  // writes that one field and nothing else. More rounds spend only on the connected model, so it is plain.
+  // writes that one field and nothing else. More rounds spend only on the connected model, so it is plain; so is
+  // "no limit", which the loop guard and the spending caps still watch.
   {
     key: "round-limit", name: "Round limit", t: "settings-kit.name.round-limit", home: "settings:advanced",
     fields: [{ field: "maxModelRounds", label: "Model rounds (steps) per task", t: "settings-kit.field.round-limit", guard: "plain",
-      initial: roundsUnset, kind: { type: "number", min: 2, max: 60, unset: roundsUnset },
-      note: `${roundsUnset}: 12 rounds, or ${codingModelRounds} when the task works on the project's files. A task working to a plan gets more on top.` }],
+      initial: roundsUnset, kind: { type: "number", min: 2, max: 500, unset: roundsUnset, unlimited: unlimitedWord },
+      note: `${roundsUnset}: ${autoSplit}; on an API key 12 rounds, or ${codingModelRounds} when the task works on the project's files. "${unlimitedWord}" never stops a task for its rounds.` }],
     // The knob's empty value (null) is "auto", so putting it back, or undoing a change, leaves no figure at all.
-    read: (store, owner) => ({ maxModelRounds: readKnobs(store, owner, "limits").maxModelRounds ?? roundsUnset }),
+    read: (store, owner) => ({ maxModelRounds: limitShown(readKnobs(store, owner, "limits").maxModelRounds) }),
     write: (store, owner, patch) => {
-      saveKnobs(store, owner, "limits", { maxModelRounds: patch.maxModelRounds === roundsUnset ? null : patch.maxModelRounds });
+      saveKnobs(store, owner, "limits", { maxModelRounds: limitSaved(patch.maxModelRounds) });
+    },
+  },
+  // The step limit of one task (limits.maxSteps): model rounds and tool steps together.
+  {
+    key: "step-limit", name: "Step limit", t: "settings-kit.name.step-limit", home: "settings:advanced",
+    fields: [{ field: "maxSteps", label: "Most steps in one task", t: "knobs.field.maxSteps", guard: "plain",
+      initial: roundsUnset, kind: { type: "number", min: 1, max: 500, unset: roundsUnset, unlimited: unlimitedWord },
+      note: `${roundsUnset}: ${autoSplit}; 60 on an API key. "${unlimitedWord}" never stops a task for its steps.` }],
+    read: (store, owner) => ({ maxSteps: limitShown(readKnobs(store, owner, "limits").maxSteps) }),
+    write: (store, owner, patch) => {
+      saveKnobs(store, owner, "limits", { maxSteps: limitSaved(patch.maxSteps) });
+    },
+  },
+  // selfdev: the token allowance of one task, the owner's own knob (limits.maxTaskTokens). More tokens spend only on
+  // the connected model, so it is plain, like the round limit; "auto" splits by the kind of connection.
+  {
+    key: "task-tokens", name: "Tokens per task", t: "settings-kit.name.task-tokens", home: "settings:advanced",
+    // The kit's own name for the field: a name with "token" in it reads as a secret (secretShaped) and is never changed here.
+    fields: [{ field: "taskAllowance", label: "Tokens one task may use", t: "settings-kit.field.task-tokens", guard: "plain",
+      initial: roundsUnset, kind: { type: "number", min: 20_000, max: 20_000_000, unset: roundsUnset, unlimited: unlimitedWord },
+      note: `${roundsUnset}: ${autoSplit}; 200,000 on an API key. "${unlimitedWord}" never stops a task for its tokens. Otherwise 20,000 to 20,000,000, counting every request the task sends to the model.` }],
+    read: (store, owner) => ({ taskAllowance: limitShown(readKnobs(store, owner, "limits").maxTaskTokens) }),
+    write: (store, owner, patch) => {
+      saveKnobs(store, owner, "limits", { maxTaskTokens: limitSaved(patch.taskAllowance) });
     },
   },
 ];
@@ -534,11 +573,14 @@ const comfortCards: SettingSpec[] = [
   { key: "comfort-keys", name: "Shortcuts", t: "comfort.keys.title", home: "settings:general", ...viaComfort("keys"),
     fields: [yesNo("vim", "Vim keys in the message box", "comfort.field.vim", "plain")] },
   { key: "comfort-display", name: "Status line and times", t: "comfort.display.title", home: "settings:appearance", ...viaComfort("display"),
-    fields: [yesNo("timestamps", "A time on every message", "comfort.field.timestamps", "plain")] },
+    fields: [yesNo("timestamps", "A time on every message", "comfort.field.timestamps", "plain"),
+      yesNo("hideTimes", "No time on messages, even on hover", "comfort.field.hideTimes", "plain")] },
   { key: "comfort-notify", name: "Notifications and sound", t: "comfort.notify.title", home: "settings:notifications", ...viaComfort("notify"),
     fields: [
       { field: "method", label: "Where you are told", t: "comfort.field.method", guard: "plain", initial: "system", kind: { type: "choice", options: ["system", "window"] } },
       { field: "sound", label: "Sound", t: "comfort.field.sound", guard: "plain", initial: "off", kind: { type: "choice", options: ["off", "chime", "knock"] } },
+      yesNo("needsYes", "A Trunk needs a yes", "comfort.field.needsYes", "plain", true),
+      yesNo("taskDone", "A long task finishes", "comfort.field.taskDone", "plain", true),
     ] },
   { key: "comfort-files", name: "Ignore files", t: "comfort.files.title", home: "settings:general", ...viaComfort("files"),
     // Turning .gitignore off lets searches see more of the workspace (never a secret file).

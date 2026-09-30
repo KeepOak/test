@@ -6,7 +6,7 @@
    in every app and opens the box from there (src/desktop/quick-ask.ts, window.branchDesktop.onQuickAsk). */
 
 import { $, esc } from "../core/dom.js";
-import { E } from "../core/state.js";
+import { E, defaultTrunk } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { ic, av, mi, toast, closePop, closeDlg, app } from "../core/ui.js";
@@ -30,13 +30,20 @@ const pressedQuick = (e) => (macDefault() ? comboOf(e) === "Alt+Space" : pressed
 
 export const quickItem = () => mi("qa17c", "quick17c", t("window.chat.quick.title"), binding("quickAsk") ? `<kbd>${esc(keysWords())}</kbd>` : "");
 
-const who = () => [{ id: "branch", name: "Branch", kind: "main" }, ...E.trunks.filter((tr) => !tr.hidden)];
+/* "Branch" here is a new conversation with no Trunk of its own. The owner's default Trunk answers such a conversation, so
+   its chip wears that Trunk's name and face and the Trunk is not listed a second time; with no default Trunk it is the
+   assistant named as the window names it (Settings' "Back to …"), with the neutral face (core/ui.js av()); never the mascot. */
+const who = () => {
+  const home = defaultTrunk();
+  const main = { id: "branch", name: home?.name || E.state?.identity?.name || "Branch", kind: "main", ...(home ? { face: home } : {}) };
+  return [main, ...E.trunks.filter((tr) => !tr.hidden && tr.id !== home?.id)];
+};
 /* A new conversation with a Trunk needs the engine's "Choosing a Trunk to answer in any conversation" part switched on;
    until then its chip stays drawn and greyed. */
 const canPick = (c) => c.id === "branch" || (E.trunkModes?.conversations ?? "off") !== "off";
 function boxHTML() {
   if (!canPick({ id: Q.to })) Q.to = "branch";
-  const chips = who().map((c) => `<button type="button" role="radio" aria-checked="${Q.to === c.id}" data-act="${canPick(c) ? "qato17c" : "qato17c-off"}" data-v="${esc(c.id)}">${av(c, 18)}<span>${esc(c.name)}</span></button>`).join("");
+  const chips = who().map((c) => `<button type="button" role="radio" aria-checked="${Q.to === c.id}" data-act="${canPick(c) ? "qato17c" : "qato17c-off"}" data-v="${esc(c.id)}">${av(c.face ?? c, 18)}<span>${esc(c.name)}</span></button>`).join("");
   const anywhere = desktop()?.onQuickAsk ? `<small>${t("window.chat.quick.anywhere")}</small>` : "<small></small>";
   return `<div class="qa17c" role="dialog" aria-label="${t("window.chat.quick.title")}"><div class="qah17c">${ic("quick17c", "s")}<b>${t("window.chat.quick.title")}</b><span class="qak17c">${keysKbd()}</span>${anywhere}<button class="icon-btn" type="button" data-act="qaclose17c" aria-label="${t("window.chat.quick.close")}">${ic("x", "s")}</button></div>
     <input id="qa-in17c" class="inp" placeholder="${t("window.chat.quick.placeholder")}" autocomplete="off" spellcheck="false" value="${esc(Q.text)}" aria-label="${t("window.chat.quick.question")}">

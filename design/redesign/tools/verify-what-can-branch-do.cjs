@@ -117,7 +117,11 @@ async function tryIt(page, want) {
   const example = want.raw.prompts.examples.find((p) => p.title === want.prompts.find((n) => want.raw.prompts.examples.some((e) => e.title === n)));
   await page.click('.dlg [data-act="whatcan-tab"][data-v="prompts"]');
   await page.click(`.dlg [data-act="whatcan-try"][data-v="${example.title}"]`);
-  check("Try it (a starter prompt): a new conversation with the engine's own words in the box", await until(async () => (await gallery(page).count()) === 0 && (await page.inputValue("#prompt")) === example.body.trim()));
+  const fields = [...new Set([...example.body.matchAll(/\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/g)].map((m) => m[1]))].filter((name) => name !== "today");
+  for (const name of fields) await page.fill(`#wc-field-${name}`, `Sample ${name}`);
+  if (fields.length) await page.click('[data-act="whatcan-prepare"]');
+  const prepared = example.body.replace(/\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/g, (_, name) => name === "today" ? new Date().toLocaleDateString("en-CA") : `Sample ${name}`).trim();
+  check("Try it (a starter prompt): the filled draft is in a new conversation", await until(async () => (await gallery(page).count()) === 0 && (await page.inputValue("#prompt")) === prepared));
   check("…not sent: no conversation or task made (GET /api/sessions, GET /api/state runs)", (await api("sessions")).sessions.length === before && (await api("state")).runs.length === 0);
   await page.click('.empty-chat [data-act="whatcan"]');
   await until(async () => (await gallery(page).count()) === 1);

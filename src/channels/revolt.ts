@@ -39,6 +39,8 @@ const channelSchema = z.object({ channel_type: z.string() }).passthrough();
 
 export class RevoltChannel implements ChannelAdapter {
   readonly kind = "revolt";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
   readonly id: string;
   /** Revolt refuses a message longer than two thousand characters. */
   readonly maxTextLength = 2000;

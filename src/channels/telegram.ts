@@ -3,6 +3,7 @@ import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, Outg
 import { telegramEntities } from "./progress-render.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
+import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
 
 /**
  * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
@@ -92,6 +93,10 @@ const telegramTarget = (address: string): { chat_id: number; message_thread_id?:
 
 export class TelegramAdapter implements ChannelAdapter {
   readonly kind = "telegram";
+  /** A reply to a message only quotes it here, so Settings › Chat apps › Replies in each app decides (reply-style.ts). */
+  readonly replyQuotes = true;
+  /** Its buttons carry a list, so `/model` can be a menu (ChannelAdapter.listButtons). */
+  readonly listButtons = true;
   readonly id: string;
   private readonly base: string;
   private readonly fetch: typeof fetch;
@@ -191,17 +196,53 @@ export class TelegramAdapter implements ChannelAdapter {
     const target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
-    form.append("document", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    // CHAT-102: a picture Telegram can show (JPEG, PNG or WebP, up to 10 MB) goes as a photo, everything else as a file.
+    const method = telegramPhoto(file) ? "sendPhoto" : "sendDocument";
+    form.append(method === "sendPhoto" ? "photo" : "document", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
     if (file.caption) form.append("caption", file.caption.slice(0, 1024));
     if (replyToMessageId) form.append("reply_to_message_id", replyToMessageId);
-    const response = await this.fetch(`${this.base}/sendDocument`, { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
+    const response = await this.fetch(`${this.base}/${method}`, { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw new Error(`Telegram sendDocument failed: ${parsed.description ?? response.status}`);
+    if (!parsed.ok) throw new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
-    if (!message.success) throw new Error("Telegram sendDocument failed: response missing message_id");
+    if (!message.success) throw new Error(`Telegram ${method} failed: response missing message_id`);
     return String(message.data.message_id);
   }
   // ---- end R17-C ----
+  /** The Mini App's signed launch data, checked with this bot's own token, which never leaves this adapter. */
+  miniAppUser(initData: string): MiniAppUser {
+    return verifyInitData(initData, this.options.token);
+  }
+  /** The live browser in a chat: a photo with buttons, then the same message's photo replaced (editMessageMedia). */
+  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[], replyToMessageId?: string): Promise<string | undefined> {
+    const form = new FormData(), target = telegramTarget(chatId);
+    form.append("chat_id", String(target.chat_id));
+    if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
+    form.append("photo", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    if (file.caption) form.append("caption", file.caption.slice(0, 1024));
+    if (buttons.length) form.append("reply_markup", JSON.stringify({ inline_keyboard: [buttons.map(inlineButton)] }));
+    form.append("disable_notification", "true");
+    if (replyToMessageId && /^\d+$/.test(replyToMessageId))
+      form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
+    const response = await this.fetch(`${this.base}/sendPhoto`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const parsed = responseSchema.parse(await response.json());
+    if (!parsed.ok) throw Object.assign(new Error(`Telegram sendPhoto failed: ${parsed.description ?? response.status}`), retryOf(parsed));
+    const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
+    if (!message.success) throw new Error("Telegram sendPhoto failed: response missing message_id");
+    return String(message.data.message_id);
+  }
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[]): Promise<void> {
+    const form = new FormData();
+    form.append("chat_id", String(telegramTarget(chatId).chat_id));
+    form.append("message_id", messageId);
+    form.append("media", JSON.stringify({ type: "photo", media: "attach://picture", ...(file.caption ? { caption: file.caption.slice(0, 1024) } : {}) }));
+    form.append("picture", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
+    form.append("reply_markup", JSON.stringify({ inline_keyboard: buttons.length ? [buttons.map(inlineButton)] : [] }));
+    const response = await this.fetch(`${this.base}/editMessageMedia`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const parsed = responseSchema.parse(await response.json());
+    if (!parsed.ok && !/message is not modified/i.test(parsed.description ?? ""))
+      throw Object.assign(new Error(`Telegram editMessageMedia failed: ${parsed.description ?? response.status}`), retryOf(parsed));
+  }
   private async poll(onMessage: (message: InboundMessage) => Promise<void>): Promise<void> {
     while (!this.stopping.signal.aborted) {
       try {
@@ -322,10 +363,12 @@ export class TelegramAdapter implements ChannelAdapter {
    * the exact request, which fits inside Telegram's 64-byte limit; the conversation the answer
    * belongs to is worked out from the chat, not carried in the button.
    */
-  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string): Promise<string | undefined> {
+  async sendButtons(chatId: string, text: string, buttons: { label: string; value: string }[], replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
     const result = await this.call("sendMessage", {
-      ...telegramTarget(chatId), text,
-      reply_markup: { inline_keyboard: [buttons.map((button) => ({ text: button.label, callback_data: button.value }))] },
+      ...telegramTarget(chatId), text, ...formatted({ spans: format?.spans }),
+      // Yes / No side by side; a longer list (the /model menu) one button a row, so each name can be read whole.
+      reply_markup: { inline_keyboard: buttons.length > 3 ? buttons.map((button) => [{ text: button.label, callback_data: button.value }])
+        : [buttons.map((button) => ({ text: button.label, callback_data: button.value }))] },
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
     });
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
@@ -349,6 +392,11 @@ export class TelegramAdapter implements ChannelAdapter {
       // Sending the same words again is refused with this; the message already says them.
       if (!/message is not modified/i.test(error instanceof Error ? error.message : "")) throw error;
     }
+  }
+  /** Removes a message the bot sent (Telegram allows it for 48 hours; an older one stays). */
+  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+    if (!/^\d+$/.test(messageId)) throw new Error("Telegram: that is not a message this bot sent");
+    await this.call("deleteMessage", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId) });
   }
   private inbound(message: z.infer<typeof messageSchema>): InboundMessage | null {
     const spoken = message.voice ?? message.audio;
@@ -437,4 +485,21 @@ export class TelegramAdapter implements ChannelAdapter {
       { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
     return parsed.result;
   }
+}
+
+/** What Telegram shows as a photo: JPEG, PNG or WebP, up to its 10 MB photo limit. */
+export function telegramPhoto(file: Pick<OutgoingFile, "mediaType" | "bytes">): boolean {
+  const type = file.mediaType.split(";")[0]!.toLowerCase();
+  return ["image/jpeg", "image/png", "image/webp"].includes(type) && file.bytes.byteLength <= 10 * 1024 * 1024;
+}
+
+/** Telegram's "wait this long" on a refusal, carried on the error so a live status can pause (live-status.ts retryAfterMs). */
+function retryOf(parsed: z.infer<typeof responseSchema>): { retryAfter?: number } {
+  const wait = parsed.parameters?.retry_after;
+  return typeof wait === "number" ? { retryAfter: wait } : {};
+}
+
+/** One button under a message: a press sent back to Branch, or (`webApp`) the bot's Mini App opened at that address. */
+function inlineButton(button: { label: string; value: string; webApp?: string }): Record<string, unknown> {
+  return button.webApp ? { text: button.label, web_app: { url: button.webApp } } : { text: button.label, callback_data: button.value };
 }

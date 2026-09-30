@@ -31,15 +31,14 @@ const noSideways = (page) => page.evaluate(() => document.documentElement.scroll
 /* Redesign: the prototype has no places bar and no Trunks strip; up to 760 px its side list slides over the conversation
    ("Show conversations", data-act="side"), and from 761 px it is a column. Its approval card (#live-ask) answers with the
    action's own verb, "Always allow" (greyed out until a standing yes can be kept for one Trunk) and "Don’t allow". */
-/** The same model for the new window: its yes carries the task that asked on (Q050), told that the call it asked about
-    did not run, so it makes the call again, which then goes through. */
+/** The same model for the new window: its yes carries the task that asked on (Q050), and the engine makes the approved
+    call itself (QA R1), so the model only reports it. */
 const carryingOn = {
   name: "scripted",
   async complete(request) {
     const last = request.messages.at(-1);
-    const allowed = /The call you asked about did not run/.test(String(request.messages[0]?.content ?? "")) && !/"ok":true/.test(String(last.content ?? ""));
-    if (last.role === "tool" && !allowed) return { content: "Written.", toolCalls: [] };
-    if ((last.role === "user" || allowed) && request.messages.some((m) => m.role === "user" && String(m.content).includes("note")))
+    if (last.role === "tool") return { content: "Written.", toolCalls: [] };
+    if (last.role === "user" && request.messages.some((m) => m.role === "user" && String(m.content).includes("note")))
       return { content: "", toolCalls: [{ id: `c${Math.random().toString(36).slice(2, 8)}`, name: "files.write", arguments: JSON.stringify({ path: "note.txt", content: "hi" }) }] };
     return { content: "Hello.", toolCalls: [] };
   },
@@ -201,8 +200,11 @@ test("a quick double tap on a phone's big answer sends one answer, not two", asy
     };
   });
   /* Three presses in the same instant (a thumb's double tap, then a slip onto Don't allow), so a slow machine cannot
-     let the first answer come back before the others land. */
-  await card.evaluate((node) => {
+     let the first answer come back before the others land. The card is found in the page at the moment of the presses:
+     one found earlier can have been drawn anew in between, and presses on the old one reach nothing (seen on busy CI). */
+  await card.waitFor();
+  await f.page.evaluate(() => {
+    const node = document.getElementById("live-ask");
     const yes = node.querySelector(".acts .btn.pri");
     const no = [...node.querySelectorAll(".acts button")].find((button) => button.textContent === "Don’t allow");
     yes.click();
@@ -228,8 +230,14 @@ test("an answer that could not be sent gives the buttons back; No is the quiet a
   });
   await f.signIn();
   const card = await ask(f.page);
-  const answers = await card.locator(".acts button").evaluateAll((buttons) => buttons.map((b) => ({
-    text: b.textContent.trim(), live: b.getAttribute("aria-disabled") !== "true" && !b.disabled, pri: b.classList.contains("pri"), bg: getComputedStyle(b).backgroundColor })));
+  /* Read in the page, in one go, once the card's buttons are drawn and styled: buttons found first and read after can
+     have been drawn anew in between, and a button no longer in the page has no colour (seen on busy CI). */
+  const answers = await (await f.page.waitForFunction(() => {
+    const buttons = [...document.querySelectorAll("#live-ask .acts button")];
+    if (buttons.length < 2 || !buttons.every((b) => getComputedStyle(b).backgroundColor)) return null;
+    return buttons.map((b) => ({ text: b.textContent.trim(), live: b.getAttribute("aria-disabled") !== "true" && !b.disabled,
+      pri: b.classList.contains("pri"), bg: getComputedStyle(b).backgroundColor }));
+  })).jsonValue();
   assert.equal(answers.some((b) => /^Always allow/.test(b.text) && b.live), false, `no live standing yes: ${JSON.stringify(answers)}`);
   const yes = answers.find((b) => b.pri), no = answers.find((b) => b.text === "Don’t allow");
   assert.ok(yes?.live && no?.live, "a yes for now and a no");

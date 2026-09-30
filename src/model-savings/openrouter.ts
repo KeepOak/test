@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Store } from "../store.js";
 import { readSavings } from "./settings.js";
 
@@ -42,4 +43,42 @@ export function openRouterRouting(store: Pick<Store, "get">, owner: string): Ope
 /** What the OpenAI-shaped connection adds to its body: only for openrouter.ai, only when asked. */
 export function openRouterBodyPart(endpoint: string, routing: OpenRouterRouting | undefined): { provider?: OpenRouterRouting } {
   return routing && isOpenRouterEndpoint(endpoint) ? { provider: routing } : {};
+}
+
+/** A company OpenRouter can send a request to: its slug (what `only` names) and its name. */
+export interface OpenRouterCompany { slug: string; name: string }
+const CompaniesSchema = z.object({ data: z.array(z.object({ slug: z.string(), name: z.string() }).passthrough()) });
+const companySlug = /^[a-z0-9][a-z0-9._/-]{0,79}$/i;
+const keptCompanies = new Map<string, { at: number; companies: OpenRouterCompany[] }>();
+const keepCompaniesFor = 24 * 60 * 60_000;
+
+/** The address of the first OpenRouter connection in the model picker, or null when there is none. */
+export function openRouterAddress(presets: Iterable<{ provider: object }>): string | null {
+  for (const preset of presets) {
+    try {
+      const sharing = preset.provider as { audio?: () => { endpoint: string } | null; embeddings?: () => { endpoint: string } | null };
+      const endpoint = sharing.audio?.()?.endpoint ?? sharing.embeddings?.()?.endpoint;
+      if (endpoint && isOpenRouterEndpoint(endpoint)) return endpoint;
+    } catch { continue; } // a connection Branch did not write may throw from its accessors: not OpenRouter
+  }
+  return null;
+}
+
+/**
+ * Settings › Models › OpenRouter picks › Only ones I list: the companies to choose from, as OpenRouter lists them
+ * (its documented `GET /api/v1/providers`, which needs no key, so none is sent). Asked only when the owner opens the
+ * list, only of OpenRouter's own address, and kept for a day; a company whose slug is not plain is left out.
+ */
+export async function openRouterCompanies(endpoint: string, fetchImpl: typeof fetch = globalThis.fetch, now = Date.now()): Promise<OpenRouterCompany[]> {
+  if (!isOpenRouterEndpoint(endpoint)) throw new Error("That is not OpenRouter's address, so Branch did not ask it.");
+  const url = new URL("/api/v1/providers", endpoint).toString(), kept = keptCompanies.get(url);
+  if (kept && now - kept.at < keepCompaniesFor) return kept.companies;
+  const response = await fetchImpl(url, { signal: AbortSignal.timeout(15_000) });
+  if (!response.ok) throw new Error(`OpenRouter did not list its companies (it answered ${response.status}).`);
+  const parsed = CompaniesSchema.safeParse(await response.json());
+  if (!parsed.success) throw new Error("OpenRouter's list of companies was not in the shape it documents.");
+  const companies = parsed.data.data.filter((c) => companySlug.test(c.slug) && c.name.trim())
+    .map((c) => ({ slug: c.slug, name: c.name.trim().slice(0, 80) })).sort((a, b) => a.name.localeCompare(b.name)).slice(0, 400);
+  keptCompanies.set(url, { at: now, companies });
+  return companies;
 }

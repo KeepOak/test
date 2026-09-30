@@ -13,7 +13,8 @@
    Flagged replies (the owner's): GET /api/reply-flags lists each flag's reasons and conversation; Remove is
    POST /api/reply-flags/<id>/remove. The reply's words leave the engine only through its audited export, so they are
    not drawn, and sending a flag to the Branch team has no engine route, so that switch stays greyed.
-   The tray has no engine or desktop setting: greyed, and not drawn on a phone. */
+   "Show usage in the tray" is the glance setting tray (the desktop app's icon rings with the same share as the ring,
+   src/desktop/tray-ring.ts); it ships on and is not drawn on a phone. */
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
 import { api } from "../../core/api.js";
@@ -22,7 +23,7 @@ import { esc, renderNow } from "../../core/dom.js";
 import { statusBox } from "../parts.js";
 import { seg15 } from "../rows15.js";
 import { logo } from "../../core/logos.js";
-import { level, E, ownerHere } from "../../core/state.js";
+import { level, E, S, ownerHere } from "../../core/state.js";
 import { sections17, init17 } from "../p17-usage.js";
 import { onPhone } from "../surface17.js";
 import { updatedWords } from "../../shell/usage.js"; // the status bar's "Updated 3 min ago", the same on both lists
@@ -31,10 +32,17 @@ import { t, language, plural } from "../../../i18n.js";
 
 let usage = null;
 let range = "30";
+/* The read in flight, if any: "Open the report" waits for it, so a report opened as the page arrives (or just after
+   a new period was chosen) adds up the engine's numbers, never an empty or older stretch. */
+let reading = null;
 
-async function loadUsage() {
-  try { usage = await api(`usage?range=${range}d&by=day`); } catch (error) { usage = null; toast(error.message); }
-  renderNow();
+function loadUsage() {
+  const read = (async () => {
+    try { usage = await api(`usage?range=${range}d&by=day`); } catch (error) { usage = null; toast(error.message); }
+    renderNow();
+  })();
+  reading = read;
+  return read;
 }
 
 function reportCard() {
@@ -82,8 +90,15 @@ function openReport() {
       <p class="hint">${t("window.settings.usage.estimated-from-each-models-published")}</p>`,
     foot: `<button class="btn ghost" type="button" data-act="repcsv15" ${f.days.length ? "" : "disabled"}>${t("window.settings.usage.save-as-a-spreadsheet")}</button><button class="btn" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
-/* The same day rows the dialog adds up, one line each, as a spreadsheet file. */
-function saveCsv() {
+/* The same day rows the dialog adds up, one line each, as a spreadsheet file. The desktop app keeps downloads blocked, so
+   there the engine writes the sheet into the workspace's usage folder (POST /api/usage/metering/now { range }) and says
+   where; a browser downloads it. Usage itself is always counted in Branch's own data; a sheet is written only here. */
+async function saveCsv() {
+  if (window.branchDesktop) {
+    try { const { path } = await api("usage/metering/now", { range: `${range}d` }); toast(t("window.settings.usage.saved-sheet-at", { path })); }
+    catch (error) { toast(error.message); }
+    return;
+  }
   const cell = (v) => `"${String(v ?? "").replaceAll('"', '""')}"`;
   const lines = [["date", "tasks", "tool calls", "input tokens", "output tokens", "estimated cost (USD)", "failures"].map(cell).join(",")]
     .concat((usage?.data ?? []).map((d) => [d.date, d.runs, d.toolCalls, d.tokens?.input, d.tokens?.output, (d.estimatedCost ?? 0).toFixed(4), d.failures].map(cell).join(",")));
@@ -157,6 +172,8 @@ function evalCard() {
 /* ---------- What each connection has left (GET /api/usage/glance), 1:1 with the status bar's list ---------- */
 let glance = null;
 let limits = null;
+let identityTimer = null;
+let loadingGlance = false;
 const CHIP = () => ({ measured: `<span class="pill ok">${t("glance.measured")}</span>`, estimated: `<span class="pill warn">${t("glance.estimate")}</span>`, not_published: `<span class="pill idle">${t("glance.notPublished")}</span>` });
 
 function windowRow(w, estimated) {
@@ -173,9 +190,15 @@ export function limitRow(r) {
 }
 
 async function loadGlance() {
+  if (loadingGlance) return;
+  loadingGlance = true;
   const [g, l] = await Promise.all(["usage/glance", "usage/limits/settings"].map((path) => api(path).catch((error) => { toast(error.message); return null; })));
+  loadingGlance = false;
   glance = g; limits = l?.usageLimits ?? null;
   renderNow();
+  clearTimeout(identityTimer);
+  const visible = () => ownerHere() && !document.querySelector(".lockscreen") && S.view === "settings" && S.setPage === "usage";
+  if (g?.identitiesPending && visible()) identityTimer = setTimeout(() => { if (visible()) loadGlance(); }, 1000);
 }
 
 /* The ring and the save-progress offer (POST /api/usage/glance/settings, merged) and asking a service what is left
@@ -183,13 +206,14 @@ async function loadGlance() {
    "Show me" only played its own demo, so it is not drawn. */
 const WIRES = {
   "u-ring": [() => glance?.settings?.ring === "shown", (on) => api("usage/glance/settings", { ring: on ? "shown" : "hidden" })],
+  "u-tray": [() => glance?.settings?.tray === "shown", (on) => api("usage/glance/settings", { tray: on ? "shown" : "hidden" })],
   "u-ckpt": [() => glance?.settings?.saveProgress === "ask", (on) => api("usage/glance/settings", { saveProgress: on ? "ask" : "off" })],
   "u-ask": [() => Boolean(limits?.mode) && limits.mode !== "off", (on) => api("usage/limits/settings", { mode: on ? "when-needed" : "off" })],
 };
 const checked = (id) => (WIRES[id][0]() ? "checked" : "");
 
 function limitsSec() {
-  const tray = onPhone() ? "" : `<div class="ctl"><b>${t("window.settings.usage.show-usage-in-the-tray")}</b><input class="sw" type="checkbox" id="u-tray" aria-label="${t("window.settings.usage.show-usage-in-the-tray")}" data-sw="set"><small>${t("window.settings.usage.a-small-ring-by-the-clock")}</small></div>`;
+  const tray = onPhone() ? "" : `<div class="ctl"><b>${t("window.settings.usage.show-usage-in-the-tray")}</b><input class="sw" type="checkbox" id="u-tray" ${checked("u-tray")} aria-label="${t("window.settings.usage.show-usage-in-the-tray")}" data-sw="set"><small>${t("window.settings.usage.tray-ring")}</small></div>`;
   return `<div class="sec"><h2>${t("glance.title")}</h2><p class="hint" data-css="margin:0 0 6px">${t("window.settings.usage.how-much-of-each-services-allowance")}</p><div class="lims flat">${(glance?.rows ?? []).map(limitRow).join("")}</div>
     <div class="ctl"><b>${t("window.settings.usage.the-ring-bottom-right")}</b><input class="sw" type="checkbox" id="u-ring" ${checked("u-ring")} aria-label="${t("window.settings.usage.show-the-ring")}" data-sw="ring"><small>${t("window.settings.usage.the-connection-used-next-how-much")}</small></div>
     <div class="ctl"><b>${t("window.settings.usage.offer-to-save-progress-at-95")}</b><input class="sw" type="checkbox" id="u-ckpt" ${checked("u-ckpt")} aria-label="${t("window.settings.usage.offer-to-save-progress-at-95")}" data-sw="ckpt"><small>${t("window.settings.usage.it-only-asks-once-per-connection")}</small></div>
@@ -197,10 +221,26 @@ function limitsSec() {
     ${tray}</div>`;
 }
 
-/* Spend by Trunk: the engine keeps no spend per Trunk, so no bars are drawn; the month's total is the engine's. */
+/* models-ui (MODEL-052): who spent what over the last 7 days (GET /api/usage/by-trunk): the owner's own tasks and each
+   Trunk's, a bar by tasks, the cost where a price is on file (a plan sign-in has none, and says so), and the
+   accounts each answered through. The month's total is the engine's too. */
+let byTrunk = null;
+async function loadByTrunk() {
+  if (E.profiles?.isOwner === false) { byTrunk = null; return; } // the owner's alone
+  byTrunk = await api("usage/by-trunk?days=7").catch(() => null);
+  renderNow();
+}
+function spendRow(r, most) {
+  const name = r.trunk ? r.trunk.name : t("window.settings.usage.by-you");
+  const cost = r.cost === null ? t("window.settings.usage.by-plan") : `$${r.cost.toFixed(2)}${r.unpricedTasks ? ` ${t("window.settings.usage.by-plus-plan", { count: r.unpricedTasks })}` : ""}`;
+  const accounts = r.accounts.map((a) => `${a.label} (${a.calls})`).join(", ");
+  return `<div class="brow spend-row"><span><b>${esc(name)}</b></span><span class="track"><u data-css="width:${Math.max(3, Math.round((r.tasks / most) * 100))}%"></u></span><span class="v">${esc(cost)}</span><small class="spend-sub">${esc(t("window.settings.usage.by-tasks", { count: r.tasks, tokens: r.tokens.toLocaleString() }))}${accounts ? ` · ${esc(accounts)}` : ""}</small></div>`;
+}
 function spendSec() {
   const month = glance?.month?.pricedRuns ? `<p class="hint">${t("window.settings.usage.this-month-value-plans-are-billed", { value: Number(glance.month.cost).toFixed(2) })}</p>` : "";
-  return `<div class="sec"><h2>${t("window.settings.usage.spend-last-7-days")}</h2><div class="bars"></div>${month}</div>`;
+  const rows = byTrunk?.rows ?? [], most = Math.max(1, ...rows.map((r) => r.tasks));
+  const bars = rows.length ? rows.map((r) => spendRow(r, most)).join("") : byTrunk ? `<p class="hint">${t("window.settings.usage.by-none")}</p>` : "";
+  return `<div class="sec"><h2>${t("window.settings.usage.spend-last-7-days")}</h2><div class="bars spend-bars">${bars}</div>${month}</div>`;
 }
 
 /* ---------- keeping things ---------- */
@@ -274,9 +314,10 @@ export function init() {
   loadUsage();
   loadSuites();
   loadGlance();
+  loadByTrunk();
   loadRetention();
   loadFlags();
-  markLive(["sw:u-ring", "sw:u-ckpt", "sw:u-ask"]);
+  markLive(["sw:u-ring", "sw:u-tray", "sw:u-ckpt", "sw:u-ask"]);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];
     if (!wire) return;
@@ -284,7 +325,7 @@ export function init() {
     await loadGlance();
   });
   on("rep15", (el) => { range = el.dataset.v; loadUsage(); });
-  on("repopen15", () => openReport());
+  on("repopen15", async () => { await reading; openReport(); });
   on("repcsv15", () => saveCsv());
   on("keep15", (el) => keep(el.dataset.v));
   on("keeploosen15", () => { const v = keepAsked; keepAsked = null; closeDlg(); if (v) keep(v, true); });
@@ -296,6 +337,6 @@ export function init() {
   markLive(["rep15", "repopen15", "eval-set", "eval-run"]);
 }
 
-export function load() { loadSuites(); loadGlance(); loadRetention(); loadFlags(); return loadUsage(); }
+export function load() { loadSuites(); loadGlance(); loadByTrunk(); loadRetention(); loadFlags(); return loadUsage(); }
 
 export const live = { "rep15": true, "repopen15": true, "eval-set": true, "eval-run": true, "repcsv15": true, "keep15": true, "keeploosen15": true, "ckpts15": true, "ckptback15": true, "flforget17c": true };

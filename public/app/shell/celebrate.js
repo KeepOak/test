@@ -49,7 +49,9 @@ function show(a) {
   } else {
     $(".ach-big")?.remove();
     el.className = "ach-big";
-    el.innerHTML = `<canvas id="confetti"></canvas><div class="card">${medal}<b data-css="font-size:18px">${esc(a.name)}</b><span>${esc(a.desc)}</span><span class="pill idle">${esc(say(a.tier))}</span><button class="btn pri sm" type="button" data-act="ach-close">${t("window.shell.celebrate.nice")}</button>${mute()}</div>`;
+    el.setAttribute("role", "dialog"); // the pop-out card, named by the achievement it shows
+    el.setAttribute("aria-label", `${t("window.shell.celebrate.achievement-unlocked")}: ${a.name}`);
+    el.innerHTML = `<canvas id="confetti" aria-hidden="true"></canvas><div class="card">${medal}<b data-css="font-size:18px">${esc(a.name)}</b><span>${esc(a.desc)}</span><span class="pill idle">${esc(say(a.tier))}</span><button class="btn pri sm" type="button" data-act="ach-close">${t("window.shell.celebrate.nice")}</button>${mute()}</div>`;
     setTimeout(() => el.remove(), 6000);
   }
   applyCss(el);

@@ -18,9 +18,10 @@ import { logo } from "../core/logos.js";
 import { t, language, LANGUAGES } from "../../i18n.js";
 import { canSpeak, chooseLanguage } from "../shell/language.js";
 import { localPicker, freshPick, initLocalPick, helloAgain } from "./localpick.js";
-import { media17 } from "../core/art17.js"; // Branch's idle loop, or its still when motion is reduced (prototype anim11)
 import { newConversationMode } from "../chat/chips.js"; // the mode a new conversation's first message carries
 import { sendBackup } from "../settings/more18.js"; // "Bring back your Branch", the same restore Settings › Accounts offers
+import { gsel } from "../core/gsel.js";
+import { say } from "../core/words.js";
 
 /* The wizard's steps: each one's short name in the engine's record, and its name on the rail. */
 const WIZARD = ["welcome", "models", "trunks"];
@@ -29,7 +30,6 @@ const STEPS = ["window.flows.setup.step-welcome", "layout.modelTabs", "window.p1
 const IDS = ["welcome", "where", "models", "yours", "trunks", "reach", "tools", "keep", "people", "more", "check"];
 /* Overview's "Finish setting up", in this order: the steps not asked in the wizard. */
 export const FINISH = IDS.filter((id) => !WIZARD.includes(id));
-const POSES = [null, "think", "work"];
 /* A template's name and job are keys: shown in the chosen language, and the Trunk it makes is named in those words. Its
    colour and shape are the prototype's jobs' (flows/trunk.js TEMPLATES): the card draws that face, and the Trunk made
    from it is given the same face. */
@@ -50,16 +50,15 @@ const ownName = (code) => {
 };
 
 const pressed = (on) => `aria-pressed="${on}"`;
-const pose = (i) => POSES[i] ? `<img class="pose11 ob-pose11" src="/art/branch-${POSES[i]}.webp" alt="" loading="lazy" decoding="async" draggable="false">` : "";
+const pose = (i) => i ? `<span class="mark mark-face ob-pose11" data-css="animation:none" aria-hidden="true"></span>` : "";
 
 function languageControl() {
   const now = language();
-  const opts = LANGUAGES.map(({ id }) => `<option value="${esc(id)}"${id === now ? " selected" : ""}>${esc(ownName(id))}</option>`).join("");
-  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right"><select class="inp" id="ob-lang" data-sw="ob-lang" aria-label="${t("appearance.language")}">${opts}</select></span></div>`;
+  return `<div class="ctl ob-lang"><b>${t("appearance.language")}</b><span class="right">${gsel({ id: "ob-lang", sw: "ob-lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now })}</span></div>`;
 }
 
 function welcome(o) {
-  return `${languageControl()}<div class="ob-stage11">${media17("/art/branch-wave.webp", "/art/anim-idle.webm", "pose11 vid11 ob-art11")}</div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>${bringBack(o)}`;
+  return `${languageControl()}<div class="ob-stage11"><span class="mark mark-face ob-art11" data-css="width:96px;height:96px" aria-hidden="true"></span></div><h2>${t("window.flows.first.hi")}</h2><p>${t("window.flows.setup.hi-lede")}</p><div class="ob-trust"><b>${t("window.flows.setup.safe")}</b><ul class="may6"><li>${ic("check", "s")}${t("window.flows.setup.safe-asks")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stay")}</li><li>${ic("check", "s")}${t("window.flows.setup.safe-stop")}</li></ul><label class="chk ob-agree"><input type="checkbox" id="ob-trust" ${o.trust ? "checked" : ""}><span class="ob-box" aria-hidden="true">${ic("check", "s")}</span><span>${t("window.flows.setup.understand")}</span></label></div>${bringBack(o)}`;
 }
 
 /* The lead's call for #484: Welcome offers "Bring back your Branch" (the prototype's tile), a backup file sent to POST
@@ -86,8 +85,10 @@ async function restoreFrom(file) {
 function modelRows(o) {
   const rows = [];
   for (const p of o.pools) for (const a of p.accounts ?? []) {
-    const sub = [p.pool, p.defaultAccount === a.id ? t("glance.usedNext") : "", p.signedIn?.[a.id] === false ? t("window.flows.first.sign-in") : ""].filter(Boolean).join(" · ");
-    rows.push([p.pool, a.label || p.pool, sub, a.disabled !== true, `data-sw="ob-brain" data-pool="${esc(p.pool)}" data-account="${esc(a.id)}"`]);
+    /* MODEL-045: the account by who it is (its verified email or name, #605) and the connection by its own name, never its id. */
+    const signedOut = p.signedIn?.[a.id] === false || (a.signIn !== false && a.ready === false && a.signedIn === false);
+    const sub = [p.name ?? p.pool, p.answering && p.defaultAccount === a.id ? t("glance.usedNext") : "", signedOut ? t("window.flows.first.sign-in") : ""].filter(Boolean).join(" · ");
+    rows.push([p.pool, a.label || p.name || p.pool, sub, a.disabled !== true, `data-sw="ob-brain" data-pool="${esc(p.pool)}" data-account="${esc(a.id)}"`]);
   }
   if (!rows.length && E.state?.activeModel) rows.push([E.state.activeModel.presetName, E.state.activeModel.presetName, E.state.activeModel.model ?? "", true, 'data-sw="ob-brain-model"']);
   return rows.map(([id, name, sub, on, which]) => `<div class="prow">${logo(id, name, 30)}<span class="grow"><b>${esc(name)}</b><small>${esc(sub)}</small></span><input class="sw" type="checkbox" ${which} data-on="${on ? 1 : 0}" aria-label="${esc(name)}"></div>`).join("");
@@ -311,7 +312,7 @@ async function propose() {
   o.life = what;
   if (!what || o.proposing) { $("#ob-life")?.focus(); return; }
   await refresh().catch(() => {});
-  if (E.state?.modelNeeded) { o.note = E.state.modelNeeded; draw(); return; }
+  if (E.state?.modelNeeded) { o.note = say(E.state.modelNeeded); draw(); return; } // the engine's English, in the window's language
   Object.assign(o, { proposing: true, note: "", error: "" });
   draw();
   try {

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelHealth, InboundMessage } from "./router.js";
 import { callJson, defineService, PollingChannel, secretName } from "./parity-common.js";
 
@@ -7,6 +8,12 @@ import { callJson, defineService, PollingChannel, secretName } from "./parity-co
  * from the owner's Twilio number and, every few seconds, lists the messages that number received.
  * Every text is a one-to-one chat with the phone number that sent it.
  * API: https://www.twilio.com/docs/messaging/api/message-resource
+ *
+ * Pictures and files sent by MMS (CHAT-171) become the task's material. Which files a message carries is read from
+ * Twilio's Media list for that message; the bytes are fetched only once the message is answered, from Twilio with the
+ * account's key, then (Twilio hands media over by redirect) from the https address it names, without the key.
+ * Branch sends no MMS: Twilio fetches an outgoing picture from a public web address, and Branch has none to offer.
+ * API: https://www.twilio.com/docs/messaging/api/media-resource
  */
 export interface TwilioSmsOptions {
   id: string;
@@ -28,7 +35,15 @@ const TwilioMessageSchema = z.object({
   to: z.string().default(""),
   body: z.string().nullable().default(""),
   direction: z.string().default(""),
+  /** How many pictures or files came with it (Twilio writes the number as text). */
+  num_media: z.union([z.string(), z.number()]).nullish(),
 }).passthrough();
+const MediaListSchema = z.object({
+  media_list: z.array(z.object({ sid: z.string().regex(/^ME[0-9a-fA-F]{32}$/), content_type: z.string().max(100).default("application/octet-stream") }).passthrough()).default([]),
+}).passthrough();
+const extensionOf = (type: string): string => ({ "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp", "image/heic": "heic",
+  "video/mp4": "mp4", "video/3gpp": "3gp", "audio/amr": "amr", "audio/mpeg": "mp3", "audio/mp4": "m4a", "application/pdf": "pdf", "text/vcard": "vcf",
+  "text/x-vcard": "vcf", "text/plain": "txt" } as Record<string, string>)[type] ?? "bin";
 const ListSchema = z.object({ messages: z.array(z.unknown()).default([]) }).passthrough();
 const SentSchema = z.object({ sid: z.string().min(1).max(64) }).passthrough();
 export const phoneNumber = /^\+[1-9]\d{6,14}$/;
@@ -82,11 +97,45 @@ export class TwilioSmsChannel extends PollingChannel {
       if (this.seen.has(row.sid)) continue;
       this.remember(row.sid);
       if (first || row.direction !== "inbound" || row.from === this.options.from) continue;
-      if (!phoneNumber.test(row.from) || !row.body?.trim()) continue;
+      const media = Math.min(10, Number(row.num_media ?? 0) || 0);
+      if (!phoneNumber.test(row.from) || (!row.body?.trim() && !media)) continue;
+      const attachments = media ? await this.mediaOf(row.sid).catch(() => []) : [];
+      if (!row.body?.trim() && !attachments.length) continue;
       out.push({ channel: this.id, chatId: row.from, chatKind: "direct", senderId: row.from, senderName: row.from,
-        text: row.body, addressed: true, messageId: row.sid });
+        text: row.body ?? "", addressed: true, messageId: row.sid, ...(attachments.length ? { attachments } : {}) });
     }
     return out;
+  }
+  /** The pictures and files on one received MMS: their types from Twilio's Media list, their bytes only when asked. */
+  private async mediaOf(messageSid: string): Promise<NonNullable<InboundMessage["attachments"]>> {
+    if (!/^(SM|MM)[0-9a-fA-F]{32}$/.test(messageSid)) return [];
+    const listed = MediaListSchema.parse(await callJson(this.fetchImpl, "Twilio", this.mediaUrl(messageSid, ".json"), { headers: this.headers() }));
+    return listed.media_list.slice(0, 10).map((item) => {
+      const mediaType = item.content_type.split(";")[0]!.trim().toLowerCase();
+      return { name: `mms-${item.sid.slice(-8)}.${extensionOf(mediaType)}`, sourceId: item.sid, mediaType,
+        kind: mediaType.startsWith("image/") ? "picture" as const : mediaType.startsWith("video/") ? "video" as const : "document" as const,
+        bytes: () => this.mediaBytes(this.mediaUrl(messageSid, `/${item.sid}`)) };
+    });
+  }
+  private mediaUrl(messageSid: string, rest: string): string {
+    return this.messagesUrl.replace(/\.json$/, `/${messageSid}/Media${rest}`);
+  }
+  /**
+   * One file: asked of Twilio with the key and without following redirects, then fetched from the https address Twilio
+   * points to, without the key. Stopped past the size a task takes, whether the size was said or only found out.
+   */
+  private async mediaBytes(url: string): Promise<Uint8Array> {
+    let response = await this.fetchImpl(url, { headers: this.headers(), redirect: "manual", signal: AbortSignal.timeout(60000) });
+    if (response.status >= 300 && response.status < 400) {
+      const next = new URL(response.headers.get("location") ?? "", url);
+      if (next.protocol !== "https:") throw new Error("Twilio pointed the file at an address that is not https, so it was not fetched");
+      response = await this.fetchImpl(next.href, { redirect: "error", signal: AbortSignal.timeout(60000) });
+    }
+    if (!response.ok) throw new Error(`Twilio would not hand over that file (${response.status})`);
+    if (Number(response.headers.get("content-length") ?? 0) > maxArtifactBytes) throw new ArtifactTooLarge("That file is too large");
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > maxArtifactBytes) throw new ArtifactTooLarge("That file is too large");
+    return bytes;
   }
   async send(chatId: string, text: string): Promise<string | undefined> {
     if (!phoneNumber.test(chatId)) throw new Error("A text can only be sent to a phone number written like +15551234567");

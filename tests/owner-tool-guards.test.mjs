@@ -21,6 +21,7 @@ import { join, relative } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { VaultAutofill, registerVaultAutofill } from "../dist/vault-autofill.js";
+import { registerRestartTool } from "../dist/dashboard-api.js";
 
 const ownersOnly = /belongs to the owner|Only the owner's own work|only the owner/i;
 
@@ -37,6 +38,9 @@ const notBranch = { name: "guard-probe", repository: "https://github.com/alice/u
 const GUARDS = [
   // Q187: preparing or widening a change to Branch's own source is the owner's own work.
   { file: "src/self-development.ts", tool: "branch.prepare_source_change", args: notBranch, setup: remoteGitOn },
+  // selfdev: Branch restarting its own engine is the owner's own work; here nothing could start it again, so it never stops.
+  { file: "src/dashboard-api.ts", tool: "branch.restart_engine", args: { why: "probe" },
+    setup: (app) => registerRestartTool(app, "unused", { platform: "linux", env: {}, pid: 1, running: async () => null }) },
   { file: "src/self-development.ts", tool: "branch.widen_source_contract", args: { name: "guard-probe", reason: "probe", changes: { allowedPaths: ["docs/**"] } }, setup: remoteGitOn },
   // All six settings tools enter ownerHere before reading or planning a change.
   { file: "src/settings-kit/tools.ts", tool: "settings.find", args: { request: "turn on the learning" } },
@@ -88,11 +92,12 @@ const NOT_TOOL_GUARDS = {
   "src/sessions.ts": "its requireOwner is about owning a conversation, not the profile switch",
   "src/runtime.ts": "startedFor decides whom a new task is for; it records the person, it guards nothing",
   "src/web-pages.ts": "the owner check guards the HTTP switch, not the tool",
-  "src/owner-browse.ts": "the owner check guards the browser's address field (POST /api/panels/browse), not a tool; the page opens through tryTool's gate",
+  "src/browser-control-api.ts": "its isOwner check refuses the owner's browser controls (/api/panels/browser) to anybody else; it defines no tool, and every page action goes through that tool's own hand-pressed gate",
   "src/sdk-kit.ts": "the owner check guards the HTTP switch, not a tool",
   "src/index.ts": "hands store.profiles.requireOwner to the guards listed above",
   "src/integrations/bootstrap.ts": "hands store.profiles.requireOwner to signin.fill (listed above)",
-  "src/owner-browse.ts": "its isOwner check refuses the owner's address field (POST /api/panels/browse) to anybody else; it defines no tool, and the page it opens goes through browser.navigate's own hand-pressed gate",
+  "src/self-development-merge.ts": "its requireOwner (ownerHere) guards the owner's review-and-merge routes in Inbox; the branch.finish_source_change tool is gated by autoOwner instead: runtime.ownerFullAccessFor(context, true), which refuses any task that is not the owner's own direct Full Access task with the owner's profile active, and no person, household caller, paired door or short-lived key",
+  "src/self-development-requests.ts": "its requireOwner (ownerHere) guards the owner's chat-request routes in Inbox, and installed() is a read-only proof that only refuses, never grants, when the window is on someone else; the tool path, fileOwnerTask (seasons.request_setting), is gated by ownerOnly(context), which judges by the task's recorded origin (runOrigin: person, key, lent door) and refuses Trunks and short-lived keys",
   "src/coding/project-tests.ts": "the isOwner check refuses `--allow-tests` when a run starts; during the task allowedForThisRun judges by the task's own recorded origin (runOrigin, taskPerson), not the window",
 };
 

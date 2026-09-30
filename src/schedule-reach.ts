@@ -19,7 +19,7 @@ const readOnlyWords = /\b(read[- ]only|only reads?|just reads?|look only|don'?t 
 const localWrites: readonly string[] = ["files.write", "documents.write", "memory.write", "scratch.write", "data.write", "media.write", "pages.write"];
 /** Sending, running and reaching elsewhere: named by the owner or never. */
 const heldBackKinds: readonly string[] = [
-  "channels.send", "personal.write", "home.control", "issues.write", "github.manage", "git.remote", "api.call", "agents.ask",
+  "channels.send", "personal.write", "home.control", "issues.write", "github.manage", "gitlab.manage", "git.remote", "api.call", "agents.ask",
   "code.execute", "shell.execute", "remote.execute", "process.manage", "nodes.run", "devices.run", "devices.act", "devices.capture",
   "blocks.run", "addons.wasm", "code.handoff", "signin.fill", "browser.interact", "sessions.handoff", "skills.http",
 ];

@@ -18,6 +18,8 @@ export const WorkerReadySchema = z.object({
   port: z.number().int().min(1).max(65535),
   version: z.string().max(40),
   pid: z.number().int().positive(),
+  /** A desktop candidate may serve restoration reads, but has not passed the renderer check yet. */
+  provisional: z.boolean().optional(),
 }).passthrough();
 export type WorkerReady = z.infer<typeof WorkerReadySchema>;
 

@@ -25,7 +25,7 @@ const ROOT = join(__dirname, "..", "..", "..");
 const WWW = join(ROOT, "apps", "mobile", "www");
 const SHOTS = process.env.SHOTS || "";
 let playwright;
-try { playwright = require("playwright"); } catch { playwright = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright"); }
+try { playwright = require("playwright"); } catch { playwright = require("playwright"); }
 
 let failures = 0, passes = 0;
 const check = (ok, what, detail = "") => { if (ok) passes++; else failures++; console.log(`${ok ? "PASS" : "FAIL"} ${what}${detail && !ok ? ` (${detail})` : ""}`); };

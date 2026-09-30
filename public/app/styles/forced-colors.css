@@ -1,0 +1,38 @@
+/* UI-224: the system's high-contrast mode (Windows Contrast themes: forced-colors). The system then draws every
+   background in its own colours, so what this window says with a background alone (a switch on, the choice pressed, the
+   row you are on, a status dot, a card's edge) is said again here in the system's colours: Highlight for what is on or
+   chosen, CanvasText for edges and marks, GrayText for what is held. Nothing here applies outside that mode. */
+@media (forced-colors: active) {
+  /* Switches: the track's edge, the knob, and on as Highlight. */
+  .sw { forced-color-adjust: none; background: Canvas; border: 1px solid CanvasText; }
+  .sw::after { background: CanvasText; box-shadow: none; }
+  .sw:checked { background: Highlight !important; border-color: Highlight !important; }
+  .sw:checked::after { background: HighlightText !important; }
+  .sw:disabled, .sw[aria-disabled="true"] { border-color: GrayText; }
+  .sw:disabled::after, .sw[aria-disabled="true"]::after { background: GrayText; }
+
+  /* The choice pressed, the page or row you are on, the tab chosen, the item ticked. */
+  [aria-pressed="true"], [aria-current="true"], [aria-selected="true"], .mi[aria-checked="true"], [role="menuitemradio"][aria-checked="true"] {
+    forced-color-adjust: none; background: Highlight !important; color: HighlightText !important; border-color: Highlight !important;
+  }
+  [aria-pressed="true"] *, [aria-current="true"] *, [aria-selected="true"] * { color: HighlightText !important; }
+  .seg, .gsel, .inp, .btn, .chip6, .tab, .ptab { border: 1px solid ButtonText; }
+
+  /* Every stop the keyboard reaches is ringed, including those that only changed their background. */
+  :focus-visible { outline: 2px solid Highlight !important; outline-offset: 2px; }
+
+  /* Edges the system's flat colours would otherwise lose: menus, dialogs, cards and the list. */
+  .pop, .dlg, .toast, .sec .rows, .x15-sec, .t9-detail, .prow, .ctl { border-color: CanvasText; }
+  .pop, .dlg, .toast { border: 1px solid CanvasText; }
+  .side { border-right: 1px solid CanvasText; }
+
+  /* Status dots and rings keep their meaning as marks, not colours. */
+  .dot { forced-color-adjust: none; background: CanvasText; }
+  .dot.off { background: Canvas; border: 1px solid GrayText; }
+
+  /* What is held (greyed with its reason) reads as held. */
+  .soon, [aria-disabled="true"], :disabled { color: GrayText; border-color: GrayText; }
+
+  /* Pictures behind the glass and the list's scenery step back: the system's colours are the page. */
+  #bgLayer, .side > .scenery { display: none; }
+}

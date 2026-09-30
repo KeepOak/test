@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Store } from "../store.js";
+import { chosenFields, forgetChosen, markChosen, sentKeys, shippedUnlessChosen } from "../ship-on.js";
 
 /**
  * R17-S08 … R17-S14: the knobs that used to be constants, written down as settings the owner can
@@ -23,10 +24,15 @@ export const KnobCompactionSettingsSchema = z.object({
   contextWindowTokens: z.number().int().min(8000).max(2_000_000).nullable().default(null),
 }).strict();
 
+/** The value a task limit holds for "No limit": the task is stopped by the loop guard and the spending caps only. */
+export const noLimit = "none";
+/** A task limit: a figure, "none" (no limit), or null (auto: no limit on a sign-in or a model on this computer, a figure on a key). */
+const taskLimit = (min: number, max: number) => z.union([z.number().int().min(min).max(max), z.literal(noLimit)]).nullable().default(null);
+
 /** R17-S09: how far one task may go before it stops. */
 export const KnobTaskLimitsSettingsSchema = z.object({
-  /** Model rounds and tool steps one task may take. */
-  maxSteps: z.number().int().min(1).max(500).default(60),
+  /** Model rounds and tool steps one task may take; null is auto (60 on a key, see src/knobs/apply.ts autoTaskLimits). */
+  maxSteps: taskLimit(1, 500),
   /** Stop a task once it has cost about this much, in dollars; null means no cap. */
   spendCapDollars: z.number().min(0.01).max(10000).nullable().default(null),
   /** How many times a failed request to the model service is tried again; null keeps the launch setting. */
@@ -39,9 +45,15 @@ export const KnobTaskLimitsSettingsSchema = z.object({
   /**
    * mac7/speed: how many times one task may go back to the model before it stops and gives the best
    * answer it has; null keeps the launch setting (12), or `codingModelRounds` for a task that works on
-   * the project's files. A planned task is given more room on top.
+   * the project's files. A planned task is given more room on top. Auto is no limit on a sign-in or a model on this computer.
    */
-  maxModelRounds: z.number().int().min(2).max(60).nullable().default(null),
+  maxModelRounds: taskLimit(2, 500),
+  /**
+   * selfdev: how many tokens one task may use in all, counting every request it sends to the model; null keeps the
+   * built-in 200,000 on a key, and no limit on a sign-in or a model on this computer. Long coding work on Branch itself
+   * (edit, test, push, wait for checks, merge) needs more.
+   */
+  maxTaskTokens: taskLimit(20_000, 20_000_000),
   /**
    * Settings › Permissions › Messages per conversation per hour: the most tasks one conversation may start in an hour.
    * It stops a runaway loop (a schedule, a trigger, a chat app or two Trunks answering each other): such a task past it is
@@ -61,9 +73,9 @@ export const KnobCommandSettingsSchema = z.object({
   /** Longest tool answer the model reads, in characters; null keeps the launch setting. */
   toolAnswerChars: z.number().int().min(1000).max(60000).nullable().default(null),
   /** Longest one tool call may run, in seconds; null keeps the launch setting. */
-  toolTimeoutSeconds: z.number().int().min(5).max(600).nullable().default(null),
+  toolTimeoutSeconds: z.number().int().min(5).max(1800).nullable().default(null),
   /** Longest one command may run, in seconds; null keeps the launch settings file's figure. */
-  commandTimeoutSeconds: z.number().int().min(1).max(120).nullable().default(null),
+  commandTimeoutSeconds: z.number().int().min(1).max(1800).nullable().default(null),
   /** Whether a task may keep a command line open between commands. */
   keptOpenShell: z.boolean().default(true),
   /** Extra environment variable names handed to commands, beyond the built-in safe list. */
@@ -130,11 +142,30 @@ export const knobCardNames = Object.keys(knobCards) as KnobCard[];
 const keyOf = (card: KnobCard): string => `knobs-${card}`;
 type Reader = Pick<Store, "get">;
 
+/**
+ * The owner's ship-on rule (defaults audit, 2026-09-28): the "about you" note goes in front of every conversation once the
+ * owner writes one; with no note nothing is added (src/knobs/apply.ts). None of (a)–(f), so it ships on. A card is written
+ * whole, so a saved false that the owner never set reads as it ships (src/ship-on.ts); one they set is kept.
+ */
+export const knobShipsOn: Partial<Record<KnobCard, Record<string, unknown>>> = { memory: { aboutYouOn: true } };
+
 /** One card's settings, with today's behaviour for anything never saved or saved wrongly. */
 export function readKnobs<K extends KnobCard>(store: Reader, owner: string, card: K): KnobValues[K] {
   const schema = knobCards[card] as unknown as z.ZodType<KnobValues[K]>;
   const saved = schema.safeParse(store.get("settings", owner, keyOf(card))?.data ?? {});
-  return saved.success ? saved.data : schema.parse({});
+  if (!saved.success) return schema.parse({ ...(knobShipsOn[card] ?? {}) });
+  const ships = knobShipsOn[card];
+  const read = ships ? shippedUnlessChosen(store, owner, keyOf(card), saved.data as Record<string, unknown>, ships) as KnobValues[K] : saved.data;
+  return card === "limits" ? stepsAsShipped(store, owner, read as KnobValues["limits"]) as KnobValues[K] : read;
+}
+
+/**
+ * The step limit used to ship as 60, and the card is written whole, so a record saved for any other limit holds a 60
+ * nobody chose. Such a 60 reads as auto; one the owner set (it is in the ship-on book) is kept.
+ */
+function stepsAsShipped(store: Reader, owner: string, limits: KnobValues["limits"]): KnobValues["limits"] {
+  if (limits.maxSteps !== 60 || chosenFields(store, owner, keyOf("limits")).includes("maxSteps")) return limits;
+  return { ...limits, maxSteps: null };
 }
 
 /** Saves one card; fields left out keep what was there. Returns what is now in force. */
@@ -142,6 +173,7 @@ export function saveKnobs<K extends KnobCard>(store: Store, owner: string, card:
   const schema = knobCards[card] as unknown as z.ZodType<KnobValues[K]>;
   const next = schema.parse({ ...readKnobs(store, owner, card), ...(input && typeof input === "object" ? input : {}) });
   store.save("settings", owner, keyOf(card), next as Record<string, unknown>);
+  markChosen(store, owner, keyOf(card), sentKeys(input));
   return next;
 }
 
@@ -153,4 +185,5 @@ export function allKnobs(store: Reader, owner: string): KnobValues {
 /** Puts one card back to how Branch ships. */
 export function resetKnobs(store: Store, owner: string, card: KnobCard): void {
   store.save("settings", owner, keyOf(card), {});
+  forgetChosen(store, owner, keyOf(card));
 }

@@ -9,7 +9,7 @@
    - the Trunk that asked for you (@you) with the needs-you dot, while the room needs you;
    - the person typing (POST /api/trunks/rooms/<id>/typing as that person) shown to the owner, and gone when it ends;
    - the owner typing in the box reported to the engine, where the person sees it and the owner does not. */
-const { chromium } = require("C:/Users/bishi/AppData/Local/Programs/Branch Agent/resources/app/node_modules/playwright");
+const { chromium } = require("playwright");
 const { join } = require("node:path");
 
 const { PORT = "3760", TOKEN, ROOM, SID, PERSON, PIN, SHOTS } = process.env;
