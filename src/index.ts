@@ -32,7 +32,7 @@ import { OsPermissions, probeReader } from "./os-permissions.js";
 import { Runtime, argumentFingerprint } from "./runtime.js";
 import { gateRefusal } from "./tool-gate.js"; // integration review (mac5/manual-actions)
 import { DemoProvider } from "./demo.js";
-import { watchSetupOrigin } from "./delight.js"; // setup polish 2
+import { noteKeepOakProfileVerified, watchSetupOrigin } from "./delight.js"; // setup polish 2
 import { Knowledge, registerKnowledge } from "./knowledge.js";
 import { registerOrchestration } from "./orchestration-tools.js";
 import { registerOrchestrationModes } from "./orchestration-modes.js";
@@ -994,6 +994,7 @@ export async function createBranch(options: {
       if (sessionLock.state().locked) throw new Error("Unlock Branch before connecting KeepOak.");
       sessionLock.require();
     } });
+  keepoak.onProfileVerified = (identity) => noteKeepOakProfileVerified(store, runtime.owner, identity);
   releaseOnLock.push(async () => keepoak.close());
   // accounts-wizard-plans: the coding assistants and the Gemini sign-in the owner added come back (src/accounts/saved-sign-ins.ts).
   attachCodexModels(runtime.models, new CodexModels(store, runtime.owner)); // QA 2026-09-28: Codex's model, chosen in Branch

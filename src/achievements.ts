@@ -4,7 +4,7 @@ import type { AchievementTallies } from "./achievement-tallies.js";
 
 /**
  * phase2/delight: the achievements — 500 in five tiers of exactly 100 (Bronze, Silver, Gold, Diamond,
- * Godly) and five near-impossible ones (SSS+), 505 in all.
+ * Godly) and five near-impossible ones (SSS+), plus separately counted connection bonuses.
  *
  * Every one is earned from something that really happened and was written down: a row in Branch's own
  * records (a finished task, a conversation, a tool that ran, an answered approval, a live voice call;
@@ -25,6 +25,8 @@ export interface Achievement {
   metric: string;
   goal: number;
   tier: AchievementTier;
+  /** A milestone outside the original rank tree, Collector and whole-tree counts. */
+  bonus?: boolean;
 }
 type Draft = Omit<Achievement, "tier"> & { days: number };
 
@@ -225,7 +227,14 @@ const secretsOfSecrets = (leaves: number): Achievement[] => [
 ].map(([metric, goal, name, desc]) => ({ id: `sss:${metric}`, metric: String(metric), goal: Number(goal), name: String(name), desc: String(desc), kind: "Secrets", tier: "SSS+" as const }));
 
 let built: Achievement[] | null = null;
-/** All 505, Bronze first. Built once; the order and the ids never depend on what anybody has earned. */
+/** A verified service response records this internally; the window's noticed flags cannot set it. */
+export const keepOakVerifiedFlag = "keepoak-connected";
+const connectionBonus: Achievement = {
+  id: "bonus:keepoak-connected", name: "KeepOak connected",
+  desc: "Verify your KeepOak account profile through its saved connection at least once.",
+  kind: "Connections", metric: `noticed:flag:${keepOakVerifiedFlag}`, goal: 1, tier: "Bronze", bonus: true,
+};
+/** Original 505 remain unchanged; bonuses are appended without changing ranked ids or thresholds. */
 export function achievementCatalogue(): Achievement[] {
   if (built) return built;
   const fixed = [...looks(), ...pets(), ...rows("audit", auditRows), ...rows("records", recordRows), ...rows("event", eventRows), ...times()];
@@ -234,7 +243,7 @@ export function achievementCatalogue(): Achievement[] {
   if (all.length !== 500) throw new Error(`The achievements add up to ${all.length}, not 500`);
   all.sort((a, b) => a.days - b.days || a.id.localeCompare(b.id));
   const ranked = all.map(({ days: _days, ...rest }, i) => ({ ...rest, tier: rankFor(i) }));
-  const done = [...ranked, ...secretsOfSecrets(themeNames().length * 2 * seasons.length)];
+  const done = [...ranked, ...secretsOfSecrets(themeNames().length * 2 * seasons.length), connectionBonus];
   built = done;
   return done;
 }
