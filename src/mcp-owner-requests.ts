@@ -22,6 +22,9 @@ const boundedProviders = new Set(['openai-compatible', 'openai-responses', 'anth
   'anthropic-vertex', 'gemini', 'bedrock', 'cohere', 'azure-openai', 'ollama']);
 const bounded = (preset: { provider: { name: string; keepsOwnTime?: boolean } }): boolean =>
   boundedProviders.has(preset.provider.name) && !preset.provider.keepsOwnTime;
+// Reused owner-request adapters inherit the app's gate for this exact store.
+const storeLockGates = new WeakMap<Store, () => boolean>();
+
 type Settings = z.infer<typeof McpOwnerRequestSettings>;
 type Answer = { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> };
 interface Pending {
@@ -38,7 +41,12 @@ export class McpOwnerRequests {
   private readonly pending = new Map<string, Pending>();
   private readonly rates = new Map<string, number[]>();
   constructor(private readonly store: Store, private readonly owner: () => string,
-    private readonly models: ModelRouter, private readonly locked: () => boolean) {}
+    private readonly models: ModelRouter, locked?: () => boolean) {
+    if (locked) storeLockGates.set(store, locked);
+  }
+  private locked(): boolean {
+    return storeLockGates.get(this.store)?.() ?? true;
+  }
 
   settings(server: string): Settings {
     const saved = McpOwnerRequestSettings.safeParse(this.store.get('settings', this.owner(), `mcp-owner-requests:${server}`)?.data ?? {});
