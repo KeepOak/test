@@ -68,8 +68,16 @@ test("Library reviews pending facts, rejects individually, and accepted preferen
   await page.goto(server.url);
   await page.evaluate(() => localStorage.clear());
   await signIn(page, server);
-  await openPlace(page, "library", "seasons");
+  // SELF-170: Seasons is a place of its own, no longer a Library tab.
+  await openPlace(page, "seasons");
   await page.getByText("Matching tasks: 3 · Before 40% · After 80% · Gain 40.0 points", { exact: true }).waitFor();
+  // SELF-136/171: an adopted skill can be pinned and unpinned from the page, through the engine's own record.
+  await page.getByRole("button", { name: "Pin skill", exact: true }).click();
+  await page.getByRole("button", { name: "Unpin skill", exact: true }).waitFor();
+  assert.equal(app.gardener.book.seeds().find((one) => one.id === seed.id).pinned, true);
+  await page.getByRole("button", { name: "Unpin skill", exact: true }).click();
+  await page.getByRole("button", { name: "Pin skill", exact: true }).waitFor();
+  assert.equal(app.gardener.book.seeds().find((one) => one.id === seed.id).pinned, false);
   await page.getByRole("button", { name: "Set aside", exact: true }).click();
   await page.getByRole("button", { name: "Restore", exact: true }).waitFor();
   assert.equal(app.store.skills.view("local", skill.id).activeVersion, null);

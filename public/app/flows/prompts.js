@@ -1,7 +1,7 @@
 /* A new saved prompt (Automations › Procedures, "New prompt"), saved in the engine's prompt library with POST /api/prompts
    {title, command, body}. Blanks are the engine's {{name}}; the line under the text says which ones it will ask for.
    The library is off until the owner switches it on, and the engine's refusal is shown in its own words.
-   "Try on two models" stays greyed. Save waits until the name and what to ask are filled in (stress test B005), and says so;
+   There is no "Try on two models" here: asking two models at once is the Model arena's, which the dialog says in words. Save waits until the name and what to ask are filled in (stress test B005), and says so;
    while the library is switched off, the dialog opens with its switch (places/switch-on.js) above the fields. */
 
 import { $ } from "../core/dom.js";
@@ -10,6 +10,7 @@ import { openDlg, closeDlg, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
+import { reason } from "../core/why.js";
 import { t } from "../../i18n.js";
 
 async function newPrompt() {
@@ -17,8 +18,8 @@ async function newPrompt() {
   try { mode = await modeOf("prompts"); } catch (error) { toast(error.message); }
   const off = mode === "off" ? offTile("prompts", t("window.switch-on.off", { label: t("prompts.card.title") })) : "";
   openDlg({ title: t("window.flows.prompt.title"),
-    body: `${off}<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="pr-name"></label><label class="fld"><span>${t("commands.dashboard.label")}</span><input class="inp" id="pr-cmd" maxlength="32"></label><label class="fld"><span>${t("window.flows.flow.what-ask")}</span><textarea class="inp" id="pr-text" rows="3"></textarea></label><p class="hint" id="pr-blanks"></p><p class="hint" id="pr-need">${t("window.switch-on.prompt-need")}</p>`,
-    foot: `<button class="btn ghost" type="button" data-act="prompt-try">${t("window.flows.prompt.try")}</button><button class="btn pri" type="button" data-act="prompt-save" disabled>${t("action.save")}</button>` });
+    body: `${off}<label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="pr-name"></label><label class="fld"><span>${t("commands.dashboard.label")}</span><input class="inp" id="pr-cmd" maxlength="32"></label><label class="fld"><span>${t("window.flows.flow.what-ask")}</span><textarea class="inp" id="pr-text" rows="3"></textarea></label><p class="hint" id="pr-blanks"></p><p class="hint" id="pr-need">${t("window.switch-on.prompt-need")}</p><p class="hint">${reason("prompt-try")}</p>`,
+    foot: `<button class="btn pri" type="button" data-act="prompt-save" disabled>${t("action.save")}</button>` });
 }
 
 /* Save is pressable once both the name and what to ask have words; the line under the fields says what is missing. */
