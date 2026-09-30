@@ -201,8 +201,15 @@ export class BranchBrowser {
    * one's own timer removes it when the hour is up, an older one is never kept, and closing the browser removes them all.
    */
   private readonly heldDownloads = new Map<string, HeldDownload>();
-  /** Files an earlier launch held and never removed are looked for once, on the first hold of this launch. */
+  /** Held files being removed now, by id, so an answer or close that arrives meanwhile waits for the file to be gone. */
+  private readonly heldRemovals = new Map<string, Promise<void>>();
+  /**
+   * Files in the held folder this launch is not holding (an earlier launch's, or another launch's sharing the folder)
+   * are looked for from the first hold of this launch on, and each is removed once it is an hour old.
+   */
   private heldLeftoversSwept = false;
+  /** The next look at those files, due when the youngest one left reaches the hour. */
+  private heldLeftoverTimer: NodeJS.Timeout | undefined;
   /** Where held files wait: this computer's temporary folder, never the workspace. Replaced in tests. */
   heldFolder = joinPath(tmpdir(), 'branch-held-downloads');
   /** Each site's small icon for the owner's tabs, as a data: address ("" while unknown or when it has none). */
@@ -1240,7 +1247,7 @@ export class BranchBrowser {
     for (const id of [...this.heldDownloads.keys()]) this.heldEntry(id);
     if (this.heldDownloads.size >= 20) throw new Error('twenty files are already waiting for your yes; answer those first');
     await mkdir(this.heldFolder, { recursive: true });
-    await this.sweepHeldLeftovers();
+    if (!this.heldLeftoversSwept) { this.heldLeftoversSwept = true; await this.sweepHeldLeftovers(); }
     const id = randomUUID(), path = joinPath(this.heldFolder, id);
     const record = await this.stream(download, path, name);
     if (this.closed) { await rm(path, { force: true }); throw new Error('the browser is closing; the file was not kept'); }
@@ -1257,29 +1264,43 @@ export class BranchBrowser {
     void this.dropHeld(id);
     return undefined;
   }
-  /** Held files an earlier launch left in the folder (its list is gone with it) are removed once they are an hour old. */
+  /**
+   * Held files this launch has no list for (an earlier launch's list is gone with it) are removed once they are an hour
+   * old, the same hour their own launch keeps them. A younger one is looked at again when it reaches the hour.
+   */
   private async sweepHeldLeftovers(): Promise<void> {
-    if (this.heldLeftoversSwept) return;
-    this.heldLeftoversSwept = true;
+    clearTimeout(this.heldLeftoverTimer);
+    this.heldLeftoverTimer = undefined;
+    if (this.closed) return;
     const names = await readdir(this.heldFolder).catch(() => [] as string[]);
+    let next = Infinity;
     await Promise.all(names.filter(name => heldName.test(name) && !this.heldDownloads.has(name)).map(async name => {
       const path = joinPath(this.heldFolder, name);
       const seen = await stat(path).catch(() => null);
-      if (seen?.isFile() && Date.now() - seen.mtimeMs > heldForMs) await rm(path, { force: true }).catch(() => undefined);
+      if (!seen?.isFile()) return;
+      const left = heldForMs - (Date.now() - seen.mtimeMs);
+      if (left < 0) await rm(path, { force: true }).catch(() => undefined);
+      else next = Math.min(next, left + 1);
     }));
+    if (next === Infinity || this.closed) return;
+    this.heldLeftoverTimer = setTimeout(() => void this.sweepHeldLeftovers(), next);
+    this.heldLeftoverTimer.unref();
   }
   private async dropHeld(id: string): Promise<void> {
     const held = this.heldDownloads.get(id);
     this.heldDownloads.delete(id);
     if (!held) return;
     clearTimeout(held.expiry);
-    await rm(held.path, { force: true }).catch(() => undefined);
+    const removal = rm(held.path, { force: true }).catch(() => undefined).finally(() => this.heldRemovals.delete(id));
+    this.heldRemovals.set(id, removal);
+    await removal;
   }
   /** browser.keep_download: once the owner said yes, the held file moves into the workspace; keep false throws it away. */
   async keepDownload(input: { id: string; keep: boolean }, context: ToolContext) {
     // An hour-old file is removed before the answer is refused, so a late yes or no leaves nothing behind.
     const found = this.heldDownloads.get(input.id);
     if (found && Date.now() - found.at > heldForMs) await this.dropHeld(input.id);
+    await this.heldRemovals.get(input.id);
     const held = this.heldDownloads.get(input.id);
     const conversation = this.store?.run(context.runId)?.sessionId ?? '';
     if (!held || held.owner !== context.owner || held.conversation !== conversation)
@@ -1547,8 +1568,9 @@ export class BranchBrowser {
       await this.browser?.close();
       await this.pinProxy?.close();
     } finally {
+      clearTimeout(this.heldLeftoverTimer);
       // Held downloads go last, once no page is left to send another: nothing waits outside the workspace after close.
-      await Promise.all([...this.heldDownloads.keys()].map(id => this.dropHeld(id)));
+      await Promise.all([...[...this.heldDownloads.keys()].map(id => this.dropHeld(id)), ...this.heldRemovals.values()]);
     }
     this.sessions.clear();
     this.controlled.clear();

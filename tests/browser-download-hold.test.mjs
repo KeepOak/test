@@ -148,3 +148,17 @@ test("Ask each time: a held file left behind by an earlier launch is removed onc
   const id = await f.hold();
   assert.deepEqual((await f.waiting()).sort(), [fresh.slice(-36), id].sort(), "only the hour-old leftover was removed");
 });
+
+test("Ask each time: a leftover younger than an hour at the first hold is removed later, once it reaches the hour", async (t) => {
+  const f = await holding(t);
+  await mkdir(join(f.root, "held"), { recursive: true });
+  const younger = join(f.root, "held", "22222222-2222-4222-8222-222222222222"), fresh = join(f.root, "held", "33333333-3333-4333-8333-333333333333");
+  await writeFile(younger, "old"); await writeFile(fresh, "new");
+  // Just short of an hour when this launch first holds a file; nobody holds anything after that.
+  const almost = new Date(Date.now() - 3_600_000 + 300); await utimes(younger, almost, almost);
+  const id = await f.hold();
+  assert.ok((await f.waiting()).includes(younger.slice(-36)), "not yet an hour old: left for now");
+  const gone = async () => { for (let i = 0; i < 100; i++) { if (!(await f.waiting()).includes(younger.slice(-36))) return true; await new Promise((r) => setTimeout(r, 50)); } return false; };
+  assert.ok(await gone(), "removed once it reached the hour, with no other download arriving");
+  assert.deepEqual((await f.waiting()).sort(), [fresh.slice(-36), id].sort(), "another launch's newer file and this launch's own are kept");
+});
