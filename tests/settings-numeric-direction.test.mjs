@@ -17,6 +17,7 @@ const numeric = [
   ["retention", "keepDays", 0, 3650, false, "plain"],
   ["comfort-mcp", "startupTimeoutSeconds", 10, 300, false, "plain"],
   ["round-limit", "maxModelRounds", 12, 60, false, "plain"],
+  ["step-limit", "maxSteps", 60, 120, false, "plain"],
   ["task-tokens", "taskAllowance", 200000, 400000, false, "plain"],
 ];
 
