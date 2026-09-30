@@ -536,7 +536,9 @@ export class Scheduler {
   private async evaluateSuite(record: SavedRecord): Promise<Run> {
     if (!this.evaluations) throw new Error("Evaluations are not available in this launch");
     const preset = typeof record.data.preset === "string" ? record.data.preset : undefined;
-    const { run } = await this.evaluations.runScheduled(String(record.data.suite), preset);
+    const { run } = await this.evaluations.runScheduled(String(record.data.suite), preset, (run) => {
+      this.store.event(run.id, "schedule.turn", { scheduleId: record.id });
+    });
     return run;
   }
   /** Whether the Trunk that made a schedule may send to chats now; false once it is gone. */

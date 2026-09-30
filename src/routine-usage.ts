@@ -17,8 +17,6 @@ export function saveRoutineBudget(store: Store, owner: string, id: string, input
   const record = store.get("schedules", owner, id);
   if (!record) throw new Error("Schedule not found");
   const value = RoutineBudgetSchema.parse(input);
-  if (record.data.kind === "evaluation" && value.monthlyEstimatedDollars !== null)
-    throw new Error("Evaluation schedules do not yet attribute all judge tasks to a routine; their budget cannot be enabled");
   store.save("governance", owner, budgetKey(id), value);
   return value;
 }
@@ -45,9 +43,10 @@ function rootsOf(store: Store, owner: string, id: string): { ids: string[]; lega
 }
 function familyOf(store: Store, owner: string, roots: string[]): { ids: string[]; capped: boolean } {
   const rows = store.sqlite.prepare(`WITH RECURSIVE links AS (
-    SELECT e.run_id AS child,json_extract(e.data,'$.parentRunId') AS parent FROM events e
-    WHERE e.kind='run.started' AND json_valid(e.data)
-      AND e.id=(SELECT MIN(first.id) FROM events first WHERE first.run_id=e.run_id AND first.kind='run.started')
+    SELECT e.run_id AS child,CASE WHEN e.kind='run.started' THEN COALESCE(NULLIF(json_extract(e.data,'$.parentRunId'),''),json_extract(e.data,'$.resumedFrom'))
+      ELSE json_extract(e.data,'$.runId') END AS parent FROM events e
+    WHERE e.kind IN ('run.started','routine.parent') AND json_valid(e.data)
+      AND e.id=(SELECT MIN(first.id) FROM events first WHERE first.run_id=e.run_id AND first.kind=e.kind)
     ), family(id,depth,path) AS (
     SELECT id,0,','||id||',' FROM tasks WHERE owner=? AND id IN (SELECT value FROM json_each(?))
     UNION ALL SELECT t.id,f.depth+1,f.path||t.id||',' FROM family f JOIN links e ON e.parent=f.id
@@ -108,9 +107,12 @@ function routineFor(store: Store, owner: string, runId: string): string | null {
     seen.add(runId);
     const events = store.events(runId), turn = events.find((event) => event.kind === "schedule.turn");
     if (turn && typeof turn.data.scheduleId === "string") return turn.data.scheduleId;
-    const parent = events.find((event) => event.kind === "run.started")?.data.parentRunId;
-    if (typeof parent !== "string" || !parent) return null;
-    runId = parent;
+    const started = events.find((event) => event.kind === "run.started")?.data;
+    const parent = typeof started?.parentRunId === "string" && started.parentRunId ? started.parentRunId : started?.resumedFrom;
+    const routineParent = events.find((event) => event.kind === "routine.parent")?.data.runId;
+    const next = typeof parent === "string" && parent ? parent : routineParent;
+    if (typeof next !== "string" || !next) return null;
+    runId = next;
   }
   throw new Error("The routine's task ancestry exceeds the supported depth");
 }

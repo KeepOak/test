@@ -1,6 +1,7 @@
 import { access } from "node:fs/promises";
 import { resolve, relative, isAbsolute } from "node:path";
 import type { Runtime } from "./runtime.js";
+import type { Run } from "./contracts.js";
 import { evaluateChecks, type CompletionCheck } from "./reliability.js";
 import type { EvaluationTask } from "./evaluation-suites.js";
 import { fenceUntrusted } from "./evaluation-honesty.js";
@@ -55,7 +56,7 @@ export function vacuousTaskProblem(task: { id: string; checks?: unknown; scorers
  * Decides one task. Checks that can be settled without a model always win when the task has them;
  * a judge is only asked when there are none. What the task forbade is fatal either way.
  */
-export async function gradeTask(runtime: Runtime, task: EvaluationTask, output: string): Promise<Grade> {
+export async function gradeTask(runtime: Runtime, task: EvaluationTask, output: string, onStarted?: (run: Run) => void): Promise<Grade> {
   const forbidden = await denyProblem(output, task, runtime.workspace);
   if (forbidden) return { score: 0, passed: false, method: "checks", problem: forbidden, reason: null };
   if (task.checks) {
@@ -63,7 +64,7 @@ export async function gradeTask(runtime: Runtime, task: EvaluationTask, output: 
     return { score: problem ? 0 : 1, passed: !problem, method: "checks", problem, reason: null };
   }
   if (task.judge) {
-    const { score, reason } = await askJudge(runtime, task, output);
+    const { score, reason } = await askJudge(runtime, task, output, onStarted);
     const passed = score >= task.judge.pass;
     return { score, passed, method: "judge", problem: passed ? null : `The grader gave ${score}: ${reason}`, reason };
   }
@@ -99,10 +100,10 @@ export async function judgePrompt(task: { prompt: string; expected?: string | un
   ].filter(Boolean).join("\n\n");
 }
 
-async function askJudge(runtime: Runtime, task: EvaluationTask, output: string): Promise<{ score: number; reason: string }> {
+async function askJudge(runtime: Runtime, task: EvaluationTask, output: string, onStarted?: (run: Run) => void): Promise<{ score: number; reason: string }> {
   const prompt = await judgePrompt(task, task.judge!.rubric, output);
   try {
-    const run = await runtime.run({ prompt, permissions: [], isolated: true, temporary: true, budget: { maxSteps: 2, maxTokens: 20000 } });
+    const run = await runtime.run({ prompt, permissions: [], isolated: true, temporary: true, ...(onStarted ? { onStarted } : {}), budget: { maxSteps: 2, maxTokens: 20000 } });
     if (run.status !== "completed") return { score: 0, reason: `The grader did not finish (${run.status})` };
     return readGrade(run.output);
   } catch (error) {
