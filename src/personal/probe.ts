@@ -24,8 +24,13 @@ export interface ConnectionHealth { checkedAt: string; ok: boolean; checks: Conn
 
 /** Uses the existing policy-checked fetch and bearer token. These fixed URLs only read metadata. */
 export async function probeSignIn(service: SignInService, token: string, fetchImpl: typeof fetch): Promise<ConnectionHealth> {
+  return probeMetadata(probes[service], token, fetchImpl);
+}
+
+/** Also used by existing token connectors; callers supply a fixed read at their saved service address. */
+export async function probeMetadata(probes: readonly Probe[], token: string, fetchImpl: typeof fetch): Promise<ConnectionHealth> {
   const checks: ConnectionCheck[] = [];
-  for (const probe of probes[service]) {
+  for (const probe of probes) {
     let ok = false, reason: string | null = null;
     try {
       const response = await fetchImpl(probe.url, { method: "GET", redirect: "error", signal: AbortSignal.timeout(10000),

@@ -127,6 +127,10 @@ async function route(deps: PersonalHttpDeps, path: string): Promise<unknown> {
   const tool = toolRoutes[path];
   if (tool && post) return runPartTool(deps, tool[0], tool[1]);
   if (path.startsWith("/api/personal/signin/")) return signInRoute(deps, path);
+  if (path === "/api/personal/home/test" && post) {
+    z.object({}).strict().parse(await deps.readBody());
+    return { health: await personal.home.test() };
+  }
   const parts: Record<string, { settings(): unknown; save(input: unknown): unknown }> = {
     "/api/personal/x": personal.x, "/api/personal/home": personal.home, "/api/personal/chat-files": personal.chatFiles,
     "/api/personal/mail": personal.mail, "/api/personal/brief": personal.brief,
