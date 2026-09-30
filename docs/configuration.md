@@ -1662,8 +1662,8 @@ means this wave added it (behind its switch, off); **not built** gives the reaso
 
 ## Setting up a chat app in one command
 
-*mac7/connect.* For every chat app Branch supports (55 of them, counted from the code: the nine with a
-type of their own, the ten team-chat services in `data/channels.json`, and the 36 wave mac3 services in
+*mac7/connect.* For every chat app Branch supports (56 of them, counted from the code: the nine with a
+type of their own, the ten team-chat services in `data/channels.json`, and the 37 added services in
 `src/channels/connectors.ts`), one command gets the official app, opens the page that makes the bot,
 takes the token without showing it, checks it with the app's own service, keeps it in the locker, and
 switches the app on if you say so:
@@ -1839,6 +1839,7 @@ says so.
 | KOOK (`kook`) | yes; switched on from it | Windows: download page; Mac: download page; Linux: download page | `https://developer.kookapp.cn/app/index` | `KOOK_BOT_TOKEN` | GET `https://www.kookapp.cn/api/v3/user/me` |
 | WeChat Official Account (`wechat-mp`) | yes; switched on from it | Windows: winget `Tencent.WeChat`; Mac: cask `wechat`; Linux: download page | `https://mp.weixin.qq.com/` | `WECHAT_MP_APP_SECRET`, `WECHAT_MP_TOKEN`, `WECHAT_MP_AES_KEY`; plus appId | none |
 | WeCom app (`wecom-app`) | yes; switched on from it | Windows: winget `Tencent.WeCom`; Mac: download page; Linux: download page | `https://work.weixin.qq.com/wework_admin/frame#apps` | `WECOM_APP_SECRET`, `WECOM_APP_TOKEN`, `WECOM_APP_AES_KEY`; plus corpId, agentId | none |
+| WhatsApp (personal number) (`whatsapp-web`) | yes; switched on from it | Windows: download page; Mac: cask `whatsapp`; Linux: download page | none (plain steps) | `WAHA_API_KEY`; plus server | none |
 
 <!-- channel-setup-table:end -->
 
@@ -6142,6 +6143,29 @@ a yes for this conversation that runs out in an hour, or a standing rule you can
   sentence the settings screen shows.
 - `POST /api/rules/allowed/revoke` — `{ session, tool, target }`. Removes one remembered answer and
   hands back what is left. A yes that is not there any more answers 404.
+
+### WhatsApp with a personal number, through a bridge you run
+
+The official WhatsApp Business Cloud API (the WhatsApp card) needs a business number and Meta's app review. For a
+personal number Branch talks to **WAHA** (github.com/devlikeapro/waha, Apache-2.0), a WhatsApp Web bridge you install
+and run yourself with Docker on this computer, the way Signal works through signal-cli: Branch ships none of it.
+**This automates a personal number through an unofficial client, which WhatsApp's terms do not allow, so the number
+can be banned.** Use a spare number; the official Cloud API has no such risk. It is off until you set it up.
+
+The setup (WhatsApp (personal number) in Customize › Channels) says the risk first, then:
+installing Docker (Docker Desktop needs administrator rights), running
+`docker run -d --restart unless-stopped -p 127.0.0.1:3000:3000 -e WAHA_API_KEY=… --name waha devlikeapro/waha`,
+typing its address and pasting the key, and a **Link** step that shows the code the bridge makes, to scan with
+WhatsApp › Settings › Linked devices (`POST /api/channel-setup/whatsapp-web/link`: owner only, this computer only,
+never returns the key). Only a loopback address is accepted for the bridge (127.0.0.1, localhost, ::1): it is a
+program on this computer, so the network settings are not asked about that one address. Messages arrive over the
+bridge's socket (`/ws?session=…&events=message`) and replies go out with `POST /api/sendText`; a direct chat is always
+answered, a group when the assistant's number is @mentioned or one of its messages is replied to, and its own
+messages and status updates are never read. Pairing codes and the allowlist apply as on every app.
+Pictures, videos, files and voice notes sent to the number come in too: the bridge downloads them, and Branch fetches
+each one from the bridge alone (same address, with its key, no redirects, at most 20 MB) only once the message has
+earned an answer; a voice note is transcribed as on the other apps. Files go out through the bridge's `sendImage`
+(JPEG and PNG) and `sendFile`, and a spoken reply through `sendVoice` as a voice note, at most 16 MB each.
 
 ### Files and voice in the other chat apps (CHAT-094, 104, 105)
 
