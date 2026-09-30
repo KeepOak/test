@@ -19,6 +19,7 @@ import { unofferedMark, wireName } from "../dist/providers.js";
 import { ProviderHttpError } from "../dist/provider-retry.js";
 import { NetworkPolicy } from "../dist/network-policy.js";
 import { providerEmbeddings } from "../dist/providers.js";
+import { openRouterBodyPart } from "../dist/model-savings/openrouter.js";
 import { EmbeddingClient } from "../dist/document-embeddings.js";
 import { embeddingConnection, embeddingsFor } from "../dist/embeddings.js";
 import { tablePrice, estimateCost } from "../dist/pricing.js";
@@ -692,8 +693,15 @@ test("the catalog supplies prices for models pricing.ts does not list, and never
   // A model on this computer genuinely costs nothing.
   assert.equal(estimateCost("local-model", { input: 1000, output: 1000 }).amount, 0);
   for (const entry of catalogEntries())
-    for (const [model, price] of Object.entries(entry.prices ?? {}))
+    for (const [model, price] of Object.entries(entry.prices ?? {})) {
+      // MODEL-091: OpenRouter's free router is zero because every request caps the price at zero, so OpenRouter refuses
+      // rather than charges; that cap is what makes the zero true, so it is checked here instead of taken on trust.
+      if (price.input === 0 && price.output === 0 && model === "openrouter/free") {
+        assert.deepEqual(openRouterBodyPart(entry.baseUrl, undefined, model).provider?.max_price, { prompt: 0, completion: 0, request: 0 });
+        continue;
+      }
       if (entry.kind === "cloud") assert.ok(price.input > 0 || price.output > 0, `${model} is priced at zero but is not local`);
+    }
 });
 
 // ---------------------------------------------------------------- D: the docs table
