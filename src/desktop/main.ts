@@ -90,6 +90,9 @@ import { readRunning, type Attachment } from "../install/running.js";
 import { moveOldEngine } from "../install/old-engine.js";
 import { desktopGatewayConfig } from "./gateway-mode.js";
 import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesktopGateway } from "./gateway-launch.js";
+import { launchSupervisedGateway, windowsGatewaySupervision } from "./gateway-supervised.js";
+import type { WriteShortcut } from "../install/gateway-task.js";
+import { keepRunningThroughErrors } from "./engine-errors.js";
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
 import { rollBackPointer, versionedLayout } from "./app-folders.js";
@@ -560,6 +563,12 @@ async function refreshWindowsShortcuts(): Promise<void> {
   }).catch((error: Error) => console.error("Shortcuts:", error.message));
 }
 
+/** The gateway's Startup shortcut, where Windows refuses its scheduled task (src/install/gateway-task.ts): no VBScript. */
+const electronShortcut: WriteShortcut = async (link) => {
+  if (!shell.writeShortcutLink(link.path, "create", { target: link.target, args: link.arguments, cwd: link.workingDirectory, description: link.description }))
+    throw new Error("Windows did not write the Startup shortcut.");
+};
+
 async function start(): Promise<void> {
   const base = app.getPath("userData");
   const settings = await loadDesktopSettings(join(base, "model-settings.json"));
@@ -803,8 +812,12 @@ function relaunchApp(hidden = false): void {
 async function brokerOrOwnEngine(base: string, dataDir: string, workspace: string): Promise<Attachment | null> {
   try {
     // Deliberately Electron itself, not as Node: gateway-launch.ts removes ELECTRON_RUN_AS_NODE and passes its own flag.
-    return await launchDesktopGateway({ executable: process.execPath, appRoot: app.getAppPath(), packaged: app.isPackaged,
-      base, dataDir, workspace, join: () => joinBackground(dataDir) });
+    const launch = { executable: process.execPath, appRoot: app.getAppPath(), packaged: app.isPackaged,
+      base, dataDir, workspace, join: () => joinBackground(dataDir) };
+    // UP-PLATFORM-002: the installed Windows app starts it through its scheduled task, which restarts it after a crash.
+    if (!app.isPackaged || process.platform !== "win32" || testHooksOn()) return await launchDesktopGateway(launch);
+    return await launchSupervisedGateway({ ...windowsGatewaySupervision({ dataDir, executable: process.execPath }, { writeShortcut: electronShortcut }),
+      join: launch.join, direct: () => launchDesktopGateway(launch), log: (line) => console.error(line) });
   } catch (error) {
     const message = (error as Error).message;
     if (error instanceof GatewayLaunchError && !error.brokerMayRun) {
@@ -1077,6 +1090,12 @@ function startDetachedGateway(): void {
   app.disableHardwareAcceleration();
   if (!app.requestSingleInstanceLock()) { app.exit(0); return; }
   let gateway: Awaited<ReturnType<typeof runDesktopGateway>> = null, ending = false;
+  // UP-PLATFORM-002: Electron's own answer to a failure nobody caught is a dialog nobody sees, with the process left
+  // hanging. It is written down and the gateway carries on; one that cannot (not running, or failing over and over)
+  // exits with a failure code, which is what makes Task Scheduler (or the next sign-in) start it again.
+  keepRunningThroughErrors(process, { healthy: async () => gateway !== null && !ending, log: (line) => console.error(line),
+    // While it is already closing on purpose, it leaves as closing does, and nothing starts it again.
+    end: (why) => { console.error(`The background engine cannot carry on (${why}); it stops so it can be started again.`); app.exit(ending ? 0 : 1); } });
   app.on("window-all-closed", () => undefined);
   app.on("before-quit", (event) => {
     if (ending) return;

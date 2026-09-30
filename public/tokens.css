@@ -123,8 +123,8 @@
    (#03140b) until public/layout.js wears the theme. These are exactly the values layout.js writes
    for Slate (the catalogue's tokens, their Branch names from theme-bridge.js BRIDGE, and its opaque
    --surface); tests/phone-layout.test.mjs checks they stay equal to the catalogue. A theme somebody
-   chose is named on the page by public/look-early.js before anything is drawn, so a chosen Forest
-   paints in the Forest values above as early as it always did. */
+   chose is named on the window's page by public/app/look-early.js before anything is drawn (UP-UI-051),
+   so a chosen theme never paints Slate first. */
 :root:not([data-palette]),
 :root[data-palette="slate"] {
   --ground: #18242C;

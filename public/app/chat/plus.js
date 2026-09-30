@@ -3,13 +3,14 @@
    Temporary conversation starts the next conversation as one the engine never keeps (POST /api/run temporary); Who
    answers in this conversation is Branch or one of the engine's Trunks (GET and POST /api/trunks/conversations/<id>; the
    Trunks only while the engine's "conversations" part is on),
-   drawn for an ordinary or Trunk conversation once the engine has said who answers it. Folders, screenshots and asking
-   questions first stay greyed until the engine can do them. */
+   drawn for an ordinary or Trunk conversation once the engine has said who answers it. Take a screenshot attaches a
+   picture of the main display, with Branch's own windows left out (POST /api/panels/screen/shot, the owner's window
+   only). */
 
 import { $, esc, renderNow } from "../core/dom.js";
 import { ic, openPop, closePop, mi, toast } from "../core/ui.js";
 import { S, E, refresh, defaultTrunk } from "../core/state.js";
-import { api } from "../core/api.js";
+import { api, token } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { plusMore } from "./media.js";
@@ -17,7 +18,7 @@ import { t } from "../../i18n.js";
 import { plus17d } from "./calls17d.js"; // pass 17 part D §2 (greyed)
 import { asksFirst } from "./askfirst.js"; // parity B1: Ask me questions first
 import { openSkills } from "./messages.js"; // parity B1: Use a skill opens the Skills list
-import { attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
+import { addFiles, attachedChips, initAttach, pickFiles, removeFile, readyUploads } from "./attach.js"; // attach-anything
 import { initPractice, loadPractice, practiceMenu, practiceNext } from "./practice-next.js";
 
 const Q = { temporary: false, who: null, whoFor: null, pending: null, error: null };
@@ -139,7 +140,7 @@ function insert(text) {
 }
 
 export function initPlus() {
-  markLive(["plusmenu", "attach", "add-folder", "unattach", "insert", "sw:pm-temp", "who", "skills15"]);
+  markLive(["plusmenu", "attach", "add-folder", "shot", "unattach", "insert", "sw:pm-temp", "who", "skills15"]);
   initAttach();
   initPractice();
   /* Use a skill: the Skills list over the box; with no skill switched on, "/" in the box as before (the engine's commands). */
@@ -148,8 +149,22 @@ export function initPlus() {
   on("plusmenu", (el) => { openPop(el, menu() + plusMore() + plus17d()); void loadPractice(); });
   on("attach", () => { closePop(); pickFiles(false); });
   on("add-folder", () => { closePop(); pickFiles(true); });
+  on("shot", () => { closePop(); void takeScreenshot(); });
   on("unattach", (el) => removeFile(el.dataset.k));
   on("insert", (el) => insert(el.dataset.v));
   on("who", (el) => chooseWho(el));
   document.addEventListener("change", (e) => { if (e.target.id === "pm-temp") { Q.temporary = e.target.checked; renderNow(); } });
+}
+
+/* computer-control: the owner's own picture of the main display (Branch's own windows left out), attached like a file. */
+async function takeScreenshot() {
+  try {
+    const response = await fetch("/api/panels/screen/shot", { method: "POST", cache: "no-store", body: "{}",
+      headers: { "content-type": "application/json", ...(token.get() ? { authorization: `Bearer ${token.get()}` } : {}) } });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || t("window.chat.plus.screenshot-failed"));
+    const blob = await response.blob();
+    const at = new Date(), two = (n) => String(n).padStart(2, "0");
+    const name = `Screenshot ${at.getFullYear()}-${two(at.getMonth() + 1)}-${two(at.getDate())} ${two(at.getHours())}.${two(at.getMinutes())}.${two(at.getSeconds())}.png`;
+    addFiles([{ file: new File([blob], name, { type: "image/png" }), name }]);
+  } catch (error) { toast(error.message); }
 }

@@ -146,7 +146,7 @@ export interface DashboardDeps extends SummaryDeps {
 /**
  * Restarts the engine that works in the background. It stops the way Ctrl+C stops it — work saved,
  * the address let go — but with exit code 75, so the sign-in file (launchd's KeepAlive on a Mac,
- * systemd's Restart=on-failure on Linux) starts it again. Anywhere nothing would start it again it
+ * systemd's Restart=always on Linux, which only a stop on purpose's 78 prevents) starts it again. Anywhere nothing would start it again it
  * is refused, because a restart that only stops would leave the owner with no Branch at all.
  */
 async function restartEngine(dataDir: string, deps: DashboardDeps): Promise<unknown> {

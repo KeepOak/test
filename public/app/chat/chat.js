@@ -2,7 +2,7 @@
    composer, sending through POST /api/run, and the approval card for a task waiting on a yes (GET /api/policy). */
 
 import { restOf } from "../core/sleep.js";
-import { $, esc, renderNow, render, onRender } from "../core/dom.js";
+import { $, esc, renderNow, render, onRender, composing } from "../core/dom.js";
 import { S, E, refresh, trunkIntro, chatFace, defaultTrunk, threadTrunk, ownerHere, projectName, level } from "../core/state.js";
 import { api, whenBack } from "../core/api.js";
 import { on } from "../core/actions.js";
@@ -972,7 +972,7 @@ export function init() {
   document.addEventListener("submit", (e) => { if (e.target.id === "composer") { e.preventDefault(); send(); } });
   /* Enter sends; in a new conversation Ctrl+Enter (Cmd+Enter on a Mac) sends it to work in the background (RES-702). */
   document.addEventListener("keydown", (e) => {
-    if (e.target.id !== "prompt" || e.key !== "Enter" || e.shiftKey) return;
+    if (e.target.id !== "prompt" || e.key !== "Enter" || e.shiftKey || composing(e)) return;
     e.preventDefault();
     if ((e.ctrlKey || e.metaKey) && !C.sessionId && !C.sending) sendAway(); else send();
   });
