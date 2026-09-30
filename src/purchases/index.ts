@@ -112,7 +112,7 @@ export class Purchases {
     this.grants.delete(grant.id); this.quotes.delete(quote.id); return grant;
   }
   private record(grant: Grant, quote: Quote, state: string, details: Record<string, unknown> = {}) {
-    const receipt = { id: grant.id, ...this.view(quote), state, recordedAt: new Date().toISOString(),
+    const receipt = { ...this.view(quote), id: grant.id, quoteId: quote.id, state, recordedAt: new Date().toISOString(),
       delivery: "unverified", invoiceTotal: "unknown", ...details };
     this.deps.runtime.store.save("governance", this.deps.runtime.owner, `purchase-receipt:${grant.id}`, receipt);
     return receipt;
@@ -142,6 +142,8 @@ export class Purchases {
   }
   private async submit(wallet: LinkWallet, requestId: string, quote: Quote, grant: Grant, context: ToolContext, signal: AbortSignal) {
     const metadata = await wallet.retrieve(requestId, false, signal);
+    this.owner(context);
+    if (this.hash() !== grant.settingsHash || grant.expires <= Date.now()) throw new Error("Authorization changed or expired.");
     if (metadata.status !== "approved") {
       if (["created", "pending_approval"].includes(metadata.status)) this.pending.set(requestId, { quote, grant });
       const approvalURL = metadata.approval_url ? new URL(metadata.approval_url) : null;
