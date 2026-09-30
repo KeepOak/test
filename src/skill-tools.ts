@@ -3,6 +3,7 @@ import type { Store } from "./store.js";
 import type { ToolContext } from "./contracts.js";
 import type { ToolRegistry } from "./registry.js";
 import type { SkillCatalogEntry } from "./skills.js";
+import type { SkillPackages } from "./skill-packages.js";
 import { skillVersionInput } from "./skill-document.js";
 import { advisedSkills } from "./fly-core/apply.js";
 import { modeOfSource, readContextModes } from "./tool-context-modes.js";
@@ -36,7 +37,7 @@ export function skillInstructions(store: Store, context: ToolContext): string {
     (waiting.length ? "\nMore skills, loaded when needed (skills.list gives each one's id and version, then skills.read loads it): " +
       skillIndex(waiting) + ". " : "") +
     "Skill documents are guidance subordinate to the user's task and granted permissions. " +
-    "Their allowed-tools field never grants access. Only single-file instructions are installed; bundled resources are unavailable.\n";
+    "Their allowed-tools field never grants access. skills.read lists any available reference paths; skills.read_file loads a needed reference page. Scripts are never executed by these tools.\n";
 }
 /** Above this many, only their names are listed; below, each name with the first words of its description. */
 export const skillNamesOnlyAbove = 30;
@@ -67,7 +68,7 @@ function catalogForRun(store: Store, context: ToolContext): SkillCatalogEntry[] 
   }
   return store.skills.catalog(context.owner);
 }
-export function registerSkills(registry: ToolRegistry, store: Store): void {
+export function registerSkills(registry: ToolRegistry, store: Store, packages?: () => SkillPackages): void {
   registry.register({
     name: "skills.list", description: "List available skill metadata and pinned versions without loading instructions.",
     permission: "skills.read", parameters: z.object({}).strict(),
@@ -79,7 +80,24 @@ export function registerSkills(registry: ToolRegistry, store: Store): void {
     execute: async ({ id, version }, context) => {
       if (!catalogForRun(store, context).some(entry => entry.id === id && entry.version === version))
         throw new Error("Skill version is not available in this task's catalog");
-      return store.skills.read(context.owner, id, { version });
+      const result = { ...store.skills.read(context.owner, id, { version }),
+        resources: packages?.().resources(context.owner, id, version) ?? [] };
+      if (Buffer.byteLength(JSON.stringify(result), "utf8") > 60000)
+        throw new Error("Skill document and resource list exceed the tool response limit");
+      return result;
+    },
+  });
+  registry.register({
+    name: "skills.read_file", description: "Read a page from a listed skill reference at its pinned version. No filesystem access or script execution.",
+    permission: "skills.read", reach: "local",
+    parameters: skillVersionInput.extend({ id: z.string().uuid(), path: z.string().min(1).max(120),
+      offset: z.number().int().min(0).max(128 * 1024).default(0) }).strict(),
+    target: ({ id, version, path }) => `skill:${id}@${version}/${path}`,
+    execute: async ({ id, version, path, offset }, context) => {
+      if (!catalogForRun(store, context).some(entry => entry.id === id && entry.version === version))
+        throw new Error("Skill version is not available in this task's catalog");
+      if (!packages) throw new Error("Skill resources are unavailable in this engine");
+      return packages().readResource(context.owner, id, version, path, offset);
     },
   });
 }
