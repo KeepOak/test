@@ -1,6 +1,7 @@
+import { NativeWatchSchema, type NativeWatch } from "../native-capture/driver.js";
 import { noteAppOpened } from '../desktop-app-ask.js'; // unhold-control
-import { randomUUID } from 'node:crypto';
-import { readFile, rm } from 'node:fs/promises';
+import { randomUUID, createHash } from 'node:crypto';
+import { readFile, rm, stat } from 'node:fs/promises';
 import { z } from 'zod';
 import type { ToolContext } from '../contracts.js';
 import type { Store } from '../store.js';
@@ -50,6 +51,38 @@ export class DesktopControl {
     this.permissions = options.permissions;
     this.runner = options.runner ?? new DesktopScriptRunner();
     this.banner = options.banner ?? new DesktopBanner(this.runner);
+  }
+  async nativeTargets(context: ToolContext): Promise<Record<string, unknown>> {
+    const signal = await this.begin(context, "desktop.nativeTargets");
+    return this.runner.nativeWindow({ action: "list" }, signal);
+  }
+  /** A bounded watch of an immutable native target; each frame spends the existing action allowance. */
+  async watchNative(input: NativeWatch, context: ToolContext): Promise<unknown> {
+    const terms = NativeWatchSchema.parse(input), artifacts = this.artifacts;
+    if (!artifacts) throw new Error("Native watch needs the existing private artifacts store.");
+    const signal = AbortSignal.any([context.signal, AbortSignal.timeout(30_000)]);
+    const changes: { frame: number; sha256: string }[] = []; let latest: Buffer | undefined, previous = "", lastSignal = signal;
+    for (let frame = 0; frame < terms.frames; frame++) {
+      const bounded = await this.begin({ ...context, signal }, "desktop.watchNative"); lastSignal = bounded;
+      const listing = await this.runner.nativeWindow({ action: "list" }, bounded);
+      if (terms.target.kind === "display") privateShowing(listing.windows);
+      else { const message = refusalFor(terms.target.window); if (message) throw new Error(message); }
+      const path = await this.runner.temporaryPng(`native-${randomUUID()}`);
+      try {
+        const answer = await this.runner.nativeWindow({ action: "capture", watch: terms, outPath: path }, bounded);
+        if (terms.target.kind === "display") { privateShowing(answer.before); privateShowing(answer.windows); }
+        bounded.throwIfAborted(); if (!readDesktopSettings(this.store, context.owner).enabled) throw new Error(switchedOffMessage);
+        const info = await stat(path); if (!info.isFile() || info.size > 20_000_000) throw new Error("Native PNG output bound exceeded.");
+        const bytes = await readFile(path), hash = createHash("sha256").update(bytes).digest("hex");
+        if (hash !== previous) changes.push({ frame, sha256: hash }); previous = hash; latest = bytes;
+      } finally { await rm(path, { force: true }).catch(() => undefined); }
+      if (frame + 1 < terms.frames) await nativeWatchPause(terms.intervalMs, bounded);
+    }
+    lastSignal.throwIfAborted(); if (!readDesktopSettings(this.store, context.owner).enabled) throw new Error(switchedOffMessage);
+    const kept = await artifacts.write(context.runId, `native-watch-${randomUUID()}.png`, "image/png", latest!);
+    lastSignal.throwIfAborted(); if (!readDesktopSettings(this.store, context.owner).enabled) throw new Error(switchedOffMessage);
+    this.record(context, "desktop.watchNative", terms.target.kind === "window" ? terms.target.window.title : terms.target.display.id, { frames: terms.frames, changes: changes.length });
+    return { ...kept, target: terms.target, excluded: terms.exclude, method: terms.target.kind === "display" ? "native-filter" : "native-window", changes };
   }
   /** Whether the owner has turned the screen and keyboard on. Read again before every action. */
   enabled(owner: string): boolean {
@@ -399,4 +432,13 @@ function privateShowing(listed: unknown): void {
   const showing = (raw as WindowInfo[]).filter(Boolean).filter((window) => refusalFor(window) && !window.minimised);
   if (showing.length)
     throw new Error(`That picture would show ${showing[0]!.title}, which handles passwords. Close or minimise it and ask again.`);
+}
+
+async function nativeWatchPause(ms: number, signal: AbortSignal): Promise<void> {
+  signal.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const done = () => { clearTimeout(timer); signal.removeEventListener("abort", abort); resolve(); };
+    const abort = () => { clearTimeout(timer); signal.removeEventListener("abort", abort); reject(new Error("Native watch stopped.")); };
+    const timer = setTimeout(done, ms); signal.addEventListener("abort", abort, { once: true });
+  });
 }
