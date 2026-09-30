@@ -64,7 +64,6 @@ const was = (...where: Surface[]): Extra => ({ legacy: where });
  * this table added follow.
  */
 export const COMMANDS: readonly CatalogCommand[] = [
-  entry("pair", [], "<phone|computer> [device name]", "request device pairing in this computer's window; codes and approval stay there", ["chat"], "run", { ...was("chat"), whileWorking: true }),
   entry("help", ["?"], "[question]", "the commands you can use here; with a question, an answer from Branch's handbook", ALL, "look", { ...was("window", "phone", "terminal", "chat"), whileWorking: true, newAliases: added(["?"], "window", "phone", "chat"), withArgument: "run" }),
   entry("model", ["models"], "[id]", "which model answers; /model on its own lists them", ["window", "phone", "terminal", "chat"], "run", { ...was("window", "phone", "terminal"), bareLooks: true, route: { method: "POST", path: "/api/models/switch" }, newAliases: added(["models"], "window", "phone") }),
   entry("think", ["reasoning"], "<low|medium|high|default>", "how hard the model thinks in this conversation", ["window", "phone", "terminal", "chat"], "run", was("terminal")),
@@ -114,6 +113,7 @@ export const COMMANDS: readonly CatalogCommand[] = [
   entry("compact", ["compress", "fold"], "", "fold the earlier part of this conversation into a summary", ["window", "phone", "terminal", "chat"], "run", { ...was("chat"), newAliases: added(["compress", "fold"], "chat") }),
   entry("usage", ["cost"], "[on|off]", "tokens and cost so far; in a chat app, on or off adds a line to each reply", ALL, "look", { ...was("chat"), newAliases: added(["cost"], "chat") }),
   entry("btw", ["side"], "<question>", "a quick question on the side; it does not join the task", ["window", "phone", "terminal", "chat"], "run", { ...was("chat"), whileWorking: true, newAliases: added(["side"], "chat") }),
+  entry("pair", [], "<phone|computer> [device name]", "request device pairing in this computer's window; codes and approval stay there", ["chat"], "run", { whileWorking: true }),
   entry("tokens", ["context"], "", "what fills the next request: instructions, tools, the conversation, and what it costs", ["window", "phone", "terminal", "chat"], "look"),
   entry("goal", [], "<what should be true> [--max rounds]", "keep working until a goal is met, paused or out of rounds", [...W, "terminal"], "run", { ...was("window", "phone"), route: { method: "POST", path: "/api/goals" } }),
   entry("whoami", ["id"], "", "what you may do from here", ALL, "look"),

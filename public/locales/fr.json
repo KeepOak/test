@@ -1322,6 +1322,7 @@
   "commands.menu": "Commandes",
   "commands.model": "le modèle qui répond ; /model seul les énumère",
   "commands.new": "commencer une nouvelle conversation",
+  "commands.pair": "demander l'appairage d'un appareil dans la fenêtre de cet ordinateur ; les codes et l'accord y restent",
   "commands.pane": "afficher ou masquer le volet latéral",
   "commands.personality": "choisir le ton des réponses pour la prochaine tâche de ce chat",
   "commands.plan": "activer ou désactiver un court plan préalable",

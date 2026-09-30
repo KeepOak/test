@@ -1322,6 +1322,7 @@
   "commands.menu": "Befehle",
   "commands.model": "welches Modell antwortet; /model allein listet sie auf",
   "commands.new": "eine neue Unterhaltung starten",
+  "commands.pair": "Gerätekopplung im Fenster dieses Computers anfragen; Codes und Freigabe bleiben dort",
   "commands.pane": "den Seitenbereich zeigen oder ausblenden",
   "commands.personality": "den Antwortton für die nächste Aufgabe dieses Chats wählen",
   "commands.plan": "einen kurzen Plan vorab ein- oder ausschalten",
