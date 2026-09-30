@@ -3298,10 +3298,6 @@ Copyright 2025 OpenAI
 
 The command names `branch` answers to beside its own (`config`, `skin`, `cron`, `pause`, `insights`, `checkpoints`, `kanban` and the rest, listed in `src/terminal-parity.ts` and `docs/configuration.md`) were chosen after reading the command lists of Hermes Agent (https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research) and OpenClaw (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation). No code was taken from either; both are under the MIT licence, whose text is given under IronClaw above.
 
-### OpenClaw and Hermes Agent: the owner's own chat as the main session, MIT
-
-owner-dm-full (`ownerChats` in `src/channels/chat-permissions.ts`, `ownerFullFrom`/`ownerFullRun` in `src/channels/router.ts`, and the per-store check in `runOrigin`, `src/key-context.ts`) follows OpenClaw's sandbox mode "non-main" (`shouldSandboxSession` in `src/agents/sandbox/runtime-status.ts`, with the DM "main" session key in `src/routing/session-key.ts`, https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation): the owner's direct chat is the main session and runs with the full toolset on the host, while groups and other senders are held back. Hermes Agent's gateway does the same for its allowed users (`_is_user_authorized` in `gateway/authz_mixin.py`, https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research). The design was followed and the code written anew for Branch. Both are under the MIT licence, whose text is given under IronClaw above.
-
 ### Letta Code (Letta, Inc.), Apache-2.0
 
 `src/reflection/settings.ts` and `src/reflection/pass.ts` follow the reflection trigger model (off, every N steps with a default of 25, or when the conversation is compacted) in Letta Code's `src/reflection-settings.ts` and `src/cli/helpers/post-turn-reflection.ts`, and the order of work in its reflection subagent, `src/agent/subagents/builtin/reflection-v2.md` (https://github.com/letta-ai/letta-code, commit 6e84e8a). The ideas were rewritten in Branch's words; Branch's pass stages suggestions instead of writing. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0): you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -3792,6 +3788,9 @@ Chat apps, from Simple Icons 16.32.0 (https://github.com/simple-icons/simple-ico
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
 
+## Hermes live-dashboard recipe (scheduled dashboard design)
+
+Reviewed `optional-skills/productivity/live-dashboard/SKILL.md` at bddd22be7c2e5f7630c3d90507e6e7280ff092e3. Its recipe informed source/timestamp state, stale last-good retention, regeneration and change notes. Branch scheduling, validators, persistence and script-free renderer are original implementation, not a port of executable upstream code. Upstream live read/verify instructions were not executed.
 ## Hermes Telegram private-topic helpers
 
 The getMe capability check and 120-character topic title sanitizer in `src/channels/telegram.ts` are adapted from NousResearch/hermes-agent `gateway/run_topics.py`, https://github.com/NousResearch/hermes-agent/blob/main/gateway/run_topics.py (MIT). Branch uses its own chat routing, owner checks and Telegram transport.
