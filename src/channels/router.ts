@@ -12,6 +12,9 @@ import { carryable } from "../carry-on.js"; // QA R1 follow-up
 type WaitingQuestion = ReturnType<Runtime["waitingApprovals"]>[number];
 import type { PolicyRemember } from "../policy.js";
 import { Deliveries } from "./deliveries.js";
+import { OwnMessagesSchema, OwnMessageSchema, type OwnMessageTarget } from "./message-actions.js";
+import { runOrigin, startedWithShortLivedKey } from "../key-context.js";
+import type { ToolContext } from "../contracts.js";
 import { audit } from "../audit.js";
 import { ArtifactTooLarge, maxArtifactBytes, maxArtifactName } from "../artifacts.js";
 import { decide, readSenderAllowlist } from "./allowlist.js";
@@ -383,6 +386,7 @@ function fitName(prefix: string, name: string): string {
 
 export class ChannelRouter {
   private readonly adapters = new Map<string, { adapter: ChannelAdapter; policy: ChannelPolicy }>();
+  private readonly messageActions = new Set<string>();
   /** PR #289: the question each chat was last shown (its conversation and fingerprint), so a typed "y" answers that one and no other. */
   private readonly shownInChat = new Map<string, { sessionId: string; fingerprint: string }>();
   private readonly shownCommands = new Map<string, string>();
@@ -794,6 +798,50 @@ export class ChannelRouter {
       return data.channel && data.chatId ? [{ channel: data.channel, chatId: data.chatId, title: data.title ?? data.chatId, updatedAt: data.updatedAt ?? record.updatedAt, sessionId: data.sessionId ?? null,
         trunkId: data.trunkId ?? null, earlier: data.earlier ?? [] }] : []; // defaulttrunk
     });
+  }
+  requireMessageActionOwner(context: ToolContext): void {
+    this.store.profiles.requireOwner("Acting on Branch's own sent chat messages");
+    if (context.owner !== this.runtime.owner || context.signal.aborted) throw new Error("The own-message action no longer belongs to an active owner task.");
+    const origin = context.runId ? runOrigin(this.store, context.runId) : null;
+    if (startedWithShortLivedKey() || (context.source && context.source !== "owner") || (origin && (origin.source !== "owner" || origin.shortLivedKey || origin.personProfileId || origin.lentTo)))
+      throw new Error("Edit and delete Branch's sent messages only from the owner's own task in the app.");
+    if (!this.liveOn() || lockedDown(this.store, this.runtime.owner)) throw new Error("Chat message actions are held while Branch is locked, paused or in quiet hours.");
+  }
+  ownMessages(input: unknown) {
+    const { channel, chatId, limit } = OwnMessagesSchema.parse(input), adapter = this.adapters.get(channel)?.adapter;
+    return { channel, chatId, retainedDays: 7, messages: this.deliveries.list()
+      .filter((row) => row.channel === channel && row.chatId === chatId && row.status === "sent" && row.messageId)
+      .sort((a, b) => b.order - a.order).slice(0, limit).map((row) => ({ messageId: row.messageId,
+        text: this.hideLeaks(this.runtime.hideSecrets(row.editedText ?? row.text)), sentAt: row.sentAt,
+        editedAt: row.editedAt, deletedAt: row.deletedAt, canEdit: !row.deletedAt && !!adapter?.edit, canDelete: !row.deletedAt && !!adapter?.deleteMessage })) };
+  }
+  async actOnOwnMessage(input: OwnMessageTarget, action: "edit" | "delete", context: ToolContext, text?: string) {
+    this.requireMessageActionOwner(context);
+    const { channel, chatId, messageId } = OwnMessageSchema.parse({ channel: input.channel, chatId: input.chatId, messageId: input.messageId });
+    const adapter = this.adapters.get(channel)?.adapter;
+    const row = this.deliveries.list().find((one) => one.channel === channel && one.chatId === chatId && one.messageId === messageId && one.status === "sent" && !one.deletedAt);
+    if (!adapter || !row) throw new Error("Branch has no retained record of sending that message to this exact chat.");
+    const key = JSON.stringify([channel, chatId, messageId]);
+    if (this.messageActions.has(key)) throw new Error("Another action is already changing that message. Wait for it to finish.");
+    this.messageActions.add(key);
+    try {
+      let replacement: string | undefined;
+      if (action === "edit") {
+        if (!adapter.edit) throw new Error("This chat app cannot edit Branch's messages.");
+        const checked = await this.outboundGuard(this.hideLeaks(this.runtime.hideSecrets(text ?? "")));
+        if (checked.blocked || !checked.text.trim()) throw new Error(checked.reason ?? "The replacement text was held before sending.");
+        if (checked.text.length > Math.min(adapter.maxTextLength ?? 4096, 4096)) throw new Error("The replacement is too long for one message; shorten it before editing.");
+        replacement = checked.text;
+      } else if (!adapter.deleteMessage) throw new Error("This chat app cannot delete Branch's messages.");
+      this.requireMessageActionOwner(context);
+      if (context.dryRun) return { channel, chatId, messageId, action, confirmed: false, dryRun: true, wouldChange: replacement ?? "delete own message" };
+      if (action === "edit") await adapter.edit!(chatId, messageId, replacement!);
+      else await adapter.deleteMessage!(chatId, messageId);
+      const saved = this.deliveries.recordMessageAction(row.id, action, replacement);
+      audit(this.store, this.runtime.owner, { action: "channel.message", actor: this.runtime.owner, subject: `${channel}:${chatId}:${messageId}`,
+        reason: `Owner-requested ${action} of a recorded own sent message`, outcome: action === "edit" ? "edited" : "deleted" });
+      return { channel, chatId, messageId, action, confirmed: true, at: action === "edit" ? saved.editedAt : saved.deletedAt };
+    } finally { this.messageActions.delete(key); }
   }
   async handle(message: InboundMessage): Promise<Outcome> {
     const entry = this.adapters.get(message.channel);

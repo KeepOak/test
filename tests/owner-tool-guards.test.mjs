@@ -50,6 +50,11 @@ const GUARDS = [
   { file: "src/settings-kit/tools.ts", tool: "settings.why", args: { setting: "fly-core.mode" } },
   { file: "src/settings-kit/tools.ts", tool: "settings.undo", args: { record: "no-such-change" } },
   { file: "src/channels/connectors.ts", tool: "channels.broadcast", args: { text: "hello" } },
+  // CHAT-023: listing, editing or deleting Branch's own sent chat messages is the owner's.
+  { file: "src/channels/message-actions.ts", tool: "channels.own_messages", args: { channel: "telegram", chatId: "1" } },
+  { file: "src/channels/message-actions.ts", tool: "channels.delete_message", args: { channel: "telegram", chatId: "1", messageId: "5" } },
+  // router.ts checks the owner again (requireMessageActionOwner) before it touches the message.
+  { file: "src/channels/router.ts", tool: "channels.edit_message", args: { channel: "telegram", chatId: "1", messageId: "5", text: "fixed" } },
   { file: "src/channels/connectors.ts", tool: "channels.digest", args: { channel: "telegram", chatId: "1" } },
   // Choosing the chat the morning brief goes to is choosing where the owner's messages go.
   { file: "src/brief.ts", tool: "brief.configure", args: { deliverTo: { channel: "telegram", chatId: "1" } } },
