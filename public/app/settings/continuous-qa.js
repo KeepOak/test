@@ -1,3 +1,4 @@
+import { markLive } from "../core/features.js";
 import { api } from "../core/api.js";
 import { esc, render } from "../core/dom.js";
 import { on } from "../core/actions.js";
@@ -9,6 +10,7 @@ export async function loadContinuousQa() {
   render();
 }
 export function initContinuousQa() {
+  markLive(["qa-save", "qa-refresh", "sw:qa-enabled", "sw:qa-copy", "sw:qa-target", "sw:qa-interval", "sw:qa-cycles", "sw:qa-model", "sw:qa-preset", "sw:qa-tokens", "sw:qa-daily-tokens", "sw:qa-paths"]);
   on("qa-refresh", () => loadContinuousQa());
   on("qa-save", async () => {
     const field = (id) => document.getElementById(id);
