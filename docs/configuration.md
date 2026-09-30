@@ -8258,6 +8258,17 @@ No model or package is fetched. Installed sherpa VAD dictation also accepts comp
 bundles (`<name>-encoder[.int8].onnx`, matching decoder, `<name>-tokens.txt`, `silero_vad.onnx`)
 alongside transducer bundles. An explicitly named streaming program still wins.
 
+When the selected connection is a ChatGPT subscription, Talk live uses its existing selected account
+for `gpt-live-1-codex`, with a browser WebRTC audio offer and engine-owned sideband. No provider token
+is given to the page. The existing owner/profile, app-lock, Lockdown, conversation and local-audio
+refusals still apply. This route requires automatic voice detection; its provider controls interruption
+when you speak. Requests needing Branch actions go through the ordinary delegated runtime, using
+the exact selected account and usual approval cards. Answer a waiting card in Inbox; spoken agreement
+does not grant approval. End or a new consultation cancels pending work and retires its unanswered cards.
+With account pooling off, the connection's primary account remains selected. A later account/model
+change ends the live conversation. The time limit applies, but subscription quota/dollar usage is
+unavailable and the dollar cap cannot be enforced for this route. WebRTC audio size recording is unavailable.
+
 ### The rest
 
 - **Connections** (`src/connections-preset.ts`): `activePreset` is which connection answers by
