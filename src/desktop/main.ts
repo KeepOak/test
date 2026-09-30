@@ -11,7 +11,8 @@ import {
   type MenuItemConstructorOptions,
   type NativeImage,
 } from "electron";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 // Wave 5 (deployment): portable folders, joining a background engine, opening straight to the tray.
@@ -91,7 +92,7 @@ import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesk
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
 import { versionedLayout } from "./app-folders.js";
-import { handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
+import { forwardedVariable, forwardTarget, handOverHook, resumeWindow, sameInstall, settleLayout } from "./shell-window.js";
 import { portableMarker } from "../install/layout.js";
 
 let window: BrowserWindow | undefined;
@@ -455,6 +456,7 @@ function settleVersions(): void {
   setTimeout(() => {
     void folders(app.getPath("userData")).then(({ dataDir }) => settleLayout(layout, appEntryName(process.platform), dataDir))
       .then((done) => {
+        if (done.retired) diagnose("updater", "info", "The copy installed before versioned folders is now the stable launcher");
         if (!done.pruned.length) return;
         console.log(`Removed older versions: ${done.pruned.join(", ")}`);
         diagnose("updater", "info", "Removed versions nothing runs from any more", { fields: { versions: done.pruned.join(", ") } });
@@ -524,11 +526,11 @@ const liveNote = (line: string): void => { console.error(line); diagnose("update
  * a person who updates from the window can go back afterwards. It stays `staged` until the next
  * start says the swap landed, because this process quits into the hand-over script.
  */
-function desktopRecord(dataDir: string): Pick<UpdateHooks, "record"> {
+function desktopRecord(dataDir: string): Pick<UpdateHooks, "record" | "dataDir"> {
   const installRoot = installedAppRoot(app.isPackaged, process.platform, process.execPath);
   // A copy that cannot update itself never hands over, so there is nothing to write down.
-  if (!installRoot) return {};
-  return { record: async (stagedDir, toVersion) => {
+  if (!installRoot) return { dataDir };
+  return { dataDir, record: async (stagedDir, toVersion) => {
     const { recordActivation } = await import("../install/headless-update.js");
     const recorded = await recordActivation({ dataDir, installRoot, stagedDir, fromVersion: app.getVersion(),
       toVersion, executableName: appEntryName(process.platform) });
@@ -982,6 +984,8 @@ else if (process.argv.includes(refreshShortcutsFlag)) {
   const trial = new URL("./beta-smoke-window.js", import.meta.url).href;
   void app.whenReady().then(async () => (await import(trial) as typeof import("./beta-smoke-window.js")).smokeMode(report, app.getVersion()))
     .then((code) => app.exit(code), () => app.exit(1));
+} else if (forwardToVersionInUse()) {
+  // Started the version current.json names in this one's place (a shortcut to an older version's folder); this one ends.
 } else if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on("second-instance", () => {
@@ -1018,6 +1022,24 @@ else {
       console.error("Branch Agent could not start:", error.message);
       app.quit();
     });
+}
+
+/**
+ * Versioned app folders: a start of a version that is not the one in use (a shortcut, the taskbar or "start with Windows"
+ * still naming an older folder, or the version before after a switch made with no window open) starts the version in
+ * use instead, with the same arguments, and ends. That keeps every start on the version `current.json` names.
+ */
+function forwardToVersionInUse(): boolean {
+  if (!app.isPackaged) return false;
+  const target = forwardTarget(appLayout(), appEntryName(process.platform), process.env, {
+    readText: (path) => { try { return readFileSync(path, "utf8"); } catch { return null; } }, exists: existsSync });
+  if (!target) return false;
+  const env: NodeJS.ProcessEnv = { ...process.env, [forwardedVariable]: process.execPath };
+  delete env.ELECTRON_RUN_AS_NODE;
+  try { spawn(target, process.argv.slice(1), { detached: true, stdio: "ignore", env }).unref(); }
+  catch { return false; } // could not start it: this version opens instead, as before
+  app.exit(0);
+  return true;
 }
 
 /** The broker's lock is separate from its windows; closing or updating a shell leaves this owner running. */

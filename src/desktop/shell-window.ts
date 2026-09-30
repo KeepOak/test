@@ -5,9 +5,10 @@ import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { UpdateDeferredError } from "./updater.js";
 import { invisibleMoment, markShellUp, takeHandOver, writeHandOver } from "./shell-switch.js";
-import { folderPath, pruneAppFolders, readPointer, type Layout } from "./app-folders.js";
+import { folderPath, PointerSchema, pruneAppFolders, readPointer, retireFlatCopy, tidyRetirement, type Layout, type Pointer } from "./app-folders.js";
+import { programInUse } from "./program-in-use.js";
 import { daemonLauncherName } from "../install/daemon.js";
-import { runKey, runValueName } from "../install/installer.js";
+import { runKey, runValueName, shippedIconPath } from "../install/installer.js";
 import { readRegistryValue, writeRegistryValues } from "../install/windows.js";
 
 /**
@@ -105,6 +106,8 @@ export interface SettleDeps {
   readText?: (path: string) => Promise<string | null>;
   writeText?: (path: string, text: string) => Promise<void>;
   prune?: typeof pruneAppFolders;
+  retire?: typeof retireFlatCopy;
+  inUse?: (program: string) => Promise<boolean>;
 }
 
 /**
@@ -112,7 +115,7 @@ export interface SettleDeps {
  * instead of an older one of the same install (shortcuts are refreshed at every start, windows-identity.ts). Older
  * versions go once nothing runs from them. Paths of any other program are never touched.
  */
-export async function settleLayout(layout: Layout, executableName: string, dataDir: string, deps: SettleDeps = {}): Promise<{ runKey: boolean; launcher: boolean; pruned: string[] }> {
+export async function settleLayout(layout: Layout, executableName: string, dataDir: string, deps: SettleDeps = {}): Promise<{ runKey: boolean; launcher: boolean; pruned: string[]; retired: boolean }> {
   const program = join(folderPath(layout.root, layout.folder), executableName);
   const readRegistry = deps.readRegistry ?? readRegistryValue, writeRegistry = deps.writeRegistry ?? writeRegistryValues;
   let runKeyMoved = false, launcherMoved = false;
@@ -132,12 +135,40 @@ export async function settleLayout(layout: Layout, executableName: string, dataD
     launcherMoved = true;
   }
   const pointer = await readPointer(layout.root);
-  const pruned = pointer && pointer.folder === layout.folder ? await (deps.prune ?? pruneAppFolders)(layout.root, pointer) : [];
-  return { runKey: runKeyMoved, launcher: launcherMoved, pruned };
+  const settled = pointer !== null && pointer.folder === layout.folder;
+  const pruned = settled ? await (deps.prune ?? pruneAppFolders)(layout.root, pointer) : [];
+  // The one-time move off the flat layout: once the flat copy is not needed to go back, its app becomes the stable
+  // launcher (app-folders.ts, retireFlatCopy). Only after the shortcuts, the Run key and the engine's launcher above
+  // name this version, so nothing still starts the flat app itself.
+  let retired = false;
+  if (settled) {
+    await tidyRetirement(layout.root);
+    retired = await (deps.retire ?? retireFlatCopy)(layout.root, pointer, { executableName,
+      icon: join(folderPath(layout.root, layout.folder), shippedIconPath), inUse: deps.inUse ?? ((program) => programInUse(program)) });
+  }
+  return { runKey: runKeyMoved, launcher: launcherMoved, pruned, retired };
 }
 
 /** Whether this start follows a switch to this very version (its pointer names this folder). */
 export function switchedHere(layout: Layout | null): boolean {
   if (!layout?.folder) return false;
   try { return JSON.parse(readFileSync(join(layout.root, "current.json"), "utf8"))?.folder === layout.folder; } catch { return false; }
+}
+
+/** Set on a start forwarded to the version in use, so that one never forwards again (no loop, whatever the disk says). */
+export const forwardedVariable = "BRANCH_FORWARDED_FROM";
+
+/**
+ * A start of a version that is not the one `current.json` names (a shortcut, the taskbar or "start with Windows" still
+ * naming an older folder, or the version before after a switch with no window open): the program of the version in use,
+ * to start in its place, or null to start this one. Only another version of this same install is ever named.
+ */
+export function forwardTarget(layout: Layout | null, executableName: string, env: NodeJS.ProcessEnv,
+  deps: { readText: (path: string) => string | null; exists: (path: string) => boolean }): string | null {
+  if (!layout || env[forwardedVariable]) return null;
+  let pointer: Pointer | null = null;
+  try { pointer = PointerSchema.parse(JSON.parse(deps.readText(join(layout.root, "current.json")) ?? "null")); } catch { pointer = null; }
+  if (!pointer || pointer.folder === layout.folder) return null;
+  const target = join(layout.root, pointer.folder, executableName);
+  return deps.exists(target) ? target : null;
 }
