@@ -52,7 +52,7 @@ interface GoalView { status: string; round: number; maxRounds: number; objective
 /** The goal feature (mac2/goal-undo), when this copy has it. */
 export interface GoalHost {
   /** `origin`: a goal set from a chat, whose rounds are the chat's tasks (its source and its short list of permissions). */
-  start(input: { objective: string; maxRounds?: number; sessionId?: string }, origin?: { source: "channel"; permissions: string[] }): Promise<GoalView>;
+  start(input: { objective: string; maxRounds?: number; sessionId?: string }, origin?: { source: "channel" | "owner"; permissions: string[]; chat?: OwnerChat }): Promise<GoalView>;
   status(sessionId: string): GoalView | null;
   pause(sessionId: string): GoalView;
   resume(sessionId: string): Promise<GoalView>;
@@ -77,7 +77,11 @@ export interface Call {
   mode: FeatureMode;
   /** What a task from this chat may use, for `/whoami` in a chat app. */
   permissions?: string[];
+  /** owner-dm-full: the owner's own verified direct chat with full access; what `/goal` and `/bg` start is the owner's. */
+  ownerChat?: OwnerChat;
 }
+/** owner-dm-full: the chat a command from the owner's own direct chat came from (src/key-context.ts `ownerChatMark`). */
+export interface OwnerChat { channel: string; senderId: string }
 type Handler = (call: Call) => Reply | Promise<Reply>;
 const say = (text: string, client?: ClientAction): Reply => (client ? { text, client } : { text });
 const needSession = "Start a conversation first; this command works on the conversation you are in.";
@@ -240,7 +244,9 @@ async function goal(call: Call): Promise<Reply> {
     return say(goalLine(await goals[word](call.sessionId)));
   }
   const state = await goals.start({ ...parseGoal(call.argument), ...(call.sessionId ? { sessionId: call.sessionId } : {}) },
-    call.surface === "chat" ? { source: "channel", permissions: call.permissions ?? [] } : undefined); // CHAT-185
+    call.surface !== "chat" ? undefined // CHAT-185; owner-dm-full: the owner's own chat's goal is the owner's, re-checked each step
+      : call.ownerChat ? { source: "owner", permissions: call.permissions ?? [], chat: call.ownerChat }
+      : { source: "channel", permissions: call.permissions ?? [] });
   return say(goalLine(state), state.sessionId && state.sessionId !== call.sessionId ? { do: "open-session", id: state.sessionId } : undefined);
 }
 async function health(call: Call): Promise<Reply> {

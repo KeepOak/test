@@ -7,6 +7,7 @@ import { offSentence, quoteLine, type AutonomyPart } from "./settings.js";
 import { addSubgoal, saveSubgoals, subgoalsOf } from "./subgoals.js";
 import { catalogue } from "./blueprints.js";
 import { conversationModeSettings, readConversationMode, type ConversationMode } from "../conversation-mode.js";
+import { ownerChatMark } from "../key-context.js"; // owner-dm-full
 
 /**
  * R17-B: what `/loop`, `/heartbeat`, `/subgoal`, `/bg`, `/handoff`, `/suggestions` and `/blueprint`
@@ -81,7 +82,7 @@ function backgroundMode(call: Call): ConversationMode | null {
   const runtime = call.host.runtime;
   if (call.sessionId)
     return readConversationMode(runtime.store, runtime.owner, runtime.modeFollows(call.sessionId) ?? call.sessionId)?.mode ?? null;
-  if (call.surface !== "window") return null;
+  if (call.surface !== "window" && !call.ownerChat) return null; // owner-dm-full: the owner's own chat starts as the window does
   const chosen = conversationModeSettings(runtime.store, runtime.owner).newConversation;
   return chosen === "follow" ? null : chosen;
 }
@@ -101,10 +102,16 @@ const bg: Handler = async (call) => {
   const mode = backgroundMode(call);
   // A separate conversation, not awaited: this one stays free. It is a task like any the owner starts.
   await new Promise<void>((resolve) => {
-    // CHAT-185: from the owner's own chat it is that chat's task, never the owner's own (a chat cannot prove who typed).
-    void runtime.run({ prompt, source: call.surface === "chat" ? "channel" : "owner", onTextDelta: () => undefined, ...(call.permissions ? { permissions: call.permissions } : {}),
+    // CHAT-185: from a chat it is that chat's task, never the owner's own (a chat cannot prove who typed). owner-dm-full:
+    // from the owner's own verified direct chat with full access it is the owner's, and carries that chat's mark so it
+    // is checked again at every step (src/key-context.ts `ownerChatMark`).
+    const chat = call.surface === "chat" ? call.ownerChat : undefined;
+    void runtime.run({ prompt, source: call.surface === "chat" && !chat ? "channel" : "owner", onTextDelta: () => undefined, ...(call.permissions ? { permissions: call.permissions } : {}),
       ...(mode ? { conversationMode: mode } : {}),
-      onStarted: (run) => { sessionId = run.sessionId; runId = run.id; working.add(run.id); resolve(); } })
+      onStarted: (run) => {
+        if (chat) runtime.store.event(run.id, ownerChatMark, { ...chat, chatKind: "direct" });
+        sessionId = run.sessionId; runId = run.id; working.add(run.id); resolve();
+      } })
       .catch(() => undefined).finally(() => { working.delete(runId); resolve(); });
   });
   return say(sessionId ? `Working on it in a separate conversation (${sessionId.slice(0, 8)}). It will be in Inbox, Finished.` : "The background task could not start.");

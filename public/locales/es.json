@@ -4971,6 +4971,8 @@
   "settings-kit.everything": "Todo lo de esta lista",
   "settings-kit.field.audit": "Revisar por sí mismo",
   "settings-kit.field.chat-extras": "Usar mi lista de lo que más pueden hacer los chats",
+  "settings-kit.field.chat-owner-chats": "Tus propios chats tienen tu acceso completo",
+  "settings-kit.field.chat-owner-chats-hint": "Tu propia cuenta, en un chat uno a uno, en una app que garantiza quién envía, puede hacer lo que tú en la ventana. Los grupos y otras personas mantienen la lista corta. El bloqueo lo desactiva.",
   "settings-kit.field.dictation-silence": "Cuánto silencio lo termina",
   "settings-kit.field.file-agents": "AGENTS.md",
   "settings-kit.field.file-heartbeat": "HEARTBEAT.md",
