@@ -1070,13 +1070,15 @@ export class ChannelRouter {
     if (picked.names.some(name => !this.commandIn({ ...message, text: `/${name}` }))) return null;
     const { authoredCommandText: _authored, ...original } = message;
     const remaining = { ...original, text: picked.remainder };
+    // The owner may pause this chat app while a shortcut's answer is on its way: nothing more goes out then.
+    const paused = () => !!(platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message));
     for (const name of picked.names) {
-      if (this.appLocked() || !this.senderAllowed(message.channel, message.senderId)
+      if (paused() || this.appLocked() || !this.senderAllowed(message.channel, message.senderId)
         || !this.commandIn({ ...message, text: `/${name}` })) return "ignored";
       await this.command(message, { name, argument: "" }, `inline-${name}`);
     }
     if (!remaining.text.trim()) return "replied";
-    if (this.appLocked() || !this.senderAllowed(message.channel, message.senderId)) return "ignored";
+    if (paused() || this.appLocked() || !this.senderAllowed(message.channel, message.senderId)) return "ignored";
     // A remainder such as "yes", "/stop" or a saved alias is task prose, never another control path.
     const current = this.turns.get(chatKey(message));
     return current ? this.joinTurn(current, remaining) : this.startTurn([remaining]);
