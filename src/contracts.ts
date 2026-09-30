@@ -578,6 +578,8 @@ export const RunInputSchema = z
   .object({
     prompt: z.string().trim().max(16000),
     sessionId: z.string().uuid().optional(),
+    /** Correlates opted-in gated sentence events with the exact sending window. */
+    speechStreamId: z.string().uuid().optional(),
     /** Start a conversation that is never searchable and is discarded when closed. */
     temporary: z.boolean().optional(),
     /** Conditions the final answer must meet (phrases, a pattern, a JSON shape, files that must exist). */

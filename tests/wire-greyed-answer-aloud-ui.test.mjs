@@ -39,6 +39,6 @@ test("When I talk reads aloud the reply to a spoken message, and not to a typed 
   await box.fill("spoken question");
   await box.press("Enter");
   for (let tries = 0; tries < 100 && !spoken.length; tries++) await page.waitForTimeout(100);
-  assert.deepEqual(spoken, ["The tower is 41 m."], "a spoken message's reply is read");
+  assert.deepEqual(spoken, ["The tower is 41 metres."], "a spoken message's reply is read, with its units said in words");
   assert.deepEqual(errors, []);
 });

@@ -63,6 +63,7 @@ export const shortLivedKeyTaskRoutes: readonly TaskRoute[] = [
   // What a task says and hears.
   post("/api/voice/transcribe", "speech to text for a message"),
   post("/api/voice/speak", "reads an answer aloud"),
+  post("/api/voice/sentences", "splits an answer into sentences to read aloud"),
   // phase2/rooms: not "/api/voice/live": a live conversation's tools run as the owner, so it is the owner's.
   post("/api/voice/command", "whether a phrase is a spoken command"),
   post("/api/media/understand", "what a video or sound file shows and says"),

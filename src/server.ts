@@ -79,6 +79,7 @@ import { serveRunSocket, tokenFromProtocol, tokenFromSocket } from "./ws.js";
 // Bucket 13 (mac4): seeing what a task did, step by step, afterwards.
 import { handlesRecordingPath, recordingApi, startEventLoopWatch } from "./run-recording-api.js";
 import { liveHooks } from "./realtime-socket.js";
+import { SpokenReplyStream } from "./voice-reply-stream.js";
 import { readBodyWithRaw, type TriggerState } from "./triggers.js";
 import { knowledgeApi } from "./knowledge-tools.js";
 import { knowledgeExtrasApi } from "./knowledge-more.js";
@@ -2086,6 +2087,10 @@ async function api(
     let userMessageId: number | undefined;
     // defaulttrunk: a new conversation that names nobody is a thread with the default Trunk (a temporary one stays nobody's).
     const home = !input.sessionId && !input.temporary ? app.trunks.homeForNew() : null;
+    const speech = input.speechStreamId && app.store.profiles.isOwner() && !startedWithShortLivedKey()
+      ? new SpokenReplyStream(app.store, input.speechStreamId, app.runtime.hideSecrets, (run) =>
+        scopeWhileUnlocked(app) === run.owner && !lockdownActive(app.store, run.owner) &&
+        app.voice.settings(run.owner).autoReadAloud && ["running", "completed"].includes(app.store.run(run.id)?.status ?? "")) : undefined;
     const run = await runForCurrentPerson(app, {
       prompt: input.prompt,
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
@@ -2111,11 +2116,13 @@ async function api(
       ...(input.project && !input.sessionId && app.store.profiles.isOwner() && !startedWithShortLivedKey() ? { conversationProject: input.project } : {}),
       personReply: true, // Q050: the person's own message may answer the question its conversation waits on
       onUserMessageId: (id) => { userMessageId = id; },
+      ...(speech ? { onStarted: (run: Run) => speech.start(run) } : {}),
       // Live steps: the model is asked to stream, so its reasoning summaries reach the window's live step list while it
-      // works (runtime.thoughtsOf); the words themselves still arrive with the finished answer, as before.
-      onTextDelta: () => undefined,
-    });
-    return userMessageId !== undefined ? { ...run, userMessageId } : run;
+      // works (runtime.thoughtsOf). Opted-in speech receives only the runtime's gated prose callback.
+      onTextDelta: (text: string) => speech?.feed(text),
+    }).catch((error: unknown) => { speech?.stop(); throw error; });
+    speech?.finish(run);
+    return { ...run, ...(userMessageId !== undefined ? { userMessageId } : {}), ...(speech ? { speechStream: speech.result } : {}) };
   }
   // phase2/panels: what the side panel's Browser and Terminal tabs show (src/panels-work.ts); owner only.
   if (request.method === "GET" && path === panelsWorkPath)
@@ -5110,14 +5117,31 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     }
     return true;
   }
+  if (request.method === "POST" && path === "/api/voice/sentences") {
+    const body = z.object({ text: z.string().max(200_000) }).strict().parse(await readBody(request));
+    response.writeHead(200, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+    response.end(JSON.stringify({ sentences: app.voice.sentences(body.text) }));
+    return true;
+  }
   if (request.method === "POST" && path === "/api/voice/speak") {
     const body = z.object({
       text: z.string().max(4000), voice: z.string().max(80).optional(), speed: z.number().min(0.5).max(2).optional(),
     }).strict().parse(await readBody(request));
+    const speechAbort = new AbortController();
+    const speechOwner = scopeWhileUnlocked(app);
+    const aborted = () => speechAbort.abort();
+    const closed = () => { if (!response.writableEnded) aborted(); };
+    const fresh = () => speechOwner === scopeWhileUnlocked(app) && !lockdownActive(app.store, speechOwner);
+    const speechWatch = setInterval(() => { if (!fresh()) aborted(); }, 200);
+    speechWatch.unref();
+    request.once("aborted", aborted);
+    response.once("close", closed);
+    if (request.aborted) aborted();
     try {
       const spoken = await app.voice.speak(app.runtime.owner, {
         text: body.text, voice: body.voice ?? "", speed: body.speed ?? 1,
-      });
+      }, { signal: speechAbort.signal });
+      if (speechAbort.signal.aborted || !fresh()) throw new HttpError(403, "Speech was stopped.");
       response.writeHead(200, {
         "content-type": spoken.mediaType, "cache-control": "no-store",
         "x-voice-route": spoken.route, "x-voice-name": encodeURIComponent(spoken.voice),
@@ -5126,7 +5150,7 @@ async function rawApi(app: Branch, request: IncomingMessage, response: ServerRes
     } catch (e) {
       const msg = errorText(e);
       throw new HttpError(400, msg);
-    }
+    } finally { clearInterval(speechWatch); request.removeListener("aborted", aborted); response.removeListener("close", closed); }
     return true;
   }
   if (request.method === "GET" && path === "/api/memory/export"

@@ -272,7 +272,8 @@ test("\"keep audio on this computer\" refuses every route that would send it awa
   const recorded = app.store.events(run.id).filter((event) => event.kind === "voice.spoken").map((event) => event.data);
   assert.equal(recorded.length, 1, "what it cost is written into the task's own record");
   assert.equal(recorded[0].route, "openai");
-  assert.equal(recorded[0].cost, estimateSpeechCost("tts-1", "read this out".length, "openai").amount);
+  // The cost is of the words actually spoken: the line is prepared for speech first, which ends it with a period.
+  assert.equal(recorded[0].cost, estimateSpeechCost("tts-1", "read this out.".length, "openai").amount);
 
   // mac2: the computer's own voice ships switched off; it is switched on here so the refusal below
   // is the one this test is about.
