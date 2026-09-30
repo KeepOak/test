@@ -130,6 +130,9 @@ test("a task still working stops after a whole step, carries on in the new engin
   assert.equal(session.messages.filter((message) => message.content === "Finished after the update.").length, 1);
 });
 
+/** The owner's line naming the Mattermost chat app, so its group's task may list the workspace's files. */
+const groupFiles = { extras: true, rules: [{ channel: "mattermost", sender: "*", allow: ["files.read"] }] };
+
 /** A chat service's side (Mattermost-shaped): the answers Branch posts back to its webhook. */
 async function chatService(t) {
   const replies = [];
@@ -142,8 +145,9 @@ async function chatService(t) {
   return { hook: `http://127.0.0.1:${server.address().port}/hooks/branch`, replies };
 }
 
-// The chat here is a group (a Mattermost channel), and a group's task never reads what Branch remembers
-// (src/channels/chat-permissions.ts), so its steps list the workspace's files instead of reading the checklist.
+// The chat here is a group (a Mattermost channel), and a group's task never reads what Branch remembers and has the
+// owner's files only when a line names its chat app (src/channels/chat-permissions.ts), so the owner names Mattermost
+// for files and its steps list the workspace's files instead of reading the checklist.
 test("a chat app's turn handed to a newer engine is answered in that chat once, by the new engine, never with a failure", { timeout: 240000 }, async (t) => {
   const model = await scriptedModel(t, [{ tool: "files.list", args: {} }, { tool: "files.list", args: {}, held: true }, { text: "Answered after the update." }]);
   const chat = await chatService(t), secret = "hot-chat-token-0123456789";
@@ -154,6 +158,7 @@ test("a chat app's turn handed to a newer engine is answered in that chat once, 
     webhookUrlSecret: "HOT_CHAT_HOOK", secretSecret: "HOT_CHAT_SECRET", activation: "always", pairing: false, allowlist: ["user-9"] }] }));
   const extra = { BRANCH_INTEGRATIONS: integrations, HOT_CHAT_HOOK: chat.hook, HOT_CHAT_SECRET: secret };
   const { host, url, started, call } = await setUp(t, model, extra);
+  await call("/api/channels/permissions", groupFiles); // a group has the owner's files only when a line names its chat app
   const live = await liveBuild();
   const address = (await call("/api/channels/addresses")).body.addresses.find((one) => one.channel === "mattermost")?.address;
   assert.ok(address, "the chat service's address is there");
@@ -189,6 +194,7 @@ test("a chat app's turn carried through two engine updates back to back is answe
     webhookUrlSecret: "HOT_CHAT_HOOK", secretSecret: "HOT_CHAT_SECRET", activation: "always", pairing: false, allowlist: ["user-9"] }] }));
   const extra = { BRANCH_INTEGRATIONS: integrations, HOT_CHAT_HOOK: chat.hook, HOT_CHAT_SECRET: secret };
   const { host, url, started, call } = await setUp(t, model, extra);
+  await call("/api/channels/permissions", groupFiles); // a group has the owner's files only when a line names its chat app
   const live = await liveBuild();
   const address = (await call("/api/channels/addresses")).body.addresses.find((one) => one.channel === "mattermost")?.address;
   const posted = fetch(new URL(new URL(address, url).pathname, url), { method: "POST", headers: { "content-type": "application/json" },
