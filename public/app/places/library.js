@@ -78,7 +78,7 @@ function documentsTab() {
   html += workSection();
   /* The Map view shows what the map says about a name in place of the list, as the prototype's Map does. */
   if (docView !== "map") html += labelled(docsList).map((d) => `<div class="prow"><span class="fi">${esc((d.name || '').split('.').pop() || 'txt')}</span>
-        <span class="grow"><b>${esc(d.name)}</b><small>${esc(when(d.updatedAt))}</small><small>${d.addedBy?.name ? t("window.places.library.doc-added-by", { name: esc(d.addedBy.name) }) : t("window.places.library.doc-added-by-unknown")}</small></span>
+        <span class="grow"><b>${esc(d.name)}</b><small>${esc(when(d.updatedAt))}</small><small>${(d.addedBy?.name || d.addedBy?.role === "owner") ? t("window.places.library.doc-added-by", { name: esc(d.addedBy.name || t("household.role.owner")) }) : t("window.places.library.doc-added-by-unknown")}</small></span>
         <button class="btn sm" type="button" data-act="doc-open" data-id="${esc(d.id)}">${t("ov.open")}</button></div>`).join('');
   if (docView !== "map" && docsKey === "[]") html += empty18("library:documents"); // read, and nothing there yet
   return html + mapSection(docView) + manageSection();

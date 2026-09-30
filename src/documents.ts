@@ -34,7 +34,8 @@ const scanLimit = 5000;
 
 /** Initial Library-entry actor, never an imported content-author claim. */
 const DocumentAddedBySchema = z.object({
-  kind: z.enum(["person", "assistant", "trunk"]), name: z.string().min(1).max(200),
+  kind: z.enum(["person", "assistant", "trunk"]), name: z.string().min(1).max(200).nullable(),
+  role: z.literal("owner").optional(),
   trunkId: z.string().max(100).optional(), runId: z.string().max(100).optional(),
 }).strict();
 export type DocumentAddedBy = z.infer<typeof DocumentAddedBySchema>;
