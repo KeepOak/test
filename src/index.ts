@@ -61,7 +61,7 @@ import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { holdTaskBrowser } from "./browser-hold.js";
 import { MiniAppSessions } from "./miniapp/sessions.js";
 import { lockedDown, lockdownRefusal } from "./lockdown.js";
-import { runOrigin } from "./key-context.js";
+import { runOrigin, startedWithShortLivedKey } from "./key-context.js";
 import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
 import { walledTools } from "./sandbox-wall.js";
 import { registerSkills } from "./skill-tools.js";
