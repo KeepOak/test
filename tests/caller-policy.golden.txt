@@ -173,6 +173,8 @@ owner GET /api/adapt/switch | here=ok remote=ok phone=ok legacy=ok person=401/32
 owner POST /api/adapt/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/4fc965 run=401/4fc965 nobody=401/40daee
 owner GET /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner GET /api/activity/today | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/activity/today | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/alive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -2433,6 +2435,8 @@ owner+lockdown GET /api/adapt/switch | here=ok remote=ok phone=ok legacy=ok pers
 owner+lockdown POST /api/adapt/switch | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/4fc965 run=401/4fc965 nobody=401/40daee
 owner+lockdown GET /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/action | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner+lockdown GET /api/activity/today | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/activity/today | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/activity | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/alive | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4693,6 +4697,8 @@ household GET /api/adapt/switch | here=400/f6e21c remote=400/f6e21c read=400/f6e
 household POST /api/adapt/switch | here=400/f6e21c remote=400/f6e21c read=401/4fc965 run=401/4fc965
 household GET /api/action | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/action | here=ok remote=ok read=401/d45404 run=ok
+household GET /api/activity/today | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/activity/today | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/activity | here=ok remote=ok read=ok run=ok
 household POST /api/activity | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/alive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -6953,6 +6959,8 @@ household+lockdown GET /api/adapt/switch | here=400/f6e21c remote=400/f6e21c rea
 household+lockdown POST /api/adapt/switch | here=400/f6e21c remote=400/f6e21c read=401/4fc965 run=401/4fc965
 household+lockdown GET /api/action | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/action | here=ok remote=ok read=401/d45404 run=ok
+household+lockdown GET /api/activity/today | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/activity/today | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/activity | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/activity | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/alive | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -9213,6 +9221,8 @@ applock GET /api/adapt/switch | here=423/a8f863
 applock POST /api/adapt/switch | here=423/a8f863
 applock GET /api/action | here=423/a8f863
 applock POST /api/action | here=423/a8f863
+applock GET /api/activity/today | here=423/a8f863
+applock POST /api/activity/today | here=423/a8f863
 applock GET /api/activity | here=423/a8f863
 applock POST /api/activity | here=423/a8f863
 applock GET /api/alive | here=ok

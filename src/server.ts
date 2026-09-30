@@ -2,6 +2,7 @@ import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import { retiredPhoneWorker } from "./retired-phone-worker.js";
 
 import { historyIdeas } from "./history-ideas.js";
+import { todayActivity } from "./today-activity.js";
 import { currentTaskRun } from "./task-scope.js";
 import {
   createServer,
@@ -4226,6 +4227,15 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
           send(response, 200, screenControl({ store: app.store, owner: app.runtime.owner, profiles: app.store.profiles, viaDoor: throughDoor(request),
             locked: () => app.sessionLock.refusal("POST", path) }, app.desktop ?? null, path));
         } catch (error) { throw error instanceof LiveScreenRefusal ? new HttpError(error.status, error.message) : error; }
+        return;
+      }
+      if (request.method === "GET" && path === "/api/activity/today") {
+        if (throughDoor(request) || currentPerson() || currentTaskRun() || startedWithShortLivedKey()
+          || !app.store.profiles.isOwner() || app.sessionLock.locked())
+          throw new HttpError(403, "Today's activity requires the owner's unlocked local window.");
+        const timezone = new URL(request.url ?? "/", "http://localhost").searchParams.get("timezone") ?? "";
+        try { send(response, 200, todayActivity(app.store, app.runtime.owner, timezone, (text) => app.runtime.hideSecrets(text))); }
+        catch (error) { if (error instanceof RangeError || timezone.length > 100 || !timezone) throw new HttpError(400, "Invalid local timezone."); throw error; }
         return;
       }
       if (request.method === "GET" && path === "/api/history-ideas") {

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Store } from "./store.js";
 
-function safeTitle(title: string, hide: (text: string) => string): string {
+export function safeTitle(title: string, hide: (text: string) => string): string {
   return hide(title).replace(/https?:\/\/\S+/gi, "[link]")
     .replace(/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/g, "[email]")
     .replace(/\b(?:password|token|secret|api[_ -]?key)\s*[:=]\s*\S+/gi, "[redacted]")

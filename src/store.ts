@@ -648,6 +648,32 @@ export class Store {
       status: String(r.status), createdAt: String(r.created_at),
     }));
   }
+  /** Completed primary owner tasks, metadata only. 1001st row signals a capped read. */
+  completedActivity(owner: string, since: string) {
+    return this.db.prepare(`SELECT t.id, t.session_id AS sessionId, finished.created_at AS completedAt,
+      COALESCE(c.title, (SELECT json_extract(e.data,'$.title') FROM events e
+        WHERE e.run_id=t.id AND e.kind='run.titled' ORDER BY e.rowid DESC LIMIT 1)) AS title
+      FROM tasks t JOIN sessions s ON s.id=t.session_id
+      JOIN events finished ON finished.run_id=t.id AND finished.kind='run.finished'
+      LEFT JOIN conversation_marks c ON c.session_id=s.id AND c.owner=t.owner
+      WHERE t.owner=? AND s.owner=t.owner AND s.temporary=0 AND t.status='completed'
+        AND json_extract(finished.data,'$.status')='completed' AND finished.created_at>=?
+        AND finished.rowid=(SELECT MAX(e.rowid) FROM events e WHERE e.run_id=t.id AND e.kind='run.finished')
+        AND c.deleted_at IS NULL AND c.archived_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM tasks other JOIN events e ON e.run_id=other.id
+          WHERE other.session_id=s.id AND e.kind='run.started' AND (
+            json_extract(e.data,'$.personProfileId') IS NOT NULL
+            OR json_extract(e.data,'$.shortLivedKey') IS NOT NULL OR json_extract(e.data,'$.lentTo') IS NOT NULL))
+        AND NOT EXISTS (SELECT 1 FROM events e WHERE e.run_id=t.id AND e.kind='run.aside')
+        AND EXISTS (SELECT 1 FROM events e WHERE e.run_id=t.id AND e.kind='run.started'
+          AND json_extract(e.data,'$.source')='owner' AND json_extract(e.data,'$.parentRunId') IS NULL
+          AND json_extract(e.data,'$.callerKind')='owner-here'
+          AND json_extract(e.data,'$.dryRun') IS NULL AND json_extract(e.data,'$.originFrom') IS NULL
+          AND json_extract(e.data,'$.resumedFrom') IS NULL)
+      ORDER BY finished.created_at DESC, finished.rowid DESC LIMIT 1001`).all(owner, since)
+      .map((r) => ({ id: String(r.id), sessionId: String(r.sessionId), completedAt: String(r.completedAt),
+        title: typeof r.title === "string" ? r.title : "Untitled task" }));
+  }
   /** models-ui: this person's task ids started since then, newest first, at most `limit` (Settings › Data & usage, by Trunk). */
   taskIdsSince(owner: string, since: string, limit: number): string[] {
     return this.db.prepare("SELECT id FROM tasks WHERE owner=? AND created_at >= ? ORDER BY created_at DESC LIMIT ?")
