@@ -761,7 +761,8 @@ export class ChannelRouter {
       if (runs.some((run) => run.status === "running" || run.status === "needs_input")) return [];
       for (const run of runs.slice(-20).reverse()) {
         const origin = runOrigin(this.store, run.id);
-        if (origin.source !== "channel" || origin.shortLivedKey || origin.personProfileId || origin.lentTo) continue;
+        // owner-dm-full: a task from the owner's own verified direct chat reads as the owner's (origin.ownerChat); it still came from this chat.
+        if ((origin.source !== "channel" && !origin.ownerChat) || origin.shortLivedKey || origin.personProfileId || origin.lentTo) continue;
         const came = this.store.events(run.id).find((event) => event.kind === "channel.inbound")?.data;
         if (!came || came.channel !== chat.channel || came.chatId !== chat.chatId) continue;
         if (typeof came.senderId !== "string" || came.senderId !== chat.chatId.split(":")[0] || came.chatKind !== "direct" || came.caughtUp !== false
