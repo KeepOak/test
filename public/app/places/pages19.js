@@ -11,6 +11,7 @@ import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { text } from "../chat/markdown.js";
 import { when17 } from "./parts17.js";
+import { viewFence, viewerFence } from "../core/view-fence.js";
 import { t } from "../../i18n.js";
 
 const P = { id: null, seen: "", timer: null };
@@ -35,8 +36,10 @@ function draw(page) {
 /** Opens one page, and keeps a live one current while it stays open. */
 export async function openPage(id) {
   stop();
+  const still = viewFence("page19"), viewer = viewerFence();
   let body;
-  try { body = await api(`asks/pages/${encodeURIComponent(id)}`); } catch (error) { toast(error.message); return; }
+  try { body = await api(`asks/pages/${encodeURIComponent(id)}`); } catch (error) { if (still()) toast(error.message); return; }
+  if (!still()) return; // closed, replaced, another person or locked while it was read: not opened late
   P.id = id;
   P.seen = JSON.stringify(body.page);
   draw(body.page);
@@ -46,6 +49,7 @@ export async function openPage(id) {
     if (!shown || document.hidden) { if (!shown) stop(); return; }
     const again = await api(`asks/pages/${encodeURIComponent(id)}`).catch(() => null);
     if (!again || P.id !== id) return;
+    if (!viewer()) { stop(); return; }
     // Closed or replaced while the page was being read: never open it again.
     if (!dialog()?.querySelector(`[data-page19="${CSS.escape(id)}"]`)) { stop(); return; }
     const seen = JSON.stringify(again.page);
@@ -55,7 +59,9 @@ export async function openPage(id) {
 
 /** Library's "Kept pages": every page, newest first, each one opening here. */
 export async function openPagesList() {
+  const still = viewFence("page19-list");
   const { pages } = await api("asks/pages");
+  if (!still()) return;
   const rows = pages.map((p) => `<button class="prow" type="button" data-act="page19" data-id="${esc(p.id)}"><span class="grow"><b>${esc(p.title)}</b><small>${esc(meta(p))}</small></span></button>`).join("");
   openDlg({ title: t("window.places.library17.kept-answers-and-long-articles"),
     body: `<p class="lead-b17">${esc(t("window.places.pages19.lead"))}</p><div class="rows demo-b17">${rows || `<p class="empty">${esc(t("window.places.pages19.none"))}</p>`}</div>`,
