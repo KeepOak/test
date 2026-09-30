@@ -347,8 +347,15 @@ export class Scheduler {
     const claimed = this.store.claimScheduleTrigger(owner, id, new Date().toISOString(), slot);
     if (!claimed) return this.refusedTrigger(owner, id, slot);
     const { statusBeforeTrigger, ...data } = claimed.data;
+    // An explicit retry of an interrupted turn must not put it back into the stuck state afterwards.
+    const wasInterrupted = statusBeforeTrigger === "interrupted";
+    const repeats = repeating(data);
+    let restored = wasInterrupted ? repeats ? "pending" : "failed" : String(statusBeforeTrigger);
+    let dueAt = data.dueAt;
+    if (wasInterrupted && repeats) try { dueAt = nextTurn(data, new Date()); }
+    catch { restored = "failed"; }
     const slots = (Array.isArray(data.triggerSlots) ? data.triggerSlots as TriggerSlot[] : []).slice(-(triggerSlotLimit - 1));
-    const record = { ...claimed, data: { ...data, status: String(statusBeforeTrigger),
+    const record = { ...claimed, data: { ...data, status: restored, dueAt,
       ...(slot ? { triggerSlots: [...slots, { slot, runId: null, at: new Date().toISOString() }] } : {}) } };
     const run = await this.execute(record, new Date(), trigger, payload, false);
     if (slot && run) this.noteSlotRun(owner, id, slot, run.id);
