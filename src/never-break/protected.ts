@@ -128,7 +128,9 @@ export function protectedAreas(input: AreaInput): ProtectedAreas {
   else noChange.push(dataDir);
   noChange.push(...(input.extra ?? []).map((path) => (same ? resolve(path) : path)));
   if (same) noChange.push(...serviceFiles());
-  const noRead = guardedDataFiles.map((name) => join2(dataDir, name));
+  // Finalized safety copies and decrypted recovery staging contain the same keys/DBs as the live data folder.
+  // Owner restore APIs read them internally; task files/commands must never turn a backup into a secret-reading bypass.
+  const noRead = [...guardedDataFiles, "update-backups"].map((name) => join2(dataDir, name));
   const withReal = (list: string[]) => same ? [...new Set([...list, ...list.map(realSpelling).filter((p): p is string => p !== null)])] : list;
   return {
     noChange: withReal(noChange), noRead: withReal(noRead),

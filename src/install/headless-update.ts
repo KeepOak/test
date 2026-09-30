@@ -107,9 +107,15 @@ function defaultBackup(dataDir: string, version: string, note: RunningInstance |
       const token = (await readFile(join(dataDir, sessionTokenFileName), "utf8")).trim();
       return requestUpdateBackup(note.url, token);
     }
-    if (!existsSync(join(dataDir, databaseName))) { print("There is no saved work yet, so no safety copy was needed."); return; }
+    const { readCheckpointConfig } = await import("./github-checkpoint-contract.js");
+    const checkpoint = await readCheckpointConfig(dataDir);
+    if (!existsSync(join(dataDir, databaseName))) {
+      if (checkpoint) throw new Error("A GitHub checkpoint is required, but saved work is unavailable; update held.");
+      print("There is no saved work yet, so no safety copy was needed."); return;
+    }
     await withStore(dataDir, async (store) => { await writeUpdateBackup(dataDir, store.backup(version), version); });
     await takeDataCopy({ dataDir, version }); // the whole data folder too (src/install/data-copy.ts)
+    if (await readCheckpointConfig(dataDir)) throw new Error("This update requires its encrypted GitHub checkpoint. Start and unlock Branch on this computer, then retry. The offline updater does not open the secrets locker; update held.");
   };
 }
 

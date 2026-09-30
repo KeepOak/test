@@ -12,6 +12,7 @@ import { waiting } from "../../flows/whatsnew.js";
 import { updates17 } from "../p17-more.js";
 import { t } from "../../../i18n.js";
 import { channelSection, initChannel, loadChannel, channelStatus } from "../updates-channel.js";
+import { githubCheckpointSection, initGithubCheckpoint, loadGithubCheckpoint } from "../github-update-checkpoint.js";
 import { holdingTasks, lastLook, waitingLine } from "../../shell/autoupdate.js";
 import { clock, failDetail, failedWords, gentleWords, installing, keptWords, stageWords, targetWords, updateNow } from "../../shell/updating.js";
 
@@ -100,6 +101,8 @@ async function saveAutoUpdate(on) {
 
 let moreOpen = false;
 export function init() {
+  initGithubCheckpoint();
+  loadGithubCheckpoint();
   loadComfort();
   loadPlan();
   loadRemoval();
@@ -118,6 +121,7 @@ let next = null;
 const notesRow = (version) => `<div class="rn-row17d">${ic("news17d", "s")}<span class="grow">${esc(next ? t("window.flows.whatsnew.have-next", { version, next: next.version }) : t("window.flows.whatsnew.have", { version }))}</span><button class="btn sm" type="button" data-act="relnotes17d">${t("window.flows.whatsnew.release-notes")}</button></div>`;
 
 export async function load() {
+  await loadGithubCheckpoint();
   loadPlan();
   loadRemoval();
   next = await waiting().catch((e) => { toast(e.message); return null; });
@@ -191,6 +195,7 @@ function draw() {
   html += `<div class="ctl"><b>${t("window.settings.updates.whats-new")}</b><span class="right"><button class="btn sm" type="button" data-act="whatsnew13">${t("window.settings.updates.whats-new")}</button></span><small></small></div>`;
   html += `<div class="ctl"><b>${t("window.settings.updates.undo-the-last-update")}</b><span class="right"><button class="btn sm" type="button" data-act="soon" data-why="undo-the-last-update">${t("strip.undo")}</button></span><small></small></div>`;
   html += channelSection();
+  html += githubCheckpointSection();
   html += "</details>";
 
   if (notOwner()) { plan = null; removal = null; } // switched to a household person: the owner's survey is not shown

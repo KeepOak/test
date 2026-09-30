@@ -4470,6 +4470,8 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // ---- end mac7/learn ----
         if (await rawApi(app, request, response, path)) return;
         if (path.startsWith("/api/deployment")) {
+          if ((path.startsWith("/api/deployment/github-checkpoint") || path === "/api/deployment/backup") && (viaRemote || throughDoor(request)))
+            throw new HttpError(403, "GitHub checkpoint authorization and recovery stay in the owner's app on this computer.");
           // bucket 22: `branch quit`, from this computer with the master key only (src/install/quit.ts).
           if (path === "/api/deployment/quit") {
             const answer = await quitRequest(request, { dataDir: options.dataDir, quit: options.quit, viaRemote })
