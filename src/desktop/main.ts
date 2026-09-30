@@ -90,10 +90,12 @@ import { desktopGatewayConfig } from "./gateway-mode.js";
 import { desktopGatewayFlag, GatewayLaunchError, joinedEngineVerdict, launchDesktopGateway } from "./gateway-launch.js";
 import { runDesktopGateway } from "./gateway-desktop.js";
 import { joinedGatewayLive } from "./gateway-client.js";
+import { desktopIsland } from "./island.js";
 
 let window: BrowserWindow | undefined;
 let tray: Tray | undefined;
 let trayTimer: NodeJS.Timeout | undefined;
+let island: ReturnType<typeof desktopIsland> | undefined;
 let stop: (() => Promise<void>) | undefined;
 let quitting = false;
 /* Redesign phase 1: why Branch is quitting, how many tasks are working, and whether an engine in the
@@ -414,6 +416,10 @@ async function createWindow(
     console.error("Window:", (error as Error).message);
     pageRecovery.failed();
   });
+  island = desktopIsland({ origin: url, call: client.fetch,
+    protect: (mini) => protectWindow(mini, url, key, new TalkLiveMic(url, mini.webContents.id), access, client),
+    open: () => { window?.show(); window?.focus(); } });
+  app.once("will-quit", () => island?.close());
   createTray();
   watchTrayUsage(url, key, () => access.ready());
 }
@@ -443,6 +449,7 @@ function createTray(): void {
         },
       },
       { type: "separator" },
+      { label: "Open desktop mini bar", click: () => island?.show() },
       { label: "Quit", click: () => app.quit() },
     ]),
   );

@@ -564,6 +564,7 @@ async function staticFile(
   request?: IncomingMessage,
 ): Promise<boolean> {
   const assets: Record<string, [string, string]> = {
+    "/desktop-island": ["desktop-island.html", "text/html; charset=utf-8"],
     // The window (public/index.html, public/app.css; its modules and art under /app/ and /art/ are served by exact file).
     "/": ["index.html", "text/html; charset=utf-8"],
     "/app.css": ["app.css", "text/css; charset=utf-8"],
@@ -1316,6 +1317,16 @@ async function api(
       state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner)) };
   }
   // ── end mac7/live-voice ──
+  if (request.method === "GET" && path === "/api/desktop/island") {
+    app.store.profiles.requireOwner("The desktop mini bar");
+    if (startedWithShortLivedKey()) throw new HttpError(403, "Open the mini bar from the desktop tray.");
+    if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch to use the mini bar.");
+    const runs = app.store.runs(app.runtime.owner).filter(run => ["running", "waiting", "paused"].includes(run.status));
+    const titles = app.store.runTitles(runs);
+    return { scope: app.store.profiles.scope(), tasks: runs.slice(0, 20).map(run => ({ id: run.id,
+      sessionId: run.sessionId, status: run.status, title: titles.get(run.id) ?? "Task" })),
+      trunks: app.trunks.modes().trunks === "off" ? [] : app.trunks.roster().trunks.map(trunk => ({ id: trunk.id, name: trunk.name })) };
+  }
   if (request.method === "GET" && path === "/api/state") {
     // The owner's triggers and webhooks ride along here too, so their secrets stay off a door as on their own routes.
     const answer = state(app) as Record<string, unknown>;
