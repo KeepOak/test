@@ -1,3 +1,6 @@
+import { privateDesktopApi } from "./integrations/private-desktop-api.js";
+import { privateDesktopViewApi } from "./integrations/private-desktop-view-api.js";
+import { servePrivateDesktopView } from "./integrations/private-desktop-view-socket.js";
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import {
   createServer,
@@ -1353,6 +1356,7 @@ async function api(
     return { results: unifiedSearch(app, app.runtime.owner, q) };
   }
   // Wave 6: sharing, labels and notes, workflows, the waiting line, days off, and profiles.
+  if (request.method === "POST" && path === "/api/profiles/switch") app.privateDesktopViews.revokeAll();
   const collab = await collabApi(app, request, path, (maximumBytes) => readBody(request, maximumBytes));
   if (collab !== notCollab) return collab;
   if (request.method === "GET" && path === "/api/tools") return toolInventory(app);
@@ -1594,6 +1598,23 @@ async function api(
   // Batch 26 (wave 8): what Windows itself allows, with the page that turns each one on.
   if (request.method === "GET" && path === "/api/os-permissions")
     return { permissions: await app.osPermissions.all(), ...permissionsContext() };
+  // Private desktop lifecycle and viewer credentials are exclusive to the unlocked owner window.
+  if (path === "/api/private-desktops/view-grants") {
+    if (throughDoor(request) || startedWithShortLivedKey() || currentPerson() || app.sessionLock.locked()) throw new HttpError(403, "Private desktop views belong to the unlocked owner window on this computer.");
+    app.store.profiles.requireOwner("Private desktop views");
+    const body = await readBody(request, 4096);
+    app.store.profiles.requireOwner("Private desktop views");
+    if (app.sessionLock.locked()) throw new HttpError(403, "Unlock Branch before opening a private desktop view.");
+    try { return privateDesktopViewApi(app.privateDesktopViews, request.method ?? "POST", body); }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
+  if (path === "/api/private-desktops") {
+    if (throughDoor(request) || startedWithShortLivedKey() || currentPerson() || app.sessionLock.locked()) throw new HttpError(403, "Private computers belong to the owner in the unlocked app window.");
+    app.store.profiles.requireOwner("Private computers");
+    if (request.method === "POST" && lockdownActive(app.store, app.runtime.owner)) throw new HttpError(403, "Turn Lockdown off before changing private computers.");
+    try { return await privateDesktopApi(app.privateDesktops, app.runtime.owner, request.method ?? "GET", request.method === "POST" ? await readBody(request, 4096) : undefined); }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   // Batch 26 (wave 8): reading passwords out of the password manager the owner already has.
   // Q255: the owner's alone, read and write; a household person is refused here, a short-lived key at the door.
   if (path === "/api/credentials/settings" && (request.method === "GET" || request.method === "POST"))
@@ -4399,6 +4420,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // ---- end of the r17-d block ----
         // ---- R17-A: Trunks under /api/trunks (src/trunks/api.ts); the owner's, bar talking to them. ----
         if (handlesTrunksPath(path)) {
+          if (request.method === "POST" && /^\/api\/trunks\/conversations\/[a-f0-9-]{36}$/.test(path)) app.privateDesktopViews.revokeAll();
           const active = app.store.profiles.active();
           const answer = await trunksApi({ trunks: app.trunks, method: request.method ?? "GET",
             readBody: () => readBody(request, 524288), person: active ? { id: active.id, name: active.name } : null,
@@ -4592,6 +4614,16 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // Integration review: the paired door serves the device socket and nothing else. It had no
       // upgrade handler before this branch, and a task's socket stays on this computer's own door.
       if (viaRemote) { refuseUpgrade(socket); return; }
+      if (path === "/api/private-desktops/view") {
+        const authorized = () => fromThisComputer(request.socket?.remoteAddress, request.headers)
+          && hostAllowed(request.headers.host, request.headers.origin, url) && tokenFromSocket(request, token)
+          && !currentPerson() && app.store.profiles.isOwner() && !app.sessionLock.locked()
+          && !lockdownActive(app.store, app.runtime.owner);
+        if (!authorized()) { refuseUpgrade(socket); return; }
+        await servePrivateDesktopView(app.privateDesktopViews, app.privateDesktops, request, socket, authorized,
+          mark ? [`${answerHeader}: ${mark}`] : [], () => app.sessionLock.touch());
+        return;
+      }
       // ---- end mac7/nodes ----
       // App lock: a locked Branch with a PIN opens no socket for a task or a program lending tools.
       // Asked only once the key has passed, so the answer tells nobody else that Branch is locked.
