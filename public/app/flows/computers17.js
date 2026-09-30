@@ -19,6 +19,7 @@ import { markLive } from "../core/features.js";
 import { ic, av, toast, openPop, closePop, mi, radio } from "../core/ui.js";
 import { t } from "../../i18n.js";
 import { art17Slot } from "../core/art17.js"; // the prototype's SPOTS17: the cloud picture in the offer
+import { initDaytona } from "./daytona.js";
 
 const DESKTOP = ["win32", "darwin", "linux"];
 const PLATFORM = { win32: "Windows", darwin: "macOS", linux: "Linux" };
@@ -193,6 +194,7 @@ async function setFirst(el) {
 }
 
 export function init() {
+  initDaytona();
   markLive(["sw:itsc17d", "itsmax17d", "itsfirst17d", "comp-chip", "comp-max", "comp-pick", "convcomp17d", "comp-toggle"]);
   on("itsmax17d", (el) => setMax(el));
   on("comp-max", (el) => setMax(el));

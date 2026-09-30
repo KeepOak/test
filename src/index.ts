@@ -154,6 +154,7 @@ import { settingsKitWriters } from "./settings-kit/writers.js";
 import { GitTools } from "./integrations/git.js";
 import { GitCheckpoints, GitWorkspaces, type GitRun } from "./git-checkpoint.js";
 import { RemoteWorkspaces, registerRemoteWorkspaces, sshRunner } from "./remote/ssh-workspace.js";
+import { DaytonaWorkspace, registerDaytonaWorkspace } from "./remote/daytona-workspace.js";
 import { SessionLimiter } from "./session-limits.js";
 import { ConversationRetention } from "./retention.js";
 import { Wakeups, registerWakeups } from "./wakeups.js"; // selfdev (SELF-305)
@@ -644,6 +645,8 @@ export async function createBranch(options: {
     allowedForThisRun: allowedForThisRun(store, runtime.owner, context) }, folder); // mac7/tests-unattended: --allow-tests
   // Locking the app: after a quiet spell the locker stays shut until the owner unlocks it again.
   const sessionLock = new SessionLock(store, runtime.owner);
+  const daytona = new DaytonaWorkspace(store, runtime.owner, web.policy, () => !sessionLock.locked());
+  registerDaytonaWorkspace(registry, daytona);
   runtime.fullAccessLocked = () => sessionLock.locked();
   store.secrets.gate = () => sessionLock.require();
   // Batch 26 (wave 8): the owner's own password manager, asked at the call boundary and only when
@@ -1817,6 +1820,7 @@ ${result.output || "(it said nothing)"}`;
     osPermissions,
     /** Folders on the owner's other computers, reached with the OpenSSH client Windows already has. */
     remotes,
+    daytona,
     /** A way back to how a folder was just before a set of changes was written. */
     checkpoints,
     /** Switching a folder to the line of work a project names. */
