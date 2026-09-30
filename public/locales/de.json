@@ -10398,6 +10398,7 @@
   "window.why.widget6": "Das Snippet würde einen Schlüssel zu diesem Computer in eine Webseite legen, und jeder, der die Seite öffnet, könnte ihn lesen und Branch als du nutzen. Es bleibt aus, bis ein Snippet einen Schlüssel tragen kann, der nur für diese Seite antwortet.",
   "window.why.win-min": "Ein Browser-Tab kann sein eigenes Fenster nicht minimieren; nutze die Schaltfläche deines Browsers.",
   "window.why.ws": "Teams bei keepoak.com sind noch nicht verfügbar, also ist Privat der einzige Arbeitsbereich.",
+  "window.why.xdo": "Erlauben bleibt hier aus, bis die Sicherheitsprüfung für Installationsanfragen erfolgt ist. Es wurde nichts installiert. Du kannst die Anfrage mit Nicht ablehnen.",
   "wsedit.card.note": "Öffne und ändere Textdateien in deinem Arbeitsbereich über den Dateien-Tab einer Unterhaltung. Jedes Speichern lässt sich zurücknehmen, und eine Datei, die sich seit dem Öffnen geändert hat, wird nie überschrieben.",
   "wsedit.card.title": "Code-Editor",
   "wsedit.discard": "Ohne Speichern deiner Änderungen verlassen?",

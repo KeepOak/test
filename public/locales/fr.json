@@ -10399,6 +10399,7 @@
   "window.why.widget6": "L’extrait placerait une clé de cet ordinateur dans une page web, et quiconque ouvre cette page pourrait la lire et utiliser Branch en votre nom. Il reste désactivé tant qu’un extrait ne peut pas porter une clé qui ne répond que pour cette page.",
   "window.why.win-min": "Un onglet de navigateur ne peut pas réduire sa propre fenêtre ; utilisez le bouton de votre navigateur.",
   "window.why.ws": "Les équipes keepoak.com ne sont pas encore ouvertes, donc Personnel est le seul espace de travail.",
+  "window.why.xdo": "Autoriser reste désactivé ici en attendant l'examen de sécurité des demandes d'installation. Rien n'a été installé. Vous pouvez refuser la demande avec Ne pas.",
   "wsedit.card.note": "Ouvrez et modifiez les fichiers texte de votre espace de travail depuis l'onglet Fichiers d'une conversation. Chaque enregistrement peut être annulé, et un fichier modifié depuis son ouverture n'est jamais écrasé.",
   "wsedit.card.title": "Éditeur de code",
   "wsedit.discard": "Quitter sans enregistrer vos modifications ?",
