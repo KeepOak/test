@@ -46,6 +46,9 @@ export interface RealtimeSettings {
   tools: RealtimeTool[];
 }
 
+export interface RealtimeAudioItem { itemId: string; contentIndex: number }
+export interface RealtimePlaybackItem extends RealtimeAudioItem { audioEndMs: number }
+
 /**
  * What a live conversation can do, whichever service is behind it. The names are the plain ones: a
  * person speaks (`sendAudio`), types (`sendText`), cuts in (`interrupt`) or stops (`close`).
@@ -64,10 +67,11 @@ export interface RealtimeSession {
   /** What one of Branch's tools did, handed back so the model can carry on. */
   toolResult(callId: string, name: string, result: unknown): void;
   /** Stop talking now: the answer is cancelled and whatever was heard so far is thrown away. */
-  interrupt(): void;
+  interrupt(playback?: readonly RealtimePlaybackItem[]): void;
   close(reason?: string): void;
   onTranscript: (part: TranscriptPart) => void;
-  onAudio: (pcm16: Uint8Array) => void;
+  onAudio: (pcm16: Uint8Array, item?: RealtimeAudioItem) => void;
+  onSpeechStarted?: () => void;
   onToolCall: (call: RealtimeToolCall) => void;
   onUsage: (usage: RealtimeUsage) => void;
   onClosed: (reason: string) => void;
@@ -82,7 +86,8 @@ export abstract class SocketSession implements RealtimeSession {
   abstract readonly service: "openai" | "gemini";
   protected socket: WebSocket | null = null;
   onTranscript: (part: TranscriptPart) => void = () => undefined;
-  onAudio: (pcm16: Uint8Array) => void = () => undefined;
+  onAudio: (pcm16: Uint8Array, item?: RealtimeAudioItem) => void = () => undefined;
+  onSpeechStarted: () => void = () => undefined;
   onToolCall: (call: RealtimeToolCall) => void = () => undefined;
   onUsage: (usage: RealtimeUsage) => void = () => undefined;
   onClosed: (reason: string) => void = () => undefined;
@@ -135,7 +140,7 @@ export abstract class SocketSession implements RealtimeSession {
   abstract commit(): void;
   abstract sendText(text: string): void;
   abstract toolResult(callId: string, name: string, result: unknown): void;
-  abstract interrupt(): void;
+  abstract interrupt(playback?: readonly RealtimePlaybackItem[]): void;
 }
 
 /** Waits for one event on a socket, and gives up rather than hanging for ever. */

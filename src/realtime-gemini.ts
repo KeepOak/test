@@ -89,6 +89,7 @@ export class GeminiLiveSession extends SocketSession {
     if (message["usageMetadata"]) this.readUsage(message["usageMetadata"]);
     const content = message["serverContent"] as Record<string, unknown> | undefined;
     if (!content) return;
+    if (content["interrupted"]) { this.onSpeechStarted(); return; }
     const input = content["inputTranscription"] as { text?: unknown } | undefined;
     if (input) this.onTranscript({ who: "person", text: textAt(input.text), final: Boolean(content["turnComplete"]) });
     const output = content["outputTranscription"] as { text?: unknown } | undefined;
