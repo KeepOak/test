@@ -17,6 +17,7 @@ import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { available as keepOakAvailable, change as changeKeepOak } from "../settings/keepoak-view.js";
 
 export const M = { name: "", asked: false, nodes: [], devices: [] };
 /* This computer's name as the engine keeps it; "" until one is given. */
@@ -45,7 +46,7 @@ async function openMachines(el) {
   const nodes = M.nodes.map((n) => row("machine", "node", n.id, n.name, "", false, "")).join("");
   const devices = M.devices.map((d) => row("machine", "device", d.id, d.name ?? d.id, d.connected ? t("layout.connected") : t("window.shell.machines.offline"), false, d.connected ? "" : "off")).join("");
   const workspace = `<div class="ph">${t("window.shell.machines.workspace")}</div>${radio("ws", "personal", t("window.flows.acct.personal"), t("window.shell.machines.just-you"), true)}<hr>`;
-  const keepOak = `<button class="mi" type="button" role="menuitemradio" aria-checked="false" data-act="machine" data-v="keepoak" data-why="machine-keepoak"><span class="tick">${ic("check", "s")}</span><span><span class="mi-t">${t("window.settings.computer.keepoak-computer")}</span><span class="mi-s"><span class="dot off"></span> ${t("window.shell.machines.keepoak-connect")}</span></span></button>`;
+  const keepOak = `<button class="mi" type="button" data-act="machine-keepoak-portal" ${!keepOakAvailable() || E.profiles?.isOwner !== true ? "disabled" : ""}><span class="tick">${ic("globe", "s")}</span><span><span class="mi-t">Open KeepOak cloud account</span><span class="mi-s">Separate website session; this conversation stays here</span></span></button>`;
   openPop(el, `${workspace}<div class="ph">${t("window.shell.machines.talk-to-the-assistant-on")}</div>${here}${nodes}${devices}${keepOak}<hr>${mi("addcomp", "plus", t("window.shell.machines.add-a-computer-or-phone"))}`);
 }
 
@@ -82,7 +83,8 @@ async function saveName(el) {
 }
 
 export function initMachines() {
-  markLive(["sw:rc-name", "machines", "machine-here", "renamecomp", "rc-save"]);
+  markLive(["machine-keepoak-portal", "sw:rc-name", "machines", "machine-here", "renamecomp", "rc-save"]);
+  on("machine-keepoak-portal", () => { closePop(); void changeKeepOak("openKeepOakView"); });
   on("machines", (el) => openMachines(el));
   on("machine-here", () => closePop());
   on("renamecomp", (el) => renameDialog(el));
