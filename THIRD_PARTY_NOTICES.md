@@ -3388,6 +3388,10 @@ The above copyright notice and this permission notice shall be included in all c
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+### LibreChat, MIT: one renewal per sign-in at a time
+
+`OAuthConnections.accessToken` in `src/oauth.ts` lets calls that find a sign-in expired at the same moment share one renewal, following LibreChat's in-flight refresh map (https://github.com/LibreChat-AI/LibreChat/blob/4d33d8c2c71ad497fdfaa2c4334b0a2293bcbd67/packages/api/src/mcp/oauth/tokens.ts#L1021-L1025, Copyright (c) 2026 LibreChat). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### OpenCode command arity table, MIT
 
 The table of how many words name a program's action in `src/command-prefix.ts` (`git status`, `npm run dev`) is copied from OpenCode's `packages/opencode/src/permission/arity.ts` (https://github.com/sst/opencode), together with its longest-prefix lookup. Used under the MIT licence:
@@ -3563,10 +3567,6 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 - `readback.ts` follows the ideas of ZeroClaw's Markdown memory (`crates/zeroclaw-memory/src/markdown.rs`, https://github.com/zeroclaw-labs/zeroclaw, commit 3df68fb, MIT or Apache-2.0) and nanobot's "dream" tidy template (`nanobot/templates/agent/dream.md`, https://github.com/HKUDS/nanobot, commit 2fb1659, MIT).
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-
-### LibreChat, MIT: one renewal per sign-in at a time
-
-`OAuthConnections.accessToken` in `src/oauth.ts` lets calls that find a sign-in expired at the same moment share one renewal, following LibreChat's in-flight refresh map (https://github.com/LibreChat-AI/LibreChat/blob/4d33d8c2c71ad497fdfaa2c4334b0a2293bcbd67/packages/api/src/mcp/oauth/tokens.ts#L1021-L1025, Copyright (c) 2026 LibreChat). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
 
 ### Service marks in public/art (lobehub/icons and Devicon, MIT; Simple Icons, CC0-1.0; each mark its owner's trademark)
 
