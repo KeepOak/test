@@ -52,9 +52,9 @@ const before = (a: readonly number[], b: readonly number[]): boolean => a[0]! !=
  * releases, dogfood D26's empty What's new), the newest release this build already contains, named as that release so
  * the window says whose notes they are. A build older than every release in the file has none.
  */
-export function notesFor(version: string, file: ReleaseNotes = releaseNotesFile()): { version: string; date: string | null; items: Release["items"] } {
+export function notesFor(version: string, file: ReleaseNotes = releaseNotesFile()): { version: string; installedVersion: string; date: string | null; items: Release["items"] } {
   const own = file.releases.find((entry) => entry.version === version);
-  if (own) return { version, date: own.date, items: own.items };
+  if (own) return { version, installedVersion: version, date: own.date, items: own.items };
   const installed = numbers(version);
   const preRelease = /^\d+\.\d+\.\d+-/.test(version);
   const contained = installed ? file.releases.filter((entry) => {
@@ -62,5 +62,5 @@ export function notesFor(version: string, file: ReleaseNotes = releaseNotesFile(
     return before(release, installed) || (!preRelease && !before(installed, release));
   }) : [];
   const newest = contained.sort((a, b) => (before(numbers(a.version)!, numbers(b.version)!) ? 1 : -1))[0];
-  return newest ? { version: newest.version, date: newest.date, items: newest.items } : { version, date: null, items: [] };
+  return newest ? { version: newest.version, installedVersion: version, date: newest.date, items: newest.items } : { version, installedVersion: version, date: null, items: [] };
 }
