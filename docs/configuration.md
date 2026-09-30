@@ -902,7 +902,34 @@ Create a bot with @BotFather, then either save its token as the secret `TELEGRAM
 { "channels": [{ "type": "telegram", "tokenSecret": "TELEGRAM_BOT_TOKEN", "activation": "mention", "pairing": true, "allowlist": [] }] }
 ```
 
-`tokenEnv` names an environment variable instead of a secret. Each chat (direct or group) keeps its own conversation. A sender who is neither on the `allowlist` (Telegram user ids) nor approved receives a six-digit code; approve it in **Settings → Channels** or with `POST /api/channels/pairings/approve {code}`. With `pairing: false`, strangers are told the assistant is private. In groups, `activation: "mention"` answers only messages that mention the bot or reply to it; `"always"` answers everything. A channel task may only read and answer, and nothing else unless you say so (see **What a chat may do beyond talking** below). `GET /api/channels` lists connected channels, pending and approved people.
+`tokenEnv` names an environment variable instead of a secret. Each chat (direct or group) keeps its own conversation. A sender who is neither on the `allowlist` (Telegram user ids) nor approved receives a six-digit code in a direct chat, once per code; approve it in **Settings → Channels** or with `POST /api/channels/pairings/approve {code}`. A code is never posted in a group: there the request waits in **Settings → Channels** with its code. At most three requests wait on one chat app at a time. With `pairing: false`, or a sender the list blocks, nothing is sent back at all. In a group, only your own account, or a person you named with `groupCommands` on a line of **What a chat may do beyond talking**, can switch the model, start the group's conversation afresh, fold it or stop somebody else's task; everyone else has /help, /status, /usage, /btw, /steer, /improve and /stop for their own task. In groups, `activation: "mention"` answers only messages that mention the bot or reply to it; `"always"` answers everything. A channel task may only read and answer, and nothing else unless you say so (see **What a chat may do beyond talking** below). `GET /api/channels` lists connected channels, pending and approved people.
+
+### Group chats: when the assistant answers there
+
+In a group the assistant answers when it is **@mentioned**, **replied to**, or **called by name** as a whole word
+("Juniper, what's the time?"; "junipers" does not count, and a generic name such as "Bot" or "Assistant" never does).
+A direct chat is always answered. On each app:
+
+- **Telegram**: a mention, a reply to one of its messages, or its name. With BotFather's default privacy mode on, a
+  group hands a bot only mentions, replies and commands, so its name alone and "Every message" reach it only once
+  privacy mode is off (send `/setprivacy` to @BotFather, choose Disable, then remove the bot from the group and add it
+  again) or the bot is an admin of that group. Branch asks Telegram (`getMe` `can_read_all_group_messages`, then
+  `getChatMember`) and says so when "Every message" is chosen.
+- **Discord**: a mention, a reply, or its user or display name, in a server channel. Discord does not let bots into
+  group DMs.
+- **Slack**: a mention, its name, or a reply in a thread it started. Group messages (several people in one DM) are
+  groups too; the wizard's Slack app has `mpim:history` and `message.mpim`. Invite the bot to a channel first.
+- **Matrix**: a mention (in the text, a pill in `formatted_body`, or `m.mentions`), a reply to one of its messages, or
+  its name. A room with only you and it (the server's `m.joined_member_count` of 2) is a direct chat.
+- **Signal**: an @mention of its number, or a reply to one of its messages. Groups were never answered before.
+
+**Every message, per group.** Settings › Chat apps › **Group chats** lists each group the assistant has answered in,
+with **Only when mentioned** and **Every message** (`POST /api/channels/groups {"channel", "chatId", "activation":
+"mention" | "always" | null}`, where null follows the app's own `activation`). The owner can also type
+`/activation always` or `/activation mention` in the group from one of their own chat accounts (the exact list
+`/platform` and `/sethome` use), on Telegram, Discord, Slack or Matrix, whose servers vouch for who sent a message;
+from anybody else it is an ordinary group message. In a group answered at every message, a stranger who did not speak
+to the assistant is let be, rather than sent a pairing code at each message.
 
 ### What every channel shares
 
@@ -3787,7 +3814,7 @@ Sending work to the branch everyone shares (`main` or `master`) stops and asks y
 { "git": { "remote": true, "github": { "tokenSecret": "GITHUB_TOKEN" } } }
 ```
 
-That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (75 by default, looking again every `checksPollSeconds`, 15 by default, 1 to 120), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators, leaves required reviews and merge queues to GitHub, and refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
+That registers `github.create_repo` (private unless you say otherwise), `github.open_pull_request`, `github.create_issue`, `github.issues` (listing them), `github.checks` (whether the automatic checks passed on a branch or a saved version, said in plain words), `github.release` (the releases published, newest first) and `github.publish_repo`, all behind the `github.manage` permission. `github.wait_for_checks` waits, for up to `seconds` in one call (300 by default, at most 600, looking again every `checksPollSeconds`, 15 by default, 1 to 120; it only looks, so one call may wait past the owner's tool time limit, and the loop guard treats it as a polled tool), for every check and workflow run on a pull request's exact latest commit to finish, and says passed, failed or still pending: queued, running or not-yet-reported checks are never counted as passed. `github.merge_pull_request` merges only after that same verification, including every check the base branch requires from its configured app, with the merge pinned to the checked commit; it does not rely on GitHub enforcing rules for administrators and leaves required reviews to GitHub. When the base takes changes only through GitHub's merge queue, the checked commit joins the queue instead (GitHub's `enqueuePullRequest`, pinned to that commit), the tool says it is queued, not merged, and `github.wait_for_checks` stays pending until GitHub says merged, or failed if the queue took it out. It refuses Branch's own source, which is finished with `branch.finish_source_change`. Like every `github.manage` tool it asks first outside the owner's Full Access. `github.publish_repo` makes the repository and sends a folder there in one step; it writes the address as a plain remote with no sign-in details in it, so the push uses the Git sign-in this computer already has and no token is ever written into the repository's settings. You are asked before anything leaves the computer.
 
 **GitLab (RES-719)** is a connection of its own, set up in the window: **Settings › Advanced › GitLab**. Its switch
 ships "when needed"; the row under it says whether GitLab is connected. **Connect** asks for your GitLab's address
@@ -3952,12 +3979,17 @@ the checks itself on the exact head commit rather than relying on GitHub enforci
 every check run, commit status and Actions workflow run must have finished and passed (skipped or neutral is
 accepted only for checks the base does not require), every check the base requires through classic
 protection or an active ruleset must have passed from its configured app, and the head must contain the exact
-base commit. Queued, running, missing or not-yet-registered checks are pending and never count as passed.
-Required approving reviews, merge queues and other rules Branch cannot satisfy by checking are left to
-GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
+base commit (unless the base has a merge queue, which tests the head on the newest base itself). Queued, running,
+missing or not-yet-registered checks are pending and never count as passed, and so is GitHub's "blocked" while
+they run. On a base with a merge queue (KeepOak/Branch-Agent's `redesign/window` has one) the checked commit joins
+the queue rather than merging directly, and the change is merged only when GitHub says so. Required approving
+reviews and other rules Branch cannot satisfy by checking are left to GitHub; fork PRs, a changed base or head, and unreadable rules refuse. Branch never changes protection,
 force-merges or bypasses a rule; the merge request names the checked head SHA, so a later push is refused by
 GitHub itself. `github.wait_for_checks` waits for the checks; in the owner's selected Full Access,
-`branch.finish_source_change` then gets an independent read-only review and merges without asking.
+`branch.finish_source_change` then gets an independent read-only review and merges without asking (or joins
+the merge queue). `branch.run_contract_tests` runs a worktree's contract tests the one way that counts as
+evidence (`node scripts/review.mjs --jobs 1` with its `expectedTests`, behind the command wall) and says whether
+they passed, with counts, or failed and why; a failed run is kept too, never as evidence.
 
 Integration review (mac4/bucket-18): each file goes through the same checks as the assistant's own
 file tools before it is sent: secret-looking names (`.env`, keys), anything `.branchignore` hides,
@@ -4652,9 +4684,24 @@ files open as the window, so a hand-over would hit a locked file. Before the han
 written, the window reads `running.json`, asks that process to close (`taskkill /PID <pid> /T`, then
 `/T /F` if it will not), waits a bounded time for it to go and removes the note. An engine that
 still refuses is not treated as a failure: the hand-over script waits for the engine's process id
-as well as the window's, and ends it itself before mirroring anything. Nothing new is started: the
-hand-over still runs through the same hidden Windows Script Host launcher, and every tool is run
-with no window.
+as well as the window's, and ends it itself before mirroring anything. Every tool is run with no
+window.
+
+**How Windows installs an update (versioned folders).** Each version sits in a folder of its own,
+`<install>\app-<version>\`, beside the others; `current.json` names the one in use and the one
+before it. A new version is made beside the one running (Electron's own program is hard linked from
+it, never made anew), tried on a copy of the work, and put in use by one rename of `current.json`,
+so there is never a half-copied program. The version before is kept whole for going back; older
+ones are removed once nothing runs from them, so two are kept. Going back is the same rename the
+other way, and it is refused when the new version has already moved the saved work to a format the
+older one cannot read (then the new version is started again and the owner is told why). A start
+of an older version's program (an old shortcut, say) starts the version in use instead. A copy
+installed before this layout is the version before on its first update, and on the update after,
+when it is no longer needed to go back, its app is replaced by a small launcher that starts the
+version in use, so shortcuts to the top of the install keep working. The switch is run by a small
+runner: Electron's own program, linked with its files beside the update's scratch files, which runs
+the switch with no window and no Windows Script Host. A portable copy keeps its data beside the
+program, so it keeps the older swap, run by the same runner.
 
 **Checking a computer is ready.** `branch doctor --fix`, and the *Check and repair what I can*
 button, look for Git, the private browser Branch uses to read pages, a free address on this

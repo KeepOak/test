@@ -54,6 +54,11 @@ export const PoolSchema = z.object({
   autoSwitch: z.boolean().default(true),
   /** The account new work uses, when no conversation picked one. Null means the first in the list. */
   defaultAccount: accountId.nullable().default(null),
+  /**
+   * MODEL-050: how many helpers may work through one account of this list at once before the next helper takes
+   * another account (src/accounts/leases.ts; Hermes Agent's DEFAULT_MAX_CONCURRENT_PER_CREDENTIAL is 1).
+   */
+  jobsPerAccount: z.number().int().min(1).max(16).default(1),
   accounts: z.array(AccountSchema).max(maxAccounts).default([]),
 }).strict();
 export type Pool = z.infer<typeof PoolSchema>;

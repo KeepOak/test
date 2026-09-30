@@ -3,14 +3,17 @@ import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { audit, auditSources, type AuditSource } from "./audit.js";
 import type { CommandContext } from "./channels/chat-commands.js";
-import { errorText } from "./contracts.js";
+import { errorText, type ToolContext } from "./contracts.js";
 import { startedWithShortLivedKey } from "./key-context.js";
 import { prepareToolName, selfDevelopmentLockdownRefusal, type SelfDevelopmentContract } from "./self-development-contract.js";
 import { lockdownActive } from "./lockdown.js";
-import { PrepareSourceChangeSchema, prepareBranchSourceChange, type SelfDevelopmentDeps } from "./self-development.js";
+import { PrepareSourceChangeSchema, prepareBranchSourceChange, ownerOnly, type SelfDevelopmentDeps } from "./self-development.js";
 import { boundedDiff, nothingPreparedYet, type BoundedDiff } from "./self-development-diff.js";
 import { HttpError } from "./server-http.js";
 import { currentTaskRun } from "./task-scope.js";
+import { typedBy } from "./seasons/evidence.js";
+import { sourceArrived } from "./self-development-arrival.js";
+import { ownBuild, ownBuildHistory } from "./hot-update/window-files.js";
 
 /**
  * A change to Branch itself, asked for from a chat app.
@@ -92,6 +95,29 @@ export class SourceChangeRequests {
   file(input: { text: string; from: RequestSender }): SourceChangeRequest {
     if (startedWithShortLivedKey() || currentTaskRun())
       throw new Error("A request to change Branch is filed from a chat message itself, never by a key or a task.");
+    return this.insert(input);
+  }
+
+  /** An explicit local owner task can request development without approving its own contract. */
+  fileOwnerTask(text: string, context: ToolContext): SourceChangeRequest {
+    ownerOnly(context, this.deps.store, this.deps.ownersDefaultTurn);
+    const run = this.deps.store.run(context.runId);
+    if (context.owner !== this.deps.owner || !run || !typedBy(this.deps.store, run, null)
+      || (currentTaskRun() && currentTaskRun() !== context.runId)) throw new Error("A source request must belong to the owner's own task");
+    return this.insert({ text, from: { channel: "branch", chatId: run.sessionId, senderId: this.deps.owner,
+      senderName: "Owner task", messageId: context.runId } });
+  }
+
+  /** Read-only proof; the caller cannot supply the running engine's identity. */
+  installed(id: string): boolean {
+    this.deps.store.profiles.requireOwner("Checking an installed source change");
+    if (startedWithShortLivedKey()) return false;
+    const request = this.get(id);
+    return Boolean(request?.status === "approved" && request.worktree && request.answeredAt
+      && sourceArrived(this.deps.store, this.deps.owner, request.worktree, request.answeredAt, ownBuild(), ownBuildHistory()));
+  }
+
+  private insert(input: { text: string; from: RequestSender }): SourceChangeRequest {
     const from = SenderSchema.parse({ ...input.from, senderName: input.from.senderName.slice(0, 120) });
     if (!input.text.trim()) throw new Error("Say what you would like changed in Branch.");
     if (input.text.length > maxRequestLength)
