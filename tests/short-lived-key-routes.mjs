@@ -1277,6 +1277,7 @@ export const ROUTES = {
   "/api/voice/command": "task POST",
   "/api/voice/engines": "owner POST",
   "/api/voice/live": "owner POST", // phase2/rooms: its tools run as the owner
+  "/api/voice/piper/files": "owner POST", // UP-RESEARCH-063: names in one folder the owner picks, for the Piper picker
   "/api/voice/plan": "look",
   "/api/voice/settings": "owner POST",
   "/api/voice/speak": "task POST",
