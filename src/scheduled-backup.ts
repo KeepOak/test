@@ -77,7 +77,7 @@ export class ScheduledGitHubBackup {
     return { ...settings, note: "Scheduled while Branch is running. Only owner memory, inactive installed skills and catalogued settings travel; no credentials or workspace files." };
   }
   private snapshot(): string {
-    const tables = Object.fromEntries(backupTables.map(table => [table, []])) as BackupArchive["tables"];
+    const tables = Object.fromEntries(backupTables.map(table => [table, []])) as unknown as BackupArchive["tables"];
     const selected = (sql: string) => this.store.sqlite.prepare(sql).all(this.owner)
       .map(row => Object.fromEntries(Object.entries(row).map(([field, value]) =>
         [field, typeof value === "bigint" ? Number(value) : value])) as Record<string, string | number | null>);
