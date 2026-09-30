@@ -92,7 +92,7 @@ function browserQuestion(request) {
   message.textContent = `${request.message}\nApproved origin: ${request.origin}\n${request.stage === 'approval'
     ? request.flow?.mode === 'modern' ? 'Opening uses your external browser. Return here to approve continuing the original request; login details stay outside the conversation.'
       : 'Opening this page uses your external browser. Login details stay outside the conversation.'
-    : request.stage === 'completed' ? 'You may retry the original request when needed; normal tool approval still applies.'
+    : request.stage === 'completed' ? 'Review the current request before proceeding; normal tool approval still applies.'
       : 'Waiting for this server to confirm completion. You can stop waiting at any time.'}`;
   card.append(title, message);
   if (request.flow?.tool) {
@@ -139,7 +139,8 @@ function browserQuestion(request) {
 function question(request) {
   const form = document.createElement('form'), title = document.createElement('h3'), body = document.createElement('pre');
   form.dataset.request = request.id;
-  title.textContent = `${request.server}: ${request.kind === 'sampling' ? 'Permission to ask a model' : 'A question for you'}`;
+  title.textContent = `${request.server}: ${request.kind === 'sampling' ? 'Permission to ask a model'
+    : request.kind === 'urlRetry' ? 'Review an original tool retry' : 'A question for you'}`;
   const inputs = new Map();
   if (request.kind === 'sampling') body.textContent = `${request.details.notice}\nModel: ${request.details.modelName}\nOutput limit: ${request.details.maxTokens}\n${request.details.messages.map(m => `${m.role}: ${m.content}`).join('\n\n')}`;
   else if (request.kind === 'roots') body.textContent = `${request.details.message}\n${request.details.uri}\nTask: ${request.details.runId}`;
