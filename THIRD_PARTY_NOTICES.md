@@ -104,6 +104,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
+The browser also includes the pinned markdown-it 15.0.2 ESM bundle (MIT) at
+`public/app/vendor/markdown-it-15.0.2/markdown-it.js`. Its upstream license and
+the notices for bundled entities (BSD-2-Clause), linkify-it, mdurl, punycode.js
+and uc.micro (MIT) are retained alongside the bundle. See that folder's README
+for the official package source, version and checksum.
+
 ## @hono/node-server 2.1.1
 
 Declared license: MIT
