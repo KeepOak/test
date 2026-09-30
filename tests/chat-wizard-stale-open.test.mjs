@@ -3,7 +3,8 @@
    late answer is dropped: no wizard, no error and no Save step drawn over the lock or the newer page.
    The real public/app/flows/chat.js runs in Node next to stand-ins for the window's core modules; each read is held open
    by the test, so the change happens while the wizard is waiting, with no timers.
-   Mutations: drop unlocked() from opening() -> the lock cases fail; drop `S.view === view` -> the page case fails; drop
+   Mutations: drop `dialog() === opened` -> the newer-dialog cases fail; drop the close/Escape count -> the closed-dialog
+   cases fail; drop unlocked() from opening() -> the lock cases fail; drop `S.view === view` -> the page case fails; drop
    the check after the setup read -> the first lock and page cases fail; drop unlocked() or the view from currentWizard ->
    the Save step cases fail. */
 import test from "node:test";
@@ -16,8 +17,8 @@ import { discardTemp } from "./temp-dir.mjs";
 
 const stubs = {
   "app/core/dom.js": "export const $ = () => null; export const esc = (s) => String(s ?? \"\");",
-  "app/core/ui.js": `export const openDlg = (o) => globalThis.__cw.openDlg(o); export const closeDlg = () => {};
-    export const toast = (m) => globalThis.__cw.toasts.push(m); export const ic = () => "";`,
+  "app/core/ui.js": `export const openDlg = (o) => globalThis.__cw.openDlg(o); export const closeDlg = () => { globalThis.__cw.dlg = null; };
+    export const dialog = () => globalThis.__cw.dlg; export const toast = (m) => globalThis.__cw.toasts.push(m); export const ic = () => "";`,
   "app/core/state.js": `export const S = globalThis.__cw.S; export const E = {}; export const refresh = async () => {};
     export const ownerHere = () => globalThis.__cw.owner; export const activeId = () => globalThis.__cw.profile;`,
   "app/core/api.js": "export const api = (path, body) => globalThis.__cw.api(path, body);",
@@ -34,13 +35,13 @@ async function wizardPage(t) {
   for (const dir of ["app/flows", "app/core"]) await mkdir(join(root, dir), { recursive: true });
   await writeFile(join(root, "app", "flows", "chat.js"), await readFile(new URL("../public/app/flows/chat.js", import.meta.url)));
   for (const [file, code] of Object.entries(stubs)) await writeFile(join(root, file), code);
-  const held = [], opened = [];
-  const cw = { S: { view: "customize" }, owner: true, profile: null, locked: false, toasts: [], acts: {},
+  const held = [], opened = [], listeners = [];
+  const cw = { S: { view: "customize" }, owner: true, profile: null, locked: false, toasts: [], acts: {}, dlg: null,
     api: (path, body) => new Promise((resolve, reject) => held.push({ path, body, resolve, reject })),
-    openDlg: (o) => { opened.push(o); return { isConnected: true }; } };
+    openDlg: (o) => { opened.push(o); cw.dlg = { wizard: o, isConnected: true }; return cw.dlg; } };
   globalThis.__cw = cw;
   globalThis.document = { getElementById: (id) => (id === "app" ? { classList: { contains: (c) => c === "locked-b17" && cw.locked } } : null),
-    addEventListener: () => {} };
+    addEventListener: (type, fn, capture) => { if (capture) listeners.push({ type, fn }); } };
   t.after(async () => { delete globalThis.__cw; delete globalThis.document; await discardTemp(root); });
   const page = await import(pathToFileURL(join(root, "app", "flows", "chat.js")).href);
   page.init();
@@ -51,7 +52,11 @@ async function wizardPage(t) {
     assert.ok(at >= 0, `the wizard asked for ${path} (waiting: ${held.map((h) => h.path).join(", ")})`);
     held.splice(at, 1)[0][how](value);
   };
-  return { page, cw, opened, asked, answer: (path, value) => settle(path, "resolve", value), fail: (path, error) => settle(path, "reject", error) };
+  /* The owner closes the open dialog with its close button, or with Escape (main.js closes it after this module hears it). */
+  const fire = (type, event) => { for (const one of listeners) if (one.type === type) one.fn(event); };
+  const closeButton = () => { fire("click", { target: { closest: (q) => (q.includes("dlg-close") ? {} : null) } }); cw.dlg = null; };
+  const escape = () => { fire("keydown", { key: "Escape" }); cw.dlg = null; };
+  return { page, cw, opened, asked, closeButton, escape, answer: (path, value) => settle(path, "resolve", value), fail: (path, error) => settle(path, "reject", error) };
 }
 
 /* A Telegram-like recipe with a Create step, so Continue goes on to Save, which reads the direct-message choices. */
@@ -127,3 +132,49 @@ for (const [what, change] of [["the App lock came on", (cw) => { cw.locked = tru
     assert.equal(opened.length, 1, "nothing was drawn after the change");
   });
 }
+
+test("an unrelated dialog opened on the same page while the setup was read is not replaced by the late wizard", async (t) => {
+  const { page, cw, opened, answer } = await wizardPage(t);
+  const open = page.openChatWizard("telegram");
+  const newer = { newer: true, isConnected: true };
+  cw.dlg = newer;
+  await answer("channel-setup/telegram", recipe);
+  await answer("channels", channels());
+  await open;
+  assert.equal(opened.length, 0);
+  assert.equal(cw.dlg, newer, "the newer dialog is still the one open");
+});
+
+test("an unrelated dialog opened while the lock state was read is not replaced either", async (t) => {
+  const { page, cw, opened, asked, answer } = await wizardPage(t);
+  const open = page.openChatWizard("telegram");
+  await answer("channel-setup/telegram", recipe);
+  await answer("channels", channels({ ownerNamed: false }));
+  await asked("lock");
+  cw.dlg = { newer: true, isConnected: true };
+  await answer("lock", { pinSet: true });
+  await open;
+  assert.equal(opened.length, 0);
+});
+
+test("a dialog the owner closed with its close button while the setup was read: the late wizard does not open", async (t) => {
+  const { page, cw, opened, answer, closeButton } = await wizardPage(t);
+  cw.dlg = { other: true, isConnected: true };
+  const open = page.openChatWizard("telegram");
+  closeButton();
+  await answer("channel-setup/telegram", recipe);
+  await answer("channels", channels());
+  await open;
+  assert.equal(opened.length, 0);
+});
+
+test("a dialog opened and closed with Escape while the setup was read still counts: the late wizard does not open", async (t) => {
+  const { page, cw, opened, answer, escape } = await wizardPage(t);
+  const open = page.openChatWizard("telegram");
+  cw.dlg = { other: true, isConnected: true };
+  escape();
+  await answer("channel-setup/telegram", recipe);
+  await answer("channels", channels());
+  await open;
+  assert.equal(opened.length, 0);
+});
