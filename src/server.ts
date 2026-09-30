@@ -1047,6 +1047,15 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path === "/api/telephone" && request.method === "GET") return app.telephone.status();
+  if (path === "/api/telephone" && request.method === "POST") return app.telephone.configure(await readBody(request));
+  if (path === "/api/telephone/recover" && request.method === "POST") return app.telephone.recover(z.object({ id: z.string().uuid(), sid: z.string().regex(/^CA[0-9a-fA-F]{32}$/) }).strict().parse(await readBody(request)));
+  if (path === "/api/telephone/propose" && request.method === "POST") return app.telephone.propose(await readBody(request));
+  const telephoneAction = /^\/api\/telephone\/([a-f0-9-]{36})\/(approve|cancel)$/.exec(path);
+  if (telephoneAction && request.method === "POST") {
+    const value = z.object({ fingerprint: z.string().max(100).optional() }).strict().parse(await readBody(request));
+    return telephoneAction[2] === "approve" ? app.telephone.approve(telephoneAction[1]!, value.fingerprint ?? "") : app.telephone.cancel(telephoneAction[1]!);
+  }
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
   if (handlesMiscPath(path))
@@ -3980,6 +3989,11 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         send(response, 200, await hook(app, request, path));
         return;
       }
+      const telephoneHook = /^\/webhooks\/telephone\/([a-f0-9-]{36})\/(answer|turn|pin|status)$/.exec(path);
+      if (telephoneHook) {
+        const result = await app.telephone.webhook(request, telephoneHook[1]!, telephoneHook[2]!);
+        response.writeHead(200, { "content-type": "text/xml; charset=utf-8", "cache-control": "no-store" }); response.end(result); return;
+      }
       if (await whatsAppWebhook(app, request, response, path, webhookLimiter, () => listen.beyond)) return;
       if (await chatWebhook(app, request, response, path, webhookLimiter, () => listen.beyond)) return;
       // Wave 6: a read-only shared conversation carries its own code instead of the session key.
@@ -4028,6 +4042,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         answerShort(response, 200, answer);
         return;
       }
+      if (path.startsWith("/webhooks/telephone/")) { refuseUpgrade(socket); return; } // No unauthenticated or borrowed live-media endpoint.
       // ---- mac7/nodes: a device answering an invitation has no key; its number and its signature are checked. ----
       if (openDevicePaths.includes(path)) {
         if (request.headers.origin && !hostAllowed(request.headers.host, request.headers.origin, url, allowedHosts()))
@@ -4537,6 +4552,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
     const mark = windowSession(request, viaRemote);
     void (async () => {
       const path = new URL(request.url ?? "/", url || "http://127.0.0.1").pathname;
+      if (path.startsWith("/webhooks/telephone/")) { refuseUpgrade(socket); return; } // No unauthenticated or borrowed live-media endpoint.
       // ---- mac7/nodes: a device's socket. Its own signature is the key; never the window's key. ----
       if (path === deviceSocketPath) {
         const hosts = allowedHosts();
@@ -5427,6 +5443,8 @@ function isExecution(request: IncomingMessage, path: string): boolean {
     || (request.method !== "GET" && handlesTrunksPath(path))
     // mac7/r17-d: every change under /api/coding may start work (a snapshot, the checks, a fork).
     || (request.method !== "GET" && handlesCodingPath(path))
+    // Telephone configuration/proposals/dial approvals can reach a paid service.
+    || (request.method !== "GET" && path.startsWith("/api/telephone"))
     // R17-C: every change under /api/personal may reach an outside service or start a program.
     || (request.method !== "GET" && handlesPersonalPath(path))
     // r17-i: every change under /api/reach may start work (a task elsewhere, a video, a send, an import).

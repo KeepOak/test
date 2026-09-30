@@ -392,6 +392,8 @@ export interface ToolContext {
    * nothing it does is learned from. See `RunOptions.isolated`.
    */
   isolated?: boolean;
+  /** Fixed telephone conversational role; still no tools, owner context or memory. */
+  isolatedRole?: "telephone";
   /** Who started this task; anything but the owner is held to the "Ask before changes" policy. */
   source?: "owner" | "trigger" | "schedule" | "mcp" | "a2a" | "acp" | "channel";
   /**

@@ -1,3 +1,4 @@
+import { initTelephone, loadTelephone, telephoneSection } from "../../chat/telephone.js";
 /* Settings › Voice, 1:1 with the prototype's page, from the engine:
    the voice settings (GET /api/voice/settings), the push-to-talk key (the comfort card
    "voice", POST /api/comfort { card, values }, merged), dictation in the message box and how long a quiet room ends it
@@ -134,10 +135,11 @@ async function saveAloud(v) {
 
 export function draw() {
   const lv = level();
-  return `<h1>${t("field.voice")}</h1><p class="lede">${t("window.settings.voice.talking-to-branch-voice-stays-on")}</p>${talking()}${speakingBack()}${lv >= 1 ? listeningMore() : ""}${voice17(lv)}${lv >= 1 ? calls17d() : ""}`;
+  return `<h1>${t("field.voice")}</h1><p class="lede">${t("window.settings.voice.talking-to-branch-voice-stays-on")}</p>${talking()}${speakingBack()}${lv >= 1 ? listeningMore() : ""}${voice17(lv)}${lv >= 1 ? telephoneSection() + calls17d() : ""}`;
 }
 
 export function init() {
+  initTelephone(); void loadTelephone();
   loadVoice();
   on("ptt-key", () => captureKey());
   on("aloud15", (el) => saveAloud(el.dataset.v));
@@ -155,6 +157,6 @@ export function init() {
   markLive(["ptt-key", "aloud15", "v-voice", "sw:v-dict", "sw:f15-wake-word", "sw:f15-silence", "sw:f15-spoken-morning-brief"]);
 }
 
-export function load() { stopCapture(); return loadVoice(); }
+export function load() { stopCapture(); void loadTelephone(); return loadVoice(); }
 
 export const live = { "ptt-key": true, aloud15: true, "v-voice": true, "sw:v-dict": true, "sw:f15-wake-word": true, "sw:f15-silence": true, "sw:f15-spoken-morning-brief": true };

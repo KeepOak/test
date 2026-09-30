@@ -1,3 +1,5 @@
+import { lockdownActive } from "./lockdown.js";
+import { Telephone } from "./telephone.js";
 import { environmentTool } from "./environment.js";
 import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
 import { currentAccountCall } from "./accounts/context.js";
@@ -1504,6 +1506,14 @@ ${result.output || "(it said nothing)"}`;
   sourceMerges.evidence.install();
   runtime.coding = coding;
   // ── end mac7/r17-d ──
+  const telephone = new Telephone({ store, owner: runtime.owner,
+    blocked: () => sessionLock.locked() || lockdownActive(store, runtime.owner),
+    fetch: () => web.policy.guard(globalThis.fetch),
+    secret: async (name) => (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose: "owner-approved telephone call" }))[name]!,
+    reply: async (prompt, tokens, signal) => { const result = await runtime.run({ prompt, permissions: [], isolated: true, temporary: true,
+      source: "channel", isolatedTelephone: true, signal, timeoutMs: 12_000, budget: { maxSteps: 1, maxTokens: tokens } }); return runtime.hideSecrets(result.answer); },
+  });
+  releaseOnLock.push(async () => telephone.close());
   // ── R17-C: files, voice, devices and personal connectors (src/personal/). Every part ships off. ──
   const personalSecret = async (name: string, purpose: string) =>
     (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!;
@@ -1753,6 +1763,7 @@ ${result.output || "(it said nothing)"}`;
     media,
     /** Writing speech out and reading text aloud, whichever service does the work. */
     voice,
+    telephone,
     /** Bucket 17: videos and sound understood through the owner's own ffmpeg and yt-dlp. */
     understanding,
     webPages, // w911 (A0743, A1452) hook: reading and crawling web pages
@@ -2010,6 +2021,7 @@ ${result.output || "(it said nothing)"}`;
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
+      telephone.close();
       voice.close(); // RES-709: the free speech worker ends with the app
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app
       await autonomy.close(); // r17-b: nothing more starts by itself, and a turn that is working gets a moment
