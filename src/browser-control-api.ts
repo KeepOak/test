@@ -26,7 +26,7 @@ const BoundSchema = ScopeSchema.extend({ id: z.string().uuid(), epoch: z.number(
 const StartSchema = ScopeSchema.extend({ confirmToken: z.string().uuid().optional(), runId: z.string().uuid().optional() });
 const ControlSchema = BoundSchema.extend({ operation: z.enum(['takeover', 'handback']), runId: z.string().uuid().optional(), confirmToken: z.string().uuid().optional() });
 const ActionSchema = BoundSchema.extend({ frameId: z.string().uuid(), sequence: z.number().int().min(1), tabId: z.string().uuid(),
-  tool: z.enum(['browser.navigate', 'browser.tab', 'browser.owner_input']), arguments: z.record(z.string(), z.unknown()), confirmToken: z.string().uuid().optional() });
+  tool: z.enum(['browser.navigate', 'browser.tab', 'browser.owner_input', 'browser.pdf']), arguments: z.record(z.string(), z.unknown()), confirmToken: z.string().uuid().optional() });
 const DemonstrationSchema = BoundSchema.extend({ tabId: z.string().uuid(), operation: z.enum(['start', 'preview', 'save', 'cancel']),
   name: z.string().trim().min(1).max(80).default('Learned browser workflow'), previewToken: z.string().uuid().optional() });
 type Scope = z.infer<typeof ScopeSchema>;

@@ -4543,3 +4543,8 @@ audio.docread18m{width:100%}
 .ob7-downloads li{display:flex;flex-direction:column;gap:3px;padding:6px 0;overflow-wrap:anywhere}
 .ob7-downloads li b{font-size:13px;font-weight:500}
 .ob7-downloads li small{font-size:12px;color:#566}
+
+/* Owner browser page controls. */
+.owner-browser7 .ob7-extras,.owner-browser7 .ob7-find{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:6px 12px;border-bottom:1px solid #e6e9ec;background:#fff;color:#3b4650}
+.owner-browser7 .ob7-find input{flex:1;min-width:150px;padding:6px 8px;border:1px solid #c9d2da;border-radius:6px;color:inherit;background:#fff}
+.owner-browser7 .ob7-find small{min-width:120px;color:inherit}
