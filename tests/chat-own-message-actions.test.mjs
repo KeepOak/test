@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, savePolicy, TelegramAdapter } from "../dist/index.js";
 import { setLockdown } from "../dist/lockdown.js";
+import { SlackAdapter } from "../dist/channels/slack.js";
 
 test("CHAT-023: an own sent message is edited once recorded; an unknown id is refused untouched", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-own-messages-"));
@@ -81,18 +82,28 @@ test("CHAT-023: an edit whose chat app was detached or replaced while its text w
   assert.deepEqual(asked, [], "neither the detached adapter nor its replacement edited the message");
 });
 
-/* Telegram behind Branch's checked fetch (web.policy.guard): an edit or delete first waits while its address is checked,
-   and then, like the platform's own fetch, sends nothing once its signal has been aborted. The long poll waits for Stop. */
-function telegramBehindAdmission() {
+/* A chat app behind Branch's checked fetch (web.policy.guard): an edit or delete first waits while its address is checked,
+   and then, like the platform's own fetch, sends nothing once its signal has been aborted. Telegram's long poll waits for
+   Stop; Slack's socket is a stand-in. */
+const APPS = {
+  telegram: { chatId: "7", messageId: "41", mutations: ["editMessageText", "deleteMessage"],
+    answer: (method) => ({ ok: true, result: method === "getMe" ? { id: 1, is_bot: true, first_name: "Branch", username: "branch_bot" } : method === "sendMessage" ? { message_id: 41 } : true }),
+    adapter: (fetch) => new TelegramAdapter({ id: "telegram", token: "123:abc", apiBase: "http://telegram.invalid", fetch, pollTimeoutSeconds: 1 }) },
+  slack: { chatId: "C7", messageId: "171.1", mutations: ["chat.update", "chat.delete"],
+    answer: (method) => (method === "auth.test" ? { ok: true, user_id: "U1", user: "branch" } : method === "chat.postMessage" ? { ok: true, ts: "171.1" } : { ok: true }),
+    adapter: (fetch) => new SlackAdapter({ id: "slack", token: "xoxb-1", appToken: "xapp-1", apiBase: "http://slack.invalid/api", fetch, socketUrl: "wss://slack.invalid",
+      connect: async () => { let done; const closed = new Promise((resolve) => { done = resolve; }); return { send() {}, close() { done(); }, closed }; } }) },
+};
+
+function behindAdmission(app) {
   const sent = [], admitting = [];
   const fetch = async (url, init) => {
     const method = String(url).split("/").pop();
     if (method === "getUpdates") return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true }));
-    if (method === "editMessageText" || method === "deleteMessage") await new Promise((resolve) => admitting.push(resolve));
+    if (app.mutations.includes(method)) await new Promise((resolve) => admitting.push(resolve));
     init.signal?.throwIfAborted();
     sent.push(method);
-    const result = method === "getMe" ? { id: 1, is_bot: true, first_name: "Branch", username: "branch_bot" } : method === "sendMessage" ? { message_id: 41 } : true;
-    return new Response(JSON.stringify({ ok: true, result }), { headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(app.answer(method)), { headers: { "content-type": "application/json" } });
   };
   const inAdmission = async () => {
     for (let i = 0; i < 2000 && !admitting.length; i++) await new Promise((resolve) => setImmediate(resolve));
@@ -101,49 +112,48 @@ function telegramBehindAdmission() {
   return { sent, fetch, inAdmission, admit: () => admitting.shift()() };
 }
 
-async function telegramApp(t, name) {
-  const root = await mkdtemp(join(tmpdir(), `branch-own-messages-${name}-`));
+async function chatApp(t, kind, name) {
+  const root = await mkdtemp(join(tmpdir(), `branch-own-messages-${kind}-${name}-`));
   const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
   t.after(async () => { await app.close(); await discardTemp(root); });
-  const telegram = telegramBehindAdmission();
-  await app.channels.attach(new TelegramAdapter({ id: "telegram", token: "123:abc", apiBase: "http://telegram.invalid", fetch: telegram.fetch, pollTimeoutSeconds: 1 }),
-    { activation: "always", pairing: true, allowlist: ["owner"] });
-  await app.channels.deliver("telegram", "7", "The meeting is at 3.");
+  const chat = APPS[kind], wire = behindAdmission(chat);
+  await app.channels.attach(chat.adapter(wire.fetch), { activation: "always", pairing: true, allowlist: ["owner"] });
+  await app.channels.deliver(kind, chat.chatId, "The meeting is at 3.");
   const run = app.store.createRun(app.runtime.owner, "fix my message");
   app.store.event(run.id, "run.started", { source: "owner", parentRunId: null });
   const stop = new AbortController();
   const context = app.runtime.context({ runId: run.id, permissions: app.registry.permissions(), signal: stop.signal });
-  return { app, telegram, context, stop };
+  return { app, wire, context, stop, target: { channel: kind, chatId: chat.chatId, messageId: chat.messageId }, mutations: chat.mutations };
 }
 
-const target = { channel: "telegram", chatId: "7", messageId: "41" };
-
-test("CHAT-023: with nothing changed, a Telegram delete is sent once its address is checked", async (t) => {
-  const { app, telegram, context } = await telegramApp(t, "sent");
-  const deleted = app.channels.actOnOwnMessage(target, "delete", context);
-  await telegram.inAdmission();
-  telegram.admit();
-  assert.equal((await deleted).confirmed, true);
-  assert.deepEqual(telegram.sent.filter((m) => m === "deleteMessage"), ["deleteMessage"]);
-});
-
-for (const [what, action, revoke] of [
-  ["the task is stopped", "delete", ({ stop }) => stop.abort(new Error("Stopped"))],
-  ["Branch is locked", "edit", ({ app }) => app.sessionLock.lock()],
-  ["Lockdown comes on", "delete", ({ app }) => setLockdown(app.store, app.runtime.owner, { on: true })],
-  ["the chat app is disconnected", "delete", ({ app }) => app.channels.detach("telegram")],
-]) {
-  test(`CHAT-023: when ${what} while a Telegram ${action}'s address is checked, nothing is sent`, async (t) => {
-    const world = await telegramApp(t, action);
-    const { app, telegram, context } = world;
-    const acting = app.channels.actOnOwnMessage(target, action, context, action === "edit" ? "The meeting is at 4." : undefined);
-    await telegram.inAdmission();
-    await revoke(world);
-    telegram.admit();
-    await assert.rejects(acting);
-    assert.deepEqual(telegram.sent.filter((m) => m === "editMessageText" || m === "deleteMessage"), [], "no edit or delete went out");
-    const [kept] = app.channels.ownMessages({ channel: "telegram", chatId: "7" }).messages;
-    assert.equal(kept.text, "The meeting is at 3.");
-    assert.equal(kept.deletedAt ?? null, null);
+for (const kind of Object.keys(APPS)) {
+  test(`CHAT-023: with nothing changed, a ${kind} delete is sent once its address is checked`, async (t) => {
+    const { app, wire, context, target, mutations } = await chatApp(t, kind, "sent");
+    const deleted = app.channels.actOnOwnMessage(target, "delete", context);
+    await wire.inAdmission();
+    wire.admit();
+    assert.equal((await deleted).confirmed, true);
+    assert.deepEqual(wire.sent.filter((m) => mutations.includes(m)), [mutations[1]]);
   });
+
+  for (const [what, action, revoke] of [
+    ["the task is stopped", "delete", ({ stop }) => stop.abort(new Error("Stopped"))],
+    ["Branch is locked", "edit", ({ app }) => app.sessionLock.lock()],
+    ["Lockdown comes on", "delete", ({ app }) => setLockdown(app.store, app.runtime.owner, { on: true })],
+    ["the chat app is disconnected", "edit", ({ app }) => app.channels.detach(kind)],
+  ]) {
+    test(`CHAT-023: when ${what} while a ${kind} ${action}'s address is checked, nothing is sent`, async (t) => {
+      const world = await chatApp(t, kind, action);
+      const { app, wire, context, target, mutations } = world;
+      const acting = app.channels.actOnOwnMessage(target, action, context, action === "edit" ? "The meeting is at 4." : undefined);
+      await wire.inAdmission();
+      await revoke(world);
+      wire.admit();
+      await assert.rejects(acting);
+      assert.deepEqual(wire.sent.filter((m) => mutations.includes(m)), [], "no edit or delete went out");
+      const [kept] = app.channels.ownMessages({ channel: kind, chatId: target.chatId }).messages;
+      assert.equal(kept.text, "The meeting is at 3.");
+      assert.equal(kept.deletedAt ?? null, null);
+    });
+  }
 }
