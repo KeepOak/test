@@ -1,3 +1,4 @@
+import { initNativeWindowViewer, nativeWindowViewerSection } from "../../chat/native-window-viewer.js";
 /* Settings › Computer & browser, 1:1 with the prototype at each level. The computers are this one and the owner's other
    devices (GET /api/devices); the Trunks are the engine's. A switch shows the engine's own value; it is live only where a
    route changes it (WIRES below), and a three-way feature switch reads as on unless its mode is "off", turns on as
@@ -75,6 +76,7 @@ async function loadAll() {
 }
 
 export function init() {
+  initNativeWindowViewer();
   markLive(["sw:f15-page-notes-and-send-to-branch-", "sw:f15-try-ideas-on-a-branch", "sw:f15-check-and-format-files-after-editing",
     "sw:f15-draft-a-pull-request-from-a-task", "sw:f15-remember-the-shell", "sw:f15-read-a-file-before-editing-it",
     "sw:f15-keep-large-tool-outputs", "sw:f15-read-jupyter-notebooks", "sw:f15-review-checks-and-a-checklist-per-task",
@@ -246,5 +248,5 @@ export function draw() {
   if (lev >= 1) html += browserMore() + code();
   if (lev >= 2) html += codeTechnical();
   if (lev >= 1) html += computerMore();
-  return html + computer17(lev);
+  return html + nativeWindowViewerSection() + computer17(lev);
 }

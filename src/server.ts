@@ -1,3 +1,4 @@
+import { nativeViewerPrefix, nativeViewerTargets, streamNativeViewer, stopNativeViewers } from "./native-capture/viewer-api.js";
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import { retiredPhoneWorker } from "./retired-phone-worker.js";
 import {
@@ -4277,6 +4278,14 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       // refresh of the screen would keep it awake for ever and it would never lock itself.
       if (request.method !== "GET" && path !== "/api/lock" && !onlyLooking) app.sessionLock.touch();
       if (await handleMcpRequest(app, request, response)) return;
+      if (path === nativeViewerPrefix + "/targets" && request.method === "GET") {
+        send(response, 200, await nativeViewerTargets({ store: app.store, owner: app.runtime.owner, desktop: app.desktop,
+          viaDoor: throughDoor(request), locked: () => app.sessionLock.refusal("GET", path) })); return;
+      }
+      if (path === nativeViewerPrefix + "/watch" && request.method === "POST") {
+        await streamNativeViewer({ store: app.store, owner: app.runtime.owner, desktop: app.desktop,
+          viaDoor: throughDoor(request), locked: () => app.sessionLock.refusal("GET", path) }, request, response, await readBody(request)); return;
+      }
       // parity-b2: the owner's live view of this computer's screen, a stream of frames for as long as the view is open
       // (src/live-screen.ts). Every check above has already run; its own are asked again before every frame.
       if (request.method === "GET" && path === liveScreenPath) {
@@ -4814,7 +4823,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
   let narrowing: Promise<void> = Promise.resolve();
   const stopWatchingLockdown = onLockdownChange((_store, _owner, on) => {
     // mac7/phone-qr: Lockdown also ends a phone download link that is showing.
-    if (on) phoneApp.stop();
+    if (on) { phoneApp.stop(); stopNativeViewers(); }
     // Lockdown shuts the door to the phone too, and an opening still waiting on Tailscale never opens.
     if (on) void remote.disable();
     if (on) narrowToThisComputer("Lockdown is on, so Branch is listening on this computer only.", "Lockdown");
@@ -4942,6 +4951,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
       miniApp.close();
       app.channels.miniAppUrl = undefined;
       await miniAppDoor.close();
+      stopNativeViewers();
       stopLiveScreen(); // parity-b2: and every live view of the screen, with the program behind it
       phoneApp.stop();
       await narrowing; // mac7/bind: a door coming back on 127.0.0.1 is back before the server stops

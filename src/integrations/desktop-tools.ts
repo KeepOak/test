@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { NativeWatchSchema } from "../native-capture/driver.js";
 import type { ToolRegistry } from '../registry.js';
 import type { DesktopControl } from './desktop.js';
 import {
@@ -18,6 +20,13 @@ import {
  */
 export function registerDesktop(registry: ToolRegistry, desktop: DesktopControl): void {
   registry.onRunFinished((context) => desktop.closeRun(context));
+  registry.register({ name: "desktop.nativeTargets", permission: "desktop.view", parameters: z.object({}).strict(),
+    description: "Discover exact native windows and Mac displays for a bounded watch. Requires the visible Stop notice and owner-prepared hash-pinned helper. Wayland is refused.",
+    target: () => "native window discovery", execute: (_input, context) => desktop.nativeTargets(context) });
+  registry.register({ name: "desktop.watchNative", permission: "desktop.view", parameters: NativeWatchSchema,
+    description: "Watch an exact previously discovered native window for up to 20 frames/30 seconds and keep only the latest private PNG. Mac display capture can exclude exact discovered windows using ScreenCaptureKit before pixels are read. Linux X11 supports window-only capture; display exclusion and Wayland are refused. No screen rectangle fallback.",
+    target: (input) => JSON.stringify(input),
+    execute: (input, context) => desktop.watchNative(input, context) });
   const bounds = 'Only works while "Allow the assistant to use my screen and keyboard" is on in Settings. Password managers and sign-in windows are always refused, and a notice with a Stop button is on screen throughout.';
   registry.register({
     name: 'desktop.screenshot', permission: 'desktop.view',

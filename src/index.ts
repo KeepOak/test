@@ -1,3 +1,4 @@
+import { stopNativeViewers } from "./native-capture/viewer-api.js";
 import { environmentTool } from "./environment.js";
 import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
 import { currentAccountCall } from "./accounts/context.js";
@@ -1029,6 +1030,7 @@ export async function createBranch(options: {
     live.closeAll("Branch was locked");
     for (const release of releaseOnLock) void release().catch(() => undefined);
   };
+  releaseOnLock.push(async () => stopNativeViewers());
   releaseOnLock.push(async () => runtime.keepAlive.stop()); // R17-050 (integration review): locking Branch stops cache pings
   // Signing in to outside services the ordinary way, with the answer coming back to this computer.
   const oauth = new OAuthConnections(runtime.owner, store.secrets, web.policy, web.policy.guard(globalThis.fetch));
@@ -2090,6 +2092,7 @@ ${result.output || "(it said nothing)"}`;
       people.close(); // stops voiding one-time codes on Lockdown
       await devices.close(); // mac7/nodes: every device socket is closed (find-computers: and the Tailscale door)
       await wake.stop(); // mac7/wake-mic: the microphone is let go of before the app closes
+      stopNativeViewers();
       dictation.stop(); // mac7/live-voice: and so is the one dictation holds open
       voice.close(); // RES-709: the free speech worker ends with the app
       runtime.keepAlive.stop(); // R17-050: no cache ping outlives the app

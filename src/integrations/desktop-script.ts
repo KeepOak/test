@@ -1,3 +1,4 @@
+import { nativeWindowAction, type NativeWatch } from "../native-capture/driver.js";
 import { accessSync, constants } from 'node:fs';
 import { assertRealScreenAllowed } from './real-screen-guard.js'; // dogfood follow-up
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -638,6 +639,16 @@ export class DesktopScriptRunner {
   private folder: Promise<string> | undefined;
   constructor(private readonly executable = powerShellPath, private readonly posix: PosixDesktopOptions = {}) {}
   private get platform(): string { return this.posix.platform ?? process.platform; }
+  /** Explicit native window path; retains Stop notice, cancellation and bounded process execution. */
+  async nativeWindow(input: { action: "list" } | { action: "capture"; watch: NativeWatch; outPath: string }, signal: AbortSignal): Promise<Record<string, unknown>> {
+    const enabled = this.posix.enabled;
+    if (!(typeof enabled === "function" ? enabled() : enabled)) throw new Error("Native capture requires the visible Stop notice; nothing was captured.");
+    return nativeWindowAction(this.platform, this.posix.env ?? process.env, this.posix.exec ?? boundedRunner(false), input, signal);
+  }
+  /** Only the owner-local viewer uses this path; it never exposes a task or remote input capability. */
+  async nativeViewer(input: { action: "list" } | { action: "capture"; watch: NativeWatch; outPath: string }, signal: AbortSignal): Promise<Record<string, unknown>> {
+    return nativeWindowAction(this.platform, this.posix.env ?? process.env, this.posix.exec ?? boundedRunner(false), input, signal);
+  }
   /** Writes the script once, into a private folder of its own, and gives back its path. */
   private async scriptPath(): Promise<string> {
     this.folder ??= mkdtemp(join(tmpdir(), 'branch-desktop-')).then(async (folder) => {
