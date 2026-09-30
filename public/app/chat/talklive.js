@@ -19,6 +19,7 @@ import { app, av, toast, closePop } from "../core/ui.js";
 import { markLive, greyOut } from "../core/features.js";
 import { toPcm16, readAudioFrame } from "./talksound.js";
 import { t } from "../../i18n.js";
+import { openPeer, openingSlot } from "./talkpeer.js";
 
 /* phase: idle → starting (task made, socket opening) → listening ⇄ speaking → idle. `call` numbers each press, so
    whatever finishes after its call has ended (a microphone still opening) can tell it is no longer wanted. */
@@ -28,7 +29,10 @@ const current = (call) => L.call === call && L.phase !== "idle";
 let hooks = { state: () => ({}), reopen: async () => {} };
 
 const fresh = () => ({ runId: null, sessionId: null, service: null, note: "", ready: false, muted: false, seconds: 0,
-  timer: null, caption: "", partial: { person: "", assistant: "" }, last: "", nextAt: 0, playing: 0 });
+  timer: null, caption: "", partial: { person: "", assistant: "" }, last: "", nextAt: 0, playing: 0,
+  generation: 0, audioItem: null, sources: new Set(), heardItems: new Map(), playedMs: 0, transport: null, peer: null });
+/* The closer of a Talk live setup still in progress (talkpeer.js openingSlot). */
+const opening = openingSlot();
 Object.assign(L, fresh());
 
 /* ---------- the view ---------- */
@@ -44,7 +48,7 @@ function viewHtml() {
   const still = L.muted || L.phase === "starting";
   return `<div class="vin"><div class="v-top">${av(chatFace(L.sessionId), 28)}<span>${who}<span id="v-t">${clock()}</span></span></div>
     <div class="orb${still ? " muted" : ""}" aria-hidden="true"></div><p class="v-cap" id="v-cap" aria-live="polite">${esc(caption())}</p>
-    <div class="acts"><button class="btn" type="button" data-act="v-mute" aria-pressed="${L.muted}">${t(L.muted ? "voiceView.unmute" : "voiceView.mute")}</button><button class="btn bad" type="button" data-act="v-end">${t("voiceView.end")}</button></div>
+    <div class="acts"><button class="btn" type="button" data-act="v-mute" aria-pressed="${L.muted}">${t(L.muted ? "voiceView.unmute" : "voiceView.mute")}</button><button class="btn" type="button" data-act="v-interrupt">${t("voiceView.cutIn")}</button><button class="btn bad" type="button" data-act="v-end">${t("voiceView.end")}</button></div>
     ${L.note ? `<p class="hint" data-css="margin:0">${esc(L.note)}</p>` : ""}</div>`;
 }
 /* Drawn once into the window when Talk live opens, drawn again in place as it changes, and taken away when it ends. */
@@ -92,6 +96,8 @@ async function openMic(call, socket) {
 /* Each block of the answer plays after the one before it; when the last has played, it is listening again. */
 function play(pcm16) {
   if (!pcm16.length) return;
+  const item = L.audioItem;
+  if (item && item.generation < L.generation) return;
   const player = (L.player ??= new AudioContext({ sampleRate: 24000 }));
   void player.resume();
   const buffer = player.createBuffer(1, pcm16.length, 24000);
@@ -101,11 +107,58 @@ function play(pcm16) {
   source.buffer = buffer;
   source.connect(player.destination);
   L.nextAt = Math.max(L.nextAt, player.currentTime);
+  const generation = L.generation;
+  if (!L.playing) L.playedMs = 0;
+  const key = item?.itemId ? `${item.itemId}:${item.contentIndex}` : "";
+  if (key && !L.heardItems.has(key)) {
+    if (L.heardItems.size >= 32) L.heardItems.delete(L.heardItems.keys().next().value);
+    L.heardItems.set(key, { itemId: item.itemId, contentIndex: item.contentIndex, audioEndMs: 0 });
+  }
+  const entry = { source, start: L.nextAt, duration: buffer.duration, key, generation };
+  L.sources.add(entry);
   source.start(L.nextAt);
   L.nextAt += buffer.duration;
   L.playing += 1;
-  source.onended = () => { L.playing -= 1; if (!L.playing && L.phase === "speaking") setPhase("listening"); };
+  source.onended = () => {
+    source.disconnect();
+    if (generation !== L.generation || !L.sources.delete(entry)) return;
+    const heard = L.heardItems.get(key);
+    if (heard) heard.audioEndMs += buffer.duration * 1000;
+    L.playedMs += buffer.duration * 1000;
+    L.playing -= 1;
+    if (!L.playing && L.phase === "speaking") setPhase("listening");
+  };
   if (L.phase === "listening") setPhase("speaking");
+}
+
+/* Adapted from OpenClaw's MIT playback sink: only elapsed sound counts, queued sound does not.
+   The generation retires scheduled callbacks and drops old binary frames still in transit. */
+function playbackSnapshot() {
+  const items = new Map([...L.heardItems].map(([key, item]) => [key, { ...item }]));
+  for (const entry of L.sources) {
+    const item = items.get(entry.key);
+    if (item) item.audioEndMs += Math.max(0, Math.min(entry.duration, (L.player?.currentTime ?? 0) - entry.start)) * 1000;
+  }
+  return [...items.values()].map((item) => ({ ...item, audioEndMs: Math.floor(item.audioEndMs) }));
+}
+function clearPlayback() {
+  L.generation += 1;
+  for (const { source } of L.sources) { source.onended = null; try { source.stop(); } catch {} source.disconnect(); }
+  L.sources.clear(); L.heardItems.clear();
+  L.playedMs = 0;
+  L.playing = 0; L.nextAt = L.player?.currentTime ?? 0;
+  L.partial.assistant = ""; L.caption = "";
+  setPhase("listening");
+}
+function cutIn(force = false) {
+  if (!L.ready || L.socket?.readyState !== 1) return;
+  const playback = playbackSnapshot();
+  // Echo guard follows upstream's minimum played prefix; a deliberate press always cuts in.
+  const played = L.playedMs + [...L.sources].reduce((ms, entry) =>
+    ms + Math.max(0, Math.min(entry.duration, (L.player?.currentTime ?? 0) - entry.start)) * 1000, 0);
+  if (!force && (!L.playing || played < 250)) return;
+  clearPlayback();
+  L.socket.send(JSON.stringify({ live: "interrupt", playback }));
 }
 
 /* ---------- the conversation ---------- */
@@ -120,7 +173,8 @@ async function press() {
   let opened;
   try { opened = await api("voice/live", { sessionId: asked }); } catch (error) { toast(error.message); return; } finally { asking = false; }
   if (L.phase !== "idle") { api(`runs/${encodeURIComponent(opened.runId)}/cancel`, {}).catch((error) => toast(error.message)); return; }
-  Object.assign(L, fresh(), { phase: "starting", call: ++calls, runId: opened.runId, sessionId: opened.sessionId, service: opened.plan?.service ?? null, note: opened.plan?.reason ?? "" });
+  Object.assign(L, fresh(), { phase: "starting", call: ++calls, runId: opened.runId, sessionId: opened.sessionId,
+    service: opened.plan?.service ?? null, note: opened.plan?.reason ?? "", transport: opened.plan?.transport ?? null });
   draw();
   connect();
 }
@@ -132,28 +186,56 @@ function connect() {
   try { socket = new WebSocket(url, isDesktop ? ["bearer"] : ["bearer", token.get()]); } catch { end({ say: t("voiceLive.neverConnected") }); return; }
   socket.binaryType = "arraybuffer";
   L.socket = socket;
-  socket.addEventListener("open", () => { if (L.socket === socket) socket.send(JSON.stringify({ live: "start" })); });
+  socket.addEventListener("open", () => { if (L.socket === socket) void beginSocket(socket, L.call); });
   socket.addEventListener("message", (event) => { if (L.socket === socket) receive(event.data); });
   /* Closed before the conversation opened: the task it made is stopped and the person is told; after, it simply ends. */
   socket.addEventListener("close", () => { if (L.socket === socket) end(L.ready ? {} : { say: t("voiceLive.neverConnected") }); });
+}
+async function beginSocket(socket, call) {
+  try {
+    if (L.transport === "webrtc") {
+      const mine = () => current(call) && L.socket === socket;
+      let release = () => {};
+      const peer = await openPeer({ current: mine, desktop: isDesktop,
+        muted: () => L.muted, speaking: () => setPhase("speaking"), failed: sentence => stop(sentence),
+        own: (close) => { release = opening.own(close, mine); } });
+      release();
+      if (!peer) return;
+      if (!current(call) || L.socket !== socket) { peer.close(); return; }
+      L.peer = peer;
+    }
+    if (current(call) && L.socket === socket && socket.readyState === 1)
+      socket.send(JSON.stringify({ live: "start", ...(L.peer ? { offer: L.peer.offer } : {}) }));
+  } catch (error) { if (current(call)) stop(error.message); }
 }
 function receive(data) {
   if (data instanceof ArrayBuffer) { if (L.ready) play(readAudioFrame(data).pcm16); return; }
   let message;
   try { message = JSON.parse(data); } catch { return; }
   const body = message?.data ?? {};
-  if (message?.kind === "voice.live.ready") void ready();
+  if (message?.kind === "voice.live.ready") void ready(body);
   else if (message?.kind === "voice.live.refused" || message?.kind === "voice.live.problem") end({ say: String(body.message ?? "") });
   else if (message?.kind === "voice.live.transcript") heard(body);
+  else if (message?.kind === "voice.live.audio") L.audioItem = body;
+  else if (message?.kind === "voice.live.speech_started") cutIn();
+  else if (message?.kind === "voice.live.interrupted") L.generation = Math.max(L.generation, Number(body.generation) || 0);
+  else if (message?.kind === "voice.live.consultation" && body.waiting) { L.last = String(body.message ?? ""); toast(L.last); }
   else if (message?.kind === "voice.live.capped") { L.last = String(body.sentence ?? ""); toast(L.last); }
   else if (message?.kind === "voice.live.ended" || message?.kind === "end") end();
 }
-async function ready() {
+async function ready(body) {
   if (L.ready || L.phase === "idle") return;
   const { call, socket } = L;
   L.ready = true;
   L.timer = setInterval(() => { L.seconds += 1; const at = L.el?.querySelector("#v-t"); if (at) at.textContent = clock(); }, 1000);
   setPhase("listening");
+  if (L.transport === "webrtc") {
+    try {
+      if (!L.peer || typeof body.answerSdp !== "string" || body.answerSdp.length > 256 * 1024) throw new Error("The live media answer was invalid.");
+      await L.peer.answer(body.answerSdp);
+    } catch { if (current(call)) stop("The live media connection could not be opened."); }
+    return;
+  }
   let mic;
   /* Refused or failed: that call ends with the reason, but only if it is still the one going. */
   try { mic = await openMic(call, socket); } catch (error) { if (current(call)) stop(error.message); return; }
@@ -168,6 +250,7 @@ function heard(part) {
   const before = L.partial[who];
   L.caption = part.final ? (before && !text.startsWith(before) ? before + text : text) : before + text;
   L.partial[who] = part.final ? "" : L.caption;
+  if (L.transport === "webrtc") L.phase = who === "assistant" && !part.final ? "speaking" : "listening";
   draw();
 }
 /* End, pressed: the engine is told to stop, then everything here is closed. Before it opened, nothing was said. */
@@ -181,11 +264,14 @@ function stop(say) {
    what was said (written in by the engine) shows. */
 function end({ say } = {}) {
   if (L.phase === "idle") return;
-  const { runId, ready: opened, sessionId, socket, mic, player, timer } = L;
+  const { runId, ready: opened, sessionId, socket, mic, player, timer, peer } = L;
   L.phase = "idle";
   L.socket = null; L.mic = null; L.player = null;
   clearInterval(timer);
+  clearPlayback();
   mic?.close();
+  peer?.close(); L.peer = null;
+  opening.stop(); // a capture still being set up is stopped too
   if (player) void player.close();
   socket?.close();
   draw();
@@ -197,9 +283,10 @@ function end({ say } = {}) {
 
 export function initTalkLive(given) {
   hooks = given;
-  markLive(["voice", "call", "v-mute", "v-end"]);
+  markLive(["voice", "call", "v-mute", "v-interrupt", "v-end"]);
   on("voice", () => press());
   on("call", () => press());
-  on("v-mute", () => { L.muted = !L.muted; draw(); });
+  on("v-mute", () => { L.muted = !L.muted; L.peer?.mute(L.muted); draw(); });
   on("v-end", () => stop());
+  on("v-interrupt", () => cutIn(true));
 }

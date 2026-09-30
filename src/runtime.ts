@@ -27,6 +27,7 @@ import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
 import { currentCaller } from "./caller.js"; // owner-selected Full Access keeps its local caller
+import { TrunkSchema } from "./trunks/record.js";
 import type { TrunkRunShape } from "./trunks/shape.js"; // R17-A (Trunks)
 import { StartsElsewhereError } from "./trunks/starts-in.js"; // Q44
 import { diagnose } from "./diagnostic-log.js"; // Q44: a queued message that cannot start is logged
@@ -170,6 +171,7 @@ import { isOutOfRoomThinking } from "./provider-stream.js"; // mac7/coding-gap
 // --- R17-E: models, cheaper and smarter (src/model-savings/hook.ts) ---
 import * as savings from "./model-savings/hook.js";
 import { KeepAlive } from "./model-savings/keep-alive.js";
+import { thresholdPreset } from "./model-savings/cost-thresholds.js";
 // --- end R17-E ---
 import { Orchestration, PlanOnlyAnswer, orchestrationSettings, type ConductOptions, type PlanAnswer, type StoredPlan } from "./orchestration.js";
 import { patternNote, patternOfTool, patternQuestion, type TeamPattern } from "./team-pattern.js"; // eng-trunk-controls
@@ -178,7 +180,7 @@ import { heldMode, policyForMode, readConversationMode, saveConversationMode, ty
 import { type AnswerShape, askInShape, shapeInstructions, type ShapedAnswer } from "./answer-shape.js";
 import { advisorInstructions, advisorQuestion, adviceLine, readAdvice, secondOpinionSettings, type Advice } from "./second-opinion.js";
 import { styleShape, takeScratch, type SpecialistStyle } from "./specialist-styles.js";
-import { Deferrals, deferredCall } from "./deferred.js";
+import { Deferrals, deferredCall, deferredFollowUp, deferredOutcome, type DeferredAction } from "./deferred.js";
 import { switchedToolTiers } from "./feature-switches.js";
 import { troubleshootInTask } from "./troubleshoot.js"; // w911 (A0374) hook: the debugging loop.
 import { RequestCache, type CacheKeyParts } from "./request-cache.js";
@@ -240,6 +242,7 @@ export interface DelegateOptions extends HelperSelection { timeoutMs?: number; r
 export interface FollowUp { id: string; prompt: string; createdAt: string; shortLivedKey?: boolean; shortLivedKeyId?: string; personProfileId?: string;
   /** mac7/outside-resume: the earlier task this message carries on for (a handed-over step's answer). */
   originFrom?: string;
+  deferredFrom?: string;
   /** mac7/outside-review: the tools the task that queued it had; the task reading it gets no more. */
   permissions?: string[] }
 /** mac7/outside-review: what a queued message keeps of the task that queued it (see FollowUp). */
@@ -266,7 +269,7 @@ export const unkeyedAlwaysRefusal = "This request does not say what it is target
  * is the registry's `noStandingTarget` (Q76).
  */
 const keyedOnDeclaredTargets: ReadonlySet<string> = new Set(["browser.flow"]);
-export interface FollowUpCarry { originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
+export interface FollowUpCarry { deferredFrom?: string | undefined; originFrom?: string | undefined; permissions?: readonly string[] | null | undefined }
 export interface BackgroundResult { childRunId: string; parentRunId: string; status: string; output: string; finishedAt: string;
   /** workbench (SELF-303): a helper the lead started with helpers.start, whose finishing wakes the lead's conversation. */
   tellsLead?: boolean }
@@ -628,6 +631,8 @@ export interface RunOptions {
    * step's answer). When that task came from outside, this one is held as it was.
    */
   originFrom?: string;
+  /** Internal: a deferred answer must recover its saved effective scope before starting. */
+  deferredFrom?: string;
   /** bucket 19 (integration review): whose conversation this is, when a person's own one is lent to the assistant. */
   lentTo?: string;
   /** Practice run: tools that would change something report what they would have done. */
@@ -876,16 +881,23 @@ export class Runtime {
    * The answer to a tool call that was handed over earlier. It is written down and then put to the
    * conversation as an ordinary follow-up message, so the assistant picks the thread back up.
    */
-  settleDeferred(id: string, outcome: string): { id: string; sessionId: string; queued: number } {
+  settleDeferred(id: string, outcome?: string, action?: DeferredAction): { id: string; sessionId: string; queued: number } {
     const waiting = this.deferrals.get(id);
-    // Q44: refused before the step is marked answered; one already answered is told so first, by settle.
-    if (waiting && !waiting.settledAt) this.queueGuard(waiting.sessionId);
-    const entry = this.deferrals.settle(id, outcome);
-    if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool });
+    if (!waiting) throw new Error("There is no handed-over job with that number");
+    if (waiting.settledAt) throw new Error("That job has already been answered");
+    const answer = deferredOutcome(waiting, outcome, action);
+    if (!this.store.ownsSession(this.owner, waiting.sessionId)) throw new Error("Session not found");
+    // Q44: a refused continuation must leave the step unanswered.
+    this.queueGuard(waiting.sessionId);
+    // Validate before settling: an unavailable scope leaves the handoff unanswered.
+    const scope = this.deferredScope(waiting.runId, waiting.sessionId);
+    this.checkDeferredCredentials(scope.credentials, this.trunkShape({ prompt: "", sessionId: waiting.sessionId }));
+    const entry = this.deferrals.settle(id, answer);
+    if (entry.runId) this.store.event(entry.runId, "tool.deferred_settled", { id: entry.id, tool: entry.tool, kind: entry.kind, ...(action ? { action } : {}) });
     // mac7/outside-resume: the answer carries the task that handed the step over on, as that task.
     const queued = this.followUp(entry.sessionId,
-      `The "${entry.tool}" step you handed over earlier has finished${entry.description ? ` (${entry.description})` : ""}. What came of it: ${entry.outcome}`,
-      null, { originFrom: entry.runId || undefined });
+      deferredFollowUp(entry, action),
+      null, { originFrom: entry.runId, deferredFrom: entry.runId, permissions: scope.permissions });
     return { id: entry.id, sessionId: entry.sessionId, queued: queued.queued };
   }
   /** The default preset's provider; individual runs may select another preset. */
@@ -1077,7 +1089,7 @@ export class Runtime {
    * so a person can steer a task that is still working without waiting for it to finish.
    */
   followUp(sessionId: string, prompt: string, windowPerson: string | null = null, carry: FollowUpCarry = {}): { id: string; position: number; queued: number } {
-    const { originFrom, permissions } = carry;
+    const { originFrom, deferredFrom, permissions } = carry;
     RunInputSchema.parse({ prompt, sessionId });
     // profile-audit: queued from the app window switched to a household profile, it runs as them.
     const person = currentPerson()?.profileId ?? windowPerson;
@@ -1090,6 +1102,7 @@ export class Runtime {
       ...(startedWithShortLivedKey() ? { shortLivedKey: true } : {}),
       ...(shortLivedKeyMark().keyId ? { shortLivedKeyId: shortLivedKeyMark().keyId } : {}),
       ...(person ? { personProfileId: person } : {}), ...(originFrom ? { originFrom } : {}),
+      ...(deferredFrom ? { deferredFrom } : {}),
       ...(permissions ? { permissions: [...permissions] } : {}) }];
     this.store.save("settings", this.owner, `followups:${sessionId}`, { items });
     this.drainFollowUps(sessionId);
@@ -1102,7 +1115,8 @@ export class Runtime {
     if (!next) return;
     this.store.save("settings", this.owner, `followups:${sessionId}`, { items: rest });
     const start = () => this.track(() => this.execute({ prompt: next.prompt, sessionId, onTextDelta: () => undefined,
-      ...(next.originFrom ? { originFrom: next.originFrom } : {}), ...(next.permissions ? { permissions: next.permissions } : {}) }));
+      ...(next.originFrom ? { originFrom: next.originFrom } : {}),
+      ...(next.deferredFrom ? { deferredFrom: next.deferredFrom } : {}), ...(next.permissions ? { permissions: next.permissions } : {}) }));
     const marked = () => (next.shortLivedKey ? underShortLivedKey(start, next.shortLivedKeyId ? { keyId: next.shortLivedKeyId } : {}) : start());
     // bucket 19: a message a household person queued runs as that person, held to their role.
     void (next.personProfileId ? asPerson({ profileId: next.personProfileId, keyId: "queued" }, marked) : marked())
@@ -1449,6 +1463,7 @@ export class Runtime {
       signal: AbortSignal.any([parent.signal, timeout.signal]),
       permissions: new Set(permissions),
       depth: parent.depth + 1,
+      ownCopy: options.ownCopy === true, delegates: options.delegates === true,
       ...(options.agent ? { agent: options.agent } : {}),
     };
     let connection: HelperConnection | undefined;
@@ -1677,6 +1692,11 @@ ${run.output.slice(0, 6000)}`;
     instructions = "",
     helper?: HelperConnection,
   ): Promise<Run> {
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      options = { ...options, source: saved.source, originFrom: options.deferredFrom,
+        ...(saved.dryRun ? { dryRun: true } : {}) };
+    }
     options = this.carryOrigin(options, parent); // mac7/outside-resume
     if (!parent) options = this.replyToAsk(options); // Q050
     assertContinuitySession(this.store, this.owner,
@@ -1707,7 +1727,13 @@ ${run.output.slice(0, 6000)}`;
     }
     const budget = parent?.budget ?? new Budget(options.budget ?? knobs.taskBudget(this.store, this.owner)); // R17-S09
     // ── R17-A (Trunks): a Trunk's turn carries its own instructions, memory scope, tools and model. ──
-    const trunk = parent ? null : this.trunkShape(options);
+    let trunk = parent ? null : this.trunkShape(options);
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      this.checkDeferredCredentials(saved.credentials, trunk);
+      // Bind the validated saved keys, not a mutable current configuration object.
+      if (trunk && saved.credentials) trunk = { ...trunk, keys: saved.credentials.keys };
+    }
     // eng-trunk-controls: a paused Trunk starts nothing new, whoever asks; said in words, above the first await.
     const paused = trunk ? this.trunkPaused(trunk.trunkId) : null;
     if (paused) throw new Error(paused);
@@ -1721,6 +1747,13 @@ ${run.output.slice(0, 6000)}`;
         ...(options.style === undefined && trunk.style ? { style: trunk.style } : {}) };
     }
     // ── end R17-A ──
+    if (options.deferredFrom) {
+      const saved = this.deferredScope(options.deferredFrom, options.sessionId);
+      const current = options.permissions ?? this.registry.permissions();
+      options = { ...options, originFrom: options.deferredFrom,
+        permissions: current.filter((permission) => saved.permissions.includes(permission)),
+        ...(saved.dryRun ? { dryRun: true } : {}) };
+    }
     // Q050: a task taken up again keeps the reach it started with, never more (the tools it was given, narrowed further
     // by anything above); Lockdown and the owner's rules are still asked at every call.
     if (options.continuing) options = { ...options, permissions: this.continuedReach(options.continuing.runId, options.permissions),
@@ -1848,6 +1881,15 @@ ${run.output.slice(0, 6000)}`;
       ...this.originMarks(options, context, parent),
       // What this task was allowed to reach, so "Do this again" can hand it the very same tools.
       permissions: [...context.permissions].sort(),
+      // Only an ordinary root can be reconstructed by this deferred queue. Helpers, scoped
+      // memory, borrowed copies and other execution shapes require their original placement.
+      deferredScope: { version: 5, source: context.source ?? "owner", credentials: trunk && !trunk.roomTurn
+        ? { trunkId: trunk.trunkId, agent: trunk.agent, owners: trunk.owners === true, keys: context.trunkKeys } : null, workspace: this.workspace, root: !parent && context.depth === 0 && (!context.agent || (!!trunk && context.agent === trunk.agent))
+        && (!context.trunk || context.trunk === trunk?.trunkId) && (!context.trunkKeys || !!trunk)
+        && (!trunk || !trunk.roomTurn) && !currentAccountCall()?.trunk && !context.isolated && !context.ownCopy && !options.lentTo
+        && context.workspace === this.workspace
+        && !currentPerson() && !startedWithShortLivedKey() && (!options.originFrom || !!options.deferredFrom)
+        && !options.resumeFrom && !options.continuing, dryRun: context.dryRun === true },
       // helper-lifecycle: how deep a helper works and whether it may hand work on, so carrying it on keeps both.
       ...(context.depth ? { depth: context.depth } : {}),
       ...(context.delegates ? { delegates: true } : {}),
@@ -1955,6 +1997,12 @@ ${run.output.slice(0, 6000)}`;
     if (!parent) this.drainFollowUps(run.sessionId);
     return settled;
   }
+  /**
+   * A run made on a task's behalf outside its own loop (a list filter's decision): it keeps the task's privacy (a task
+   * that stays on this computer keeps it here too) and its spending counts against the task's cap. Left when it ends.
+   */
+  joinSideRun(runId: string, parentRunId: string): void { this.joinSpend(runId, parentRunId); }
+  leaveSideRun(runId: string): void { this.leaveSpend(runId); }
   /** R17-S09: a sub-task's spending counts against the task at the top of its tree. */
   private joinSpend(runId: string, parentRunId: string | undefined): void {
     if (parentRunId && this.staysHere.has(parentRunId)) this.staysHere.add(runId);
@@ -2069,7 +2117,50 @@ ${run.output.slice(0, 6000)}`;
   private startedAsDryRun(runId: string): boolean {
     return this.store.events(runId).find((event) => event.kind === "run.started")?.data.dryRun === true;
   }
-  /** Q050: what a task taken up again may reach: what it was given when it started, narrowed by what is asked now. */
+  /** Deferred answers only resume a durably identified ordinary root; other shapes remain held. */
+  private deferredScope(runId: string | undefined, sessionId: string | undefined): { permissions: string[]; dryRun: boolean; source: RunSource; credentials: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null } {
+    const run = runId ? this.store.run(runId) : null;
+    const events = runId ? this.store.events(runId) : [];
+    const started = events.find((event) => event.kind === "run.started")?.data;
+    const value = started?.deferredScope;
+    const saved = value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown> : null;
+    if (!run || run.owner !== this.owner || run.sessionId !== sessionId
+      || !saved
+      || saved.version !== 5 || saved.workspace !== this.workspace || saved.root !== true || typeof saved.dryRun !== "boolean"
+      || !Array.isArray(started?.permissions) || !started.permissions.every((permission) => typeof permission === "string")
+      || events.some((event) => event.kind === "worktree.used" || event.kind === "worktree.inherited"))
+      throw new Error("This handed-over task cannot continue safely because its saved effective scope or workspace cannot be recovered. The job remains unanswered; reconcile its original task first.");
+    let credentials: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null = null;
+    if (saved.credentials !== null) {
+      const value = saved.credentials;
+      if (!value || typeof value !== "object" || Array.isArray(value))
+        throw new Error("The handed-over task's saved credential scope is unavailable; the job remains unanswered.");
+      const record = value as Record<string, unknown>;
+      const keys = TrunkSchema.shape.keys.safeParse(record.keys);
+      if (typeof record.trunkId !== "string" || !record.trunkId || typeof record.agent !== "string" || !record.agent
+        || typeof record.owners !== "boolean" || record.keys === undefined || !keys.success
+        || canonicalArguments(JSON.stringify(record.keys)) !== canonicalArguments(JSON.stringify(keys.data)))
+        throw new Error("The handed-over task's saved credential identity or key restrictions are invalid; the job remains unanswered.");
+      credentials = { trunkId: record.trunkId, agent: record.agent, owners: record.owners, keys: keys.data };
+    }
+    const sources: readonly string[] = ["owner", "trigger", "schedule", "mcp", "a2a", "acp", "channel"];
+    const origin = runOrigin(this.store, run.id);
+    if (typeof saved.source !== "string" || !sources.includes(saved.source) || saved.source !== started.source
+      || saved.source !== origin.source || origin.shortLivedKey || origin.personProfileId || origin.lentTo)
+      throw new Error("The handed-over task's original source or caller scope cannot be recovered safely; the job remains unanswered.");
+    return { permissions: [...started.permissions] as string[], dryRun: saved.dryRun, source: saved.source as RunSource, credentials };
+  }
+  private checkDeferredCredentials(saved: { trunkId: string; agent: string; owners: boolean; keys: NonNullable<ToolContext["trunkKeys"]> } | null, current: TrunkRunShape | null): void {
+    // Equality deliberately holds changed scopes: neither a different identity nor newly added
+    // accounts/fallbacks/owner access may be installed by answering an existing handoff.
+    if (currentAccountCall()?.trunk || (saved === null ? current !== null
+      : !current || (current.owners === true) !== saved.owners || current.agent !== saved.agent
+        || current.roomTurn || current.trunkId !== saved.trunkId
+        || canonicalArguments(JSON.stringify(current.keys)) !== canonicalArguments(JSON.stringify(saved.keys))))
+      throw new Error("This handed-over task's original credential identity or key restrictions no longer match. Reconcile its scope before answering; no new credential authority was adopted.");
+  }
+  /** Q050: what a task taken up again may reach, narrowed by what is asked now. */
   private continuedReach(runId: string, now: string[] | undefined): string[] {
     const started = runOrigin(this.store, runId).permissions;
     const allowed = now ?? this.registry.permissions();
@@ -2514,7 +2605,8 @@ ${run.output.slice(0, 6000)}`;
     // mac7/smoke-fixes (B5): nobody can be asked about the plan. A chat app is a person who can
     // answer, so it is not one of them (nobodyToAskAboutPlan in src/coding/project-tests.ts).
     const conductor = this.orchestration.conductor(run,
-      { ...conduct, ...planned, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
+      { ...conduct, ...planned, signal: context.signal, nobodyToAsk: nobodyToAskAboutPlan(context), ...(checks ? { checks } : {}),
+        checkLifecycle: () => this.checkPaused(run.id),
         memory: { scope: memoryScope(this.store, context), agent: memoryAgent(context) } },
       (aside) => this.aside(run, context, route, aside));
     const opening = await this.openConductor(run, conductor);
@@ -2718,7 +2810,7 @@ ${run.output.slice(0, 6000)}`;
             if (outOfSteps(context, outcome.reason)) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
             throw outcome.reason;
           }
-          const call = group[at]!, result = outcome.value;
+          const call = group[at]!, result = await this.filteredList(run, context, call, outcome.value);
           const message: Message = { role: "tool", toolCallId: call.id, content: this.clipped(run, call, JSON.stringify(result)) };
           messages.push(message); ids.push(null);
           this.store.message(run.sessionId, message);
@@ -2730,6 +2822,41 @@ ${run.output.slice(0, 6000)}`;
       this.guards.afterRound(run.id); // wave mac2 (guards): ends a task that keeps repeating itself
     }
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
+  }
+  /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
+  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget; runId: string; trunk?: string | undefined; trunkKeys?: ToolContext["trunkKeys"]; dryRun?: boolean }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  /**
+   * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
+   * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
+   * so the owner still sees every line, and Look inside says what was kept (list.filtered). Anything that goes wrong,
+   * or a model that is not sure, leaves the list whole.
+   */
+  private async filteredList(run: Run, context: ToolContext, call: ToolCall, result: unknown): Promise<unknown> {
+    if (!this.listFilter || !/(^|\.|_)(search|list|glob|grep|find|inbox|messages|results)/i.test(call.name)) return result;
+    // A tool's answer reaches the task wrapped ({ ok, result }); the list is inside it, and the wrapper is kept.
+    const wrapped = !!result && typeof result === "object" && "ok" in result && "result" in result;
+    const inner = wrapped ? (result as { result: unknown }).result : result;
+    const found = longestList(inner);
+    if (!found || found.items.length < 2) return result;
+    const lines = found.items.map((item) => (typeof item === "string" ? item : JSON.stringify(item) ?? ""));
+    try {
+      // The task's own Stop and budget: a filter never runs on after the task stops, nor past what it may spend.
+      const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget, runId: run.id,
+        ...(context.trunk ? { trunk: context.trunk } : {}), ...(context.trunkKeys ? { trunkKeys: context.trunkKeys } : {}),
+        ...(context.dryRun ? { dryRun: true } : {}) });
+      if (!said) return result;
+      if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
+      const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);
+      if (keep.length === lines.length) return result;
+      const dropped = lines.length - keep.length, kept = keep.map((i) => found.items[i]);
+      this.store.event(run.id, "list.filtered", { tool: call.name, kept: keep.length, dropped, total: lines.length, model: said.model.name, local: said.model.local });
+      const setAside = { lines: dropped, note: `${dropped} of ${lines.length} lines were set aside as not needed for this task by ${said.model.name}. The owner still sees them all; ask the tool again, more narrowly, if one is missing.` };
+      const shown = found.key === null ? { items: kept, setAside } : { ...(inner as Record<string, unknown>), [found.key]: kept, setAside };
+      return wrapped ? { ...(result as Record<string, unknown>), result: shown } : shown;
+    } catch (error) {
+      this.store.event(run.id, "list.filter_failed", { tool: call.name, total: lines.length, reason: errorText(error) });
+      return result;
+    }
   }
   /**
    * mac7/speed: one tool call, from the journal entry to the result. This is exactly the path a
@@ -3956,6 +4083,14 @@ ${run.output.slice(0, 6000)}`;
     // A task that must stay on this computer never reaches a connection elsewhere, whichever part of it asks:
     // a side job that names its own connection is answered by the one here instead, and with none here it stops.
     if (this.staysHere.has(run.id) && !presetRunsLocally(preset)) preset = this.keptHere(run, preset);
+    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
+    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
+    preset = thresholdPreset(this.store, this.models, this.owner, preset, { runId: run.id,
+      allowFallback: !pinnedHelper && !this.helperModels.has(run.id),
+      mayUse: (next) => (!this.staysHere.has(run.id) || presetRunsLocally(next))
+        && (!context.trunkKeys || trunkSignIns || !isSignInConnection(next))
+        && this.models.canDo(next, "tools") && (!shape || this.models.canDo(next, "json-mode"))
+        && (!messages.some((message) => message.images?.length) || this.models.canDo(next, "vision")) });
     if (context.dryRun && unwrapProvider(preset.provider) instanceof CliAgentProvider)
       throw new Error("Practice cannot use an installed coding assistant because its own tools run outside Branch's simulation. Pick another model connection for this practice task.");
     // The owner's "auto" limits are no limit on a sign-in or a model here, and finite on a key billed per token; a key's
@@ -3970,7 +4105,6 @@ ${run.output.slice(0, 6000)}`;
     // R17-S09: a task that has reached the owner's spending cap for one task stops here.
     this.checkSpendCap(run, preset.model);
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
-    const trunkSignIns = !!context.trunkKeys && this.trunkSignIns(run.id); // trunks-use-subscriptions
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
     const input = estimateTokens({ messages, tools });
@@ -3985,7 +4119,6 @@ ${run.output.slice(0, 6000)}`;
       messages, tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
       shape: shape?.name ?? null,
     };
-    const pinnedHelper = helperRoute(this.store, run.owner, run.sessionId) !== null;
     const kept = pinnedHelper ? null : this.requestCache.look(cacheKey);
     if (kept) return this.shownThinking(this.answeredFromCache(run, preset, kept, input));
     context.budget.charge(input);
@@ -4014,7 +4147,8 @@ ${run.output.slice(0, 6000)}`;
         ...(shape ? { responseFormat: { name: shape.name, schema: shape.schema } } : {}),
         // An installed program answering as the model (Claude Code, Codex) keeps its own tools only for the owner's own
         // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
-        ...(runOrigin(this.store, run.id).source === "owner" ? {} : { programTools: false }) };
+        // A shaped answer asked with no tools of Branch's (a decision) is words only, whoever asked it.
+        ...(runOrigin(this.store, run.id).source === "owner" && !(shape && !context.permissions.size) ? {} : { programTools: false }) };
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
@@ -4060,6 +4194,7 @@ ${run.output.slice(0, 6000)}`;
         preset: preset.id,
         provider: preset.provider.name,
         model: preset.model,
+        ...(preset.catalogId ? { catalogId: preset.catalogId } : {}),
       });
       // Dogfood B7: a real model has answered, so the first-run card is done with (src/onboarding.ts). An empty
       // reply is no answer (NAS ca8db88): only words, or a tool call, count.
@@ -4396,6 +4531,7 @@ ${run.output.slice(0, 6000)}`;
    */
   private carryOrigin(options: RunOptions, parent?: ToolContext): RunOptions {
     if (parent || (options.source && options.source !== "owner")) return options;
+    if (options.deferredFrom) return { ...options, originFrom: options.deferredFrom };
     const { originFrom: asked, ...rest } = options;
     const carried = (id: string | null | undefined) => (id && outsideSourceOf(this.store, id) ? id : undefined);
     const from = carried(options.resumeFrom) ?? carried(asked) ?? carried(conversationCarrier(this.store, options.sessionId));
@@ -4455,6 +4591,9 @@ ${run.output.slice(0, 6000)}`;
     const target = at?.target ?? this.registry.targetOf(tool, args, context);
     const label = describeToolCall(tool, args, (id) => this.specialistName(id)); // QA Q049: helpers named, not ids
     const source: RunSource = this.sourceOf(context); // mac7/outside-resume
+    // A helper's lead controls whether it may hand work on, including a named call omitted from its catalogue.
+    const handOn = this.handOnReason(tool, args, context);
+    if (handOn) return { decision: "deny", label, target, readOnly, remember: "never", sandbox: null, backend: null, paths: null, reason: handOn };
     // dogfood D4: the owner's screen asks first until the owner has said yes to it for this task (or, for opening a
     // program, this Trunk opened it before after a yes).
     const screen = reachesScreen(tool, permission, args, this.registry.declaresScreen(tool))
@@ -4518,7 +4657,7 @@ ${run.output.slice(0, 6000)}`;
     // before its own config.yaml or .env is edited, so the model cannot switch off the one question Full access keeps.
     const fullAccess = this.ownerFullMode(context);
     const loosening = fullAccess ? settingsHold(tool, args) : null;
-    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = fullAccess ? (loosening?.onceOnly ? loosening : null) : personalHold(tool, args, source) ?? handOffHold(tool) ?? (settingsHold(tool, args, { store: this.store, context, rule }) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;
@@ -5227,10 +5366,12 @@ ${run.output.slice(0, 6000)}`;
     const deferred = deferredCall(result);
     if (!deferred) return null;
     const entry = this.deferrals.open({ id: deferred.id, runId: context.runId, sessionId: this.sessionOf(context),
-      tool: call.name, description: deferred.description });
-    this.store.event(context.runId, "tool.deferred", { name: call.name, id: call.id, deferredId: entry.id, description: entry.description });
-    return { deferred: true, id: entry.id,
-      note: "This is not finished yet and you are not to wait for it. Carry on with whatever else you can do, and finish your answer. When it is done, what came of it arrives as a new message in this conversation." };
+      tool: call.name, description: deferred.description, ...(deferred.kind ? { kind: deferred.kind } : {}) });
+    this.store.event(context.runId, "tool.deferred", { name: call.name, id: call.id, deferredId: entry.id, description: entry.description, kind: entry.kind });
+    return { deferred: true, id: entry.id, kind: entry.kind,
+      note: entry.kind === "later"
+        ? "This work is set aside and still unfinished. Do not do the remaining work now. Finish your answer with what is pending. The person's Finish now button queues a continuation in this conversation."
+        : "This is not finished yet and you are not to wait for it. Carry on with whatever else you can do, and finish your answer. When it is done, what came of it arrives as a new message in this conversation." };
   }
   /**
    * Some servers answer with a small page meant to be looked at rather than read out. It is kept
@@ -5271,8 +5412,23 @@ ${run.output.slice(0, 6000)}`;
     const outcome = await this.runToolCall(call, context, prepared, shown);
     return ignored.length && outcome && typeof outcome === "object" ? { ...outcome, note: ignoredNote(ignored) } : outcome;
   }
+  /** A lead's ceiling and a specialist's target rule are independent, narrowing restrictions. */
+  private handOnReason(name: string, args: unknown, context: ToolContext): string | null {
+    const ceiling = handOnRefusal(name, context);
+    if (!ceiling) return null;
+    if (name === "delegate.handoff" && args && typeof args === "object" && !Array.isArray(args)) {
+      const specialist = (args as { specialist?: unknown }).specialist;
+      if (typeof specialist === "string") {
+        const target = this.handoffs.refusal(context.agent, specialist);
+        if (target) return `${target} ${ceiling}`;
+      }
+    }
+    return ceiling;
+  }
   /** The registry's own refusal (src/registry.ts execute) for a tool that is not there or not this task's, else null. */
-  private outsideReach(name: string, context: ToolContext): string | null {
+  private outsideReach(name: string, context: ToolContext, args: unknown): string | null {
+    const handOn = this.handOnReason(name, args, context);
+    if (handOn) return handOn;
     const permission = this.registry.permissionOf(name);
     if (!permission) return `Unknown tool: ${name}`;
     return context.permissions.has(permission) ? null : `Permission denied: ${permission}`;
@@ -5291,7 +5447,7 @@ ${run.output.slice(0, 6000)}`;
     if (call.name === toolNoteName) return this.noteTool(call, context, args);
     // Q050 follow-up: a tool that does not exist, or one this task was not given, is refused here as the registry would
     // refuse it when run, before any rule, question or yes is weighed: a question about it could never lead anywhere.
-    const outside = this.outsideReach(call.name, context);
+    const outside = this.outsideReach(call.name, context, args);
     if (outside) { this.store.event(context.runId, "tool.failed", { name: call.name, id: call.id, error: outside }); return { ok: false, error: outside }; }
     const blocked = this.reconciliationBlock(context, call);
     if (blocked) { this.store.event(context.runId, "reconciliation.required", { name: call.name, id: call.id }); return { ok: false, error: blocked }; }
@@ -5516,4 +5672,14 @@ export { argumentFingerprint };
 function stepFingerprint(tool: string, index: number, target: string | undefined, argumentBytes: string): string {
   const parts = ["browser.flow step", index, tool, target ?? "", canonicalArguments(argumentBytes)];
   return argumentFingerprint(tool, parts.join("\u0000"));
+}
+
+/** models-ui: the list a tool's answer holds: the answer itself, or its longest list-valued field. */
+function longestList(result: unknown): { key: string | null; items: unknown[] } | null {
+  if (Array.isArray(result)) return { key: null, items: result };
+  if (!result || typeof result !== "object") return null;
+  let best: { key: string; items: unknown[] } | null = null;
+  for (const [key, value] of Object.entries(result as Record<string, unknown>))
+    if (Array.isArray(value) && (!best || value.length > best.items.length)) best = { key, items: value };
+  return best;
 }

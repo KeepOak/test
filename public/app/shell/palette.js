@@ -21,6 +21,7 @@ import { PLACES } from "./shell.js"; // every place the sidebar lists, Team incl
 import { t } from "../../i18n.js";
 import { say } from "../core/words.js";
 import { allOf } from "../chat/putaway.js";
+import { paletteScore } from "./palette-match.js";
 
 const P = { el: null, sel: 0, items: [], archived: [], opened: 0, asked: -1 };
 /* What the engine found for the words last asked: its conversation and document hits (owner only; anybody else is refused
@@ -94,18 +95,32 @@ function paint(q) {
   P.items = [];
   let html = "";
   for (const [group, items] of all(!!ql, q.trim())) {
-    const found = items.filter((i) => i.label && (i.found || !ql || i.label.toLowerCase().includes(ql) || i.sub.toLowerCase().includes(ql)));
+    const found = items.filter((item) => item.label).map((item) => ({ item, score: paletteScore(ql, item) }))
+      .filter((match) => Number.isFinite(match.score)).sort((a, b) => b.score - a.score).map((match) => match.item);
     if (!found.length) continue;
     html += `<div class="ph">${esc(group)}</div>`;
     for (const i of found) {
       const n = P.items.push(i) - 1;
-      html += `<button class="mi" type="button" role="option" data-act="pal" data-i="${n}" aria-selected="${n === P.sel}"><span class="ico">${ic(i.icon, "s")}</span><span class="mi-t">${esc(i.label)}</span><span class="r">${esc(i.sub)}</span></button>`;
+      html += `<button class="mi" type="button" role="option" id="pal-option-${n}" data-act="pal" data-i="${n}" aria-selected="${n === P.sel}"><span class="ico">${ic(i.icon, "s")}</span><span class="mi-t">${esc(i.label)}</span><span class="r">${esc(i.sub)}</span></button>`;
     }
   }
   const list = $("#pal-list");
   list.innerHTML = html || `<p class="empty" data-css="padding:20px">${t("window.shell.palette.nothing-matches-try-a-trunks-name")}</p>`;
   applyCss(list);
-  list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+  selectPalette();
+}
+
+/* OpenClaw's palette (MIT) informed grouped results and composition guards.
+   Branch keeps focus in its combobox and announces the option through active-descendant. */
+function selectPalette() {
+  P.sel = Math.max(0, Math.min(P.items.length - 1, P.sel));
+  const input = $("#pal-in");
+  for (const option of document.querySelectorAll("#pal-list [role='option']")) {
+    option.setAttribute("aria-selected", String(Number(option.dataset.i) === P.sel));
+  }
+  if (P.items.length) input?.setAttribute("aria-activedescendant", `pal-option-${P.sel}`);
+  else input?.removeAttribute("aria-activedescendant");
+  $("#pal-list [aria-selected='true']")?.scrollIntoView({ block: "nearest" });
 }
 
 export function openPalette() {
@@ -114,7 +129,7 @@ export function openPalette() {
   closePalette();
   P.sel = 0;
   P.el = Object.assign(document.createElement("div"), { className: "scrim top" });
-  P.el.innerHTML = `<div class="palette" role="dialog" aria-label="${t("comfort.field.palette")}"><div class="pin-in">${ic("search")}<input id="pal-in" placeholder="${t("window.shell.palette.find-a-trunk-a-conversation-a")}" aria-label="${t("comfort.field.palette")}" autocomplete="off"></div><div class="pal-list" id="pal-list" role="listbox" aria-label="${t("comfort.field.palette")}"></div><div class="pal-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> ${t("window.shell.palette.move")}</span><span><kbd>Enter</kbd> ${t("window.shell.palette.open")}</span><span><kbd>Esc</kbd> ${t("window.shell.palette.close")}</span></div></div>`;
+  P.el.innerHTML = `<div class="palette" role="dialog" aria-label="${t("comfort.field.palette")}"><div class="pin-in">${ic("search")}<input id="pal-in" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="pal-list" placeholder="${t("window.shell.palette.find-a-trunk-a-conversation-a")}" aria-label="${t("comfort.field.palette")}" autocomplete="off"></div><div class="pal-list" id="pal-list" role="listbox" aria-label="${t("comfort.field.palette")}"></div><div class="pal-foot"><span><kbd>↑</kbd> <kbd>↓</kbd> ${t("window.shell.palette.move")}</span><span><kbd>Enter</kbd> ${t("window.shell.palette.open")}</span><span><kbd>Esc</kbd> ${t("window.shell.palette.close")}</span></div></div>`;
   app().appendChild(P.el);
   paint("");
   $("#pal-in").focus();
@@ -146,10 +161,11 @@ export function initPalette() {
   on("pal", (el) => pick(+el.dataset.i));
   document.addEventListener("input", (e) => { if (e.target.id === "pal-in") { P.sel = 0; paint(e.target.value); askEngine(e.target.value); if (e.target.value.trim()) loadArchived(); } });
   document.addEventListener("keydown", (e) => {
+    if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
     if (pressed(e, "palette")) { e.preventDefault(); openPalette(); return; }
     if (!P.el) return;
     if (e.key === "Escape") { e.stopPropagation(); closePalette(); }
-    else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); P.sel = Math.max(0, Math.min(P.items.length - 1, P.sel + (e.key === "ArrowDown" ? 1 : -1))); paint($("#pal-in").value); }
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); P.sel = Math.max(0, Math.min(P.items.length - 1, P.sel + (e.key === "ArrowDown" ? 1 : -1))); selectPalette(); }
     else if (e.key === "Enter" && e.target.id === "pal-in") { e.preventDefault(); pick(P.sel); }
   }, true);
   document.addEventListener("pointerdown", (e) => { if (P.el && e.target === P.el) closePalette(); });

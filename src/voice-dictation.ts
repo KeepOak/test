@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { FeatureModeSchema, type FeatureMode } from "./feature-switches.js";
 import { lockdownOverrides } from "./lockdown.js";
 import { bytesPerSecond, onThisComputer, recorderFor, recorderName,
@@ -138,6 +140,8 @@ export function dictationEngine(
   // substitution a person would never find out about.
   const named = voice.localSpeechStream ? streamingPrograms[3] : undefined;
   const found = named ?? streamingPrograms.filter((program) => program.file).find((program) => present(program.file));
+  const vad = vadDictationEngine(voice, present);
+  if (!named && vad) return vad;
   if (!found) return { available: false, kind: "none", command: null, how: missingProgram(platform) };
   const file = found.file || voice.localSpeechStream;
   if (!voice.localSpeechModel)
@@ -150,6 +154,37 @@ export function dictationEngine(
       ? `${found.label}, which you installed yourself, kept running for as long as you are dictating and ended the moment you stop. It opens the microphone itself, so no sound ever reaches Branch at all — only the words, and only while it runs. Branch runs the first program called ${file} on your search path and does not check what it is, so keep that path yours; it is given its arguments one by one, never a line for a shell to read, and none of this computer's own environment. Words appear about a second behind you and may change as it hears more.`
       : `${found.label}, handed sound on its standard input by a recorder Branch holds open beside it. Branch counts how loud the room is and feeds it only what carries speech, so a quiet room costs it nothing. No file is written and no file name is ever an argument; it is given its arguments one by one, never a line for a shell to read, and none of this computer's own environment. Words appear about a second behind you and may change as it hears more.`,
   };
+}
+
+/** Upstream Apache-2.0 sherpa-onnx VAD microphone CLI, 040afe360a38. External program only.
+ * Prefer finished segments when the owner supplied a complete transducer/Whisper + Silero bundle. */
+function vadDictationEngine(voice: VoiceSettings, present: ProgramPresent): DictationEngine | null {
+  const file = "sherpa-onnx-vad-microphone-offline-asr", model = voice.localSpeechModel;
+  if (!model || !present(file)) return null;
+  const vad = join(model, "silero_vad.onnx");
+  if (!existsSync(vad)) return null;
+  const asr = sherpaVadAsr(model, voice.language);
+  if (!asr) return null;
+  return { available: true, kind: "own-microphone", command: { file, args: [
+    `--silero-vad-model=${vad}`, ...asr,
+  ] }, how: "Your installed sherpa-onnx VAD microphone program stays loaded while you dictate and writes each finished speech segment once. It uses the Silero and complete speech models you supplied, opens the microphone itself, and stops when you stop dictating. Branch downloads nothing." };
+}
+
+/** Flags/layouts in the pinned sherpa VAD microphone and offline Whisper CLI sources. */
+function sherpaVadAsr(model: string, language: string): string[] | null {
+  const files = ["tokens.txt", "encoder.onnx", "decoder.onnx", "joiner.onnx"];
+  if (files.every(file => existsSync(join(model, file))))
+    return files.map((file, index) => `--${["tokens", "encoder", "decoder", "joiner"][index]}=${join(model, file)}`);
+  const names = ["tiny.en", "base.en", "tiny", "base", "small.en", "small", "medium.en", "medium", "large"];
+  for (const name of names) for (const precision of [".int8", ""]) {
+    const encoder = join(model, `${name}-encoder${precision}.onnx`), decoder = join(model, `${name}-decoder${precision}.onnx`);
+    const tokens = join(model, `${name}-tokens.txt`);
+    if ([encoder, decoder, tokens].every(file => existsSync(file))) return [
+      `--whisper-encoder=${encoder}`, `--whisper-decoder=${decoder}`, `--tokens=${tokens}`, "--num-threads=1",
+      ...(language ? [`--whisper-language=${language}`] : []),
+    ];
+  }
+  return null;
 }
 
 const missingProgram = (platform: string): string =>
@@ -195,33 +230,40 @@ export function loudness(sound: Uint8Array): number {
 }
 
 /**
- * How quiet this room is when nobody is speaking, learned from the first second of it and then left
- * alone. Speech is what is clearly above that floor; anything else is the room, and the room does
- * not keep a microphone open.
+ * Four-state hysteresis ported from Pipecat vad_analyzer.py at 20999cd7b816
+ * (Copyright 2024-2026 Daily, BSD-2-Clause; THIRD_PARTY_NOTICES.md). The existing
+ * energy detector remains local; only quiet frames adapt its floor, so speech on
+ * the first frame is never learned as ambient noise. No neural VAD is downloaded.
  */
 export class RoomFloor {
-  private readonly heard: number[] = [];
-  private floor: number | null = null;
-  /** How many pieces make up the first second listened to before anything counts as speech. */
-  static readonly learningFrames = 50;
-  /** How far above the quiet room a piece must be to be speech, and the least it must ever be. */
+  private floor = 0.004;
+  private state: "quiet" | "starting" | "speaking" | "stopping" = "quiet";
+  private count = 0;
   static readonly overFloor = 2.5;
   static readonly leastLoud = 0.01;
+  static readonly startFrames = 10;
+  static readonly stopFrames = 10;
 
-  /** True when this piece carries speech. While the floor is still being learned, nothing does. */
+  /** 200ms start and stop hysteresis, in the recorder's 20ms frames. */
   speech(sound: Uint8Array): boolean {
     const level = loudness(sound);
-    if (this.floor === null) {
-      this.heard.push(level);
-      if (this.heard.length < RoomFloor.learningFrames) return false;
-      const quiet = [...this.heard].sort((one, two) => one - two);
-      this.floor = quiet[Math.floor(quiet.length / 2)] ?? 0;
-      this.heard.length = 0;
+    const loud = level > Math.max(this.floor * RoomFloor.overFloor, RoomFloor.leastLoud);
+    if (loud) {
+      if (this.state === "quiet") { this.state = "starting"; this.count = 1; }
+      else if (this.state === "starting") this.count += 1;
+      else if (this.state === "stopping") { this.state = "speaking"; this.count = 0; }
+    } else {
+      if (this.state === "quiet") this.floor = this.floor * 0.98 + level * 0.02;
+      else if (this.state === "starting") { this.state = "quiet"; this.count = 0; }
+      else if (this.state === "speaking") { this.state = "stopping"; this.count = 1; }
+      else this.count += 1;
     }
-    return level > Math.max(this.floor * RoomFloor.overFloor, RoomFloor.leastLoud);
+    if (this.state === "starting" && this.count >= RoomFloor.startFrames) { this.state = "speaking"; this.count = 0; }
+    if (this.state === "stopping" && this.count >= RoomFloor.stopFrames) { this.state = "quiet"; this.count = 0; }
+    return this.state === "speaking" || this.state === "stopping";
   }
   /** Forgotten when the microphone is let go of, so the next room is learned afresh. */
-  forget(): void { this.heard.length = 0; this.floor = null; }
+  forget(): void { this.floor = 0.004; this.state = "quiet"; this.count = 0; }
 }
 
 /* ---------- the words that come back ---------- */
@@ -236,6 +278,7 @@ export const mostWords = 4000;
  */
 export function cleanWords(written: string): string {
   return written
+    .replace(/\[Start speaking\]/gi, "")
     .replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "") // the codes a program uses to rewrite its own line
     .replace(/\[[0-9:.\s>-]+\]/g, "")       // whisper.cpp's timings
     .replace(/\r/g, " ")
