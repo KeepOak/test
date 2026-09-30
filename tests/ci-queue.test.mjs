@@ -1,8 +1,8 @@
 // The pull-request CI queue (scripts/ci-queue.mjs): at most `prSlots` pull-request runs hold runners, oldest first.
 // Mutations that go red here: admitting a run past the limit, letting a new run jump older waiting ones, holding a
 // rerun the queue started, admitting a rerun a person started without a slot, ignoring or misplacing ci-priority,
-// counting a replaced (superseded) run or a draft or `hold` pull request as waiting, and counting finished or push
-// runs as holding a slot.
+// counting a replaced (superseded) run or a draft or `hold` pull request as waiting, counting finished or push runs as
+// holding a slot, and missing an admitted run whose shares wait for runners (it reports `queued`).
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -53,15 +53,45 @@ test("waiting means: the newest run for the pull request's own head was cancelle
   assert.deepEqual(waitingRuns(pulls, runs, 51).map((one) => one.pr), [1], "this run is never waiting on itself");
 });
 
-test("a slot is held only by another pull-request run that is running now", () => {
+/* The regression of 2026-09-29: an admitted run whose shares all wait for runners is `queued`, not `in_progress`, and
+   counting only `in_progress` runs let about 29 pull-request runs start their shares while each plan logged "1 of 3".
+   Mutation: count `status === "in_progress"` again → the first assertion goes red. */
+test("a slot is held by every other unfinished pull-request run, its shares queued or running", () => {
   const runs = [
     { id: 1, event: "pull_request", status: "in_progress" },
     { id: 2, event: "pull_request", status: "queued" },
     { id: 3, event: "push", status: "in_progress" },
     { id: 4, event: "pull_request", status: "completed" },
     { id: 5, event: "pull_request", status: "in_progress" },
+    { id: 6, event: "pull_request", status: "waiting" },
+    { id: 7, event: "merge_group", status: "queued" },
   ];
-  assert.equal(activeRuns(runs, 5), 1);
+  assert.equal(activeRuns(runs, 5), 3, "runs 1, 2 and 6; never push, merge-queue or finished runs, never itself");
+  const saturated = Array.from({ length: 29 }, (_, index) => ({ id: index + 1, event: "pull_request", status: "queued",
+    run_started_at: `2026-09-29T21:${String(index).padStart(2, "0")}:00Z` }));
+  const self = { id: 99, event: "pull_request", status: "in_progress", run_started_at: "2026-09-29T22:00:00Z" };
+  const decision = schedule({ slots: 3, active: activeRuns([...saturated, self], 99, self), waiting: [], self: {} });
+  assert.equal(decision.admitSelf, false, "29 admitted runs waiting for runners hold every slot");
+});
+
+/* Runs that plan at the same moment each count only the unfinished runs that started before them, so they agree:
+   the oldest are admitted and the rest wait, and nobody is left holding with no run to hand a slot on. Mutations:
+   count every unfinished run (four simultaneous plans all hold) or none (all four go) → red. */
+test("runs that plan at once agree on the order: exactly the free slots are taken, oldest first", () => {
+  const at = (id, minute, extra = {}) => ({ id, event: "pull_request", status: "in_progress", run_started_at: `2026-09-29T21:0${minute}:00Z`, ...extra });
+  const runs = [at(40, 4), at(10, 1), at(30, 3), at(20, 2)];
+  const admitted = runs.filter((run) => schedule({ slots: 3, active: activeRuns(runs, run.id, run), waiting: [], self: {} }).admitSelf);
+  assert.deepEqual(admitted.map((run) => run.id).sort(), [10, 20, 30]);
+  // The oldest unfinished run is always admitted, however many others are unfinished.
+  const crowd = Array.from({ length: 12 }, (_, index) => at(100 + index, 5));
+  assert.equal(schedule({ slots: 1, active: activeRuns(crowd, 100, crowd[0]), waiting: [], self: {} }).admitSelf, true);
+  // A rerun moves run_started_at: an old run started again by a person lines up behind the runs already going.
+  const rerun = at(5, 9, { run_attempt: 2, created_at: "2026-09-29T20:00:00Z" });
+  assert.equal(activeRuns([...runs, rerun], 5, rerun), 4);
+  assert.equal(activeRuns([...runs, rerun], 10, runs[1]), 0, "the older run does not count a rerun started after it");
+  // The same second: the lower id is first.
+  assert.equal(activeRuns([at(1, 1), at(2, 1)], 2, at(2, 1)), 1);
+  assert.equal(activeRuns([at(1, 1), at(2, 1)], 1, at(1, 1)), 0);
 });
 
 test("a waiting run says it is waiting, where it is in line, and that it did not fail", () => {
@@ -86,4 +116,16 @@ test("ci-priority pull requests are first in line, and a priority run passes the
   assert.deepEqual(mine.rerun, []);
   const behindPriority = schedule({ slots: 3, active: 3, waiting: [wait(5, "a", true), ...waiting], self: { priority: true } });
   assert.equal(behindPriority.position, 2, "behind the other priority run only");
+});
+
+/* A decision to wait is written before any write is tried: rerunning another run (which a second plan or verify may
+   have rerun first), a label or the cancel can fail, and must never let a held run go ahead. Mutation: write held=true
+   after the reruns again → red. */
+test("a run that must wait is marked waiting before the queue tries any write", () => {
+  const source = readFileSync(new URL("../scripts/ci-queue.mjs", import.meta.url), "utf8");
+  const main = source.slice(source.indexOf("async function main()"));
+  assert.ok(main.indexOf("held=true") > 0);
+  assert.ok(main.indexOf("held=true") < main.indexOf("await rerun(api, decision.rerun)"));
+  assert.match(source, /async function attempt\(what, call\) \{\n  try \{/, "each write is caught on its own");
+  assert.doesNotMatch(main, /await api\("POST"/, "every write in main goes through attempt()");
 });

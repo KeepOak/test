@@ -49,6 +49,12 @@ export interface WalledPolicy {
   sha256?: string | undefined;
   /** What the owner saw the package ask for; a plugin that describes more is cut back to this. */
   permissions?: readonly string[] | undefined;
+  /**
+   * RES-251: a file the owner placed in the plugins folder themselves. Before, it ran inside Branch; on Windows, where
+   * the wall is only a job object, running it as its own program with limits is still far tighter than that, so it is
+   * not refused there the way code somebody else wrote is.
+   */
+  handPlaced?: boolean;
 }
 
 /** How large one question to a plugin may be, and how many may run at once. */
@@ -115,7 +121,7 @@ export class WalledPlugins implements PluginIsolation {
     this.pinned.delete(id);
     const { code, policy } = await this.code(id, file);
     if (!policy.sha256) this.pinned.set(id, fingerprint(code));
-    const answer = await this.ask(code, policy.hosts, { kind: "describe" });
+    const answer = await this.ask(code, policy.hosts, { kind: "describe" }, policy.handPlaced === true);
     const described = DescribeShape.parse(answer.plugin);
     // A plugin may describe more permissions than its package listed; only the listed ones count.
     const notes: string[] = [];
@@ -155,7 +161,7 @@ export class WalledPlugins implements PluginIsolation {
 
   private async call(id: string, file: string, request: Record<string, unknown>): Promise<unknown> {
     const { code, policy } = await this.code(id, file);
-    const answer = await this.ask(code, policy.hosts, request);
+    const answer = await this.ask(code, policy.hosts, request, policy.handPlaced === true);
     return answer.result ?? null;
   }
 
@@ -170,10 +176,10 @@ export class WalledPlugins implements PluginIsolation {
   private platform(): NodeJS.Platform { return this.options.wallDeps?.platform ?? process.platform; }
 
   /** One run of the plugin's program behind the wall, refused when it is too large, too many, or unwalled. */
-  async ask(code: string, hosts: readonly string[], request: Record<string, unknown>): Promise<z.infer<typeof Answer>> {
+  async ask(code: string, hosts: readonly string[], request: Record<string, unknown>, handPlaced = false): Promise<z.infer<typeof Answer>> {
     const body = JSON.stringify(request);
     if (Buffer.byteLength(body) > maxRequestBytes) throw new Error("That is more than Branch hands a plugin in one go, so it was not sent.");
-    if (this.platform() === "win32" && !this.options.weakWallAllowed?.()) throw new Error(weakWallRefusal);
+    if (this.platform() === "win32" && !handPlaced && !this.options.weakWallAllowed?.()) throw new Error(weakWallRefusal);
     if (this.runsGoing >= maxRunsAtOnce) throw new Error(`${maxRunsAtOnce} plugin runs are already going. Try again when one has finished.`);
     this.runsGoing += 1;
     try { return await this.run(code, hosts, body); }

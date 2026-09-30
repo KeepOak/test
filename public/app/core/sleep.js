@@ -77,7 +77,12 @@ export function sleeps(v) {
 function sweep() {
   for (const v of document.querySelectorAll("video")) {
     if (!v.autoplay || !v.loop) continue;
-    if (sleeps(v)) { if (!v.paused) { hold17(v); v.dataset.rest18 = "1"; } }
+    if (sleeps(v)) {
+      if (!v.paused) { hold17(v); v.dataset.rest18 = "1"; }
+      // One paused already (the napping pet, shell/scene.js applyMood) kept its frames: it lets them go as well. Whoever
+      // paused it plays it again, and play17 loads its file back.
+      else if (v.readyState >= 2) hold17(v);
+    }
     else if (v.dataset.rest18) {
       delete v.dataset.rest18;
       if (!document.hidden && !v.dataset.off13 && !v.closest(".zz11")) play17(v).catch((error) => console.warn(error.message));

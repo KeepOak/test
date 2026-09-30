@@ -141,13 +141,19 @@ export interface Message {
 export interface Usage {
   input: number;
   output: number;
-  /** Input tokens the provider served from its own prompt cache, when it reports them. */
+  /** Input tokens the provider served from its own prompt cache, when it reports them. Part of `input`. */
   cachedInput?: number | undefined;
+  /** Input tokens written to the provider's prompt cache (Anthropic's cache_creation_input_tokens). Part of `input`. */
+  cacheWrite?: number | undefined;
+  /** Of `cacheWrite`, the tokens written to the one-hour cache, when the provider says (charged at its own rate). */
+  cacheWrite1h?: number | undefined;
 }
 export const UsageSchema = z.object({
   input: z.number().int().nonnegative(),
   output: z.number().int().nonnegative(),
   cachedInput: z.number().int().nonnegative().optional(),
+  cacheWrite: z.number().int().nonnegative().optional(),
+  cacheWrite1h: z.number().int().nonnegative().optional(),
 });
 export interface ToolDescription {
   name: string;
@@ -361,6 +367,8 @@ export interface ToolContext {
   depth: number;
   /** workbench (SELF-302): this helper's lead asked for it to work in its own copy of the project (a git worktree). */
   ownCopy?: boolean;
+  /** helper-lifecycle: this helper's lead let it hand work on (start helpers of its own); src/helper-tree.ts. */
+  delegates?: boolean;
   /** Set for delegated specialists: memory reads are limited to shared facts and this agent's own. */
   agent?: string;
   /** FQ-routing.isolated-agents: the Trunk this work is for, set on a Trunk's turn and carried through every
