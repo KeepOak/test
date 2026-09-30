@@ -124,6 +124,7 @@ import { AppResourceSchema, appHeaders, appPage, type AppResource } from "./mcp-
 import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "./fly-core-api.js";
 // Wave 8: artifacts out of a reply, shown in the same locked-down frame an MCP app gets.
 import { conversationPathsApi, conversationPathsRoute, readMarksPath } from "./conversation-paths-api.js";
+import { desktopIslandUsage } from "./desktop-island-usage.js";
 import { ArtifactPageSchema, ArtifactSaveSchema, artifactPageRoute, holdArtifactPage } from "./artifact-pages.js";
 import { readServingSettings, saveServingSettings } from "./mcp-server.js";
 import { meaningSearchExplanation, meaningSearchOn, meaningSearchSetting } from "./tool-loading.js";
@@ -1317,13 +1318,16 @@ async function api(
       state: dictationView(app.store, app.runtime.owner, app.dictation.platform, true, app.dictation.open, app.dictation.present, app.voice.localSpeech(app.runtime.owner)) };
   }
   // ── end mac7/live-voice ──
+  if (request.method === "GET" && path === "/api/desktop/island/usage") return desktopIslandUsage(app);
   if (request.method === "GET" && path === "/api/desktop/island") {
     app.store.profiles.requireOwner("The desktop mini bar");
     if (startedWithShortLivedKey()) throw new HttpError(403, "Open the mini bar from the desktop tray.");
     if (app.sessionLock.locked()) throw new HttpError(423, "Unlock Branch to use the mini bar.");
     const runs = app.store.runs(app.runtime.owner).filter(run => ["running", "waiting", "paused"].includes(run.status));
     const titles = app.store.runTitles(runs);
-    return { scope: app.store.profiles.scope(), tasks: runs.slice(0, 20).map(run => ({ id: run.id,
+    const presence = { running: runs.filter(run => run.status === "running").length,
+      waiting: runs.filter(run => run.status === "waiting").length, paused: runs.filter(run => run.status === "paused").length };
+    return { scope: app.store.profiles.scope(), presence, tasks: runs.slice(0, 20).map(run => ({ id: run.id,
       sessionId: run.sessionId, status: run.status, title: titles.get(run.id) ?? "Task" })),
       trunks: app.trunks.modes().trunks === "off" ? [] : app.trunks.roster().trunks.map(trunk => ({ id: trunk.id, name: trunk.name })) };
   }

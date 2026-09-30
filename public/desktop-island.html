@@ -3,7 +3,8 @@
 <title>Branch mini bar</title><link rel="stylesheet" href="/app/desktop/island.css"><script type="module" src="/app/desktop/island.js"></script></head>
 <body><header><b>Branch mini bar</b><button id="open">Open Branch</button></header>
 <p id="status" role="status" aria-live="polite">Connecting…</p>
-<main id="owner" hidden><section><h2>Working now</h2><ul id="tasks"></ul></section>
+<main id="owner" hidden><section><h2>Presence</h2><p id="presence">Unknown until the engine answers.</p><h2>Working now</h2><ul id="tasks"></ul></section>
+<section><h2>Recorded usage</h2><p id="usage-summary">Not loaded.</p><ul id="usage-history"></ul><p id="usage-basis"></p><button id="usage-refresh">Read recorded usage</button></section>
 <section><label><input type="checkbox" id="awake"> Keep awake</label><p id="power"></p><p id="resources"></p></section>
 <section><h2>Next meeting</h2><p id="meeting">Unavailable until you refresh a connected calendar.</p>
 <select id="calendar" aria-label="Calendar"><option value="google">Google Calendar</option><option value="microsoft">Outlook</option></select><button id="meeting-refresh">Refresh meeting</button></section>

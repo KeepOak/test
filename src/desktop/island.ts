@@ -76,9 +76,17 @@ class DesktopIsland {
     return { copied };
   }
   show(): void {
-    if (this.window && !this.window.isDestroyed()) { this.window.show(); this.window.focus(); return; }
+    if (this.window && !this.window.isDestroyed()) {
+      const bounds = this.window.getBounds(), area = screen.getDisplayMatching(bounds).workArea;
+      const width = Math.min(bounds.width, area.width), height = Math.min(bounds.height, area.height);
+      this.window.setBounds({ width, height, x: Math.max(area.x, Math.min(bounds.x, area.x + area.width - width)),
+        y: Math.max(area.y, Math.min(bounds.y, area.y + area.height - height)) });
+      this.window.show(); this.window.focus(); return;
+    }
     const area = screen.getPrimaryDisplay().workArea;
-    const shown = new BrowserWindow({ width: 480, height: 520, x: area.x + area.width - 500, y: area.y + 24,
+    const width = Math.min(480, area.width), height = Math.min(680, area.height);
+    const shown = new BrowserWindow({ width, height, x: area.x + Math.max(0, area.width - width - 20),
+      y: area.y + Math.max(0, Math.min(24, area.height - height)),
       title: "Branch mini bar", alwaysOnTop: true, skipTaskbar: true, autoHideMenuBar: true,
       webPreferences: { preload: fileURLToPath(new URL("./island-preload.cjs", import.meta.url)), nodeIntegration: false,
         contextIsolation: true, sandbox: true, webSecurity: true, partition: `branch-island-${randomUUID()}` } });
