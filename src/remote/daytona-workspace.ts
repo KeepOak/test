@@ -88,7 +88,10 @@ export class DaytonaWorkspace {
       const saved = this.required();
       const raw = await this.request(saved.settings, this.address(saved), "GET");
       if (raw === null) {
-        if (!["stopping", "deleting"].includes(saved.phase)) throw new Error("Creation remains uncertain. Inspect the saved name in Daytona; Branch will not create another.");
+        // A sandbox Branch saw and bound, now gone, was removed (its TTL ran out, or it was deleted): that is known.
+        // Only a creation whose reply never came stays uncertain.
+        if (!["stopping", "deleting"].includes(saved.phase) && !(saved.phase === "bound" && saved.id))
+          throw new Error("Creation remains uncertain. Inspect the saved name in Daytona; Branch will not create another.");
         const deleted: Binding = { ...saved, phase: "deleted" };
         this.store.save("settings", this.owner, key, deleted);
         return { ...deleted, state: "deleted" };
@@ -138,6 +141,11 @@ export class DaytonaWorkspace {
       if (saved.name !== name) throw new Error("Workspace changed. Review its exact name again.");
       // Recovery remains possible when isolation metadata changed or creation lost its reply.
       const raw = await this.request(saved.settings, this.address(saved), "GET");
+      if (raw === null) {
+        if (!saved.id) throw new Error("Creation remains uncertain. Inspect the saved name in Daytona; Branch will not create another.");
+        this.store.save("settings", this.owner, key, { ...saved, phase: "deleted" });
+        return { requested: action, name, note: "Daytona no longer has this workspace; it is marked as gone." };
+      }
       const identity = z.object({ id: Id, name: Id, labels: z.record(z.string(), z.string()) }).loose().parse(raw);
       if (identity.name !== name || identity.labels["branch.workspace"] !== name || (saved.id && saved.id !== identity.id))
         throw new Error("Workspace ownership record does not match.");
@@ -160,7 +168,9 @@ export class DaytonaWorkspace {
     const token = values[settings.secret];
     if (!token || /[\r\n]/.test(token)) throw new Error("Select a usable Daytona API key in the owner's locker.");
     this.store.secrets.scrubber.remember(settings.secret, token);
-    const guarded = this.policy.guard((input, init) => { this.guard(); return fetch(input, init); });
+    // The platform fetch itself, so the policy uses its pinned transport; the owner checks run right before and after.
+    const guarded = this.policy.guard(globalThis.fetch);
+    this.guard();
     const response = await guarded(address, { method, redirect: "error", headers: { authorization: `Bearer ${token}`,
       accept: "application/json", ...(body ? { "content-type": "application/json" } : {}) },
       ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.any([AbortSignal.timeout(70_000), ...(signal ? [signal] : [])]) });

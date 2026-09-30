@@ -22,3 +22,20 @@ test("nothing paid is created without the owner's exact, fresh confirmation, and
   assert.equal(app.daytona.state().workspace, null, "nothing was recorded as made");
   assert.throws(() => app.daytona.prepare({ secret: "lowercase", snapshot: "x" }), "only a locker secret name is accepted");
 });
+
+test("a bound sandbox Daytona no longer has is known to be gone; a creation whose reply never came stays uncertain", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-daytona-gone-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data") });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  const settings = { secret: "DAYTONA_API_KEY", snapshot: "daytona-small", target: "us", ttlMinutes: 30 };
+  const save = (extra) => app.store.save("settings", app.runtime.owner, "daytona-workspace",
+    { settings, name: "branch-11111111-1111-4111-8111-111111111111", expiresAt: Date.now() + 60_000, ...extra });
+  app.daytona.request = async () => null; // Daytona answers 404: no such sandbox
+  save({ phase: "creating" });
+  await assert.rejects(app.daytona.inspect(), /uncertain/, "an unanswered creation is never assumed gone");
+  save({ phase: "bound", id: "sb-1" });
+  assert.equal((await app.daytona.inspect()).state, "deleted", "its TTL deletion is recognised");
+  save({ phase: "bound", id: "sb-1" });
+  assert.match((await app.daytona.lifecycle("delete", "branch-11111111-1111-4111-8111-111111111111")).note, /no longer has/);
+  assert.equal(app.daytona.state().workspace.phase, "deleted", "and a new workspace can be made again");
+});
