@@ -18,7 +18,7 @@ import { level as level17 } from "../../core/state.js";
 import { ART17, art17Slot } from "../../core/art17.js";
 import { sec17 } from "../rows17.js";
 import { AG, saveUi } from "../../chat/agent17.js";
-import { LANGUAGES, language, t } from "../../../i18n.js";
+import { LANGUAGES, language, languageCoverage, t } from "../../../i18n.js";
 import { say } from "../../core/words.js";
 import { canSpeak, chooseLanguage } from "../../shell/language.js";
 import { gsel } from "../../core/gsel.js";
@@ -117,8 +117,8 @@ const ownName = (code) => {
 };
 function languageSection() {
   const now = language();
-  const pick = gsel({ id: "lang", sw: "lang", label: t("appearance.language"), options: LANGUAGES.map(({ id }) => [id, ownName(id)]), value: now });
-  return `<div class="sec"><h2>${t("appearance.language")}</h2><div class="ctl"><b>${t("appearance.language")}</b><span class="right">${pick}</span><small>${t("window.settings.appearance.dates-and-numbers-follow-it-too")}</small></div></div>`;
+  const pick = gsel({ id: "lang", sw: "lang", label: t("appearance.language"), options: LANGUAGES.map(({ id, label, partial }) => [id, partial ? label : ownName(id)]), value: now });
+  return `<div class="sec"><h2>${t("appearance.language")}</h2><div class="ctl"><b>${t("appearance.language")}</b><span class="right">${pick}</span><small>${languageCoverage() ? esc(languageCoverage()) : t("window.settings.appearance.dates-and-numbers-follow-it-too")}</small></div></div>`;
 }
 /* The window is drawn again in the new words; English says so as the prototype does. */
 async function pickLanguage(code) {

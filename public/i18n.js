@@ -12,7 +12,16 @@ export const LANGUAGES = [
   { id: "fr", label: "Français (machine draft)", draft: true },
   { id: "es", label: "Español", draft: false },
   { id: "de", label: "Deutsch", draft: false },
+  { id: "ar", label: "العربية (ترجمة جزئية)", draft: true, partial: true, direction: "rtl" },
 ];
+/* Locale startup follows Hermes Desktop's saved-choice/OS-language fallback (Nous Research, MIT),
+   adapted to Branch's bundled languages and navigator.languages preference order. */
+export function initialLanguage(saved, preferred = navigator.languages ?? [navigator.language]) {
+  const supported = (value) => typeof value === "string"
+    ? LANGUAGES.find((entry) => entry.id === value.toLowerCase().replace(/_/g, "-").split("-")[0])?.id
+    : undefined;
+  return supported(saved) ?? preferred.map(supported).find(Boolean) ?? "en";
+}
 let dictionary = {};
 let english = {};
 let current = "en";
@@ -39,6 +48,8 @@ export function tc(key, count, values = {}) {
   return t(form in dictionary || form in english ? form : `${key}.other`, { ...values, count });
 }
 export const language = () => current;
+export const languageCoverage = () => LANGUAGES.find((entry) => entry.id === current)?.partial
+  ? t("appearance.languagePartial") : "";
 /**
  * The words for a count, in the form the chosen language uses for it (Intl.PluralRules: "one", "other", and "few" or
  * "many" where a language has them). `forms` names a key per form, e.g. { one: "x.one", other: "x" }; a form with no key,
@@ -85,6 +96,7 @@ export function applyLanguage(root = document) {
       if (node.getAttribute(attribute) !== words) node.setAttribute(attribute, words);
     }
   document.documentElement.lang = current;
+  document.documentElement.dir = LANGUAGES.find((entry) => entry.id === current)?.direction ?? "ltr";
 }
 /** Switches language, remembers the choice, and redraws the page's words. */
 /**
@@ -97,12 +109,12 @@ export function applyLanguage(root = document) {
  * with it. Nothing to do now means nothing done and nobody told.
  */
 let applied = null;
-export async function setLanguage(next) {
+export async function setLanguage(next, { remember = true } = {}) {
   const chosen = LANGUAGES.some((l) => l.id === next) ? next : "en";
+  if (remember) try { localStorage.setItem(STORAGE, chosen); } catch { /* a private window simply forgets */ }
   if (applied === chosen) return chosen;
   dictionary = chosen === "en" ? english : await load(chosen).catch(() => ({}));
   current = chosen;
-  try { localStorage.setItem(STORAGE, chosen); } catch { /* a private window simply forgets */ }
   /* A language whose words never arrived is not applied, so asking for it again tries again rather
      than sitting silently on an empty dictionary. */
   applied = chosen === "en" || Object.keys(dictionary).length > 0 ? chosen : null;
@@ -110,14 +122,14 @@ export async function setLanguage(next) {
   document.dispatchEvent(new CustomEvent("branch-language", { detail: { language: chosen } }));
   return chosen;
 }
-/** Loads English once, then whatever language was last chosen. */
+/** Loads English once, then the saved choice or the first supported computer language. */
 export async function initLanguage() {
   english = await load("en").catch(() => ({}));
   dictionary = english;
   /* Starting up applies from scratch: the page may be showing whatever the HTML shipped with, so the
      "already in force" guard above must not skip the first pass. */
   applied = null;
-  let saved = "en";
-  try { saved = localStorage.getItem(STORAGE) || "en"; } catch { /* default to English */ }
-  return setLanguage(saved);
+  let saved = null;
+  try { saved = localStorage.getItem(STORAGE); } catch { /* the computer language still works */ }
+  return setLanguage(initialLanguage(saved), { remember: false });
 }

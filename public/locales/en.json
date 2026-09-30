@@ -450,6 +450,7 @@
   "appearance.howMuch": "How much to show",
   "appearance.intro": "Change how Branch Agent looks. Everything you pick shows straight away.",
   "appearance.language": "Language",
+  "appearance.languagePartial": "Partial Arabic translation draft: core navigation, conversation and selected settings are translated. Untranslated pages remain in English. Not all right-to-left layouts have been verified.",
   "appearance.languageNote": "English is the original. Other languages are machine drafts and may read oddly.",
   "appearance.note": "Saved with this workspace, so it looks the same the next time you open it.",
   "appearance.reduceMotion": "Keep things still (no sliding or spinning)",

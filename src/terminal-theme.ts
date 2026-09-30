@@ -214,7 +214,7 @@ export const THEME_ID = /^[a-z0-9-]{1,40}$/;
    copy of this name is DEFAULT_THEME in public/theme-bridge.js. */
 export const DEFAULT_THEME = "slate";
 /** The languages Branch has words on file for (public/locales), besides "auto" (follow this computer). */
-export const LOOK_LANGUAGES = ["en", "fr", "es", "de"] as const;
+export const LOOK_LANGUAGES = ["en", "fr", "es", "de", "ar"] as const;
 export type LookLanguage = (typeof LOOK_LANGUAGES)[number];
 export const LookSchema = z.object({
   theme: z.string().regex(THEME_ID).default(DEFAULT_THEME),

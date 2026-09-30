@@ -1,0 +1,29 @@
+/* UI-213: mirror the actual shell edges; technical text remains readable left-to-right. */
+html[dir="rtl"] .app{font-family:Tahoma,"Segoe UI",sans-serif}
+html[dir="rtl"] :is(.machine,.row,.nav,.owner,.mi,.inp,.fld,.ctl,.set-col,.dlg){text-align:start}
+html[dir="rtl"] :is(.side,.set-nav){border-right:0;border-inline-end:1px solid var(--line)}
+html[dir="rtl"] .pane{border-left:0;border-inline-start:1px solid var(--line)}
+html[dir="rtl"] :is(.machine .chev,.search kbd,.nav .cnt,.owner .upd,.bar>.btn,.hm19-wait .btn){margin-left:0;margin-inline-start:auto}
+html[dir="rtl"] .bar>.btn+.btn{margin-inline-start:0}
+html[dir="rtl"] :is(.txt,.u,textarea){unicode-bidi:plaintext;text-align:start}
+html[dir="rtl"] :is(pre,code,kbd,input[type="url"],input[type="email"]){direction:ltr;unicode-bidi:isolate;text-align:left}
+html[dir="rtl"] .msg-acts{right:auto;inset-inline-end:4px}
+html[dir="rtl"] .u .msg-acts{left:auto;right:auto;inset-inline-start:-6px}
+html[dir="rtl"] .steps ol{margin-left:0;margin-inline-start:13px;padding-left:0;padding-inline-start:14px;border-left:0;border-inline-start:1.5px solid var(--line-2)}
+html[dir="rtl"] .side>.resizer{right:auto;left:-5px}
+html[dir="rtl"] .pane>.resizer{left:auto;right:-5px}
+html[dir="rtl"] .app.side-hidden .side>.resizer{left:auto;right:0}
+html[dir="rtl"] .titlebar.merged14{left:0;right:var(--side-w,292px)}
+html[dir="rtl"] :is(.app.side-hidden,.app.focus) .titlebar.merged14{right:0}
+@media(min-width:1101px){
+  html[dir="rtl"] .app.set18c .settings>.set-nav{left:auto;right:0}
+  html[dir="rtl"] :is(.app.set18c.side-hidden,.app.set18c.rail9) .set-page{padding-left:0;padding-inline-start:max(0px,calc(232px - var(--side-w,0px)))}
+}
+@media(max-width:1100px){
+  html[dir="rtl"] :is(.pane,.home19){right:auto;left:0}
+}
+@media(max-width:760px){
+  html[dir="rtl"] .side{left:auto;right:0;transform:translateX(105%)}
+  html[dir="rtl"] .app.side-open .side{transform:translateX(0)}
+  html[dir="rtl"] .home19{left:0;right:0}
+}
