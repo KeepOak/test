@@ -15,6 +15,7 @@ import { pullRequestPinned, pushRefusal, pushRepositoryRefusal, selfDevelopmentB
 import { githubRepositoryOf } from "./github-address.js";
 import { queueSourcePublication, resumeSourcePublication } from "./self-development-publication-hook.js";
 import type { PublicationEntry } from "./self-development-publication.js";
+import { pullRequestReference } from "./self-development-results.js";
 export { githubRepositoryOf };
 
 // The branch a pull request asks to join, for the saved setting and the tool alike. A tool's pattern
@@ -224,6 +225,8 @@ export async function pullRequestFromChanges(deps: PullRequestDeps, input: PullR
   else await gitText(deps, cwd, ["push", "--set-upstream", settings.remote, `refs/heads/${head}:refs/heads/${head}`], input.signal, 180000);
   const pullRequest = saved ? await deps.runTool("github.open_pull_request", opening, input.runId)
     : await deps.openWithComputerGh!({ repo: opening.repo, title: opening.title, body: opening.body, base: opening.base, head: opening.head }, input.signal);
+  const reference = pullRequestReference(where.repo, pullRequest), runId = input.runId ?? input.auditRunId;
+  if (reference && runId) note(deps, runId, "pull_request.opened", { ...reference, branch: head, base: where.base, files: visible.length });
   return { repository: where.repo, branch: head, base: where.base, files: visible, pullRequest };
 }
 
@@ -334,7 +337,6 @@ export function watchFinishedTasks(deps: PullRequestDeps, track: (work: () => Pr
     const title = `Branch: ${prompt.split("\n")[0]!.trim().slice(0, 150) || "changes from a task"}`;
     const summary = `${prompt.trim().slice(0, 4000)}\n\nOpened by Branch when task ${runId.slice(0, 8)} finished.`;
     track(() => pullRequestFromChanges(deps, { name: `task-${runId.slice(0, 8)}`, title, summary, paths, auditRunId: runId, byItself: true, signal: AbortSignal.timeout(300000) })
-      .then((opened) => note(deps, runId, "pull_request.opened", { repository: opened.repository, branch: opened.branch, base: opened.base, files: opened.files.length }))
       .catch((error: unknown) => note(deps, runId, "pull_request.failed", { reason: error instanceof Error ? error.message.slice(0, 500) : "unknown" })));
   });
 }
