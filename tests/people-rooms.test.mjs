@@ -7,6 +7,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { brain, on } from "./trunks-helpers.mjs";
+import { setLockdown } from "../dist/lockdown.js";
 
 /* TRUNK-079: a household person seated in a room reads and writes it from their own device, and only that room. */
 test("a seated person lists, reads and writes only their own rooms, until their key is revoked", async (t) => {
@@ -44,6 +45,12 @@ test("a seated person lists, reads and writes only their own rooms, until their 
   const said = view.body.messages.find((message) => message.role === "user");
   assert.deepEqual([said.who, said.content], ["Sam", "@ann what is for dinner?"]);
   assert.ok(view.body.messages.some((message) => message.role === "assistant" && message.who === "Ann"), "Ann's answer is shown");
+
+  setLockdown(app.store, app.runtime.owner, { on: true });
+  assert.notEqual((await call("GET", "/api/people/rooms", key)).status, 200, "Lockdown closes rooms to other devices");
+  assert.notEqual((await call("POST", `/api/people/rooms/${seated.id}/message`, key, { text: "still here?" })).status, 200);
+  setLockdown(app.store, app.runtime.owner, { on: false });
+  assert.equal((await call("GET", "/api/people/rooms", key)).status, 200);
 
   app.people.keys.revokeAll(sam.id);
   assert.equal((await call("GET", "/api/people/rooms", key)).status, 401, "a revoked key reaches no room");
