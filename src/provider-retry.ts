@@ -25,6 +25,8 @@ const knownCodes = [
   // Account pools (src/accounts/pool.ts failureFor): a plan's own limit, and a model the account is not entitled to.
   "usage_limit_reached",
   "plan_limit_reached",
+  // A ChatGPT plan that does not include this use (openai/codex codex-rs/codex-api/src/api_bridge.rs, Apache-2.0).
+  "usage_not_included",
   "model_not_found",
   "model_not_available",
   "unsupported_model",
@@ -37,6 +39,11 @@ export class ProviderHttpError extends Error {
   readonly code: ProviderErrorCode | undefined;
   /** The refusal's own words name a tool's name (a server that allows fewer characters in one). */
   aboutToolNames = false;
+  /**
+   * When a plan limit the refusal reported ends (ms since the epoch): the body's `error.resets_at` (seconds since the
+   * epoch) or `error.resets_in_seconds`, as ChatGPT's usage_limit_reached says it (openai/codex api_bridge.rs).
+   */
+  resetsAtMs: number | undefined;
   constructor(
     readonly status: number,
     readonly retryAfterMs?: number,
@@ -75,8 +82,9 @@ export function parseRetryAfter(
   now = Date.now(),
 ): number | undefined {
   if (!value) return undefined;
-  if (/^\d+$/.test(value.trim()))
-    return Math.min(Number.MAX_SAFE_INTEGER, Number(value.trim()) * 1000);
+  // Seconds, whole or with a fraction ("1.5"): several services send the fraction, and a wait they asked for is kept.
+  if (/^\d+(\.\d+)?$/.test(value.trim()))
+    return Math.min(Number.MAX_SAFE_INTEGER, Math.ceil(Number(value.trim()) * 1000));
   if (
     !/^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(
       value.trim(),
@@ -113,6 +121,7 @@ export async function rejectedHttpResponse(
     ...(details.contextLimit ? [details.contextLimit] : []),
   );
   if (details.aboutToolNames) refused.aboutToolNames = true;
+  if (details.resetsAtMs !== undefined) refused.resetsAtMs = details.resetsAtMs;
   return refused;
 }
 
@@ -122,6 +131,8 @@ interface ErrorDetails {
   /** Dogfood follow-up: the maximum context a "too long" refusal stated (never the words themselves). */
   contextLimit?: number;
   aboutToolNames?: boolean;
+  /** When the plan limit the refusal reported ends, if it said (see ProviderHttpError.resetsAtMs). */
+  resetsAtMs?: number;
 }
 /** A refusal naming a tool's name: `tools[0].function.name`, "tool name", `tools.0.name`. Read from the words alone. */
 const toolNameWords = /function\.name|tool[ _]name|\btools?(?:\[\d+\]|\.\d+)(?:\.function)?\.name/i;
@@ -166,11 +177,14 @@ function parseErrorCodes(body: string): ErrorDetails {
       code: z.string().nullish(),
       type: z.string().nullish(),
       message: z.string().max(4000).nullish(),
+      resets_at: z.number().finite().nonnegative().nullish(),
+      resets_in_seconds: z.number().finite().nonnegative().nullish(),
     }),
   });
   const parsed = shape.safeParse(JSON.parse(body));
   if (!parsed.success) return unavailableErrorDetails();
-  const { code, type, message } = parsed.data.error;
+  const { code, type, message, resets_at, resets_in_seconds } = parsed.data.error;
+  const resetsAtMs = resets_at != null ? resets_at * 1000 : resets_in_seconds != null ? Date.now() + resets_in_seconds * 1000 : undefined;
   // Dogfood follow-up: Anthropic says "prompt is too long: N tokens > M maximum" under a general invalid_request_error,
   // and other services say it only in words; any of them is read as the one overflow code, with the maximum it states.
   const overflow = !!message && overflowWordsIn(message);
@@ -181,6 +195,7 @@ function parseErrorCodes(body: string): ErrorDetails {
     ),
     complete: true,
     ...(limit ? { contextLimit: limit } : {}),
+    ...(resetsAtMs !== undefined && Number.isFinite(resetsAtMs) ? { resetsAtMs } : {}),
   };
 }
 
@@ -204,6 +219,19 @@ export function outOfCredit(error: unknown): boolean {
     error = error.cause;
   }
   if (error instanceof ProviderHttpError) return error.status === 402 || quotaCodes.some((code) => code === error.code);
+  return error instanceof Error && (error.name === "AccountLimitError" || error.name === "ProgramLimitError");
+}
+
+/**
+ * True when a sign-in's plan has reached its limit (ChatGPT's usage_limit_reached, a pool or an installed program that says
+ * so): the plan's window, not a spent balance. Such a task may move to another plan (src/runtime.ts fallBack).
+ */
+export function planLimitReached(error: unknown): boolean {
+  for (let depth = 0; error instanceof ProviderStreamError && depth < 4; depth++) {
+    if (error.estimatedOutput > 0 || error.usage !== undefined) return false;
+    error = error.cause;
+  }
+  if (error instanceof ProviderHttpError) return error.status === 429 && (error.code === "usage_limit_reached" || error.code === "plan_limit_reached");
   return error instanceof Error && (error.name === "AccountLimitError" || error.name === "ProgramLimitError");
 }
 

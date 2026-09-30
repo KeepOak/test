@@ -63,3 +63,12 @@ export function ownBuild(): string | null {
   } catch { own = null; }
   return own;
 }
+
+/** History stamped by the trusted builder, never supplied by a task or inferred from a version. */
+export function ownBuildHistory(): string[] {
+  try {
+    const info = JSON.parse(readFileSync(new URL("../build-info.json", import.meta.url), "utf8"));
+    if (!ownBuild() || info.commit !== ownBuild() || !Array.isArray(info.ancestors) || info.ancestors.length > 2000) return [];
+    return info.ancestors.filter((sha: unknown): sha is string => typeof sha === "string" && /^[0-9a-f]{40}$/.test(sha));
+  } catch { return []; }
+}
