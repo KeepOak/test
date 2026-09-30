@@ -627,18 +627,20 @@ export async function createBranch(options: {
   registerWorkbookTools(registry, workbooks);
   runtime.learningRules = (sessionId) => workbooks.rules(sessionId); // sealed: only its own tools, every browser step asks
   // P17-D §4: small decisions on the owner's own connections, asked with no tools (src/decision-models.ts).
-  const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset) => {
+  const decisionModels = new DecisionModels(store, runtime.owner, runtime.models, async (text, shape, preset, origin) => {
     // Temporary, so a decision never adds a conversation to the list.
     const run = store.createRun(runtime.owner, "Making a small decision", undefined, true, "owner");
     let answer: ShapedAnswer | undefined;
     try {
-      answer = await runtime.shaped(run, runtime.context({ runId: run.id, permissions: [], signal: AbortSignal.timeout(60_000) }), text, shape, preset);
+      // A decision made for a task stops with it and is paid from its budget (a list filter); any other has a minute.
+      const signal = origin ? AbortSignal.any([origin.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000);
+      answer = await runtime.shaped(run, runtime.context({ runId: run.id, permissions: [], signal, ...(origin ? { budget: origin.budget } : {}) }), text, shape, preset);
       return answer;
     } finally {
       store.finish(run.id, answer?.status === "resolved" ? "completed" : "failed", answer?.status === "refused" ? answer.reason : "");
     }
   });
-  runtime.listFilter = (rule, lines) => decisionModels.filterList(rule, lines); // models-ui: long lists filtered before a task reads them
+  runtime.listFilter = (rule, lines, origin) => decisionModels.filterList(rule, lines, origin); // models-ui: long lists filtered before a task reads them
   runtime.journal = journalHook(journal, (text) => runtime.hideSecrets(text)); // mac3/never-break: nothing secret is written down
   // FQ-execution.browser: a tool's own steps (a browser.flow click) are judged as the tool they stand for.
   registry.judgeStep = (tool, args, context, target, index) => runtime.judgeStep(tool, args, context, target, index);

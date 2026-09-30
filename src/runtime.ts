@@ -2718,7 +2718,7 @@ ${run.output.slice(0, 6000)}`;
             if (outOfSteps(context, outcome.reason)) return await this.outOfRounds(run, context, messages, route, context.budget.limits.maxSteps, "steps");
             throw outcome.reason;
           }
-          const call = group[at]!, result = await this.filteredList(run, call, outcome.value);
+          const call = group[at]!, result = await this.filteredList(run, context, call, outcome.value);
           const message: Message = { role: "tool", toolCallId: call.id, content: this.clipped(run, call, JSON.stringify(result)) };
           messages.push(message); ids.push(null);
           this.store.message(run.sessionId, message);
@@ -2732,14 +2732,14 @@ ${run.output.slice(0, 6000)}`;
     return await this.outOfRounds(run, context, messages, route, conductor.maxRounds(ceiling()));
   }
   /** models-ui: set where decision models are made (src/index.ts): which lines of a long list a task could need. */
-  listFilter: ((rule: string, lines: string[]) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
+  listFilter: ((rule: string, lines: string[], origin: { signal: AbortSignal; budget: Budget }) => Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null>) | null = null;
   /**
    * models-ui: a long list a searching or listing tool handed back is filtered by the decision model before the task
    * reads it. The task is told how many lines were set aside; the record keeps the tool's whole answer (tool.completed),
    * so the owner still sees every line, and Look inside says what was kept (list.filtered). Anything that goes wrong,
    * or a model that is not sure, leaves the list whole.
    */
-  private async filteredList(run: Run, call: ToolCall, result: unknown): Promise<unknown> {
+  private async filteredList(run: Run, context: ToolContext, call: ToolCall, result: unknown): Promise<unknown> {
     if (!this.listFilter || !/(^|\.|_)(search|list|glob|grep|find|inbox|messages|results)/i.test(call.name)) return result;
     // A tool's answer reaches the task wrapped ({ ok, result }); the list is inside it, and the wrapper is kept.
     const wrapped = !!result && typeof result === "object" && "ok" in result && "result" in result;
@@ -2748,7 +2748,8 @@ ${run.output.slice(0, 6000)}`;
     if (!found || found.items.length < 2) return result;
     const lines = found.items.map((item) => (typeof item === "string" ? item : JSON.stringify(item) ?? ""));
     try {
-      const said = await this.listFilter(run.prompt, lines);
+      // The task's own Stop and budget: a filter never runs on after the task stops, nor past what it may spend.
+      const said = await this.listFilter(run.prompt, lines, { signal: context.signal, budget: context.budget });
       if (!said) return result;
       if (!said.sure) { this.store.event(run.id, "list.filter_unsure", { tool: call.name, total: lines.length, confidence: said.confidence }); return result; }
       const keep = [...new Set(said.keep)].filter((i) => i >= 0 && i < lines.length).sort((a, b) => a - b);

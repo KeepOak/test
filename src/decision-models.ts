@@ -4,6 +4,7 @@ import { declareShape, type AnswerShape, type ShapedAnswer } from "./answer-shap
 import type { ModelPreset, ModelRouter } from "./models.js";
 import { presetRunsLocally } from "./models.js";
 import type { Store } from "./store.js";
+import type { Budget } from "./contracts.js";
 
 /**
  * P17-D §4: decision models. Small, bounded judgments (yes or no, pick one, a score from 1 to 10, keep or drop each
@@ -64,7 +65,9 @@ const SHAPES = {
 type Raw = { answer?: boolean; choice?: string; score?: number; keep?: number[]; confidence: number; why?: string };
 
 /** Asks one shaped question of one connection (src/runtime.ts `shaped`, with no tools). */
-export type DecisionAsk = (text: string, shape: AnswerShape, preset: ModelPreset) => Promise<ShapedAnswer>;
+/** The task a decision is made for: its Stop and its budget reach the decision too. */
+export interface DecisionOrigin { signal: AbortSignal; budget: Budget }
+export type DecisionAsk = (text: string, shape: AnswerShape, preset: ModelPreset, origin?: DecisionOrigin) => Promise<ShapedAnswer>;
 
 export interface DecisionResult {
   kind: DecisionInput["kind"];
@@ -158,17 +161,17 @@ export class DecisionModels {
   }
 
   /** One decision on one connection; a long list is split and its parts decided one after another. */
-  private async once(input: DecisionInput, preset: ModelPreset, maxList: number) {
-    if (input.kind !== "filter" || input.items.length <= maxList) return this.single(input, preset);
+  private async once(input: DecisionInput, preset: ModelPreset, maxList: number, origin?: DecisionOrigin) {
+    if (input.kind !== "filter" || input.items.length <= maxList) return this.single(input, preset, origin);
     const parts: (ReturnType<typeof checkDecision> & { start: number })[] = [];
     for (let start = 0; start < input.items.length; start += maxList)
-      parts.push({ ...await this.single({ ...input, items: input.items.slice(start, start + maxList) }, preset), start });
+      parts.push({ ...await this.single({ ...input, items: input.items.slice(start, start + maxList) }, preset, origin), start });
     return { kind: input.kind, why: "", confidence: Math.min(...parts.map((p) => p.confidence)),
       kept: parts.flatMap((p) => p.kept ?? []), dropped: parts.flatMap((p) => p.dropped ?? []),
       keep: parts.flatMap((p) => (p.keep ?? []).map((i) => i + p.start)) };
   }
-  private async single(input: DecisionInput, preset: ModelPreset) {
-    const answer = await this.ask(prompt(input), SHAPES[input.kind], preset);
+  private async single(input: DecisionInput, preset: ModelPreset, origin?: DecisionOrigin) {
+    const answer = await this.ask(prompt(input), SHAPES[input.kind], preset, origin);
     if (answer.status === "refused") throw new Error(answer.reason);
     return checkDecision(input, answer.value as Raw);
   }
@@ -187,13 +190,13 @@ export class DecisionModels {
    * (switched off, short, too long to ask about at once, or no model for it). Never escalated to the task's own model.
    * A line may say only so much; an empty one is asked about as "(empty)".
    */
-  async filterList(rule: string, lines: string[]): Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null> {
+  async filterList(rule: string, lines: string[], origin?: DecisionOrigin): Promise<{ keep: number[]; confidence: number; sure: boolean; model: { name: string; local: boolean } } | null> {
     const settings = this.settings(), preset = this.listModel();
     if (!settings.lists || !preset || lines.length < settings.listMin || lines.length > 2000) return null;
     const items = lines.map((one) => one.replace(/\s+/g, " ").trim().slice(0, 500) || "(empty)");
     const question = `Keep every line that could matter for this task, and anything you are not sure about. The task: ${rule.replace(/\s+/g, " ").trim()}`.slice(0, 1000);
     const started = Date.now();
-    const result = await this.once({ kind: "filter", question, items }, preset, settings.maxList);
+    const result = await this.once({ kind: "filter", question, items }, preset, settings.maxList, origin);
     this.remember(Date.now() - started);
     return { keep: result.keep ?? [], confidence: result.confidence, sure: result.confidence >= settings.minConfidence,
       model: { name: preset.name, local: presetRunsLocally(preset) } };

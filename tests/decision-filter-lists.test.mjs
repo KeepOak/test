@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { createBranch } from "../dist/index.js";
 import { notes } from "../dist/inspect.js";
+import { DecisionModels } from "../dist/decision-models.js";
 import { discardTemp } from "./temp-dir.mjs";
 
 const NEEDLE = "invoice-2026-0917 from Acme Ltd: 4,120.00 overdue";
@@ -68,4 +69,34 @@ test("a short list, the switch off, or no cheap model: the task reads the whole 
   assert.equal(JSON.parse(seen.task.at(-1).find((m) => m.role === "tool").content).result.results.length, 100, "no model to filter with: whole");
   assert.equal(seen.decision.length, 0);
   assert.equal(app.decisionModels.overview().listModel, null, "the window greys the switch with its reason");
+});
+
+test("a list filter stops with its task and is paid from the task's budget", async (t) => {
+  const { app } = await fixture(t);
+  // The plumbing: the task's Stop and budget are what the decision is asked with.
+  const origin = { signal: new AbortController().signal, budget: { tag: "the task's budget" } };
+  let asked = null;
+  const decisions = new DecisionModels(app.store, app.runtime.owner, app.runtime.models, async (text, shape, preset, given) => {
+    asked = given;
+    return { status: "resolved", value: { keep: [1], confidence: 0.9 } };
+  });
+  await decisions.filterList("find the invoice", results.map((r) => r.title), origin);
+  assert.equal(asked, origin, "the decision is asked with the task's own signal and budget");
+
+  // In a task: Stop reaches a filter that is still deciding, rather than it running on for its own minute.
+  let aborted = false, deciding;
+  const started = new Promise((resolve) => { deciding = resolve; });
+  const here = app.runtime.models.presets.get("here");
+  here.provider.complete = (request) => new Promise((resolve, reject) => {
+    deciding();
+    request.signal.addEventListener("abort", () => { aborted = true; reject(new Error("stopped")); }, { once: true });
+  });
+  const running = app.runtime.run({ prompt: "Find the overdue invoice in my mail", permissions: ["files.read"] });
+  await started;
+  const id = app.store.runs(app.runtime.owner).find((run) => run.prompt.startsWith("Find the overdue"))?.id;
+  assert.ok(id && app.runtime.cancel(id), "the task is stopped");
+  const until = Date.now() + 5000;
+  while (!aborted && Date.now() < until) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(aborted, true, "the filter's model call was stopped with the task");
+  await running.catch(() => undefined);
 });
