@@ -121,7 +121,7 @@ export class McpConnections {
   /** Ping an existing session only. Checking never invokes an opener, acquires a task or restarts a program. */
   async check(id: string): Promise<void> {
     const entry = this.entries.get(id), connection = entry?.connection;
-    if (!connection || entry?.closed || dead(connection) || !connection.check)
+    if (!entry || !connection || entry.closed || dead(connection) || !connection.check)
       throw new Error("This MCP session is not open. Use one of its tools before checking it.");
     await connection.check();
     if (this.entries.get(id)?.connection !== connection || entry.closed)
