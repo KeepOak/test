@@ -227,8 +227,8 @@ export class Store {
     return this.library.search(owner, input, this.hiddenSessions().slice(0, 500), agent);
   }
   /** The recent conversations with what was last said in each, for picking one up on a phone. */
-  recentSessions(owner: string, limit?: number) {
-    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500));
+  recentSessions(owner: string, limit?: number, offset = 0) {
+    return this.library.recent(owner, limit, this.hiddenSessions().slice(0, 500), undefined, offset);
   }
   /** A project's conversations, newest first, in the same shape as recentSessions (src/session-library.ts projectOf). */
   projectSessions(owner: string, project: string, limit = 100) {

@@ -59,7 +59,11 @@ export interface LiveStageDeps {
   owner: string;
   /** Who is at the window: records are theirs (`scope`), and only the owner is shown anything. */
   profiles: { scope(): string; isOwner(): boolean };
-  browser: { watch?(owner: string, runId: string): Promise<WatchedWindow | null> } | null;
+  browser: {
+    watch?(owner: string, runId: string): Promise<WatchedWindow | null>;
+    paintWake?(owner: string, runId: string, signal: AbortSignal, painted: () => void, readable: () => boolean):
+      Promise<{ close(): Promise<void>; current(): boolean } | null>;
+  } | null;
 }
 
 const GOING = new Set(["running", "needs_input"]);
