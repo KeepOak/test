@@ -4,7 +4,6 @@ import type { Run, ToolContext } from "../contracts.js";
 import type { Runtime } from "../runtime.js";
 import type { ToolRegistry } from "../registry.js";
 import type { ToolScripts } from "../safety-extras/tool-scripts.js";
-import { windowsScriptRefusal } from "../safety-extras/tool-scripts.js";
 import { mcpCatalogue } from "../mcp-catalogue.js";
 import type { Store } from "../store.js";
 import type { Gardener } from "./gardener.js";
@@ -12,6 +11,8 @@ import { typedBy } from "./evidence.js";
 import type { OwnMcpServers } from "../mcp-own-servers.js";
 import type { SourceChangeRequests } from "../self-development-requests.js";
 import { lockdownActive } from "../lockdown.js";
+import { evaluateBud, regressionCases, type BudEvaluation } from "./bud-evaluation.js";
+import { candidatesFor, namingWords, negated, valueFor } from "../settings-kit/clarify.js";
 
 export const gapMarker = "BUDDING_GAP:";
 const prefix = "plugin.bud-";
@@ -21,9 +22,13 @@ export const BuildBudSchema = z.object({
   /** Defines async function build(input, branch). All code executes only behind the held wall. */
   source: z.string().min(1).max(16000),
   tools: z.array(z.string().regex(/^[a-z][a-z0-9_.-]{0,99}$/)).min(1).max(16),
-  tests: z.array(z.object({ input: z.record(z.string(), z.unknown()), expected: z.unknown() }).strict()).min(1).max(10),
+  tests: z.array(z.object({ input: z.record(z.string(), z.unknown()), expected: z.unknown(),
+    replies: z.array(z.object({ tool: z.string().min(1).max(100), args: z.record(z.string(), z.unknown()), result: z.unknown() }).strict()).max(50).optional(),
+  }).strict()).min(1).max(10),
 }).strict();
 type Built = z.infer<typeof BuildBudSchema>;
+const MissingSettingSchema = z.object({ request: z.string().trim().min(1).max(500),
+  task: z.string().trim().min(1).max(3000), value: z.union([z.string().max(500), z.boolean(), z.number().finite()]) }).strict();
 export interface Bud {
   id: string; runId: string; task: string; gap: string;
   stage: "composing" | "connector-review" | "sandbox-ready" | "tested" | "completed" | "branch-review" | "failed";
@@ -33,12 +38,14 @@ export interface Bud {
   serverId?: string; approvedConnectorId?: string; requestId?: string;
   permissions?: string[]; sessionId?: string; trunkId?: string; resuming?: boolean; resumeRunId?: string;
   requestedVersion?: string; branchConfirmed?: boolean;
+  previousBuilt?: Built; evaluation?: BudEvaluation; evaluations?: BudEvaluation[];
+  settingRequest?: z.infer<typeof MissingSettingSchema>;
 }
 interface BudDeps {
   store: Store; runtime: Runtime; registry: ToolRegistry; gardener: Gardener;
   scripts: Pick<ToolScripts, "run">;
   servers: Pick<OwnMcpServers, "add" | "start">;
-  sourceRequests: Pick<SourceChangeRequests, "file" | "list">;
+  sourceRequests: Pick<SourceChangeRequests, "file" | "list" | "fileOwnerTask" | "installed">;
   version?: string;
   platform?: string;
 }
@@ -48,9 +55,10 @@ export class Budding {
   private inFlight: Promise<void> | null = null;
   private readonly connectorApprovals = new Map<string, Promise<Bud>>();
   private readonly stopping = new AbortController();
+  private readonly editing = new Set<string>();
   constructor(private readonly deps: BudDeps) {
     deps.store.sqlite.exec("CREATE TABLE IF NOT EXISTS seasons_buds(id TEXT PRIMARY KEY,owner TEXT NOT NULL,data TEXT NOT NULL,updated_at TEXT NOT NULL)");
-    if ((deps.platform ?? process.platform) !== "win32") for (const bud of this.list()) {
+    for (const bud of this.list()) {
       if (bud.built && bud.tool && ["tested", "completed"].includes(bud.stage) && !deps.registry.names().includes(bud.tool))
         this.register(BuildBudSchema.parse(bud.built), bud.tool);
     }
@@ -80,6 +88,23 @@ export class Budding {
   private ownerOnly(): void {
     if (this.deps.store.profiles.scope() !== this.deps.runtime.owner) throw new Error("Capability decisions belong to the owner");
     if (lockdownActive(this.deps.store, this.deps.runtime.owner)) throw new Error("Budding waits while Lockdown is on");
+  }
+  requestSetting(input: z.infer<typeof MissingSettingSchema>, context: ToolContext): Bud {
+    this.ownTask(context);
+    const asked = MissingSettingSchema.parse(input);
+    if (negated(asked.request) || !namingWords(asked.request).length || candidatesFor(asked.request).length)
+      throw new Error("Use settings.find to change an existing setting or clarify the request first");
+    const previous = this.list().find((bud) => bud.runId === context.runId && bud.settingRequest
+      && JSON.stringify(bud.settingRequest) === JSON.stringify(asked));
+    if (previous) return previous;
+    if (this.list().filter((bud) => !["completed", "failed"].includes(bud.stage)).length >= 20)
+      throw new Error("Finish a waiting capability request first");
+    const request = this.deps.sourceRequests.fileOwnerTask(`Add the missing Branch setting: ${asked.request}\nRequested value: ${JSON.stringify(asked.value)}\nOriginal task: ${asked.task}\nUse an isolated source contract, tests, independent review, and the normal update path. Do not edit the installed app.`, context);
+    const now = new Date().toISOString();
+    return this.save({ id: randomUUID(), runId: context.runId, task: asked.task, gap: asked.request, settingRequest: asked,
+      stage: "branch-review", connectors: [], tool: null, output: null, error: null, createdAt: now, updatedAt: now,
+      requestId: request.id, requestedVersion: this.deps.version ?? "unknown", permissions: [...context.permissions].filter((p) => p !== "learning.bud"),
+      sessionId: this.deps.store.run(context.runId)!.sessionId, ...(context.trunk ? { trunkId: context.trunk } : {}) });
   }
   async start(task: string, gap: string, context: ToolContext): Promise<Bud> {
     this.ownTask(context);
@@ -153,8 +178,13 @@ export class Budding {
     return this.compose(bud, context);
   }
   private branchArrived(bud: Bud): boolean {
-    return Boolean(this.deps.version && bud.requestedVersion && this.deps.version !== bud.requestedVersion
-      && bud.branchConfirmed);
+    if (bud.settingRequest) {
+      const found = candidatesFor(bud.settingRequest.request);
+      if (found.length !== 1 || valueFor(found[0]!.field, bud.settingRequest.value) === undefined) return false;
+      return Boolean(bud.requestId && this.deps.sourceRequests.installed(bud.requestId));
+    }
+    return Boolean(bud.requestId && this.deps.sourceRequests.installed(bud.requestId)
+      || this.deps.version && bud.requestedVersion && this.deps.version !== bud.requestedVersion && bud.branchConfirmed);
   }
   /** A version change alone cannot prove that this request's reviewed PR was installed. */
   confirmBranch(id: string): Bud {
@@ -217,10 +247,16 @@ export class Budding {
     return this.save({ ...bud, stage: "branch-review", requestId: request.id, requestedVersion: this.deps.version ?? "unknown" });
   }
   async build(input: Built, context: ToolContext): Promise<Bud> {
+    const args = BuildBudSchema.parse(input);
+    if (this.editing.has(args.id)) throw new Error("This capability is already being evaluated");
+    this.editing.add(args.id);
+    try { return await this.buildOnce(args, context); }
+    finally { this.editing.delete(args.id); }
+  }
+  private async buildOnce(input: Built, context: ToolContext): Promise<Bud> {
     this.ownTask(context);
     const args = BuildBudSchema.parse(input), bud = this.get(args.id);
     if (bud.stage !== "sandbox-ready") throw new Error("Complete the cheaper rungs before building this tool");
-    if ((this.deps.platform ?? process.platform) === "win32") return this.save({ ...bud, error: windowsScriptRefusal });
     if (!context.permissions.has("code.execute")) throw new Error("This task has not been allowed to run held code");
     if (args.tools.some((tool) => tool === "tools.script" || this.deps.registry.sourceOf(tool)?.startsWith("plugin:bud-")))
       throw new Error("A held capability cannot start another script or held capability");
@@ -228,12 +264,47 @@ export class Budding {
       throw new Error("A held capability cannot gain tools the original task was not allowed");
     const name = `${prefix}${args.name}.run`;
     if (this.deps.registry.names().includes(name)) throw new Error("That capability name already exists");
-    const testSource = `${args.source}\nexport default async function(branch) { for (const test of ${JSON.stringify(args.tests)}) { const actual = await build(test.input, branch); if (JSON.stringify(actual) !== JSON.stringify(test.expected)) throw new Error("Capability test failed"); } return { passed: ${args.tests.length} }; }`;
-    const tested = await this.deps.scripts.run({ source: testSource, tools: args.tools, timeoutMs: 60000 }, context);
-    if (!tested.ok || (tested.result as { passed?: number } | null)?.passed !== args.tests.length) return this.save({ ...bud, error: tested.error || "Capability tests did not pass" });
+    const evaluation = await evaluateBud(this.deps.scripts, { source: args.source, tools: args.tools }, undefined, args.tests, context);
+    this.ownTask(context); context.signal.throwIfAborted();
+    if (!evaluation.promoted) return this.save({ ...bud, evaluation, evaluations: [evaluation], error: evaluation.candidate.error || "Capability tests did not pass" });
+    if (this.deps.registry.names().includes(name)) throw new Error("That capability name was registered while tests ran");
     this.register(args, name);
-    const saved = this.save({ ...bud, stage: "tested", tool: name, built: args, error: null });
+    const saved = this.save({ ...bud, stage: "tested", tool: name, built: args, error: null, evaluation, evaluations: [evaluation] });
     return this.compose(saved, context);
+  }
+  async revise(input: Built, context: ToolContext): Promise<Bud> {
+    this.ownTask(context);
+    const args = BuildBudSchema.parse(input), bud = this.get(args.id);
+    if (!bud.built || !bud.tool || args.name !== bud.built.name) throw new Error("Revise an existing capability by its original name");
+    if (this.editing.has(bud.id)) throw new Error("This capability is already being evaluated");
+    if (!context.permissions.has("code.execute") || args.tools.some((tool) => !context.permissions.has(this.deps.registry.permissionOf(tool))))
+      throw new Error("A revision cannot gain tools the task was not allowed");
+    if (args.tools.some((tool) => tool === "tools.script" || this.deps.registry.sourceOf(tool)?.startsWith("plugin:bud-")))
+      throw new Error("A held capability cannot start another script or held capability");
+    const tests = regressionCases(bud.built.tests, args.tests);
+    this.editing.add(bud.id);
+    try {
+      const evaluation = await evaluateBud(this.deps.scripts, { source: args.source, tools: args.tools },
+        { source: bud.built.source, tools: bud.built.tools }, tests, context);
+      this.ownTask(context); context.signal.throwIfAborted();
+      const evidence = { evaluation, evaluations: [...(bud.evaluations ?? []), evaluation].slice(-20) };
+      if (!evaluation.promoted) return this.save({ ...bud, ...evidence, error: evaluation.candidate.error || "Regression tests failed; the previous tool remains active" });
+      const built = { ...args, tests };
+      this.deps.registry.unregister(bud.tool);
+      this.register(built, bud.tool);
+      return this.save({ ...bud, ...evidence, built, previousBuilt: bud.built, error: null });
+    } finally { this.editing.delete(bud.id); }
+  }
+  rollback(id: string, context: ToolContext): Bud {
+    this.ownTask(context);
+    const bud = this.get(id);
+    if (this.editing.has(id)) throw new Error("Wait for this capability's evaluation to finish");
+    if (!bud.previousBuilt || !bud.tool) throw new Error("There is no previous capability version to restore");
+    const { previousBuilt, ...kept } = bud;
+    this.deps.registry.unregister(bud.tool);
+    const built = { ...previousBuilt, tests: regressionCases(previousBuilt.tests, bud.built?.tests ?? []) };
+    this.register(built, bud.tool);
+    return this.save({ ...kept, built, error: null });
   }
   private register(args: Built, name: string): void {
     this.deps.registry.register({ name, description: args.description, source: `plugin:bud-${args.name}`, external: true,
@@ -252,6 +323,16 @@ export class Budding {
 }
 
 export function registerBudding(registry: ToolRegistry, budding: Budding): void {
+  registry.register({ name: "seasons.request_setting", permission: "learning.bud", group: "learning",
+    description: "When the owner explicitly asks to ADD a setting absent from settings.list/find, preserve the original task and file a source-change review request. Supply the missing setting name, desired value and original task. This does not change settings or approve source edits. The task resumes after the reviewed change is installed and the setting is available.",
+    parameters: MissingSettingSchema, target: (args) => `the missing setting ${args.request}`,
+    execute: async (args, context) => budding.requestSetting(args, context) });
+  registry.register({ name: "seasons.revise_tool", permission: "learning.bud", group: "learning",
+    description: "Evaluate a generated tool revision against its retained and new fixtures with simulated replies, never live actions. Only passing revisions replace the active tool. Returns baseline and candidate scores, hashes, and rollback state.",
+    parameters: BuildBudSchema, target: () => "a tested capability revision", execute: (args, context) => budding.revise(args, context) });
+  registry.register({ name: "seasons.rollback_tool", permission: "learning.bud", group: "learning",
+    description: "Restore the previous tested version of a generated tool without replaying any task or external action.",
+    parameters: z.object({ id: z.string().uuid() }).strict(), target: () => "a capability rollback", execute: async (args, context) => budding.rollback(args.id, context) });
   registry.register({ name: "seasons.bud", permission: "learning.bud", group: "learning",
     description: "When a requested capability is missing, preserve the original task and try composing existing tools first. Connector installation and Branch changes wait for the owner's per-item review. Never say the original task is done unless stage is completed.",
     parameters: z.object({ task: z.string().trim().min(1).max(4000), gap: z.string().trim().min(1).max(500) }).strict(),
