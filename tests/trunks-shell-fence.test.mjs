@@ -6,7 +6,7 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +18,8 @@ import { saveWallSettings } from "../dist/sandbox.js";
 const ada = "0a0a0a0a-1111-4111-8111-aaaaaaaaaaaa", bob = "0b0b0b0b-2222-4222-8222-bbbbbbbbbbbb";
 
 async function fixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "branch-trunk-fence-"));
+  // The name the system gives the folder (macOS's /var is /private/var), which is where a command says it runs.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "branch-trunk-fence-")));
   const workspace = join(root, "workspace"), home = join(workspace, ".branch-agents");
   const app = await createBranch({ workspace, dataDir: join(root, "data") });
   await mkdir(join(home, ada), { recursive: true });

@@ -34,8 +34,9 @@ export interface TrunkFence {
   siblings: string[];
 }
 
-const windows = process.platform === "win32";
-const same = (path: string): string => (windows ? path.toLowerCase() : path);
+// Windows and macOS name files without regard to case by default, so there `../BOB` is Bob's folder.
+const caseBlind = process.platform === "win32" || process.platform === "darwin";
+const same = (path: string): string => (caseBlind ? path.toLowerCase() : path);
 const within = (path: string, folder: string): boolean => {
   const [p, f] = [same(path), same(folder)];
   return p === f || p.startsWith(f.endsWith(sep) ? f : f + sep);
@@ -73,10 +74,11 @@ const pieces = (arg: string): string[] => arg.split(/[\s"'`;&|()<>=,]+/).filter(
 /** Why a Trunk's command may not run as written, or null. `cwd` is where it starts; `args` are exactly what it is given. */
 export function fenceRefusal(fence: TrunkFence, cwd: string, args: readonly string[]): string | null {
   const homes = forms(fence.home), owns = forms(fence.own);
-  // Trunk ids are UUIDs (src/trunks/record.ts); a short folder name is left to the path check, never matched as text.
-  const ids = fence.siblings.map((path) => same(basename(path))).filter((id) => id.length >= 8);
+  // Trunk ids are UUIDs (src/trunks/record.ts), matched as text in any case on every computer; a short folder name is
+  // left to the path check, never matched as text.
+  const ids = fence.siblings.map((path) => basename(path).toLowerCase()).filter((id) => id.length >= 8);
   for (const arg of args) {
-    const named = ids.find((id) => same(arg).includes(id));
+    const named = ids.find((id) => arg.toLowerCase().includes(id));
     if (named) return refusal(arg);
     for (const piece of pieces(arg)) {
       const path = resolve(cwd, piece);
