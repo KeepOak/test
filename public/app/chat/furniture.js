@@ -22,6 +22,7 @@ import { stepsOf, loadSteps } from "./timeline.js";
 import { said } from "./livesteps.js";
 import { t, language } from "../../i18n.js";
 import { browserProofHTML } from "./browser-proof.js";
+import { stepSummary } from "./step-summary.js";
 
 const F = { own: new Map(), summaries: new Map(), asked: new Set(), artifacts: null, artAsked: 0, stepsAsked: new Set(), later: new Map(), send: async () => {} };
 
@@ -71,7 +72,7 @@ function steps(runId) {
   if (!runId) return null;
   const got = stepsOf(runId);
   if (!got && !F.stepsAsked.has(runId)) { F.stepsAsked.add(runId); loadSteps(runId).then((body) => { if (body) render(); }); }
-  if (open(got)) reread(runId, true);
+  if (open(got) || got?.status === "running") reread(runId, open(got));
   return got;
 }
 
@@ -93,9 +94,9 @@ export function stepsBlock(calls, runId, face) {
   const whole = typeof ran === "number" && ran > 0 && calledLast && calls.some((c) => c.id === calledLast) ? ran : null;
   const secs = whole ?? (!Number.isNaN(first) && ends.length ? Math.max(0, (Math.max(...ends) - first) / 1000) : shown.reduce((n, s) => n + (Number(s.seconds) || 0), 0));
   const one = shown.length === 1;
-  // Live steps: the owner's words for a folded task, "Worked for 2m 14s · 9 steps".
-  const summary = secs ? t(one ? "window.chat.live.worked-one" : "window.chat.live.worked", { count: shown.length, time: dur(secs) })
-    : t(one ? "window.chat.steps.one" : "window.chat.steps.count", { count: shown.length });
+  // Known completed outcomes describe the work; missing status retains the time/step fallback.
+  const summary = stepSummary(calls, byCall) || (secs ? t(one ? "window.chat.live.worked-one" : "window.chat.live.worked", { count: shown.length, time: dur(secs) })
+    : t(one ? "window.chat.steps.one" : "window.chat.steps.count", { count: shown.length }));
   // What a step came to, in words: a tool's raw answer (JSON) is left to the Timeline.
   const said = (s) => (s.happened && !/^\s*[[{]/.test(s.happened) ? `<small>${esc(firstLine(s.happened))}</small>` : "");
   // Each step with the emoji the engine gave its kind (src/live-steps.ts), the same as while it ran; a step not yet read
