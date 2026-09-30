@@ -6,6 +6,7 @@
    the engine has answered). Drawing is kept side-effect free: the level is put back afterwards, nothing is saved or
    redrawn, and nothing is asked of the engine. */
 import { S } from "../core/state.js";
+import { withoutModePolicy } from "../core/interface-mode.js";
 
 /* The rows a person can change or read as a setting: a titled row, a ticked row, and an operating-system permission row.
    A list of the person's own things (projects, accounts, snapshots) is data, not a setting, so it is never indexed. */
@@ -73,7 +74,8 @@ const LEVEL_NAMES = ["regular", "advanced", "technical"];
  * Every row of every page. `pages` is [{ id, name, least, draw, tabs }]: `least` the least level the page itself shows at,
  * `tabs` (optional) [{ id, name, draw }] when the page draws one tab at a time.
  */
-export function buildIndex(pages) {
+export function buildIndex(pages) { return withoutModePolicy(() => indexPreferences(pages)); }
+function indexPreferences(pages) {
   const found = new Map(), was = S.level;
   try {
     for (const [lv, name] of LEVEL_NAMES.entries()) {

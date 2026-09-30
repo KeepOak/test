@@ -8,7 +8,7 @@
    snapshot still attached, as a chip by the box that the next message carries (chat/chat.js addSendPrefix). */
 
 import { $, esc, afterDraw, paintChanged, applyCss, render, renderNow } from "../core/dom.js";
-import { S, E, save, refresh, ownName, ownerHere, defaultTrunk } from "../core/state.js";
+import { S, E, save, refresh, ownName, ownerHere, defaultTrunk, displayPreference, revealDisplay } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
@@ -17,7 +17,6 @@ import { text, plain } from "../chat/markdown.js";
 import { openConversation, startConversation, addDockItem, addSendPrefix } from "../chat/chat.js";
 import { attachedChips, pickFiles, readyUploads, filesSent, hasFiles, moveFiles } from "../chat/attach.js";
 import { newConversationMode } from "../chat/chips.js";
-import { simplePart } from "./simple.js";
 import { t } from "../../i18n.js";
 
 const H = { sid: undefined, messages: [], sending: false, mark: "", seeing: false, left: null, picked: null, row: null, carried: null };
@@ -27,8 +26,13 @@ const BUSY = ["running", "queued", "waiting", "needs_input"];
 /* The default Trunk the engine names (GET /api/trunks defaultId, core/state.js defaultTrunk), in its own conversation. */
 export const homeTrunk = () => defaultTrunk() ?? null;
 const homeSid = () => homeTrunk()?.chatSessionId ?? S.home19?.sid ?? null;
-const panelOpen = () => S.home19?.open === true;
-const keep = (patch) => { S.home19 = { open: false, sid: null, ...S.home19, ...patch }; save(); };
+const panelOpen = () => displayPreference("home19", S.home19?.open === true);
+function keep(patch) {
+  const kept = { ...patch };
+  if ("open" in kept && revealDisplay("home19", kept.open)) delete kept.open;
+  S.home19 = { open: false, sid: null, ...S.home19, ...kept };
+  save();
+}
 
 /* ---------- Working on ---------- */
 const words = (selector) => $(selector)?.textContent?.replace(/\s+/g, " ").trim() ?? "";
@@ -203,9 +207,6 @@ function takeCarried(sid) {
   H.carried = null;
   return c.words;
 }
-
-/* RES-704: Simple closes the panel; Advanced opens it again if it was open. */
-simplePart({ name: "home19", take: () => panelOpen(), hide: () => { if (panelOpen()) keep({ open: false }); }, give: (open) => { if (typeof open === "boolean") keep({ open }); } });
 
 /** The title row's button that opens and closes the panel. */
 export function homeButton() {
