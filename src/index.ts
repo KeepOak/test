@@ -1,4 +1,5 @@
 import { PrivateDesktops } from "./integrations/private-desktops.js";
+import { PrivateDesktopViews } from "./integrations/private-desktop-views.js";
 import { registerPrivateDesktops } from "./integrations/private-desktop-tools.js";
 import { environmentTool } from "./environment.js";
 import { secretSources, trunkSecretRefusal, trunkSecretsProject } from "./trunks/secrets.js"; // RES-260
@@ -62,7 +63,7 @@ import { registerSessions } from "./sessions.js";
 import { SessionTree, registerSessionTree } from "./session-tree.js";
 import { holdTaskBrowser } from "./browser-hold.js";
 import { MiniAppSessions } from "./miniapp/sessions.js";
-import { lockedDown, lockdownRefusal } from "./lockdown.js";
+import { lockedDown, lockdownRefusal, lockdownActive } from "./lockdown.js";
 import { runOrigin } from "./key-context.js";
 import { heldOnly, outsideCaller, outsideProgramRefusal, outsideRemoteRefusal, remoteTools } from "./outside-commands.js";
 import { walledTools } from "./sandbox-wall.js";
@@ -1456,6 +1457,13 @@ ${result.output || "(it said nothing)"}`;
       return { bytes: await runtime.artifacts.read(made.path), mediaType: made.mediaType ?? "image/png" };
     } });
   registerTrunkMemoryFiles(registry, store, trunks); // workbench (SELF-311): a Trunk's own memory files
+  const privateDesktopViews = new PrivateDesktopViews(privateDesktops, {
+    owner: runtime.owner, profile: () => store.profiles.scope(),
+    allowed: () => store.isOpen && store.profiles.isOwner() && !sessionLock.locked() && !lockdownActive(store, runtime.owner),
+    trunk: conversation => trunks.trunkForConversation(conversation)?.trunkId ?? null,
+    owns: conversation => store.ownsSession(runtime.owner, conversation),
+  });
+  releaseOnLock.push(async () => { privateDesktopViews.revokeAll(); });
   // Browser profiles that stay signed in: a removed Trunk's own profile is removed with it (nobody else can reach it).
   trunks.onRemoved = (id) => { void browserProfiles.remove(runtime.owner, trunkProfileName(id)).catch(() => undefined); };
   devices.computerRule = trunks.computerRule; // P17-D §9: the device tools and the pick route follow each Trunk's computers
@@ -1816,7 +1824,7 @@ ${result.output || "(it said nothing)"}`;
     /** The screen and keyboard of this computer, and the switch that has to be on to use them. */
     desktop,
     /** FQ-execution.desktop: the shared Linux desktop the owner may watch or take over. */
-    linuxDesktop, privateDesktops,
+    linuxDesktop, privateDesktops, privateDesktopViews,
     /** What Windows itself allows: the microphone, the camera and taking hold of windows. */
     osPermissions,
     /** Folders on the owner's other computers, reached with the OpenSSH client Windows already has. */
@@ -2021,6 +2029,7 @@ ${result.output || "(it said nothing)"}`;
       await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
+      privateDesktopViews.close();
       await privateDesktops.close().catch(() => undefined);
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
       await ownMcp.closeAll(); // eng-connectors: no question watcher or server of the owner's outlives the app

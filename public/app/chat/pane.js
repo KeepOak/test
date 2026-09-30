@@ -16,6 +16,7 @@ import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { sendingPrompt, sendingHere } from "./chat.js";
 import { initStage } from "./stage.js";
+import { initPrivateDesktopPane, beforePrivatePaneDraw } from "./private-desktop-pane.js";
 import { terminalBody, loadWork, initTerminal, work } from "./terminal.js";
 import { pressed } from "../shell/keys.js";
 import { timelineBody, initTimeline } from "./timeline.js";
@@ -133,9 +134,11 @@ export function drawPane() {
   if (!pane) return;
   pane.hidden = !open;
   body?.classList.toggle("pane-on", open);
-  if (!open) { pane.innerHTML = ""; return; }
+  if (!open) { beforePrivatePaneDraw(null); pane.innerHTML = ""; return; }
   const extra = extraShown(), own = extra.find(([id]) => id === S.pane);
   const tab = REAL.has(S.pane) || own ? S.pane : "activity";
+  const keptPrivateDesktop = beforePrivatePaneDraw(tab);
+  if (keptPrivateDesktop) { loadPane(); return; } // Do not detach a focused canvas or lose held-key state on message refresh.
   pane.innerHTML = `${resizerHTML("pane")}<div class="pane-h"><div class="ptabs" role="tablist">${tabRow(extra).map(([id, l]) => ptabButton(id, l, tab)).join("")}</div><button class="icon-btn" type="button" aria-label="${t("pane.close")}" data-act="pane" data-p="close">${ic("x")}</button></div><div class="pane-b">${own ? own[2]() : BODY[tab]()}</div>`;
   applyCss(pane);
   greyOut(pane);
@@ -173,6 +176,7 @@ function focusSwitch() {
 }
 
 export function initPane() {
+  initPrivateDesktopPane(extraTabs);
   initStage();
   initTerminal();
   initTimeline({ redraw: drawPane, changed: render, messages: () => (P.sid === S.chat ? P.messages : []), first: sendingPrompt,

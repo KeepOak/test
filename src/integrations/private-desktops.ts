@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { Store } from '../store.js';
-import { lockdownActive } from '../lockdown.js';
+import { lockdownActive, onLockdownChange } from '../lockdown.js';
 import { LinuxDesktopSandbox, LinuxDesktopSchema, readLinuxDesktop, saveLinuxDesktop, type SharedDesktopAction } from './linux-desktop.js';
 
 const recordKey = 'private-desktop-records';
@@ -18,7 +18,31 @@ export class PrivateDesktops {
   private readonly work = new Map<string, Promise<unknown>>();
   private readonly cancellations = new Map<string, number>();
   private closed = false;
-  constructor(private readonly store: Store, private readonly knownAgent: (agent: string) => boolean) {}
+  private readonly revisions = new Map<string, number>();
+  private readonly listeners = new Set<(owner: string, agent: string) => void>();
+  private readonly stopLockdown: () => void;
+  constructor(private readonly store: Store, private readonly knownAgent: (agent: string) => boolean) {
+    this.stopLockdown = onLockdownChange((changed, owner, on) => {
+      if (on && changed === store) for (const record of this.records(owner)) this.invalidate(owner, record.agent);
+    });
+  }
+  onInvalidate(listener: (owner: string, agent: string) => void): () => void {
+    this.listeners.add(listener); return () => { this.listeners.delete(listener); };
+  }
+  private invalidate(owner: string, agent: string): void {
+    const scope = scopeOf(owner, agent); this.revisions.set(scope, (this.revisions.get(scope) ?? 0) + 1);
+    for (const listener of this.listeners) listener(owner, agent);
+  }
+  revision(owner: string, agent: string): number { return this.revisions.get(scopeOf(owner, agent)) ?? 0; }
+  viewerStatus(owner: string, agent: string): {control: 'agent' | 'user'; revision: number} {
+    this.require(owner, agent);
+    const status = this.desktop(owner, agent).status(owner);
+    if (!status.running || status.control === 'none') throw new Error('This private computer is not running.');
+    return {control: status.control, revision: this.revision(owner, agent)};
+  }
+  async viewerTarget(owner: string, agent: string): Promise<import('./linux-desktop.js').SharedDesktopInfo> {
+    this.viewerStatus(owner, agent); return this.desktop(owner, agent).viewerInfo(owner);
+  }
 
   private records(owner: string): z.infer<typeof Records> {
     const saved = Records.safeParse(this.store.get('settings', owner, recordKey)?.data ?? []);
@@ -57,6 +81,7 @@ export class PrivateDesktops {
     return Promise.all(this.records(owner).map(async record => ({...record, ...(await this.desktop(owner, record.agent).status(owner))})));
   }
   async create(owner: string, agent: string, image: string): Promise<unknown> {
+    this.invalidate(owner, agent);
     return this.serial(owner, agent, async () => {
       this.store.profiles.requireOwner('Private computers');
       if (!this.knownAgent(agent) || lockdownActive(this.store, owner) || this.closed) throw new Error('Choose an existing Trunk with Lockdown off.');
@@ -70,6 +95,7 @@ export class PrivateDesktops {
     });
   }
   async start(owner: string, agent: string, ownerAction = false): Promise<unknown> {
+    if (!this.desktop(owner, agent).status(owner).running) this.invalidate(owner, agent);
     return this.serial(owner, agent, async () => {
       this.store.profiles.requireOwner('Private computers');
       if (ownerAction && this.knownAgent(agent) && this.records(owner).some(record => record.agent === agent) && !lockdownActive(this.store, owner) && !this.closed)
@@ -83,6 +109,8 @@ export class PrivateDesktops {
   async stop(owner: string, agent: string, ownerAction = false): Promise<void> {
     // End immediately cancels starts/actions; it does not wait behind a long lifecycle operation.
     if (!this.records(owner).some(record => record.agent === agent)) throw new Error('No private computer is enabled for that Trunk.');
+    if (!ownerAction && this.desktop(owner, agent).status(owner).control === 'user') throw new Error('The owner holds this private computer.');
+    this.invalidate(owner, agent);
     if (ownerAction) {
       this.store.profiles.requireOwner('Private computers');
       const scope = scopeOf(owner, agent); this.cancellations.set(scope, (this.cancellations.get(scope) ?? 0) + 1);
@@ -91,6 +119,7 @@ export class PrivateDesktops {
     else await this.desktop(owner, agent).stop(owner);
   }
   async snapshot(owner: string, agent: string): Promise<unknown> {
+    this.invalidate(owner, agent);
     return this.serial(owner, agent, async (still) => {
       this.require(owner, agent);
       const records = this.records(owner), record = records.find(entry => entry.agent === agent)!;
@@ -115,6 +144,7 @@ export class PrivateDesktops {
     if (label.trim() !== scope) throw new Error('The snapshot image does not belong to this desktop.');
   }
   async restore(owner: string, agent: string, id: string): Promise<unknown> {
+    this.invalidate(owner, agent);
     return this.serial(owner, agent, async (still) => {
       this.requireRecord(owner, agent);
       const snapshot = this.records(owner).find(record => record.agent === agent)?.snapshots.find(entry => entry.id === id);
@@ -138,7 +168,9 @@ export class PrivateDesktops {
     });
   }
   async control(owner: string, agent: string, operation: 'takeOver' | 'handBack' | 'viewerInfo'): Promise<unknown> {
-    this.require(owner, agent); return this.desktop(owner, agent)[operation](owner);
+    this.require(owner, agent);
+    if (operation !== 'viewerInfo') this.invalidate(owner, agent);
+    return this.desktop(owner, agent)[operation](owner);
   }
-  async close(): Promise<void> { this.closed = true; await Promise.all([...this.desktops.values()].map(desktop => desktop.close())); }
+  async close(): Promise<void> { this.closed = true; this.stopLockdown(); await Promise.all([...this.desktops.values()].map(desktop => desktop.close())); }
 }

@@ -30,8 +30,41 @@ desktop. Image removal never uses force and cannot delete an image used by a
 running container. Stopping discards unsnapshotted changes; snapshots survive
 Branch shutdown and are removed only through the explicit owner action.
 
-Watch returns the existing localhost VNC connection to the owner; an installed
-VNC viewer is required. This does not yet embed a desktop in the Trunk pane.
+The Trunk conversation's **Private desktop** side-panel tab embeds its desktop.
+Open read-only view creates a one-use, five-minute grant bound to the owner,
+profile, actual conversation-to-Trunk mapping and desktop revision. Four grants
+at most exist at once. The local window key and same-origin checks gate the
+WebSocket; its opaque grant goes in the protocol header, never the URL. Paired
+devices and doors cannot obtain a grant or operate this lifecycle API.
+
+The server authenticates VNC itself and forwards only bounded rectangles. The
+real VNC password never goes to the embedded viewer, transcript, event log or
+URL. Take over first uses the existing exact-target takeover path, then asks for
+a separate control grant. The server independently refuses keyboard/pointer
+packets from read-only grants and rechecks the owner, lock, target and held
+control before every accepted input and outgoing rectangle. Merely watching
+never pauses a Trunk. Profile switching, reassignment, Lockdown, app lock,
+stop, snapshot, restore and hand-back revoke the view. Closing the pane clears
+its canvas and disconnects; it does not silently hand back an existing takeover.
+
+This original implementation uses [RFB 3.8 / RFC 6143](https://www.rfc-editor.org/rfc/rfc6143.html)
+with VNC challenge authentication and Raw true-color encoding. It uses Node's
+existing crypto API (equal-key Triple DES implements the DES challenge) rather
+than copying noVNC or adding dependencies. The noVNC 1.6 authentication/DES source
+and its license were inspected as protocol reference; no upstream code was
+copied ([upstream DES reference](https://github.com/novnc/noVNC/blob/v1.6.0/core/crypto/des.js),
+[upstream license](https://github.com/novnc/noVNC/blob/v1.6.0/LICENSE.txt)).
+Rendering is at most 1280×800 with a single request outstanding and a
+500 ms interval after each response. Pending RFB and WebSocket output are capped
+at 5 MiB; inbound WebSocket buffering and input output at 64 KiB. There are at
+most 2048 rectangles per update, bounded total pixels, 120 input packets/second
+and 32 held keys. Stream teardown releases only that connection's held keys and
+buttons, removes its Docker tunnel, and bounds final socket cleanup to 300 ms.
+Clipboard, file transfer, protocol extensions, wheel events, dynamic desktop
+resizing and compressed encodings are intentionally unsupported. An unsupported
+RFB/security/cipher configuration disconnects; no weaker fallback is attempted.
+Watching with a separately installed localhost VNC viewer remains available as
+an optional existing owner flow.
 Cloud providers and native Windows private desktops are outside this local Linux
 path. Resource limits bound each container, not aggregate Docker disk usage.
 Orphaned images after daemon failure may require manual Docker cleanup; Branch

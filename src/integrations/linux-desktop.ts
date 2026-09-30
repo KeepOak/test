@@ -328,16 +328,22 @@ export class LinuxDesktopSandbox {
         const tunnel = { socket, child };
         tunnels.add(tunnel);
 
-        socket.on('data', (data) => child.stdin?.write(data));
-        child.stdout?.on('data', (data) => socket.write(data));
+        socket.on('data', (data) => { if (child.stdin?.write(data) === false) socket.pause(); });
+        child.stdin?.on('drain', () => socket.resume());
+        child.stdout?.on('data', (data) => { if (!socket.write(data)) child.stdout.pause(); });
+        socket.on('drain', () => child.stdout?.resume());
         child.stderr?.on('data', () => {}); // ignore stderr
 
+        let cleaned = false;
         const cleanup = () => {
+          if (cleaned) return;
+          cleaned = true;
           child.kill();
           socket.destroy();
           tunnels.delete(tunnel);
         };
         socket.on('end', cleanup);
+        socket.on('close', cleanup);
         socket.on('error', cleanup);
         child.on('exit', cleanup);
         child.on('error', cleanup);
