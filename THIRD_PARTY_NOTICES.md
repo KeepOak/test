@@ -3308,6 +3308,8 @@ SOFTWARE.
 
 ### Gemini CLI (Google LLC), Apache-2.0
 
+The configured MCP call timeout and progress-token request pattern in `src/integrations/mcp.ts` is adapted from `packages/core/src/tools/mcp-client.ts`, lines 1440–1490 at commit `40d4dccfa9aec692b27798ca819b918609e2bc60` (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/tools/mcp-client.ts), Copyright 2025 Google LLC, Apache-2.0. Changes: use the SDK's correlated progress token, reset the inactivity timer on progress, retain cancellation and add a one-hour total deadline; Branch supplies its own bounded per-server setting and owner controls. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), whose text appears above; distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
 The test in `src/skill-authoring.ts` for whether something deserves to be a new skill (a concrete, repeatable procedure, not general knowledge, a one-off fix or a preference; when in doubt, none) follows `packages/core/src/agents/skill-extraction-agent.ts` in Gemini CLI (https://github.com/google-gemini/gemini-cli, commit 6a466a7), rewritten in Branch's words. Copyright 2026 Google LLC. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), on the same terms as above.
 
 ### Hermes Agent (Nous Research), MIT

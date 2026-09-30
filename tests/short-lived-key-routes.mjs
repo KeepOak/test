@@ -800,6 +800,7 @@ export const ROUTES = {
   "/api/mcp/servers/sample/remove": "owner POST",
   "/api/mcp/servers/sample/start": "owner POST",
   "/api/mcp/servers/sample/stop": "owner POST",
+  "/api/mcp/servers/sample/timeout": "owner POST",
   "/api/mcp/settings": "owner POST",
   "/api/mcp/signin": "owner POST",
   "/api/mcp/snapshots": "look",

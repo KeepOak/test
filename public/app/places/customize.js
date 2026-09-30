@@ -140,7 +140,17 @@ const startProblem = (x) => (x.error ? `<div class="status"><span class="sdot ba
 function detailActs(k, x) {
   const rm = k === "skills" || k === "agents" || x.own || x.shelf ? "tool-rm" : "tool-rm-kept";
   const test = k === "mcp" ? `<button class="btn sm" type="button" data-act="tool-test">${t("window.places.customize.test-it")}</button>` : "";
-  return `<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm" type="button" data-act="${rm}" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button></div>`;
+  const timeout = k === "mcp" && x.own ? `<div class="sec"><label class="fld"><span>Call timeout (seconds without progress)</span><input class="inp" id="tool-call-timeout" type="number" min="1" max="3600" step="1" value="${esc(x.own.callTimeoutSeconds ?? 30)}" ${x.on || x.own.waiting ? "disabled" : ""}></label><p class="hint">Progress extends the wait, up to one hour. Switch the server off before changing this setting.</p><button class="btn sm" type="button" data-act="tool-timeout" data-id="${esc(x.id)}" ${x.on || x.own.waiting ? "disabled" : ""}>Save timeout</button></div>` : "";
+  return `${timeout}<div class="acts" data-css="margin-top:16px">${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm" type="button" data-act="${rm}" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button></div>`;
+}
+
+async function saveServerTimeout(el) {
+  try {
+    const seconds = Number(document.querySelector("#tool-call-timeout")?.value);
+    toast((await api(`mcp/servers/${encodeURIComponent(el.dataset.id)}/timeout`, { seconds })).said);
+    await reloadTools();
+    renderNow();
+  } catch (error) { toast(error.message); }
 }
 /* Which Trunks may use a server or a skill is drawn from each Trunk's own lists (servers by id, skills by name), and stays
    greyed: adding a server to a Trunk widens what it can reach. */
@@ -456,7 +466,8 @@ export function init() {
   initPluginLifecycle();
   markLive(pluginInsideLive);
   initPluginInside(reloadShown);
-  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
+  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "tool-timeout", "sw:tool-call-timeout", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
+  on("tool-timeout", (el) => saveServerTimeout(el));
   on("tool-retry", (el) => retryServer(el));
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "tool9g") switchServer(e.target); });
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "ctx9") setContextMode(e.target); });
