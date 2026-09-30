@@ -52,6 +52,8 @@ export interface RealtimeSettings {
  */
 export interface RealtimeSession {
   readonly service: "openai" | "gemini";
+  /** WebRTC media negotiation only; never contains provider authentication headers. */
+  readonly answerSdp?: string;
   open(): Promise<void>;
   /** One chunk of what the person is saying, as PCM16 at 16kHz. */
   sendAudio(chunk: Uint8Array): void;
