@@ -55,6 +55,7 @@ function service([id, name]) {
     + `<label class="fld"><span>${t("personal.signin.secret-value")}</span><input class="inp" type="password" id="more18-${id}-secret" value="" autocomplete="new-password" spellcheck="false"></label>`
     + (id === "google" || id === "microsoft" ? `<label class="fld"><span>Allow calendar changes after confirmation</span><input type="checkbox" id="more18-${id}-calendar" ${s.calendarWrite ? "checked" : ""}></label><p class="hint">Save, then sign in again to allow event changes. Each change asks once. Calendar reminders are set for 24 hours before.</p>` : "")
     + (id === "google" || id === "microsoft" ? `<label class="fld"><span>Allow sending mail after preview and confirmation</span><input type="checkbox" id="more18-${id}-send" ${s.mailSend ? "checked" : ""}></label><p class="hint">Save, then sign in again to allow sending. Branch shows a local draft preview and asks Send? for each message.</p>` : "")
+    + (id === "google" ? `<label class="fld"><span>Allow shared calendar availability</span><input type="checkbox" id="more18-${id}-availability" ${s.availability ? "checked" : ""}></label><p class="hint">Save and sign in again to compare accessible calendars. Outlook shared availability uses work or school accounts. Ask Branch to find a common slot; nothing is booked.</p>` : "")
     + `<div class="acts"><button class="btn sm" type="button" data-act="more18-save" data-v="${id}">${t("personal.save")}</button><button class="btn pri sm" type="button" data-act="more18-signin" data-v="${id}">${t("personal.signin.go")}</button></div></div>`;
 }
 
@@ -79,7 +80,8 @@ async function save(id, account = M.signin[id]?.accountId ?? "default") {
     const calendar = document.getElementById(`more18-${id}-calendar`);
     const send = document.getElementById(`more18-${id}-send`);
     const endpoint = accountPath(id, account);
-    await api(endpoint, { clientId: client.value.trim(), ...(calendar ? { calendarWrite: calendar.checked } : {}), ...(send ? { mailSend: send.checked } : {}) });
+    const availability = document.getElementById(`more18-${id}-availability`);
+    await api(endpoint, { clientId: client.value.trim(), ...(calendar ? { calendarWrite: calendar.checked } : {}), ...(send ? { mailSend: send.checked } : {}), ...(availability ? { availability: availability.checked } : {}) });
     delete M.typed[client.id];
     if (value) await api(`${endpoint}/secret`, { value });
     secret.value = "";

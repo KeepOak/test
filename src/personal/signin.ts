@@ -30,12 +30,14 @@ export const SignInSettingsSchema = z.object({
   calendarWrite: z.boolean().default(false),
   /** Separate send-only scope, never enabled by permission to write provider drafts. */
   mailSend: z.boolean().default(false),
+  /** Read shared free/busy data only after a separate owner opt-in and new consent. */
+  availability: z.boolean().default(false),
 }).strict();
 export type SignInSettings = z.infer<typeof SignInSettingsSchema>;
 
 
 /** The scopes each service is asked for. Read-only unless the owner turned drafts on. */
-export function scopesFor(service: SignInService, drafts: boolean, calendarWrite = false, mailSend = false): string[] {
+export function scopesFor(service: SignInService, drafts: boolean, calendarWrite = false, mailSend = false, availability = false): string[] {
   if (service === "google") return [
     "https://www.googleapis.com/auth/gmail.readonly",
     calendarWrite ? "https://www.googleapis.com/auth/calendar.events" : "https://www.googleapis.com/auth/calendar.events.readonly",
@@ -43,6 +45,7 @@ export function scopesFor(service: SignInService, drafts: boolean, calendarWrite
     // Gmail has no drafts-only scope; this one could also send, which Branch never does.
     ...(drafts ? ["https://www.googleapis.com/auth/gmail.compose"] : []),
     ...(mailSend ? ["https://www.googleapis.com/auth/gmail.send"] : []),
+    ...(availability ? ["https://www.googleapis.com/auth/calendar.freebusy"] : []),
   ];
   if (service === "microsoft") return [
     "offline_access", "User.Read", drafts ? "Mail.ReadWrite" : "Mail.Read", calendarWrite ? "Calendars.ReadWrite" : "Calendars.Read",
@@ -57,7 +60,7 @@ const labels: Record<SignInService, string> = { google: "Google", microsoft: "Mi
 /** The service described for the existing connection flow, without its client secret. */
 export function describeSignIn(service: SignInService, settings: SignInSettings, account = "default"): OAuthProvider {
   const base = { id: personalProviderId(service, account), label: labels[service], clientId: settings.clientId,
-    scopes: scopesFor(service, settings.drafts, settings.calendarWrite, settings.mailSend), extra: {} as Record<string, string> };
+    scopes: scopesFor(service, settings.drafts, settings.calendarWrite, settings.mailSend, settings.availability), extra: {} as Record<string, string> };
   if (service === "google") return { ...base, authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token", extra: { access_type: "offline", prompt: account === "default" ? "consent" : "consent select_account" } };
   if (service === "microsoft") {
