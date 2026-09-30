@@ -1,24 +1,27 @@
-import { writeFile, rm } from "node:fs/promises";
-import { runTool, systemTool, type RunTool } from "./windows.js";
+import { rm } from "node:fs/promises";
+import { systemTool, type RunTool } from "./windows.js";
+import { forgetGatewayTask, gatewayFlag, gatewaySupervision, gatewayTaskName, registerGatewayTask, removeGatewayTask, taskUser,
+  type GatewayTaskDeps, type WriteShortcut } from "./gateway-task.js";
 import { launchdCommand, launchdPlistPath } from "./launchd.js";
 import { systemdCommand, systemdUnitPath } from "./systemd.js";
 
 /**
- * Windows Script Host text that runs a command with window style 0 (hidden) and does not wait. Used only to start the
- * background engine at sign-in and on request (UP-PLATFORM-006a moves these off VBScript too); the update hand-over
- * no longer uses it (src/desktop/hand-over.ts).
+ * Windows Script Host text that runs a command with window style 0 (hidden) and does not wait. The sign-in task no
+ * longer uses it (src/install/gateway-task.ts), nor does the update hand-over (src/desktop/hand-over.ts); only the fresh
+ * engine an update starts does (src/install/old-engine.ts).
  */
 export function hiddenRunner(command: string): string {
   return `CreateObject("WScript.Shell").Run "${command.replace(/"/g, '""')}", 0, False\r\n`;
 }
 
 /**
- * Keeping Branch working with the window closed. A Windows scheduled task starts the assistant's
- * engine when the person signs in, with no window at all, so timed jobs, chat channels and triggers
- * keep running. The app window, when it is opened later, joins that running engine instead of
- * starting a second one.
+ * Keeping Branch working with the window closed. The operating system starts Branch's background gateway when the
+ * person signs in, with no window at all, and starts it again if it stops by accident, so timed jobs, chat channels
+ * and triggers keep running. The app window, when it is opened later, joins that running gateway instead of starting
+ * a second one.
  */
-export const daemonTaskName = "Branch Agent daemon";
+export const daemonTaskName = gatewayTaskName;
+/** The script-host launcher earlier versions wrote for the Windows task; installing or removing now deletes it. */
 export const daemonLauncherName = "branch-daemon.vbs";
 
 export interface DaemonOptions {
@@ -29,7 +32,7 @@ export interface DaemonOptions {
   dataDir: string;
   workspace: string;
   port: number;
-  /** Where the tiny no-window launcher is written. */
+  /** Where earlier versions wrote their Windows launcher, which is removed now. */
   launcherPath: string;
   taskName?: string;
   systemRoot?: string;
@@ -42,7 +45,14 @@ export interface DaemonOptions {
   /** macOS: the signed-in person's user id. */
   uid?: number;
 }
-export interface DaemonDeps { run?: RunTool; write?: (path: string, content: string) => Promise<void> }
+export interface DaemonDeps {
+  run?: RunTool;
+  write?: (path: string, content: string) => Promise<void>;
+  /** Windows: how a Startup shortcut is written where schtasks is refused (tests hand in a stand-in). */
+  writeShortcut?: WriteShortcut;
+  /** Windows: where this account's Startup folder is (APPDATA). */
+  env?: NodeJS.ProcessEnv;
+}
 export type DaemonAction = "install" | "uninstall" | "status";
 export interface DaemonReport {
   action: DaemonAction;
@@ -52,7 +62,7 @@ export interface DaemonReport {
   message: string;
 }
 
-/** The command the task runs: the engine, with its folders and port, through the app's own runtime. */
+/** The engine, with its folders and port, through the app's own runtime (src/install/old-engine.ts starts it so). */
 export function daemonCommandLine(options: DaemonOptions): string {
   const settings = [
     ["ELECTRON_RUN_AS_NODE", "1"],
@@ -63,48 +73,46 @@ export function daemonCommandLine(options: DaemonOptions): string {
   return `${systemTool("cmd.exe", options.systemRoot)} /d /c ${settings} & "${options.executable}" "${options.script}" start`;
 }
 
-export function daemonInstallArgs(options: DaemonOptions): string[] {
-  const wscript = systemTool("wscript.exe", options.systemRoot);
-  return ["/Create", "/F", "/RL", "LIMITED", "/SC", "ONLOGON", "/TN", options.taskName ?? daemonTaskName,
-    "/TR", `"${wscript}" //B //Nologo "${options.launcherPath}"`];
-}
-export function daemonUninstallArgs(taskName = daemonTaskName): string[] {
-  return ["/Delete", "/F", "/TN", taskName];
-}
-export function daemonStatusArgs(taskName = daemonTaskName): string[] {
-  return ["/Query", "/TN", taskName];
-}
-
+/**
+ * Windows (UP-PLATFORM-002): the installed app's own gateway, `"Branch Agent.exe" --branch-gateway`, registered as a
+ * scheduled task that starts it at sign-in and again after a crash, or a Startup shortcut where schtasks is refused
+ * (src/install/gateway-task.ts). The script-host launcher earlier versions wrote is removed.
+ */
 async function install(options: DaemonOptions, deps: DaemonDeps): Promise<DaemonReport> {
-  const run = deps.run ?? runTool;
-  const write = deps.write ?? ((path: string, content: string) => writeFile(path, content, "utf8"));
-  const command = daemonCommandLine(options);
-  await write(options.launcherPath, hiddenRunner(command));
-  await run(systemTool("schtasks.exe", options.systemRoot), daemonInstallArgs(options));
+  const kind = await registerGatewayTask({ executable: options.executable, atSignIn: true, user: taskUser(), dataDir: options.dataDir },
+    windowsDeps(options, deps));
+  await rm(options.launcherPath, { force: true }).catch(() => undefined);
   return {
-    action: "install", taskName: options.taskName ?? daemonTaskName, installed: true, command,
-    message: "Branch now starts by itself when you sign in to Windows, with no window. Timed jobs and chat replies keep working when the window is closed.",
+    action: "install", taskName: options.taskName ?? daemonTaskName, installed: true, command: `"${options.executable}" ${gatewayFlag}`,
+    message: kind === "task"
+      ? "Branch now starts by itself when you sign in to Windows, with no window, and starts again if it stops by accident. Timed jobs and chat replies keep working when the window is closed."
+      : "Windows would not let Branch add a scheduled task, so it starts from your Startup folder when you sign in instead. It will not be started again by itself if it stops; open Branch then.",
   };
 }
 
 async function uninstall(options: DaemonOptions, deps: DaemonDeps): Promise<DaemonReport> {
-  const run = deps.run ?? runTool, taskName = options.taskName ?? daemonTaskName;
-  await run(systemTool("schtasks.exe", options.systemRoot), daemonUninstallArgs(taskName)).catch(() => undefined);
+  const taskName = options.taskName ?? daemonTaskName;
+  await removeGatewayTask(windowsDeps(options, deps));
+  await forgetGatewayTask(options.dataDir);
   await rm(options.launcherPath, { force: true }).catch(() => undefined);
   return { action: "uninstall", taskName, installed: false, message: "Branch will no longer start by itself. Open the app when you want it." };
 }
 
 async function status(options: DaemonOptions, deps: DaemonDeps): Promise<DaemonReport> {
-  const run = deps.run ?? runTool, taskName = options.taskName ?? daemonTaskName;
-  const installed = await run(systemTool("schtasks.exe", options.systemRoot), daemonStatusArgs(taskName))
-    .then(() => true, () => false);
+  const taskName = options.taskName ?? daemonTaskName;
+  const kind = await gatewaySupervision(windowsDeps(options, deps));
   return {
-    action: "status", taskName, installed,
-    message: installed
-      ? "Branch starts by itself when you sign in to Windows."
-      : "Branch does not start by itself. Run `branch daemon install` to switch that on.",
+    action: "status", taskName, installed: kind !== "none",
+    message: kind === "task" ? "Branch starts by itself when you sign in to Windows, and again if it stops by accident."
+      : kind === "startup" ? "Branch starts from your Startup folder when you sign in to Windows."
+        : "Branch does not start by itself. Run `branch daemon install` to switch that on.",
   };
 }
+
+const windowsDeps = (options: DaemonOptions, deps: DaemonDeps): GatewayTaskDeps => ({
+  ...(deps.run ? { run: deps.run } : {}), ...(deps.writeShortcut ? { writeShortcut: deps.writeShortcut } : {}),
+  ...(deps.env ? { env: deps.env } : {}), ...(options.systemRoot ? { systemRoot: options.systemRoot } : {}),
+});
 
 /**
  * macOS and Linux use their own sign-in systems; Windows keeps its scheduled task. Any other system

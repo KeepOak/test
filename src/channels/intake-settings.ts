@@ -6,8 +6,9 @@ import type { Store } from "../store.js";
  *
  * - `edited`: an edited message is answered as its latest version (Telegram's edited messages).
  * - `albums`: photos sent together as one album are waited for and arrive as one message.
- * - `splitWaitMs`: messages from one chat that arrive within this long of the first are joined into one turn, so a
- *   long message an app split in two is answered once (off, one second or three).
+ * - `splitWaitMs`: after a message long enough to be the first piece of one an app split (`splitPieceChars`), the same
+ *   person's messages that arrive within this long are joined into one turn, so it is answered once (off, one second
+ *   or three). A shorter message is never waited on (chat-speed).
  * - `watchdog`: an app with no contact for `stalledAfterSeconds` is stalled; stalled for `reconnectMinutes` it is
  *   started again, and if that does not bring it back its card says so. An app that is merely quiet (reached, with
  *   nothing new) is never restarted.
@@ -42,5 +43,12 @@ export function saveChatIntake(store: Pick<Store, "get" | "save">, owner: string
 }
 /** How long an album's photos are waited for, at least, when albums are joined. */
 export const albumWaitMs = 1000;
+/**
+ * chat-speed: an app splits only a message too long to send whole (Telegram at 4,096 characters), so `splitWaitMs` is
+ * waited only after a message at least this long; every other message starts its turn at once. The same line as
+ * NousResearch/hermes-agent (MIT) `_SPLIT_THRESHOLD` in plugins/platforms/telegram/adapter.py and openclaw/openclaw
+ * (MIT) extensions/telegram/src/bot-handlers.inbound-buffer.ts, which both wait longer only for a 4,000-character piece.
+ */
+export const splitPieceChars = 4000;
 /** The words the bot's short description says (presence). */
 export const presenceWords = { online: "Online", offline: "Offline, back soon" } as const;

@@ -1,4 +1,5 @@
 import { randomBytes, randomInt } from "node:crypto";
+import { setTimeout as pause } from "node:timers/promises";
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { z } from "zod";
 import type { Store } from "../store.js";
@@ -19,7 +20,7 @@ import { chatSteps, compactSummary, pageChatSteps, renderChatSteps, type ChatSte
 import { stepsBehaviour, stepsCapsOf } from "./steps-caps.js";
 import { saveStepsSettings, stepsDisplayFor, stepsSettings, type StepsDisplay, type StepsSettings } from "./steps-display.js";
 import { liveSteps, specialistName } from "../live-steps.js";
-import { readChatIntake, albumWaitMs, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
+import { readChatIntake, albumWaitMs, splitPieceChars, presenceWords, type ChatIntake } from "./intake-settings.js"; // Settings › Chat apps
 import { channelFormatting, installChannelFormatting } from "./formatting-settings.js";
 import { chatLiveSwitches, commandsInPairedDm, saveChatLiveSwitches, type ChatLiveSwitches } from "./chat-live-settings.js";
 // mac7/chat-allowlist: the short list a chat's task may use, and the owner's additions to it.
@@ -148,6 +149,8 @@ export interface ChannelAdapter {
    * app's settings) or has none.
    */
   setCommands?(commands: { command: string; description: string }[]): Promise<void>;
+  /** UP-CHAT-015: the picker for one direct chat only (Telegram's per-chat scope), over the one `setCommands` sets. */
+  setChatCommands?(chatId: string, commands: { command: string; description: string }[]): Promise<void>;
   /** Sends a spoken reply, on the channels that accept one. Absent means this channel cannot. */
   sendVoice?(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined>;
   /**
@@ -228,6 +231,11 @@ export interface ChannelAdapter {
    */
   miniAppUser?(initData: string): MiniAppUser;
   stop(): Promise<void>;
+  /**
+   * Taken out for good (removed, or replaced by a connection with another token), unlike stop() when Branch closes:
+   * drops what the app saved about its incoming messages (Telegram's inbox), so none of their words are kept.
+   */
+  forget?(): void;
 }
 /**
  * How a message's words are shown (src/channels/progress-render.ts): the parts that are code, and whether it arrives
@@ -529,26 +537,67 @@ export class ChannelRouter {
    */
   /**
    * CHAT-134: one beat of the watchdog. A beat that comes far later than it should means this computer slept: every
-   * connection is then started again at once (a socket or long poll from before a sleep usually never says it died),
-   * rather than waiting for "stalled after" to pass. Otherwise the usual stall check.
+   * connection is then looked at at once (a socket or long poll from before a sleep usually never says it died), rather
+   * than waiting for "stalled after" to pass. Otherwise the usual stall check.
    */
   async watchTick(now = Date.now()): Promise<void> {
     const slept = this.lastBeat !== 0 && now - this.lastBeat > Math.max(60_000, this.watchdogMs * 4);
     this.lastBeat = now;
-    if (slept && this.intake().watchdog) await this.wake();
+    if (slept) await this.wake();
     else await this.checkStalled(now);
   }
   private lastBeat = 0;
-  /** After a sleep: every connected app that can start again does, each on its own so one failure stops no other. */
-  async wake(): Promise<void> {
-    await Promise.allSettled([...this.adapters].map(async ([id, { adapter }]) => {
-      if (!adapter.restart) return;
-      const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
-      this.watch.set(id, state);
-      try { await adapter.restart(this.handlerFor()); state.lastRestartAt = Date.now(); state.problem = null; }
-      catch (error) { state.problem = `${adapter.kind} could not reconnect after this computer woke: ${error instanceof Error ? error.message : String(error)}`; }
-      if (this.adapters.get(id)?.adapter !== adapter) await adapter.stop().catch(() => undefined);
-    }));
+  /**
+   * UP-PLATFORM-003: after a sleep (the system said it resumed, or a watchdog beat came far too late), one bounded look
+   * per connected app. An app its service reaches within `wakeProbeMs` of waking is left alone; one that stays silent
+   * (a socket or long poll from before the sleep that never said it died) is started again, retried with backoff, each
+   * app on its own so one failure stops no other. The resume signal and the late beat usually both come, so calls
+   * within `wakeHoldoffMs` of one another are one wake. Only with Staying connected's watchdog on.
+   * After hermes-agent's post-resume sweep (apps/desktop/electron/remote-liveness.ts, MIT, Nous Research).
+   */
+  wake(): Promise<void> {
+    if (this.waking) return this.waking;
+    if (!this.watchdogOn() || Date.now() - this.wokeAt < this.wakeHoldoffMs) return Promise.resolve();
+    const since = this.wokeAt = Date.now();
+    return this.waking = Promise.allSettled([...this.adapters].map(async ([id, { adapter }]) => {
+      if (adapter.restart && !(await this.heardSince(id, adapter, since))) await this.reconnect(id, adapter);
+    })).then(() => undefined).finally(() => { this.waking = null; });
+  }
+  /** Longer than any app's own contact beat (Matrix's 30 s sync, Telegram's 25 s poll, the 20 s socket pings). */
+  wakeProbeMs = 45_000;
+  /** The first wait between reconnect attempts after a wake; it doubles each time, three attempts in all. */
+  wakeRetryMs = 2_000;
+  wakeHoldoffMs = 15_000;
+  private waking: Promise<void> | null = null;
+  private wokeAt = 0;
+  private watchdogOn(): boolean {
+    try { return this.intake().watchdog; } catch { return false; }
+  }
+  private attached(id: string, adapter: ChannelAdapter): boolean { return this.adapters.get(id)?.adapter === adapter; }
+  /** The bounded look: true once the app's service reached it after `since`, or once it was taken out meanwhile. */
+  private async heardSince(id: string, adapter: ChannelAdapter, since: number): Promise<boolean> {
+    if (!adapter.lastContact) return false; // an app that cannot say is started again, as every app was before
+    const end = Date.now() + this.wakeProbeMs, step = Math.max(5, Math.min(500, this.wakeProbeMs / 20));
+    for (;;) {
+      if (!this.attached(id, adapter) || adapter.lastContact() > since) return true;
+      if (Date.now() >= end) return false;
+      await pause(step);
+    }
+  }
+  /** A stale app is started again, up to three times with doubling waits; the last failure goes on its card. */
+  private async reconnect(id: string, adapter: ChannelAdapter): Promise<void> {
+    const state = this.watch.get(id) ?? { restarts: [], lastRestartAt: 0, problem: null };
+    this.watch.set(id, state);
+    let failure: string | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await pause(this.wakeRetryMs * 2 ** (attempt - 1));
+      if (!this.attached(id, adapter)) return;
+      try { await adapter.restart!(this.handlerFor()); failure = null; state.lastRestartAt = Date.now(); state.problem = null; break; }
+      catch (error) { failure = error instanceof Error ? error.message : String(error); }
+    }
+    if (failure !== null) state.problem = `${adapter.kind} could not reconnect after this computer woke: ${failure}`;
+    // Taken out while it was being started again: stop what the restart began, or a second poller would keep running.
+    if (!this.attached(id, adapter)) await adapter.stop().catch(() => undefined);
   }
   async checkStalled(now = Date.now()): Promise<void> {
     const intake = this.intake();
@@ -589,6 +638,7 @@ export class ChannelRouter {
     this.adapters.delete(id);
     this.watch.delete(id); // a new connection under this id starts with a clean watchdog card
     await attached.adapter.stop();
+    try { attached.adapter.forget?.(); } catch { /* the saved rows are tidied when this connection is next opened */ }
   }
   async detachAll(): Promise<void> {
     if (this.pump) clearInterval(this.pump);
@@ -667,11 +717,20 @@ export class ChannelRouter {
    */
   refreshCommandMenus(): Promise<void> {
     return this.menuChain = this.menuChain.then(async () => {
-      const commands = this.switches().commands === "off" ? [] : chatCommandsFor(commandMode(this.store, this.runtime.owner))
-        .map((one) => ({ command: one.name, description: one.description }));
-      const unique = [...new Map(commands.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      const listed = chatCommandsFor(commandMode(this.store, this.runtime.owner)).map((one) => ({ command: one.name, description: one.description }));
+      const all = [...new Map(listed.filter((one) => /^[a-z0-9_-]{1,32}$/.test(one.command)).map((one) => [one.command, one])).values()].slice(0, 100);
+      const off = this.switches().commands === "off", unique = off ? [] : all;
+      // UP-CHAT-015: as shipped (off, never moved), the owner's own paired direct chat still reads commands (`commandIn`),
+      // so its own picker lists them; once the owner moves the switch, that chat gets what every chat gets.
+      const ownerDm = off && commandsInPairedDm(this.store, this.runtime.owner) ? all : unique;
+      const owner = this.runtime.owner, named = [...ownerCommands(this.store, owner).accounts, ...platformSettings(this.store, owner).owners];
+      const accounts = [...new Map(named.map((one) => [`${one.channel}\u0000${one.sender}`, one])).values()]; // as `ownAccount` reads them
       await Promise.all([...this.adapters.values()].map(async ({ adapter }) => {
-        try { await adapter.setCommands?.(unique); }
+        try {
+          await adapter.setCommands?.(unique);
+          for (const account of accounts.filter((one) => one.channel === adapter.id && this.pair(one.channel, one.sender)?.status === "approved"))
+            await adapter.setChatCommands?.(account.sender, ownerDm);
+        }
         catch (error) { diagnose("channels", "warn", `The command menu could not be updated on ${adapter.kind}: ${error instanceof Error ? error.message : String(error)}`); }
       }));
     });
@@ -1246,7 +1305,8 @@ export class ChannelRouter {
     // With no split wait, a turn gathering only for an album takes only that album's photos (Codex P2).
     const first = turn.messages[0], sameAlbum = !!message.groupId && message.groupId === first?.groupId;
     const joins = this.switches().steering === "on"
-      || (message.senderId === first?.senderId && !message.caughtUp && (this.intake().splitWaitMs > 0 || sameAlbum));
+      || (message.senderId === first?.senderId && !message.caughtUp
+        && ((this.intake().splitWaitMs > 0 && (first?.text.length ?? 0) >= splitPieceChars) || sameAlbum));
     if (turn.phase === "gathering" && joins && fitsTurn(turn.messages, message)) {
       turn.messages.push(message);
       return new Promise((resolve) => turn.waiters.push(resolve));
@@ -1374,14 +1434,16 @@ export class ChannelRouter {
   }
   /**
    * How long a new turn gathers before it runs: the steering window ("on"), the owner's "Wait for messages split in
-   * two", and at least `albumWaitMs` for a photo that came in an album while albums are joined. `mergeWindowMs` 0 turns
-   * all gathering off (tests that want each message on its own).
+   * two" after a message long enough to be a split one's first piece, and at least `albumWaitMs` for a photo that came
+   * in an album while albums are joined. `mergeWindowMs` 0 turns all gathering off (tests that want each message on its
+   * own). chat-speed: every other message starts at once; the owner's "Hi" waited a whole second here.
    */
   private gatherMs(first: InboundMessage): number {
     if (this.mergeWindowMs <= 0) return 0;
     const intake = this.intake(), steering = this.switches().steering === "on" ? this.mergeWindowMs : 0;
     if (first.caughtUp) return steering; // messages fetched after a restart are old ones, each already whole
-    return Math.max(steering, intake.splitWaitMs, first.groupId && intake.albums ? albumWaitMs : 0);
+    const split = first.text.length >= splitPieceChars ? intake.splitWaitMs : 0;
+    return Math.max(steering, split, first.groupId && intake.albums ? albumWaitMs : 0);
   }
   /** Runs one turn's messages as a task and sends the answer, showing progress while it works. */
   private async runTurn(turn: ChatTurnState): Promise<Outcome> {
@@ -1456,6 +1518,8 @@ export class ChannelRouter {
             waitedMs: Date.now() - receivedAt }); // gathering split messages and waiting for a free slot
           turn.runId = started.id;
           turn.startedAt = Date.now();
+          // chat-speed: when the reply's first words were in the chat, beside when the model wrote them (first_words).
+          if (turn.reply) turn.reply.onFirstShown = () => this.store.event(started.id, "channel.first_shown", { ms: Date.now() - receivedAt });
           live?.thinking();
           if (turn.dropped) this.runtime.cancel(started.id);
           this.passNotes(turn);

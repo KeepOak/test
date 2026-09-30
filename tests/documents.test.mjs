@@ -206,7 +206,8 @@ test("the person's documents reach the model before the task, and the switch tur
   await app.documents.add("local", { name: "Handbook", text: "The holiday policy gives staff twenty days of paid leave each year." });
   const run = await app.runtime.run({ prompt: "What is the holiday policy?", permissions: [] });
   assert.equal(run.status, "completed");
-  const system = provider.requests[0].filter((message) => message.role === "system").map((message) => message.content).join("\n");
+  // Passages travel with the question, as Branch's own note in the turn (src/runtime.ts intoTurn).
+  const system = provider.requests[0].filter((message) => message.role === "system" || message.from === "branch").map((message) => message.content).join("\n");
   assert.match(system, /twenty days of paid leave/, "the passage itself is in the context");
   assert.match(system, /Handbook/, "the passage says which document it came from");
   const event = app.store.events(run.id).find((item) => item.kind === "documents.retrieved");
