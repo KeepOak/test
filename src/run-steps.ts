@@ -16,7 +16,7 @@
 import type { PendingApproval } from "./approvals.js";
 import type { AuditEntry } from "./audit.js";
 import type { Event, Run } from "./contracts.js";
-import { calls, rounds, type PriceRound } from "./inspect.js";
+import { calls, rounds, type PriceRound, type InspectCall } from "./inspect.js";
 import type { ChainEntry } from "./safety-extras/activity-chain.js";
 import type { Store } from "./store.js";
 import { STEP_ICONS, accountMoved, stepIcon, type Said } from "./live-steps.js";
@@ -37,6 +37,8 @@ export interface Step {
   happened?: string | null;
   /** A tool call's id, so the window can find the message that asked for it. */
   callId?: string | null;
+  /** The recorded tool outcome; separate from an approval question's state. */
+  toolStatus?: InspectCall["status"];
   /** ask: the id of the call it asked about, so the window draws its answer right after the steps that made it (Q050). */
   askedCall?: string | null;
   state?: AskState;
@@ -96,7 +98,7 @@ function toolSteps(store: Store, run: Run, events: Event[], hashOf: (kinds: read
   return calls(store, run.id, new Map(), run.sessionId).map((call) => ({
     kind: "tool" as const, at: call.at, seconds: call.seconds, cost: null,
     title: labels.get(call.id ?? "") || call.name, detail: call.name, had: call.input, happened: call.output,
-    callId: call.id, hash: hashOf([kindOf[call.status]]),
+    callId: call.id, toolStatus: call.status, hash: hashOf([kindOf[call.status]]),
   }));
 }
 
