@@ -10417,5 +10417,18 @@
   "wsedit.title": "Edit a file",
   "wsedit.top": "The top of your workspace",
   "wsedit.unsaved": "(not saved)",
-  "wsedit.up": "Up one folder"
+  "wsedit.up": "Up one folder",
+  "githubDevice.title": "GitHub connection",
+  "githubDevice.description": "Use an OAuth app registered for Branch. Enable device flow in its GitHub settings. GitHub will ask for repo and read:user access.",
+  "githubDevice.client": "Branch OAuth app client ID",
+  "githubDevice.save": "Save client ID",
+  "githubDevice.connected": "Connected to GitHub",
+  "githubDevice.disconnected": "GitHub is not connected",
+  "githubDevice.begin": "Connect with GitHub",
+  "githubDevice.disconnect": "Disconnect",
+  "githubDevice.code": "Enter this code on GitHub:",
+  "githubDevice.consent": "Open GitHub consent",
+  "githubDevice.waiting": "Waiting for your approval. Return here after approving.",
+  "githubDevice.cancel": "Cancel sign-in",
+  "githubDevice.launch": "This connection supplies a missing token to configured public GitHub integrations. Existing project tokens and GitHub Apps take precedence."
 }
