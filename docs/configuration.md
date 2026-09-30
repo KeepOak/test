@@ -5741,13 +5741,14 @@ question and only runs after you say yes, and the result is shown exactly as the
 Below that, one question can be put to two models using the evaluation route where that is
 configured.
 
-**On a phone.** `/manifest.webmanifest` and `/service-worker.js` make the page installable. The
-worker keeps the app's own files (stylesheets, scripts, icons, the English words) so it opens
-quickly and shows the app rather than a browser error when the connection drops. Nothing under
-`/api/`, `/v1/` or `/webhooks/` is ever cached: your assistant is live or it is nothing, and an
-unreachable computer puts a plain banner on the screen. The worker is never registered inside the
-desktop app or when the page is opened with `?desktop=1`, and the desktop app never offers to
-install itself.
+**On a phone.** The redesigned window serves `/manifest.webmanifest` and its icons, but it
+does not register a service worker or promise an offline shell. Opening it needs a reachable
+Branch computer. If the connection drops while the window is open, live requests fail and the
+window shows its connection banner; it does not cache assistant requests or replay changes.
+The legacy `/service-worker.js` URL now only retires its own previously installed registration
+and deletes the exact historical Branch shell caches. It creates no cache or registration and
+preserves unrelated workers and caches. Retirement takes effect when the browser next checks
+that worker for an update; it cannot clear an old installation which never reconnects.
 
 **Languages.** Labels go through `t(key)` in `/i18n.js`, reading `/locales/en.json`. The rail, the
 sections, the owner menu, the message box and the screens described above are covered; the older
@@ -5759,9 +5760,10 @@ and kept in this browser, not in the workspace. Dates and numbers are written wi
 chosen language.
 
 The files `/web-ui.js`, `/web-ui.css`, `/markdown.js`, `/i18n.js`, `/inspector.js`, `/live-run.js`,
-`/conversation-facts.js`, `/playground.js`, `/service-worker.js`, `/manifest.webmanifest`,
+`/conversation-facts.js`, `/playground.js`, `/manifest.webmanifest`,
 `/locales/en.json`, `/locales/fr.json` and the app icons are served from the same local allowlist
-as the rest of the interface.
+as the rest of the interface. `/service-worker.js` is a compatibility retirement response rather
+than a static app asset.
 
 ## Knowledge bases (batch 24, wave 7)
 
@@ -7666,6 +7668,43 @@ fingerprint of the picture rather than the picture — nothing that was on scree
 A password manager showing on screen stops it outright, as it stops any other picture of the screen.
 
 Tools: `monitors.screen.create`, `monitors.screen.check`. File: `src/screen-watch.ts`.
+
+Set `readText: true` when creating a screen watch to explain changed pictures with local OCR text
+differences. This is optional and off by default. It requires Tesseract on PATH with its English
+language data; Branch does not install or download it. This optional existing executable avoids
+adding a bundled OCR runtime or sending screen content to a provider. The image is passed through
+stdin, with a 15-second cap and bounded input/output. The existing private-window capture refusal
+and screen-control switches still apply, and known secrets are scrubbed before comparison.
+
+At most 4,096 recognized characters per watch are held as a memory-only baseline. Screenshots and
+baselines are not saved by OCR. A restart or evicted baseline means the next look establishes a new
+baseline; it cannot reconstruct earlier words. When pixels change, the summary includes up to six
+removed and six added text lines, capped at 1,600 characters. These summaries can be retained in
+the resulting conversation or delivered to the chat selected by `notifyVia`, so enable this only
+for a region whose words you want in those notifications. OCR errors fail the look without
+advancing its fingerprint; unchanged OCR text is reported honestly rather than invented as a
+text change. OCR recognizes printed text imperfectly and does not infer what a page means.
+
+### Local OCR of workspace pictures and scans
+
+`documents.ocr` reads a workspace-relative PNG/JPEG or explicitly selected scanned-PDF pages locally.
+It uses the same bounded Tesseract adapter as screen watches. PDF pages additionally need installed
+Poppler `pdftoppm`; neither executable is installed automatically. Executables are resolved only
+from absolute directories on the owner's startup PATH, never from a task argument or working folder.
+
+This is an owner-only `files.read` tool, held to the task's workspace/project, file rules, hidden and
+secret filename checks, and symlink/hardlink refusals. No renderer endpoint accepts arbitrary paths.
+PNG/JPEG inputs are capped at 8 MiB and 4 megapixels; PDFs at 24 MiB. Choose `firstPage` (default 1)
+and `pageCount` (default 1, maximum 5). PDF pages render one at a time at a maximum 2048-pixel long
+side; a page outside the document is an error. Private temporary input/raster files are removed
+on success, error and cancellation. A job has a 90-second overall cap, each child 15 seconds, and
+only one local document OCR job runs at a time.
+
+Recognized text is capped at 4096 characters per page, scrubbed for known secrets and passed through
+the existing file-content instruction filter. Results identify the selected page numbers and remain
+untrusted document content; OCR does not execute their instructions or index the file. Returned text
+can be retained in the tool's conversation, as with other file reads. Password-protected or damaged
+PDFs, unsupported pictures, missing executables and cancelled work fail explicitly.
 
 ## Asking a specialist one question (batch 22, wave 8)
 
