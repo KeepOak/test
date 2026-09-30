@@ -25,6 +25,7 @@ import * as computer from "./pages/computer.js";
 import * as secrets from "./pages/secrets.js";
 import * as usage from "./pages/usage.js";
 import * as gateway from "./pages/gateway.js";
+import * as redisQueue from "./pages/redis-queue.js";
 import * as updates from "./pages/updates.js";
 import * as advanced from "./pages/advanced.js";
 import * as developer from "./pages/developer.js";
@@ -41,7 +42,7 @@ import { initDemosB5 } from "./demos-b5.js";
 
 const PAGES = {
   general, people, appearance, notifications, instructions, models, local,
-  accounts, voice, permissions, computer, secrets, usage, gateway, updates,
+  accounts, voice, permissions, computer, secrets, usage, gateway, redisQueue, updates,
   advanced, developer, achievements, self, chatapps, data
 };
 
@@ -52,7 +53,7 @@ export const hasPage = (id) => Object.hasOwn(PAGES, id);
 export const NAV = [
   ["You", [["general", "General"], ["people", "People"], ["appearance", "Appearance"], ["notifications", "Notifications"], ["achievements", "Achievements"]]],
   ["Assistant", [["instructions", "Instructions & personality"], ["models", "Models"], ["accounts", "Accounts"], ["local", "On this computer"], ["voice", "Voice"]]],
-  ["Reach", [["chatapps", "Chat apps"], ["gateway", "Gateway"]]],
+  ["Reach", [["chatapps", "Chat apps"], ["gateway", "Gateway"], ["redisQueue", "Redis fleet queue"]]],
   ["Safety", [["permissions", "Permissions"], ["computer", "Computer & browser"], ["secrets", "Saved sign-ins"]]],
   ["Care", [["usage", "Data & usage"], ["data", "Your data"], ["self", "Branch itself"], ["updates", "Updates & about"]]]
 ];

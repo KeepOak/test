@@ -1403,6 +1403,7 @@ ${result.output || "(it said nothing)"}`;
   // ── mac4/bucket-20: talking to other agents and tools (src/interop/). Every part ships off. ──
   const interop = new Interop({ runtime, registry, knowledge, teams, flows, remoteAgents,
     tokens: sessionTokens, files, policy: web.policy, version, locked: () => sessionLock.locked() });
+  releaseOnLock.push(async () => interop.redisQueueControls.invalidate());
   // ── mac6/bucket-23: the smaller asks (src/asks/). Every part ships off. ──
   const asks = new Asks({ runtime, registry, web, files, flows, fetch: web.policy.guard(globalThis.fetch),
     secret: async (name, purpose) => (await store.secrets.resolve(runtime.owner, store.projects.active(runtime.owner).id, [name], { purpose }))[name]!,
@@ -2017,6 +2018,7 @@ ${result.output || "(it said nothing)"}`;
       await personalBuilt?.close().catch(() => undefined); // R17-C: the webhook tunnel program stops
       await reachParts.close(); // r17-i: the relay stops asking
       safetyExtras.close(); // mac7/r17-g
+      interop.redisQueueControls.invalidate();
       await linuxDesktop.close().catch(() => undefined); // FQ-execution.desktop: no shared desktop outlives the app
       await ownMcp.closeAll(); // eng-connectors: no question watcher or server of the owner's outlives the app
       await mcpConnections.closeAll();

@@ -9,6 +9,7 @@ import { outsideSourceOf } from "../outside-origin.js";
 import { pinnedFetch } from "../pinned-fetch.js";
 import type { Runtime } from "../runtime.js";
 import type { ToolRegistry } from "../registry.js";
+import { wallSettings } from "../sandbox.js";
 import { requireInterop } from "./settings.js";
 import { queueScript } from "./redis-queue-script.js";
 
@@ -45,15 +46,19 @@ export class RedisQueue {
   }
 
   configure(input: unknown): Settings {
-    this.owner();
+    this.assertOwner();
     const value = RedisQueueSettingsSchema.parse(input);
     this.runtime.store.save("settings", this.runtime.owner, key, { ...value });
-    this.revision++;
-    for (const controller of this.active) controller.abort();
+    this.cancel();
     return value;
   }
 
-  private owner(): void {
+  cancel(): void {
+    this.revision++;
+    for (const controller of this.active) controller.abort();
+  }
+
+  assertOwner(): void {
     this.runtime.store.profiles.requireOwner("Redis fleet coordination");
     if (startedWithShortLivedKey() || this.locked() || lockdownActive(this.runtime.store, this.runtime.owner)
       || this.runtime.store.profiles.scope() !== this.runtime.owner)
@@ -61,9 +66,11 @@ export class RedisQueue {
   }
 
   private fence(context: ToolContext, snapshot: Settings, revision: number): void {
-    this.owner();
+    this.assertOwner();
     requireInterop(this.runtime.store, context.owner, "fleet");
     context.signal.throwIfAborted();
+    const wall = wallSettings(this.runtime.store, context.owner);
+    if (wall.mode !== "off" && wall.network !== "open") throw new Error("The OS network wall refuses Redis coordination");
     if (context.owner !== this.runtime.owner || context.source !== "owner" || outsideSourceOf(this.runtime.store, context.runId)
       || context.isolated || context.dryRun
       || !context.permissions.has("specialists.use") || context.sandbox === "no-internet"
@@ -144,7 +151,7 @@ export class RedisQueue {
       const token = TokenSchema.parse(fields[2]);
       if (!token.startsWith(this.prefix(context))) throw new Error("The lease belongs to another turn");
       const job = JobSchema.parse(JSON.parse(z.string().parse(fields[4])));
-      return { status, id: IdSchema.parse(fields[1]), token, expiresAt: z.number().int().positive().parse(fields[3]),
+      return { status, id: IdSchema.parse(fields[1]), token, expiresAt: z.number().int().positive().max(8640000000000000).parse(fields[3]),
         job: { prompt: this.runtime.hideSecrets(job.prompt) }, authority: "data-only; execution requires fresh local approval" };
     }
     const allowed: Record<Operation, string[]> = { submit: ["submitted", "existing", "completed", "conflict", "full", "damaged"],

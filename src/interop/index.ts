@@ -12,6 +12,7 @@ import { AgentProtocol } from "./agent-protocol.js";
 import { ClientToolHub } from "./client-tools.js";
 import { registerFleetTools } from "./fleet.js";
 import { RedisQueue, registerRedisQueueTools } from "./redis-queue.js";
+import { RedisQueueControls } from "./redis-queue-controls.js";
 import { registerFlowSearch } from "./flow-search.js";
 import { registerHandoffTool, type HandoffParts } from "./handoff.js";
 import { Modes, registerModeTools } from "./modes.js";
@@ -37,6 +38,7 @@ export class Interop {
   readonly router: ProjectRouter;
   readonly market: AgentMarket;
   readonly redisQueue: RedisQueue;
+  readonly redisQueueControls: RedisQueueControls;
   readonly handoffParts: HandoffParts;
   private readonly registrars: Record<InteropPart, () => void>;
 
@@ -49,6 +51,7 @@ export class Interop {
     this.router = new ProjectRouter(store, owner);
     this.market = new AgentMarket(store, owner, deps.policy, deps.files, deps.version);
     this.redisQueue = new RedisQueue(runtime, deps.policy, deps.locked ?? (() => true));
+    this.redisQueueControls = new RedisQueueControls(runtime, this.redisQueue);
     this.handoffParts = { store, owner, tokens: deps.tokens, remoteAgents: deps.remoteAgents,
       scrub: (text) => runtime.hideSecrets(text) };
     const fleet = { runtime, knowledge: deps.knowledge, teams: deps.teams, remoteAgents: deps.remoteAgents, clients: this.clients };
