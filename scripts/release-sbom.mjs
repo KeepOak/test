@@ -13,12 +13,17 @@ if (!sourceArg || !downloadsArg || !/^[0-9a-f]{40}$/.test(commit ?? ""))
 const source = resolve(sourceArg), downloads = resolve(downloadsArg);
 const lockBytes = await readFile(join(source, "package-lock.json"));
 const manifest = JSON.parse(await readFile(join(source, "package.json"), "utf8"));
+// On Windows npm is a .cmd, which only a shell starts; every argument here is fixed, so nothing reaches that shell.
 const { stdout } = await exec("npm", ["sbom", "--package-lock-only", "--sbom-format=cyclonedx", "--include=dev", "--include=optional", "--ignore-scripts"],
-  { cwd: source, encoding: "utf8", maxBuffer: 16 << 20, timeout: 60_000, windowsHide: true });
+  { cwd: source, encoding: "utf8", maxBuffer: 16 << 20, timeout: 60_000, windowsHide: true, shell: process.platform === "win32" });
 const bom = JSON.parse(stdout);
+const root = bom.metadata?.component;
+// npm names the root component after the folder it ran in (the release job checks out into "source"); its bom-ref and
+// purl carry the package's own name, so those are what is checked, and the name is set to the package's.
 if (bom.bomFormat !== "CycloneDX" || !Array.isArray(bom.components) || !bom.components.length
-  || bom.metadata?.component?.name !== manifest.name || bom.metadata?.component?.version !== manifest.version)
+  || root?.["bom-ref"] !== `${manifest.name}@${manifest.version}` || root?.version !== manifest.version)
   throw new Error("npm did not produce the release's dependency inventory; nothing may be published.");
+root.name = manifest.name;
 const lock = JSON.parse(lockBytes);
 const electron = lock.packages?.["node_modules/electron"]?.version;
 if (!electron || !bom.components.some((component) => component.name === "electron" && component.version === electron))
