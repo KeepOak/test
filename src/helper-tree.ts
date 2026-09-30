@@ -25,7 +25,7 @@ export const helperSpawnDepth = 1;
 /** What handing work on means: starting helpers, and messaging other Branches and Trunks. */
 const handOnTools = new Set([
   "helpers.start", "fleet.send", "trunks.remote.message",
-  "specialists.delegate", "specialists.fanout", "mode.task",
+  "specialists.delegate", "specialists.fanout", "specialists.evaluate", "mode.task",
   "delegate.parallel", "delegate.handoff", "delegate.supervise", "delegate.swarm", "delegate.route",
 ]);
 export const nestedHelperRefusal = "A helper does not start helpers or message other Branches and Trunks unless its lead allowed it "
