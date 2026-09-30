@@ -53,7 +53,7 @@ export const safetyLabels: Record<SafetyPart, string> = {
   "tool-scripts": "Scripts that call several tools at once",
   "wasm-add-ons": "Add-ons that run in a sealed WebAssembly box",
   "code-approvals": "A code from your authenticator app for chosen yeses",
-  "command-scan": "Checking commands for look-alike letters, piped downloads and hidden terminal codes",
+  "command-scan": "Checking commands for look-alike letters, piped downloads, hidden terminal codes and dangerous commands",
   "progress-judge": "Asking whether a long task is getting anywhere",
   "activity-chain": "A tamper-evident chain over the record of what happened",
   "history-repair": "Tidying a conversation's history before it is sent",

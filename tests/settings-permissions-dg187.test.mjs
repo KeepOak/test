@@ -11,7 +11,7 @@ import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
-import { settingsWindow, openSettingsPage, setLevel } from "./settings-window.mjs";
+import { settingsWindow, openSettingsPage, setLevel, assertHeadings } from "./settings-window.mjs";
 import { watchSettled } from "./page-settled.mjs";
 
 /* The new window: Settings › Permissions is the prototype's page. At Regular: its title, "Without asking, Trunks may…",
@@ -27,9 +27,8 @@ for (const [width, height] of [[1440, 950], [860, 900], [400, 844]]) {
     await setLevel(page, "regular");
     await settled();
     const col = page.locator(".set-col");
-    const shown = await col.locator("h1, h2, summary, .danger b").evaluateAll((all) =>
-      all.filter((node) => node.getClientRects().length > 0).map((node) => node.textContent.replace(/\s+/g, " ").trim()));
-    assert.deepEqual(shown, ["Permissions", ...OWN_COMPUTER, "Without asking, Trunks may…", "Advanced", "Lockdown", "Pinned settings"]);
+    await assertHeadings(page, ["Permissions", ...OWN_COMPUTER, "Without asking, Trunks may…", "Advanced", "Lockdown", "Pinned settings"], `${width} px`,
+      { levels: "h1, h2, summary, .danger b" });
     await col.getByRole("button", { name: "Turn Lockdown on", exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false, `${width} px fits`);
     assert.deepEqual(errors, []);
