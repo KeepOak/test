@@ -483,6 +483,7 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--fill);color:var
 .mi .r{margin-left:auto;color:var(--ink-3);font-size:12px;display:flex;align-items:center;gap:6px}
 .mi.danger{color:var(--bad)}
 .mi[aria-checked="true"] .tick{visibility:visible}
+.pop [data-act="mention-pick"][aria-selected="true"],.pop [data-act="slash-pick"][aria-selected="true"]{background:var(--fill-2)}
 .mi .tick{visibility:hidden;color:var(--ink)}
 .mi .mi-t{display:block}
 .mi .mi-s{display:block;font-size:12px;color:var(--ink-3)}
