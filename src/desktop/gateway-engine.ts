@@ -16,6 +16,8 @@ import { EngineClient } from "./engine-client.js";
 import { proveOnce } from "../engine-proof.js";
 import { requestUpdateBackup } from "../install/background-engine.js";
 import type { GatewayPowerPolicy } from "./gateway-power.js";
+import type { PreparedGatewayCode } from "./gateway-code.js";
+import type { InUse } from "../hot-update/live-folder.js";
 
 export async function brokerRequest<T>(host: EngineHost, action: (client: EngineClient) => Promise<T>): Promise<T> {
   const boot = await proveOnce(host.url, host.token);
@@ -25,11 +27,12 @@ export async function brokerRequest<T>(host: EngineHost, action: (client: Engine
 }
 
 function retainedLive(options: DetachedDesktopOptions, host: EngineHost, env: NodeJS.ProcessEnv, ready: (version: string, provisional?: boolean) => void, checking: () => void,
-  control: AdoptionControl, packaged: string | null, closeBroker: () => void): LiveHooks {
+  control: AdoptionControl, packaged: string | null, closeBroker: () => void,
+  prepareCode?: (inUse: InUse) => Promise<PreparedGatewayCode>): LiveHooks {
   const { appRoot, dataDir } = options;
   return liveHooks({ appRoot, dataDir, repo: fallbackRepo, buildDir: join(dataDir, "updates", "beta-build"), packaged,
     host: () => host, forkLive: (file) => forkDesktopEngine(file, env), runtime: process.execPath,
-    gateway: { ready, checking, packagedVersion: app.getVersion() }, onEngineDeparture: closeBroker,
+    gateway: { ready, checking, packagedVersion: app.getVersion(), ...(prepareCode ? { prepareCode } : {}) }, onEngineDeparture: closeBroker,
     snapshot: () => brokerRequest(host, async (client) => {
       const response = await client.fetch(`${host.url}/api/never-break/snapshot`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: AbortSignal.timeout(120000) });
       const body = await response.json() as { folder?: unknown };
@@ -43,7 +46,7 @@ function retainedLive(options: DetachedDesktopOptions, host: EngineHost, env: No
 /** Every crash replacement reloads checked live state and encrypted settings, after the departed writer ended. */
 export function retainedDesktopWorker(options: DetachedDesktopOptions, env: NodeJS.ProcessEnv, ready: (version: string, provisional?: boolean) => void, checking: () => void,
   control: AdoptionControl, activated: (hooks: LiveHooks, host: EngineHost) => void, quit: () => void,
-  power?: GatewayPowerPolicy): DesktopWorkerOptions {
+  power?: GatewayPowerPolicy, prepareCode?: (inUse: InUse) => Promise<PreparedGatewayCode>): DesktopWorkerOptions {
   const services = desktopEngineServices(options.base); let host: EngineHost, version = app.getVersion();
   const { vault, banner, loginItem } = services;
   const broker = engineBroker({ vault, banner, loginItem, tell: (method) => host.tell(method), quit,
@@ -58,7 +61,7 @@ export function retainedDesktopWorker(options: DetachedDesktopOptions, env: Node
         executable: app.isPackaged ? process.execPath : null, installRoot: installedAppRoot(app.isPackaged, process.platform, process.execPath),
         packaged: app.isPackaged, loginItem: services.loginItem?.read() ?? null, appPid: process.pid, testHooks: false, appRoot: options.appRoot,
         ...(live.window ? { liveWindow: live.window } : {}) }, log: (line) => console.error(line) });
-    activated(retainedLive(options, host, env, ready, checking, control, await builtFrom(options.appRoot, app.isPackaged), () => broker.close()), host);
+    activated(retainedLive(options, host, env, ready, checking, control, await builtFrom(options.appRoot, app.isPackaged), () => broker.close(), prepareCode), host);
     return host;
   } };
 }
