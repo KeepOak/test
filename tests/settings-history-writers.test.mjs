@@ -166,6 +166,7 @@ const unreadKeys = {
   "src/personal/accounts.ts": "the personal accounts list for each service, not in the catalogue",
   "src/personal/settings.ts": "the personal connector parts, none of them in the catalogue",
   "src/plugin-catalog.ts": "one record per plugin offer",
+  "src/scheduled-backup.ts": "the scheduled GitHub backup's consent and its last outcome, kept on this computer",
   "src/plugins.ts": "one record per plugin",
   "src/profile-roles.ts": "one record per profile",
   "src/prompt-library.ts": "the saved prompts themselves",

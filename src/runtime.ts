@@ -22,6 +22,7 @@ import { CliAgentProvider } from "./providers/cli-agent.js";
 import { unwrapProvider } from "./accounts/pool-provider.js";
 import { askerOf, runOrigin, shortLivedKeyMark, startedWithShortLivedKey, underShortLivedKey } from "./key-context.js"; // bucket-18 (A0300), bucket 19
 import { personalHold } from "./personal/guard.js"; // R17-C integration review
+import { scheduledBackupHold } from "./scheduled-backup.js";
 import { settingsChangeReason, settingsHold, settingsPreview } from "./settings-kit/tools.js";
 import { conversationCarrier, outsideSourceOf, type OutsideSource } from "./outside-origin.js"; // mac7/outside-resume
 import { asPerson, currentPerson, throughPairedDoor } from "./people/context.js"; // bucket 19
@@ -4482,7 +4483,7 @@ ${run.output.slice(0, 6000)}`;
     // The owner's selected Full Access skips routine prompts. A coding hand-off still uses
     // the owner's external program sign-in and keeps its own once-only question.
     const fullAccess = this.ownerFullAccessFor(context) !== null;
-    const personal = personalHold(tool, args, source) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
+    const personal = personalHold(tool, args, source) ?? scheduledBackupHold(tool) ?? handOffHold(tool) ?? (fullAccess ? null : settingsHold(tool, args) ?? contractHold(tool, args)
       // The contract, source and target checks still run at execution; these are only extra prompts.
       ?? sourceSendHold({ workspace: this.workspace, scope: this.registry.pathScope(), tool, args }));
     const screenHeld = screen && !fullAccess;

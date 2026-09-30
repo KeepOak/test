@@ -69,6 +69,7 @@ const GUARDS = [
     setup: (app) => app.personal.setMode("chat-files", { mode: "on" }) },
   { file: "src/flows-boards/tools.ts", tool: "board.cards", args: {}, setup: (app) => app.flowsBoards.setMode("kanban", { mode: "on" }) },
   { file: "src/reach/tools.ts", tool: "machines.list", args: {}, setup: (app) => app.reachParts.setMode("machines", { mode: "on" }) },
+  { file: "src/scheduled-backup.ts", tool: "backup.github_status", args: {} },
   { file: "src/wiki.ts", tool: "wiki.read", args: { title: "Roof" } },
   { file: "src/wiki.ts", tool: "wiki.search", args: { query: "roof" } },
   { file: "src/wiki.ts", tool: "wiki.history", args: { title: "Roof" } },

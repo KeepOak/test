@@ -109,6 +109,7 @@ const reviewedComputedKeys = new Set([
   "src/person-about.ts: aboutKey",
   "src/person-about.ts: pictureKey",
   "src/plan-act.ts: key",
+  "src/scheduled-backup.ts: statusKey",
   "src/plan-act.ts: projectKey",
   "src/plan-act.ts: sessionKey",
   "src/plugin-catalog.ts: key",

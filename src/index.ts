@@ -52,6 +52,8 @@ import { MemoryTransfer } from "./memory-export.js";
 import { SqliteMemoryBackend } from "./memory-backend.js";
 import { MemoryProvider } from "./memory-provider.js"; // FQ-memory.providers
 import { Scheduler, registerSchedules, nextTurn } from "./scheduler.js";
+import { ScheduledGitHubBackup, registerScheduledBackup } from "./scheduled-backup.js";
+import { ownerGitHubConnection } from "./integrations/git-tools.js";
 import { registerHistory } from "./history.js";
 import { registerRunExport } from "./trajectory.js";
 import { meteringTick } from "./metering.js";
@@ -1345,6 +1347,10 @@ ${result.output || "(it said nothing)"}`;
   // bucket-18: memory history (A2317): what is remembered, committed to a private repository in the data folder.
   const memoryHistory = new MemoryHistory(dataDir, store, memoryMirror, (options, signal) => gitRunner.run(options, signal), web.policy);
   registerMemoryHistory(registry, memoryHistory, runtime.owner);
+  const scheduledBackup = new ScheduledGitHubBackup(store, runtime.owner, dataDir, version,
+    () => ownerGitHubConnection(registry), value => runtime.hideSecrets(value));
+  registerScheduledBackup(registry, scheduledBackup);
+  scheduler.onTick.add(now => scheduledBackup.tick(now));
   // Saved facts are read through the same store of already-read passages, so nothing is sent twice.
   memory.retrieval.wrapEmbedder = (embedder) => new CachedEmbeddings(asEmbeddings(embedder), knowledgeBases.cache);
   const consolidation = new MemoryConsolidation(store, memory.retrieval, memory.hygiene);

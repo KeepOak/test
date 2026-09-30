@@ -48,6 +48,34 @@ export class GitHubAccess {
     return matchingPublication(input, await this.request("GET", publicationLookupPath(input), undefined, undefined, signal));
   }
 
+  /** Dedicated backup operations: private repository, fixed namespace, no arbitrary file writes. */
+  async backupRepository(repo: string): Promise<{ id: number; private: boolean; push: boolean }> {
+    repositoryPath.parse(repo);
+    const row = z.object({ id: z.number().int().positive(), private: z.boolean(),
+      permissions: z.object({ push: z.boolean() }).optional() }).passthrough()
+      .parse(await this.request("GET", `repos/${repo}`));
+    return { id: row.id, private: row.private, push: row.permissions?.push === true };
+  }
+  async createBackup(repo: string, id: string, text: string, beforeSend: () => void): Promise<{ commit: string; blob: string }> {
+    repositoryPath.parse(repo);
+    if (!/^[0-9a-f-]{36}$/.test(id) || Buffer.byteLength(text) > 128 * 1024) throw new Error("Invalid or oversized backup");
+    const row = z.object({ commit: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/) }),
+      content: z.object({ sha: z.string().regex(/^[0-9a-f]{40}$/) }) }).passthrough()
+      .parse(await this.request("PUT", `repos/${repo}/contents/branch-agent-backups/${id}.json`,
+        { message: "Branch scheduled backup", content: Buffer.from(text).toString("base64") }, beforeSend));
+    return { commit: row.commit.sha, blob: row.content.sha };
+  }
+  async readBackup(repo: string, id: string, commit: string): Promise<string> {
+    repositoryPath.parse(repo);
+    if (!/^[0-9a-f-]{36}$/.test(id) || !/^[0-9a-f]{40}$/.test(commit)) throw new Error("Use a listed backup id and exact commit");
+    const row = z.object({ encoding: z.literal("base64"), size: z.number().int().min(0).max(128 * 1024),
+      content: z.string().max(180000) }).passthrough().parse(await this.request("GET",
+        `repos/${repo}/contents/branch-agent-backups/${id}.json?ref=${commit}`));
+    const text = Buffer.from(row.content, "base64").toString("utf8");
+    if (Buffer.byteLength(text) !== row.size) throw new Error("Incomplete backup received");
+    return text;
+  }
+
   /** One REST call: the network policy decides whether the address may be reached at all. */
   private async request(method: string, path: string, body?: unknown, beforeSend?: () => void, signal?: AbortSignal): Promise<unknown> {
     const token = await this.token();
