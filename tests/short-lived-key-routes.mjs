@@ -1152,6 +1152,8 @@ export const ROUTES = {
   "/api/self-development/requests/:id/approve": "owner POST",
   "/api/self-development/requests/:id/decline": "owner POST",
   "/api/self-development/requests/:id/diff": "secret-read", // the change to Branch's own source, for the owner to read before a yes
+  "/api/self-development/requests/:id/draft": "secret-read", // the committed draft, for the owner to review before publishing
+  "/api/self-development/requests/:id/publish": "owner POST",
   "/api/sessions": "look",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
@@ -1196,6 +1198,8 @@ export const ROUTES = {
   "/api/skill-installs": "look",
   "/api/skill-installs/": "prefix",
   "/api/skill-installs/export": "look",
+  "/api/skill-installs/github": "owner POST", // looks at a GitHub skill and holds a preview; the owner's alone
+  "/api/skill-installs/github/install": "owner POST",
   "/api/skill-installs/inspect": "owner POST",
   "/api/skill-installs/install": "owner POST",
   "/api/skill-installs/remove": "owner POST",
@@ -1312,6 +1316,7 @@ export const ROUTES = {
   "/api/panels/browser/action": "owner POST",
   "/api/panels/browser/disconnect": "owner POST",
   "/api/panels/browser/stop": "owner POST",
+  "/api/self-development/ci": "owner POST",
   "/api/usage/glance": "look",
   "/api/usage/by-trunk": "look", // models-ui: who spent what, read as the usage glance is
   "/api/usage/glance/settings": "secret-read",

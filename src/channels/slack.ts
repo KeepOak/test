@@ -5,7 +5,7 @@ import { EditedWords } from "./edited-words.js";
 import { lookup } from "../commands/catalog.js";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
+import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile, SendGate } from "./router.js"; // R17-C: OutgoingFile
 import { connectWebSocket, reconnectDelay, type WebSocketConnect, type WebSocketConnection } from "./ws-client.js";
 
 /**
@@ -323,11 +323,11 @@ export class SlackAdapter implements ChannelAdapter {
   async setStatus(chatId: string, threadId: string, words: string): Promise<void> {
     await this.call("assistant.threads.setStatus", this.options.token, { channel_id: chatId, thread_ts: threadId, status: words.slice(0, 100) });
   }
-  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
-    await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) });
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat, gate?: SendGate): Promise<void> {
+    await this.call("chat.update", this.options.token, { channel: chatId, ts: messageId, text: slackText(text, format), ...slackPlain(text, format) }, gate);
   }
-  async deleteMessage(chatId: string, messageId: string): Promise<void> {
-    await this.call("chat.delete", this.options.token, { channel: chatId, ts: messageId });
+  async deleteMessage(chatId: string, messageId: string, gate?: SendGate): Promise<void> {
+    await this.call("chat.delete", this.options.token, { channel: chatId, ts: messageId }, gate);
   }
   // ---- R17-C (R17-022): a file through Slack's external upload (the older files.upload is retired).
   // 1. files.getUploadURLExternal hands out an address and a file id; 2. the bytes go to that
@@ -427,10 +427,14 @@ export class SlackAdapter implements ChannelAdapter {
     const seconds = Number(response.headers.get("retry-after"));
     throw Object.assign(new Error("Slack asked us to slow down"), { retryAfter: Number.isFinite(seconds) && seconds > 0 ? seconds : 1 });
   }
-  private async call(method: string, token: string, body: unknown): Promise<unknown> {
+  /** One Web API request. A `gate` (an owner's own-message edit or delete) is checked last before sending, and its
+      signal aborts the request, including while the address is still being checked. */
+  private async call(method: string, token: string, body: unknown, gate?: SendGate): Promise<unknown> {
+    const timeout = AbortSignal.timeout(20000), signal = gate ? AbortSignal.any([timeout, gate.signal]) : timeout;
+    gate?.check();
     const response = await this.fetch(`${this.base}/${method}`, {
       method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json; charset=utf-8" },
-      body: JSON.stringify(body), signal: AbortSignal.timeout(20000),
+      body: JSON.stringify(body), signal,
     });
     this.rateLimit(response);
     const parsed = z.object({ ok: z.boolean(), error: z.string().optional() }).passthrough().parse(await response.json());
