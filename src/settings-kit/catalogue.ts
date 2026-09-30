@@ -384,7 +384,9 @@ const reach: SettingSpec[] = [
   {
     key: "chat-permissions", name: "What a chat may do beyond talking", t: "settings-kit.name.chat-permissions",
     home: "customize:channels",
-    fields: [yesNo("extras", "Use my list of what chats may also do", "settings-kit.field.chat-extras", "reach")],
+    fields: [yesNo("extras", "Use my list of what chats may also do", "settings-kit.field.chat-extras", "reach"),
+      // owner-dm-full: the owner's own verified direct chat runs as the owner (src/channels/chat-permissions.ts). On by default.
+      yesNo("ownerChats", "Your own chats have your full access", "settings-kit.field.chat-owner-chats", "reach", true)],
     write: (store, owner, patch) => { saveChatPermissionSettings(store, owner, patch); },
     read: (store, owner) => ({ ...readChatPermissionSettings(store, owner) }),
   },

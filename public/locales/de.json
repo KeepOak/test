@@ -4985,6 +4985,8 @@
   "settings-kit.everything": "Alles auf dieser Liste",
   "settings-kit.field.audit": "Selbst prüfen",
   "settings-kit.field.chat-extras": "Meine Liste nutzen, was Chats zusätzlich dürfen",
+  "settings-kit.field.chat-owner-chats": "Deine eigenen Chats haben deinen vollen Zugriff",
+  "settings-kit.field.chat-owner-chats-hint": "Dein eigenes Konto, im Einzelchat, in einer App, die für ihre Absender bürgt, darf, was du im Fenster darfst. Gruppen und andere Personen behalten die kurze Liste. Lockdown schaltet es aus.",
   "settings-kit.field.dictation-silence": "Wie lange Stille es beendet",
   "settings-kit.field.file-agents": "AGENTS.md",
   "settings-kit.field.file-heartbeat": "HEARTBEAT.md",
