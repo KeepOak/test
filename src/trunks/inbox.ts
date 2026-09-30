@@ -16,9 +16,9 @@ function attribution(store: InboxStore, owner: string): (id: string) => string |
       if (memo.has(cursor)) { found = memo.get(cursor) ?? null; break; }
       seen.add(cursor);
       if (store.run(cursor)?.owner !== owner) break;
-      const marker = store.sqlite.prepare("SELECT json_extract(data,'$.trunkId') AS trunk FROM events WHERE run_id=? AND kind='trunk.turn' ORDER BY id DESC LIMIT 1").get(cursor);
+      const marker: { trunk?: unknown } | undefined = store.sqlite.prepare("SELECT json_extract(data,'$.trunkId') AS trunk FROM events WHERE run_id=? AND kind='trunk.turn' ORDER BY id DESC LIMIT 1").get(cursor);
       if (typeof marker?.trunk === "string") { found = marker.trunk; break; }
-      const start = store.sqlite.prepare("SELECT json_extract(data,'$.parentRunId') AS parent FROM events WHERE run_id=? AND kind='run.started' ORDER BY id LIMIT 1").get(cursor);
+      const start: { parent?: unknown } | undefined = store.sqlite.prepare("SELECT json_extract(data,'$.parentRunId') AS parent FROM events WHERE run_id=? AND kind='run.started' ORDER BY id LIMIT 1").get(cursor);
       cursor = typeof start?.parent === "string" ? start.parent : null;
     }
     if (found) for (const visited of seen) memo.set(visited, found);

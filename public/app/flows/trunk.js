@@ -5,7 +5,7 @@
 
 import { $, esc, onRender } from "../core/dom.js";
 import { openDlg, closeDlg, openPop, closePop, toast, ic, av, mi, COLOURS, SHAPE_NAMES, hex, faceOf, dialog } from "../core/ui.js";
-import { S, E, refresh, activeId } from "../core/state.js";
+import { S, E, refresh, activeId, ownerHere } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on, run } from "../core/actions.js";
 import { markLive } from "../core/features.js";
