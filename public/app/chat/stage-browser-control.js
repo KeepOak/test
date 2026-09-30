@@ -22,7 +22,7 @@ import { networkLearningButtons, initNetworkLearning } from './network-learning.
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
   busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
-  error: "", typed: "", opening: false, touch: "scroll", names: { name: "", runId: null } };
+  error: "", typed: "", opening: false, touch: "scroll", downloadsOpen: false, names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const visible = () => B.shown && !document.hidden && !locked();
@@ -89,7 +89,7 @@ function applyView(answer) {
   B.control = answer.control; B.page = answer.page ?? B.page;
   B.frameId = answer.frameId ?? ""; B.tabId = answer.tabId ?? ""; B.ready = answer.ready === true;
   B.frame = answer.page?.frame ? `data:image/jpeg;base64,${answer.page.frame}` : "";
-  const meta = JSON.stringify([B.control, B.page?.url, B.page?.title, B.page?.tabs, B.ready, !!B.frame, B.error]);
+  const meta = JSON.stringify([B.control, B.page?.url, B.page?.title, B.page?.tabs, B.page?.downloads, B.ready, !!B.frame, B.error]);
   const redraw = B.meta !== meta; B.meta = meta; changed(redraw);
 }
 function disconnect() {
@@ -104,7 +104,7 @@ export function watchOwnerBrowser(sid, show, onChange, names = {}) {
   B.onChange = onChange;
   B.names = { name: names.name ?? "", runId: names.runId ?? null };
   const next = show && sid ? sid : null;
-  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null }); }
+  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, downloadsOpen: false }); }
   if (next) B.sid = next;
   B.shown = !!next;
   if (!visible()) { if (B.reading || B.timer || owned()) disconnect(); return; }
@@ -181,9 +181,18 @@ function pageHTML() {
     <img class="shot7 owner-browser7-img" draggable="false" alt="${esc(B.page?.title || t("window.chat.stage.ob.page"))}"${ready ? "" : " hidden"}>
     ${ready ? "" : `<div class="browser-status7 owner-browser7-empty" role="status"><small>${empty}</small></div>`}</div>`;
 }
+/** Session-only completions: workspace paths and file sizes, or a truthful refused-download state. */
+function downloadsHTML() {
+  const downloads = B.page?.downloads ?? [];
+  if (!downloads.length) return "";
+  const rows = [...downloads].reverse().map(file => `<li><b>${esc(file.saved
+    ? file.file || t("window.chat.stage.ob.download-path-hidden") : t("window.chat.stage.ob.download-not-saved"))}</b>
+    <small>${esc(file.from)}${file.saved ? ` · ${esc(t("window.chat.stage.ob.download-bytes", { count: file.bytes }))}` : ""}</small></li>`).join("");
+  return `<details class="ob7-downloads"${B.downloadsOpen ? " open" : ""}><summary>${esc(t("window.chat.stage.ob.downloads", { count: downloads.length }))}</summary><ol>${rows}</ol></details>`;
+}
 /** The whole browser, drawn at the stage's 1280 × 800 like the task's live view. */
 export function ownerBrowserHTML() {
-  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${statusHTML()}${pageHTML()}</div></div>`;
+  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${statusHTML()}${downloadsHTML()}${pageHTML()}</div></div>`;
 }
 /** What the page is waiting for, when it is waiting for a person rather than the task. */
 export function ownerBrowserNeeds() {
@@ -389,6 +398,9 @@ function pointerUp(event) {
 const inPage = (event) => event.target.closest?.("#stage7 .owner-browser7-page");
 
 export function initOwnerBrowser() {
+  document.addEventListener("toggle", (event) => {
+    if (event.target.matches?.("#stage7 .ob7-downloads")) B.downloadsOpen = event.target.open;
+  }, true);
   initNetworkLearning({ bound: () => ({ ...bound(), tabId: B.tabId }), available: owned, onChange: changed });
   initDemonstrations({ bound: () => ({ ...bound(), tabId: B.tabId }), available: owned, onChange: changed,
     inOrder: work => { flushText(); return inOrder(work); } });

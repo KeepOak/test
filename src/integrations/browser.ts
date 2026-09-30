@@ -149,6 +149,8 @@ export interface WatchedWindow {
   borrowed: boolean;
   /** The page is asking for a person: a sign-in (a password or one-time-code box) or a "prove you're a person" check. */
   needs?: 'sign-in' | 'captcha' | null;
+  /** Completed files, confined to this session; source addresses contain only their origin. */
+  downloads?: { file: string; bytes: number; from: string; saved: boolean }[];
 }
 /** w911 (A1726): a page Branch itself opened for a benchmark task, before the task starts. */
 export interface BenchmarkWindow {
@@ -1221,9 +1223,11 @@ export class BranchBrowser {
     if (!entry || !seen) return null;
     // A tab whose page is busy may not answer; its title is left empty after a second rather than holding up the view.
     const titleOf = (tab: Page) => Promise.race([tab.title().catch(() => ''), new Promise<string>(done => { setTimeout(() => done(''), 1000).unref?.(); })]);
+    const pageSecrets: (string[] | null)[] = [];
     const tabs = await Promise.all(seen.tabs.map(async (tab, index) => {
       const [title, hidden, extra] = await Promise.all([titleOf(tab), entry.control ? this.watchedSecrets(entry, tab) : undefined,
         entry.control ? this.tabExtras(tab) : undefined]);
+      if (hidden !== undefined) pageSecrets.push(hidden);
       return { url: hidden === undefined ? tab.url() : scrubAddress(tab.url(), hidden),
         title: hidden === undefined ? title : hidden === null ? '' : scrubText(title, hidden), active: index === seen.active, ...extra };
     }));
@@ -1232,7 +1236,13 @@ export class BranchBrowser {
     const filled = entry.filled.get(seen.page)?.boxes ?? [];
     const frame = borrowed ? null : await liveFrame(seen.page, filled).catch(() => null);
     const needs = borrowed ? null : await needsPerson(seen.page);
-    return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed, needs };
+    const hidden = pageSecrets.length && pageSecrets.every(values => values !== null) ? pageSecrets.flatMap(values => values!) : null;
+    const downloads = entry.control ? entry.session.completedDownloads().map(record => ({
+      file: hidden === null ? '' : scrubText(record.file, hidden), bytes: record.bytes, saved: !!record.file,
+      from: scrubAddress(record.from, null),
+    })) : undefined;
+    return { url: tabs[seen.active]?.url ?? '', title: tabs[seen.active]?.title ?? '', tabs, frame, borrowed,
+      needs, ...(downloads ? { downloads } : {}) };
   }
   /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
   private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
