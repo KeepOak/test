@@ -1,4 +1,4 @@
-import { connect as netConnect, type Socket } from "node:net";
+import { connect as netConnect, isIP, type Socket } from "node:net";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { randomUUID } from "node:crypto";
 import { mimeParts, textOf } from "../personal/mime.js";
@@ -85,10 +85,11 @@ class LineSocket {
     if (this.buffer) this.fail(new Error(`${server.host} sent more before encryption began, so Branch hung up`));
     this.socket.removeAllListeners("data");
     this.socket.removeAllListeners("close");
-    const secure = tlsConnect({ socket: this.socket, servername: server.host, rejectUnauthorized: server.rejectUnauthorized ?? true });
+    let secure: TLSSocket | undefined;
     try {
-      await new Promise<void>((resolve, reject) => { secure.once("secureConnect", resolve); secure.once("error", reject); });
-    } catch (error) { secure.destroy(); this.fail(error instanceof Error ? error : new Error(String(error))); }
+      secure = tlsConnect({ socket: this.socket, servername: tlsServerName(server.host), rejectUnauthorized: server.rejectUnauthorized ?? true });
+      await new Promise<void>((resolve, reject) => { secure!.once("secureConnect", resolve); secure!.once("error", reject); });
+    } catch (error) { secure?.destroy(); this.fail(error instanceof Error ? error : new Error(String(error))); }
     this.socket = secure;
     this.buffer = "";
     this.listen();
@@ -100,6 +101,14 @@ class LineSocket {
     throw error;
   }
   close(): void { this.socket.destroy(); }
+}
+/**
+ * The name sent in the TLS greeting (SNI). It may only be a host name, never an IP address (RFC 6066), and newer Node
+ * refuses to start TLS at all when given one, so a server reached by its address is greeted without a name.
+ */
+export function tlsServerName(host: string): string | undefined {
+  const bare = host.replace(/^\[(.*)\]$/, "$1");
+  return isIP(bare) ? undefined : bare;
 }
 /** Whether the connection is TLS from the first byte; otherwise it must switch with STARTTLS. */
 export function implicitTls(server: Pick<MailServer, "tls" | "port">): boolean {
@@ -119,7 +128,7 @@ function noEncryption(server: MailServer, what: string): Error {
  */
 async function open(server: MailServer, secure: boolean): Promise<LineSocket> {
   const socket = secure
-    ? tlsConnect({ host: server.host, port: server.port, servername: server.host, rejectUnauthorized: server.rejectUnauthorized ?? true })
+    ? tlsConnect({ host: server.host, port: server.port, servername: tlsServerName(server.host), rejectUnauthorized: server.rejectUnauthorized ?? true })
     : netConnect({ host: server.host, port: server.port });
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => { socket.destroy(); reject(new Error(`${server.host} did not answer in time`)); }, server.timeoutMs ?? 20000);

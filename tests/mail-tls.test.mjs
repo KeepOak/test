@@ -9,7 +9,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
-import { ImapClient, implicitTls, sendMail } from "../dist/channels/mail-client.js";
+import { ImapClient, implicitTls, sendMail, tlsServerName } from "../dist/channels/mail-client.js";
 
 const remote = "::ffff:127.0.0.1";
 const password = "mailbox-password";
@@ -122,4 +122,11 @@ test("left unset, the standard STARTTLS ports use STARTTLS and every other port 
   assert.equal(implicitTls({ port: 25 }), false);
   assert.equal(implicitTls({ port: 587, tls: true }), true, "the owner's choice wins");
   assert.equal(implicitTls({ port: 993, tls: false }), false);
+});
+
+test("a server reached by its IP address is greeted over TLS without a name, which may only be a host name", () => {
+  assert.equal(tlsServerName("mail.example.net"), "mail.example.net");
+  assert.equal(tlsServerName("192.0.2.7"), undefined);
+  assert.equal(tlsServerName("::ffff:127.0.0.1"), undefined);
+  assert.equal(tlsServerName("[2001:db8::1]"), undefined);
 });
