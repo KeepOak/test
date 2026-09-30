@@ -19,6 +19,7 @@ import { fenceUntrusted } from "./evaluation-honesty.js";
 import { bestPassage, tokenF1 } from "./answer-metrics.js";
 import { selectAll } from "./html-state.js";
 import { compareTrajectories, type ReferenceStep } from "./trajectory-compare.js";
+import type { EvaluationHelperReceipt } from "./evaluation-helper-receipts.js";
 
 /** What a scorer is told about the task it is grading. Only the parts every source can supply. */
 export interface ScoredTask {
@@ -32,6 +33,8 @@ export interface ScoredTrajectory {
   runId: string | null;
   /** Tool calls in the order they were made, with the arguments as they were parsed. */
   calls: { name: string; arguments: Record<string, unknown> }[];
+  /** Actual owner-scoped child runs, available only when the engine's provenance was read. */
+  helpers?: EvaluationHelperReceipt[];
   /** Rounds with the model. */
   steps: number;
   ms: number;
@@ -64,6 +67,10 @@ export const ScorerSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("file-exists"), path: z.string().min(1).max(500) }).strict(),
   z.object({ kind: z.literal("file-contains"), path: z.string().min(1).max(500), text: z.string().min(1).max(2000) }).strict(),
   z.object({ kind: z.literal("tool-called"), name: z.string().min(1).max(100), withArgs: z.record(z.string(), z.unknown()).optional() }).strict(),
+  z.object({ kind: z.literal("helper-runs"), min: z.number().int().min(0).max(100).default(1),
+    max: z.number().int().min(0).max(100).default(100), completed: z.boolean().default(true),
+    output: z.string().min(1).max(2000).optional() }).strict()
+    .refine((spec) => spec.min <= spec.max, "Minimum helpers cannot exceed maximum helpers"),
   z.object({
     kind: z.literal("budget"),
     maxSteps: z.number().int().min(1).max(500).optional(),
@@ -114,7 +121,7 @@ export type ScorerSpec = z.infer<typeof ScorerSchema>;
 /** Every scorer the program knows, for documentation and for the screen's picker. */
 export const scorerKinds: readonly string[] = [
   "exact", "contains", "regex", "json-schema", "numeric", "url", "file-exists", "file-contains",
-  "tool-called", "budget", "rubric", "finished",
+  "tool-called", "helper-runs", "budget", "rubric", "finished",
   "f1", "passage", "html", "trajectory",
 ];
 /**
@@ -160,6 +167,7 @@ async function scoreWith(
     case "file-exists": return scoreFileExists(context.workspace, spec.path);
     case "file-contains": return scoreFileContains(context.workspace, spec.path, spec.text);
     case "tool-called": return scoreToolCalled(spec, trajectory);
+    case "helper-runs": return scoreHelpers(spec, trajectory);
     case "budget": return scoreBudget(spec, trajectory);
     case "rubric": return scoreRubric(spec, context, task, answer);
     case "finished": return scoreFinished(spec.checks, context.workspace, answer);
@@ -240,6 +248,16 @@ function scoreToolCalled(spec: { name: string; withArgs?: Record<string, unknown
   const wanted = Object.entries(spec.withArgs);
   const hit = matches.some((call) => wanted.every(([key, value]) => JSON.stringify(call.arguments[key]) === JSON.stringify(value)));
   return hit ? pass() : fail(`${spec.name} was used, but never with ${JSON.stringify(spec.withArgs).slice(0, 160)}`);
+}
+
+function scoreHelpers(spec: { min: number; max: number; completed: boolean; output?: string | undefined }, trajectory: ScoredTrajectory): ScoreResult {
+  if (!trajectory.runId || !trajectory.helpers) return fail("No engine-authored helper provenance was supplied");
+  if (trajectory.helpers.length > 100) return fail("The helper receipt bound was exceeded");
+  const helpers = trajectory.helpers.filter((helper) => (!spec.completed || helper.status === "completed")
+    && (spec.output === undefined || normaliseAnswer(helper.output) === normaliseAnswer(spec.output)));
+  if (trajectory.helpers.length > spec.max) return fail(`The task started ${trajectory.helpers.length} helpers; at most ${spec.max} were allowed`);
+  if (helpers.length < spec.min) return fail(`Only ${helpers.length} helpers have the required completion and answer; at least ${spec.min} were required`);
+  return pass();
 }
 
 function scoreBudget(
