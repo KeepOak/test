@@ -120,7 +120,7 @@ test("native settings encrypt a key, keep IPC narrow, and connect after restart"
     assert.equal((await page.content()).includes("fixture-device-key-82743"), false);
     // The preload's whole surface (src/desktop/preload.cts), which now also carries the quick-ask pair and the live-talk microphone (#376), attach-anything's clipboard files, and hot-update's sender-checked live window calls.
     assert.deepEqual(await page.evaluate(() => Object.keys(window.branchDesktop).sort()),
-      ["checkForUpdates", "clipboardFiles", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onHelp", "onQuickAsk", "onUpdateStatus", "onWindowUpdated", "openExternal", "quickAskKeysChanged", "reloadLive", "restartBranch", "saveModelSettings", "showInFolder", "talkLiveMic", "updateStatus", "windowLook", "windowRestored", "windowUpdateResult"]);
+      ["checkForUpdates", "clipboardFiles", "exportBackup", "exportConversation", "exportMemory", "exportMemoryLines", "installUpdate", "modelSettings", "onHelp", "onQuickAsk", "onUpdateSaid", "onUpdateStatus", "onWindowUpdated", "openExternal", "quickAskKeysChanged", "reloadLive", "restartBranch", "saveModelSettings", "showInFolder", "talkLiveMic", "updateLoop", "updateStatus", "windowLook", "windowRestored", "windowUpdateResult"]);
     // attach-anything: the page cannot read the clipboard's files by asking; only a paste the person made opens that.
     // attach-followups: asked without one, it is told there are none (no error for the page to show).
     assert.deepEqual(await page.evaluate(() => window.branchDesktop.clipboardFiles()), { sent: [], error: null });

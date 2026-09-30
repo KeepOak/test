@@ -60,7 +60,9 @@ import { stillOutOfSight } from "../core/still.js";
 import { liveRun as engineRun } from "./timeline.js"; // household: the task the engine says works here
 import { lineHTML, lineAfter, openLine, freshLine, leaveLine, lineTrunk, trunkOfId, currentOf, dropFromLine, freshIn, firstTimed, keepRead, initTrunkLine } from "./trunkline.js"; // trunk-one-row
 
-const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null };
+/* seat: counts each conversation opened or started, so a send whose answer comes back after the person went to another
+   conversation leaves that one on screen (chat/chat.js sendPlain). */
+const C = { sessionId: null, messages: [], waiting: [], sending: false, thinking: "", mark: "", project: null, seat: 0 };
 const LINE = { now: null }; // trunk-one-row: the timeline drawn around the open conversation (draw, thread)
 const routingSends = new Set();
 /* Q257: a question the engine bound to the exact request shown (its fingerprint); only such a question is answered here. */
@@ -412,6 +414,7 @@ async function rereadRoom() {
 
 /* Opening a conversation closes the phone's list over it, as the prototype's openChat does. */
 export async function openConversation(id) {
+  C.seat += 1;
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   openLine();
@@ -449,6 +452,7 @@ export async function rereadOpen(force = false) {
 }
 
 export function startConversation(project = null) {
+  C.seat += 1;
   S.view = "chat";
   $("#app")?.classList.remove("side-open");
   leaveLine();
@@ -466,8 +470,10 @@ export function startConversation(project = null) {
    with that Trunk, a new context shown as a new line at the end of the same timeline, never a row of its own. The
    default Trunk's is begun by its first message (POST /api/run names no conversation, so the engine gives it to the
    default Trunk); another Trunk's is made at once (POST /api/trunks/conversations). Anywhere else it is a new
-   conversation as before. */
-export async function startFresh() {
+   conversation as before. helper-lifecycle: the helpers the conversation left working are stopped, as typed /new stops
+   them (src/commands/handlers.ts freshConversation); `stopped` says /new already did. */
+export async function startFresh({ stopped = false } = {}) {
+  if (!stopped && C.sessionId) void api("commands/run", { surface: "window", line: "/new", sessionId: C.sessionId }).catch(() => undefined);
   const trunk = S.view === "chat" ? lineTrunk() : undefined;
   if (!trunk) return startConversation();
   keepRead(C.sessionId, C.messages);
@@ -533,7 +539,7 @@ async function carryOut(client) {
   if (!client?.do) return;
   if (client.do === "go") { if (goHome(client.home)) renderNow(); }
   else if (client.do === "open-session" && client.id) await openConversation(client.id);
-  else if (client.do === "new") await startFresh();
+  else if (client.do === "new") await startFresh({ stopped: true });
   else if (client.do === "fill" && typeof client.text === "string") {
     S.drafts[C.sessionId ?? "new"] = client.text;
     const box = $("#prompt");
@@ -667,12 +673,30 @@ function adoptDraft(sessionId) {
   };
 }
 
+/* The answered conversation becomes the one on screen: its id (a new conversation's first), its draft and its messages,
+   unless another was opened while they were read. */
+async function adopt(sessionId, before, keepDraft) {
+  const seat = C.seat;
+  keepDraft(adoptDraft(sessionId));
+  C.sessionId = sessionId;
+  S.chat = sessionId;
+  teachAdopt(sessionId);
+  const got = await api("sessions/" + sessionId);
+  if (C.seat !== seat) return;
+  C.messages = got.messages ?? C.messages;
+  C.project = got.project ?? C.project;
+  readNewReply(before, C.messages);
+}
+
 /* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
    card's answer and a room's route are sent word for word. */
 async function sendPlain(said, withLead = false) {
   const lead = withLead ? PREFIX.map((take) => take(C.sessionId ?? null)).filter(Boolean).join("\n") : "";
   const prompt = lead ? `${lead}\n\n${said}` : said;
-  const before = replyMark(C.messages);
+  const before = replyMark(C.messages), seat = C.seat, from = C.sessionId ?? "new";
+  /* Another conversation opened while this one's answer was on its way (search, the Inbox, a Trunk's row) stays open:
+     the answer is this conversation's, read when it is opened again, never drawn over the one on screen. */
+  const moved = () => C.seat !== seat;
   C.messages.push({ role: "user", content: prompt });
   C.atBottom = true;
   C.prompt = prompt;
@@ -686,15 +710,9 @@ async function sendPlain(said, withLead = false) {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
     filesSent();
-    restoreDraft = adoptDraft(run.sessionId);
     practiceSent();
-    C.sessionId = run.sessionId;
-    S.chat = run.sessionId;
-    teachAdopt(run.sessionId);
-    const got = await api("sessions/" + run.sessionId);
-    C.messages = got.messages ?? C.messages;
-    C.project = got.project ?? C.project;
-    readNewReply(before, C.messages);
+    // Gone and come back to it before the answer came: it is on screen again, so its answer is read here all the same.
+    if (!moved() || C.sessionId === run.sessionId) await adopt(run.sessionId, before, (restore) => { restoreDraft = restore; });
     /* The task is over once its answer is read back: from here the window only reads what it left (its questions, the
        picture, the extras). Still "sending" meanwhile, a message sent after the answer showed went to the waiting line of
        a task that had ended, and in a new conversation, which has no line, it was left unsent in the box (D1 on CI). */
@@ -704,7 +722,8 @@ async function sendPlain(said, withLead = false) {
     restoreDraft(); // on this redraw, before the person can type in the box that now shows the answer
     await loadWaiting();
   } catch (error) {
-    if (error.offline && !started) keepForLater(prompt);
+    if (moved()) { toast(error.message); if (!started) S.drafts[from] = prompt; }
+    else if (error.offline && !started) keepForLater(prompt);
     else {
       C.messages.push({ role: "assistant", content: error.message });
       if (!started) S.drafts[C.sessionId ?? "new"] = prompt;
