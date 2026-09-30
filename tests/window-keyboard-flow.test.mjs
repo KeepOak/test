@@ -73,7 +73,8 @@ test("the window works from the keyboard: conversations by number and in turn, t
   const words = await list.innerText();
   for (const action of ["Previous conversation", "Search the history", "Focus the message box", "Look inside the latest task", "Start a new Trunk", "Who is using Branch"])
     assert.match(words, new RegExp(action), `the list names "${action}"`);
-  assert.match(await page.locator(".dlg .shortcuts").innerText(), /Open conversation 1 to 9 in the list/);
+  for (const action of ["Find in this conversation", "Open conversation 1 in the list", "Open conversation 9 in the list"])
+    assert.match(words, new RegExp(action), `the list names "${action}" as a shortcut the owner can change`);
   await list.locator('[data-act="key15"][data-v="switchPerson"]').click();
   await page.locator(".dlg .listen15").waitFor();
   await page.keyboard.press("Alt+w");
