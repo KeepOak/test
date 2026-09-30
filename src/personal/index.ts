@@ -10,6 +10,7 @@ import { MailSearch, registerMailSearch, type MailClient } from "./mail-search.j
 import { MicrosoftConnector, registerMicrosoft } from "./microsoft.js";
 import { personalMode, personalParts, personalTools, savePersonalMode, type PersonalMode, type PersonalPart } from "./settings.js";
 import { SignIn } from "./signin.js";
+import { accountTools } from "./account-tools.js";
 import { registerSpokenBrief, SpokenBrief } from "./spoken-brief.js";
 import { registerSpotify, SpotifyConnector } from "./spotify.js";
 import { WebhookTunnel, type TunnelSpawn } from "./tunnel.js";
@@ -100,9 +101,9 @@ export class Personal {
       "home-control": () => registerHomeControl(tools, this.home),
       "spoken-brief": () => registerSpokenBrief(tools, this.brief),
       "x-search": () => registerXSearch(tools, this.x),
-      spotify: () => registerSpotify(tools, this.spotify),
-      google: () => registerGoogle(tools, this.google),
-      microsoft: () => registerMicrosoft(tools, this.microsoft),
+      spotify: () => registerSpotify(accountTools(tools, this.signIns.spotify), this.spotify),
+      google: () => registerGoogle(accountTools(tools, this.signIns.google), this.google),
+      microsoft: () => registerMicrosoft(accountTools(tools, this.signIns.microsoft), this.microsoft),
       "mail-search": () => registerMailSearch(tools, this.mail),
     };
     for (const part of personalParts) this.sync(part);

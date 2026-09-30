@@ -76,9 +76,9 @@ export const personalTools: Record<PersonalPart, readonly string[]> = {
   "spoken-brief": ["brief.spoken", "brief.send_voice"],
   "voice-approvals": [],
   "x-search": ["x.search"],
-  spotify: ["spotify.now", "spotify.search", "spotify.control"],
-  google: ["gmail.search", "gmail.read", "gmail.draft", "gmail.preview_send", "gmail.send", "gcal.events", "gcal.create", "gcal.move", "gcal.delete", "gdrive.search", "gdrive.read"],
-  microsoft: ["outlook.search", "outlook.read", "outlook.draft", "outlook.preview_send", "outlook.send", "outlook.events", "outlook.create", "outlook.move", "outlook.delete", "teams.summary"],
+  spotify: ["spotify.accounts", "spotify.now", "spotify.search", "spotify.control"],
+  google: ["gmail.accounts", "gmail.search", "gmail.read", "gmail.draft", "gmail.preview_send", "gmail.send", "gcal.events", "gcal.create", "gcal.move", "gcal.delete", "gdrive.search", "gdrive.read"],
+  microsoft: ["outlook.accounts", "outlook.search", "outlook.read", "outlook.draft", "outlook.preview_send", "outlook.send", "outlook.events", "outlook.create", "outlook.move", "outlook.delete", "teams.summary"],
   "mail-search": ["mail.search", "mail.attachments", "mail.save_attachment"],
   tunnel: [],
 };
