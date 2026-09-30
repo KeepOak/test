@@ -195,7 +195,7 @@ export class Store {
       .all()
       .map((row) => row.name);
     // Prompt-cache reads and writes, as parts of reported_input, so each can be priced at its own rate (src/pricing.ts).
-    for (const column of ["attempts", "unreported_calls", "incomplete_calls", "reported_cached_input", "reported_cache_write", "reported_cache_write_1h"])
+    for (const column of ["attempts", "unreported_calls", "incomplete_calls", "reported_cached_input", "reported_cache_write", "reported_cache_write_hour"])
       if (!usageColumns.includes(column))
         this.db.exec(
           `ALTER TABLE usage ADD COLUMN ${column} INTEGER NOT NULL DEFAULT 0`,
@@ -940,7 +940,7 @@ export class Store {
   ): void {
     this.db
       .prepare(
-        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reported_cached_input=reported_cached_input+?,reported_cache_write=reported_cache_write+?,reported_cache_write_1h=reported_cache_write_1h+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
+        "UPDATE usage SET estimated_input=estimated_input+?,estimated_output=estimated_output+?,reported_input=reported_input+?,reported_output=reported_output+?,reported_cached_input=reported_cached_input+?,reported_cache_write=reported_cache_write+?,reported_cache_write_hour=reported_cache_write_hour+?,reports=reports+?,unreported_calls=MAX(0,unreported_calls-?),incomplete_calls=MAX(0,incomplete_calls-?) WHERE run_id=?",
       )
       .run(
         estimatedInput,
@@ -965,7 +965,7 @@ export class Store {
       reportedOutput: Number(r?.reported_output ?? 0),
       reportedCachedInput: Number(r?.reported_cached_input ?? 0),
       reportedCacheWrite: Number(r?.reported_cache_write ?? 0),
-      reportedCacheWrite1h: Number(r?.reported_cache_write_1h ?? 0),
+      reportedCacheWrite1h: Number(r?.reported_cache_write_hour ?? 0),
       reports: Number(r?.reports ?? 0),
       attempts: Number(r?.attempts ?? 0),
       unreportedCalls: Number(r?.unreported_calls ?? 0),

@@ -7,6 +7,11 @@ import { Store } from "../dist/store.js";
 import { estimateCost, tokenCountsOf } from "../dist/pricing.js";
 import { saveKnobs } from "../dist/knobs/settings.js";
 import { spendCapCheck } from "../dist/knobs/apply.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createBranch } from "../dist/index.js";
+import { discardTemp } from "./temp-dir.mjs";
 
 /**
  * Anthropic's input_tokens leaves out the prompt-cache reads and writes, which it counts apart. Branch recorded only
@@ -80,4 +85,28 @@ test("a cache write with no one-hour rate on file is charged at the five-minute 
   assert.equal(cost.amount, 1.25);
   const bare = estimateCost("m", { input: 1_000_000, output: 0, cached: 500_000 }, { m: { input: 1, output: 2 } });
   assert.equal(bare.amount, 1, "a missing cache-read rate is the input rate");
+});
+
+async function install(root, name) {
+  const provider = { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } };
+  return createBranch({ workspace: join(root, name, "workspace"), dataDir: join(root, name, "data"), provider });
+}
+
+test("a backup with cache usage in it puts back into a fresh install, with every count kept", async (t) => {
+  // A usage column whose name the backup cannot carry would break every restore of a copy that has used a model.
+  const root = await mkdtemp(join(tmpdir(), "branch-cache-backup-"));
+  const apps = [];
+  t.after(async () => { for (const app of apps) await app.close(); await discardTemp(root); });
+  const used = await install(root, "used");
+  apps.push(used);
+  const run = used.store.createRun(used.runtime.owner, "q");
+  used.store.addUsage(run.id, 0, 50, whole);
+  const snapshot = used.store.backup(used.version);
+  const fresh = await install(root, "fresh");
+  apps.push(fresh);
+  assert.ok(fresh.store.restore(snapshot).rows > 0);
+  const usage = fresh.store.usage(run.id);
+  assert.equal(usage.reportedCachedInput, 10_000);
+  assert.equal(usage.reportedCacheWrite, 2_000);
+  assert.equal(usage.reportedCacheWrite1h, 500);
 });

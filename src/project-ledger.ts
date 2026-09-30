@@ -29,13 +29,13 @@ function rows(store: Store, owner: string, since: string): Row[] {
        COALESCE(u.reported_input, 0) + COALESCE(u.estimated_input, 0) AS input,
        COALESCE(u.reported_output, 0) + COALESCE(u.estimated_output, 0) AS output,
        COALESCE(u.reported_cached_input, 0) AS cached, COALESCE(u.reported_cache_write, 0) AS cache_write,
-       COALESCE(u.reported_cache_write_1h, 0) AS cache_write_1h
+       COALESCE(u.reported_cache_write_hour, 0) AS cache_write_hour
      FROM tasks t LEFT JOIN usage u ON u.run_id = t.id
      WHERE t.owner = ? AND t.created_at >= ? ORDER BY t.created_at`,
   ).all(owner, since).map((row) => ({
     project: String(row.project ?? "default"), run_id: String(row.run_id),
     input: Number(row.input ?? 0), output: Number(row.output ?? 0),
-    cached: Number(row.cached ?? 0), cacheWrite: Number(row.cache_write ?? 0), cacheWrite1h: Number(row.cache_write_1h ?? 0),
+    cached: Number(row.cached ?? 0), cacheWrite: Number(row.cache_write ?? 0), cacheWrite1h: Number(row.cache_write_hour ?? 0),
   }));
 }
 

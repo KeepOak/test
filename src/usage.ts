@@ -103,7 +103,7 @@ export class UsageStore {
       estimatedInput: count("estimated_input"), estimatedOutput: count("estimated_output"),
       reportedInput: count("reported_input"), reportedOutput: count("reported_output"),
       reportedCachedInput: count("reported_cached_input"), reportedCacheWrite: count("reported_cache_write"),
-      reportedCacheWrite1h: count("reported_cache_write_1h"),
+      reportedCacheWrite1h: count("reported_cache_write_hour"),
     });
   }
 
