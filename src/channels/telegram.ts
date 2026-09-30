@@ -64,7 +64,7 @@ const messageSchema = z.object({
   voice: voiceSchema.optional(),
   audio: voiceSchema.optional(),
   from: userSchema.optional(),
-  chat: z.object({ id: z.number(), type: z.string(), title: z.string().optional() }).passthrough(),
+  chat: z.object({ id: z.number(), type: z.string(), title: z.string().optional(), is_forum: z.boolean().optional() }).passthrough(),
   entities: z.array(z.object({ type: z.string(), offset: z.number(), length: z.number() })).optional(),
   reply_to_message: z.object({ from: userSchema.optional() }).passthrough().optional(),
 }).passthrough();
@@ -97,6 +97,38 @@ const formatted = (format?: MessageFormat) => ({
 /** Topic addresses remain distinct in the router; Telegram receives the underlying chat and thread. */
 const topicAddress = (chatId: number, threadId?: number): string =>
   threadId === undefined ? String(chatId) : `${chatId}:${threadId}`;
+/**
+ * UP-CHAT-014: a topic is its own conversation only in a forum. In an ordinary group, Telegram gives a reply chain a
+ * `message_thread_id` too, and that must not split one group into a conversation per reply chain.
+ * From OpenClaw (MIT), extensions/telegram/src/bot/helpers.ts `resolveTelegramForumThreadId`.
+ */
+const forumThread = (chat: { is_forum?: boolean | undefined }, threadId: number | undefined): number | undefined =>
+  chat.is_forum ? threadId : undefined;
+/**
+ * UP-CHAT-013: `/cmd@SomeBot` names the bot a command is for (Telegram's form in groups). Adapted from OpenClaw (MIT),
+ * src/auto-reply/commands-registry-normalize.ts `TARGETED_COMMAND_BODY_RE`.
+ */
+const targetedCommand = /^\/([^\s@]+)@([A-Za-z0-9_]+)(?=$|\s|[.!?,;:'")\]}])([\s\S]*)$/u;
+/** Telegram's own limits for a bot's command menu (https://core.telegram.org/bots/api#botcommand). */
+const menuNamePattern = /^[a-z0-9_]{1,32}$/;
+const menuMax = 100, menuTextBudget = 5700, menuDescriptionMax = 256;
+/**
+ * The menu within Telegram's limits: names it accepts, at most 100 commands, and descriptions trimmed so the whole menu
+ * fits the text budget. Adapted from OpenClaw (MIT), extensions/telegram/src/bot-native-command-menu.ts
+ * `fitTelegramCommandsWithinTextBudget`. A name Telegram would refuse is left out rather than renamed, because the
+ * router reads the name as it is.
+ */
+export function telegramMenu(commands: { command: string; description: string }[]): { command: string; description: string }[] {
+  let menu = commands.filter((one) => menuNamePattern.test(one.command)).slice(0, menuMax);
+  while (menu.length) {
+    const names = menu.reduce((total, one) => total + one.command.length, 0);
+    const room = menuTextBudget - names;
+    if (room < menu.length) { menu = menu.slice(0, -1); continue; }
+    const cap = Math.min(menuDescriptionMax, Math.floor(room / menu.length));
+    return menu.map((one) => ({ command: one.command, description: (one.description.trim() || one.command).slice(0, cap) }));
+  }
+  return [];
+}
 const telegramTarget = (address: string): { chat_id: number; message_thread_id?: number } => {
   const [chatId, threadId] = address.split(":");
   return { chat_id: Number(chatId), ...(threadId === undefined ? {} : { message_thread_id: Number(threadId) }) };
@@ -438,7 +470,8 @@ export class TelegramAdapter implements ChannelAdapter {
     if (!chat || !query.from || query.from.is_bot || !query.data) return null;
     void this.call("answerCallbackQuery", { callback_query_id: query.id }).catch(() => undefined);
     return {
-      channel: this.id, chatId: topicAddress(chat.id, query.message?.message_thread_id), chatKind: chat.type === "private" ? "direct" : "group",
+      channel: this.id, chatId: topicAddress(chat.id, forumThread(chat as { is_forum?: boolean }, query.message?.message_thread_id)),
+      chatKind: chat.type === "private" ? "direct" : "group",
       ...(chat.title ? { chatTitle: chat.title } : {}),
       senderId: String(query.from.id),
       senderName: query.from.username ?? query.from.first_name ?? String(query.from.id),
@@ -446,6 +479,38 @@ export class TelegramAdapter implements ChannelAdapter {
       // keyboard need distinct delivery identities (including a stale-press explanation).
       text: query.data, addressed: true, messageId: query.id,
     };
+  }
+  /** The menu last set for each scope ("" for every chat), so an unchanged one is not sent again (OpenClaw's command hash). */
+  private readonly menuSet = new Map<string, string>();
+  /**
+   * UP-CHAT-015 (CHAT-018, CHAT-161): Branch's commands in Telegram's own "/" menu, from the list the router hands every
+   * app. An empty list clears the menu. A menu Telegram calls too big is sent again with four in five of its commands
+   * until it fits (OpenClaw's BOT_COMMANDS_TOO_MUCH retry).
+   */
+  async setCommands(commands: { command: string; description: string }[]): Promise<void> {
+    await this.putMenu(commands, null);
+  }
+  /** The menu for one private chat (the owner's own), in Telegram's `chat` scope; a private chat's id is its person's. */
+  async setChatCommands(chatId: string, commands: { command: string; description: string }[]): Promise<void> {
+    if (!/^\d+$/.test(chatId)) return;
+    await this.putMenu(commands, { type: "chat", chat_id: Number(chatId) });
+  }
+  private async putMenu(commands: { command: string; description: string }[], scope: { type: "chat"; chat_id: number } | null): Promise<void> {
+    let menu = telegramMenu(commands);
+    const key = JSON.stringify(menu), where = scope ? String(scope.chat_id) : "";
+    if (key === this.menuSet.get(where)) return;
+    const scoped = scope ? { scope } : {};
+    if (!menu.length) { await this.call("deleteMyCommands", scoped); this.menuSet.set(where, key); return; }
+    for (;;) {
+      try {
+        await this.call("setMyCommands", { commands: menu, ...scoped });
+        this.menuSet.set(where, key);
+        return;
+      } catch (error) {
+        if (!/BOT_COMMANDS_TOO_MUCH/i.test(error instanceof Error ? error.message : String(error)) || menu.length <= 1) throw error;
+        menu = menu.slice(0, Math.floor(menu.length * 0.8));
+      }
+    }
   }
   /**
    * A question with buttons to press. Each button's `data` is the answer plus the fingerprint of
@@ -497,12 +562,17 @@ export class TelegramAdapter implements ChannelAdapter {
       entity.type === "mention" && written.slice(entity.offset, entity.offset + entity.length).toLowerCase() === mention);
     const replyToBot = !!this.username && message.reply_to_message?.from?.username === this.username;
     const direct = message.chat.type === "private";
-    const text = mention && mentioned ? written.replace(new RegExp(mention, "ig"), "").trim() : written;
+    // UP-CHAT-013: `/stop@ThisBot` is a command for this bot, so it counts as addressed and is read as `/stop`;
+    // `/stop@OtherBot` is somebody else's command, and this bot lets it go (OpenClaw mention-gating.ts, MIT).
+    const targeted = targetedCommand.exec(written);
+    if (targeted && targeted[2]!.toLowerCase() !== this.username?.toLowerCase()) return null;
+    const aimed = targeted ? `/${targeted[1]}${targeted[3]}` : null;
+    const text = aimed ?? (mention && mentioned ? written.replace(new RegExp(mention, "ig"), "").trim() : written);
     return {
-      channel: this.id, chatId: topicAddress(message.chat.id, message.message_thread_id), chatKind: direct ? "direct" : "group",
+      channel: this.id, chatId: topicAddress(message.chat.id, forumThread(message.chat, message.message_thread_id)), chatKind: direct ? "direct" : "group",
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
-      text, addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
+      text, addressed: direct || mentioned || !!aimed || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
       ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
         name: message.document?.file_name ?? message.video?.file_name ?? `photo-${message.message_id}.jpg`,
