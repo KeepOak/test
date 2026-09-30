@@ -27,7 +27,7 @@ import com.keepoak.branchagent.BranchLendGeneration.Pending;
  */
 final class BranchLend {
     /** What this phone does when lent: its page takes photos and records (Android's WebView cannot speak). */
-    static final List<String> OFFERS = Collections.unmodifiableList(Arrays.asList("camera", "listen"));
+    static final List<String> OFFERS = Collections.unmodifiableList(Arrays.asList("camera", "listen", "location", "notify", "open-url"));
     static final int PROTOCOL = 1;
     static final int MEDIA_LIMIT = 8 * 1024 * 1024;
 
@@ -291,6 +291,18 @@ final class BranchLend {
             () -> lock.authorize(id, pending, open, System.currentTimeMillis(), page::foreground, node::never));
     }
 
+    /** Native effects are bound to an outstanding signed-socket request, never just a page-supplied action. */
+    void performAction(String id, String capability, Runnable action) {
+        synchronized (lock) {
+            BranchLendGeneration.Pending pending = lock.waiting.get(id);
+            if (pending == null || pending.generation != lock.generation || socket == null || lock.socket != socket
+                || pending.effectCommitted || !pending.capability.equals(capability) || !lock.enabled.contains(capability) || node.never().contains(capability)
+                || pending.deadline < System.currentTimeMillis() || !page.foreground())
+                throw new IllegalStateException("No current phone action request.");
+            pending.effectCommitted = true;
+            action.run();
+        }
+    }
     private static byte[] frameMedia(String id, byte[] bytes) {
         if (bytes == null) return null;
         byte[] framed = new byte[32 + bytes.length];

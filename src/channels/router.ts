@@ -1,4 +1,5 @@
 import { randomBytes, randomInt } from "node:crypto";
+import { companionChatPermissions } from "../devices/companion-grants.js";
 import { diagnose } from "../diagnostic-log.js"; // mac7/diagnostics
 import { z } from "zod";
 import type { Store } from "../store.js";
@@ -1061,6 +1062,10 @@ export class ChannelRouter {
     const settings = chatPermissionSettings(this.store, this.runtime.owner);
     const extra = from ? chatExtraPermissions(settings, from.channel, from.senderId) : [];
     const allowed = chatPermissionsAllowed(this.runtime.registry.permissions(), extra);
+    if (from && !this.appLocked() && !lockedDown(this.store, this.runtime.owner) && this.senderAllowed(from.channel, from.senderId)
+      && this.pair(from.channel, from.senderId)?.status === "approved"
+      && ownerDmHere(this.store, this.runtime.owner, this.adapters.get(from.channel)?.adapter.kind ?? "", from))
+      allowed.push(...companionChatPermissions(this.store).filter(p => this.runtime.registry.permissions().includes(p)));
     // The one exception to "a chat never runs a program": the owner's own account, in a direct chat, on an app that
     // proves who sent it, with the part on (src/channels/owner-commands.ts). Every command still asks.
     return from && this.ownerCommandsFrom(from) && this.runtime.registry.permissions().includes(commandPermission)
@@ -1123,6 +1128,25 @@ export class ChannelRouter {
       for (const next of [started?.parentRunId, started?.resumedFrom, started?.originFrom]) if (typeof next === "string") queue.push(next);
     }
     return chats > 0 && !queue.length;
+  }
+  /** Fresh, still-paired owner DMs only; fetched backlog and removed pairings cannot operate a phone. */
+  companionRunAllowed(runId: string): boolean {
+    if (this.appLocked() || lockedDown(this.store, this.runtime.owner) || !this.ownerDmRun(runId)) return false;
+    const queue = [runId], seen = new Set<string>();
+    while (queue.length && seen.size < 100) {
+      const id = queue.shift()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const events = this.store.events(id);
+      for (const e of events.filter(e => e.kind === "channel.inbound")) {
+        const d = e.data;
+        if (d.caughtUp === true || typeof d.channel !== "string" || typeof d.senderId !== "string"
+          || this.pair(d.channel, d.senderId)?.status !== "approved") return false;
+      }
+      const started = events.find(e => e.kind === "run.started")?.data;
+      for (const next of [started?.parentRunId, started?.resumedFrom, started?.originFrom]) if (typeof next === "string") queue.push(next);
+    }
+    return !queue.length;
   }
   /**
    * A command is approved in a chat only with its own Yes button (the exact request's fingerprint), pressed by the

@@ -61,11 +61,23 @@ async function loadAll() {
     .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
   Object.assign(D, { coding: c, notes: n?.settings ?? null, prs: p, devices: d, desktop, wall, reach, appAsk });
   await loadSites();
+  D.companion = await api("devices/companion-grants").catch(() => null);
   render();
   await loadComputers17();
 }
 
 export function init() {
+  markLive(["phone-companion-add", "phone-companion-revoke"]);
+  on("phone-companion-add", async () => {
+    try { await api("devices/companion-grants", { deviceId: document.getElementById("pc-device").value, profileId: D.companion.profileId,
+      action: document.getElementById("pc-action").value, chat: document.getElementById("pc-chat").checked, minutes: 5 }); }
+    catch (error) { toast(error.message); }
+    await loadAll();
+  });
+  on("phone-companion-revoke", async el => {
+    try { await api("devices/companion-grants", { id: el.dataset.v }, "DELETE"); } catch (error) { toast(error.message); }
+    await loadAll();
+  });
   markLive(["sw:f15-page-notes-and-send-to-branch-", "sw:f15-try-ideas-on-a-branch", "sw:f15-check-and-format-files-after-editing",
     "sw:f15-draft-a-pull-request-from-a-task", "sw:f15-remember-the-shell", "sw:f15-read-a-file-before-editing-it",
     "sw:f15-keep-large-tool-outputs", "sw:f15-read-jupyter-notebooks", "sw:f15-review-checks-and-a-checklist-per-task",
@@ -219,13 +231,21 @@ const computerMore = () => sec15(t("window.settings.computer.on-a-computer-more"
   + sw("Review checks and a checklist per task", "Checks you write run before a task says it’s done; the checklist shows in the task.")
   + code15(t("window.settings.computer.write-agents-md-for-a-project"), t("window.settings.computer.branch-reads-the-project-and-writes"), "/init"));
 
+function phoneCompanion() {
+  if (!D.companion) return "";
+  const phones = (D.devices?.devices ?? []).filter(d => ["ios", "android"].includes(d.platform));
+  const choices = phones.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("");
+  const actions = [["camera", "Camera photo"], ["location", "One location fix"], ["notify", "Show notification"], ["open-url", "Open HTTPS page"]];
+  const grants = D.companion.grants.map(g => `<p>${esc(phones.find(p => p.id === g.deviceId)?.name ?? "Unpaired phone")} · ${esc(g.action)} · ${g.chat ? "verified owner DM and window" : "window only"} · until ${esc(new Date(g.expiresAt).toLocaleTimeString())} <button type="button" data-act="phone-companion-revoke" data-v="${esc(g.id)}">Revoke</button></p>`).join("");
+  return `<section class="sec"><h2>Phone companion actions</h2><p>Separate from screen viewing. Grant one action to one phone in the owner profile for five minutes. Expiry or revoke switches that action off and cancels outstanding work. The phone must offer it and remain open; its Never allow choices and OS permission still apply.</p><p>Devices are ${esc(D.devices?.mode ?? "off")}. Existing tool approval rules still apply. Camera/location results go into the requesting task; notifications only post to this phone, and do not read other apps’ notifications.</p><label>Phone <select id="pc-device">${choices}</select></label><label>Action <select id="pc-action">${actions.map(([id, title]) => `<option value="${id}">${title}</option>`).join("")}</select></label><label><input type="checkbox" id="pc-chat">Also allow requests from my verified, named owner direct chat accounts (whoever controls that account can request this action)</label><button type="button" data-act="phone-companion-add" ${choices ? "" : "disabled"}>Grant selected action for five minutes</button>${grants}</section>`;
+}
 export function draw() {
   const lev = level();
   let html = `<h1>${esc(t("settings.page.computer"))}</h1><p class="lede">${t("window.settings.computer.the-computers-your-trunks-may-use")}</p>`;
   html += computers() + whichTrunk() + onAComputer() + BROWSER();
   if (lev < 2) html += `<p class="hint">${t("window.settings.computer.switch-to-technical-bottom-left-to")}</p>`;
   else html += `<div class="sec"><h2>${t("settingsGrown.level.technical")}</h2><dl class="kv"></dl></div>`; // the engine gives no sandbox, profile or screen facts
-  html += phones();
+  html += phones() + phoneCompanion();
   if (lev >= 1) html += browserMore() + code();
   if (lev >= 2) html += codeTechnical();
   if (lev >= 1) html += computerMore();

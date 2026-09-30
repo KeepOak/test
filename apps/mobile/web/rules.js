@@ -102,7 +102,7 @@ export function readInvitation(text) {
  * likely to mind. They are the capability names src/devices/capabilities.ts uses. The native sides keep
  * the list; while lending is hidden (the phone cannot yet do what it would offer), the phone offers nothing.
  */
-export const DEVICE_REFUSALS = ["camera", "screen", "listen", "run"];
+export const DEVICE_REFUSALS = ["camera", "screen", "listen", "run", "location", "notify", "open-url"];
 /** A kept refusal list, in a fixed order, with anything unknown dropped. */
 export const readNever = (saved) => DEVICE_REFUSALS.filter((name) => (Array.isArray(saved) ? saved : []).includes(name));
 

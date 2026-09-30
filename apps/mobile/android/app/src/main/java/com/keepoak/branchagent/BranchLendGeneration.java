@@ -18,6 +18,7 @@ final class BranchLendGeneration {
     static final class Pending {
         final long deadline, generation;
         final String capability;
+        boolean effectCommitted;
         Pending(long deadline, long generation, String capability) {
             this.deadline = deadline;
             this.generation = generation;

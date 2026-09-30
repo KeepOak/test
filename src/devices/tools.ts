@@ -13,6 +13,7 @@ import { deviceArgs } from "./args.js";
 import type { DeviceBook, DeviceRecord } from "./book.js";
 import { capabilityInfo, devicePermissions, type Capability } from "./capabilities.js";
 import { DeviceSaid, type DeviceHub, type InvokeAnswer } from "./hub.js";
+import { companionActions, companionGrant, isCompanionAction } from "./companion-grants.js";
 
 /**
  * mac7/nodes: the tools the model uses to ask one of the owner's devices for something. Every call
@@ -35,6 +36,7 @@ export const chatRefusal = "A message from a chat app cannot use the owner's dev
 export interface DeviceToolDeps {
   store: Store; owner: string; book: DeviceBook; hub: DeviceHub; files: WorkspaceFiles;
   now?: () => Date;
+  ownerChatRun?: (runId: string) => boolean;
   /** P17-D §9: the computers each Trunk may use (src/trunks/computers.ts); absent, every computer is allowed. */
   rule?: () => ComputerRule | null;
 }
@@ -67,11 +69,11 @@ function askingPerson(deps: DeviceToolDeps, context: ToolContext): string | null
 }
 
 /** Why this task may not use devices at all, or null. */
-export function accessRefusal(deps: DeviceToolDeps, context: ToolContext): string | null {
+export function accessRefusal(deps: DeviceToolDeps, context: ToolContext, allowCompanionChat = false): string | null {
   const origin = runOrigin(deps.store, context.runId);
   if (startedWithShortLivedKey() || origin.shortLivedKey) return keyRefusal;
   const source = context.source && context.source !== "owner" ? context.source : origin.source;
-  if (source === "channel") return chatRefusal;
+  if (source === "channel" && !allowCompanionChat) return chatRefusal;
   if (["mcp", "a2a", "acp"].includes(source)) return agentRefusal;
   return null;
 }
@@ -152,12 +154,23 @@ export function deviceError(error: unknown, device: string): Error {
 export async function useDevice(deps: DeviceToolDeps, context: ToolContext, named: string | undefined,
   capability: Capability, args: Record<string, unknown>): Promise<Record<string, unknown>> {
   deps.book.requireOn();
-  const refused = accessRefusal(deps, context);
+  const chat = runOrigin(deps.store, context.runId).source === "channel" || context.source === "channel";
+  const ownerChat = chat && deps.ownerChatRun?.(context.runId) === true;
+  const refused = accessRefusal(deps, context, ownerChat);
   if (refused) throw new Error(refused);
   const device = chooseDevice(deps, context, named);
-  const answer = await deps.hub.invoke(device.id, capability, args, { signal: context.signal,
-    timeoutMs: capability === "run" ? Number(args.timeoutSeconds ?? 60) * 1000 + 15_000 : 45_000 })
+  const companion = isCompanionAction(device, capability);
+  const grant = companion ? companionGrant(deps.store, device, askingPerson(deps, context), capability, chat) : null;
+  if (companion && !grant || chat && (!companion || !grant || !ownerChat)) throw new Error("This phone action needs its own current local-owner device/profile/action grant.");
+  const signal = grant ? AbortSignal.any([grant.abort.signal, ...(context.signal ? [context.signal] : [])]) : context.signal;
+  const answer = await deps.hub.invoke(device.id, capability, args, { signal,
+    timeoutMs: grant ? Math.max(1, Math.min(45000, grant.expiresAt - Date.now()))
+      : capability === "run" ? Number(args.timeoutSeconds ?? 60) * 1000 + 15_000 : 45_000 })
     .catch((error: unknown) => { throw error instanceof DeviceSaid ? deviceError(error, device.name) : error; });
+  const current = deps.book.device(device.id);
+  deps.book.requireOn();
+  if (companion && (!current || companionGrant(deps.store, current, askingPerson(deps, context), capability, chat) !== grant)
+    || grant?.abort.signal.aborted || chat && deps.ownerChatRun?.(context.runId) !== true) throw new Error("The phone action grant is no longer current.");
   const cleaned = redactLeaksIn(cutText(answer.value ?? null));
   const result: Record<string, unknown> = { device: device.name, trust: "untrusted", note: untrustedNote, result: cleaned.value };
   if (cleaned.kinds.size) result.hidden = [...cleaned.kinds];
@@ -195,6 +208,7 @@ function argsFor(capability: Capability, input: Record<string, unknown>): Record
 }
 
 export function registerDeviceTools(registry: ToolRegistry, deps: DeviceToolDeps): void {
+  registerCompanionTools(registry, deps);
   registry.register({
     name: "device.list", permission: devicePermissions.list,
     description: "List the owner's paired devices this task may use: name, kind, whether connected, and what is switched on.",
@@ -224,5 +238,30 @@ export function registerDeviceTools(registry: ToolRegistry, deps: DeviceToolDeps
         return `${String(input.device ?? "the picked device")}: ${what}`;
       },
     });
+  }
+}
+
+/** Narrow phone tools leave the existing devices.* chat permission prohibition intact. */
+function registerCompanionTools(registry: ToolRegistry, deps: DeviceToolDeps): void {
+  registry.register({ name: "phone.list", permission: "phone.read", description: "Phones with current local-owner action grants for this profile. No screen/control authority is included.",
+    parameters: z.object({}).strict(), execute: async (_input, context) => {
+      deps.book.requireOn();
+      const chat = runOrigin(deps.store, context.runId).source === "channel";
+      const refusal = accessRefusal(deps, context, chat && deps.ownerChatRun?.(context.runId) === true);
+      if (refusal) throw new Error(refusal);
+      const person = askingPerson(deps, context);
+      return { devices: visibleDevices(deps, context).map(d => ({ device: d, actions: companionActions.filter(c => companionGrant(deps.store, d, person, c, chat)) }))
+        .filter(d => d.actions.length).map(({ device, actions }) => ({ id: device.id, name: device.name, connected: deps.hub.connected(device.id), actions })) };
+    } });
+  for (const entry of registrations.filter(e => typeof e.capability === "string" && (companionActions as readonly string[]).includes(e.capability))) {
+    const capability = entry.capability as Capability;
+    registry.register({ name: entry.name.replace("device.", "phone."), permission: capabilityInfo[capability].kind === "capture" ? "phone.capture" : "phone.act",
+      description: `One explicitly granted action on a paired phone; its separate local-owner device/profile/action grant must still be current. ${entry.extra} ${untrustedNote}`,
+      parameters: entry.schema.extend({ device: DeviceName }),
+      execute: async (input: Record<string, unknown>, context) => {
+        const device = chooseDevice(deps, context, input.device as string | undefined);
+        if (!isCompanionAction(device, capability)) throw new Error("Choose a paired phone with a companion action grant.");
+        return useDevice(deps, context, device.id, capability, argsFor(capability, input));
+      }, target: input => `${String(input.device ?? "the picked phone")}: ${capability === "open-url" ? String(input.url ?? "") : capabilityInfo[capability].label}` });
   }
 }
