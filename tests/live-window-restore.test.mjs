@@ -6,7 +6,8 @@ const source = await readFile(new URL("../public/app/shell/liveupdate.js", impor
 const keep = source.slice(source.indexOf("function openNow("), source.indexOf("const frames ="));
 /* The module's own layout and scroll helpers, and stand-ins for what it imports (who is signed in, Settings pages, pane tabs). */
 const helpers = source.slice(source.indexOf("const VIEWS ="), source.indexOf("/* Listens for live updates"));
-const stubs = (principal = "owner") => ({ E: { profiles: null }, sessionPrincipal: () => principal, hasPage: () => true, extraTabs: [] });
+const stubs = (principal = "owner") => ({ E: { profiles: null }, sessionPrincipal: () => principal, hasPage: () => true, extraTabs: [],
+  document: { getElementById: () => null, querySelectorAll: () => [] } });
 function capture({ chat = null, pending = true, storageError = false } = {}) {
   let saved;
   const context = vm.createContext({ ...stubs(), S: { chat, view: "chat", tabs: {}, drafts: {} }, sendingWithoutSession: () => pending,
@@ -60,7 +61,8 @@ test("active recovery restores a retained snapshot older than a minute before ac
     renderNow: () => {}, $: (selector) => selector === "#prompt" ? box : scroll,
     sessionStorage: { getItem: () => JSON.stringify(kept), removeItem: () => { removed = true; } } });
   vm.runInContext(helpers + restore, context);
-  assert.equal(await vm.runInContext("restoreOpen(async (id) => { S.chat = id; })", context), true);
+  // As chat/chat.js openConversation does: the conversation opens in the chat view.
+  assert.equal(await vm.runInContext("restoreOpen(async (id) => { S.chat = id; S.view = 'chat'; })", context), true);
   assert.equal(state.chat, KEPT); assert.equal(box.value, "slow rollback draft"); assert.deepEqual(caret, [2, 7]);
   assert.equal(scroll.scrollTop, 12); assert.equal(acknowledged, "current-recovery"); assert.equal(removed, true);
 });
@@ -108,4 +110,60 @@ test("PLAT-045: a shell handover brings back the place, pane and layout, and nev
   assert.equal(other.state.chat, null, "another person's conversation is not opened");
   assert.deepEqual({ ...other.state.drafts }, {}, "nor their draft");
   assert.equal(other.removed, true, "their snapshot is dropped");
+});
+/* Each case changes something while the restoration waits (inside the awaited call, so the change lands mid-wait):
+   the person, the app lock, the owner's own move, or a newer handover's snapshot. */
+async function interrupted(at, change) {
+  const kept = { at: Date.now(), commit: "a".repeat(40), principal: "owner", view: "inbox", chat: KEPT, drafts: { [KEPT]: "half a thought" },
+    caret: { start: 1, end: 4, focused: false }, scroll: { top: 30, atEnd: false }, layout: { pane: "files", sideW: 300 } };
+  const store = new Map([["restore", JSON.stringify(kept)]]);
+  const world = { who: "owner", locked: false, opens: 0, receipts: 0, frames: 0, store };
+  const state = world.state = { chat: null, view: "chat", tabs: {}, drafts: {} };
+  const box = world.box = { value: "", setSelectionRange: () => {}, focus: () => {} }, scroll = world.scroll = { scrollTop: 0 };
+  const app = { classList: { contains: (name) => name === "locked-b17" && world.locked } };
+  const context = vm.createContext({ ...stubs(), sessionPrincipal: () => world.who, KEY: "restore",
+    frames: async () => { if (++world.frames === 1 && at === "frames") change(world); },
+    bridge: () => ({ windowRestored: async () => { world.receipts++; if (at === "receipt") change(world); return true; } }),
+    location: { href: "http://localhost:45001/?_branch_live_restore=handover" }, URL, history: { replaceState: () => {} }, S: state, renderNow: () => {},
+    $: (selector) => selector === "#prompt" ? box : selector === "#scroll" ? scroll : null,
+    document: { getElementById: (id) => id === "app" ? app : null, querySelectorAll: () => [] },
+    sessionStorage: { getItem: (key) => store.get(key) ?? null, removeItem: (key) => { store.delete(key); } } });
+  context.held = async (id) => { world.opens++; state.chat = id; state.view = "chat"; if (at === "open") change(world); };
+  vm.runInContext(helpers + restore, context);
+  world.result = await vm.runInContext("restoreOpen(held)", context);
+  return world;
+}
+test("PLAT-045: a person switch while the conversation is read puts nothing more back and drops only that snapshot", async () => {
+  const run = await interrupted("open", (world) => { world.who = "someone-else"; });
+  assert.equal(run.result, false);
+  assert.equal(run.state.view, "chat", "the previous person's place is not put back");
+  assert.equal(run.state.pane, undefined, "nor their layout");
+  assert.equal(run.box.value, "", "nor their draft in the composer");
+  assert.equal(run.store.has("restore"), false, "their snapshot is dropped");
+  assert.equal(run.opens, 1); assert.equal(run.receipts, 1, "the app is told once");
+});
+test("PLAT-045: the app lock during the first frames stops the composer, caret and scroll coming back", async () => {
+  const run = await interrupted("frames", (world) => { world.locked = true; });
+  assert.equal(run.result, false);
+  assert.equal(run.box.value, "", "no draft is written behind the lock");
+  assert.equal(run.scroll.scrollTop, 0);
+  assert.equal(run.store.has("restore"), false);
+  assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
+});
+test("PLAT-045: the owner's own move while the conversation is read stands; the old place is not laid over it", async () => {
+  const other = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+  const run = await interrupted("open", (world) => { world.state.chat = other; });
+  assert.equal(run.result, true);
+  assert.equal(run.state.chat, other);
+  assert.equal(run.state.view, "chat", "the kept place (inbox) does not replace where the owner went");
+  assert.equal(run.state.pane, undefined);
+  assert.equal(run.scroll.scrollTop, 0);
+  assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
+});
+test("PLAT-045: a newer handover's snapshot written while the app is told is kept for the page after this one", async () => {
+  const newer = JSON.stringify({ at: Date.now(), commit: "b".repeat(40), principal: "owner", view: "chat", drafts: { new: "newer words" } });
+  const run = await interrupted("receipt", (world) => { world.store.set("restore", newer); });
+  assert.equal(run.result, false);
+  assert.equal(run.store.get("restore"), newer, "the older restoration does not consume the newer snapshot");
+  assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
 });
