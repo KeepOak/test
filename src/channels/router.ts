@@ -204,9 +204,10 @@ export interface ChannelAdapter {
    * reactions side by side (Slack, Discord) take `previous` off first; apps where a new reaction
    * replaces the old one (Telegram) may ignore it. An app that names reactions in words maps the
    * emoji itself and throws for one it has no name for. Absent means this app has no reactions and
-   * the status shows only as typing and progress.
+   * the status shows only as typing and progress. A `gate` is checked before each call to the app and its signal carried
+   * by each request, so a replacement (take off, then put on) stops when the owner's access ends between the two.
    */
-  react?(chatId: string, messageId: string, emoji: string, previous?: string): Promise<void>;
+  react?(chatId: string, messageId: string, emoji: string, previous?: string, gate?: SendGate): Promise<void>;
   /**
    * An app without buttons that reads reactions: from now on, a thumbs up (or check) or thumbs down (or cross) by
    * `senderId` on the question message `messageId` in this chat comes back as the answer to that question
@@ -2122,7 +2123,7 @@ export class ChannelRouter {
       return { bytes: seen.frame, caption: words ? `🌐 ${words}` : "" };
     } : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
-      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress, react: this.style(message).react, picture, pictureButtons,
+      allowed: () => this.liveOn() && this.adapters.get(message.channel)?.adapter === adapter, kindsOnly: message.chatKind === "group", progress, react: this.style(message).react, picture, pictureButtons,
       milestones: adapter.kind === "whatsapp" && message.chatKind === "direct" ? () => {
         const current = this.stepsDisplay(message.channel), toggles = this.switches();
         return this.senderAllowed(message.channel, message.senderId) && toggles.liveStatus !== "off" && toggles.steps !== "off"

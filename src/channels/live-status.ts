@@ -1,4 +1,4 @@
-import type { ChannelAdapter, MessageFormat } from "./router.js";
+import type { ChannelAdapter, MessageFormat, SendGate } from "./router.js";
 import { chunkText } from "./deliveries.js";
 import { kindLines, type RichText } from "./progress-render.js";
 
@@ -156,6 +156,8 @@ export class LiveStatus {
   private state: LiveState | null = null;
   private wanted: LiveState | null = null;
   private readonly failures = { typing: 0, react: 0, edit: 0, status: 0 };
+  /** Aborted by cancel(): a reaction still on its way to the app stops there. */
+  private readonly cancelled = new AbortController();
   /** The status line last asked for, so the same words are not sent again. */
   private statusShown = "";
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
@@ -391,6 +393,7 @@ export class LiveStatus {
   /** Stops everything without a last reaction or edit, for a turn that never became a task. */
   cancel(): void {
     this.closed = true;
+    this.cancelled.abort();
     this.stopTimers();
     this.clearStatus();
   }
@@ -451,12 +454,20 @@ export class LiveStatus {
     if (!adapter.react || this.target.react === false || !wanted || wanted === this.state || this.failures.react >= giveUpAfter || !this.permitted()) return;
     const previous = this.state ? statusEmoji[this.state] : undefined;
     try {
-      await adapter.react(chatId, reactTo ?? messageId, statusEmoji[wanted], previous);
+      await adapter.react(chatId, reactTo ?? messageId, statusEmoji[wanted], previous, this.reactionGate());
       this.state = wanted;
       this.failures.react = 0;
     } catch {
       this.failures.react++;
     }
+  }
+  /** Checked again before each call of one reaction change, so Lockdown, quiet hours or a disconnect between them stop it. */
+  private reactionGate(): SendGate {
+    const signal = this.cancelled.signal;
+    return { signal, check: () => {
+      signal.throwIfAborted();
+      if (!this.permitted()) throw new Error("The live status is no longer allowed");
+    } };
   }
   /** Sends the progress message once the task has been working for a while. */
   private openProgress(): Promise<void> {
