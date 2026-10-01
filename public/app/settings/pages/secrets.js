@@ -10,7 +10,8 @@ import { esc, render } from "../../core/dom.js";
 import { api } from "../../core/api.js";
 import { on } from "../../core/actions.js";
 import { markLive } from "../../core/features.js";
-import { toast, ic } from "../../core/ui.js";
+import { toast } from "../../core/ui.js";
+import { signInLogo } from "../../core/logos.js";
 import { secrets17, VAULT_SERVICE } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { t } from "../../../i18n.js";
@@ -52,7 +53,7 @@ export async function load() { await loadAll(); }
 export const live = { "secret-rm": true, "vaultb17": true };
 
 function rows() {
-  return (vault?.logins ?? []).map((s) => `<div class="prow"><span class="ico-tile">${ic("key", "s")}</span><span class="grow"><b>${esc(s.name)}</b><small>${esc(s.site)}</small></span><span class="meta">${MASK}</span><button class="btn ghost sm" type="button" data-act="secret-rm" data-name="${esc(s.name)}">${t("accounts.action.remove")}</button></div>`).join("");
+  return (vault?.logins ?? []).map((s) => `<div class="prow">${signInLogo(s.site)}<span class="grow"><b>${esc(s.name)}</b><small>${esc(s.site)}</small></span><span class="meta">${MASK}</span><button class="btn ghost sm" type="button" data-act="secret-rm" data-name="${esc(s.name)}">${t("accounts.action.remove")}</button></div>`).join("");
 }
 
 export function draw() {

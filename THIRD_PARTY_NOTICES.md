@@ -4065,3 +4065,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+### Gotify logo (CC BY 4.0)
+
+`public/art/channels/gotify.svg` is the original, unmodified `gotify-logo-small.svg` from the Gotify organisation's official logo repository, commit `25c1d2c08894fcb0ed39c36a2816316a161c0e57`:
+https://github.com/gotify/logo/blob/25c1d2c08894fcb0ed39c36a2816316a161c0e57/gotify-logo-small.svg
+
+Attribution: Gotify organisation and logo contributors; the original Go gopher was designed by Renee French (http://reneefrench.blogspot.com/). The project's README publishes the logo under Creative Commons Attribution 4.0 International: https://creativecommons.org/licenses/by/4.0/. Full upstream licence text is preserved in `public/art/channels/gotify.LICENSE`. No modifications were made; it identifies the connected Gotify service and does not imply endorsement. The mark's tooltip also carries source and licence attribution. Asset SHA-256: `1b7d4e4f46d09950cb10ee98a5971b2ea1c10bf8d5970c198b8233380dcada63`.
+
+UI121/CHAT154 retains all other existing mark sources and licences. The OpenAI Blossom remains the existing square symbol with its original shape and colour (usage terms checked at https://openai.com/brand/). Unknown services use Branch's neutral glyphs, not fabricated marks. Microsoft/Apple permission gaps remain, and IRC is a protocol rather than a vendor brand. No new permission for their marks is claimed.

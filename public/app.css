@@ -3681,7 +3681,7 @@ button.sb:hover,button.sb[aria-expanded="true"]{background:var(--wash17)}
 
 /* area: accounts-wizard-plans */
 .logo.mark14{box-shadow:inset 0 0 0 1px rgba(0,0,0,.12)}
-.logo.mark14 img{display:block}
+.logo.mark14 img{display:block;object-fit:contain;object-position:center;max-width:62%;max-height:62%;filter:none;transform:none}
 .devcode14{font:600 22px var(--mono);letter-spacing:.12em;padding:6px 14px;border-radius:10px;background:var(--fill);color:var(--ink);user-select:all}
 .sigline14{display:block;margin:6px 0 10px;padding:8px 10px;border-radius:10px;background:var(--fill);font:12px var(--mono);color:var(--ink);white-space:pre-wrap;word-break:break-all;user-select:all}
 
