@@ -260,7 +260,7 @@ test("Windows computer control runs Windows on a pull request; a file most tests
     assert.equal(platformLanes([file], checkedIn).windows, true, file);
   assert.deepEqual(platformLanes(["tests/windows-computer-proof.test.mjs"], checkedIn, laneTests), { windows: true, macos: false });
   assert.ok(checkedIn.platformSourceTests >= 1 && checkedIn.platformSourceTests < checkedIn.hubTests);
-  assert.equal(checkedIn.prLinuxShards, 4);
+  assert.equal(checkedIn.prLinuxShards, 8);
 });
 
 /* A script sends the whole lane in selectImpact, so its own tests were missing from a pull request's light run
