@@ -21,6 +21,7 @@ import { $, esc, renderNow } from "../core/dom.js";
 import { E, S, ownerHere, ownName, roleLabel, projectName, activeId } from "../core/state.js";
 import { ic, openDlg, closeDlg, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
+import { sessionPrincipal } from "../core/session-pages.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { ctl, ctlSeg } from "../settings/parts.js";
@@ -30,7 +31,7 @@ import { av } from "../core/ui.js";
 import { empty18 } from "../core/p18.js"; // pass 18: an empty list is a welcome
 import { helperSource, helperControls } from "../chat/helpframe.js"; // pass 18b: a lane's Steer and Stop
 
-const D = { card: null, links: [], teams: [], tasks: {}, audit: [], glance: null, projects: [] };
+const D = { card: null, links: [], teams: [], tasks: {}, audit: [], glance: null, personUsage: null, projects: [] };
 /* Pass 18: the tabs whose data came back from the engine; only those draw an empty state (never while still reading). */
 const READ = new Set();
 /* The owner's sign-in card, as Team last read it (places/team.js). */
@@ -283,9 +284,28 @@ function activityTab(card) {
 
 /* ---------- Usage and Rules ---------- */
 
+function personUsageRows() {
+  const report = D.personUsage;
+  if (!report) return "";
+  const total = report.rows.reduce((sum, row) => sum + row.tokens.input + row.tokens.output, 0);
+  const rows = report.rows.map((row) => {
+    const name = row.kind === "owner" ? ownName() : row.kind === "unassigned" ? t("window.places.team.person-usage-unassigned")
+      : row.name || t("window.places.team.person-usage-removed");
+    const tokens = row.tokens.input + row.tokens.output;
+    const share = total ? (100 * tokens / total).toFixed(1) : "0.0";
+    const cost = row.estimatedModelCost === null ? t("window.places.team.person-usage-unknown") : money(row.estimatedModelCost);
+    const details = [t("window.places.team.person-usage-count", { tasks: row.tasks, tokens, share }),
+      t("window.places.team.person-usage-estimate", { cost }),
+      row.unpricedTasks ? t("window.places.team.person-usage-unpriced", { count: row.unpricedTasks }) : ""].filter(Boolean).join(" · ");
+    return `<div class="prow"><span class="grow"><b>${esc(name)}</b><small>${esc(details)}</small></span></div>`;
+  }).join("");
+  const coverage = report.capped ? `<p class="hint">${esc(t("window.places.team.person-usage-capped", { count: report.inspected }))}</p>` : "";
+  return `<section class="sec"><h2>${esc(t("window.places.team.person-usage-title", { days: report.days }))}</h2><p class="hint">${esc(t("window.places.team.person-usage-note"))}</p>${coverage}${rows || `<p class="hint">${esc(t("window.places.team.person-usage-empty"))}</p>`}</section>`;
+}
 function usageTab() {
-  if (READ.has("usage") && !(D.glance?.rows ?? []).length) return empty18("team:usage");
-  return `<p class="hint" data-css="margin:0 0 10px">${t("window.places.team.each-persons-own-model-accounts")}</p><div class="lims flat" data-css="margin-top:14px">${(D.glance?.rows ?? []).map(limitRow).join("")}</div>`;
+  keepUsageScoped();
+  if (READ.has("usage") && !(D.glance?.rows ?? []).length && !D.personUsage?.rows?.length) return personUsageRows() + empty18("team:usage");
+  return `${personUsageRows()}<p class="hint" data-css="margin:0 0 10px">${t("window.places.team.each-persons-own-model-accounts")}</p><div class="lims flat" data-css="margin-top:14px">${(D.glance?.rows ?? []).map(limitRow).join("")}</div>`;
 }
 /* The workspace's rules live on keepoak.com, which the engine does not reach: drawn greyed, nothing pressed. */
 function rulesTab() {
@@ -320,15 +340,37 @@ async function readTeams() {
   return { teams, tasks };
 }
 /* A tab's own data, read when it is switched to; answers whether anything changed. Only the owner reads any of it. */
+/* The usage report is the owner's, as read for one person at the window: kept with who read it and dropped once someone
+   else is at the window or the app locks. An answer is taken only while the read that asked is still the newest, for the
+   same person, unlocked, on the same place and tab, so an older answer arriving late never replaces a newer report. */
+let usageRead = 0, usageFor = null;
+const appLocked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
+function keepUsageScoped() {
+  if (usageFor === null || (usageFor === sessionPrincipal(E.profiles) && ownerHere() && !appLocked())) return;
+  usageRead += 1; usageFor = null; D.glance = null; D.personUsage = null; READ.delete("usage");
+}
+/* Answers false only when the answer came too late to be taken. */
+async function readUsage() {
+  const mine = ++usageRead, who = sessionPrincipal(E.profiles), view = S.view, tab = S.tabs.team;
+  const current = () => mine === usageRead && sessionPrincipal(E.profiles) === who && ownerHere() && !appLocked()
+    && S.view === view && S.tabs.team === tab;
+  try {
+    const [glance, usage] = await Promise.all([api("usage/glance"), api("usage?range=30d&people=1")]);
+    if (!current()) return false;
+    D.glance = glance; D.personUsage = usage.byPerson ?? null; usageFor = who; READ.add("usage");
+  } catch (error) { if (!current()) return false; toast(error.message); }
+  return true;
+}
 export async function readTab(tab) {
-  if (!ownerHere()) return false;
+  if (tab === "usage") keepUsageScoped();
+  if (!ownerHere() || (tab === "usage" && appLocked())) return false;
   const before = JSON.stringify(D), had = READ.has(tab);
+  if (tab === "usage") return (await readUsage()) && (JSON.stringify(D) !== before || !had);
   try {
     if (tab === "shared") D.links = (await api("shares")).shares ?? [];
     else if (tab === "groups") D.projects = (await api("projects")).all ?? [];
     else if (tab === "agents") Object.assign(D, await readTeams());
     else if (tab === "activity") D.audit = await readAudit();
-    else if (tab === "usage") D.glance = await api("usage/glance");
     READ.add(tab);
   } catch (error) { toast(error.message); }
   return JSON.stringify(D) !== before || !had;

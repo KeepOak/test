@@ -3,10 +3,23 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { _electron } from "playwright";
-import { desktopOptions, offScreen, onboarded } from "./fixtures/desktop-options.mjs";
+import { desktopOptions, mainLines, offScreen, onboarded, STARTUP_MS } from "./fixtures/desktop-options.mjs";
 import { discardTemp } from "./temp-dir.mjs";
 import { stopHomeBroker } from "./fixtures/gateway-close.mjs";
 import { proveOnce, sessionKey } from "../dist/engine-proof.js";
+
+/**
+ * A shell that ends before the test closes it says why: its exit code and everything main wrote are printed into the
+ * test's output (a Windows run once saw a shell close about 3.5 s after launch with nothing else to go on).
+ */
+function reportEarlyExit(electron, name, closing) {
+  const lines = mainLines(electron);
+  electron.process().once("close", (code, signal) => {
+    if (closing()) return;
+    console.log(`${name} ended before the test closed it`, JSON.stringify({ code, signal, pid: electron.process().pid }));
+    console.log(lines.filter((line) => line.trim()).join("\n") || "(it wrote nothing)");
+  });
+}
 
 test("a detached Electron broker proves its public engine with no shell windows and ends only its owned engine", { timeout: 180000 }, async (t) => {
   // Here an explicit existing runtime is required; a build machine uses the one its install put in place.
@@ -68,9 +81,10 @@ test("closing and reopening a shell joins the same detached broker and keeps its
     await discardTemp(home);
   });
   const first = await _electron.launch(options), firstItem = { electron: first, closing: false }; shells.push(firstItem);
+  reportEarlyExit(first, "first joined shell", () => firstItem.closing);
   const firstPid = await first.evaluate(() => process.pid);
   console.log("isolated gateway shell", JSON.stringify({ mainPid: firstPid, home, launchedAt: new Date().toISOString() }));
-  await onboarded(await first.firstWindow()); await offScreen(first, "first joined shell");
+  await onboarded(await first.firstWindow({ timeout: STARTUP_MS })); await offScreen(first, "first joined shell");
   presence = JSON.parse(await readFile(join(home, "state", "running.json"), "utf8"));
   token = (await readFile(join(home, "state", "session-token"), "utf8")).trim();
   const boot = await proveOnce(presence.url, token, 5000); assert.ok(boot); assert.notEqual(presence.pid, firstPid);
@@ -82,8 +96,9 @@ test("closing and reopening a shell joins the same detached broker and keeps its
   while (Date.now() < until) { try { process.kill(firstPid, 0); } catch { break; } await new Promise((resolve) => setTimeout(resolve, 30)); }
   assert.throws(() => process.kill(firstPid, 0), "the actual first shell exited");
   assert.equal(await proveOnce(presence.url, token, 5000), boot, "shell close leaves the gateway proof unchanged");
-  const second = await _electron.launch(options); shells.push({ electron: second, closing: false });
-  await onboarded(await second.firstWindow()); await offScreen(second, "reopened joined shell");
+  const second = await _electron.launch(options), secondItem = { electron: second, closing: false }; shells.push(secondItem);
+  reportEarlyExit(second, "reopened joined shell", () => secondItem.closing);
+  await onboarded(await second.firstWindow({ timeout: STARTUP_MS })); await offScreen(second, "reopened joined shell");
   assert.deepEqual(JSON.parse(await readFile(join(home, "state", "running.json"), "utf8")), presence);
   assert.equal(await proveOnce(presence.url, token, 5000), boot);
 });
@@ -94,18 +109,20 @@ test("the owner's OFF from a joined shell stops the broker and the shell starts 
   const { options, home } = await desktopOptions({ hidden: true, gateway: true });
   if (process.env.BRANCH_TEST_ELECTRON) options.executablePath = process.env.BRANCH_TEST_ELECTRON; options.env.BRANCH_TEST_ENGINE_HOOKS = "1";
   const shell = await _electron.launch(options);
-  let presence, token;
+  let presence, token, closing = false;
+  reportEarlyExit(shell, "gateway-off shell", () => closing);
   t.after(async () => {
+    closing = true;
     await offScreen(shell, "joined shell cleanup");
-    const closing = shell.close();
+    const closed = shell.close();
     // Ends the broker this test's home started, even when the test stopped before it read the note (a busy computer).
     await stopHomeBroker(home);
-    await closing;
+    await closed;
     await discardTemp(home);
   });
   const shellPid = await shell.evaluate(() => process.pid);
   console.log("isolated gateway-off shell", JSON.stringify({ mainPid: shellPid, home, launchedAt: new Date().toISOString() }));
-  await onboarded(await shell.firstWindow()); await offScreen(shell, "joined shell before OFF");
+  await onboarded(await shell.firstWindow({ timeout: STARTUP_MS })); await offScreen(shell, "joined shell before OFF");
   presence = JSON.parse(await readFile(join(home, "state", "running.json"), "utf8"));
   token = (await readFile(join(home, "state", "session-token"), "utf8")).trim();
   const boot = await proveOnce(presence.url, token, 5000); assert.ok(boot); assert.notEqual(presence.pid, shellPid);
