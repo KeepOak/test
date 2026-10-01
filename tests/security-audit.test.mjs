@@ -149,7 +149,8 @@ const triggers = {
   "channels.no-pairing": (s) => { chat(s, { pairing: false, allowlist: ["12345"] }); },
   "channels.always-listening": (s) => { chat(s, { activation: "always" }); },
   "channels.mail-in-clear": (s) => { chat(s, { id: "email", type: "email", tls: false }); },
-  "channels.commands-without-asking": (s) => { chat(s); s.integrations.shell = shell(); s.policy.unmatchedCommands = "allow"; },
+  // Owner ruling 2026-09-30: "a command no rule mentions" is the owner's own tasks' setting (outside ones ask anyway), so only a rule counts.
+  "channels.commands-without-asking": (s) => { chat(s); s.integrations.shell = shell(); s.policy.rules = [rule({ tool: "shell.execute", decision: "allow" })]; },
   "channels.personal-details-sent": (s) => { chat(s); s.privacy.outbound = "off"; },
   "channels.no-content-check": (s) => { chat(s); s.privacy.moderation = false; },
 };

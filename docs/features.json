@@ -224,7 +224,7 @@
       "status": "partial",
       "evidence": {
         "paths": [
-          "public/service-worker.js",
+          "src/retired-phone-worker.ts",
           "apps/mobile/web/rules.js",
           "tests/web-ui.test.mjs",
           "tests/mobile-rules.test.mjs"
@@ -233,7 +233,7 @@
           "U6 the installable-app files are served and the worker is skipped inside the desktop app",
           "a notification is only for something new that is waiting for the owner"
         ],
-        "detail": "There is an installable app and phone notifications for items waiting on the owner. Nothing notifies when a task completes, and there is no Web Push while the app is in the background."
+        "detail": "Phone notifications cover items waiting on the owner. The redesigned window serves a manifest but registers no offline shell; the legacy worker URL only retires previous Branch shell registrations. Nothing notifies when a task completes, and there is no Web Push while the app is in the background."
       },
       "remaining": "Notify when a task completes, and deliver Web Push while the app is in the background."
     },

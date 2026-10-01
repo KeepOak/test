@@ -40,3 +40,23 @@ test("Gateway power choice saves and distinguishes a requested preference from r
   await page.getByText("Keeping the system awake now.", { exact: false }).waitFor();
   assert.match(await box.locator("..").textContent(), /Closing a laptop lid, battery limits or OS policy/);
 });
+
+test("PLAT-009: the Gateway page says sleep pauses work and leads to pairing an always-on computer", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "branch-gateway-sleep-ui-"));
+  const dataDir = join(root, "data");
+  const app = await createBranch({ dataDir, workspace: join(root, "workspace") });
+  const server = await startServer(app, { dataDir, port: 0 });
+  const browser = await chromium.launch({ headless: true });
+  t.after(async () => { await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
+  await fetch(server.url + "/api/onboarding", { method: "POST", headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, body: '{"done":true}' });
+  const page = await browser.newPage({ serviceWorkers: "block" });
+  await page.goto(server.url);
+  await page.getByLabel("Session token", { exact: true }).fill(server.token);
+  await page.getByRole("button", { name: "Connect", exact: true }).click();
+  await page.locator('#side [data-act="view"][data-v="settings"]').click();
+  await page.locator('[data-act="setpage"][data-v="gateway"]').click();
+  await page.getByText("Closing the lid can put a laptop to sleep too.", { exact: false }).waitFor();
+  await page.getByText("always-on cloud computer you control", { exact: false }).waitFor();
+  await page.getByRole("button", { name: "Computers and pairing", exact: true }).click();
+  await page.locator('[data-act="setpage"][data-v="computer"][aria-current="true"]').waitFor();
+});

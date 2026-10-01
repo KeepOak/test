@@ -6,6 +6,10 @@ import { readEventStream } from "./provider-stream.js";
 import { restoreToolNames, wireName } from "./providers.js";
 import { chatgptAccountId, chatgptDefaults, type ChatGPTAuth } from "./chatgpt-auth.js";
 import { refuseSignInForTrunk } from "./accounts/context.js"; // mac7/lockdown-fix
+import type { CodexImageEndpoint } from "./media-codex-images.js";
+import { audioOnlySdp, chatgptCallUrl, ChatGPTRealtimeSession } from "./realtime-chatgpt.js";
+import type { NetworkPolicy } from "./network-policy.js";
+import type { RealtimeSession, RealtimeSettings } from "./realtime.js";
 
 /** Models the ChatGPT subscription route serves; the first is the suggested default. */
 export const chatgptModels = [
@@ -14,6 +18,8 @@ export const chatgptModels = [
   // list (as the Codex CLI reads it) added the GPT-6 family, and GPT-6 Sol at medium is the owner's choice. GPT-6 Astra
   // is an explicit choice; src/chatgpt-presets.ts keeps it out of automatic fallbacks to preserve that spending choice.
   { id: "gpt-6-sol", label: "GPT-6 Sol", reasoning: "medium" },
+  // On 2026-09-30 the account's model list added GPT-6.1 Sol ("latest workhorse"); offered next to the owner's default.
+  { id: "gpt-6.1-sol", label: "GPT-6.1 Sol", reasoning: "medium" },
   { id: "gpt-6-luna", label: "GPT-6 Luna", reasoning: "medium" },
   { id: "gpt-5.6-sol", label: "GPT-5.6 Sol (light)", reasoning: "low" },
   { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", reasoning: "medium" },
@@ -31,6 +37,12 @@ export interface ChatGPTProviderOptions {
 /** Responses API over the ChatGPT subscription backend. Requests always stream; Branch identifies itself. */
 export class ChatGPTProvider implements Provider {
   readonly name = "chatgpt";
+  /**
+   * The ChatGPT plan's models take pictures as the Codex app does (codex-rs core/src/client.rs: a user message's
+   * `input_image` part with a data URL), so a screenshot pasted in the window is shown rather than kept unseen.
+   */
+  readonly acceptsImages = true;
+  readonly realtimeTransport = "chatgpt-webrtc" as const;
   private readonly apiBase: string;
   private readonly userAgent: string;
   private readonly fetch: typeof fetch;
@@ -43,6 +55,30 @@ export class ChatGPTProvider implements Provider {
   }
   audio(): null {
     return null;
+  }
+  get signInImagesAvailable(): boolean { return this.apiBase === chatgptDefaults.apiBase; }
+  /** The caller checks owner/source/account constraints before requesting this private route. */
+  async signInImages(signal: AbortSignal): Promise<CodexImageEndpoint> {
+    refuseSignInForTrunk(); signal.throwIfAborted();
+    if (this.apiBase !== chatgptDefaults.apiBase) throw new Error("ChatGPT pictures cannot use a proxy or a different service address.");
+    const token = await this.auth.accessToken();
+    signal.throwIfAborted(); refuseSignInForTrunk();
+    const accountId = chatgptAccountId(token);
+    if (!accountId) throw new Error("The ChatGPT sign-in does not identify its account for making pictures.");
+    return { endpoint: this.apiBase, token, accountId, originator: chatgptDefaults.originator, userAgent: this.userAgent };
+  }
+  supportsImages(): boolean { return true; }
+  async realtime(policy: NetworkPolicy, settings: RealtimeSettings, offer: string, runId: string, signal: AbortSignal): Promise<RealtimeSession> {
+    refuseSignInForTrunk();
+    audioOnlySdp(offer);
+    try {
+      await policy.assertAllowed(new URL(chatgptCallUrl), "a ChatGPT live conversation");
+      if (signal.aborted) throw new Error("Stopped");
+      const token = await this.auth.accessToken();
+      const accountId = chatgptAccountId(token);
+      if (!accountId || signal.aborted) throw new Error("No selected account");
+      return new ChatGPTRealtimeSession(policy, settings, { token, accountId, offer, runId, signal, fetch: this.fetch });
+    } catch { throw new Error("The selected ChatGPT account could not open live voice."); }
   }
   async complete(request: CompletionRequest): Promise<Completion> {
     refuseSignInForTrunk(); // mac7/lockdown-fix: a ChatGPT sign-in answers a Trunk only for work the owner is behind
@@ -99,8 +135,12 @@ export function responsesBody(request: CompletionRequest, model: string): Record
 function inputItems(message: Message): Record<string, unknown>[] {
   if (message.role === "tool")
     return [{ type: "function_call_output", call_id: message.toolCallId, output: message.content }];
-  if (message.role === "user")
-    return [{ role: "user", content: [{ type: "input_text", text: message.content }] }];
+  if (message.role === "user") {
+    const parts: Record<string, unknown>[] = [{ type: "input_text", text: message.content }];
+    for (const image of message.images ?? [])
+      parts.push({ type: "input_image", image_url: `data:${image.mediaType};base64,${image.data}` });
+    return [{ role: "user", content: parts }];
+  }
   return [
     ...(message.content ? [{ role: "assistant", content: [{ type: "output_text", text: message.content }] }] : []),
     ...(message.toolCalls ?? []).map((call) => ({
