@@ -247,7 +247,7 @@ export function initMore() {
   const app = document.getElementById("app");
   if (app) { lockObserver = new MutationObserver(records => { if (lockedMutation(records)) forgetScope(); ensureScope(); });
     lockObserver.observe(app, { attributes: true, attributeFilter: ["class"], attributeOldValue: true }); }
-  markLive(["more18-save", "more18-signin", "more18-test", "more18-connector-test", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`])]);
+  markLive(["more18-save", "more18-signin", "more18-test", "more18-connector-test", "more18-restore", "sw:more18-file", "sw:more18-google-calendar", "sw:more18-microsoft-calendar", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`])]);
   on("more18-save", async (el) => { if (await save(el.dataset.v)) { toast(t("accounts.saved")); await loadMore(); } });
   on("more18-signin", (el) => signIn(el.dataset.v));
   on("more18-test", (el) => testConnection(el.dataset.v));
