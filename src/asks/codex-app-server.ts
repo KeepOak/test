@@ -5,6 +5,7 @@ import { basename, delimiter, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { performance } from "node:perf_hooks";
 import type { Completion, CompletionRequest, Provider } from "../contracts.js";
+import { codexChildEnvironment, codexTransportEnvironment } from "../providers/codex-environment.js";
 import { cleanChildEnvironment } from "../child-env.js";
 import { agentPromptFrom } from "../providers/cli-agent.js";
 import { startCall } from "../windows-command.js";
@@ -32,9 +33,10 @@ export interface AppServerChild {
 /** `env`: the program's whole environment (an account's own folder included); absent is codexEnvironment(). */
 export type StartAppServer = (command: string, env?: NodeJS.ProcessEnv) => AppServerChild;
 
-/** Branch's short allowlist (src/child-env.ts), plus where Codex keeps its own sign-in when moved. */
+/** Branch's short allowlist plus Codex's configured account folder and network transport. */
 export function codexEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return { ...cleanChildEnvironment(source), ...(source.CODEX_HOME ? { CODEX_HOME: source.CODEX_HOME } : {}) };
+  const effective = codexChildEnvironment(source);
+  return { ...cleanChildEnvironment(effective), ...codexTransportEnvironment(effective) };
 }
 
 /**
@@ -69,6 +71,7 @@ export function codexBinary(command: string, env: NodeJS.ProcessEnv, platform: N
 }
 
 export const startCodexAppServer: StartAppServer = (command, env = codexEnvironment()) => {
+  env = codexChildEnvironment(env);
   assertRealAgentAllowed(command, env);
   // Started as the npm launcher would start it, with what the launcher adds to its environment, but without the launcher.
   const binary = codexBinary(command, env);
@@ -411,10 +414,14 @@ export function warmCodexTurn(command: string, start: StartAppServer, request: C
   const started = performance.now();
   let byKey = warmCodex.get(start);
   if (!byKey) warmCodex.set(start, byKey = new Map());
-  const key = JSON.stringify([command, thread.home ?? ""]), keys = byKey;
+  const env = codexChildEnvironment(thread.env ?? codexEnvironment());
+  // A child retains its initial account and transport environment. Never borrow it after
+  // either the fallback account home or configured proxy/CA transport has changed.
+  const transport = Object.entries(codexTransportEnvironment(env)).sort(([a], [b]) => a.localeCompare(b));
+  const key = JSON.stringify([command, env.CODEX_HOME ?? "", env.HOME ?? "", env.USERPROFILE ?? "", thread.home ?? "", transport]), keys = byKey;
   let warm = keys.get(key);
   if (!warm) {
-    const made: WarmCodex = new WarmCodex(command, thread.env, start, version, () => { if (keys.get(key) === made) keys.delete(key); });
+    const made: WarmCodex = new WarmCodex(command, env, start, version, () => { if (keys.get(key) === made) keys.delete(key); });
     keys.set(key, warm = made);
   }
   return warm.turn(request, thread, timeoutMs, started);
