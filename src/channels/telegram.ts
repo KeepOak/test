@@ -223,7 +223,7 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   // ---- R17-C (R17-022): a file as a Telegram document. Bots may send up to 50 MB. ----
   readonly maxFileBytes = 50 * 1024 * 1024;
-  async sendFile(chatId: string, file: OutgoingFile, replyToMessageId?: string): Promise<string | undefined> {
+  async sendFile(chatId: string, file: OutgoingFile, replyToMessageId?: string, gate?: SendGate): Promise<string | undefined> {
     const form = new FormData();
     const target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
@@ -233,7 +233,8 @@ export class TelegramAdapter implements ChannelAdapter {
     form.append(method === "sendPhoto" ? "photo" : "document", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
     if (file.caption) form.append("caption", file.caption.slice(0, 1024));
     if (replyToMessageId) form.append("reply_to_message_id", replyToMessageId);
-    const response = await this.fetch(`${this.base}/${method}`, { method: "POST", body: form, signal: AbortSignal.timeout(120000) });
+    gate?.check();
+    const response = await this.fetch(`${this.base}/${method}`, { method: "POST", body: form, signal: gated(120000, gate) });
     const parsed = responseSchema.parse(await response.json());
     if (!parsed.ok) throw new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
@@ -246,7 +247,7 @@ export class TelegramAdapter implements ChannelAdapter {
     return verifyInitData(initData, this.options.token);
   }
   /** The live browser in a chat: a photo with buttons, then the same message's photo replaced (editMessageMedia). */
-  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[], replyToMessageId?: string): Promise<string | undefined> {
+  async sendPicture(chatId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[], replyToMessageId?: string, gate?: SendGate): Promise<string | undefined> {
     const form = new FormData(), target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
@@ -256,21 +257,23 @@ export class TelegramAdapter implements ChannelAdapter {
     form.append("disable_notification", "true");
     if (replyToMessageId && /^\d+$/.test(replyToMessageId))
       form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
-    const response = await this.fetch(`${this.base}/sendPhoto`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    gate?.check();
+    const response = await this.fetch(`${this.base}/sendPhoto`, { method: "POST", body: form, signal: gated(60000, gate) });
     const parsed = responseSchema.parse(await response.json());
     if (!parsed.ok) throw Object.assign(new Error(`Telegram sendPhoto failed: ${parsed.description ?? response.status}`), retryOf(parsed));
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
     if (!message.success) throw new Error("Telegram sendPhoto failed: response missing message_id");
     return String(message.data.message_id);
   }
-  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[]): Promise<void> {
+  async editPicture(chatId: string, messageId: string, file: OutgoingFile, buttons: { label: string; value: string; webApp?: string }[], gate?: SendGate): Promise<void> {
     const form = new FormData();
     form.append("chat_id", String(telegramTarget(chatId).chat_id));
     form.append("message_id", messageId);
     form.append("media", JSON.stringify({ type: "photo", media: "attach://picture", ...(file.caption ? { caption: file.caption.slice(0, 1024) } : {}) }));
     form.append("picture", new Blob([new Uint8Array(file.bytes)], { type: file.mediaType }), file.name);
     form.append("reply_markup", JSON.stringify({ inline_keyboard: buttons.length ? [buttons.map(inlineButton)] : [] }));
-    const response = await this.fetch(`${this.base}/editMessageMedia`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    gate?.check();
+    const response = await this.fetch(`${this.base}/editMessageMedia`, { method: "POST", body: form, signal: gated(60000, gate) });
     const parsed = responseSchema.parse(await response.json());
     if (!parsed.ok && !/message is not modified/i.test(parsed.description ?? ""))
       throw Object.assign(new Error(`Telegram editMessageMedia failed: ${parsed.description ?? response.status}`), retryOf(parsed));
@@ -525,6 +528,11 @@ export class TelegramAdapter implements ChannelAdapter {
       { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
     return parsed.result;
   }
+}
+
+/** A file request's own time limit, and a gate's signal (a live picture's Stop, lock, person or connection) beside it. */
+function gated(ms: number, gate?: SendGate): AbortSignal {
+  return gate ? AbortSignal.any([AbortSignal.timeout(ms), gate.signal]) : AbortSignal.timeout(ms);
 }
 
 /** What Telegram shows as a photo: JPEG, PNG or WebP, up to its 10 MB photo limit. */

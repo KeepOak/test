@@ -738,3 +738,99 @@ test("live status: a browser picture still being taken when the task finishes is
   await delay(100);
   assert.equal(chat.calls.filter((c) => c.op === "file").length, 0, "the late picture stays unsent");
 });
+
+/* CHAT-225 review: a live browser picture goes out only for the person, chat app connection, sender and task it was
+   taken for (router liveFor), through a gate the app's own request carries. Stand-in chat app, no browser. */
+const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
+async function pictureChat(t, hold = true) {
+  const root = await mkdtemp(join(tmpdir(), "branch-live-picture-authority-"));
+  const app = await createBranch({ workspace: join(root, "workspace"), dataDir: join(root, "data"),
+    provider: { name: "scripted", async complete() { return { content: "Done.", toolCalls: [] }; } } });
+  t.after(async () => { await app.close(); await discardTemp(root); });
+  app.channels.liveTiming = fast;
+  app.channels.setSwitches({ liveStatus: "on", commands: "on", steering: "on", splitting: "on", steps: "on" });
+  const calls = [], capture = deferred(), stops = new Map();
+  const sending = [];
+  const makeAdapter = () => ({ id: "chat", kind: "telegram", botName: () => "Branch", maxFileBytes: 10_000_000, async start() {}, async stop() {},
+    async send() { return "s1"; }, async edit() {}, async sendTyping() {},
+    async sendFile(chatId, file, replyTo, gate) { calls.push({ op: "file", gate }); return "f1"; },
+    sendPicture(chatId, file, buttons, replyTo, gate) {
+      calls.push({ op: "picture", gate });
+      if (!hold) return Promise.resolve("p1");
+      const reply = deferred(); sending.push(reply); return reply.promise;
+    },
+    async editPicture(chatId, messageId, file, buttons, gate) { calls.push({ op: "repicture", messageId, buttons, gate }); } });
+  const adapter = makeAdapter();
+  await app.channels.attach(adapter, { activation: "always", pairing: true, allowlist: ["owner"] });
+  app.channels.browserPicture = () => capture.promise;
+  app.runtime.activeRunSignal = (runId) => stops.get(runId)?.signal ?? null;
+  const live = (runId) => {
+    stops.set(runId, new AbortController());
+    const status = app.channels.liveFor({ channel: "chat", chatId: "c1", chatKind: "direct", senderId: "owner", senderName: "Sam",
+      text: "look", addressed: true, messageId: "m1" }, () => runId);
+    status.start();
+    return status;
+  };
+  const shot = { frame: new Uint8Array([1, 2, 3]), url: "https://example.test/page", title: "Page" };
+  return { app, calls, capture, sending, stops, live, shot, makeAdapter };
+}
+test("live picture: a chat app connection replaced while the picture is taken never receives it", async (t) => {
+  const f = await pictureChat(t, false);
+  const live = f.live("run-1");
+  live.refreshPicture();
+  await f.app.channels.detach("chat");
+  await f.app.channels.attach(f.makeAdapter(), { activation: "always", pairing: true, allowlist: ["owner"] });
+  f.capture.resolve(f.shot);
+  await live.finish("done", "Done.");
+  assert.deepEqual(f.calls.map((c) => c.op), [], "nothing went to either connection");
+});
+test("live picture: a person switch while the picture is on its way aborts its request and leaves nothing to clean up", async (t) => {
+  const f = await pictureChat(t);
+  const guest = f.app.store.profiles.create({ name: "Guest", pin: "2468" });
+  f.capture.resolve(f.shot);
+  const live = f.live("run-1");
+  live.refreshPicture();
+  await until(() => f.sending.length, "the picture on its way");
+  assert.equal(f.calls[0].gate?.signal.aborted, false, "the picture's request carries the gate");
+  f.app.store.profiles.switch({ profileId: guest.id, pin: "2468" });
+  assert.equal(f.calls[0].gate.signal.aborted, true, "the switch aborts the request on its way");
+  f.sending[0].resolve("p1");
+  await live.finish("done", "Done.");
+  assert.deepEqual(f.calls.map((c) => c.op), ["picture"], "the screenshot is not uploaded again for anyone else");
+});
+test("live picture: after a late first send settles, Stop keeps the screenshot from going up again; without Stop its controls come off", async (t) => {
+  const f = await pictureChat(t);
+  f.capture.resolve(f.shot);
+  const stopped = f.live("run-stopped"), kept = f.live("run-kept");
+  stopped.refreshPicture(); kept.refreshPicture();
+  await until(() => f.sending.length === 2, "both pictures on their way");
+  // Each finish waits its bounded time for the picture, then closes; the sends are still out.
+  const finishing = [stopped.finish("done", "Done."), kept.finish("done", "Done.")];
+  f.stops.get("run-stopped").abort();
+  assert.equal(f.calls[0].gate?.signal.aborted, true, "Stop aborts the stopped task's picture request");
+  assert.equal(f.calls[1].gate.signal.aborted, false);
+  await until(() => stopped.closed && kept.closed, "both tasks closed", 1000);
+  f.sending[0].resolve("p-stopped"); f.sending[1].resolve("p-kept");
+  await Promise.all(finishing);
+  const again = f.calls.filter((c) => c.op === "repicture");
+  assert.deepEqual(again.map((c) => [c.messageId, c.buttons]), [["p-kept", []]], "only the picture whose task was not stopped is edited");
+});
+test("Telegram picture requests check the gate last and carry its signal", async () => {
+  const seen = [];
+  const fetch = async (url, init) => { seen.push({ url, signal: init.signal });
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), { headers: { "content-type": "application/json" } }); };
+  const adapter = new TelegramAdapter({ id: "tg", token: "123:abc", apiBase: "http://telegram.invalid", fetch });
+  const file = { name: "branch-browser.jpg", mediaType: "image/jpeg", bytes: new Uint8Array([1, 2, 3]), caption: "Page" };
+  const stop = new AbortController(), open = { signal: stop.signal, check: () => {} };
+  await adapter.sendPicture("5", file, [], undefined, open);
+  await adapter.editPicture("5", "7", file, [], open);
+  await adapter.sendFile("5", file, undefined, open);
+  assert.deepEqual(seen.map((one) => one.signal.aborted), [false, false, false]);
+  stop.abort();
+  assert.deepEqual(seen.map((one) => one.signal.aborted), [true, true, true], "the gate's abort reaches each request");
+  const shut = { signal: new AbortController().signal, check: () => { throw new Error("The person using Branch changed"); } };
+  await assert.rejects(adapter.sendPicture("5", file, [], undefined, shut), /person using Branch changed/);
+  await assert.rejects(adapter.editPicture("5", "7", file, [], shut), /person using Branch changed/);
+  await assert.rejects(adapter.sendFile("5", file, undefined, shut), /person using Branch changed/);
+  assert.equal(seen.length, 3, "a refused gate sends nothing");
+});
