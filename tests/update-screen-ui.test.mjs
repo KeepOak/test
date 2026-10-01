@@ -13,6 +13,16 @@ import { createContext, runInContext } from "node:vm";
 
 const source = async (path) => (await readFile(new URL(`../public/app/${path}`, import.meta.url), "utf8"))
   .replace(/^import [\s\S]*?;\r?\n/gm, "").replace(/^export (\{[^}]*\};?)?/gm, "");
+// Keep the imported report renderer real, in its own module scope. These older card-only
+// harnesses have no signed-in report owner; dedicated coverage below exercises that section.
+async function failureHelpers({ signedIn = false, ownerHere = () => true, api = async () => ({ failure: null }) } = {}) {
+  const context = createContext({ S: { signedIn }, activeId: () => "fixture-owner", ownerHere,
+    document: { getElementById: () => null }, api, t: words,
+    esc: (text) => String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;"),
+    render: () => undefined, toast: () => undefined, markLive: () => undefined, on: () => undefined });
+  runInContext(await source("settings/update-failure.js"), context);
+  return runInContext("({ updateFailureSection, initUpdateFailure, loadUpdateFailure })", context);
+}
 const words = (key, params) => (params ? `${key}[${Object.entries(params).map(([k, v]) => `${k}=${v}`).join(",")}]` : key);
 const esc = (text) => String(text ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
@@ -193,6 +203,7 @@ async function settings({ status, autoUpdate = "install", channel = "beta", plan
     initChannel: () => undefined, loadChannel: async () => undefined, channelStatus: () => status,
     lastLook: { plan, problem, wait, status }, holdingTasks: () => holding, waitingLine: () => (plan?.until ? `window.updates.ready-installs-when[until=${plan.until}]` : wait),
   });
+  Object.assign(context, await failureHelpers());
   runInContext(await source("settings/pages/updates.js"), context);
   runInContext(`comfortData = ${JSON.stringify({ notify: { autoUpdate, releaseChannel: channel } })};`, context);
   const html = runInContext("draw()", context);
@@ -299,4 +310,20 @@ test("the card says plainly why a build takes longer: it is gentle, or it waits 
   assert.doesNotMatch((await settings({ status: stable })).html, /card.gentle/, "a download is not a build");
   const stableWaits = await settings({ status: { ...stable, paused: "typing" } });
   assert.match(stableWaits.html, /<p>window.updates.card.paused-typing<\/p>/, "but it does hold back for the owner, and says so");
+});
+
+test("the real update failure renderer exposes the owner's report action and excludes other callers", async () => {
+  const owner = await failureHelpers({ signedIn: true,
+    api: async () => ({ failure: { fromVersion: "1.0.0", toVersion: "2.0.0" } }) });
+  assert.equal(owner.updateFailureSection(), "", "no recorded or current failure means no report card");
+  assert.match(owner.updateFailureSection(true), /data-act="update-failure-download"/);
+  await owner.loadUpdateFailure();
+  const html = owner.updateFailureSection();
+  assert.match(html, /updateFailureDownload.failed\[from=1\.0\.0,to=2\.0\.0\]/);
+  assert.equal((html.match(/data-act="update-failure-download"/g) ?? []).length, 1);
+  assert.match(html, /updateFailureDownload.download/);
+  const person = await failureHelpers({ signedIn: true, ownerHere: () => false });
+  assert.equal(person.updateFailureSection(true), "", "a household caller receives no owner report action");
+  const signedOut = await failureHelpers();
+  assert.equal(signedOut.updateFailureSection(true), "", "a disconnected window receives no report action");
 });

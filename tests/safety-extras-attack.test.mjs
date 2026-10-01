@@ -216,6 +216,8 @@ test("scripts: a restart in the middle of a script puts it to the owner, and not
   const hang = new Promise((resolve) => { release = resolve; });
   app.registry.register({ name: "notes.send", permission: "channels.send", description: "send a note",
     parameters: z.object({ to: z.string() }).strict(), execute: async ({ to }) => { sent.push(to); await hang; return { sent: true }; } });
+  app.store.event(run.id, "run.started", { source: "owner", permissions: [app.registry.permissionOf("tools.script"), app.registry.permissionOf("notes.send")],
+    deadlineMs: 30_000, depth: 0, delegates: false, dryRun: false, ownCopy: false });
   const controller = new AbortController();
   const context = app.runtime.context({ runId: run.id, signal: controller.signal });
   const args = { source: `export default async (branch) => branch.call("notes.send", { to: "sam" })`, tools: ["notes.send"], timeoutMs: 30_000 };

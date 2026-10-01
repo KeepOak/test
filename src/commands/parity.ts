@@ -15,7 +15,7 @@ export interface ParityRow { what: string; theirs: string; branch: string; statu
 const row = (what: string, theirs: string, branch: string, status: ParityStatus, note = ""): ParityRow => ({ what, theirs, branch, status, note });
 
 export const PARITY: readonly ParityRow[] = [
-  row("List the commands", "/help (all), /commands (OpenClaw, Hermes)", "/help", "existed", "Now written from the one table, per surface."),
+  row("List the commands", "/help (all), /commands (OpenClaw, Hermes)", "/help and /commands", "existed", "Now written from the one table, per surface; /commands is every one, as /help all."),
   row("Ask about the agent itself", "/help <question> (Aider), /docs (Gemini)", "/help <question>", "built", "Answers from Branch's own handbook."),
   row("Change the model", "/model (all), /models (OpenClaw)", "/model", "existed", "Now also in chat apps, for that chat's conversation."),
   row("How hard it thinks", "/think, /reasoning (OpenClaw, Hermes), /reasoning_effort (Aider)", "/think", "built", "Was terminal only."),
@@ -32,6 +32,7 @@ export const PARITY: readonly ParityRow[] = [
   row("Version", "/version (Hermes), /about (Gemini)", "/version", "built"),
   row("Health check", "/doctor (Claude Code), /diagnostics (OpenClaw), /debug (Hermes)", "/health", "built", "The same check as `branch doctor`."),
   row("Approval mode", "/permissions (Codex, Gemini, Claude Code), /approvals (Hermes), /yolo (Hermes)", "/preset", "existed", "Changing it needs the key of this computer; never from a chat."),
+  row("Spoken replies", "/voice (Hermes), /tts (OpenClaw)", "/voice", "built", "Per chat: voice notes, every reply (owner's own account only), or never. Settings › Voice still decides whether anything is spoken."),
   row("Emergency stop for everything", "/pause (Hermes), /elevated (OpenClaw)", "/lockdown", "existed", "Owner only; ends earlier yeses as the route does."),
   row("Memory", "/memory (Hermes, Gemini, Claude Code, Codex)", "/memory", "existed"),
   row("Skills", "/skills (Hermes, Codex, Gemini)", "/skills", "existed"),
@@ -50,6 +51,10 @@ export const PARITY: readonly ParityRow[] = [
   row("Leave", "/quit, /exit (all)", "/exit", "existed", "Terminal only."),
   row("Take back a turn or files", "/undo (Hermes, Aider, OpenCode), /rewind (Gemini), /rollback (Hermes)", "—", "elsewhere", "mac2/goal-undo builds it as a message action; a command can follow it."),
   row("Branch or fork a conversation", "/branch (Hermes), /fork (Codex, OpenCode)", "—", "elsewhere", "The window's branch action (session tree); not a typed command yet."),
+  // the chat-parity build
+  row("Home chat for results", "/sethome (Hermes)", "/sethome", "built", "Owner only. In a chat, only from the owner's own account in a direct chat; at the window, /sethome <chat app> [chat]. Deliveries to \"home\" read it when they are sent."),
+  row("What is working, helpers too", "/agents (Hermes), /subagents, /tasks (OpenClaw)", "/agents", "built", "Helpers are shown under the task that started them; a chat sees only its own."),
+  row("Name the conversation", "/title (Hermes), /name (OpenClaw)", "/title", "built", "The same rename as the window's menu."),
   row("Show the changes", "/diff (Hermes, Codex, Aider)", "—", "elsewhere", "Receipts in the side pane's Files tab."),
   row("Review the work", "/review (Hermes, Codex)", "—", "elsewhere", "/verify (terminal) and the reviewer switch."),
   row("Write project instructions", "/init (Hermes, Codex, Gemini, Claude Code)", "/init", "built", "mac7/r17-d: the model writes AGENTS.md through the context-file loader's writer; follows the \"Writing the project's instruction file\" switch."),
@@ -68,7 +73,7 @@ export const PARITY: readonly ParityRow[] = [
   row("A quiet check on this conversation", "/heartbeat, /hb (Hermes)", "/heartbeat", "built", "Speaks up only with news; five minutes apart at least."),
   row("More to a goal", "/subgoal (Hermes)", "/subgoal", "built", "The judge counts the goal done only when every sub-goal holds."),
   row("A task on the side, in its own conversation", "/bg (Hermes)", "/bg", "built", "At most three at once."),
-  row("Carry on elsewhere", "/handoff (Hermes)", "/handoff", "built", "A chat app that has talked to Branch, a terminal, or another assistant."),
+  row("Carry on elsewhere", "/handoff (Hermes)", "/handoff", "built", "An exact admitted Telegram owner DM from the Share chooser, a terminal command, or a named assistant."),
   row("Suggested automations", "/suggestions, /suggest (Hermes)", "/suggestions", "built", "A no is kept for good."),
   row("Automation blueprints", "/blueprint, /bp (Hermes)", "/blueprint", "built", "The blanks are checked; the owner's own command is the yes."),
   // r17-i

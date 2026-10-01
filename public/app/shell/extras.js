@@ -14,7 +14,7 @@ import { chatMenuTop } from "../chat/beside.js";
 import { pinnedCount } from "../chat/messages.js";
 import { pinItem } from "../chat/putaway.js"; // batch A: pin an ordinary conversation from its menu
 import { trunkMenu, trunkMenuEnd } from "../flows/trunk.js";
-import { binding, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./keys.js";
+import { binding, bindings, usedBy, defaultOf, pressed, comboOf, kbd, spoken, saveKey } from "./keys.js";
 import { toggleSide, hiddenNow } from "./resize.js";
 import { initMachines } from "./machines.js";
 import { initFileView } from "./fileview.js";
@@ -122,17 +122,18 @@ function restartFromGateway() {
 
 /* ---------- keyboard shortcuts ---------- */
 /* The engine's changeable shortcuts this window answers to, by the engine's names, with the prototype's words. */
-/* The prototype's KEYS15, less Lockdown (its keys would also turn it off, which loosens: that stays with its banner). */
+/* Lockdown's shortcut only turns it on; turning it off stays with its banner or Settings. */
 const KEYS = [["palette", "Find anything"], ["newConversation", "New conversation"], ["appearance", "Settings"], ["sidePane", "Show or hide the side panel"], ["focusMode", "Focus mode"], ["talkLive", "Talk live"], ["stopTask", "Stop the current task"], ["openInbox", "Open the Inbox"], ["nextConversation", "Next conversation"], ["previousConversation", "Previous conversation"],
   ["searchHistory", "Search the history"], ["focusPrompt", "Focus the message box"], ["lookInside", "Look inside the latest task"], ["newTrunk", "Start a new Trunk"],
-  ["switchPerson", "Who is using Branch"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"]];
+  ["switchPerson", "Who is using Branch"], ["sideList", "Show or hide the list"], ["quickAsk", "Quick ask, from any app"], ["lockdownOn", "Turn Lockdown on"]];
 const FIXED = [["Open conversation 1 to 9 in the list", "Ctrl+1…9"], ["New line in a message", "Shift+Enter"], ["Call a Trunk in a message", "@"], ["Use a skill", "/"], ["This list", "?"], ["Close anything", "Esc"]];
 let listening = null;
 const nameOf = (action) => KEYS.find(([a]) => a === action)?.[1] ?? "";
 
 function keyRow([action, words]) {
   const now = binding(action), was = defaultOf(action);
-  const set = `<button type="button" class="k-set15 ${listening === action ? "listen15" : ""}" data-act="key15" data-v="${action}" aria-label="${esc(t("window.shell.extras.action-keys-change", { action: say(words), keys: spoken(now) }))}">${listening === action ? `<em>${t("window.shell.extras.press-the-keys")}</em>` : kbd(now, esc)}</button>`;
+  const active = bindings(action);
+  const set = `<button type="button" class="k-set15 ${listening === action ? "listen15" : ""}" data-act="key15" data-v="${action}" aria-label="${esc(t("window.shell.extras.action-keys-change", { action: say(words), keys: active.map(spoken).join(" / ") }))}">${listening === action ? `<em>${t("window.shell.extras.press-the-keys")}</em>` : active.map((combo) => kbd(combo, esc)).join(" / ")}</button>`;
   const back = now !== was ? `<button type="button" class="icon-btn" aria-label="${t("activityLog.action.putBack")} ${esc(spoken(was))}" data-act="keyreset15" data-v="${action}">${ic("x", "s")}</button>` : "<span></span>";
   return `<div class="k-row15"><span>${esc(say(words))}</span>${set}${back}</div>`;
 }
@@ -152,8 +153,8 @@ async function takeKeys(e) {
   listening = null;
   if (e.key === "Escape") { showShortcuts(); return; }
   if (!/^(Ctrl|Control|Alt)\+/.test(combo)) { showShortcuts(); toast(t("window.shell.extras.use-ctrl-or-alt-with-it")); return; }
-  const clash = KEYS.find(([a]) => a !== action && spoken(binding(a)).toLowerCase() === spoken(combo).toLowerCase());
-  if (clash) { showShortcuts(); toast(t("window.shell.extras.combo-already-does-value", { combo: spoken(combo), value: clash[1] })); return; }
+  const clash = usedBy(combo, action);
+  if (clash) { showShortcuts(); toast(t("window.shell.extras.combo-already-does-value", { combo: spoken(combo), value: nameOf(clash) || clash })); return; }
   try {
     await saveKey(action, combo);
     showShortcuts();

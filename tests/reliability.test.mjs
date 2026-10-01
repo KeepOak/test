@@ -122,6 +122,8 @@ test("an interrupted task continues from its transcript without repeating tool a
   const { z } = await import("zod");
   app.registry.register({ name: "notes.send", permission: "files.read", description: "pretend side effect", parameters: z.object({}).strict(), execute: async () => { executed++; return { sent: true }; } });
   const first = app.store.createRun("local", "send my notes");
+  app.store.event(first.id, "run.started", { source: "owner", permissions: [app.registry.permissionOf("notes.send")],
+    deadlineMs: 30_000, depth: 0, delegates: false, dryRun: false, ownCopy: false });
   app.store.message(first.sessionId, { role: "user", content: "send my notes" });
   app.store.message(first.sessionId, { role: "assistant", content: "", toolCalls: [{ id: "t1", name: "notes.send", arguments: "{}" }] });
   app.store.finish(first.id, "interrupted", "Process stopped before completion; side effects were not replayed");

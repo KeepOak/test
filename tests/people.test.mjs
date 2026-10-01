@@ -787,7 +787,8 @@ test("B19-29 a person's task cut off by a restart carries on as that person, and
   first.runtime.roles.save(ada.id, { role: "child" });
   // Ada's task, lent to the assistant, when Branch stopped.
   const run = first.store.createRun(first.runtime.owner, "plan my week");
-  first.store.event(run.id, "run.started", { source: "owner", personProfileId: ada.id, lentTo: `profile:${ada.id}` });
+  first.store.event(run.id, "run.started", { source: "owner", personProfileId: ada.id, lentTo: `profile:${ada.id}`,
+    permissions: first.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false, parentRunId: null });
   first.store.message(run.sessionId, { role: "user", content: "plan my week" });
   first.store.finish(run.id, "interrupted", "cut off");
   await first.close();
@@ -824,7 +825,8 @@ test("B19-30 a step redone after a restart is held to the person's role, not the
   const ada = app.store.profiles.create({ name: "Ada", pin: "1234" });
   app.runtime.roles.save(ada.id, { role: "child" });
   const run = app.store.createRun(app.runtime.owner, "write it");
-  app.store.event(run.id, "run.started", { source: "owner", personProfileId: ada.id, lentTo: `profile:${ada.id}` });
+  app.store.event(run.id, "run.started", { source: "owner", personProfileId: ada.id, lentTo: `profile:${ada.id}`,
+    permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false, parentRunId: null });
   app.neverBreak.journal.turn(run.id, run.sessionId, 1);
   const call = { id: "w1", name: "files.write", arguments: JSON.stringify({ path: "child.txt", content: "not allowed" }) };
   const hook = journalHook(app.neverBreak.journal);
