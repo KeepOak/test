@@ -185,6 +185,20 @@ export function filesSent(name = "main") {
   if (failed.length) toast(failed.map((f) => f.error).join(" "));
   redraw();
 }
+/** Keep the submitted files privately until the engine answers; a refused background start puts them back. */
+export function holdBackgroundFiles(uploads = [], name = "main") {
+  const files = tray(name).filter((f) => uploads.includes(f.upload));
+  A.trays[name] = tray(name).filter((f) => !files.includes(f));
+  redraw();
+  let settled = false;
+  return (restore = false) => {
+    if (settled) return;
+    settled = true;
+    if (restore) A.trays[name] = [...files, ...tray(name)];
+    else for (const f of files) if (f.preview.thumb) URL.revokeObjectURL(f.preview.thumb);
+    redraw();
+  };
+}
 /**
  * The engine was away when the message was sent: the files it had waiting may have gone with it (they are kept in its
  * memory, src/attachments.ts), so each chip holding its file is sent ahead again, the earlier copy taken off.
