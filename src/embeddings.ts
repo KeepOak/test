@@ -4,7 +4,7 @@ import { z } from "zod";
 import { estimateTokens } from "./contracts.js";
 import { EmbeddingClient, defaultEmbeddingModel, packVector, unpackVector, type Embedder } from "./document-embeddings.js";
 import { OllamaClient, defaultLocalEmbeddingModel, ollamaHome } from "./local-models.js";
-import type { ModelRouter } from "./models.js";
+import { presetRunsLocally, type ModelRouter } from "./models.js";
 import { assertProviderEndpoint, providerEmbeddings } from "./providers.js";
 import { parseRetryPolicy, planRetry, waitForRetry, type RetryPolicy } from "./provider-retry.js";
 
@@ -48,11 +48,13 @@ export function onThisComputer(endpoint: string): boolean {
 export function embeddingConnection(
   models: ModelRouter | undefined, owner: string, model: string = defaultEmbeddingModel,
 ): EmbeddingConnection | null {
-  const provider = models?.plan(owner, "").candidates[0]?.provider;
-  if (!provider) return null;
+  const preset = models?.plan(owner, "").candidates[0];
+  const provider = preset?.provider;
+  if (!preset || !provider) return null;
   const route = providerEmbeddings(provider);
   if (route) {
-    const local = onThisComputer(route.endpoint);
+    // A declared remote forward stays remote even when its transport listens on loopback.
+    const local = onThisComputer(route.endpoint) && presetRunsLocally(preset);
     const ollama = local && new URL(route.endpoint).port === new URL(ollamaHome).port;
     const chosen = ollama && model === defaultEmbeddingModel ? defaultLocalEmbeddingModel : model;
     return { shape: ollama ? "ollama" : "openai", endpoint: route.endpoint, apiKey: route.apiKey, model: chosen, local,
@@ -148,7 +150,8 @@ export const embeddingFetch = (endpoint: string, call: typeof fetch): typeof fet
  * owner's network rules first.
  */
 export function embeddingsFor(connection: EmbeddingConnection, call: typeof fetch = globalThis.fetch): Embeddings | null {
-  const reach = connection.fetchImpl ?? embeddingFetch(connection.endpoint, call);
+  // A remote model behind loopback must retain the guarded remote transport.
+  const reach = connection.fetchImpl ?? (connection.local ? embeddingFetch(connection.endpoint, call) : call);
   try {
     if (connection.shape === "gemini") return new GeminiEmbeddings(connection, connection.local, reach);
     if (connection.shape === "ollama") return new OllamaEmbeddings(connection, connection.model, reach);

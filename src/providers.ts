@@ -381,7 +381,8 @@ export class OpenAIProvider implements Provider {
   }
   /** This provider speaks the OpenAI shape, so the same address and key also serve `/embeddings`. */
   embeddings(): EmbeddingEndpoint | null {
-    return { endpoint: this.options.endpoint, apiKey: this.options.apiKey };
+    return { endpoint: this.options.endpoint, apiKey: this.options.apiKey,
+      ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}) };
   }
   /** The same address and key also serve `/images/generations` and `/images/edits`. */
   images(): { kind: "openai"; endpoint: string; apiKey: string; defaultModel: string } {
