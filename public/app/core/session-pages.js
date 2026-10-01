@@ -3,10 +3,11 @@
 import { api } from "./api.js";
 
 export const sessionPages = { pages: 1, more: false, busy: false, error: null };
-let principal, generation = 0, controller = null;
+let principal, generation = 0, controller = null, principalGeneration = 0;
 export const sessionPrincipal = (profiles) => JSON.stringify([profiles?.active?.id ?? null, profiles?.isOwner === true]);
 
 export function clearSessionPages() {
+  principalGeneration += 1;
   controller?.abort();
   generation += 1;
   principal = undefined;
@@ -17,6 +18,7 @@ export function resetSessionPages(profiles) {
   const next = sessionPrincipal(profiles);
   if (principal === next) return false;
   principal = next;
+  principalGeneration += 1;
   controller?.abort();
   generation += 1;
   Object.assign(sessionPages, { pages: 1, more: false, busy: false, error: null });
@@ -53,3 +55,18 @@ export async function readSessionPages(profiles, stillHere) {
 }
 
 addEventListener("pagehide", clearSessionPages);
+
+/** Pending owner UI work never revives after a profile roundtrip or a transient lock. */
+export function sessionAuthority(profiles, app) {
+  const who = sessionPrincipal(profiles), revision = principalGeneration;
+  let revoked = false;
+  const hear = records => {
+    if (app?.classList.contains("locked-b17") || records.some(record => /(?:^|\s)locked-b17(?:\s|$)/.test(record.oldValue ?? ""))) revoked = true;
+  };
+  const observer = new MutationObserver(hear);
+  if (app) observer.observe(app, { attributes: true, attributeFilter: ["class"], attributeOldValue: true });
+  return {
+    current(next) { hear(observer.takeRecords()); return !revoked && revision === principalGeneration && sessionPrincipal(next) === who; },
+    close() { observer.disconnect(); },
+  };
+}

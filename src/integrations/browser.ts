@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, open, rm, stat } from 'node:fs/promises';
+import { mkdir, open, readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join as joinPath } from 'node:path';
 import type { Browser, Download, LaunchOptions, Locator, Page } from 'playwright';
 import { chromium } from './playwright-lazy.js';
@@ -18,6 +18,7 @@ import {
   screenshot, scrubAddress, scrubAddresses, scrubMessage, scrubSnapshot, scrubText, secretValues, waitFor,
 } from './browser-page.js';
 import { AnnotateSchema, MarkRegistry, annotate, clearMarks, liveMarkKey, markLine } from './browser-marks.js';
+import { FindSchema, matchingMarks } from './browser-find.js';
 import { ExtractSchemaSchema, extractSchema } from './browser-schema.js';
 import { resolve as healResolve, type HealTarget } from './browser-heal.js';
 import { SiteSkills, applyQuirks, type QuirksApplied } from './browser-sites.js';
@@ -77,6 +78,11 @@ export const missingBrowser = 'The private browser Branch uses is not installed 
 export const runLimitReached = (message: string): boolean => /^This task has already (opened|taken) \d+ /.test(message);
 /** Where files a website sends are kept, inside the person's workspace. */
 export const downloadFolder = 'downloads';
+/** How long a held download (Downloads may come from › Ask each time) waits for the owner's answer. */
+const heldForMs = 3_600_000;
+/** A held file's name in the held folder: the id it was given. */
+const heldName = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+interface HeldDownload { path: string; name: string; from: string; owner: string; conversation: string; at: number; expiry: NodeJS.Timeout }
 /** What the person is told when a task has wandered too far; it stops and reports instead. */
 const originStop = (limit: number) =>
   `This task has already opened ${limit} different websites, which is as many as one task may. Stop, tell the person what you found and what you still wanted to look at, and let them decide.`;
@@ -122,6 +128,8 @@ interface RunEntry {
   shown?: Set<string> | undefined;
   /** A recording started by Settings' "Record browser tasks", kept by itself when the task ends. */
   autoRecording?: boolean | undefined;
+  /** Serializes recording startup/stop with adoption before any awaited work begins. */
+  recordingTransition?: Promise<void> | undefined;
   /** Whether this task's Trunk's own saved sign-in was looked for (trunkProfile). */
   trunkChecked?: boolean;
   /**
@@ -146,7 +154,7 @@ interface RunEntry {
 export interface WatchedWindow {
   url: string;
   title: string;
-  tabs: { url: string; title: string; active: boolean; loading?: boolean; icon?: string }[];
+  tabs: { url: string; title: string; active: boolean; loading?: boolean; icon?: string; zoom?: number }[];
   /** A JPEG of the tab being worked in, or null (a borrowed window, or no frame could be taken). */
   frame: Buffer | null;
   borrowed: boolean;
@@ -192,9 +200,19 @@ export class BranchBrowser {
   sharesWith: ((owner: string, conversation: string, runId: string) => boolean) | undefined;
   /**
    * Downloads ask each time: files a page sent, waiting outside the workspace for the owner's yes, by id. Kept in
-   * memory for an hour (a task that stopped to ask carries on under its own conversation when the owner answers).
+   * memory for an hour (a task that stopped to ask carries on under its own conversation when the owner answers). Each
+   * one's own timer removes it when the hour is up, an older one is never kept, and closing the browser removes them all.
    */
-  private readonly heldDownloads = new Map<string, { path: string; name: string; from: string; owner: string; conversation: string; at: number }>();
+  private readonly heldDownloads = new Map<string, HeldDownload>();
+  /** Held files being removed now, by id, so an answer or close that arrives meanwhile waits for the file to be gone. */
+  private readonly heldRemovals = new Map<string, Promise<void>>();
+  /**
+   * Files in the held folder this launch is not holding (an earlier launch's, or another launch's sharing the folder)
+   * are looked for from the first hold of this launch on, and each is removed once it is an hour old.
+   */
+  private heldLeftoversSwept = false;
+  /** The next look at those files, due when the youngest one left reaches the hour. */
+  private heldLeftoverTimer: NodeJS.Timeout | undefined;
   /** Where held files wait: this computer's temporary folder, never the workspace. Replaced in tests. */
   heldFolder = joinPath(tmpdir(), 'branch-held-downloads');
   /** Each site's small icon for the owner's tabs, as a data: address ("" while unknown or when it has none). */
@@ -366,25 +384,28 @@ export class BranchBrowser {
    */
   async adoptRun(owner: string, conversation: string, runId: string, clientId: string): Promise<BrowserControl> {
     const key = this.key({ owner, runId }), entry = this.sessions.get(key);
-    if (entry?.control) {
-      if (entry.control.binding.conversation !== conversation) throw new Error('This browser belongs to another conversation.');
-      return entry.control;
-    }
-    if (!entry || !entry.session.started()) throw new Error('That task has no browser page open.');
-    if (entry.borrowed || entry.session.isBorrowed()) throw new Error('That task is working in your own browser, so there is nothing to take over here.');
-    if (entry.held) throw new Error('A benchmark window cannot be taken over.');
-    // A recording Settings started is kept before the owner drives, so nothing the owner types is in it.
-    if (entry.autoRecording) await this.keepAutoRecording(runId, entry);
-    if (entry.session.isRecording()) throw new Error('That task is keeping a recording of its browser. Stop the recording before taking over.');
-    if (this.sessions.get(key) !== entry || entry.control) throw new Error('That task\'s browser changed; try again.');
-    const control = this.controls.adopt({ owner, conversation, profile: entry.profile }, clientId, runId, entry.session.tabs().length);
-    entry.control = control;
-    entry.tabIds = control.view().tabs;
-    entry.budgets = new Map([[runId, { actions: entry.actions, origins: entry.origins }]]);
-    entry.trunkChecked = true;
-    this.controlled.set(control.id, entry);
-    this.sessions.set(this.key({ owner, runId: `browser-control:${control.id}` }), entry);
-    return control;
+    if (!entry) throw new Error('That task has no browser page open.');
+    return this.withRecordingTransition(entry, async () => {
+      if (entry.control) {
+        if (entry.control.binding.conversation !== conversation) throw new Error('This browser belongs to another conversation.');
+        return entry.control;
+      }
+      if (!entry.session.started()) throw new Error('That task has no browser page open.');
+      if (entry.borrowed || entry.session.isBorrowed()) throw new Error('That task is working in your own browser, so there is nothing to take over here.');
+      if (entry.held) throw new Error('A benchmark window cannot be taken over.');
+      // A recording Settings started is kept before the owner drives, so nothing the owner types is in it.
+      if (entry.autoRecording) await this.finishAutoRecording(runId, entry);
+      if (entry.session.isRecording()) throw new Error('That task is keeping a recording of its browser. Stop the recording before taking over.');
+      if (this.sessions.get(key) !== entry || entry.control) throw new Error('That task\'s browser changed; try again.');
+      const control = this.controls.adopt({ owner, conversation, profile: entry.profile }, clientId, runId, entry.session.tabs().length);
+      entry.control = control;
+      entry.tabIds = control.view().tabs;
+      entry.budgets = new Map([[runId, { actions: entry.actions, origins: entry.origins }]]);
+      entry.trunkChecked = true;
+      this.controlled.set(control.id, entry);
+      this.sessions.set(this.key({ owner, runId: `browser-control:${control.id}` }), entry);
+      return control;
+    });
   }
   /** Creates a kept Branch-owned session before its first page; routes retain their existing caller/tool gates. */
   async createControlled(binding: BrowserBinding, clientId: string, context: ToolContext) {
@@ -874,6 +895,31 @@ export class BranchBrowser {
         marks: named.map(mark => ({ id: mark.id, role: mark.role, name: mark.name })) };
     });
   }
+  /** Finds literal label words and optional roles, returning a mark only when one current element matches. */
+  async find(options: z.infer<typeof FindSchema>, context: ToolContext) {
+    const entry = this.entry(context);
+    return this.operation(context, async page => {
+      const found = await annotate(page, { draw: false, limit: 200 }, entry.marks);
+      const { hidden } = await this.pageSecrets(context, page);
+      // A secret or page instruction must never become a search term or a result label.
+      const safe = found.marks.filter(mark => scrubText(mark.name, hidden) === mark.name
+        && !detectInjection(mark.name).length && !detectInjection(mark.role).length);
+      const matches = matchingMarks(safe, options.description), current: typeof matches = [];
+      for (const mark of matches)
+        if (mark.id <= 500 && await page.locator(`[data-branch-mark="${mark.id}"]`).isVisible()
+          && await liveMarkKey(page, mark.id) === mark.key) current.push(mark);
+      if (page.url() !== found.url) throw new Error('The page changed during the search. Describe the current page again.');
+      const status = found.truncated ? 'incomplete' : current.length === 1 ? 'found'
+        : current.length > 1 ? 'ambiguous' : 'not found';
+      return pageText({ url: found.url, status, matched: current.length,
+        ...(status === 'found' ? { mark: current[0]!.id } : {}),
+        matches: current.slice(0, options.limit).map(mark => ({ mark: mark.id, role: mark.role, name: mark.name })),
+        more: Math.max(0, current.length - options.limit), truncated: found.truncated,
+        note: found.truncated ? 'Only the first 200 elements were searched; describe the page more narrowly before acting.'
+          : status === 'ambiguous' ? 'Several elements match. Describe the intended label and role more precisely.'
+          : 'Matches describe page content. Acting on a mark requires a separate browser.act call and its permissions.' });
+    });
+  }
   /** w911 (A2144): one read-only look at the page this task has open, with its numbers checkable. */
   async lookAtPage<T extends object>(context: ToolContext, look: (page: Page, checks: MarkChecks) => Promise<T>): Promise<T> {
     const entry = this.entry(context);
@@ -1037,27 +1083,30 @@ export class BranchBrowser {
   /** Starts keeping a recording of this task's browser window. */
   async startRecording(context: ToolContext) {
     return this.writeFor(context, async (write) => {
-    const entry = this.entry(context);
-    if (entry.control && await this.ownedRecordingPrivate(entry))
-      throw new Error('This shared browser holds or has handled private values, so a recording cannot start.');
-    // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
-    // value is still in a box of the window.
-    // A box that cannot be asked counts as holding one, as it does for a saved page (holdsSecret).
-    const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
-    const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
-    if (typed.some(Boolean))
-      throw new Error('A saved sign-in is still typed into a box of this window, so a recording cannot start yet. Start it once the sign-in is done.');
-    // A recording photographs every tab in the window it is made in, so it is never made in the
-    // owner's own window: their other tabs are none of Branch's business.
-    if (entry.borrowed)
-      throw new Error('This task is working in your own browser, so a recording would photograph your other tabs too. Give your browser back first, then start a recording.');
-    await this.trunkProfile(context, entry); // a recording that opens the window opens it with the Trunk's own sign-in
-    write?.check();
-    await entry.session.record(startRecording);
-    // The same boxes page text leaves out (secretValues), so what a step reads is what the recording writes down.
-    entry.session.options.beforeAction = page => clearSecretValues(page);
-    return { recording: true,
-      note: 'Pictures of each step are kept; the page\'s own markup is not, and password and one-time-code boxes are emptied before every step, so no password or code can get into the file.' };
+    const entry = this.entry(context), control = entry.control;
+    return this.withRecordingTransition(entry, async () => {
+      if (entry.control !== control) throw new Error('Browser control changed before recording could start.');
+      if (entry.control && await this.ownedRecordingPrivate(entry))
+        throw new Error('This shared browser holds or has handled private values, so a recording cannot start.');
+      // A recording's pictures are the browser's own and cannot be covered, so none starts while a saved sign-in's
+      // value is still in a box of the window.
+      // A box that cannot be asked counts as holding one, as it does for a saved page (holdsSecret).
+      const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
+      const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
+      if (typed.some(Boolean))
+        throw new Error('A saved sign-in is still typed into a box of this window, so a recording cannot start yet. Start it once the sign-in is done.');
+      // A recording photographs every tab in the window it is made in, so it is never made in the
+      // owner's own window: their other tabs are none of Branch's business.
+      if (entry.borrowed)
+        throw new Error('This task is working in your own browser, so a recording would photograph your other tabs too. Give your browser back first, then start a recording.');
+      await this.trunkProfile(context, entry); // a recording that opens the window opens it with the Trunk's own sign-in
+      write?.check();
+      await entry.session.record(startRecording);
+      // The same boxes page text leaves out (secretValues), so what a step reads is what the recording writes down.
+      entry.session.options.beforeAction = page => clearSecretValues(page);
+      return { recording: true,
+        note: 'Pictures of each step are kept; the page\'s own markup is not, and password and one-time-code boxes are emptied before every step, so no password or code can get into the file.' };
+    });
     });
   }
   private async ownedRecordingPrivate(entry: RunEntry): Promise<boolean> {
@@ -1073,12 +1122,15 @@ export class BranchBrowser {
     const artifacts = this.artifacts;
     if (!artifacts) throw new Error('Recordings are switched off because there is nowhere to keep the file');
     const entry = this.entry(context);
-    const bytes = await entry.session.keepRecording();
-    write?.check();
-    entry.session.options.beforeAction = undefined;
-    const kept = await artifacts.write(context.runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`,
-      'application/zip', bytes);
-    return { ...kept, note: 'Open this in Playwright\'s trace viewer to watch what the browser did.' };
+    return this.withRecordingTransition(entry, async () => {
+      try {
+        const bytes = await entry.session.keepRecording();
+        write?.check();
+        const kept = await artifacts.write(context.runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`,
+          'application/zip', bytes);
+        return { ...kept, note: 'Open this in Playwright\'s trace viewer to watch what the browser did.' };
+      } finally { if (!entry.session.isRecording()) entry.session.options.beforeAction = undefined; }
+    });
     });
   }
   async tab(action: 'list' | 'open' | 'select' | 'close', index: number | undefined, context: ToolContext) {
@@ -1225,41 +1277,83 @@ export class BranchBrowser {
   }
   /** Ask each time: the file is written outside the workspace, with the same name and size limits, until the owner answers. */
   private async holdDownload(download: Download, context: Pick<ToolContext, 'owner' | 'runId'>): Promise<DownloadRecord> {
+    if (this.closed) throw new Error('the browser is closing; the file was not kept');
     const name = safeDownloadName(download.suggestedFilename());
     const ending = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : '';
     if (!this.config.downloadTypes.includes(ending)) throw new Error(`files ending in .${ending || '(nothing)'} are not saved`);
-    for (const [id, held] of this.heldDownloads) if (Date.now() - held.at > 3_600_000) this.dropHeld(id);
+    for (const id of [...this.heldDownloads.keys()]) this.heldEntry(id);
     if (this.heldDownloads.size >= 20) throw new Error('twenty files are already waiting for your yes; answer those first');
     await mkdir(this.heldFolder, { recursive: true });
+    if (!this.heldLeftoversSwept) { this.heldLeftoversSwept = true; await this.sweepHeldLeftovers(); }
     const id = randomUUID(), path = joinPath(this.heldFolder, id);
     const record = await this.stream(download, path, name);
+    if (this.closed) { await rm(path, { force: true }); throw new Error('the browser is closing; the file was not kept'); }
     const conversation = this.store?.run(context.runId)?.sessionId ?? '';
-    this.heldDownloads.set(id, { path, name, from: record.from, owner: context.owner, conversation, at: Date.now() });
+    const expiry = setTimeout(() => void this.dropHeld(id), heldForMs);
+    expiry.unref();
+    this.heldDownloads.set(id, { path, name, from: record.from, owner: context.owner, conversation, at: Date.now(), expiry });
     return { file: '', bytes: record.bytes, from: `${record.from} — ${downloadHeld(name)}`, held: id, name };
   }
-  private dropHeld(id: string): void {
+  /** A held file by id, or undefined once its hour is up (an expired one is removed on the way). */
+  private heldEntry(id: string): HeldDownload | undefined {
+    const held = this.heldDownloads.get(id);
+    if (!held || Date.now() - held.at <= heldForMs) return held;
+    void this.dropHeld(id);
+    return undefined;
+  }
+  /**
+   * Held files this launch has no list for (an earlier launch's list is gone with it) are removed once they are an hour
+   * old, the same hour their own launch keeps them. A younger one is looked at again when it reaches the hour.
+   */
+  private async sweepHeldLeftovers(): Promise<void> {
+    clearTimeout(this.heldLeftoverTimer);
+    this.heldLeftoverTimer = undefined;
+    if (this.closed) return;
+    const names = await readdir(this.heldFolder).catch(() => [] as string[]);
+    let next = Infinity;
+    await Promise.all(names.filter(name => heldName.test(name) && !this.heldDownloads.has(name)).map(async name => {
+      const path = joinPath(this.heldFolder, name);
+      const seen = await stat(path).catch(() => null);
+      if (!seen?.isFile()) return;
+      const left = heldForMs - (Date.now() - seen.mtimeMs);
+      if (left < 0) await rm(path, { force: true }).catch(() => undefined);
+      else next = Math.min(next, left + 1);
+    }));
+    if (next === Infinity || this.closed) return;
+    this.heldLeftoverTimer = setTimeout(() => void this.sweepHeldLeftovers(), next);
+    this.heldLeftoverTimer.unref();
+  }
+  private async dropHeld(id: string): Promise<void> {
     const held = this.heldDownloads.get(id);
     this.heldDownloads.delete(id);
-    if (held) void rm(held.path, { force: true }).catch(() => undefined);
+    if (!held) return;
+    clearTimeout(held.expiry);
+    const removal = rm(held.path, { force: true }).catch(() => undefined).finally(() => this.heldRemovals.delete(id));
+    this.heldRemovals.set(id, removal);
+    await removal;
   }
   /** browser.keep_download: once the owner said yes, the held file moves into the workspace; keep false throws it away. */
   async keepDownload(input: { id: string; keep: boolean }, context: ToolContext) {
+    // An hour-old file is removed before the answer is refused, so a late yes or no leaves nothing behind.
+    const found = this.heldDownloads.get(input.id);
+    if (found && Date.now() - found.at > heldForMs) await this.dropHeld(input.id);
+    await this.heldRemovals.get(input.id);
     const held = this.heldDownloads.get(input.id);
     const conversation = this.store?.run(context.runId)?.sessionId ?? '';
     if (!held || held.owner !== context.owner || held.conversation !== conversation)
       throw new Error('No file with that id is waiting for this conversation.');
-    if (!input.keep) { this.dropHeld(input.id); return { discarded: held.name }; }
+    if (!input.keep) { await this.dropHeld(input.id); return { discarded: held.name }; }
     if (!this.files) throw new Error('saving files from websites needs the workspace');
     for (let attempt = 0; ; attempt++) {
       const relative = await this.freeName(held.name), target = await this.files.checked(relative);
       await mkdir(dirname(target), { recursive: true });
-      try { await copyFile(held.path, target, 1 /* COPYFILE_EXCL */); this.dropHeld(input.id); return { file: relative, from: held.from }; }
+      try { await copyFile(held.path, target, 1 /* COPYFILE_EXCL */); await this.dropHeld(input.id); return { file: relative, from: held.from }; }
       catch (error) { if (attempt > 0 || (error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
     }
   }
   /** Where a held file came from, so the approval names the site. */
   heldHost(id: unknown): string {
-    const held = typeof id === 'string' ? this.heldDownloads.get(id) : undefined;
+    const held = typeof id === 'string' ? this.heldEntry(id) : undefined;
     try { return held ? new URL(held.from.split(' ')[0]!).host : ''; } catch { return ''; }
   }
   /** A name inside the downloads folder that is not taken yet. */
@@ -1317,10 +1411,11 @@ export class BranchBrowser {
     return browserPaintWake(page, painted, signal, current);
   }
   /** For the owner's tabs: whether the page is still loading, and its site's small icon once known. */
-  private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string }> {
-    const state = await Promise.race([tab.evaluate(() => document.readyState).catch(() => 'complete'),
-      new Promise<string>(done => { setTimeout(() => done('loading'), 300).unref?.(); })]);
-    return { loading: state !== 'complete', icon: this.iconFor(tab) };
+  private async tabExtras(tab: Page): Promise<{ loading: boolean; icon: string; zoom?: number }> {
+    const state = await Promise.race([tab.evaluate(() => ({ state: document.readyState,
+      zoom: Number(getComputedStyle(document.documentElement).zoom) || 1 })).catch(() => ({ state: 'complete', zoom: null })),
+      new Promise<{ state: string; zoom: number | null }>(done => { setTimeout(() => done({ state: 'loading', zoom: null }), 300).unref?.(); })]);
+    return { loading: state.state !== 'complete', icon: this.iconFor(tab), ...(state.zoom !== null ? { zoom: state.zoom } : {}) };
   }
   /**
    * A site's icon, fetched once per site under the same network rules as every other request (the policy's own
@@ -1414,37 +1509,52 @@ export class BranchBrowser {
     const key = this.key(context), entry = this.sessions.get(key);
     if (!entry || entry.held) return; // w911 (A1726): a benchmark window is closed by the benchmark
 
-    if (entry.control) {
-      this.controls.finishRun(context.owner, context.runId);
-      entry.budgets?.delete(context.runId);
-      this.sessions.delete(key);
-      return;
-    }
+    await this.withRecordingTransition(entry, async () => {
+      if (entry.control) {
+        this.controls.finishRun(context.owner, context.runId);
+        entry.budgets?.delete(context.runId);
+        this.sessions.delete(key);
+        return;
+      }
 
-    entry.detach();
-    await this.keepAutoRecording(context.runId, entry);
-    await this.keepSignIn(context.owner, entry);
-    await entry.session.close();
-    if (this.sessions.get(key) === entry) this.sessions.delete(key);
+      entry.detach();
+      await this.finishAutoRecording(context.runId, entry);
+      await this.keepSignIn(context.owner, entry);
+      await entry.session.close();
+      if (this.sessions.get(key) === entry) this.sessions.delete(key);
+    });
+  }
+  /** Reserve the entry's next transition synchronously, including secret reads, trace startup and trace stop. */
+  private withRecordingTransition<T>(entry: RunEntry, action: () => Promise<T>): Promise<T> {
+    const work = (entry.recordingTransition ?? Promise.resolve()).then(action);
+    entry.recordingTransition = work.then(() => undefined, () => undefined);
+    return work;
   }
   /**
    * Settings' "Record browser tasks": once a task's first page has opened, its window keeps a recording, as
    * browser.recording "start" would, unless a saved sign-in's value is still typed in, the window is the owner's own,
    * or it is the conversation's kept browser (which the owner may take over and type into). Skipped quietly then.
    */
-  private async autoRecord(context: ToolContext, entry: RunEntry): Promise<void> {
+  private autoRecord(context: ToolContext, entry: RunEntry): Promise<void> {
+    return this.withRecordingTransition(entry, () => this.startAutoRecording(context, entry));
+  }
+  private async startAutoRecording(context: ToolContext, entry: RunEntry): Promise<void> {
     if (!this.care(context.owner).recordTasks || !this.artifacts || entry.control || entry.borrowed || entry.held
       || entry.session.isBorrowed() || entry.session.isRecording() || entry.autoRecording !== undefined) return;
     const boxes = [...entry.filled.values()].flatMap(kept => kept.boxes);
     const typed = await Promise.all(boxes.map(box => box.evaluateAll(found => found.some(one => !!(one as HTMLInputElement).value)).catch(() => true)));
-    if (typed.some(Boolean)) return;
+    if (typed.some(Boolean) || entry.control || this.sessions.get(this.key(context)) !== entry) return;
     entry.autoRecording = false;
     await entry.session.record(startRecording);
+    if (entry.control || this.sessions.get(this.key(context)) !== entry) {
+      await entry.session.keepRecording();
+      return;
+    }
     entry.session.options.beforeAction = page => clearSecretValues(page);
     entry.autoRecording = true;
   }
   /** A recording Settings started is kept beside the task's other files when the task ends or the owner takes over. */
-  private async keepAutoRecording(runId: string, entry: RunEntry): Promise<{ path: string } | null> {
+  private async finishAutoRecording(runId: string, entry: RunEntry): Promise<{ path: string } | null> {
     if (!entry.autoRecording || !entry.session.isRecording() || !this.artifacts) return null;
     entry.autoRecording = false;
     try {
@@ -1452,6 +1562,7 @@ export class BranchBrowser {
       entry.session.options.beforeAction = undefined;
       return await this.artifacts.write(runId, `browser-recording-${randomUUID().slice(0, 8)}.zip`, 'application/zip', bytes);
     } catch { return null; } // a recording that could not be kept never holds up the end of a task
+    finally { if (!entry.session.isRecording()) entry.session.options.beforeAction = undefined; }
   }
   /** A run that used a saved sign-in writes what it learned back, so the person stays signed in. */
   private async keepSignIn(owner: string, entry: RunEntry): Promise<void> {
@@ -1506,9 +1617,15 @@ export class BranchBrowser {
     });
     const results = await Promise.allSettled(pending);
     await this.starting?.catch(() => undefined);
-    await this.sandbox?.close(); // w911 (A2019) hook: closes the sandbox browser and stops its container
-    await this.browser?.close();
-    await this.pinProxy?.close();
+    try {
+      await this.sandbox?.close(); // w911 (A2019) hook: closes the sandbox browser and stops its container
+      await this.browser?.close();
+      await this.pinProxy?.close();
+    } finally {
+      clearTimeout(this.heldLeftoverTimer);
+      // Held downloads go last, once no page is left to send another: nothing waits outside the workspace after close.
+      await Promise.all([...[...this.heldDownloads.keys()].map(id => this.dropHeld(id)), ...this.heldRemovals.values()]);
+    }
     this.sessions.clear();
     this.controlled.clear();
     const failures = results.filter(result => result.status === 'rejected');
@@ -1688,6 +1805,9 @@ function registerBrowserSecondPass(registry: ToolRegistry, browser: BranchBrowse
   registry.register({ name: 'browser.annotate', permission: 'browser.read',
     description: 'Number everything on the page you can press or type into and list them, so you can say "press 3" instead of guessing at a selector. A number stays with the same thing while the task lasts.',
     parameters: AnnotateSchema, execute: (a, c) => browser.annotate(a, c) });
+  registry.register({ name: 'browser.find', permission: 'browser.read',
+    description: 'Find a current page element by the words on its label and optional role, such as "the Save button". Returns checked mark numbers, reports ambiguous or incomplete searches, and performs no click or fill. Matches use literal words, not inferred synonyms.',
+    parameters: FindSchema, execute: (a, c) => browser.find(a, c), target: host });
   registry.register({ name: 'browser.unmark', permission: 'browser.read',
     description: 'Take the numbered labels off the page again, so a picture shows it the way the website meant it.',
     parameters: z.object({}).strict(), execute: (_a, c) => browser.clearMarks(c) });

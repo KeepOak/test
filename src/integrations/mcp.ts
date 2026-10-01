@@ -9,6 +9,8 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { ToolRegistry } from '../registry.js';
 import type { ToolDefinition, ToolContext } from '../contracts.js';
 import { McpConfigSchema, makeTransport, type McpConfig } from './mcp-config.js';
+import { openStatelessMcp, LegacyMcpFallback } from './mcp-stateless-client.js';
+import { StatelessError } from '../mcp-stateless.js';
 import { remoteMcpError, RemoteMcpError } from './mcp-errors.js';
 import { mcpContent, mcpDescription, type McpContentPolicy } from './mcp-content.js';
 
@@ -206,6 +208,8 @@ export async function openMcp(
 ) {
   const config = McpConfigSchema.parse(input);
   if (new Set(config.tools).size !== config.tools.length) throw new Error('Duplicate MCP tool allowlist entry');
+  const modern = await tryStateless(config, env, policy, cache, startupTimeoutMs);
+  if (modern) return modern;
   const { transport, secrets } = await makeTransport(config, env, policy);
   const client = new (await mcpClient())({ name: 'branch', version: '0.1.0' });
   try {
@@ -219,10 +223,36 @@ export async function openMcp(
     // Told when the connection closes for any reason, so a crashed program is started again on next use, not called dead.
     let alive = true;
     client.onclose = () => { alive = false; };
-    return { config, found, secrets, call: through(client, config), close: () => client.close(), alive: () => alive };
+    return { config, found, secrets, call: through(client, config), close: () => client.close(), alive: () => alive,
+      check: async (signal?: AbortSignal) => {
+        signal?.throwIfAborted();
+        await client.ping({ timeout: 10000, ...(signal ? { signal } : {}) });
+        signal?.throwIfAborted();
+      } };
   } catch {
     await client.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');
+  }
+}
+
+async function tryStateless(config: McpConfig, env: NodeJS.ProcessEnv, policy: { guard(base: typeof fetch): typeof fetch } | undefined,
+  cache: McpToolCache | undefined, timeout: number): Promise<Awaited<ReturnType<typeof openStatelessMcp>> | undefined> {
+  if (config.transport !== 'http' || (config.protocol ?? 'legacy') === 'legacy') return undefined;
+  let opened: Awaited<ReturnType<typeof openStatelessMcp>> | undefined;
+  try {
+    opened = await openStatelessMcp(config, env, policy, timeout);
+    if (JSON.stringify(redact(opened.found, opened.secrets)) !== JSON.stringify(opened.found))
+      throw new Error('MCP discovery contains a configured credential');
+    cache?.write(config.id, cacheable(opened.found));
+    return opened;
+  } catch (error) {
+    await opened?.close();
+    const supported = error instanceof StatelessError && error.code === -32022 && error.data && typeof error.data === 'object'
+      ? (error.data as { supported?: unknown }).supported : undefined;
+    const compatible = Array.isArray(supported) && supported.some((version) => ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'].includes(String(version)));
+    if (config.protocol !== 'auto' || !(error instanceof LegacyMcpFallback || compatible)) throw error;
+    // Only a read-only discovery probe can negotiate down. Tool calls are never automatically retried.
+    return undefined;
   }
 }
 
@@ -253,7 +283,18 @@ function restarting(first: Awaited<ReturnType<typeof openMcp>>, reopen: () => Pr
     }
     return current.call(tool, args, context);
   };
-  return { call, close: async () => { closed = true; await current.close(); } };
+  const check = async (signal?: AbortSignal) => {
+    if (closed || !current.alive()) throw new Error('MCP connection is not open. Use a tool to connect it before checking.');
+    signal?.throwIfAborted();
+    const checking = current;
+    if (!("check" in checking) || typeof checking.check !== "function")
+      throw new Error('This MCP transport does not support a live connection check.');
+    await checking.check(signal);
+    signal?.throwIfAborted();
+    if (closed || current !== checking || !checking.alive())
+      throw new Error('The checked MCP connection closed or changed. Check the current connection again.');
+  };
+  return { call, check, close: async () => { closed = true; await current.close(); } };
 }
 
 export async function connectMcp(
@@ -274,7 +315,7 @@ export async function connectMcp(
     if (definitions.some(tool => existing.has(tool.name))) throw new Error('MCP tool name collision');
     for (const tool of definitions) registry.register(tool);
     return { id: opened.config.id, version: opened.config.expectedVersion,
-      tools: definitions.map(tool => tool.name), call: opened.call, close: opened.close };
+      tools: definitions.map(tool => tool.name), call: opened.call, close: opened.close, check: live.check };
   } catch {
     await opened.close().catch(() => undefined);
     throw new Error('MCP connection failed: check server availability, version, tool allowlist and metadata');

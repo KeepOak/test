@@ -221,6 +221,10 @@ export function updatePlan(store: Pick<Store, "get">, owner: string, facts: Plan
         ? plan("nothing", "A newer version is ready; it installs once no task is working.", "no task is working")
         : plan("nothing", "A newer version is ready; it installs once the questions asked in the last hour are answered.", "the questions asked in the last hour are answered");
     }
+    // A release that keeps waiting stays "available" and would be taken again every turn, never looking past it (the
+    // owner's copy retried one for 7.5 hours while newer builds landed). When a look is due, look first; the loop then
+    // installs what that look found. The owner's own request, and a plan with no look on record, go on as before.
+    if (!requested && lastCheckedAt !== null && due) return plan("check", "Looking for a newer version before installing the one found.");
     if (facts.overdueTasks) return plan("install", `A newer version has waited three hours for ${facts.overdueTasks} task(s), so it is installed now; the work carries on after it.`);
     return plan("install", "A newer version is ready and nothing is working, so it is installed now, safely.");
   }

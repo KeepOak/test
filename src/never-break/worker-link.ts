@@ -89,7 +89,7 @@ export async function runGatewayIfSwitchedOn(input: { dataDir: string; script: s
     quit: () => stop("branch quit"),
     onWorker: (event) => {
       if (event.kind === "ready") record.log.write({ level: "info", component: "gateway", message: "The engine is ready", fields: { pid: event.ready.pid ?? null, version: event.ready.version } });
-      else record.log.write({ level: "error", component: "gateway", message: "The engine stopped unexpectedly", fields: { code: event.code, signal: event.signal, tripped: event.tripped } });
+      else record.log.write({ level: "error", component: "gateway", message: event.why ?? "The engine stopped unexpectedly", fields: { code: event.code, signal: event.signal, tripped: event.tripped } });
     } });
   const url = await gateway.start();
   console.log(`Branch gateway listening at ${url}\nThe engine runs behind it and is started again if it stops.`);

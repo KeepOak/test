@@ -24,7 +24,7 @@ async function withTrunks(t) {
 const openChat = async (page, name) => { await page.locator(`#side [data-act="chat"]:has-text("${name}")`).first().click(); await page.waitForTimeout(400); };
 const menu = async (page, selector) => { await page.locator('[data-act="chatmenu"]').first().click(); await page.locator(`.pop ${selector}`).click(); };
 
-test("Share…: With people is saved and taken back in the engine; a copy, a key and hand-off stay greyed", async (t) => {
+test("Share…: With people is saved and taken back in the engine; a copy and a key stay greyed, hand-off is live", async (t) => {
   const { page, call, a, person, errors } = await withTrunks(t);
   await openChat(page, "Wren");
   await menu(page, '[data-act="share10"][data-k="conv"]');
@@ -40,10 +40,18 @@ test("Share…: With people is saved and taken back in the engine; a copy, a key
   await page.locator(`.dlg [data-act="share-rel"][data-subject="${subject}"][data-v="no"]`).click();
   await page.waitForTimeout(400);
   assert.deepEqual(await held(), []);
-  for (const [tab, act] of [["copy", "share-link"], ["carry", "share-key"], ["handoff", "share-handoff"]]) {
+  for (const [tab, act] of [["copy", "share-link"], ["carry", "share-key"]]) {
     await page.locator(`.dlg [data-act="share-tab"][data-v="${tab}"]`).click();
     assert.ok(await greyed(page.locator(`.dlg [data-act="${act}"]`).first()), `${act} stays greyed`);
   }
+  // CHAT-261: Hand off is live. With no owner Telegram DM it says how to get one; the terminal answers through /handoff.
+  await page.locator('.dlg [data-act="share-tab"][data-v="handoff"]').click();
+  await page.locator(".dlg .empty").filter({ hasText: "No available Telegram owner DM" }).waitFor();
+  const terminal = page.locator('.dlg [data-act="share-handoff"][data-v="terminal"]');
+  assert.equal(await greyed(terminal), false);
+  await terminal.click();
+  await page.locator(".dlg pre.code").waitFor();
+  assert.ok((await page.locator(".dlg pre.code").textContent()).trim().length > 0, "the command's answer is shown");
   assert.deepEqual((await call("/api/shares")).shares, [], "no copy link was made");
   assert.deepEqual(errors, []);
 });
@@ -93,17 +101,24 @@ test("Room rules: the rule and the room's pattern are saved; the row names the r
   assert.deepEqual(errors, []);
 });
 
-/* The desktop app (?desktop=1) refuses downloads, so As a file is greyed there instead of claiming a save. */
-test("Share this Trunk…: As a file is greyed in the desktop app, which refuses downloads", async (t) => {
-  const { page, errors } = await withTrunks(t);
+/* TRUNK-036: the desktop app lets through a download the page made on its own origin (src/desktop/own-download.ts), so
+   As a file is live there too; the file is a blob on the window's origin with a name safe for any disk. */
+test("Share this Trunk…: As a file works in the desktop app too, as a blob on the window's own origin", async (t) => {
+  const { page, call, errors } = await withTrunks(t);
+  await call("/api/trunks", { name: "Wren / notes: v2", title: "Checks" });
   const url = new URL(page.url());
   url.searchParams.set("desktop", "1");
   await page.goto(url.href);
   await page.locator("#app #side").waitFor({ state: "visible" });
-  await openChat(page, "Wren");
+  await openChat(page, "Wren / notes");
   await menu(page, '[data-act="share10"][data-k="trunk"]');
   await page.locator('.dlg [data-act="share-tab"][data-v="file"]').click();
-  assert.ok(await greyed(page.locator('.dlg [data-act="share-file"]')));
+  const button = page.locator('.dlg [data-act="share-file"]');
+  assert.equal(await greyed(button), false);
+  const [download] = await Promise.all([page.waitForEvent("download"), button.click()]);
+  assert.ok(download.url().startsWith(`blob:${url.origin}/`), download.url());
+  assert.equal(download.suggestedFilename(), "Wren-notes-v2.branch-trunk");
+  assert.equal(JSON.parse(readFileSync(await download.path(), "utf8")).trunk.name, "Wren / notes: v2");
   assert.deepEqual(errors, []);
 });
 

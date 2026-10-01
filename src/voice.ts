@@ -24,7 +24,7 @@ export const VoiceSettingsSchema = z
     /** Where recordings are written out: the connected model, Gemini, or a program on this computer. */
     sttRoute: z.enum(["auto", "openai", "gemini", "local"]).default("auto"),
     /** Which service reads replies aloud. "windows" is the computer's own voice (the name is kept for saved settings). */
-    ttsRoute: z.enum(["auto", "openai", "gemini", "windows"]).default("auto"),
+    ttsRoute: z.enum(["auto", "openai", "gemini", "windows", "piper"]).default("auto"),
     /** The transcription model to ask for; empty means each route's usual one. */
     sttModel: z.string().trim().max(200).default(""),
     /** The speech model to ask for; empty means each route's usual one. */
@@ -42,6 +42,9 @@ export const VoiceSettingsSchema = z
     localSpeechExecutable: z.string().trim().max(400).default(""),
     localSpeechModel: z.string().trim().max(400).default(""),
     localSpeechKind: z.enum(["whisper-cpp", "faster-whisper"]).default("whisper-cpp"),
+    /** Installed external Piper CLI and an existing .onnx voice with adjacent .onnx.json. */
+    localVoiceExecutable: z.string().trim().max(400).default(""),
+    localVoiceModel: z.string().trim().max(400).default(""),
     /**
      * mac7/live-voice: a streaming speech program on this computer that is handed sound on its
      * standard input and writes words out as it hears them, for live dictation. Empty means none,

@@ -391,3 +391,15 @@ test("a named household member can open only a room they belong to in the real w
   await f.page.waitForFunction(() => /Scout here, in the room\./.test(document.getElementById("conversation").textContent), null, { timeout: 15000 });
   assert.deepEqual(f.errors, []);
 });
+
+test("UI-032: on a new conversation the + menu picks a Trunk before the first message, and that Trunk answers it", async (t) => {
+  const f = await fixture(t, ["conversations"]);
+  await f.page.locator("#prompt").fill("Kept draft");
+  const pop = await whoMenu(f.page);
+  await pop.locator(`[data-act="who"][data-v="${f.scout.id}"]`).click();
+  await f.page.waitForFunction(() => document.querySelector('#side .list [data-act="chat"][aria-current="true"]'), null, { timeout: 15000 });
+  assert.equal(await f.page.locator("#prompt").inputValue(), "Kept draft", "the draft moves into the new conversation");
+  await send(f.page, "Has the price moved?");
+  await f.page.waitForFunction(() => /Scout here\./.test([...document.querySelectorAll("#conversation .b")].at(-1)?.textContent ?? ""), null, { timeout: 15000 });
+  assert.deepEqual(f.errors, []);
+});

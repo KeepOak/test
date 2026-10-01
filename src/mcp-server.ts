@@ -14,6 +14,8 @@ import {
 import { compareSnapshot, listSnapshots, recordSnapshot, type SnapshotTool } from './mcp-snapshots.js';
 import { argumentFingerprint } from './runtime.js';
 import { approvalQuestion, maximumPendingPerSession } from './approvals.js';
+import { completed, protocolKey, statelessVersion, StatelessError } from './mcp-stateless.js';
+import { lockedDown } from './lockdown.js';
 
 /**
  * Protocol versions Branch understands, newest first. A client that asks for something else is told
@@ -54,6 +56,8 @@ export type StreamListener = (notification: JsonRpcNotification) => void;
 export const McpSharingSchema = z
   .object({
     enabled: z.boolean().default(false),
+    /** Preview: only stateless discovery/resource/prompt requests, no execution or subscriptions. */
+    statelessPreview: z.boolean().optional(),
     exposedTools: z.array(z.string().min(1).max(100)).max(200).default([]),
     /** Also answer assistants elsewhere over the agent-to-agent protocol, from the same shared list. */
     a2a: z.boolean().default(false),
@@ -205,6 +209,7 @@ const scopedResources: readonly ResourceScope[] = [
 export class McpServer {
   private sessions = new Map<string, McpSession>();
   private inFlight = 0;
+  private statelessInFlight = 0;
   /**
    * Calls parked on a question for the owner. Waiting for a person is not work, so it is taken off
    * the busy count: otherwise a couple of unanswered questions would hold every slot the connection
@@ -329,7 +334,46 @@ export class McpServer {
     return preflight(this.registry, this.store, this.runtime.owner, this.exposed());
   }
 
-  /** Handle a JSON-RPC request and return the response to send back. */
+  /** Request-local read adapter. Never allocates a session or restores a connection's approvals. */
+  async handleStateless(request: JsonRpcRequest): Promise<JsonRpcResponse> {
+    const respond = (value: unknown): JsonRpcResponse => ({ jsonrpc: '2.0', id: request.id, result: completed(value) });
+    if (this.statelessInFlight >= this.options.maxConcurrentCalls)
+      return { jsonrpc: '2.0', id: request.id, error: { code: -32603, message: 'Stateless request concurrency limit' } };
+    this.statelessInFlight++;
+    try {
+      this.store.profiles.requireOwner('Stateless MCP reads');
+      if (this.runtime.fullAccessLocked() || lockedDown(this.store, this.runtime.owner)) throw new StatelessError(-32602, 'Stateless MCP is locked');
+      const sharing = this.sharing(), params = request.params ?? {}, meta = params._meta as Record<string, unknown>;
+      const version = meta[protocolKey];
+      if (version !== statelessVersion || !sharing.statelessPreview)
+        throw new StatelessError(-32022, 'Unsupported protocol version', { requested: version,
+          supported: [...(sharing.statelessPreview ? [statelessVersion] : []), ...supportedProtocolVersions] });
+      if (!sharing.enabled) throw new StatelessError(-32602, 'MCP sharing is disabled');
+      const { _meta: _context, ...argumentsOnly } = params;
+      if (request.method === 'server/discover') return respond({ supportedVersions: [statelessVersion],
+        capabilities: { resources: {}, prompts: {} }, ttlMs: 0, cacheScope: 'private',
+        instructions: 'Stateless read preview: discovery, resources and prompts only. Execution, MRTR and subscriptions are unavailable.' });
+      let result: unknown;
+      switch (request.method) {
+        case 'ping': result = {}; break;
+        case 'resources/list': result = { resources: this.listResources(), ttlMs: 0, cacheScope: 'private' }; break;
+        case 'resources/read': result = await this.readResource(argumentsOnly); break;
+        case 'prompts/list': result = { prompts: this.listPrompts(), ttlMs: 0, cacheScope: 'private' }; break;
+        case 'prompts/get': result = await this.getPrompt(argumentsOnly); break;
+        default: throw new StatelessError(-32601, 'Method unavailable in the stateless read preview');
+      }
+      this.store.profiles.requireOwner('Stateless MCP reads');
+      if (!this.sharing().enabled || !this.sharing().statelessPreview || this.runtime.fullAccessLocked() || lockedDown(this.store, this.runtime.owner)
+        || (request.method === 'resources/read' && !this.mayStillRead(argumentsOnly)))
+        throw new StatelessError(-32602, 'Stateless MCP reads are no longer available');
+      return respond(this.runtime.hideSecrets(result));
+    } catch (error) {
+      return { jsonrpc: '2.0', id: request.id, error: error instanceof StatelessError
+        ? { code: error.code, message: error.message, ...(error.data === undefined ? {} : { data: error.data }) }
+        : { code: -32602, message: 'Invalid or unavailable stateless read request' } };
+    } finally { this.statelessInFlight--; }
+  }
+
   async handle(request: JsonRpcRequest, sessionId?: string): Promise<JsonRpcResponse> {
     const session = this.getSession(sessionId);
     const respond = (result?: unknown, error?: JsonRpcResponse['error']): JsonRpcResponse => ({
@@ -685,6 +729,13 @@ export class McpServer {
     const { decision } = evaluatePolicy(policy,
       { tool: scope.tool, target: '', readOnly: isReadOnlyPermission(scope.permission) });
     return decision !== 'deny';
+  }
+
+  /** The approval settings as they are now, for a resource that has already been read, just before it is sent. */
+  private mayStillRead(params: Record<string, unknown>): boolean {
+    const uri = params.uri;
+    if (uri === hiddenToolsUri) return true;
+    return this.mayRead(scopedResources.find((entry) => entry.uri === uri) ?? historyScope);
   }
 
   private listResources(): unknown[] {

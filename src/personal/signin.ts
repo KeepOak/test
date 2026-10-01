@@ -2,7 +2,9 @@ import { z } from "zod";
 import type { OAuthConnections, OAuthProvider, OAuthStart } from "../oauth.js";
 import type { Store } from "../store.js";
 import { callJson } from "../channels/parity-common.js";
-import { partSettings, savePartSettings, secretNameSchema, type PersonalPart } from "./settings.js";
+import { partSettings, requirePersonal, savePartSettings, secretNameSchema, type PersonalPart } from "./settings.js";
+import { probeSignIn, type ConnectionHealth } from "./probe.js";
+import { assertHealthCurrent } from "../health-check.js";
 
 /**
  * R17-C: signing in to the owner's own Google, Microsoft and Spotify accounts. Nothing new is
@@ -62,6 +64,7 @@ export function describeSignIn(service: SignInService, settings: SignInSettings)
 
 export interface SignInDeps {
   store: Store;
+  fetch: typeof fetch;
   owner: string;
   oauth: Pick<OAuthConnections, "start" | "waitFor" | "saved" | "accessToken">;
   /** A named secret from the locker, filled in at the moment it is needed. */
@@ -70,10 +73,13 @@ export interface SignInDeps {
 
 /** One service's sign-in: its settings, starting it, whether it is done, and a usable access key. */
 export class SignIn {
+  private healthRevision = 0;
   constructor(private readonly deps: SignInDeps, readonly service: SignInService, readonly part: PersonalPart) {}
   settings(): SignInSettings { return partSettings(this.deps.store, this.deps.owner, settingsKey(this.service), SignInSettingsSchema); }
   save(input: unknown): SignInSettings {
-    return savePartSettings(this.deps.store, this.deps.owner, settingsKey(this.service), SignInSettingsSchema, input);
+    const saved = savePartSettings(this.deps.store, this.deps.owner, settingsKey(this.service), SignInSettingsSchema, input);
+    this.clearHealth();
+    return saved;
   }
   /** The full description, with the client secret filled in from the locker when one is named. */
   async provider(): Promise<OAuthProvider> {
@@ -82,21 +88,56 @@ export class SignIn {
     const described = describeSignIn(this.service, settings);
     if (!settings.clientSecretName) return described;
     const clientSecret = await this.deps.secret(settings.clientSecretName, `signing in to ${labels[this.service]}`);
+    assertHealthCurrent();
     return { ...described, clientSecret };
   }
   /** Starts the sign-in through the existing flow; the owner opens the address it hands back. */
   async start(): Promise<OAuthStart> {
+    this.clearHealth();
     const started = await this.deps.oauth.start(await this.provider());
-    this.deps.oauth.waitFor(started.id).catch(() => undefined);
+    // A check begun on the old grant must not be kept for the new one: finishing the sign-in forgets checks again.
+    this.deps.oauth.waitFor(started.id).then(() => this.clearHealth(), () => undefined);
     return started;
   }
-  async status(): Promise<{ signedIn: boolean; expiresAt: string | null; scope: string | null }> {
+  async status(): Promise<{ signedIn: boolean; expiresAt: string | null; scope: string | null; health: ConnectionHealth | null }> {
     const tokens = await this.deps.oauth.saved(`personal-${this.service}`);
-    return { signedIn: tokens !== null, expiresAt: tokens?.expiresAt ?? null, scope: tokens?.scope ?? null };
+    assertHealthCurrent();
+    return { signedIn: tokens !== null, expiresAt: tokens?.expiresAt ?? null, scope: tokens?.scope ?? null, health: tokens ? this.health() : null };
+  }
+  private healthKey(): string { return `personal-connection-health:${this.service}`; }
+  private clearHealth(): void {
+    this.healthRevision++;
+    this.deps.store.delete("settings", this.deps.owner, this.healthKey());
+  }
+  private health(): ConnectionHealth | null {
+    const saved = this.deps.store.get("settings", this.deps.owner, this.healthKey())?.data as unknown as ConnectionHealth | undefined;
+    const age = saved ? Date.now() - Date.parse(saved.checkedAt) : NaN;
+    return saved && age >= 0 && age < 15 * 60 * 1000 ? saved : null;
+  }
+  /** Explicit safe reads, separate from having a saved sign-in. A failed read never signs the owner out. */
+  async test(): Promise<ConnectionHealth> {
+    assertHealthCurrent();
+    requirePersonal(this.deps.store, this.deps.owner, this.part);
+    this.clearHealth();
+    const revision = this.healthRevision;
+    const settings = JSON.stringify(this.settings());
+    const token = await this.token();
+    assertHealthCurrent();
+    const health = await probeSignIn(this.service, token, this.deps.fetch);
+    assertHealthCurrent();
+    requirePersonal(this.deps.store, this.deps.owner, this.part);
+    if (this.healthRevision !== revision || JSON.stringify(this.settings()) !== settings)
+      throw new Error("The connection changed. Check it again.");
+    this.deps.store.save("settings", this.deps.owner, this.healthKey(), { ...health });
+    return health;
   }
   /** A usable access key, renewed first when it has run out. */
   async token(): Promise<string> {
-    return this.deps.oauth.accessToken(await this.provider());
+    const provider = await this.provider();
+    assertHealthCurrent();
+    const token = await this.deps.oauth.accessToken(provider);
+    assertHealthCurrent();
+    return token;
   }
 }
 
