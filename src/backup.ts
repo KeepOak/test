@@ -220,7 +220,7 @@ export const restoreHeldKey = "restore-held";
  */
 export const staysOnThisComputer = (id: string): boolean =>
   signInSettings.includes(id) || thisComputerSettings.includes(id) || [...signInPrefixes, ...thisComputerPrefixes].some((start) => id.startsWith(start))
-  || id === restoreHeldKey || id === restoredTrunksKey;
+  || id === "purchases-link-settings" || id === restoreHeldKey || id === restoredTrunksKey;
 /**
  * The owner's own preferences that say where their words go or who gets in (Q168 B): the model accounts and
  * connections, approved chat senders and the allow list, who may view or drive the owner's conversations, each

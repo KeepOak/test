@@ -28,6 +28,8 @@ const outbound: readonly string[] = [
   "code.handoff",
   // Acting on a web page or on another program's window is outside the workspace too.
   "browser.interact", "signin.fill", "desktop.control", "desktop.clipboard",
+  // RES-115/116: an exact purchase talks to the seller and to Stripe Link.
+  "payments.spend",
 ];
 const local: readonly string[] = [
   "files.read", "files.write", "code.execute", "shell.execute", "process.read", "process.manage",

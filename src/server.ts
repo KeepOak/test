@@ -1,5 +1,7 @@
 import { leastPermissions, reachWords } from "./schedule-reach.js"; // dogfood
 import { retiredPhoneWorker } from "./retired-phone-worker.js";
+
+import { currentTaskRun } from "./task-scope.js";
 import {
   createServer,
   type IncomingMessage,
@@ -4564,11 +4566,17 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         // ---- end phase2/shell ----
         // ---- R17-C: files, voice, devices and personal connectors under /api/personal (src/personal/api.ts). ----
         if (handlesPersonalPath(path)) {
+          if (path === "/api/personal/purchases" || path.startsWith("/api/personal/purchases/")) {
+            if (throughDoor(request) || currentPerson() || currentTaskRun() || startedWithShortLivedKey() || !app.store.profiles.isOwner() || app.sessionLock.locked())
+              throw new HttpError(403, "Purchases require your unlocked local owner window.");
+          }
           app.store.profiles.requireOwner("Your personal connectors");
           const answer = await personalApi({ personal: app.personal, runtime: app.runtime, method: request.method ?? "GET",
             readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
             throw error instanceof PersonalHttpError ? new HttpError(error.status, error.message) : error;
           });
+          if ((path === "/api/personal/purchases" || path.startsWith("/api/personal/purchases/")) &&
+            (app.sessionLock.locked() || !app.store.profiles.isOwner())) throw new HttpError(403, "Purchase access changed during this request.");
           send(response, 200, answer);
           return;
         }

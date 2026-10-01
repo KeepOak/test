@@ -300,6 +300,7 @@ import { computerPlatforms } from "./trunks/starts-in.js"; // Q44
 import { accountsSettings, poolOf, saveSessionChoice } from "./accounts/settings.js"; // R17-A: a Trunk's account (R17-005)
 import { Coding } from "./coding/index.js"; // mac7/r17-d: coding polish
 import { worktreeScope } from "./coding/worktrees.js"; // mac7/r17-d
+import { purchaseToolNames } from "./purchases/index.js"; // RES-115/116
 import type { Personal } from "./personal/index.js"; // R17-C: files, voice, devices and personal connectors
 // PLAT-191: parts of Branch built the first time they are needed, with their tools listed from cards until then.
 import { personalMode, personalParts, personalTools } from "./personal/settings.js";
@@ -1591,11 +1592,14 @@ ${result.output || "(it said nothing)"}`;
     morningBrief: () => brief.preview(runtime.owner).markdown,
     speak: async (text) => { const spoken = await voice.speak(runtime.owner, { text, voice: "", speed: 1 }); return { bytes: spoken.bytes, mediaType: spoken.mediaType }; },
     transcribe: async (clip) => (await voice.transcribe(runtime.owner, { ...clip, name: "spoken answer" })).text,
+    purchaseRefusal: () => sessionLock.locked() ? "Unlock Branch before a purchase." : lockedDown(store, runtime.owner) ? lockdownRefusal : null,
     lockdownRefusal: () => (lockedDown(store, runtime.owner) ? lockdownRefusal : null) });
+  releaseOnLock.push(async () => { personalBuilt?.purchases.clear(); });
     built.tunnel.localAddress = localAddress;
     return built;
   };
-  listFromCards(registry, personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]),
+  // RES-115/116: the purchase tools are built with the personal part whatever its switches, so they are listed with it.
+  listFromCards(registry, [...personalParts.filter((part) => personalMode(store, runtime.owner, part) !== "off").flatMap((part) => personalTools[part]), ...purchaseToolNames],
     () => void personal());
   releaseOnLock.push(async () => { await personalBuilt?.close(); }); // locking Branch stops the tunnel and forgets spoken answers
   // ── end R17-C ──

@@ -1156,6 +1156,12 @@ export const ROUTES = {
   "/api/self-development/requests/:id/draft": "secret-read", // the committed draft, for the owner to review before publishing
   "/api/self-development/requests/:id/publish": "owner POST",
   "/api/sessions": "look",
+  "/api/personal/purchases": "owner POST",
+  "/api/personal/purchases/": "prefix",
+  "/api/personal/purchases/authorize": "owner POST",
+  "/api/personal/purchases/quote": "owner POST",
+  "/api/personal/purchases/spend": "owner POST",
+  "/api/personal/purchases/complete": "owner POST",
   "/api/sessions/": "prefix",
   "/api/sessions/:id": "look",
   "/api/sessions/:id/branch": "other POST", // pass 17: a named path of the conversation, copied like duplicate

@@ -20,6 +20,7 @@ import { t } from "../../i18n.js";
 
 const SERVICES = [["google", "personal.google.name", "accounts.google.com"], ["microsoft", "personal.microsoft.name", "login.microsoftonline.com"]];
 /* What the owner has typed and not saved yet, by field id, so a redraw never takes the words. */
+import { initPurchases } from "./purchases.js";
 const M = { signin: {}, busy: false, typed: {}, checking: {} };
 const typed = (id, saved) => esc(M.typed[id] ?? saved ?? "");
 /* Reuse the password controls during a draw of Accounts: a late read must not discard input. No secret goes into
@@ -74,6 +75,7 @@ export function moreSections() {
   passwordControls = SERVICES.map(([id]) => document.getElementById(`more18-${id}-secret`)).filter(Boolean);
   return `<div class="sec more18"><h2>${t("window.flows.setup.email")}</h2><p class="hint">${t("window.flows.setup.email-hint")}</p>${SERVICES.map(service).join("")}</div>`
     + `<div class="sec more18"><h2>${t("first-run-steps.restore-title")}</h2><p class="hint">${t("first-run-steps.restore-purpose")}</p>`
+    + `<div class="sec more18"><h2>Exact purchases</h2><p>Owner-scoped Stripe Link purchases and free/paid money conditions.</p><button class="btn" data-act="purchases">Configure and review purchases</button></div>`
     + `<div class="acts"><button class="btn" type="button" data-act="more18-restore" ${M.busy ? "disabled" : ""}>${ic("folder", "s")}${M.busy ? t("first-run-steps.restore-working") : t("window.flows.setup.backup")}</button></div>`
     + `<input type="file" id="more18-file" accept=".json,application/json" hidden></div>`;
 }
@@ -131,6 +133,7 @@ async function restore(file) {
 }
 
 export function initMore() {
+  initPurchases();
   markLive(["more18-save", "more18-signin", "more18-test", "more18-restore", "sw:more18-file", ...SERVICES.flatMap(([id]) => [`sw:more18-${id}-client`, `sw:more18-${id}-secret`])]);
   on("more18-save", async (el) => { if (await save(el.dataset.v)) { toast(t("accounts.saved")); await loadMore(); } });
   on("more18-signin", (el) => signIn(el.dataset.v));

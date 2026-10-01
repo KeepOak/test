@@ -69,6 +69,9 @@ const GUARDS = [
   { file: "src/asks/owner-only.ts", tool: "forecast.add", args: { question: "Will it rain on Friday?", probability: 0.4 },
     setup: (app) => app.asks.setMode("forecasts", { mode: "on" }) },
   { file: "src/personal/guard.ts", tool: "gcal.events", args: {}, setup: (app) => app.personal.setMode("google", { mode: "on" }) },
+  // RES-115/116: the purchase tools go through the same owner-only wrapper, and the purchase code checks the task's origin too.
+  { file: "src/personal/index.ts", tool: "payments.quote", args: { url: "https://shop.example/buy", item: "Lamp", seller: "Shop" } },
+  { file: "src/purchases/index.ts", tool: "payments.spend", args: { quoteId: "0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f" } },
   { file: "src/personal/chat-files.ts", tool: "chat.send_file", args: { channel: "telegram", chatId: "1", path: "a.txt" },
     setup: (app) => app.personal.setMode("chat-files", { mode: "on" }) },
   { file: "src/flows-boards/tools.ts", tool: "board.cards", args: {}, setup: (app) => app.flowsBoards.setMode("kanban", { mode: "on" }) },
