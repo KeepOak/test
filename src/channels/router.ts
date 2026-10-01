@@ -1257,17 +1257,24 @@ export class ChannelRouter {
     // The owner may pause this chat app while a shortcut's answer is on its way: nothing more goes out then.
     const paused = () => !!(platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message));
     const attached = this.adapters.get(message.channel), lockGeneration = this.appLockGeneration();
-    const allowed = (name: string) => this.adapters.get(message.channel) === attached && this.appLockGeneration() === lockGeneration
+    const allowedNow = (name: string) => this.adapters.get(message.channel) === attached && this.appLockGeneration() === lockGeneration
       && !paused() && !this.appLocked()
       && this.senderAllowed(message.channel, message.senderId) && !!this.commandIn({ ...message, text: `/${name}` });
-    for (const name of picked.names) {
-      if (!allowed(name)) return "ignored";
-      // Each answer goes out under an authority taken now; the channel in its key keeps two apps' answers apart.
-      const authority = this.answerAuthority(message.channel, () => allowed(name));
-      if (await this.command(message, { name, argument: "" }, `inline-${name}:${message.channel}`, authority) === "ignored") return "ignored";
-    }
-    if (!remaining.text.trim()) return "replied";
-    if (paused() || this.appLocked() || !this.senderAllowed(message.channel, message.senderId)) return "ignored";
+    // One authority for the whole message, watched until its shortcuts are settled: once it is revoked, no later shortcut
+    // or remainder goes out, even when the answer before it already reached the chat.
+    const whole = this.answerAuthority(message.channel, () => picked.names.every(allowedNow));
+    const allowed = (name: string) => whole.allowed() && allowedNow(name);
+    try {
+      for (const name of picked.names) {
+        if (!allowed(name)) return "ignored";
+        // Each answer goes out under an authority taken now; the channel in its key keeps two apps' answers apart.
+        const authority = this.answerAuthority(message.channel, () => allowed(name));
+        if (await this.command(message, { name, argument: "" }, `inline-${name}:${message.channel}`, authority) === "ignored"
+          || !whole.allowed()) return "ignored";
+      }
+      if (!remaining.text.trim()) return "replied";
+      if (!whole.allowed()) return "ignored";
+    } finally { whole.release(); }
     // A remainder such as "yes", "/stop" or a saved alias is task prose, never another control path.
     const current = this.turns.get(chatKey(message));
     return current ? this.joinTurn(current, remaining) : this.startTurn([remaining]);
@@ -1581,10 +1588,9 @@ export class ChannelRouter {
     try { reply = asks ? await this.withSlot(work) : await work(); }
     catch (error) { authority?.release(); throw error; }
     finally { if (named) this.trunkCommands.delete(chatKey(message)); }
-    const delivered = await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message), authority)
-      .then(() => true, () => false);
-    // An answer its authority held back was not given, so it is not reported as one.
-    return delivered || !authority || authority.allowed() ? "replied" : "ignored";
+    await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message), authority).catch(() => undefined);
+    // An answer whose authority was revoked on its way, even after it reached the chat, does not count as a reply.
+    return authority && !authority.allowed() ? "ignored" : "replied";
   }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
   ownerDmHost: (() => CommandHost) | null = null;
