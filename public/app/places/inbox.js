@@ -46,6 +46,8 @@ import { openSourceReview, initSourceReview } from "./self-change-review.js";
 import { readUrgency, byUrgency } from "./inbox-urgency.js"; // Sort the Inbox by urgency (decision models)
 import { autonomyRows, autonomyCount, readAutonomy, initAutonomyInbox } from "./inbox-autonomy.js";
 
+import { scheduleFailureSection, initScheduleFailures } from "./inbox-schedules.js";
+
 let asks = [];
 let asksRead = false; // pass 18: "Nothing needs you" only once the engine answered (after() below)
 /* stress test B001: the recordings switch as the engine has it (GET /api/recordings settings.mode), read on History; while
@@ -121,7 +123,7 @@ function needsTab() {
 /* Needs you, and the prototype's line when nothing at all waits (a p.empty: the Branch-in-person pose, setup-delight-033,
    is drawn above it by the shell). */
 function needsBody() {
-  const lead = cutCards() + revokedPrompts() + adaptCards();
+  const lead = cutCards() + scheduleFailureSection() + revokedPrompts() + adaptCards();
   const nothing = asksRead && !lead && !rowsWaiting() && !waitingChanges().length && !sourceMergeCards() && !sourcePublicationCards();
   return revokedPrompts() + adaptCards() + needsTab() + (nothing ? empty18("inbox:needs") : "");
 }
@@ -187,7 +189,7 @@ export function draw() {
   if (!E.state) return `<main class="main enter11" id="main"><div class="scroll"><div class="place"></div></div></main>`;
 
   const count = waitingCount();
-  const body = workSection() + cutCards() + (tab === "needs" ? needsBody() : tab === "finished" ? finishedTab() : tab === "history" ? historyTab() + receiptsSection() : tab === "later" ? laterTab() : "");
+  const body = workSection() + cutCards() + (tab === "needs" ? scheduleFailureSection() : "") + (tab === "needs" ? needsBody() : tab === "finished" ? finishedTab() : tab === "history" ? historyTab() + receiptsSection() : tab === "later" ? laterTab() : "");
   let html = `<main class="main enter11" id="main"><div class="lock-banner"><svg class="i s" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"></path></svg>${t("window.places.automations.lockdown-is-on-trunks-can-read")}<button type="button" data-act="lock">${t("lockdown.turnOff")}</button></div><div class="scroll"><div class="place">
     ${recBar()}${updateCard()}
     <h1>${t("place.inbox")}</h1><p class="lede">${t("window.places.inbox.everything-a-trunk-is-waiting-on")}</p>
@@ -477,6 +479,7 @@ async function allowAll() {
 }
 
 export function init() {
+  initScheduleFailures();
   initAutonomyInbox();
   initDemo17();
   initInbox17();
