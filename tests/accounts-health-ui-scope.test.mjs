@@ -17,6 +17,8 @@ function declarations(source, pick = () => true) {
   }).join("\n");
 }
 const source = declarations(await read("settings/more18.js"));
+const accountsLoad = declarations(await read("settings/pages/accounts.js"), node => ts.isFunctionDeclaration(node) && node.name?.text === "load");
+const settingsNavigation = declarations(await read("settings/settings.js"), node => ts.isFunctionDeclaration(node) && ["open", "go"].includes(node.name?.text));
 const fence = declarations(await read("core/view-fence.js"));
 const principal = declarations(await read("core/session-pages.js"), node => ts.isVariableStatement(node)
   && node.declarationList.declarations.some(declaration => declaration.name.getText() === "sessionPrincipal"));
@@ -118,6 +120,32 @@ test("a successful own token refresh publishes the changed expiry and clears its
   assert.equal(f.handlers.M.checking.google, false);
   assert.equal(f.renders(), 2, "one admission draw and one accepted-result draw");
   assert.deepEqual(f.toasts, []);
+});
+function navigateAccounts(f) {
+  f.E.loaded = true; f.S.setPage = "general";
+  const context = { S: f.S, E: f.E, queueMicrotask,
+    loadMore: () => { f.accountsLoadResult = f.handlers.loadMore(); return f.accountsLoadResult; }, loadAccounts: async () => undefined,
+    notice() {}, renderNow() {}, started: new Set(), asked: null, marked: null, searchText: "" };
+  runInNewContext(accountsLoad + "; globalThis.pageLoad = load;", context);
+  context.PAGES = { accounts: { init: context.pageLoad, load: context.pageLoad } };
+  runInNewContext(settingsNavigation + "; globalThis.settingsGo = go;", context);
+  return context.settingsGo("accounts");
+}
+test("the actual Settings destination commit precedes Accounts metadata fence admission", async () => {
+  const f = fixture();
+  await navigateAccounts(f); await f.waitRequests(3);
+  for (const request of f.requests.slice()) request.resolve(answer);
+  for (let count = 4; count <= 7; count++) { await f.waitRequests(count); f.requests[count - 1].resolve(answer); }
+  await f.accountsLoadResult;
+  assert.equal(f.S.setPage, "accounts");
+  assert.equal(f.handlers.M.signin.google.status.marker, "old-result");
+  assert.equal(f.renders(), 1);
+});
+for (const change of ["navigation", "setPage", "profile", "lock"]) test(`queued Accounts admission starts no metadata request after ${change}`, async () => {
+  const f = fixture(), opening = navigateAccounts(f);
+  transitions[change](f);
+  await opening; await f.accountsLoadResult;
+  assert.equal(f.requests.length, 0);
 });
 for (const failure of [false, true]) test(`Accounts current load ${failure ? "service errors" : "success"} finishes its bounded reads`, async () => {
   const f = fixture(), pending = f.handlers.loadMore(); await f.waitRequests(3);
