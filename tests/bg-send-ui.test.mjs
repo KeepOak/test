@@ -8,11 +8,12 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { chromium } from "playwright";
 import { discardTemp } from "./temp-dir.mjs";
+import { attachFiles } from "./new-window-places.mjs";
 import { createBranch } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { saveConversationModeSettings } from "../dist/conversation-mode.js";
@@ -165,5 +166,28 @@ test("an owner's background task is never announced while a household person use
     render();
   });
   await page.locator(".notif").filter({ hasText: /weekly numbers are ready/ }).waitFor({ timeout: 5000 });
+  assert.deepEqual(errors, []);
+});
+
+test("a redraw while the message's file still arrives does not leave the started words in the box", async (t) => {
+  const { app, page, errors, release } = await fixture(t);
+  const folder = await mkdtemp(join(tmpdir(), "branch-bgsend-file-"));
+  t.after(() => discardTemp(folder));
+  await writeFile(join(folder, "numbers.csv"), "week,total");
+  let arrive;
+  const arriving = new Promise((done) => { arrive = done; });
+  await page.route("**/api/attachments/upload*", async (route) => { await arriving; await route.continue(); });
+  await page.locator(".empty-chat").waitFor();
+  await page.locator("#prompt").fill(asked);
+  await attachFiles(page, [join(folder, "numbers.csv")]);
+  await page.locator("#prompt").press("Control+Enter");
+  await page.waitForTimeout(300);
+  await page.evaluate(async () => (await import("/app/core/dom.js")).renderNow()); // the window redraws while the file waits
+  arrive();
+  const run = await until(() => app.store.runs(app.runtime.owner).find((r) => r.prompt === asked));
+  assert.ok(run, "the engine started the task once the file arrived");
+  await page.waitForFunction(() => document.getElementById("prompt")?.value === "", null, { timeout: 10000 });
+  assert.equal(app.store.runs(app.runtime.owner).filter((r) => r.prompt === asked).length, 1);
+  release();
   assert.deepEqual(errors, []);
 });

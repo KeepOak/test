@@ -772,9 +772,11 @@ async function sendAway() {
   } catch (error) { toast(error.message); } finally { away = false; if (!started) restore(); }
   if (!started) return;
   practiceSent(); // a practice task was carried (takePending dryRun); the flag is used once, as Enter uses it
-  // Upload preparation may outlive this draft: keep whatever the person typed next.
-  if (!C.sessionId && $("#prompt") === box && box.value.trim() === prompt) clearBox(true);
-  box?.dispatchEvent(new Event("input", { bubbles: true }));
+  // Upload preparation may outlive this draft: keep whatever the person typed next. The box may have been redrawn
+  // meanwhile, so the box read is the one shown now.
+  const shown = $("#prompt");
+  if (!C.sessionId && shown?.value.trim() === prompt) clearBox(true);
+  shown?.dispatchEvent(new Event("input", { bubbles: true }));
   renderNow();
   $("#prompt")?.focus();
 }
