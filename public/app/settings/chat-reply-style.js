@@ -6,12 +6,22 @@ import { toast } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { t } from "../../i18n.js";
+import { S, ownerHere, activeId } from "../core/state.js";
 
 let styles = {};
 const styleOf = (id) => ({ quote: "auto", react: true, ...styles[id] });
+/* A late answer is kept, drawn or its error shown only for the newest read, by the same owner on the same page, with the
+   window unlocked: nothing lands behind the lock or for another person. */
+let reading = 0;
+function fence() {
+  const mine = ++reading, profile = activeId(), view = S.view;
+  return () => mine === reading && ownerHere() && activeId() === profile && S.view === view
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+}
 export async function loadReplyStyles() {
-  try { styles = (await api("channels/reply-style")).styles ?? {}; }
-  catch (error) { toast(error.message); }
+  const still = fence();
+  try { const read = (await api("channels/reply-style")).styles ?? {}; if (still()) styles = read; }
+  catch (error) { if (still()) toast(error.message); }
 }
 const seg = (act, id, label, pairs, current) =>
   `<span class="seg" role="group" aria-label="${esc(label)}">${pairs.map(([value, words]) =>
@@ -26,9 +36,10 @@ export function replyStyleRows(id, name, quotes = true) {
     + `<div class="ctl"><b>${esc(t("window.chat-reply.react-in", { name }))}</b><span class="right">${react}</span><small>${esc(t("window.chat-reply.react-hint"))}</small></div>`;
 }
 async function save(change) {
-  try { styles = (await api("channels/reply-style", change)).styles ?? styles; }
-  catch (error) { toast(error.message); }
-  render();
+  const still = fence();
+  try { const saved = (await api("channels/reply-style", change)).styles; if (still()) styles = saved ?? styles; }
+  catch (error) { if (still()) toast(error.message); }
+  if (still()) render();
 }
 export function initReplyStyle() {
   markLive(["chquote", "chreact"]);

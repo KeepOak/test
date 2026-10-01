@@ -2,7 +2,7 @@ import { matrixPictureContent } from "./matrix-picture.js";
 import { createHash, randomUUID } from "node:crypto";
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
 import { z } from "zod";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile, SendGate } from "./router.js";
 import { matrixHtml } from "./progress-render.js";
 import { handle } from "./email.js";
 import { ReactionAnswers } from "./reaction-answers.js";
@@ -374,10 +374,13 @@ export class MatrixAdapter implements ChannelAdapter {
     this.reactions.set(messageId, { emoji, eventId });
     if (this.reactions.size > 200) this.reactions.delete(this.reactions.keys().next().value!);
   }
-  private async redact(roomId: string, eventId: string): Promise<void> {
+  /** A `gate` (an owner's own-message delete) is checked last before sending, and its signal aborts the request. */
+  private async redact(roomId: string, eventId: string, gate?: SendGate): Promise<void> {
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/redact/${encodeURIComponent(eventId)}/${randomUUID()}`;
+    const timeout = AbortSignal.timeout(20000), signal = gate ? AbortSignal.any([timeout, gate.signal]) : timeout;
+    gate?.check();
     const response = await this.fetch(address, { method: "PUT", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": "application/json" },
-      body: "{}", redirect: "error", signal: AbortSignal.timeout(20000) });
+      body: "{}", redirect: "error", signal });
     if (response.status === 429) {
       const body = z.object({ retry_after_ms: z.number().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));
       throw Object.assign(new Error("Matrix asked us to slow down"), { retryAfter: ((body.success ? body.data.retry_after_ms : undefined) ?? 1000) / 1000 });
@@ -404,18 +407,18 @@ export class MatrixAdapter implements ChannelAdapter {
    * Replaces the words of a message this adapter sent, the Matrix way: a new event that says it replaces the old one
    * (`m.replace`), which every client shows in the old one's place.
    */
-  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat, gate?: SendGate): Promise<void> {
     const eventId = this.sent.get(messageId);
     if (!eventId || this.sentChats.get(messageId) !== chatId) throw new Error("Matrix: that message was not sent in this conversation, so it cannot be edited");
     const content = this.threadContent(chatId, MatrixAdapter.content(text.slice(0, this.maxTextLength), format));
     await this.put(chatId, { ...content, body: `* ${content.body}`, "m.new_content": content,
-      "m.relates_to": { rel_type: "m.replace", event_id: eventId } });
+      "m.relates_to": { rel_type: "m.replace", event_id: eventId } }, "m.room.message", gate);
   }
   /** Redacts an event this adapter sent (only its own, by the handle it gave it). */
-  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+  async deleteMessage(chatId: string, messageId: string, gate?: SendGate): Promise<void> {
     const eventId = this.sent.get(messageId);
     if (!eventId || this.sentChats.get(messageId) !== chatId) throw new Error("Matrix: that message was not sent in this conversation, so it cannot be removed");
-    await this.redact(this.rooms.get(chatId) ?? chatId, eventId);
+    await this.redact(this.rooms.get(chatId) ?? chatId, eventId, gate);
   }
   /** Plain words, with the code as Matrix's HTML beside them when there is any. */
   private static content(text: string, format?: MessageFormat): Record<string, unknown> {
@@ -478,14 +481,17 @@ export class MatrixAdapter implements ChannelAdapter {
   }
   /** Questions this adapter asked with reactions: the question's event, and what each reaction on it answers. */
   private readonly questions = new Map<string, Map<string, string>>();
-  private async put(chatId: string, content: Record<string, unknown>, eventType = "m.room.message"): Promise<string | undefined> {
+  /** A `gate` (an owner's own-message edit) is checked last before sending, and its signal aborts the request. */
+  private async put(chatId: string, content: Record<string, unknown>, eventType = "m.room.message", gate?: SendGate): Promise<string | undefined> {
     if (chatId.startsWith("thread:") && !this.threads.has(chatId))
       throw new Error("Matrix: this thread has not been read since reconnecting; send a message there first");
     const roomId = this.rooms.get(chatId) ?? chatId;
     const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/${encodeURIComponent(eventType)}/${randomUUID()}`;
+    const timeout = AbortSignal.timeout(20000), signal = gate ? AbortSignal.any([timeout, gate.signal]) : timeout;
+    gate?.check();
     const response = await this.fetch(address, {
       method: "PUT", headers: { authorization: `Bearer ${this.options.accessToken}`, "content-type": "application/json" },
-      body: JSON.stringify(eventType === "m.room.message" ? this.threadContent(chatId, content) : content), redirect: "error", signal: AbortSignal.timeout(20000),
+      body: JSON.stringify(eventType === "m.room.message" ? this.threadContent(chatId, content) : content), redirect: "error", signal,
     });
     if (response.status === 429) {
       const wait = z.object({ retry_after_ms: z.number().optional() }).passthrough().safeParse(await response.json().catch(() => ({})));

@@ -1,0 +1,3 @@
+[
+  { "key": "showTimestamp", "type": "toggle", "label": "Show timestamp" }
+]

@@ -19,6 +19,7 @@ import { app, av, toast, closePop } from "../core/ui.js";
 import { markLive, greyOut } from "../core/features.js";
 import { toPcm16, readAudioFrame } from "./talksound.js";
 import { t } from "../../i18n.js";
+import { openPeer, openingSlot } from "./talkpeer.js";
 
 /* phase: idle → starting (task made, socket opening) → listening ⇄ speaking → idle. `call` numbers each press, so
    whatever finishes after its call has ended (a microphone still opening) can tell it is no longer wanted. */
@@ -29,7 +30,9 @@ let hooks = { state: () => ({}), reopen: async () => {} };
 
 const fresh = () => ({ runId: null, sessionId: null, service: null, note: "", ready: false, muted: false, seconds: 0,
   timer: null, caption: "", partial: { person: "", assistant: "" }, last: "", nextAt: 0, playing: 0,
-  generation: 0, audioItem: null, sources: new Set(), heardItems: new Map(), playedMs: 0 });
+  generation: 0, audioItem: null, sources: new Set(), heardItems: new Map(), playedMs: 0, transport: null, peer: null });
+/* The closer of a Talk live setup still in progress (talkpeer.js openingSlot). */
+const opening = openingSlot();
 Object.assign(L, fresh());
 
 /* ---------- the view ---------- */
@@ -170,7 +173,8 @@ async function press() {
   let opened;
   try { opened = await api("voice/live", { sessionId: asked }); } catch (error) { toast(error.message); return; } finally { asking = false; }
   if (L.phase !== "idle") { api(`runs/${encodeURIComponent(opened.runId)}/cancel`, {}).catch((error) => toast(error.message)); return; }
-  Object.assign(L, fresh(), { phase: "starting", call: ++calls, runId: opened.runId, sessionId: opened.sessionId, service: opened.plan?.service ?? null, note: opened.plan?.reason ?? "" });
+  Object.assign(L, fresh(), { phase: "starting", call: ++calls, runId: opened.runId, sessionId: opened.sessionId,
+    service: opened.plan?.service ?? null, note: opened.plan?.reason ?? "", transport: opened.plan?.transport ?? null });
   draw();
   connect();
 }
@@ -182,31 +186,56 @@ function connect() {
   try { socket = new WebSocket(url, isDesktop ? ["bearer"] : ["bearer", token.get()]); } catch { end({ say: t("voiceLive.neverConnected") }); return; }
   socket.binaryType = "arraybuffer";
   L.socket = socket;
-  socket.addEventListener("open", () => { if (L.socket === socket) socket.send(JSON.stringify({ live: "start" })); });
+  socket.addEventListener("open", () => { if (L.socket === socket) void beginSocket(socket, L.call); });
   socket.addEventListener("message", (event) => { if (L.socket === socket) receive(event.data); });
   /* Closed before the conversation opened: the task it made is stopped and the person is told; after, it simply ends. */
   socket.addEventListener("close", () => { if (L.socket === socket) end(L.ready ? {} : { say: t("voiceLive.neverConnected") }); });
+}
+async function beginSocket(socket, call) {
+  try {
+    if (L.transport === "webrtc") {
+      const mine = () => current(call) && L.socket === socket;
+      let release = () => {};
+      const peer = await openPeer({ current: mine, desktop: isDesktop,
+        muted: () => L.muted, speaking: () => setPhase("speaking"), failed: sentence => stop(sentence),
+        own: (close) => { release = opening.own(close, mine); } });
+      release();
+      if (!peer) return;
+      if (!current(call) || L.socket !== socket) { peer.close(); return; }
+      L.peer = peer;
+    }
+    if (current(call) && L.socket === socket && socket.readyState === 1)
+      socket.send(JSON.stringify({ live: "start", ...(L.peer ? { offer: L.peer.offer } : {}) }));
+  } catch (error) { if (current(call)) stop(error.message); }
 }
 function receive(data) {
   if (data instanceof ArrayBuffer) { if (L.ready) play(readAudioFrame(data).pcm16); return; }
   let message;
   try { message = JSON.parse(data); } catch { return; }
   const body = message?.data ?? {};
-  if (message?.kind === "voice.live.ready") void ready();
+  if (message?.kind === "voice.live.ready") void ready(body);
   else if (message?.kind === "voice.live.refused" || message?.kind === "voice.live.problem") end({ say: String(body.message ?? "") });
   else if (message?.kind === "voice.live.transcript") heard(body);
   else if (message?.kind === "voice.live.audio") L.audioItem = body;
   else if (message?.kind === "voice.live.speech_started") cutIn();
   else if (message?.kind === "voice.live.interrupted") L.generation = Math.max(L.generation, Number(body.generation) || 0);
+  else if (message?.kind === "voice.live.consultation" && body.waiting) { L.last = String(body.message ?? ""); toast(L.last); }
   else if (message?.kind === "voice.live.capped") { L.last = String(body.sentence ?? ""); toast(L.last); }
   else if (message?.kind === "voice.live.ended" || message?.kind === "end") end();
 }
-async function ready() {
+async function ready(body) {
   if (L.ready || L.phase === "idle") return;
   const { call, socket } = L;
   L.ready = true;
   L.timer = setInterval(() => { L.seconds += 1; const at = L.el?.querySelector("#v-t"); if (at) at.textContent = clock(); }, 1000);
   setPhase("listening");
+  if (L.transport === "webrtc") {
+    try {
+      if (!L.peer || typeof body.answerSdp !== "string" || body.answerSdp.length > 256 * 1024) throw new Error("The live media answer was invalid.");
+      await L.peer.answer(body.answerSdp);
+    } catch { if (current(call)) stop("The live media connection could not be opened."); }
+    return;
+  }
   let mic;
   /* Refused or failed: that call ends with the reason, but only if it is still the one going. */
   try { mic = await openMic(call, socket); } catch (error) { if (current(call)) stop(error.message); return; }
@@ -221,6 +250,7 @@ function heard(part) {
   const before = L.partial[who];
   L.caption = part.final ? (before && !text.startsWith(before) ? before + text : text) : before + text;
   L.partial[who] = part.final ? "" : L.caption;
+  if (L.transport === "webrtc") L.phase = who === "assistant" && !part.final ? "speaking" : "listening";
   draw();
 }
 /* End, pressed: the engine is told to stop, then everything here is closed. Before it opened, nothing was said. */
@@ -234,12 +264,14 @@ function stop(say) {
    what was said (written in by the engine) shows. */
 function end({ say } = {}) {
   if (L.phase === "idle") return;
-  const { runId, ready: opened, sessionId, socket, mic, player, timer } = L;
+  const { runId, ready: opened, sessionId, socket, mic, player, timer, peer } = L;
   L.phase = "idle";
   L.socket = null; L.mic = null; L.player = null;
   clearInterval(timer);
   clearPlayback();
   mic?.close();
+  peer?.close(); L.peer = null;
+  opening.stop(); // a capture still being set up is stopped too
   if (player) void player.close();
   socket?.close();
   draw();
@@ -254,7 +286,7 @@ export function initTalkLive(given) {
   markLive(["voice", "call", "v-mute", "v-interrupt", "v-end"]);
   on("voice", () => press());
   on("call", () => press());
-  on("v-mute", () => { L.muted = !L.muted; draw(); });
+  on("v-mute", () => { L.muted = !L.muted; L.peer?.mute(L.muted); draw(); });
   on("v-end", () => stop());
   on("v-interrupt", () => cutIn(true));
 }
