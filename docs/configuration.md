@@ -1265,6 +1265,44 @@ Use `"type": "instagram"` for Instagram, with the professional account's id as `
 
 **X / Twitter direct messages are not built.** The direct-message endpoints need an elevated access tier that is applied for and paid for per project, and there is no shape Branch could ship that would work on a fresh developer account, so shipping a connection that always fails would be worse than not shipping one.
 
+### Telegram webhook reception
+
+Polling remains the default. To opt into webhook reception, add these fields to your trusted Telegram connection:
+
+```json
+{
+  "type": "telegram",
+  "id": "telegram",
+  "tokenSecret": "TELEGRAM_BOT_TOKEN",
+  "receiving": "webhook",
+  "webhook": {
+    "publicOrigin": "https://branch.example.org",
+    "secretTokenSecret": "TELEGRAM_WEBHOOK_SECRET"
+  }
+}
+```
+
+The HTTPS origin must already forward Branch's webhook routes to this engine. This does not create a tunnel or
+install a certificate. Telegram supports ports 443, 80, 88 and 8443. Store a separate random header secret in the
+locker (or the named environment variable), using 1–256 letters, digits, underscores or dashes. Branch registers
+its existing random address under `/webhooks/chat/<channel>/<random-word>` with `setWebhook`, and Telegram sends
+that secret in `X-Telegram-Bot-Api-Secret-Token`. The address and header secret are both checked before an update
+can reach the usual sender pairing, allowlist and group activation rules. The header is a shared secret, not a
+signature over the body. See the [official Bot API protocol](https://core.telegram.org/bots/api#setwebhook).
+
+Webhook mode never starts `getUpdates`. It acknowledges only after saving the update into a bounded private inbox,
+replays unfinished entries on restart, and retains completed update IDs for 24 hours to ignore ordinary redelivery.
+The limits are 256 KiB per update, 128 waiting entries, 2 MiB of waiting payloads and 4096 combined waiting/completed
+IDs in that retention window. A full or unwritable inbox returns 503 so Telegram can retry. Task processing is at
+least once across a crash; an interrupted task may be replayed. Registration failure never falls back to polling.
+Webhook idle time is not treated as a failed polling connection.
+
+To switch back, remove `webhook` and explicitly set `receiving` to `polling`. Branch confirms `deleteWebhook` before
+starting `getUpdates`, with `drop_pending_updates: false`, and drains any saved webhook entries. Restart reapplies
+the selected transport. Rotating the webhook address in Settings re-registers the configured Telegram endpoint;
+a failed registration is surfaced rather than reported as successful. No external reception or provider behavior
+is established merely by saving this configuration.
+
 ### Sending without being asked
 
 Two tools send on the assistant's own initiative rather than answering somebody. `channels.broadcast` sends one message to several linked chats at once — leave the list empty to reach every chat that has talked to the assistant — and `channels.digest` sends the morning brief as it stands right now to one chat on any connected service. Both go through the same waiting line every reply uses, so quiet hours, splitting and retries apply unchanged: during quiet hours the message is written down and sent when they end. Both are the owner's alone: somebody else using this computer under their own profile is refused, because the chats belong to the owner. Neither is available to a task started from a chat message, so somebody you have paired cannot make the assistant write to everyone else.

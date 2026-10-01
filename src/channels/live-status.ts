@@ -1,4 +1,4 @@
-import type { ChannelAdapter, MessageFormat } from "./router.js";
+import type { ChannelAdapter, MessageFormat, SendGate } from "./router.js";
 import { chunkText } from "./deliveries.js";
 import { kindLines, type RichText } from "./progress-render.js";
 
@@ -99,6 +99,12 @@ export interface LiveTarget {
   picture?: (() => Promise<{ bytes: Uint8Array; caption: string } | null>) | undefined;
   /** The buttons under a picture kept in place (Take over, or Hand back): values the router reads back as a press. */
   pictureButtons?: (() => { label: string; value: string; webApp?: string }[]) | undefined;
+  /**
+   * Runs one picture's way out under the authority of the person, chat app connection, sender and task it was taken
+   * for (src/channels/router.ts liveFor). The gate is checked before each call to the app and handed to the app's own
+   * request, which a person switch, Branch's lock, Lockdown, a disconnect or the task's Stop aborts.
+   */
+  pictureSend?: (<T>(work: (gate: SendGate) => Promise<T>) => Promise<T>) | undefined;
 }
 /** Pictures of the browser: the first after the first browser step, then at most one every so often, and a cap per task. */
 export const pictureTiming = { everyMs: 20_000, most: 6, inPlaceEveryMs: 4_000, inPlaceMost: 150 };
@@ -286,35 +292,54 @@ export class LiveStatus {
   }
   private quoteTarget(): string | undefined { return this.target.quote ? this.target.quote() : this.target.messageId; }
   private pictureWork: Promise<void> | null = null;
+  private picturesClosed = false;
   private async takePicture(): Promise<void> {
-    if (this.closed || !this.permitted() || this.pictures >= this.mostPictures || Date.now() < this.pausedUntil) return;
+    if (this.closed || this.picturesClosed || !this.permitted() || this.pictures >= this.mostPictures || Date.now() < this.pausedUntil) return;
     this.pictures++;
     this.pictureAt = Date.now();
     let shot: { bytes: Uint8Array; caption: string } | null = null;
     try { shot = await this.target.picture!(); } catch { shot = null; }
     if (!shot?.bytes.length) { this.pictures--; return; }
+    // A capture can outlive finish's bounded wait; it must not enqueue another picture after cleanup.
+    if (this.closed || this.picturesClosed) return;
     await this.enqueue(() => this.sendPicture(shot!));
   }
   private async sendPicture(shot: { bytes: Uint8Array; caption: string }): Promise<void> {
     const bytes = shot.bytes;
-    if (!this.permitted()) return;
-    // The page the picture shows, else what the step was; every word through the chat's outbound check.
-    const caption = (shot!.caption ? await this.checked(shot!.caption) : null) ?? await this.checked(statusOf(this.pictureCaption));
-    if (caption === null) return;
-    if (this.target.adapter.maxFileBytes && bytes.length > this.target.adapter.maxFileBytes) return;
-    const file = { name: "branch-browser.jpg", mediaType: "image/jpeg", bytes, caption };
-    this.lastPicture = file;
+    if (this.closed || this.picturesClosed || !this.permitted()) return;
     try {
-      if (this.inPlace) {
+      await this.pictureSend(async (gate) => {
+        gate.check();
+        // The page the picture shows, else what the step was; every word through the chat's outbound check.
+        const caption = (shot!.caption ? await this.checked(shot!.caption) : null) ?? await this.checked(statusOf(this.pictureCaption));
+        // Caption checks may outlive finish's wait just like the screenshot itself.
+        if (caption === null || this.closed || this.picturesClosed) return;
+        gate.check();
+        if (this.target.adapter.maxFileBytes && bytes.length > this.target.adapter.maxFileBytes) return;
+        const file = { name: "branch-browser.jpg", mediaType: "image/jpeg", bytes, caption };
+        this.lastPicture = file;
+        if (!this.inPlace) { await this.target.adapter.sendFile!(this.target.chatId, file, this.quoteTarget(), gate); return; }
         const buttons = this.closed ? [] : this.target.pictureButtons?.() ?? [];
-        if (this.pictureId) await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, buttons);
+        if (this.pictureId) await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, buttons, gate);
         // Pictures follow the chat's quoting rule like the steps message (#700), not a quote on every one.
-        else this.pictureId = await this.target.adapter.sendPicture!(this.target.chatId, file, buttons, this.quoteTarget()) ?? null;
-      } else await this.target.adapter.sendFile!(this.target.chatId, file, this.quoteTarget());
+        else this.pictureId = await this.target.adapter.sendPicture!(this.target.chatId, file, buttons, this.quoteTarget(), gate) ?? null;
+        // An already-started first send can return its id after finish skipped cleanup, and an in-flight edit can settle
+        // after it: their controls come off, but only while the picture's own authority still holds.
+        if ((this.closed || this.picturesClosed) && this.pictureId) {
+          gate.check();
+          await this.target.adapter.editPicture!(this.target.chatId, this.pictureId, file, [], gate);
+        }
+      });
     } catch (error) {
       const wait = retryAfterMs(error);
       if (wait) this.pausedUntil = Date.now() + wait;
     }
+  }
+  /** A picture's way out: the router's (pictureSend), else only this status's own check before each call to the app. */
+  private pictureSend<T>(work: (gate: SendGate) => Promise<T>): Promise<T> {
+    const own = () => { if (!this.permitted()) throw new Error("Live pictures are no longer allowed in this chat."); };
+    if (this.target.pictureSend) return this.target.pictureSend((gate) => work({ signal: gate.signal, check: () => { gate.check(); own(); } }));
+    return work({ signal: new AbortController().signal, check: own });
   }
   /** A piece of the reply as the model writes it. */
   text(delta: string): void {
@@ -334,10 +359,15 @@ export class LiveStatus {
     if (this.pictureDue) { clearTimeout(this.pictureDue); this.timers.delete(this.pictureDue); this.pictureDue = null; }
     if (this.pictureWork) await Promise.race([this.pictureWork, new Promise((done) => { setTimeout(done, 5000).unref?.(); })]);
     this.pictureWork = null;
+    // Close picture admission before queueing the final edit: delayed captures and queued sends stop here.
+    this.picturesClosed = true;
     // The task is over: its last picture stays, without buttons that could no longer do anything.
     if (this.pictureId && this.lastPicture && this.inPlace && this.permitted()) {
       const { pictureId, lastPicture } = this;
-      await this.enqueue(() => this.target.adapter.editPicture!(this.target.chatId, pictureId, lastPicture, [])).catch(() => undefined);
+      await this.enqueue(() => this.pictureSend((gate) => {
+        gate.check();
+        return this.target.adapter.editPicture!(this.target.chatId, pictureId, lastPicture, [], gate);
+      })).catch(() => undefined);
     }
     this.closed = true;
     this.stopTimers();

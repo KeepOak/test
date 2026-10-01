@@ -2,13 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
+import ts from "typescript";
 const source = await readFile(new URL("../public/app/shell/liveupdate.js", import.meta.url), "utf8");
 const keep = source.slice(source.indexOf("function openNow("), source.indexOf("const frames ="));
+/* The module's own layout and scroll helpers, and stand-ins for what it imports (who is signed in, Settings pages, pane tabs). */
+const helpers = source.slice(source.indexOf("const VIEWS ="), source.indexOf("/* Listens for live updates"));
+const stubs = (principal = "owner") => ({ E: { profiles: null }, sessionPrincipal: () => principal, hasPage: () => true, extraTabs: [],
+  sessionAuthority: () => ({ current: () => true, close: () => {} }), document: { getElementById: () => null, querySelectorAll: () => [] } });
 function capture({ chat = null, pending = true, storageError = false } = {}) {
   let saved;
-  const context = vm.createContext({ S: { chat, view: "chat", tabs: {}, drafts: {} }, sendingWithoutSession: () => pending,
-    $: () => null, KEY: "restore", document: {}, sessionStorage: { setItem: (_, value) => { if (storageError) throw new Error("QuotaExceededError"); saved = JSON.parse(value); } } });
-  vm.runInContext(keep, context);
+  const context = vm.createContext({ ...stubs(), S: { chat, view: "chat", tabs: {}, drafts: {} }, sendingWithoutSession: () => pending,
+    $: () => null, KEY: "restore", document: { querySelectorAll: () => [], activeElement: null }, sessionStorage: { setItem: (_, value) => { if (storageError) throw new Error("QuotaExceededError"); saved = JSON.parse(value); } } });
+  vm.runInContext(helpers + keep, context);
   return { keep: () => vm.runInContext(`keepOpen("${"a".repeat(40)}")`, context), saved: () => saved };
 }
 test("a first submission without its session cannot guess an older conversation with identical words", async () => {
@@ -35,29 +40,31 @@ test("the first confirmed conversation adopts the pending draft and caret before
   state.chat = "actual-session"; box = { setSelectionRange: (...range) => caret.push(...range) }; restore();
   assert.deepEqual(caret, [2, 7]);
 });
+const KEPT = "0b6f6c6e-1d3a-4c55-9a51-6f2f5d8e9a10";
 const restore = source.slice(source.indexOf("export async function restoreOpen(")).replace("export async", "async");
 test("a late refused page acknowledgment retains the snapshot for the old-page recovery", async () => {
   let removed = false;
   const kept = { at: Date.now(), commit: "a".repeat(40), view: "chat", drafts: { new: "the draft" } };
-  const context = vm.createContext({ KEY: "restore", frames: async () => {}, bridge: () => ({ windowRestored: async () => false }),
+  const context = vm.createContext({ ...stubs(), KEY: "restore", frames: async () => {}, bridge: () => ({ windowRestored: async () => false }),
     location: { href: "http://localhost:45001/" }, URL, S: { chat: null, tabs: {}, drafts: {} }, renderNow: () => {}, $: () => null,
     sessionStorage: { getItem: () => JSON.stringify(kept), removeItem: () => { removed = true; } } });
-  vm.runInContext(restore, context);
+  vm.runInContext(helpers + restore, context);
   await assert.rejects(vm.runInContext("restoreOpen(async () => {})", context), /not accepted/);
   assert.equal(removed, false, "the old-page recovery still has its draft and caret snapshot");
 });
 test("active recovery restores a retained snapshot older than a minute before accepting its navigation acknowledgment", async () => {
   const state = { chat: null, tabs: {}, drafts: {} }, caret = []; let acknowledged, removed = false;
-  const kept = { at: Date.now() - 61_000, commit: "a".repeat(40), view: "chat", chat: "kept-session", drafts: { "kept-session": "slow rollback draft" },
+  const kept = { at: Date.now() - 61_000, commit: "a".repeat(40), view: "chat", chat: KEPT, drafts: { [KEPT]: "slow rollback draft" },
     caret: { start: 2, end: 7, focused: false }, scroll: { top: 12, atEnd: false } };
   const box = { value: "", setSelectionRange: (...range) => caret.push(...range) }, scroll = { scrollTop: 0 };
-  const context = vm.createContext({ KEY: "restore", frames: async () => {}, bridge: () => ({ windowRestored: async (nonce) => { acknowledged = nonce; return true; } }),
+  const context = vm.createContext({ ...stubs(), KEY: "restore", frames: async () => {}, bridge: () => ({ windowRestored: async (nonce) => { acknowledged = nonce; return true; } }),
     location: { href: "http://localhost:45001/?_branch_live_restore=current-recovery" }, URL, history: { replaceState: () => {} }, S: state,
     renderNow: () => {}, $: (selector) => selector === "#prompt" ? box : scroll,
     sessionStorage: { getItem: () => JSON.stringify(kept), removeItem: () => { removed = true; } } });
-  vm.runInContext(restore, context);
-  assert.equal(await vm.runInContext("restoreOpen(async (id) => { S.chat = id; })", context), true);
-  assert.equal(state.chat, "kept-session"); assert.equal(box.value, "slow rollback draft"); assert.deepEqual(caret, [2, 7]);
+  vm.runInContext(helpers + restore, context);
+  // As chat/chat.js openConversation does: the conversation opens in the chat view.
+  assert.equal(await vm.runInContext("restoreOpen(async (id) => { S.chat = id; S.view = 'chat'; })", context), true);
+  assert.equal(state.chat, KEPT); assert.equal(box.value, "slow rollback draft"); assert.deepEqual(caret, [2, 7]);
   assert.equal(scroll.scrollTop, 12); assert.equal(acknowledged, "current-recovery"); assert.equal(removed, true);
 });
 
@@ -65,11 +72,11 @@ const framesSource = source.slice(source.indexOf("const frames ="), source.index
 test("a page started in the tray, never painted, finishes its first load and tells the app without waiting for a frame", async () => {
   // requestAnimationFrame never fires in an unpainted page (main.ts paintWhenInitiallyHidden: false for a tray start).
   let told = null, asked = 0;
-  const context = vm.createContext({ KEY: "restore", document: { visibilityState: "hidden" }, requestAnimationFrame: () => { asked++; },
+  const context = vm.createContext({ ...stubs(), KEY: "restore", document: { visibilityState: "hidden" }, requestAnimationFrame: () => { asked++; },
     bridge: () => ({ windowRestored: async (nonce) => { told = nonce ?? "ordinary start"; return true; } }),
     location: { href: "http://localhost:45001/?desktop=1" }, URL, S: { chat: null, tabs: {}, drafts: {} }, renderNow: () => {}, $: () => null,
     sessionStorage: { getItem: () => null, removeItem: () => {} } });
-  vm.runInContext(framesSource + restore, context);
+  vm.runInContext(helpers + framesSource + restore, context);
   const done = await Promise.race([vm.runInContext("restoreOpen(async () => {})", context), new Promise((resolve) => setTimeout(() => resolve("stalled"), 1000))]);
   assert.equal(done, false, "the first load ended instead of waiting for the window to be shown");
   assert.equal(told, "ordinary start");
@@ -80,3 +87,178 @@ test("a page started in the tray, never painted, finishes its first load and tel
   await vm.runInContext("restoreOpen(async () => {})", context);
   assert.equal(frames, 2);
 });
+test("PLAT-045: a shell handover brings back the place, pane and layout, and never another person's workspace", async () => {
+  const run = async (principal, kept) => {
+    const state = { chat: null, view: "chat", tabs: { inbox: "needs" }, drafts: {} }; let removed = false;
+    const context = vm.createContext({ ...stubs(principal), KEY: "restore", frames: async () => {}, bridge: () => ({ windowRestored: async () => true }),
+      location: { href: "http://localhost:45001/?_branch_live_restore=handover" }, URL, history: { replaceState: () => {} }, S: state,
+      renderNow: () => {}, $: () => null, document: { getElementById: () => null, querySelectorAll: () => [] },
+      sessionStorage: { getItem: () => JSON.stringify(kept), removeItem: () => { removed = true; } } });
+    vm.runInContext(helpers + restore, context);
+    const result = await vm.runInContext("restoreOpen(async (id) => { S.chat = id; S.view = 'chat'; })", context);
+    return { result, state, removed };
+  };
+  const kept = { at: Date.now(), commit: "a".repeat(40), principal: "owner", view: "inbox", chat: KEPT, tabs: { inbox: "history" },
+    drafts: { [KEPT]: "half a thought" }, layout: { pane: "files", sideW: 300, rail: true, home19: { open: true, sid: KEPT } } };
+  const mine = await run("owner", kept);
+  assert.equal(mine.state.chat, KEPT);
+  assert.equal(mine.state.view, "inbox", "the place the owner was in comes back after the conversation is read");
+  assert.equal(mine.state.tabs.inbox, "history");
+  assert.equal(mine.state.pane, "files"); assert.equal(mine.state.sideW, 300); assert.equal(mine.state.rail, true);
+  assert.deepEqual({ ...mine.state.home19 }, { open: true, sid: KEPT });
+  const other = await run("someone-else", kept);
+  assert.equal(other.result, false);
+  assert.equal(other.state.chat, null, "another person's conversation is not opened");
+  assert.deepEqual({ ...other.state.drafts }, {}, "nor their draft");
+  assert.equal(other.removed, true, "their snapshot is dropped");
+});
+/* Each case changes something while the restoration waits (inside the awaited call, so the change lands mid-wait):
+   the person, the app lock, the owner's own move, or a newer handover's snapshot. sessionAuthority stands in for
+   core/session-pages.js: revoked for good by any lock it hears, or by any person change, even one switched back
+   (its own behaviour is covered by tests/new-conversation-*.test.mjs). */
+async function interrupted(at, change) {
+  const kept = { at: Date.now(), commit: "a".repeat(40), principal: "owner", view: "inbox", chat: KEPT, drafts: { [KEPT]: "half a thought" },
+    caret: { start: 1, end: 4, focused: false }, scroll: { top: 30, atEnd: false }, layout: { pane: "files", sideW: 300 } };
+  const store = new Map([["restore", JSON.stringify(kept)]]);
+  const world = { who: "owner", revision: 0, opens: 0, receipts: 0, frames: 0, closed: 0, store, hearing: [] };
+  world.lock = (on) => { for (const hear of world.hearing) hear(on); };
+  const state = world.state = { chat: null, view: "chat", tabs: {}, drafts: {} };
+  const box = world.box = { value: "", setSelectionRange: () => {}, focus: () => {} }, scroll = world.scroll = { scrollTop: 0 };
+  const sessionAuthority = () => {
+    const who = world.who, revision = world.revision; let revoked = false;
+    world.hearing.push((on) => { if (on) revoked = true; });
+    return { current: () => !revoked && world.revision === revision && world.who === who, close: () => { world.closed++; } };
+  };
+  const context = vm.createContext({ ...stubs(), sessionPrincipal: () => world.who, sessionAuthority, KEY: "restore",
+    frames: async () => { if (++world.frames === 1 && at === "frames") change(world); },
+    bridge: () => ({ windowRestored: async () => { world.receipts++; if (at === "receipt") change(world); return true; } }),
+    location: { href: "http://localhost:45001/?_branch_live_restore=handover" }, URL, history: { replaceState: () => {} }, S: state, renderNow: () => {},
+    $: (selector) => selector === "#prompt" ? box : selector === "#scroll" ? scroll : null,
+    sessionStorage: { getItem: (key) => store.get(key) ?? null, removeItem: (key) => { store.delete(key); } } });
+  context.held = async (id) => { world.opens++; state.chat = id; state.view = "chat"; if (at === "open") change(world); };
+  vm.runInContext(helpers + restore, context);
+  world.result = await vm.runInContext("restoreOpen(held)", context);
+  assert.equal(world.closed, 1, "the authority is let go once");
+  return world;
+}
+test("PLAT-045: a person switch while the conversation is read puts nothing more back and drops only that snapshot", async () => {
+  const run = await interrupted("open", (world) => { world.who = "someone-else"; });
+  assert.equal(run.result, false);
+  assert.equal(run.state.view, "chat", "the previous person's place is not put back");
+  assert.equal(run.state.pane, undefined, "nor their layout");
+  assert.equal(run.box.value, "", "nor their draft in the composer");
+  assert.equal(run.store.has("restore"), false, "their snapshot is dropped");
+  assert.equal(run.opens, 1); assert.equal(run.receipts, 1, "the app is told once");
+});
+test("PLAT-045: the app lock during the first frames stops the composer, caret and scroll coming back", async () => {
+  const run = await interrupted("frames", (world) => { world.lock(true); });
+  assert.equal(run.result, false);
+  assert.equal(run.box.value, "", "no draft is written behind the lock");
+  assert.equal(run.scroll.scrollTop, 0);
+  assert.equal(run.store.has("restore"), false);
+  assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
+});
+test("PLAT-045: the owner's own move while the conversation is read stands; the old place is not laid over it", async () => {
+  const other = "1c2d3e4f-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+  const run = await interrupted("open", (world) => { world.state.chat = other; });
+  assert.equal(run.result, true);
+  assert.equal(run.state.chat, other);
+  assert.equal(run.state.view, "chat", "the kept place (inbox) does not replace where the owner went");
+  assert.equal(run.state.pane, undefined);
+  assert.equal(run.scroll.scrollTop, 0);
+  assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
+});
+test("PLAT-045: a newer handover's snapshot written while the app is told is kept for the page after this one", async () => {
+  const newer = JSON.stringify({ at: Date.now(), commit: "b".repeat(40), principal: "owner", view: "chat", drafts: { new: "newer words" } });
+  const run = await interrupted("receipt", (world) => { world.store.set("restore", newer); });
+  assert.equal(run.result, false);
+  assert.equal(run.store.get("restore"), newer, "the older restoration does not consume the newer snapshot");
+  assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
+});
+test("PLAT-045: a lock lifted again, or a person switched away and back, while the conversation is read still ends the restoration", async () => {
+  for (const change of [(world) => { world.lock(true); world.lock(false); },
+    (world) => { world.who = "someone-else"; world.revision++; world.who = "owner"; }]) {
+    const run = await interrupted("open", change);
+    assert.equal(run.result, false);
+    assert.equal(run.state.view, "chat"); assert.equal(run.state.pane, undefined);
+    assert.equal(run.box.value, ""); assert.equal(run.scroll.scrollTop, 0);
+    assert.equal(run.store.has("restore"), false);
+    assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
+  }
+});
+
+/* The real opening: chat/chat.js openConversation and core/session-pages.js sessionAuthority, with restoreOpen on top.
+   The conversation read is held, and the person or the lock goes away and comes back while it waits. */
+function actual(text, select = () => true) {
+  const parsed = ts.createSourceFile("fixture.js", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  return parsed.statements.filter(node => !ts.isImportDeclaration(node) && select(node)).map(node => {
+    let out = node.getText(parsed);
+    for (const modifier of [...(node.modifiers ?? [])].reverse()) if (modifier.kind === ts.SyntaxKind.ExportKeyword) {
+      const start = modifier.getStart(parsed) - node.getStart(parsed);
+      out = out.slice(0, start) + out.slice(modifier.end - node.getStart(parsed));
+    }
+    return out;
+  }).join("\n");
+}
+const app = name => readFile(new URL(`../public/app/${name}`, import.meta.url), "utf8");
+const opening = actual(await app("chat/chat.js"), node => ts.isFunctionDeclaration(node) && node.name?.text === "openConversation"
+  || ts.isVariableStatement(node) && node.declarationList.declarations.some(one => one.name.getText() === "openMark"));
+const pages = actual(await app("core/session-pages.js")), live = actual(source);
+async function realRestore(during, outcome = "read") {
+  const requests = [], waiters = [], toasts = [], receipts = [], observers = [];
+  const profiles = { active: null, isOwner: true };
+  const kept = { at: Date.now(), commit: "a".repeat(40), principal: JSON.stringify([null, true]), view: "inbox", chat: KEPT,
+    drafts: { [KEPT]: "half a thought" }, layout: { pane: "files" } };
+  const store = new Map([["branch-live-restore", JSON.stringify(kept)]]);
+  const shell = { classList: { contains: () => false, remove: () => {} } };
+  const context = vm.createContext({ URL, AbortController, addEventListener: () => {},
+    S: { chat: null, view: "chat", tabs: {}, drafts: {} }, E: { profiles, sessions: [], state: { runs: [] } }, C: { seat: 0, messages: [], sessionId: null },
+    $: (selector) => selector === "#app" ? shell : null, renderNow: () => {}, openLine: () => {}, leaveHelper: () => {},
+    loadWaiting: async () => {}, loadExtras: async () => {}, toast: (message) => toasts.push(message),
+    api: (path) => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+      requests.push({ path, resolve, reject }); for (const wake of waiters.splice(0)) wake(); return promise; },
+    hasPage: () => true, extraTabs: [], sendingWithoutSession: () => false, goingAway: () => {},
+    location: { href: "http://localhost:45001/?_branch_live_restore=handover" }, history: { replaceState: () => {} },
+    sessionStorage: { getItem: (key) => store.get(key) ?? null, removeItem: (key) => { store.delete(key); }, setItem: (key, value) => { store.set(key, value); } },
+    document: { visibilityState: "hidden", getElementById: () => null, querySelectorAll: () => [] },
+    MutationObserver: class { constructor() { this.records = []; observers.push(this); } observe() {} takeRecords() { return this.records.splice(0); } disconnect() {} },
+    window: { branchDesktop: { windowRestored: async (nonce) => { receipts.push(nonce); return true; } } } });
+  vm.runInContext(`${pages}\n${opening}\n${live}\nglobalThis.real = { restoreOpen, openConversation, resetSessionPages };`, context);
+  context.real.resetSessionPages(profiles);
+  const restoring = context.real.restoreOpen(context.real.openConversation);
+  while (!requests.length) await new Promise((wake) => waiters.push(wake));
+  assert.equal(requests[0].path, `sessions/${KEPT}`);
+  during?.(context, observers);
+  if (outcome === "error") requests[0].reject(new Error("The engine is away"));
+  else requests[0].resolve({ messages: [{ role: "user", content: "kept question" }], project: null });
+  return { result: await restoring, C: context.C, S: context.S, toasts, receipts, store };
+}
+test("PLAT-045 real opening: a delayed conversation read is published and the place comes back", async () => {
+  const run = await realRestore();
+  assert.equal(run.result, true);
+  assert.equal(run.C.messages.length, 1); assert.equal(run.S.chat, KEPT); assert.equal(run.S.view, "inbox");
+  assert.deepEqual(run.toasts, []); assert.deepEqual(run.receipts, ["handover"]); assert.equal(run.store.size, 0);
+});
+test("PLAT-045 real opening: a delayed failed read says so once and the restoration still finishes", async () => {
+  const run = await realRestore(undefined, "error");
+  assert.equal(run.result, true);
+  assert.deepEqual(run.toasts, ["The engine is away"]); assert.equal(run.S.view, "inbox"); assert.deepEqual(run.receipts, ["handover"]);
+});
+for (const [name, during] of [
+  ["a person switched away and back", (context) => {
+    const original = context.E.profiles;
+    context.E.profiles = { active: { id: "sam" }, isOwner: false }; context.real.resetSessionPages(context.E.profiles);
+    context.E.profiles = original; context.real.resetSessionPages(original);
+  }],
+  ["the app locked and unlocked", (context, observers) => { for (const observer of observers) observer.records.push({ oldValue: "locked-b17" }); }],
+]) for (const outcome of ["read", "error"]) {
+  test(`PLAT-045 real opening: ${name} during the held ${outcome === "read" ? "read" : "failed read"} publishes nothing from it`, async () => {
+    const run = await realRestore(during, outcome);
+    assert.equal(run.result, false);
+    assert.equal(run.C.messages.length, 0, "the old read's messages are not published");
+    assert.deepEqual(run.toasts, [], "nor its error");
+    assert.equal(run.S.view, "chat", "nor the kept place");
+    assert.deepEqual(run.receipts, ["handover"], "the app is told once");
+    assert.equal(run.store.size, 0, "the snapshot is dropped");
+  });
+}
