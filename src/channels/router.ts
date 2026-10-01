@@ -134,6 +134,11 @@ export interface ChannelAdapter {
    */
   readonly needsAppReview?: boolean;
   botName(): string | null;
+  /**
+   * The chat this chat belongs to, when its address does not say so (a Matrix thread has an id of its own; this names
+   * its room). A route on that chat then covers this one (src/channels/routes.ts). Null or absent: no parent.
+   */
+  routeParent?(chatId: string): string | null;
   /** Connection state in plain language, shown in Settings -> Channels. */
   health?(): ChannelHealth;
   /**
@@ -444,6 +449,7 @@ export class ChannelRouter {
   routeSettings(input: unknown, actor = this.runtime.owner) {
     return saveChannelRoute({ store: this.store, owner: this.runtime.owner,
       kindOf: channel => this.adapters.get(channel)?.adapter.kind ?? null,
+      parentOf: (channel, chatId) => this.adapters.get(channel)?.adapter.routeParent?.(chatId) ?? null,
       activeChatIds: channel => [...this.turns.values()].flatMap(turn => turn.messages[0]?.channel === channel ? [turn.messages[0].chatId] : []),
       busy: (channel, chatId) => this.turns.has(`${channel}\u0001${chatId}`),
       requireTrunk: (channel, trunkId) => {
@@ -1242,7 +1248,7 @@ export class ChannelRouter {
       && this.pair(message.channel, message.senderId)?.status === "approved" && this.senderAllowed(message.channel, message.senderId);
     if (!argument) {
       const id = this.chatTrunk(message.channel, message.chatId), trunk = this.routingTrunks().find(one => one.id === id);
-      const bound = adapter ? routeFor(this.store, this.runtime.owner, message.channel, message.chatId, adapter.kind) : null;
+      const bound = adapter ? routeFor(this.store, this.runtime.owner, message.channel, message.chatId, adapter.kind, adapter.routeParent?.(message.chatId) ?? null) : null;
       const current = `${trunk?.name ?? "The default Trunk"} answers here${bound ? " (chosen for this chat)" : " (default)"}.`;
       return own ? `${current}\nSend /trunk <name>, /trunk default, or /trunk inherit.\n${this.routingTrunks().map(one => `${one.name} (@${one.handle})`).join("\n")}` : current;
     }

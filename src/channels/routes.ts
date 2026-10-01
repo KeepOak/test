@@ -27,17 +27,20 @@ export function channelRoutes(store: Pick<Store, "list">, owner: string): Channe
     return parsed.success && parsed.data.trunkId !== null ? [parsed.data] : [];
   });
 }
-/** Exact chat, supported parent, whole app. An explicit default stops inheritance. */
-export function routeFor(store: Pick<Store, "get">, owner: string, channel: string, scope: string, kind: string): ChannelRoute | null {
-  for (const candidate of [...new Set([scope, parentScope(kind, scope), "*"])]) {
+/**
+ * Exact chat, supported parent, whole app. An explicit default stops inheritance. `parent` is the chat the adapter says
+ * this one belongs to (a Matrix thread's room, ChannelAdapter.routeParent), for addresses that do not spell it.
+ */
+export function routeFor(store: Pick<Store, "get">, owner: string, channel: string, scope: string, kind: string, parent: string | null = null): ChannelRoute | null {
+  for (const candidate of [...new Set([scope, parentScope(kind, scope) ?? parent, "*"])]) {
     if (!candidate) continue;
     const parsed = ChannelRouteSchema.safeParse(store.get("settings", owner, routeKey(channel, candidate))?.data);
     if (parsed.success && parsed.data.channel === channel && parsed.data.scope === candidate && parsed.data.trunkId !== null) return parsed.data;
   }
   return null;
 }
-export const bindingFor = (store: Pick<Store, "get">, owner: string, channel: string, scope: string, kind: string): string | null => {
-  const id = routeFor(store, owner, channel, scope, kind)?.trunkId;
+export const bindingFor = (store: Pick<Store, "get">, owner: string, channel: string, scope: string, kind: string, parent: string | null = null): string | null => {
+  const id = routeFor(store, owner, channel, scope, kind, parent)?.trunkId;
   return id && id !== "default" ? id : null;
 };
 export function dropTrunkRoutes(store: Store, owner: string, trunkId: string): void {
@@ -54,6 +57,8 @@ export interface RoutingDeps {
   store: Store;
   owner: string;
   kindOf(channel: string): string | null;
+  /** The chat a chat belongs to, when its adapter knows (ChannelAdapter.routeParent). */
+  parentOf?(channel: string, chatId: string): string | null;
   requireTrunk(channel: string, trunkId: string): void;
   busy(channel: string, chatId: string): boolean;
   activeChatIds(channel: string): string[];
@@ -70,14 +75,14 @@ export function saveChannelRoute(deps: RoutingDeps, input: unknown, actor: strin
       if (!record.id.startsWith("channel-session:")) return [];
       const chat = record.data as Partial<ChatThread>;
       if (chat.channel !== route.channel || !chat.chatId) return [];
-      return [{ chatId: chat.chatId, before: bindingFor(store, owner, route.channel, chat.chatId, kind) }];
+      return [{ chatId: chat.chatId, before: bindingFor(store, owner, route.channel, chat.chatId, kind, deps.parentOf?.(route.channel, chat.chatId) ?? null) }];
     });
     for (const chatId of deps.activeChatIds(route.channel))
-      if (!chats.some(chat => chat.chatId === chatId)) chats.push({ chatId, before: bindingFor(store, owner, route.channel, chatId, kind) });
+      if (!chats.some(chat => chat.chatId === chatId)) chats.push({ chatId, before: bindingFor(store, owner, route.channel, chatId, kind, deps.parentOf?.(route.channel, chatId) ?? null) });
     if (route.trunkId === null) store.delete("settings", owner, routeKey(route.channel, route.scope));
     else store.save("settings", owner, routeKey(route.channel, route.scope), { ...route });
     for (const chat of chats) {
-      if (chat.before === bindingFor(store, owner, route.channel, chat.chatId, kind)) continue;
+      if (chat.before === bindingFor(store, owner, route.channel, chat.chatId, kind, deps.parentOf?.(route.channel, chat.chatId) ?? null)) continue;
       if (deps.busy(route.channel, chat.chatId)) throw new ChannelRouteError("Wait for that chat's task to finish, or stop it, before changing who answers.");
       freshThread(store, owner, route.channel, chat.chatId);
     }

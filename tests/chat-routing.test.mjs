@@ -80,6 +80,25 @@ test("with Trunks switched off, saved routes start no Trunk and routing offers n
   await say("/trunk"); assert.doesNotMatch(sent.at(-1).text, /Bo \(@/);
   assert.notEqual((await say("hello", { chatId: "fresh" })).trunkId, bo.id);
 });
+// A chat app whose threads have chat ids of their own (base's Matrix threads) names each thread's room: a route on the room
+// covers its threads, a thread's own route wins, and changing the room's route starts its threads afresh.
+test("a route on a room reaches the threads the chat app says belong to it", async t => {
+  const { app, ada, bo, route, say } = await setup(t);
+  await app.channels.attach({ id: "rooms", kind: "matrix", botName: () => "Branch", async start() {}, async stop() {},
+    routeParent: chatId => chatId.startsWith("thread:") ? "room-1" : null, async send() { return "1"; } },
+  { activation: "always", pairing: false, allowlist: ["owner"] });
+  app.trunks.edit(bo.id, { reach: { channels: ["chat", "slack", "matrix", "rooms"], commands: false } });
+  app.trunks.edit(ada.id, { reach: { channels: ["chat", "slack", "matrix", "rooms"], commands: false } });
+  const before = await say("hello", { channel: "rooms", chatId: "thread:a" });
+  route("room-1", bo.id, "rooms");
+  assert.equal(app.channels.chatTrunk("rooms", "thread:a"), bo.id);
+  assert.equal(chatThread(app.store, app.runtime.owner, "rooms", "thread:a").sessionId, undefined, "the thread starts afresh with the room's Trunk");
+  assert.notEqual(before.sessionId, undefined);
+  route("thread:a", "default", "rooms");
+  assert.equal(app.channels.chatTrunk("rooms", "thread:a"), ada.id);
+  assert.equal(app.channels.chatTrunk("rooms", "thread:b"), bo.id);
+  assert.equal(app.channels.chatTrunk("rooms", "other-room"), ada.id);
+});
 test("changing a route starts a fresh thread and retains its earlier conversation", async t => {
   const { app, bo, route, say } = await setup(t);
   const before = await say(); route("dm", bo.id);
