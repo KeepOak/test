@@ -4,6 +4,7 @@ import { declareShape, type AnswerShape, type ShapedAnswer } from "./answer-shap
 import { CompletionCheckSchema, evaluateChecks, type CompletionCheck } from "./reliability.js";
 import type { RunOptions } from "./runtime.js";
 import type { Store } from "./store.js";
+import { underProject } from "./project-scope.js";
 import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
 import { goalWithSubgoals } from "./autonomy/subgoals.js"; // r17-b: /subgoal
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
@@ -241,7 +242,17 @@ export class GoalMode {
     const prompt = state.round === 1 && !state.lastRunId ? firstPrompt(goal.objective) : nextPrompt(goal);
     for (;;) {
       try {
-        return await this.runtime.run({
+        let project: string | null = null;
+        if (state.lastRunId) {
+          const previous = this.store.run(state.lastRunId);
+          if (!previous || previous.owner !== this.runtime.owner || previous.sessionId !== state.sessionId
+            || typeof previous.project !== "string" || !this.store.projects.list(previous.owner).some((one) => one.id === previous.project))
+            throw new Error("The goal's previous task or original project is unavailable. Reconcile its saved context before continuing; no new round was started.");
+          project = previous.project;
+        } else if (state.round > 1) {
+          throw new Error("The goal's previous task identity is unavailable. Reconcile its saved context before continuing; no new round was started.");
+        }
+        const start = () => this.runtime.run({
           prompt, signal: controller.signal, onTextDelta: () => undefined,
           ...(state.sessionId ? { sessionId: state.sessionId } : {}),
           ...(state.origin ? { source: state.origin.source, permissions: state.origin.permissions } : {}),
@@ -254,6 +265,7 @@ export class GoalMode {
             onStarted();
           },
         });
+        return await (project === null ? start() : underProject(project, start));
       } catch (error) {
         // The owner's own message is still being answered: wait for it rather than giving up.
         if (!busyError.test(String((error as Error)?.message)) || controller.signal.aborted) throw error;
