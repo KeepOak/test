@@ -59,8 +59,10 @@ Pushes are never held. Only a rerun the queue itself started goes straight to it
 it at the front of the line. Do not rerun a cancelled run by hand: the queue does it.
 
 How 3 slots and 4 shares were sized (2026-10-01): this is modeled admitted work against a cap of 180 concurrent jobs.
-That 180 is the owner's reading of the organization's enterprise settings page; it was not measured by us, and our
-token cannot read that setting. The model counts every admitted pull request at the full matrix, whatever its plan: a
+That 180 was measured: run 36849796914 in KeepOak/ci-capacity-probe (a 256-job matrix) held exactly 180 jobs in
+progress across the organization (179 of its own and 1 of this repository's), with 77 queued, from 10:33:44 to
+10:35:19 UTC on 2026-10-01; it matches the owner's reading of the enterprise settings page. The macOS share of the cap
+was not measured. The model counts every admitted pull request at the full matrix, whatever its plan: a
 pull request labelled `ci-full` or into a base other than `redesign/window` runs all 8 Linux shares, because
 `prLinuxShards` caps only a light plan. A full pull-request run is about 14 Checks jobs (plan, local voice, 8 Linux,
 2 Windows, 1 macOS, verify-suite), and CodeQL default setup adds 6 more for the same pull request, one of them a macOS
@@ -69,7 +71,7 @@ place of plan) and the same 6 CodeQL jobs, and the merge queue builds at most 5 
 in the ruleset). So 3 pull-request runs × 20 = 60 jobs (6 macOS) plus 5 groups × 20 = 100 (10 macOS) is about 160
 admitted jobs. That is close to the cap with no reserve: CodeQL for pull requests still waiting for a slot, pushes, the
 nightly run and unrelated workflows are not counted and can push the total over 180, in which case the jobs past the
-limit wait in GitHub's queue rather than fail. Revisit these numbers when the owner confirms a higher limit.
+limit wait in GitHub's queue rather than fail. Revisit these numbers if a new measurement shows a higher limit.
 
 Shared hosted-runner queue time is not controlled by repository code. Never run fork pull-request code on a personal
 NAS or runner with vault, LAN, or signing-secret access.
