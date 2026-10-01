@@ -40,6 +40,29 @@ const sameText = (a: string, b: string): boolean => {
 /** The locker name a connection's tokens are kept under, in the default project. */
 export const oauthSecretName = (id: string): string => `OAUTH_${id.toUpperCase().replace(/-/g, "_")}`;
 
+/** The saved sign-in was replaced while an older one was being renewed: that renewal's answer is dropped. */
+class ReplacedSignIn extends Error {}
+/* Each account check (src/health-check.ts) is its own authority: a renewal it starts runs and saves under it. */
+const checkIds = new WeakMap<object, number>();
+let checksSeen = 0;
+const checkId = (check: object | undefined): number | null => {
+  if (!check) return null;
+  if (!checkIds.has(check)) checkIds.set(check, ++checksSeen);
+  return checkIds.get(check) ?? null;
+};
+/**
+ * Which renewal a call may share: the same connection, client, tenant and sign-in addresses (a tenant lives in them, or
+ * in `extra`), the same saved credential, and the same account check or none. Hashed, so the map never holds a key in
+ * the clear.
+ */
+function renewalKey(provider: OAuthProvider, tokens: OAuthTokens): string {
+  return createHash("sha256").update(JSON.stringify([provider.id, provider.clientId, provider.clientSecret ?? "",
+    provider.authorizeUrl, provider.tokenUrl, provider.extra, tokens.refreshToken, tokens.accessToken, tokens.obtainedAt,
+    checkId(currentHealthCheck())])).digest("hex");
+}
+const sameCredential = (a: OAuthTokens, b: OAuthTokens): boolean =>
+  a.refreshToken === b.refreshToken && a.accessToken === b.accessToken && a.obtainedAt === b.obtainedAt;
+
 interface Flow {
   provider: OAuthProvider; verifier: string; state: string; redirectUri: string;
   server: Server; settle: (tokens: OAuthTokens) => void; fail: (error: Error) => void;
@@ -48,7 +71,7 @@ interface Flow {
 
 export class OAuthConnections {
   private readonly flows = new Map<string, Flow>();
-  /** A renewal under way for each connection, which calls arriving meanwhile wait for instead of starting their own. */
+  /** A renewal under way for each sign-in (renewalKey), which calls arriving meanwhile wait for instead of starting their own. */
   private readonly renewals = new Map<string, Promise<OAuthTokens>>();
   constructor(private readonly owner: string, private readonly secrets: Secrets, private readonly policy: NetworkPolicy,
     private readonly fetchImpl: typeof fetch = globalThis.fetch, private readonly windowMs = 300_000) {}
@@ -136,14 +159,17 @@ export class OAuthConnections {
       client_id: flow.provider.clientId, code_verifier: flow.verifier });
     return this.token(flow.provider, body);
   }
-  /** Swaps a refresh key for a fresh access key when the old one has run out. */
-  async refresh(provider: OAuthProvider, tokens: OAuthTokens): Promise<OAuthTokens> {
+  /**
+   * Swaps a refresh key for a fresh access key when the old one has run out. With `stillCurrent`, the answer is saved
+   * only while it still answers yes (the renewed sign-in was not replaced meanwhile); otherwise ReplacedSignIn.
+   */
+  async refresh(provider: OAuthProvider, tokens: OAuthTokens, stillCurrent?: () => Promise<boolean>): Promise<OAuthTokens> {
     if (!tokens.refreshToken) throw new Error(`${provider.label} did not give a way to renew the sign-in; sign in again`);
     const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokens.refreshToken, client_id: provider.clientId });
-    const fresh = await this.token(provider, body);
+    const fresh = await this.token(provider, body, stillCurrent);
     return { ...fresh, refreshToken: fresh.refreshToken ?? tokens.refreshToken };
   }
-  private async token(provider: OAuthProvider, body: URLSearchParams): Promise<OAuthTokens> {
+  private async token(provider: OAuthProvider, body: URLSearchParams, stillCurrent?: () => Promise<boolean>): Promise<OAuthTokens> {
     const target = new URL(provider.tokenUrl);
     await this.policy.assertAllowed(target, "sign-in address");
     assertHealthCurrent();
@@ -155,6 +181,7 @@ export class OAuthConnections {
     if (!response.ok) throw new Error(`The sign-in service answered ${response.status}`);
     const tokens = readTokens(await response.json());
     assertHealthCurrent();
+    if (stillCurrent && !(await stillCurrent())) throw new ReplacedSignIn(`The sign-in to ${provider.label} was replaced while it was renewed`);
     await this.save(provider, tokens);
     return tokens;
   }
@@ -182,19 +209,28 @@ export class OAuthConnections {
    * A usable access key, renewed first when the saved one has expired. Calls that find it expired at the same moment
    * share one renewal: a service that rotates refresh keys accepts each one only once, so a second renewal with the
    * same key would lose the sign-in. Adapted from LibreChat's in-flight refresh map (packages/api/src/mcp/oauth/tokens.ts,
-   * MIT; see THIRD_PARTY_NOTICES.md).
+   * MIT; see THIRD_PARTY_NOTICES.md). Only a call with the same sign-in (renewalKey) shares one. A renewal whose saved
+   * sign-in was replaced meanwhile saves nothing and hands nothing out; its callers read the new sign-in once more.
    */
   async accessToken(provider: OAuthProvider): Promise<string> {
-    const tokens = await this.saved(provider.id);
-    if (!tokens) throw new Error(`Branch Agent is not signed in to ${provider.label} yet`);
-    const expired = tokens.expiresAt !== null && Date.parse(tokens.expiresAt) - 30_000 <= Date.now();
-    if (!expired) return tokens.accessToken;
-    let renewal = this.renewals.get(provider.id);
-    if (!renewal) {
-      renewal = this.refresh(provider, tokens).finally(() => this.renewals.delete(provider.id));
-      this.renewals.set(provider.id, renewal);
+    for (let tries = 0; ; tries++) {
+      const tokens = await this.saved(provider.id);
+      if (!tokens) throw new Error(`Branch Agent is not signed in to ${provider.label} yet`);
+      const expired = tokens.expiresAt !== null && Date.parse(tokens.expiresAt) - 30_000 <= Date.now();
+      if (!expired) return tokens.accessToken;
+      const key = renewalKey(provider, tokens);
+      let renewal = this.renewals.get(key);
+      if (!renewal) {
+        const stillCurrent = async () => { const now = await this.saved(provider.id); return now !== null && sameCredential(now, tokens); };
+        renewal = this.refresh(provider, tokens, stillCurrent).finally(() => this.renewals.delete(key));
+        this.renewals.set(key, renewal);
+      }
+      try {
+        return (await renewal).accessToken;
+      } catch (error) {
+        if (!(error instanceof ReplacedSignIn) || tries > 0) throw error;
+      }
     }
-    return (await renewal).accessToken;
   }
 }
 
