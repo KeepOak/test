@@ -1,3 +1,4 @@
+import { processRunning } from "../process-running.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,8 +17,8 @@ export async function closeOwnedGateway(electron, home, gatewayPid) {
   const response = await fetch(`${presence.url}/api/deployment/quit`, { method: "POST", headers: { authorization: `Bearer ${sessionKey(token, boot)}` }, signal: AbortSignal.timeout(10000) });
   assert.equal(response.status, 200);
   const until = Date.now() + 15000;
-  while (Date.now() < until) { try { process.kill(gatewayPid, 0); } catch { break; } await new Promise((resolve) => setTimeout(resolve, 30)); }
-  assert.throws(() => process.kill(gatewayPid, 0), "the exact gateway exited after stopping its owned engine");
+  while (Date.now() < until) { if (!processRunning(gatewayPid)) break; await new Promise((resolve) => setTimeout(resolve, 30)); }
+  assert.equal(processRunning(gatewayPid), false, "the exact gateway exited after stopping its owned engine");
   await electron.close();
 }
 
@@ -31,7 +32,7 @@ export async function stopHomeBroker(home) {
   let note = null, token = null;
   try { note = JSON.parse(await readFile(join(dataDir, "running.json"), "utf8")); } catch { return null; }
   try { token = (await readFile(join(dataDir, "session-token"), "utf8")).trim(); } catch { /* no key: go straight to the pid */ }
-  const alive = () => { try { process.kill(note.pid, 0); return true; } catch { return false; } };
+  const alive = () => processRunning(note.pid, () => { try { process.kill(note.pid, 0); return true; } catch { return false; } });
   if (!Number.isInteger(note?.pid) || !alive()) return null;
   const boot = token ? await proveOnce(note.url, token, 5000).catch(() => null) : null;
   if (boot) await fetch(`${note.url}/api/deployment/quit`, { method: "POST", headers: { authorization: `Bearer ${sessionKey(token, boot)}` },

@@ -225,8 +225,9 @@ export class Budding {
       // Refuse missing provenance rather than selecting whichever project is chosen now.
       const original = this.deps.store.run(bud.runId);
       if (!original || original.owner !== this.deps.runtime.owner || !bud.sessionId || original.sessionId !== bud.sessionId
-        || typeof original.project !== "string" || !this.deps.store.projects.list(original.owner).some((project) => project.id === original.project))
-        throw new Error("The original task's conversation or project is unavailable. Reconcile its saved context before continuing; no work was replayed.");
+        || typeof original.project !== "string" || !this.deps.store.projects.list(original.owner).some((project) => project.id === original.project)
+        || this.deps.store.sessionProject(bud.sessionId) !== original.project)
+        throw new Error("The original task's conversation or project is unavailable or changed project. Reconcile its saved context before continuing; no work was replayed.");
       // Only the exact connector the owner approved contributes new permissions after hot reload.
       const added = bud.serverId ? this.deps.registry.inventory().filter((tool) => this.deps.registry.sourceOf(tool.name) === `mcp:${bud.serverId}`).map((tool) => tool.permission) : [];
       const run = await underProject(original.project, () => this.deps.runtime.run({ prompt: `${bud.task}\nContinue the original task. Do not repeat work already completed. Prior attempt:\n${bud.output ?? ""}`,
