@@ -183,7 +183,7 @@ by hand; edit the data file and run that command.
 
 <!-- providers:start -->
 
-Branch knows 44 model services (36 online, 7 that run on this computer, and one address of your own). Every one of them has been tested against a fake of the
+Branch knows 45 model services (37 online, 7 that run on this computer, and one address of your own). Every one of them has been tested against a fake of the
 service, not against the real one, so treat this as "Branch speaks the right language", not as
 "this was tried on a live account". Addresses and prices were last checked on 2026-09-16.
 
@@ -220,6 +220,7 @@ service, not against the real one, so treat this as "Branch speaks the right lan
 | OpenAI | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types, compare passages, speech, pictures out, live conversation | just a key | [Your own API key](https://openai.com/policies/services-agreement/) |
 | OpenAI (Responses API) | in the cloud | OpenAI Responses | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key (Responses route)](https://openai.com/policies/services-agreement/) |
 | OpenRouter | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key](https://openrouter.ai/terms) |
+| OpenRouter · Free models with tools | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key · free model router](https://openrouter.ai/terms) |
 | Perplexity | in the cloud | Perplexity Agent | conversation, pictures in, tools, as it types | just a key | [Your own API key, Agent API](https://www.perplexity.ai/hub/legal/perplexity-api-terms-of-service) |
 | Portkey | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types | just a key | [Your own API key](https://portkey.ai/terms) |
 | Qwen (Alibaba DashScope) | in the cloud | OpenAI | conversation, pictures in, tools, fixed format, as it types, compare passages | just a key | [Your own API key](https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-product-terms-of-service) |
