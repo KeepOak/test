@@ -130,9 +130,19 @@ export class Secrets {
     this.writeMeta(owner, project, name, saved.createdAt, keepDays ? new Date(Date.now() + keepDays * dayMs).toISOString() : null);
     return this.entry(owner, project, name, saved.createdAt);
   }
-  /** The origin label kept with a secret's current value (Locker.origin), or null. */
-  origin(owner: string, project: string, name: string): string | null {
-    return this.locker.origin(owner, project, name);
+  /**
+   * One secret's value with its origin label, read together (Locker.resolveWithOrigin), remembered by the scrubber and
+   * written to the audit as resolve does; null when there is no such secret.
+   */
+  async resolveWithOrigin(owner: string, project: string, name: string,
+    use: { runId?: string | undefined; purpose: string }): Promise<{ value: string; origin: string | null } | null> {
+    this.gate();
+    const held = await this.locker.resolveWithOrigin(owner, project, name);
+    if (!held) return null;
+    this.scrubber.remember(name, held.value);
+    this.db.prepare("INSERT INTO secret_use(owner,run_id,project,name,purpose,used_at) VALUES(?,?,?,?,?,?)")
+      .run(owner, use.runId ?? null, project, name, use.purpose.slice(0, 120), new Date().toISOString());
+    return held;
   }
   remove(owner: string, project: string, name: string): boolean {
     this.db.prepare("DELETE FROM secret_meta WHERE owner=? AND project=? AND name=?").run(owner, project, name);

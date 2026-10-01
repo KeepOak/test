@@ -224,13 +224,13 @@ export class OAuthConnections {
   /** The saved tokens for a connection, or null when it has never been signed in. */
   async saved(id: string): Promise<OAuthTokens | null> {
     const name = oauthSecretName(id);
-    const values = await this.secrets.resolve(this.owner, "default", [name], { purpose: `sign-in ${id}` }).catch(() => null);
+    // The tokens and the settings stamp come from one read, so they always belong to the same save.
+    const held = await this.secrets.resolveWithOrigin(this.owner, "default", name, { purpose: `sign-in ${id}` }).catch(() => null);
     assertHealthCurrent();
-    const saved = storedTokens(values?.[name] ?? null);
-    if (!saved) return null;
+    const saved = storedTokens(held?.value ?? null);
+    if (!saved || !held) return null;
     this.secrets.scrubber.remember(name, saved.accessToken);
-    const issuer = this.secrets.origin(this.owner, "default", name);
-    return issuer === null ? saved : { ...saved, issuer };
+    return held.origin === null ? saved : { ...saved, issuer: held.origin };
   }
   /**
    * A usable access key, renewed first when the saved one has expired. Calls that find it expired at the same moment

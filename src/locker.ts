@@ -117,6 +117,15 @@ export class Locker {
     }
     return values;
   }
+  /**
+   * One secret's value with the origin label written with it, read together in one step after the key is read, so the
+   * two always belong to the same write; null when there is no such secret.
+   */
+  async resolveWithOrigin(owner: string, project: string, name: string): Promise<{ value: string; origin: string | null } | null> {
+    const key = await this.keys.key();
+    const value = this.read(key, owner, project, name);
+    return value === null ? null : { value, origin: this.origin(owner, project, name) };
+  }
   /** One secret's value, read and decrypted in one step with no wait, or null when there is none. */
   private read(key: Buffer, owner: string, project: string, name: string): string | null {
     const row = this.db.prepare("SELECT iv,tag,ciphertext FROM locker WHERE owner=? AND project=? AND name=?").get(owner, project, name);
