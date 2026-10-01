@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { discardTemp } from "./temp-dir.mjs";
 import { Updater, UpdateDeferredError, compareVersions } from "../dist/desktop/updater.js";
+import { betaLine } from "../dist/desktop/dev-build.js";
 
 const run = promisify(execFile);
 const windows = process.platform === "win32";
@@ -448,4 +449,58 @@ test("release lookup does NOT fall back when fetch throws (network error)", asyn
   assert.equal(status.phase, "error", status.message);
   assert.match(status.message, /Network timeout/);
   assert.deepEqual(requested, ["KeepOak/Branch-Agent"], "did not fall back to stabrea on network error");
+});
+
+/* The owner's copy retried one Beta build that kept waiting (an UpdateDeferredError each time) every 30 s for 7.5 hours
+   and never saw the newer builds that landed meanwhile: the waiting build stayed "available" and each automatic install
+   took it again without looking. Stand-ins for git and the live build: nothing is fetched, built or installed here. */
+async function waitingBeta(t) {
+  const root = await mkdtemp(join(tmpdir(), "branch-update-relook-"));
+  t.after(() => discardTemp(root));
+  const head = { commit: "a".repeat(40) }, looks = [], built = [];
+  let clock = Date.parse("2026-09-30T12:00:00Z");
+  const devRun = async (file, args) => {
+    if (args.includes("--version")) return file === "node" ? "v24.14.0\n" : file === "npm" ? "11.6.0\n" : "1.0\n";
+    if (file === "git" && args.includes("ls-remote")) { looks.push(head.commit); return `${head.commit}\trefs/heads/${betaLine}\n`; }
+    throw new Error(`unexpected ${file} ${args.join(" ")}`);
+  };
+  const live = {
+    build: async (release) => { built.push(release.commit); throw new UpdateDeferredError("A window is in use, so the update waits."); },
+    apply: async () => { throw new Error("nothing is applied here"); },
+  };
+  const updater = new Updater({ repo: "stabrea/Branch-Agent", currentVersion: "0.19.3-beta.3", channel: "beta", platform: "win32",
+    installDir: join(root, "installed"), executableName: "Branch Agent.exe", assetName: "Branch-Agent-windows-x64.zip",
+    scratchDir: join(root, "scratch"), devBuildDir: join(root, "build"), fetch: async (url) => { throw new Error(`no network here: ${url}`); },
+    devRun, currentCommit: null, backup: async () => {}, canary: async () => {}, tryOut: async () => null, live, now: () => clock });
+  return { updater, head, looks, built, later: (ms) => { clock += ms; } };
+}
+
+test("a Beta build that keeps waiting does not hold back a newer one: an automatic install a look later looks again", async (t) => {
+  const { updater, head, looks, built, later } = await waitingBeta(t);
+  const stuck = head.commit;
+  await updater.check();
+  await assert.rejects(updater.install({ automatic: true }), UpdateDeferredError);
+  assert.equal(updater.status.phase, "available", "the waiting build is still the one found");
+  // A newer green build lands while the first one waits; the next automatic turn is a minute on.
+  head.commit = "c".repeat(40);
+  later(60_000);
+  await assert.rejects(updater.install({ automatic: true }), UpdateDeferredError);
+  assert.deepEqual(built, [stuck, head.commit], "the second automatic install targets the newer build, not the stuck one");
+  assert.equal(looks.length, 2, "it looked again once, before installing");
+  assert.equal(updater.status.release?.commit, head.commit);
+});
+
+test("control: a build a fresh look found is installed with no second look, and the Update button takes the one found", async (t) => {
+  const { updater, head, looks, built, later } = await waitingBeta(t);
+  const found = head.commit;
+  await updater.check();
+  later(30_000);
+  await assert.rejects(updater.install({ automatic: true }), UpdateDeferredError);
+  assert.deepEqual(looks, [found], "within the look window the automatic install uses what the look found");
+  // The owner's own Update button is unchanged: it installs the build shown, however long ago it was found.
+  head.commit = "d".repeat(40);
+  later(10 * 60_000);
+  await assert.rejects(updater.install(), UpdateDeferredError);
+  assert.deepEqual(built, [found, found]);
+  assert.equal(looks.length, 1);
 });

@@ -33,6 +33,13 @@ async function interruptedTask(app: Branch): Promise<string> {
   // Carried on by the stand-in too, never by the owner's own model (see checksOn).
   app.runtime.models.configureSession(app.runtime.owner, run.sessionId, { preset: selfTestPreset });
   const call = { id: "self-test-look", name: "files.list", arguments: JSON.stringify({ path: "." }) };
+  // This synthetic interrupted task needs the same bounded, recorded authority as a real
+  // task. Keep the proof read-only; missing records on real interrupted tasks still refuse.
+  const permission = app.runtime.registry.permissionOf(call.name);
+  if (!permission) throw new Error("The self-test read-only tool has no registered permission");
+  app.store.event(run.id, "run.started", { source: "owner", parentRunId: null,
+    deadlineMs: 30_000, permissions: [permission], depth: 0, delegates: false,
+    ownCopy: false, dryRun: false });
   app.store.message(run.sessionId, { role: "assistant", content: "", toolCalls: [call] });
   app.neverBreak.journal.begin({ runId: run.id, sessionId: run.sessionId, callId: call.id, tool: call.name,
     arguments: call.arguments, key: "self-test", effects: "none", evidence: null });

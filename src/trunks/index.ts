@@ -422,9 +422,9 @@ export class Trunks {
     return { unread: 0 };
   }
 
-  private conversation(title: string): string {
-    // Dogfood D14: a Trunk's own conversation belongs to no project, so a project opened last never lends it its instructions.
-    const run = this.store.createRun(this.owner, title, undefined, false, "web", defaultProjectId);
+  private conversation(title: string, project = defaultProjectId): string {
+    // Canonical Trunk chats stay in default; a chosen conversation carries its explicitly requested project.
+    const run = this.store.createRun(this.owner, title, undefined, false, "web", project);
     this.store.event(run.id, "run.bootstrap", conversationBootstrap);
     this.store.markAside(run.id); // overview: the conversation's opening row, set aside in GET /api/state
     this.store.finish(run.id, "completed", "Opened");
@@ -433,7 +433,7 @@ export class Trunks {
   }
   /** phase2/rooms: a new conversation that a chosen Trunk answers in. */
   startConversation(input: unknown): { sessionId: string } {
-    return this.conversations.start(input, (title) => this.conversation(title));
+    return this.conversations.start(input, (title, project) => this.conversation(title, project));
   }
   /** R17-002: the three-field create. The Trunk then introduces itself in its own conversation. */
   create(input: unknown, extra: Partial<Trunk> = {}): Trunk {

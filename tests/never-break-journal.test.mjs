@@ -23,6 +23,10 @@ import { saveGatewayConfig, GatewayConfigSchema } from "../dist/never-break/gate
 import { saveLongWorkSettings } from "../dist/long-work.js";
 
 const sha = (text) => createHash("sha256").update(text).digest("hex");
+function recordBoundedStart(app, run) {
+  app.store.event(run.id, "run.started", { source: "owner", parentRunId: null,
+    permissions: app.registry.permissions(), deadlineMs: 30_000, depth: 0, delegates: false });
+}
 const cleanEnv = () => Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith("BRANCH_") && name !== "NODE_OPTIONS"));
 /**
  * Windows will not delete an open database, so what a test opened (`closeFirst`) is closed, newest
@@ -237,6 +241,7 @@ test("a file step checked after the fact: done is kept, not done is done", async
   closeFirst(t, () => app.close());
   const make = async (callId, path, content, landed) => {
     const run = app.store.createRun("local", `write ${path}`);
+    recordBoundedStart(app, run);
     app.store.message(run.sessionId, { role: "assistant", content: "", toolCalls: [{ id: callId, name: "files.write", arguments: JSON.stringify({ path, content }) }] });
     const evidence = await evidenceFor("files.write", { path, content }, app.runtime.workspace);
     app.neverBreak.journal.begin({ runId: run.id, sessionId: run.sessionId, callId, tool: "files.write", arguments: JSON.stringify({ path, content }), key: "k", effects: "idempotent", evidence });
@@ -356,6 +361,7 @@ async function severalCalls(t, calls, register) {
     execute: async ({ n }) => { sent.push(n); return { sent: n }; } });
   register?.(app);
   const run = app.store.createRun("local", "several at once");
+  recordBoundedStart(app, run);
   app.neverBreak.journal.turn(run.id, run.sessionId, 1);
   const toolCalls = calls.map((c) => ({ id: c.id, name: c.tool, arguments: JSON.stringify(c.args) }));
   const hook = journalHook(app.neverBreak.journal);
@@ -407,6 +413,7 @@ test("a task from before intents were written keeps today's behaviour: a call wi
   app.registry.register({ name: "chaos.send", permission: "chaos.send", description: "send", parameters: z.object({ n: z.number() }).strict(),
     execute: async ({ n }) => { sent.push(n); return { sent: n }; } });
   const run = app.store.createRun("local", "from an older version");
+  recordBoundedStart(app, run);
   app.neverBreak.journal.turn(run.id, run.sessionId, 1);
   app.store.message(run.sessionId, { role: "assistant", content: "", toolCalls: [
     { id: "o1", name: "files.write", arguments: JSON.stringify({ path: "old.txt", content: "old" }) },
@@ -696,4 +703,29 @@ test("a task cut off by Branch closing is cancelled with the gateway and carryin
     await reopened.close();
     assert.equal(run.status, mode === "off" && !resumeAfterRestart ? "cancelled" : "interrupted", `gateway ${mode}, carrying on ${resumeAfterRestart}`);
   }
+});
+
+test("a one-time job cut off by a restart is settled as failed, not replayed, and Run now can still start it", async (t) => {
+  const root = await temp(t);
+  const app = await createBranch({ workspace: join(root, "w"), dataDir: join(root, "d"), provider: scripted([say("ran")]) });
+  closeFirst(t, () => app.close());
+  const now = new Date(), earlier = new Date(now.getTime() - 3600_000).toISOString();
+  const once = "55555555-5555-4555-8555-555555555555", broken = "66666666-6666-4666-8666-666666666666";
+  app.store.save("schedules", "local", once, { kind: "task", prompt: "send the invoice", dueAt: earlier, status: "interrupted",
+    permissions: [], history: [{ runId: "r1", status: "running", startedAt: earlier }] });
+  app.store.save("schedules", "local", broken, { kind: "task", prompt: "hourly", dueAt: earlier, intervalMs: 3600_000,
+    status: "interrupted", permissions: [], history: [] });
+  const next = (data) => { if (data.prompt === "hourly") throw new Error("no next turn"); return now.toISOString(); };
+  assert.equal(releaseInterruptedSchedules(app.store, next, now), 2);
+  const settled = app.store.get("schedules", "local", once).data;
+  assert.equal(settled.status, "failed", "a one-time job is never replayed: its steps may already have taken effect");
+  assert.equal(settled.dueAt, earlier);
+  assert.match(settled.error, /was not replayed/);
+  assert.equal(settled.history[0].status, "interrupted", "the cut-off turn is settled in its history");
+  assert.equal(settled.history[0].finishedAt, now.toISOString());
+  const unscheduled = app.store.get("schedules", "local", broken).data;
+  assert.equal(unscheduled.status, "failed", "a repeating job whose next turn cannot be worked out waits for the owner");
+  assert.match(unscheduled.error, /could not be calculated/);
+  app.store.save("schedules", "local", once, { ...settled, status: "interrupted" });
+  assert.ok(app.store.claimScheduleTrigger("local", once, now.toISOString(), null), "Run now can start an interrupted job");
 });

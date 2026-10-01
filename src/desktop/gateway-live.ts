@@ -25,7 +25,9 @@ export async function applyGatewayLive(appRoot: string, hooks: LiveHooks, args: 
 }
 
 export function gatewayLiveRequest(outcome: Exclude<LiveOutcome, { tier: "shell" | "none" }>): z.infer<typeof GatewayLiveSchema> {
-  return GatewayLiveSchema.parse({ tier: outcome.tier, version: outcome.version, commit: outcome.manifest.commit, digest: outcome.digest, changed: outcome.changed });
+  // Files that never run (docs, tests: part null) are not the broker's to apply; sent along, they failed the whole update.
+  const changed = outcome.changed.filter((file) => file.part !== null);
+  return GatewayLiveSchema.parse({ tier: outcome.tier, version: outcome.version, commit: outcome.manifest.commit, digest: outcome.digest, changed });
 }
 
 /** Every renderer operation is awaited by the broker; loss/refusal defers adoption and retains the old build. */
