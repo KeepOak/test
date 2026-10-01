@@ -17,6 +17,8 @@ async function fixture(t, { gap = false, platform = "linux", passed = 1 } = {}) 
   const provider = { name: "stand-in", async complete() { return { content: "Owner task", toolCalls: [] }; } };
   const app = await createBranch({ dataDir: join(root, "data"), workspace: join(root, "workspace"), provider });
   t.after(async () => { await app.close(); await discardTemp(root); });
+  app.store.projects.save("local", { id: "original-project", name: "Original project" });
+  app.store.projects.setActive("local", { active: "original-project" });
   const original = await app.runtime.run({ prompt: "Compute and save a report" });
   const context = app.runtime.context({ runId: original.id });
   const seen = { delegated: [], scripts: [], installs: [], source: [] };
@@ -245,6 +247,61 @@ test("building cannot widen the task's code or named-tool permissions", async (t
   assert.deepEqual(seen.scripts, []);
 });
 
+test("scheduled Budding keeps the original project after the owner chooses another project", async (t) => {
+  const { app, budding, context } = await fixture(t, { gap: true });
+  const original = app.store.run(context.runId);
+  const bud = await budding.start("Search Linear issues", "linear", context);
+  await budding.approveConnector(bud.id, bud.connectors[0].id);
+  app.registry.register({ name: "mcp.approved.search", permission: "mcp.approved.search", source: "mcp:approved-server", parameters: z.object({}).strict(), description: "Search", execute: async () => [] });
+  app.store.projects.save("local", { id: "different-project", name: "Different project" });
+  app.store.projects.setActive("local", { active: "different-project" });
+  let resumed;
+  app.runtime.run = async (options) => {
+    assert.equal(app.store.projects.active("local").id, original.project);
+    assert.equal(options.sessionId, original.sessionId);
+    assert.equal(options.originFrom, original.id);
+    assert.deepEqual(options.permissions, [...new Set([...bud.permissions, "mcp.approved.search"])]);
+    resumed = app.store.createRun("local", options.prompt, options.sessionId);
+    app.store.finish(resumed.id, "completed", "Issues found");
+    return app.store.run(resumed.id);
+  };
+  await budding.tick();
+  assert.equal(resumed.project, "original-project");
+  assert.equal(app.store.projects.chosen("local").id, "different-project");
+  assert.equal(budding.get(bud.id).stage, "completed");
+});
+
+test("scheduled Budding refuses missing or conflicting original provenance without replay", async (t) => {
+  for (const fault of ["missing task", "different owner", "different conversation", "missing conversation", "removed project", "moved conversation"]) {
+    await t.test(fault, async (t) => {
+      const { app, budding, context, deps } = await fixture(t);
+      const bud = budding.requestSetting({ request: "quantum report style", task: "Make my report", value: "on" }, context);
+      const saved = { ...bud, settingRequest: { ...bud.settingRequest, request: "wake word mode" } };
+      deps.sourceRequests.installed = () => true;
+      if (fault === "missing task") saved.runId = randomUUID();
+      if (fault === "different owner") saved.runId = app.store.createRun("another-owner", "Other task").id;
+      if (fault === "different conversation") saved.sessionId = randomUUID();
+      if (fault === "missing conversation") delete saved.sessionId;
+      if (fault === "removed project") app.store.projects.remove("local", "original-project");
+      if (fault === "moved conversation") {
+        app.store.projects.save("local", { id: "different-project", name: "Different project" });
+        app.store.createRun("local", "Later task", bud.sessionId, false, "web", "different-project");
+      }
+      app.store.sqlite.prepare("UPDATE seasons_buds SET data=? WHERE id=?").run(JSON.stringify(saved), bud.id);
+      const before = app.store.sqlite.prepare("SELECT count(*) AS count FROM tasks").get().count;
+      let runs = 0;
+      app.runtime.run = async () => { runs++; throw new Error("must not replay"); };
+      await budding.tick();
+      await budding.tick();
+      assert.equal(runs, 0);
+      assert.equal(app.store.sqlite.prepare("SELECT count(*) AS count FROM tasks").get().count, before);
+      assert.equal(budding.get(bud.id).stage, "failed");
+      assert.equal(budding.get(bud.id).resuming, false);
+      assert.match(budding.get(bud.id).error, /conversation or project is unavailable or changed project/);
+    });
+  }
+});
+
 test("a restart preserves the interrupted task without replaying its uncertain work", async (t) => {
   const { app, budding, context } = await fixture(t, { gap: true });
   const bud = await budding.start("Search Linear issues", "linear", context);
@@ -294,15 +351,17 @@ test("a prepared Branch contract and an unrelated update do not prove this chang
   const bud = await budding.start("Compute reports", "zzx-unsupported-capability", context);
   await budding.build(build(bud.id), context);
   budding.requestBranch(bud.id);
-  assert.throws(() => budding.confirmBranch(bud.id), /Approve and install/);
+  assert.throws(() => budding.confirmBranch(bud.id), /proved installed/);
   deps.sourceRequests.list = () => [{ id: "source-request", status: "approved" }];
-  assert.throws(() => budding.confirmBranch(bud.id), /Approve and install/);
+  assert.throws(() => budding.confirmBranch(bud.id), /proved installed/);
   deps.version = "test-v2";
   let runs = 0;
   app.runtime.run = async () => { runs++; return { id: bud.runId, status: "completed", output: "Report finished" }; };
   await budding.tick();
   assert.equal(runs, 0);
   await assert.rejects(budding.retry(bud.id, context), /has not arrived/);
+  assert.throws(() => budding.confirmBranch(bud.id), /proved installed/);
+  deps.sourceRequests.installed = (id) => id === "source-request";
   budding.confirmBranch(bud.id);
   await budding.tick();
   assert.equal(runs, 1);
