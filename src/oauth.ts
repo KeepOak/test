@@ -42,14 +42,23 @@ export const oauthSecretName = (id: string): string => `OAUTH_${id.toUpperCase()
 
 /** The saved sign-in was replaced while an older one was being renewed: that renewal's answer is dropped. */
 class ReplacedSignIn extends Error {}
+/* Each account check (src/health-check.ts) is its own authority: a renewal it starts runs and saves under it. */
+const checkIds = new WeakMap<object, number>();
+let checksSeen = 0;
+const checkId = (check: object | undefined): number | null => {
+  if (!check) return null;
+  if (!checkIds.has(check)) checkIds.set(check, ++checksSeen);
+  return checkIds.get(check) ?? null;
+};
 /**
  * Which renewal a call may share: the same connection, client, tenant and sign-in addresses (a tenant lives in them, or
- * in `extra`) and the same saved credential. Hashed, so the map never holds a key in the clear.
+ * in `extra`), the same saved credential, and the same account check or none. Hashed, so the map never holds a key in
+ * the clear.
  */
 function renewalKey(provider: OAuthProvider, tokens: OAuthTokens): string {
   return createHash("sha256").update(JSON.stringify([provider.id, provider.clientId, provider.clientSecret ?? "",
-    provider.authorizeUrl, provider.tokenUrl, provider.extra, tokens.refreshToken, tokens.accessToken, tokens.obtainedAt]))
-    .digest("hex");
+    provider.authorizeUrl, provider.tokenUrl, provider.extra, tokens.refreshToken, tokens.accessToken, tokens.obtainedAt,
+    checkId(currentHealthCheck())])).digest("hex");
 }
 const sameCredential = (a: OAuthTokens, b: OAuthTokens): boolean =>
   a.refreshToken === b.refreshToken && a.accessToken === b.accessToken && a.obtainedAt === b.obtainedAt;

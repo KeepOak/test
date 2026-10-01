@@ -268,3 +268,30 @@ test("actual personalApi GET sign-in status refuses owner-return and unlock afte
     await refusal;
   }
 });
+
+/* #982: a renewal started inside an account check runs and saves under that check. An ordinary call arriving meanwhile
+   never shares it, so the check's revocation cannot fail the ordinary call, and the ordinary call renews on its own. */
+test("a renewal started by an account check is never shared with an ordinary call, which survives the check's revocation", async t => {
+  const f = await fixture(t), posts = [];
+  const expiredTokens = { accessToken: "fixture-old", refreshToken: "fixture-refresh", tokenType: "Bearer",
+    expiresAt: new Date(Date.now() - 60_000).toISOString(), scope: null, obtainedAt: new Date().toISOString() };
+  await f.app.store.secrets.put(f.owner, "default", "OAUTH_PERSONAL_GOOGLE", JSON.stringify(expiredTokens));
+  const oauth = new OAuthConnections(f.owner, f.app.store.secrets, new NetworkPolicy({}, async () => ["93.184.216.34"]),
+    async () => { const post = deferred(); posts.push(post); return post.promise; });
+  const provider = { id: "personal-google", label: "Google", authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
+    clientId: "fixture-client", tokenUrl: "https://oauth2.googleapis.com/token", scopes: [], extra: {} };
+  const posted = async (count) => { for (const end = Date.now() + 2000; posts.length < count && Date.now() < end;) await new Promise((r) => setTimeout(r, 5)); };
+  const check = f.check(undefined, "OAUTH_PERSONAL_GOOGLE");
+  const checked = withHealthCheck(check, () => oauth.accessToken(provider));
+  const refusal = assert.rejects(checked, /no longer authorized/);
+  await posted(1);
+  const ordinary = oauth.accessToken(provider);
+  await posted(2);
+  assert.equal(posts.length, 2, "the ordinary call renews on its own, outside the check");
+  await changes.lock(f);
+  posts[1].resolve(new Response('{"access_token":"fixture-ordinary","token_type":"Bearer","expires_in":3600}'));
+  assert.equal(await ordinary, "fixture-ordinary", "the check's revocation does not fail the ordinary call");
+  posts[0].resolve(new Response('{"access_token":"fixture-checked","token_type":"Bearer","expires_in":3600}'));
+  await refusal;
+  assert.equal((await oauth.saved("personal-google")).accessToken, "fixture-ordinary");
+});
