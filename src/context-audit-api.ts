@@ -20,8 +20,15 @@ export async function contextAuditApi(app: Branch, request: IncomingMessage, pat
   guard(app, owner, id);
   if (request.method === "GET") return app.runtime.contextAudit.read(app.store, owner, id);
   if (request.method !== "POST") throw new HttpError(404, "Endpoint not found.");
-  const input = Change.parse(await readBody());
-  guard(app, owner, id); // A profile switch or lock while the body arrives revokes the write.
-  app.runtime.contextAudit.change(app.store, owner, id, input.runId, input.requestId, input.callId, input.out);
+  // A profile switch or lock while the body arrives revokes the write, even if switched back or unlocked by then.
+  let revoked = false;
+  const revoke = () => { revoked = true; };
+  const release = [app.store.profiles.onSwitched(revoke), app.sessionLock.onLocked(revoke)];
+  try {
+    const input = Change.parse(await readBody());
+    guard(app, owner, id);
+    if (revoked) throw new HttpError(403, "The person using Branch or the app lock changed. Refresh the context audit.");
+    app.runtime.contextAudit.change(app.store, owner, id, input.runId, input.requestId, input.callId, input.out);
+  } finally { for (const stop of release) stop(); }
   return app.runtime.contextAudit.read(app.store, owner, id);
 }

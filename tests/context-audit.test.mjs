@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ContextAudit } from "../dist/context-audit.js";
+import { contextAuditApi } from "../dist/context-audit-api.js";
 
 function store(runId, sessionId) {
   const rows = new Map(), events = [];
@@ -34,4 +35,37 @@ test("a plain read result can be left out of future requests and put back; prote
   audit.change(s, "owner", run.sessionId, run.id, requestId, "c1", false);
   assert.equal(audit.prepare(s, run, messages)[3].content, messages[3].content, "put back");
   assert.equal(audit.read(s, "someone-else", run.sessionId).available, false);
+});
+
+// Review 5914164114: a lock and unlock, or a profile switch away and back, while the POST body arrives ends the
+// original authority; the later guard alone would pass again and apply a stale exclusion.
+
+function window() {
+  const lockListeners = new Set(), switchListeners = new Set(), changes = [];
+  let locked = false, scope = "owner";
+  return {
+    sessionLock: { locked: () => locked, onLocked: (f) => { lockListeners.add(f); return () => lockListeners.delete(f); } },
+    store: { ownsSession: () => true, profiles: { isOwner: () => scope === "owner", scope: () => scope,
+      onSwitched: (f) => { switchListeners.add(f); return () => switchListeners.delete(f); } } },
+    runtime: { contextAudit: { read: () => ({ available: true }), change: (...args) => changes.push(args) } },
+    lock() { locked = true; for (const f of lockListeners) f(); }, unlock() { locked = false; },
+    switchTo(profile) { scope = profile ?? "owner"; for (const f of switchListeners) f(profile); },
+    changes, listening: () => lockListeners.size + switchListeners.size,
+  };
+}
+const path = `/api/sessions/${run.sessionId}/context-audit`;
+const body = { runId: run.id, requestId: "33333333-3333-4333-8333-333333333333", callId: "c1", out: true, confirmed: true };
+
+test("a lock or profile switch while the exclusion body arrives revokes the write, even once restored", async () => {
+  for (const transition of [(w) => { w.lock(); w.unlock(); }, (w) => { w.switchTo("p1"); w.switchTo(null); }]) {
+    const w = window();
+    await assert.rejects(contextAuditApi(w, { method: "POST" }, path, async () => { transition(w); return body; }),
+      (error) => error.status === 403);
+    assert.equal(w.changes.length, 0, "no stale exclusion is applied");
+    assert.equal(w.listening(), 0, "the request's subscriptions are released");
+  }
+  const w = window();
+  await contextAuditApi(w, { method: "POST" }, path, async () => body);
+  assert.equal(w.changes.length, 1, "an undisturbed write still applies");
+  assert.equal(w.listening(), 0);
 });
