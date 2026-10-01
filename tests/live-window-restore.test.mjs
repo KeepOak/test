@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
+import ts from "typescript";
 const source = await readFile(new URL("../public/app/shell/liveupdate.js", import.meta.url), "utf8");
 const keep = source.slice(source.indexOf("function openNow("), source.indexOf("const frames ="));
 /* The module's own layout and scroll helpers, and stand-ins for what it imports (who is signed in, Settings pages, pane tabs). */
@@ -185,3 +186,79 @@ test("PLAT-045: a lock lifted again, or a person switched away and back, while t
     assert.equal(run.opens, 1); assert.equal(run.receipts, 1);
   }
 });
+
+/* The real opening: chat/chat.js openConversation and core/session-pages.js sessionAuthority, with restoreOpen on top.
+   The conversation read is held, and the person or the lock goes away and comes back while it waits. */
+function actual(text, select = () => true) {
+  const parsed = ts.createSourceFile("fixture.js", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+  return parsed.statements.filter(node => !ts.isImportDeclaration(node) && select(node)).map(node => {
+    let out = node.getText(parsed);
+    for (const modifier of [...(node.modifiers ?? [])].reverse()) if (modifier.kind === ts.SyntaxKind.ExportKeyword) {
+      const start = modifier.getStart(parsed) - node.getStart(parsed);
+      out = out.slice(0, start) + out.slice(modifier.end - node.getStart(parsed));
+    }
+    return out;
+  }).join("\n");
+}
+const app = name => readFile(new URL(`../public/app/${name}`, import.meta.url), "utf8");
+const opening = actual(await app("chat/chat.js"), node => ts.isFunctionDeclaration(node) && node.name?.text === "openConversation"
+  || ts.isVariableStatement(node) && node.declarationList.declarations.some(one => one.name.getText() === "openMark"));
+const pages = actual(await app("core/session-pages.js")), live = actual(source);
+async function realRestore(during, outcome = "read") {
+  const requests = [], waiters = [], toasts = [], receipts = [], observers = [];
+  const profiles = { active: null, isOwner: true };
+  const kept = { at: Date.now(), commit: "a".repeat(40), principal: JSON.stringify([null, true]), view: "inbox", chat: KEPT,
+    drafts: { [KEPT]: "half a thought" }, layout: { pane: "files" } };
+  const store = new Map([["branch-live-restore", JSON.stringify(kept)]]);
+  const shell = { classList: { contains: () => false, remove: () => {} } };
+  const context = vm.createContext({ URL, AbortController, addEventListener: () => {},
+    S: { chat: null, view: "chat", tabs: {}, drafts: {} }, E: { profiles, sessions: [], state: { runs: [] } }, C: { seat: 0, messages: [], sessionId: null },
+    $: (selector) => selector === "#app" ? shell : null, renderNow: () => {}, openLine: () => {}, leaveHelper: () => {},
+    loadWaiting: async () => {}, loadExtras: async () => {}, toast: (message) => toasts.push(message),
+    api: (path) => { let resolve, reject; const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+      requests.push({ path, resolve, reject }); for (const wake of waiters.splice(0)) wake(); return promise; },
+    hasPage: () => true, extraTabs: [], sendingWithoutSession: () => false, goingAway: () => {},
+    location: { href: "http://localhost:45001/?_branch_live_restore=handover" }, history: { replaceState: () => {} },
+    sessionStorage: { getItem: (key) => store.get(key) ?? null, removeItem: (key) => { store.delete(key); }, setItem: (key, value) => { store.set(key, value); } },
+    document: { visibilityState: "hidden", getElementById: () => null, querySelectorAll: () => [] },
+    MutationObserver: class { constructor() { this.records = []; observers.push(this); } observe() {} takeRecords() { return this.records.splice(0); } disconnect() {} },
+    window: { branchDesktop: { windowRestored: async (nonce) => { receipts.push(nonce); return true; } } } });
+  vm.runInContext(`${pages}\n${opening}\n${live}\nglobalThis.real = { restoreOpen, openConversation, resetSessionPages };`, context);
+  context.real.resetSessionPages(profiles);
+  const restoring = context.real.restoreOpen(context.real.openConversation);
+  while (!requests.length) await new Promise((wake) => waiters.push(wake));
+  assert.equal(requests[0].path, `sessions/${KEPT}`);
+  during?.(context, observers);
+  if (outcome === "error") requests[0].reject(new Error("The engine is away"));
+  else requests[0].resolve({ messages: [{ role: "user", content: "kept question" }], project: null });
+  return { result: await restoring, C: context.C, S: context.S, toasts, receipts, store };
+}
+test("PLAT-045 real opening: a delayed conversation read is published and the place comes back", async () => {
+  const run = await realRestore();
+  assert.equal(run.result, true);
+  assert.equal(run.C.messages.length, 1); assert.equal(run.S.chat, KEPT); assert.equal(run.S.view, "inbox");
+  assert.deepEqual(run.toasts, []); assert.deepEqual(run.receipts, ["handover"]); assert.equal(run.store.size, 0);
+});
+test("PLAT-045 real opening: a delayed failed read says so once and the restoration still finishes", async () => {
+  const run = await realRestore(undefined, "error");
+  assert.equal(run.result, true);
+  assert.deepEqual(run.toasts, ["The engine is away"]); assert.equal(run.S.view, "inbox"); assert.deepEqual(run.receipts, ["handover"]);
+});
+for (const [name, during] of [
+  ["a person switched away and back", (context) => {
+    const original = context.E.profiles;
+    context.E.profiles = { active: { id: "sam" }, isOwner: false }; context.real.resetSessionPages(context.E.profiles);
+    context.E.profiles = original; context.real.resetSessionPages(original);
+  }],
+  ["the app locked and unlocked", (context, observers) => { for (const observer of observers) observer.records.push({ oldValue: "locked-b17" }); }],
+]) for (const outcome of ["read", "error"]) {
+  test(`PLAT-045 real opening: ${name} during the held ${outcome === "read" ? "read" : "failed read"} publishes nothing from it`, async () => {
+    const run = await realRestore(during, outcome);
+    assert.equal(run.result, false);
+    assert.equal(run.C.messages.length, 0, "the old read's messages are not published");
+    assert.deepEqual(run.toasts, [], "nor its error");
+    assert.equal(run.S.view, "chat", "nor the kept place");
+    assert.deepEqual(run.receipts, ["handover"], "the app is told once");
+    assert.equal(run.store.size, 0, "the snapshot is dropped");
+  });
+}
