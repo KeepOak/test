@@ -162,7 +162,7 @@ export class WorktreePlaces {
     if (worktreeScope() && !parent) return this.inheritedPlace(run);
     // workbench (SELF-302): a helper its lead asked to give a copy of its own gets one, whatever the switches say: the
     // switches decide what happens by default; the lead can explicitly request a copy for one helper.
-    if (parent && context.ownCopy) return this.helperPlace(run, context);
+    if (parent && context.ownCopy) return this.helperPlace(run, context, true);
     if (!codingOn(store, owner, "worktrees")) {
       if (!parent && this.forks().some((fork) => fork.sessionId === run.sessionId))
         throw new Error("This conversation is assigned to a project copy, but project copies are switched off. Enable them before continuing this conversation.");
@@ -170,7 +170,8 @@ export class WorktreePlaces {
     }
     if (!parent) return this.forkPlace(run);
     if (!partSettings(store, owner, "worktrees", WorktreeSettingsSchema).perHelper) return this.inheritedPlace(run);
-    return this.helperPlace(run, context);
+    // A copy by default, not one the lead required: a project with no Git commit to copy from shares its folder, as it did.
+    return this.helperPlace(run, context, false);
   }
 
   /** A background child can outlive its lead while using the lead's existing copy. */
@@ -334,23 +335,24 @@ export class WorktreePlaces {
     } catch (error) { this.helperSources.delete(run.id); throw error; }
   }
 
-  private async helperPlace(run: { id: string }, context: ToolContext): Promise<TaskPlace | null> {
+  private async helperPlace(run: { id: string }, context: ToolContext, required: boolean): Promise<TaskPlace | null> {
     const folder = worktreeScope() ?? this.deps.projectFolder();
     this.requireAvailableSource(folder);
     this.helperSources.set(run.id, folder);
     let placed = false;
     try {
-      const copy = await this.createHelper(run, context, folder);
+      const copy = await this.createHelper(run, context, folder, required);
       placed = copy !== null;
       return copy;
     } finally { if (!placed) this.helperSources.delete(run.id); }
   }
 
-  private async createHelper(run: { id: string }, context: ToolContext, folder: string): Promise<TaskPlace | null> {
+  private async createHelper(run: { id: string }, context: ToolContext, folder: string, required: boolean): Promise<TaskPlace | null> {
     const cwd = join(this.deps.root, folder);
     const head = await this.deps.run(cwd, ["rev-parse", "HEAD"], context.signal).catch(() => null);
     if (!head || head.status !== "completed" || head.exitCode !== 0 || !head.stdout.trim()) {
       context.signal.throwIfAborted();
+      if (!required) { this.deps.note(run.id, "worktree.shared", { reason: "no-git-commit" }); return null; }
       const reason = "The helper needs a separate project copy, but the project has no readable Git commit. The helper was not started in the shared project.";
       this.deps.note(run.id, "worktree.failed", { reason });
       throw new Error(reason);

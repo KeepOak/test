@@ -2573,7 +2573,8 @@ them on a task in a suite file as `"scorers": [...]`:
 `exact` (the answer, once case, spacing and trailing punctuation are taken off), `contains`,
 `regex`, `json-schema`, `numeric` (with a tolerance), `url` (a pattern the address must match),
 `file-exists` and `file-contains` (inside the workspace), `tool-called` (optionally `withArgs`, so
-you can say a tool must have been used with particular arguments), `budget` (`maxSteps`, `maxMs`,
+you can say a tool must have been used with particular arguments), `helper-runs` (`min`, `max`,
+`completed`, `output`: the helpers the engine actually recorded for the task), `budget` (`maxSteps`, `maxMs`,
 `maxTokens`, `maxDollars` — the rounds, time, tokens and money a task may use), `finished` (did it
 actually do the work, or did it say it could not — the completion checks you already use, plus the
 phrases an answer uses when it has quietly given up), `f1`, `passage`, `html`, `trajectory`, and
