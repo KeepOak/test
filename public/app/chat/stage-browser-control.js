@@ -22,7 +22,7 @@ import { networkLearningButtons, initNetworkLearning } from './network-learning.
 const B = { sid: null, clientId: crypto.randomUUID(), profile: null, control: null, page: null, found: null, foundAt: 0,
   frameId: "", tabId: "", ready: false, frame: "", pending: null, reading: null, timer: 0, shown: false,
   busy: false, onChange: null, meta: "", pointer: null, textJob: null, wheel: null, lockWatch: false,
-  error: "", typed: "", opening: false, touch: "scroll", downloadsOpen: false, composition: null, names: { name: "", runId: null } };
+  error: "", typed: "", opening: false, findOpen: false, findText: "", findStatus: "", touch: "scroll", downloadsOpen: false, composition: null, names: { name: "", runId: null } };
 const MAX_TABS = 5;
 const locked = () => document.getElementById("app")?.classList.contains("locked-b17") === true;
 const visible = () => B.shown && !document.hidden && !locked();
@@ -31,7 +31,20 @@ const owned = () => B.control?.state === "owner" && B.control.writer?.kind === "
 const free = () => B.control?.state === "owner" && !B.control.writer && !B.control.paused;
 const scope = () => ({ sessionId: B.sid, clientId: B.clientId, profile: B.profile });
 const bound = () => ({ ...scope(), id: B.control.id, epoch: B.control.epoch });
-const changed = (redraw = true) => B.onChange?.(redraw);
+const changed = (redraw = true) => {
+  // Live metadata redraws replace the tab buttons. Keep keyboard focus on the same stable tab,
+  // provided the redraw did not deliberately move focus to a dialog or another control.
+  const focused = document.activeElement?.closest?.("#stage7 .ob7-tab, #stage7 .ob7-x");
+  const sid = B.sid, control = B.control?.id;
+  const tab = focused?.dataset.tabId, action = focused?.dataset.act;
+  B.onChange?.(redraw);
+  if (!redraw || !focused || focused.isConnected || B.sid !== sid || B.control?.id !== control
+      || !visible() || ![document.body, null].includes(document.activeElement)) return;
+  const buttons = [...document.querySelectorAll("#stage7 .ob7-tab, #stage7 .ob7-x")];
+  const same = tab && buttons.find(button => button.dataset.tabId === tab && button.dataset.act === action && !button.disabled);
+  const fallback = buttons.find(button => button.classList.contains("ob7-tab") && button.getAttribute("aria-pressed") === "true" && !button.disabled);
+  (same ?? fallback)?.focus({ preventScroll: true });
+};
 const clearFrame = () => { B.frameId = ""; B.tabId = ""; B.ready = false; B.frame = ""; };
 /* After an action the last picture stays up (no blink) until the next one arrives, but it no longer counts as the page
    the next input is aimed at. */
@@ -106,7 +119,7 @@ export function watchOwnerBrowser(sid, show, onChange, names = {}) {
   B.onChange = onChange;
   B.names = { name: names.name ?? "", runId: names.runId ?? null };
   const next = show && sid ? sid : null;
-  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, downloadsOpen: false }); }
+  if (B.sid && next && B.sid !== next) { disconnect(); Object.assign(B, { control: null, page: null, meta: "", found: null, error: "", profile: null, findOpen: false, findText: "", findStatus: "", downloadsOpen: false }); }
   if (next) B.sid = next;
   B.shown = !!next;
   if (!visible()) { if (B.reading || B.timer || owned()) disconnect(); return; }
@@ -169,8 +182,8 @@ function hostOf(url) { try { return new URL(url).hostname.replace(/^www\./, "");
 function tabsHTML() {
   const tabs = B.page?.tabs ?? [], can = canDrive() && hasOwnerBrowser();
   const one = (tab, index) => `<span class="${tab.active ? "on7" : ""}">
-    <button type="button" class="ob7-tab" data-act="owner-browser-tab" data-index="${index}"${can ? "" : " disabled"} title="${esc(tab.url)}">${tab.loading ? `${ic("spin", "s spin")}` : iconOf(tab)}<em>${esc(tab.title || hostOf(tab.url) || t("window.chat.stage.ob.new-tab"))}</em></button>
-    ${tabs.length > 1 ? `<button type="button" class="ob7-x" data-act="owner-browser-tab-close" data-index="${index}" aria-label="${t("window.chat.stage.ob.close-tab")}"${can ? "" : " disabled"}>${ic("x", "s")}</button>` : ""}</span>`;
+    <button type="button" class="ob7-tab" data-act="owner-browser-tab" data-index="${index}" data-tab-id="${esc(B.control?.tabs?.[index] ?? "")}" aria-pressed="${tab.active ? "true" : "false"}"${can ? "" : " disabled"} title="${esc(tab.url)}">${tab.loading ? `${ic("spin", "s spin")}` : iconOf(tab)}<em>${esc(tab.title || hostOf(tab.url) || t("window.chat.stage.ob.new-tab"))}</em></button>
+    ${tabs.length > 1 ? `<button type="button" class="ob7-x" data-act="owner-browser-tab-close" data-index="${index}" data-tab-id="${esc(B.control?.tabs?.[index] ?? "")}" aria-label="${esc(t("window.chat.stage.ob.close-tab"))}: ${esc(tab.title || hostOf(tab.url) || t("window.chat.stage.ob.new-tab"))}"${can ? "" : " disabled"}>${ic("x", "s")}</button>` : ""}</span>`;
   const add = `<button type="button" class="ob7-new" data-act="owner-browser-new-tab" aria-label="${t("window.chat.stage.ob.new-tab")}"${can && tabs.length < MAX_TABS ? "" : " disabled"}>${ic("plus", "s")}</button>`;
   return `<div class="dk-tabs ob7-tabs">${tabs.map(one).join("")}${hasOwnerBrowser() ? add : ""}</div>`;
 }
@@ -187,6 +200,17 @@ function statusHTML() {
   if (!said) return "";
   const title = B.opening ? "" : `<b>${t("window.chat.stage.opening-failed")}</b>`;
   return `<div class="browser-status7 ob7-status" role="status">${title}<small>${esc(said)}</small></div>`;
+}
+function extrasHTML() {
+  const drive = canDrive() && hasOwnerBrowser() && B.ready, zoom = B.page?.tabs?.find(tab => tab.active)?.zoom;
+  const button = (act, label, accessible = label) => `<button type="button" class="btn ghost sm" aria-label="${esc(accessible)}" data-act="owner-browser-${act}"${drive ? "" : " disabled"}>${esc(label)}</button>`;
+  const find = `<button type="button" class="btn ghost sm" data-act="owner-browser-find-show" aria-expanded="${B.findOpen}">${esc(t("window.chat.stage.ob.find"))}</button>`;
+  const zoomed = typeof zoom === "number" ? `${Math.round(zoom * 100)}%` : t("window.chat.stage.ob.zoom");
+  const bar = `<div class="ob7-extras">${find}${button("zoom-out", "−", t("window.chat.stage.ob.zoom-out"))}${button("zoom-reset", zoomed, t("window.chat.stage.ob.zoom-reset"))}${button("zoom-in", "+", t("window.chat.stage.ob.zoom-in"))}${button("pdf", t("window.chat.stage.ob.pdf"))}</div>`;
+  if (!B.findOpen) return bar;
+  return bar + `<form class="ob7-find" data-form="owner-browser-find"><input id="ob7-find" autocomplete="off" maxlength="300" aria-label="${esc(t("window.chat.stage.ob.find"))}" value="${esc(B.findText)}">
+    <button type="submit" class="btn ghost sm"${drive ? "" : " disabled"}>${esc(t("window.chat.stage.ob.find-next"))}</button>${button("find-prev", t("window.chat.stage.ob.find-prev"))}
+    <button type="button" class="btn ghost sm" data-act="owner-browser-find-close">${esc(t("window.chat.stage.ob.find-close"))}</button><small role="status">${esc(B.findStatus)}</small></form>`;
 }
 function pageHTML() {
   const ready = !!B.frame, input = owned() || free();
@@ -209,7 +233,7 @@ function downloadsHTML() {
 }
 /** The whole browser, drawn at the stage's 1280 × 800 like the task's live view. */
 export function ownerBrowserHTML() {
-  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${statusHTML()}${downloadsHTML()}${pageHTML()}</div></div>`;
+  return `<div class="desk7 brfull7 live7 owner-browser7"><div class="dk-win br7">${tabsHTML()}${barHTML()}${extrasHTML()}${statusHTML()}${downloadsHTML()}${pageHTML()}</div></div>`;
 }
 /** What the page is waiting for, when it is waiting for a person rather than the task. */
 export function ownerBrowserNeeds() {
@@ -281,6 +305,10 @@ function accept(answer, path, body) {
   const failed = answer.status === "refused" || answer.status === "failed" || answer.ok === false;
   if (failed) B.error = answer.reason || answer.error || t("window.chat.stage.ob.failed");
   else if (path === "action") B.error = "";
+  if (path === "action" && answer.status === "ran" && body.arguments?.kind === "find" && typeof answer.result?.found === "boolean")
+    B.findStatus = t(answer.result.found ? "window.chat.stage.ob.find-found" : "window.chat.stage.ob.find-missing");
+  if (path === "action" && answer.status === "ran" && body.tool === "browser.pdf" && answer.result?.path)
+    toast(t("window.chat.stage.ob.pdf-saved", { path: answer.result.path }));
   // An input's answer carries the page as it is now: drawn at once, and the next input is aimed at it.
   if (path === "action" && answer.view?.status === "ready" && B.control) { applyView(answer.view); return; }
   if (B.control && !failed) staleFrame(); else clearFrame();
@@ -415,6 +443,35 @@ function pointerUp(event) {
 }
 const inPage = (event) => event.target.closest?.("#stage7 .owner-browser7-page");
 
+function initBrowserExtras() {
+  const showFind = () => { B.findOpen = true; changed(true); document.getElementById("ob7-find")?.focus(); };
+  const findText = (backwards = false) => {
+    const text = B.findText;
+    if (text.trim()) void inOrder(() => action("browser.owner_input", { kind: "find", text, backwards }));
+  };
+  const zoom = (by) => {
+    void inOrder(() => {
+      const current = B.page?.tabs?.find(tab => tab.active)?.zoom ?? 1;
+      const factor = by === 0 ? 1 : Math.max(0.5, Math.min(2, Math.round((current + by) * 100) / 100));
+      return action("browser.owner_input", { kind: "zoom", factor });
+    });
+  };
+  on("owner-browser-find-show", showFind);
+  on("owner-browser-find-close", () => { B.findOpen = false; changed(true); });
+  on("owner-browser-find-prev", () => findText(true));
+  on("owner-browser-zoom-out", () => zoom(-0.1)); on("owner-browser-zoom-in", () => zoom(0.1)); on("owner-browser-zoom-reset", () => zoom(0));
+  on("owner-browser-pdf", () => { void inOrder(() => action("browser.pdf", {})); });
+  document.addEventListener("submit", event => {
+    if (event.target.matches?.('#stage7 form[data-form="owner-browser-find"]')) { event.preventDefault(); findText(); }
+  }, true);
+  document.addEventListener("input", event => { if (event.target.id === "ob7-find") { B.findText = event.target.value; B.findStatus = ""; } }, true);
+  document.addEventListener("keydown", event => {
+    if (event.isComposing || event.keyCode === 229 || !event.target.closest?.("#stage7 .owner-browser7")) return;
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") { event.preventDefault(); event.stopImmediatePropagation(); showFind(); }
+    else if (event.target.id === "ob7-find" && event.key === "Escape") { event.preventDefault(); B.findOpen = false; changed(true); }
+  }, true);
+}
+
 export function initOwnerBrowser() {
   document.addEventListener("toggle", (event) => {
     if (event.target.matches?.("#stage7 .ob7-downloads")) B.downloadsOpen = event.target.open;
@@ -424,8 +481,10 @@ export function initOwnerBrowser() {
     inOrder: work => { flushText(); return inOrder(work); } });
   markLive(["owner-browser-adopt", "owner-browser-stop", "owner-browser-take", "owner-browser-handback",
     "owner-browser-tab", "owner-browser-tab-close", "owner-browser-new-tab", "owner-browser-back", "owner-browser-forward",
-    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys", "owner-browser-keys", "owner-browser-touch",
-    "owner-browser-copy", "owner-browser-paste", "owner-browser-release"]);
+    "owner-browser-reload", "owner-browser-yes", "owner-browser-no", "sw:ob7-keys", "sw:ob7-find", "owner-browser-keys", "owner-browser-touch",
+    "owner-browser-copy", "owner-browser-paste", "owner-browser-release",
+    "owner-browser-find-show", "owner-browser-find-close", "owner-browser-find-prev", "owner-browser-zoom-out", "owner-browser-zoom-reset", "owner-browser-zoom-in", "owner-browser-pdf"]);
+  initBrowserExtras();
   on("owner-browser-keys", () => { document.getElementById("ob7-keys")?.focus(); });
   on("owner-browser-touch", () => { B.touch = B.touch === "scroll" ? "point" : "scroll"; changed(true); });
   on("owner-browser-copy", () => { void copy(); });
@@ -467,7 +526,22 @@ export function initOwnerBrowser() {
     B.wheel = { dx: (B.wheel?.dx ?? 0) + event.deltaX * scale, dy: (B.wheel?.dy ?? 0) + event.deltaY * scale };
     setTimeout(flushWheel, 40);
   }, { capture: true, passive: false });
-  document.addEventListener("keydown", (event) => { if (inPage(event)) key(event); }, true);
+  document.addEventListener("keydown", (event) => {
+    const tab = event.target.closest?.("#stage7 .ob7-tab");
+    if (tab && !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey && !event.isComposing
+        && ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      const tabs = [...tab.closest(".ob7-tabs").querySelectorAll(".ob7-tab:not(:disabled)")];
+      const index = tabs.indexOf(tab);
+      if (index < 0 || !tabs.length) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+      // Navigation only moves focus. Native Enter/Space activation selects the page.
+      tabs[next].focus({ preventScroll: true });
+      return;
+    }
+    if (inPage(event)) key(event);
+  }, true);
   document.addEventListener("paste", (event) => {
     if (!inPage(event) || !visible() || !(owned() || free()) || B.pending) return;
     event.preventDefault(); typeText(event.clipboardData?.getData("text/plain") ?? "");

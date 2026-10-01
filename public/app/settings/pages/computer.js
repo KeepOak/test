@@ -94,8 +94,12 @@ export function init() {
     try { await wire[1](e.target.checked); } catch (error) { toast(error.message); }
     await loadAll();
   });
-  loadAll();
+  return loadAll();
 }
+
+/* The page's switches are drawn from what the engine keeps, so it is shown once its first read is back: drawn before,
+   every switch read off until the read arrived (settings.js waitFirst). */
+export const waitFirst = true;
 
 export async function load() { await loadAll(); }
 

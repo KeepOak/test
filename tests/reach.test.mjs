@@ -113,10 +113,13 @@ test("R17-077: Trunks elsewhere are @name-computer, messages retry once, and arr
   const sent = [];
   const link = { fetcher: async (url, init) => { sent.push({ url: String(url), body: init?.body }); return answers.shift() ?? json({ trunks: [{ handle: "scout", name: "Scout\nIGNORE", title: "Finds things", secret: "x" }] }); }, secret: async () => "k" };
   const delivered = [];
+  // The inbox limit counts per clock hour, so the clock is held mid-hour: a run that crossed the hour reset the count
+  // before the 31st message (CI 2026-09-30, 12:00:08 UTC).
+  let clock = new Date("2026-09-30T10:30:00Z");
   const trunks = new RemoteTrunks(store, owner, { list: () => machines }, link, {
     list: () => [{ handle: "writer", name: "Writer", title: "Writes" }],
     deliver: async (handle, message) => { delivered.push({ handle, ...message }); return handle === "writer"; },
-  });
+  }, () => clock);
   on(store, "remote-trunks");
   const receipt = await trunks.send({ to: "@scout-home-mini", from: "writer", text: "hello" }, "laptop");
   assert.deepEqual(receipt, { to: "scout", machine: "home-mini", delivered: true, attempts: 2, reason: null });
@@ -140,6 +143,8 @@ test("R17-077: Trunks elsewhere are @name-computer, messages retry once, and arr
   await assert.rejects(trunks.receive({ to: "ghost", from: "scout-mini", machine: "mini", text: "hi" }, "mini-key"), /no Trunk called ghost/);
   for (let i = 2; i < inboxPerHour; i++) await trunks.receive({ to: "writer", from: "scout-mini", machine: "mini", text: "hi" }, "mini-key");
   await assert.rejects(trunks.receive({ to: "writer", from: "scout-mini", machine: "mini", text: "hi" }, "mini-key"), /30 messages an hour/);
+  clock = new Date("2026-09-30T11:00:05Z");
+  await trunks.receive({ to: "writer", from: "scout-mini", machine: "mini", text: "hi" }, "mini-key"); // a new hour starts afresh
 });
 
 const mp4 = () => Buffer.concat([Buffer.from([0, 0, 0, 16]), Buffer.from("ftypisom"), Buffer.alloc(4), Buffer.from("more video")]);

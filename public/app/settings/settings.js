@@ -120,6 +120,7 @@ function found(q, rows) {
    data each time it is opened again; nothing is fetched before the engine has accepted the window. A page that draws a
    choice from what the engine keeps (waitFirst) is shown once its read has come back, so it never shows none pressed. */
 const started = new Set();
+let shownPage = null; // cleared outside Settings: returning through the gear must read the page again
 function open(id) {
   const page = PAGES[id];
   if (!page || !E.loaded) return undefined;
@@ -145,13 +146,20 @@ async function go(id) {
   const reading = open(id);
   if (PAGES[id]?.waitFirst) await reading;
   if (asked !== id) return;
+  shownPage = id;
   S.setPage = id;
   renderNow();
 }
+/** A Settings page opened from elsewhere (an engine command's or a link's home, chat/goto.js) goes the way the page list
+    goes: a page drawn from what the engine keeps (waitFirst) is shown once its read is back. */
+export const openPage = (id) => go(id);
 
 export function draw() {
   const lv = level();
-  if (!started.has(S.setPage)) open(S.setPage);
+  if (!started.has(S.setPage) || shownPage !== S.setPage) {
+    shownPage = S.setPage; // before reading: a read may schedule another draw
+    open(S.setPage);
+  }
   const q = searchText.trim().toLowerCase();
   const rows = q ? findSettings(searchText) : [];
   const extra = [lv >= 1 ? ["advanced", t("settings.page.advanced")] : null, lv >= 2 ? ["developer", t("settings.card.developer")] : null].filter(Boolean);
@@ -196,7 +204,7 @@ export function draw() {
 /* Where the person was before Settings (a conversation or a place), so Esc takes them back there: the "?" list's
    "Close anything: Esc" (QA pass 2). Read after every drawing, so it is whatever was last on screen outside Settings. */
 let before = "chat";
-afterDraw(() => { if (S.view !== "settings") before = S.view; });
+afterDraw(() => { if (S.view !== "settings") { before = S.view; shownPage = null; } });
 export function leaveSettings() {
   S.view = before;
   renderNow();
@@ -226,6 +234,7 @@ export function init() {
     S.view = "settings";
     S.setPage = "updates";
     searchText = "";
+    shownPage = S.setPage;
     open(S.setPage);
     renderNow();
   });

@@ -154,12 +154,23 @@ test("a handed-over step's answer carries the outside task on as that task", asy
   const { app } = await fixture(t);
   const mine = await app.runtime.run({ prompt: "hello" });
   const trigger = await app.runtime.run({ prompt: "hello", source: "trigger" });
-  const entry = app.runtime.deferrals.open({ id: "d1", runId: trigger.id, sessionId: mine.sessionId, tool: "files.write", description: "a file" });
+  const mixed = app.runtime.deferrals.open({ id: "mixed", runId: trigger.id, sessionId: mine.sessionId, tool: "files.write", description: "a file" });
+  assert.throws(() => app.runtime.settleDeferred(mixed.id, "written"), /saved effective scope or workspace/);
+  assert.equal(app.runtime.deferrals.get(mixed.id).settledAt, null, "mixed-session authority remains refused");
+  const entry = app.runtime.deferrals.open({ id: "d1", runId: trigger.id, sessionId: trigger.sessionId, tool: "files.write", description: "a file" });
   const before = new Set(app.store.runs(app.runtime.owner).map((r) => r.id));
   app.runtime.settleDeferred(entry.id, "written");
-  const carried = await drained(app, mine.sessionId, before);
+  const carried = await drained(app, trigger.sessionId, before);
   assert.equal(started(app, carried.id).source, "trigger");
   assert.equal(started(app, carried.id).originFrom, trigger.id);
+  assert.deepEqual(started(app, carried.id).permissions, started(app, trigger.id).permissions);
+  const held = app.runtime.checkPolicy("files.write", { path: "outside-deferred.txt", content: "x" },
+    app.runtime.context({ runId: carried.id }));
+  assert.equal(held.decision, "ask", "answering a trigger handoff grants no owner's change authority");
+  const next = await app.runtime.run({ prompt: write("outside-after-handoff.txt"), sessionId: carried.sessionId });
+  assert.equal(started(app, next.id).source, "trigger");
+  assert.equal(next.status, "needs_input", "the trigger's next change still waits for approval");
+  assert.throws(() => app.runtime.approve(next.sessionId, "allow", "always"), /did not start yourself/);
 });
 
 test("a chat's task carried on in the window, done again or resumed still cannot do owner-only things", async (t) => {

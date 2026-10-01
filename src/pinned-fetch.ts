@@ -1,3 +1,4 @@
+import { assertHealthCurrent } from "./health-check.js";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP, type LookupFunction } from "node:net";
@@ -63,6 +64,8 @@ async function sendPinned(input: string | URL | Request, init: RequestInit, pin:
   if (url.hostname !== pin.host) throw fetchFailed(new Error(`${pin.host} was checked, not ${url.host}`));
   if (request.signal.aborted) throw request.signal.reason;
   const body = request.body ? Buffer.from(await request.arrayBuffer()) : undefined;
+  assertHealthCurrent();
+  request.signal.throwIfAborted();
   const answer = await exchange(url, request, body, pin);
   return responseFrom(answer, request, url);
 }
@@ -88,6 +91,8 @@ function judgedOnly(pin: Pin): LookupFunction {
 function exchange(url: URL, request: Request, body: Buffer | undefined, pin: Pin): Promise<IncomingMessage> {
   const secure = url.protocol === "https:";
   return new Promise((resolve, reject) => {
+    assertHealthCurrent();
+    request.signal.throwIfAborted();
     let answer: IncomingMessage | undefined;
     const outgoing = (secure ? httpsRequest : httpRequest)({
       host: pin.host, port: url.port || (secure ? 443 : 80), path: `${url.pathname}${url.search}`, method: request.method,

@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { cp, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -56,7 +57,7 @@ async function quitGateway(home, gatewayPid) {
   assert.ok(boot, "the test-owned gateway proves itself before cleanup");
   await fetch(`${presence.url}/api/deployment/quit`, { method: "POST", headers: { authorization: `Bearer ${sessionKey(token, boot)}` }, signal: AbortSignal.timeout(10000) });
   const until = Date.now() + 15000;
-  while (Date.now() < until) { try { process.kill(gatewayPid, 0); } catch { return; } await new Promise((resolve) => setTimeout(resolve, 30)); }
+  while (Date.now() < until) { if (!processRunning(gatewayPid)) return; await new Promise((resolve) => setTimeout(resolve, 30)); }
   assert.fail("the case's gateway did not quit");
 }
 const apply = (electron, update) => electron.evaluate(async (_electron, update) => globalThis.branchLiveForTests.hooks.apply(
