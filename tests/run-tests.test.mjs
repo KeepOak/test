@@ -30,7 +30,8 @@ test("npm test isolates browser and desktop files while keeping ordinary tests t
      "tests/desktop-gateway-presence.test.mjs", "tests/desktop-gateway-preview.test.mjs",
      "tests/desktop-gateway-runtime.test.mjs", "tests/desktop-gateway-worker.test.mjs",
      "tests/desktop-hot-update.test.mjs", "tests/desktop-identity.test.mjs", "tests/desktop-joined-engine.test.mjs",
-     "tests/desktop-old-engine.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs", "tests/desktop-update-chaos.test.mjs",
+     "tests/desktop-old-engine.test.mjs", "tests/desktop-responsive.test.mjs", "tests/desktop-settings.test.mjs",
+     "tests/desktop-shell-lock-liveness.test.mjs", "tests/desktop-update-chaos.test.mjs",
      "tests/desktop-window.test.mjs", "tests/desktop.test.mjs"]);
   assert.equal(real.shared.some((file) => /^tests[\\/]desktop/.test(file)), false);
   assert.ok(real.browser.includes(join("tests", "glass-select.test.mjs")));
