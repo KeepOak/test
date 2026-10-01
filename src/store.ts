@@ -1084,6 +1084,29 @@ export class Store {
       .all(owner)
       .map((row) => this.toRecord(row));
   }
+  /** Current retained goals only; temporary and recently deleted conversations stay out of this index. */
+  goalRecords(owner: string): SavedRecord[] {
+    return this.db.prepare(`SELECT g.* FROM settings g JOIN sessions s ON g.id='goal:'||s.id AND g.owner=s.owner
+      WHERE g.owner=? AND s.temporary=0 AND NOT EXISTS
+      (SELECT 1 FROM conversation_marks m WHERE m.session_id=s.id AND m.deleted_at IS NOT NULL)
+      ORDER BY g.updated_at DESC LIMIT 101`).all(owner).map((row) => this.toRecord(row));
+  }
+  goalRecord(owner: string, sessionId: string): SavedRecord | undefined {
+    const row = this.db.prepare(`SELECT g.* FROM settings g JOIN sessions s ON g.id='goal:'||s.id AND g.owner=s.owner
+      WHERE g.owner=? AND s.id=? AND s.temporary=0 AND NOT EXISTS
+      (SELECT 1 FROM conversation_marks m WHERE m.session_id=s.id AND m.deleted_at IS NOT NULL)`)
+      .get(owner, sessionId);
+    return row ? this.toRecord(row) : undefined;
+  }
+  /** Only lifecycle metadata from this goal, never raw tool events or another conversation's runs. */
+  goalEvents(owner: string, sessionId: string, startedAt: string): Event[] {
+    return this.db.prepare(`SELECT e.* FROM events e JOIN tasks t ON t.id=e.run_id
+      WHERE t.owner=? AND t.session_id=? AND e.kind='goal.state' AND json_extract(e.data,'$.startedAt')=?
+      ORDER BY e.id DESC LIMIT 201`).all(owner, sessionId, startedAt).map((row) => ({
+        id: Number(row.id), runId: String(row.run_id), kind: String(row.kind),
+        data: JSON.parse(String(row.data)), createdAt: String(row.created_at),
+      }));
+  }
   delete(table: RecordTable, owner: string, id: string): boolean {
     if (table === "memory") return this.memories.delete(owner, id);
     // mac7/wake-pins (integration review): removing the record puts every field it held back to

@@ -62,12 +62,13 @@ test("the goal strip shows the round, score, what is missing and Resume/Stop, an
   const text = await strip.textContent();
   for (const words of ["Goal: Make the tests pass", "Round 2 of 6", "score 0.4 of 1", "1 min", "still missing: the login test"])
     assert.ok(text.includes(words), `the strip says "${words}": ${text}`);
-  assert.deepEqual(await strip.locator("button").allTextContents(), ["Resume", "Stop"]);
+  assert.deepEqual(await strip.locator("button").allTextContents(), ["Timeline", "Resume", "Stop"]);
   assert.ok((await overflow(page)) <= 0, "no sideways scrolling at 400 px");
-  // Stop, as a person presses it: a finished goal has no strip (it is said in the conversation itself). Redesign: the old
-  // strip's "Goal stopped" wording and its Hide button are replaced by the new window.
+  // Stop, as a person presses it (UI-265): a finished goal keeps a small strip that says how it ended and opens its
+  // timeline; nothing on it can resume or stop it.
   await strip.getByRole("button", { name: "Stop", exact: true }).click();
-  await page.locator(".goal6").waitFor({ state: "detached", timeout: 10_000 });
+  await page.locator(".goal6").filter({ hasText: "Goal stopped" }).waitFor({ timeout: 10_000 });
+  assert.deepEqual(await page.locator(".goal6").first().locator("button").allTextContents(), ["Timeline"]);
   assert.equal(app.store.get("settings", "local", `goal:${run.sessionId}`)?.data?.status, "stopped");
   assert.deepEqual(errors, []);
 });

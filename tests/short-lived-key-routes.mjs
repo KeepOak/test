@@ -1176,6 +1176,7 @@ export const ROUTES = {
   "/api/sessions/:id/followups": "task POST",
   "/api/sessions/:id/left-out": "other POST", // pass 17: kept in the conversation, never sent to the model
   "/api/sessions/:id/goal": "task POST",
+  "/api/sessions/:id/goal-timeline": "look",
   "/api/sessions/:id/memory-policy": "owner POST",
   "/api/sessions/:id/merge-note": "other POST",
   "/api/sessions/:id/model": "task POST",

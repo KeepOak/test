@@ -5,7 +5,7 @@ import { CompletionCheckSchema, evaluateChecks, type CompletionCheck } from "./r
 import type { RunOptions } from "./runtime.js";
 import type { Store } from "./store.js";
 import { markChosen, savedFields, shippedUnlessChosen } from "./ship-on.js";
-import { goalWithSubgoals } from "./autonomy/subgoals.js"; // r17-b: /subgoal
+import { goalWithSubgoals, subgoalsOf } from "./autonomy/subgoals.js"; // r17-b: /subgoal
 import { byCard, recordedWrite } from "./settings-kit/recorded-write.js"; // Q48
 import { ownerChatMark } from "./key-context.js"; // owner-dm-full
 
@@ -175,6 +175,21 @@ export class GoalMode {
     return this.view(saved);
   }
 
+  /** A bounded readout of real retained goals, including finished and interrupted goals. */
+  index(owns: (sessionId: string) => boolean): unknown {
+    const records = this.store.goalRecords(this.runtime.owner).filter((record) => owns(record.id.slice(5)));
+    return { goals: records.slice(0, 100).map((record) => this.status(record.id.slice(5))), more: records.length > 100 };
+  }
+
+  timeline(sessionId: string): unknown {
+    const saved = this.store.goalRecord(this.runtime.owner, sessionId);
+    if (!saved) throw new Error("Goal not found");
+    const goal = this.status(sessionId)!;
+    const events = this.store.goalEvents(this.runtime.owner, sessionId, goal.startedAt);
+    return { goal, updatedAt: saved.updatedAt, events: events.slice(0, 200).reverse(), more: events.length > 200,
+      subgoals: subgoalsOf(this.store, this.runtime.owner, sessionId), historyRecorded: events.length > 0 };
+  }
+
   /** Lets the round that is working finish, then waits. */
   pause(sessionId: string): GoalState {
     const state = this.require(sessionId);
@@ -320,7 +335,15 @@ export class GoalMode {
     return this.view(state);
   }
   private save(state: GoalState): void {
-    if (state.sessionId) this.store.save("settings", this.runtime.owner, key(state.sessionId), { ...state });
+    if (!state.sessionId) return;
+    const previous = this.store.get("settings", this.runtime.owner, key(state.sessionId))?.data;
+    this.store.save("settings", this.runtime.owner, key(state.sessionId), { ...state });
+    // Only a round that is recorded carries its goal's state; a round with no task on record keeps the snapshot alone.
+    if (state.lastRunId && this.store.run(state.lastRunId) && JSON.stringify(previous) !== JSON.stringify(state)) this.store.event(state.lastRunId, "goal.state", {
+      startedAt: state.startedAt, status: state.status, round: state.round, maxRounds: state.maxRounds,
+      score: state.score, missing: state.missing, reason: state.reason, elapsedMs: state.elapsedMs,
+      subgoals: subgoalsOf(this.store, this.runtime.owner, state.sessionId),
+    });
   }
   /** Elapsed time includes the stretch that is running now. */
   private view(state: GoalState): GoalState {
@@ -349,6 +372,12 @@ function gradeQuestion(state: GoalState, recent: string): string {
 
 /** The HTTP side: `/api/goal-undo/settings` holds the switches; `POST /api/goals` starts one; `/api/sessions/<id>/goal` reads it and pauses, resumes or stops it. */
 export async function goalApi(goals: GoalMode, owns: (sessionId: string) => boolean, method: string, path: string, body: () => Promise<unknown>): Promise<unknown> {
+  if (path === "/api/goals" && method === "GET") return goals.index(owns);
+  const timeline = /^\/api\/sessions\/([a-f0-9-]{36})\/goal-timeline$/.exec(path);
+  if (timeline && method === "GET") {
+    if (!owns(timeline[1]!)) throw new Error("Conversation not found");
+    return goals.timeline(timeline[1]!);
+  }
   if (path === "/api/goal-undo/settings") {
     if (method === "GET") return goals.settings();
     if (method === "POST") return goals.saveSettings(await body());

@@ -2019,6 +2019,8 @@ owner GET /api/sessions/:id/left-out | here=ok remote=ok phone=ok legacy=ok pers
 owner POST /api/sessions/:id/left-out | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/goal | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions/:id/goal | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner GET /api/sessions/:id/goal-timeline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner POST /api/sessions/:id/goal-timeline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/memory-policy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner POST /api/sessions/:id/memory-policy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner GET /api/sessions/:id/merge-note | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -4314,6 +4316,8 @@ owner+lockdown GET /api/sessions/:id/left-out | here=ok remote=ok phone=ok legac
 owner+lockdown POST /api/sessions/:id/left-out | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/goal | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions/:id/goal | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/d45404 run=ok nobody=401/40daee
+owner+lockdown GET /api/sessions/:id/goal-timeline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
+owner+lockdown POST /api/sessions/:id/goal-timeline | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/memory-policy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
 owner+lockdown POST /api/sessions/:id/memory-policy | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=401/55661c run=401/55661c nobody=401/40daee
 owner+lockdown GET /api/sessions/:id/merge-note | here=ok remote=ok phone=ok legacy=ok person=401/327290 read=ok run=ok nobody=401/40daee
@@ -6609,6 +6613,8 @@ household GET /api/sessions/:id/left-out | here=400/f6e21c remote=400/f6e21c rea
 household POST /api/sessions/:id/left-out | here=ok remote=ok read=401/55661c run=401/55661c
 household GET /api/sessions/:id/goal | here=ok remote=ok read=ok run=ok
 household POST /api/sessions/:id/goal | here=ok remote=ok read=401/d45404 run=ok
+household GET /api/sessions/:id/goal-timeline | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household POST /api/sessions/:id/goal-timeline | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id/memory-policy | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household POST /api/sessions/:id/memory-policy | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household GET /api/sessions/:id/merge-note | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -8904,6 +8910,8 @@ household+lockdown GET /api/sessions/:id/left-out | here=400/f6e21c remote=400/f
 household+lockdown POST /api/sessions/:id/left-out | here=ok remote=ok read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/goal | here=ok remote=ok read=ok run=ok
 household+lockdown POST /api/sessions/:id/goal | here=ok remote=ok read=401/d45404 run=ok
+household+lockdown GET /api/sessions/:id/goal-timeline | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
+household+lockdown POST /api/sessions/:id/goal-timeline | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/memory-policy | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
 household+lockdown POST /api/sessions/:id/memory-policy | here=400/f6e21c remote=400/f6e21c read=401/55661c run=401/55661c
 household+lockdown GET /api/sessions/:id/merge-note | here=400/f6e21c remote=400/f6e21c read=400/f6e21c run=400/f6e21c
@@ -11199,6 +11207,8 @@ applock GET /api/sessions/:id/left-out | here=423/a8f863
 applock POST /api/sessions/:id/left-out | here=423/a8f863
 applock GET /api/sessions/:id/goal | here=423/a8f863
 applock POST /api/sessions/:id/goal | here=423/a8f863
+applock GET /api/sessions/:id/goal-timeline | here=423/a8f863
+applock POST /api/sessions/:id/goal-timeline | here=423/a8f863
 applock GET /api/sessions/:id/memory-policy | here=423/a8f863
 applock POST /api/sessions/:id/memory-policy | here=423/a8f863
 applock GET /api/sessions/:id/merge-note | here=423/a8f863
