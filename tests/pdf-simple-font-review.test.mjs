@@ -42,3 +42,9 @@ test("glyph scalar recovery rejects surrogates and values beyond Unicode", () =>
   assert.equal(pdfEncoding("UnknownEncoding"), undefined);
   assert.equal(pdfEncoding("WinAnsiEncoding").length, 256);
 });
+
+test("indirect named encoding preserves PDF object whitespace and decodes its byte table", () => {
+  const indirect = pdfText(document("6 0 R", "(\\200)", "6 0 obj\r\n /WinAnsiEncoding \r\n endobj"));
+  assert.equal(indirect.pages[0].text, "\u20ac");
+  assert.deepEqual(indirect.limits, pdfText(document("/WinAnsiEncoding", "(\\200)")).limits);
+});

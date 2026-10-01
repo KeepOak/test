@@ -194,7 +194,7 @@ function fontEncoding(objects: Map<number, RawObject>, font: RawObject, limits: 
   const raw = dictValue(dictionary, "Encoding");
   if (!raw) return null;
   const ref = referenceNumber(raw);
-  const encoding = ref === null ? raw : latin(objects.get(ref)?.body ?? Buffer.alloc(0));
+  const encoding = (ref === null ? raw : latin(objects.get(ref)?.body ?? Buffer.alloc(0))).trim();
   const base = encoding.startsWith("/") ? encoding.slice(1) : (dictValue(encoding, "BaseEncoding") ?? "/StandardEncoding").slice(1);
   const names = pdfEncoding(base), map = parseCmap("1 begincodespacerange <00> <ff> endcodespacerange");
   const note = (message: string) => { if (!limits.includes(message)) limits.push(message); };
