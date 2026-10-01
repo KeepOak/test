@@ -4491,6 +4491,11 @@
   "repeat.preview": "Cela se produirait {words}.",
   "repeat.title": "À quelle fréquence doit-il se répéter ?",
   "repeat.used": "Les champs ci-dessous indiquent maintenant {words}.",
+  "replyTable.count": "{shown} sur {total} lignes",
+  "replyTable.filter": "Filtrer les lignes",
+  "replyTable.reset": "Réinitialiser le tableau",
+  "replyTable.sort": "Trier",
+  "replyTable.sortBy": "Trier par {column}",
   "report.intro": "Si quelque chose s'est mal passé, Branch peut réunir ce dont un développeur a besoin pour en trouver la cause. Vous lisez chaque partie d'abord et pouvez en retirer. Ce rapport manuel n'est pas envoyé automatiquement : vous l'enregistrez en zip, ou ouvrez un formulaire de ticket GitHub et y joignez le zip vous-même.",
   "reports.blanked": "Enregistré. {count} élément(s) ont d'abord été masqués.",
   "reports.episode": "Enregistrer toutes les étapes",
@@ -10597,10 +10602,5 @@
   "wsedit.title": "Modifier un fichier",
   "wsedit.top": "La racine de votre espace de travail",
   "wsedit.unsaved": "(non enregistré)",
-  "wsedit.up": "Remonter d'un dossier",
-  "replyTable.filter": "Filtrer les lignes",
-  "replyTable.sort": "Trier",
-  "replyTable.sortBy": "Trier par {column}",
-  "replyTable.reset": "R\u00e9initialiser le tableau",
-  "replyTable.count": "{shown} sur {total} lignes"
+  "wsedit.up": "Remonter d'un dossier"
 }

@@ -4491,6 +4491,11 @@
   "repeat.preview": "Pasaría {words}.",
   "repeat.title": "¿Con qué frecuencia debe repetirse?",
   "repeat.used": "Las casillas de abajo ahora dicen {words}.",
+  "replyTable.count": "{shown} de {total} filas",
+  "replyTable.filter": "Filtrar filas",
+  "replyTable.reset": "Restablecer tabla",
+  "replyTable.sort": "Ordenar",
+  "replyTable.sortBy": "Ordenar por {column}",
   "report.intro": "Si algo ha salido mal, Branch puede reunir lo que un desarrollador necesita para encontrar la causa. Tú lees antes cada parte y puedes quitar cualquiera. Este informe manual no se envía automáticamente: lo guardas como zip, o abres un formulario de incidencia de GitHub y adjuntas tú el zip.",
   "reports.blanked": "Guardado. Antes se taparon {count} cosa(s).",
   "reports.episode": "Guardar todos los pasos",
@@ -10597,10 +10602,5 @@
   "wsedit.title": "Editar un archivo",
   "wsedit.top": "La raíz de tu espacio de trabajo",
   "wsedit.unsaved": "(sin guardar)",
-  "wsedit.up": "Subir una carpeta",
-  "replyTable.filter": "Filtrar filas",
-  "replyTable.sort": "Ordenar",
-  "replyTable.sortBy": "Ordenar por {column}",
-  "replyTable.reset": "Restablecer tabla",
-  "replyTable.count": "{shown} de {total} filas"
+  "wsedit.up": "Subir una carpeta"
 }
