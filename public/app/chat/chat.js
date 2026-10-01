@@ -14,7 +14,7 @@ import { drawPane, initPane } from "./pane.js";
 import { attached, takePending, filesSent, resendFiles, hasFiles, initPlus, loadWho, readyWho, whoHere, forgetWho, temporaryNext } from "./plus.js";
 import { practiceFlag, practiceSent, refusePracticeRoute } from "./practice-next.js";
 import { initRec } from "./rec.js";
-import { noModelRow } from "./nomodel.js";
+import { noModelRow, recoveryActor, recoverFailedSend } from "./nomodel.js";
 import { binding, spoken } from "../shell/keys.js";
 import { checkpointRows, initCheckpoints } from "./checkpoints.js";
 import { selfCard, loadSelfChange, initSelfChange } from "./selfchange.js";
@@ -758,7 +758,22 @@ async function adopt(sessionId, before, keepDraft) {
 
 /* `withLead`: a message the person typed and sent carries the words hooked in front of it (addSendPrefix); a choice
    card's answer and a room's route are sent word for word. */
+async function finishSending(restoreDraft) {
+  C.sending = false;
+  watchThinking(false);
+  await refresh().catch(() => {});
+  forgetMade();
+  loadSummary(C.sessionId, true);
+  loadCost(C.sessionId, true);
+  await loadExtras(C.sessionId);
+  renderNow();
+  $("#prompt")?.focus();
+  restoreDraft();
+}
+
 async function sendPlain(said, withLead = false) {
+  const actor = recoveryActor();
+  let sentRun = null;
   const lead = withLead ? PREFIX.map((take) => take(C.sessionId ?? null)).filter(Boolean).join("\n") : "";
   const prompt = lead ? `${lead}\n\n${said}` : said;
   const before = replyMark(C.messages), seat = C.seat, from = C.sessionId ?? "new";
@@ -777,6 +792,7 @@ async function sendPlain(said, withLead = false) {
   try {
     const run = await api("run", { prompt, ...(C.sessionId ? { sessionId: C.sessionId } : {}), ...(await takePending(!C.sessionId)), ...(C.sessionId ? {} : { ...(await startMode()), ...newProject() }) });
     started = true;
+    sentRun = run;
     filesSent();
     practiceSent();
     // Gone and come back to it before the answer came: it is on screen again, so its answer is read here all the same.
@@ -796,18 +812,8 @@ async function sendPlain(said, withLead = false) {
       C.messages.push({ role: "assistant", content: error.message });
       if (!started) S.drafts[C.sessionId ?? "new"] = prompt;
     }
-  } finally {
-    C.sending = false;
-    watchThinking(false);
-    await refresh().catch(() => {});
-    forgetMade();
-    loadSummary(C.sessionId, true);
-    loadCost(C.sessionId, true);
-    await loadExtras(C.sessionId);
-    renderNow();
-    $("#prompt")?.focus();
-    restoreDraft();
-  }
+  } finally { await finishSending(restoreDraft); }
+  await recoverFailedSend(sentRun?.id, sentRun?.sessionId, actor);
   if (C.queued && C.sessionId) { C.queued = false; await follow(C.sessionId); }
 }
 

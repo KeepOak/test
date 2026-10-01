@@ -4,6 +4,10 @@ import type { ModelPreset } from "./models.js";
 /** What a task is told when no model has been set up: the words the window and every other surface show as they are. */
 export const noModelWords = "No model yet. Choose one in setup or in Settings › Models.";
 export const noModelProviderName = "no-model";
+export class NoConfiguredModelError extends Error {
+  override name = "NoConfiguredModelError";
+  constructor() { super(noModelWords); }
+}
 
 /**
  * Stands where a model would be until the person sets one up. It is never listed as a model: it only answers every
@@ -15,7 +19,7 @@ export class NoModelProvider implements Provider {
     return null;
   }
   async complete(): Promise<Completion> {
-    throw new Error(noModelWords);
+    throw new NoConfiguredModelError();
   }
 }
 

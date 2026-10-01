@@ -149,6 +149,7 @@ import {
   type RetryPolicy,
   type RetryPolicyInput,
 } from "./provider-retry.js";
+import { modelRecoveryFor } from "./model-recovery.js";
 import {
   answerReserve, catalogTokens, compactionThresholdFloor, contextBudget, expandToolName,
   rankGroups, type ContextBudget,
@@ -4057,8 +4058,13 @@ ${run.output.slice(0, 6000)}`;
           continue;
         }
         if (error instanceof StallError) {
-          if (error.beforeFirstWord && presetRunsLocally(preset)) { this.recoverLocalFirstReply(run, context, route, error, firstReply); retriesUsed = -1; continue; }
+          if (error.beforeFirstWord && presetRunsLocally(preset)) {
+            try { this.recoverLocalFirstReply(run, context, route, error, firstReply); }
+            catch (stopped) { this.noteModelRecovery(run, context, error, observedText); throw stopped; }
+            retriesUsed = -1; continue;
+          }
           if (this.recoverStall(run, context, route, error, stalls++)) { retriesUsed = -1; continue; }
+          this.noteModelRecovery(run, context, error, observedText);
           throw error;
         }
         const retry = observedText
@@ -4069,6 +4075,7 @@ ${run.output.slice(0, 6000)}`;
           if (!observedText && await this.outlast(run, context, error, outage)) { retriesUsed = -1; continue; }
           if (observedText || !this.fallBack(run, context, route, error)) {
             if (!observedText && await this.waitOutLimit(run, context, error, outage)) { retriesUsed = -1; continue; }
+            this.noteModelRecovery(run, context, error, observedText);
             throw error;
           }
           retriesUsed = -1;
@@ -4085,6 +4092,13 @@ ${run.output.slice(0, 6000)}`;
         await waitForRetry(retry.delayMs, context.signal);
       }
     }
+  }
+  /** A terminal model failure in a direct owner task; never inspect its error text or change routing authority. */
+  private noteModelRecovery(run: Run, context: ToolContext, error: unknown, observedText: boolean): void {
+    if (observedText || context.signal.aborted || context.depth > 0 || context.agent
+      || context.owner !== this.owner || (context.source ?? "owner") !== "owner") return;
+    const recovery = modelRecoveryFor(error);
+    if (recovery) this.store.event(run.id, "model.setup_needed", { recovery });
   }
   /**
    * long-work: a connection that dropped before any of the answer arrived is asked again after 1, 2, 4, 8, 16 and 30

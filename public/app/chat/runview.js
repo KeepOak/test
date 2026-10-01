@@ -12,6 +12,7 @@ import { esc, render } from "../core/dom.js";
 import { ic, toast } from "../core/ui.js";
 import { api } from "../core/api.js";
 import { E } from "../core/state.js";
+import { modelRecovery } from "./nomodel.js";
 
 const PLANS = new Map(); // run id → { plan, at, busy, said }
 const CLS = { done: "done", working: "now", failed: "bad", waiting: "" };
@@ -54,7 +55,7 @@ export async function loadPlan(run) {
 /** A failed task's line, or one that stopped at a limit (dogfood D22: out of room), with the engine's words; nothing for any other task. */
 export function failedRow(run) {
   if (!["failed", "budget_exceeded"].includes(run?.status) || !String(run.output ?? "").trim()) return "";
-  return `<div class="b"><div class="gut"></div><div><div class="txt">${esc(run.output)}</div></div></div>`;
+  return `<div class="b"><div class="gut"></div><div><div class="txt">${esc(run.output)}</div>${modelRecovery(run)}</div></div>`;
 }
 /** The newest task of this conversation, when it failed, with the engine's words, unless its turn already shows them (Q068). */
 export function failedLine(runs, sessionId, sending, shownIds = new Set()) {

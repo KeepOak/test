@@ -471,6 +471,25 @@ export class AccountsService {
     if (!this.identityVisible() || currentAccountCall()?.owner !== this.deps.owner)
       throw new Error("Claude subscription requires its owner's authorized model-call context");
   }
+  /** One small greeting to this exact account; never silently switch to another account. */
+  async connectionTest(ref: HelperAccountRef): Promise<ModelPreset> {
+    this.authorizeHelper();
+    refuseSignInForTrunk();
+    const selected = [...this.deps.models.presets.values()].find((one) => this.poolFor(one)?.pool === ref.pool);
+    const found = selected ? this.poolFor(selected) : null;
+    if (!selected || !found) throw new Error("This account has no configured model connection");
+    const preset = Object.freeze({ ...selected });
+    if (found.kind !== "api-key") await this.readIdentities();
+    this.authorizeHelper();
+    this.requireHelperAccount(ref.pool, found.kind, ref.account);
+    const account = this.pool(ref.pool)?.accounts.find((one) => one.id === ref.account);
+    if (account && this.capReached(ref.pool, account)) throw new Error("This account reached its monthly cap");
+    const own = await this.providerFor(ref.pool, found.kind, preset, ref.account);
+    if (!own && ref.account !== primaryAccount) throw new Error("The exact account could not be bound");
+    const bound = own ?? unwrapProvider(preset.provider);
+    return { ...preset, provider: this.helperProvider(bound, preset, Object.freeze({ ...ref }), found.kind, this.addressOf(preset.id)) };
+  }
+
   /** Resolve once for a child, without changing the model router, pool defaults or another conversation. */
   async resolveHelper(selected: ModelPreset, accountRef: HelperAccountRef | undefined, parentSessionId: string): Promise<HelperConnection> {
     const preset = Object.freeze({ ...selected }), asked = accountRef ? Object.freeze({ ...accountRef }) : undefined;
