@@ -98,12 +98,19 @@ test("a command in the worktree, listed in its contract, runs behind the real OS
   { skip: process.platform === "win32" || !(await wallReport()).available }, async (t) => {
   const branch = await withSource(t, { project: "worktree", permissions: ["shell.execute"] });
   // Run from src/ui, which the contract's src/ui/** covers whole: writes are held to that folder.
+  const protectedNote = join(branch.workspace, worktree, "src", "ui", ".agents", "keep.txt");
+  await mkdir(join(protectedNote, ".."), { recursive: true });
+  await writeFile(protectedNote, "protected\n");
   const { failed, result } = await branch.command({ executable: "sh", cwd: `${worktree}/src/ui`,
-    args: ["-c", "echo ok > inside.txt; echo PWNED >> ../../../../src/main.ts; for f in ../../../../src/main.ts; do echo PWNED >> $f; done; echo x > ../../package.json"] });
+    args: ["-c", 'echo ok > inside.txt; echo scratch > "$TMPDIR/private.txt"; /bin/cat "$TMPDIR/private.txt"; echo PWNED >> ../../../../src/main.ts; for f in ../../../../src/main.ts; do echo PWNED >> $f; done; echo x > ../../package.json; echo PWNED > .agents/keep.txt'] });
   assert.equal(failed, null, failed);
   assert.equal(await readFile(join(branch.workspace, worktree, "src", "ui", "inside.txt"), "utf8"), "ok\n", "a write in the allowed folder works");
   assert.equal(await branch.protectedFile(), original, "the sandbox blocked the write to the protected checkout");
   assert.equal(existsSync(join(branch.workspace, worktree, "package.json")), false, "and the write outside the allowed folder");
+  assert.match(result.stdout, /scratch/, "the private temporary folder is writable");
+  assert.equal(await readFile(protectedNote, "utf8"), "protected\n", "the protected host file stays unchanged");
+  // Linux may allow earlier outside-folder writes into its throwaway /tmp view. This final write
+  // targets a real protected mount, so a nonzero exit proves an actual denial rather than a shadow write.
   assert.notEqual(result.exitCode, 0);
   assert.equal(result.target.cwd.endsWith(join("self-remove-button", "src", "ui")), true);
   // From the worktree itself the contract's src/ui/** does not cover the folder, so it is refused first.
