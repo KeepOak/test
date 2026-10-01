@@ -51,10 +51,10 @@ test("U1 the wake word is under Settings, Voice, starts off, and switching it on
   const { app, page, errors } = await fixture(t);
   await openSettingsPage(page, "voice");
   assert.equal(app.store.get("settings", "local", "wake-word"), undefined, "a fresh install already saved something");
-  // prototype.html: Talking › Listening (Off / Push to talk / Wake word), drawn in place and greyed until wired
-  // (Coming soon, seg, checked at e5b8a610), and Advanced › "Listening, more" › Wake word, which is live.
-  const listening = page.getByRole("group", { name: "Listening", exact: true });
-  assert.equal(await listening.getByRole("button", { name: "Wake word", exact: true }).count(), 1, "Wake word is among the Listening choices");
+  // Talking › Listening says in words how Branch listens now (settings/rows15.js fact15, no control of its own), and
+  // Advanced › "Listening, more" › Wake word is the live switch.
+  await page.locator('[data-fact="f15-listening"]').waitFor();
+  assert.equal(await page.getByRole("group", { name: "Listening", exact: true }).count(), 0, "Listening is words, not a greyed control");
   await page.locator('[data-act="setlevel"][data-v="advanced"]').click();
   const wake = page.getByRole("checkbox", { name: "Wake word", exact: true });
   await wake.waitFor();
@@ -63,14 +63,14 @@ test("U1 the wake word is under Settings, Voice, starts off, and switching it on
   let kept = app.store.get("settings", "local", "wake-word")?.data;
   for (let i = 0; i < 30 && !(kept && kept.mode !== "off"); i++) { await page.waitForTimeout(100); kept = app.store.get("settings", "local", "wake-word")?.data; }
   assert.ok(kept && kept.mode !== "off", `the engine keeps it on (${JSON.stringify(kept)})`);
-  await page.waitForFunction(() => document.querySelector('[role=group][aria-label="Listening"] [aria-pressed="true"]')?.textContent === "Wake word");
+  await page.waitForFunction(() => document.querySelector('[data-fact="f15-listening"] .fact15-v')?.textContent === "Wake word");
   assert.deepEqual(errors, []);
 });
 
 test("U2 the pins card is under Settings, Permissions, starts empty, and its Pin a setting is greyed out", async (t) => {
   const { app, page, errors } = await fixture(t);
   await openSettingsPage(page, "permissions");
-  const card = page.locator(".set-col .sec", { hasText: "Pinned settings" });
+  const card = page.locator(".set-col .sec", { has: page.locator("h2", { hasText: /^Pinned settings$/ }) });
   await card.waitFor({ state: "visible" });
   assert.equal(await card.locator(".rows > *").count(), 0, "nothing is pinned yet");
   assert.equal(app.store.get("settings", "local", "settings-pins"), undefined);

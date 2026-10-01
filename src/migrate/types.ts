@@ -2,11 +2,11 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 /** The assistants Branch can bring things over from. */
-export const moveInSources = ["claude-code", "codex", "hermes", "openclaw", "opencode"] as const;
+export const moveInSources = ["claude-code", "codex", "hermes", "openclaw", "opencode", "chatgpt"] as const;
 export const MoveInSourceSchema = z.enum(moveInSources);
 export type MoveInSource = z.infer<typeof MoveInSourceSchema>;
 export const sourceNames: Record<MoveInSource, string> = {
-  "claude-code": "Claude Code", codex: "Codex CLI", hermes: "Hermes Agent", openclaw: "OpenClaw", opencode: "OpenCode",
+  "claude-code": "Claude Code", codex: "Codex CLI", hermes: "Hermes Agent", openclaw: "OpenClaw", opencode: "OpenCode", chatgpt: "ChatGPT",
 };
 
 /** What one thing found is, in the order the preview shows them. */
@@ -59,7 +59,16 @@ export type MovedServer =
   | { transport: "stdio"; name: string; command: string; args: string[]; cwd?: string; envKeys: string[] }
   | { transport: "http"; name: string; url: string; bearerEnv?: string; envKeys: string[] };
 
+export const ChatProvenanceSchema = z.object({
+  conversationId: z.string().min(1).max(200), leafId: z.string().min(1).max(200),
+  nodePath: z.array(z.string().min(1).max(200)).min(1).max(1000),
+  current: z.boolean(), omittedParts: z.number().int().nonnegative(),
+}).strict();
+export type ChatProvenance = z.infer<typeof ChatProvenanceSchema>;
+
 export interface FoundItem {
+  /** Source graph identity, not instructions or a claim about who wrote its content. */
+  provenance?: ChatProvenance;
   /** Stable across scans of the same source, so the record can say it was already brought over. */
   key: string;
   kind: ItemKind;

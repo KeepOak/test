@@ -77,6 +77,7 @@ export function setupPanel(store: Pick<Store, "get">, owner: string, id: string,
     codes: { ios: qrFor(recipe.stores?.ios), android: qrFor(recipe.stores?.android), create: qrFor(create) ?? qrFor(plainLink(recipe)) },
     fields: recipe.fields, paste: recipe.paste.map(({ secret, what, optional }) => ({ secret, what, optional: optional === true })),
     hasCheck: Boolean(recipe.check), noCheck: recipe.noCheck ?? null, pairing: recipe.pairing ?? null, groups: recipe.groups ?? null,
+    warning: recipe.warning ?? null, link: recipe.link ?? null,
     saved: done[recipe.id] ?? null, setUpHere: savedEntries(store, owner)[recipe.id] !== undefined, sources: recipe.sources,
   };
 }
@@ -109,6 +110,8 @@ export interface SetupHost {
    * computer: src/remote/window-key.ts). Absent means this computer (the window's own key, or `branch connect`).
    */
   thisComputer?: boolean;
+  /** Reaches a bridge on this computer's loopback address (the network settings keep tasks off it). Tests hand in a fake. */
+  localFetch?: typeof fetch;
 }
 /** Apps whose settings name a program on this computer that Branch then starts (signal-cli, keybase, deltachat-rpc-server). */
 export const startsAProgram = (recipe: Recipe): boolean => recipe.fields.some((field) => field.name === "path");
@@ -194,6 +197,37 @@ export async function removeSetup(host: SetupHost, id: string): Promise<Record<s
   if (host.live) await host.live.disconnect(recipe.id);
   else rememberEntry(host.store, host.owner, recipe.id, null);
   return { id: recipe.id, removed: true };
+}
+
+/**
+ * The Link step for an app set up through a bridge on this computer (WhatsApp with a personal number, via WAHA): starts
+ * the bridge's session if it has none, and answers its state with the code to scan while it waits for one. Only from
+ * this computer (scanning links an account to it), only once the app's settings were saved, and never with the key.
+ */
+export async function bridgeLink(host: SetupHost, id: string): Promise<Record<string, unknown>> {
+  const recipe = recipeFor(id);
+  if (!recipe || recipe.link !== "bridge") throw new SetupRefusal(404, "That app is not linked by a code.");
+  if (host.thisComputer === false) throw new SetupRefusal(403, `${recipe.name} is linked only in the Branch app on this computer.`);
+  const entry = savedEntries(host.store, host.owner)[recipe.id]?.entry as { server?: unknown; session?: unknown } | undefined;
+  if (!entry || typeof entry.server !== "string") throw new SetupRefusal(409, `Save ${recipe.name}'s settings first.`);
+  let key: string | undefined;
+  try { key = (await host.store.secrets.resolve(host.owner, "default", ["WAHA_API_KEY"], { purpose: "channel" }))["WAHA_API_KEY"]; }
+  catch { throw new SetupRefusal(423, "The locker is closed. Unlock Branch, then try again."); }
+  if (!key) throw new SetupRefusal(409, "The bridge's API key has not been saved yet.");
+  const { WahaBridge, bridgeAddress } = await import("../channels/whatsapp-web.js");
+  const bridge = new WahaBridge(bridgeAddress(entry.server), typeof entry.session === "string" ? entry.session : "default", key, host.localFetch);
+  try {
+    const status = await bridge.ensureStarted();
+    if (status === "WORKING") {
+      const now = await bridge.status();
+      return { state: "linked", number: now?.me?.id.replace(/[:@].*$/, "") ?? null, name: now?.me?.pushName ?? null };
+    }
+    if (status !== "SCAN_QR_CODE") return { state: "starting", status };
+    const code = await bridge.pairingCode();
+    return { state: "scan", qr: qrFor(code.value), image: code.value && qrFor(code.value) ? null : code.image };
+  } catch (error) {
+    throw new SetupRefusal(502, scrub(`The WhatsApp bridge at ${entry.server} did not answer: ${error instanceof Error ? error.message : String(error)}. Is it running?`, { WAHA_API_KEY: key }));
+  }
 }
 
 /** Every recipe id, for the command's help. */

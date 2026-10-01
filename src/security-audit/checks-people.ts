@@ -88,7 +88,8 @@ export const channelChecks: SecurityCheck[] = [
     } : null;
   }),
   check("channels.commands-without-asking", "channels", "critical", "A message from outside cannot run a program without you", (snapshot) => {
-    const loose = snapshot.policy.unmatchedCommands === "allow" || snapshot.policy.rules.some((rule) =>
+    // Owner ruling 2026-09-30: "a command no rule mentions" shapes only the owner's own tasks; a chat's task asks before every change.
+    const loose = snapshot.policy.rules.some((rule) =>
       rule.decision === "allow" && rule.match === "*" && ["*", "shell.*", "shell.execute"].includes(rule.tool));
     return channelsOn(snapshot) && shellOn(snapshot) && loose ? {
       detail: "People can message the assistant from outside, and a rule lets it run programs without asking you. Tasks from outside are held to \"Ask before changes\", but a rule you wrote can still allow commands.",

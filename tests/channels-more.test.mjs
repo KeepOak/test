@@ -361,20 +361,6 @@ test("Email: a forged From is a stranger, even for an address on the list, and i
   }
 });
 
-test("Email: with the owner's server named, only its verdict is read", async (t) => {
-  const { app, provider } = await fixture(t);
-  const mailbox = await fakeImap(t, { auth: ["mx.example.net; dmarc=fail header.from=example.com", "mx.google.com; dmarc=pass header.from=example.com"] });
-  const outbox = await fakeSmtp(t);
-  const adapter = new EmailAdapter({ id: "email", address: "assistant@example.com", pollMs: 50, authservId: "mx.google.com",
-    imap: { host: "127.0.0.1", port: mailbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 },
-    smtp: { host: "127.0.0.1", port: outbox.port, user: "a@example.com", password: "p", tls: false, timeoutMs: 4000 } });
-  await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["alice@example.com"] });
-  const reply = await until(() => outbox.messages[0], "reply sent");
-  assert.equal(reply.body.trim(), "Echo: How much is the fee?");
-  assert.equal(provider.requests.length, 1);
-  await adapter.stop();
-});
-
 test("a mail with accents and emoji is read whole, since IMAP counts bytes (CHAT-003)", async (t) => {
   // Counted as characters, this body overran its literal, and the reader waited for an end that never came.
   const body = "Ça coûte combien ? Déjà payé, naïve café 🌳🌳🌳";
@@ -445,8 +431,10 @@ test("a channel that is refused says so in words, and never repeats the secret i
  */
 async function fakeImap(t, options = {}) {
   const stored = [];
-  const auth = (options.auth ?? ["mx.example.net; dmarc=pass header.from=example.com"]).map((line) => `Authentication-Results: ${line}\r\n`).join("");
-  const headers = `${auth}From:${options.from ?? "Alice <alice@example.com>"}\r\nSubject: A question\r\nMessage-ID: <first@example.com>\r\n`;
+  const from = options.from ?? "Alice <alice@example.com>", fromDomain = /@([^>\s]+)/.exec(from)?.[1] ?? "example.com";
+  // The receiving server's verdict, as a real mailbox stamps it (#979: unauthenticated senders are not routed); a test may give its own lines (`auth`).
+  const auth = (options.auth ?? [`mx.example.com; dmarc=pass header.from=${fromDomain}`]).map((line) => `Authentication-Results: ${line}\r\n`).join("");
+  const headers = `${auth}From: ${from}\r\nSubject: A question\r\nMessage-ID: <first@example.com>\r\n`;
   const body = options.body ?? "How much is the fee?";
   let fetched = false;
   const server = createSocketServer((socket) => {

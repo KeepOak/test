@@ -8,7 +8,7 @@
 
 import { setupNeeds } from "../core/setup-needs.js";
 import { esc, renderNow, paint } from "../core/dom.js";
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, ownerHere } from "../core/state.js";
 import { ic, av, toast, openDlg, closeDlg } from "../core/ui.js";
 import { markLive, greyOut } from "../core/features.js";
 import { api } from "../core/api.js";
@@ -65,7 +65,9 @@ function itemsOf(k) {
   if (k === "mcp") return [...ownServers.map((s) => ({ id: s.id, name: s.name, sub: s.how, error: s.error ?? "", own: s, on: Boolean(s.on) })),
     ...mcpServers.filter((s) => !ownServers.some((o) => o.id === s.id)).map((s) => ({ id: s.id, name: s.id, sub: s.summary ?? "", error: s.lastError ?? "", on: !s.lastError }))];
   if (k === "clis") return [...clis.programs.map((c) => ({ id: c.name, name: c.name, sub: c.path, own: c, on: true })), ...clis.launch.map((n) => ({ id: n, name: n, sub: "", on: true }))];
-  if (k === "skills") return [learnItem(), ...(E.state?.skills ?? []).map((s) => ({ id: s.id, name: s.activeName || s.name, sub: s.description ?? "", on: s.activeVersion != null }))]; // pass 17 part D §3: learn-this first
+  if (k === "skills") return [learnItem(), ...(E.state?.skills ?? []).map((s) => ({ id: s.id, name: s.activeName || s.name,
+    sub: s.availability?.available === false ? `Not available on this computer · ${s.availability.reasons.join("; ")}` : s.description ?? "",
+    on: s.activeVersion != null }))]; // pass 17 part D §3: learn-this first
   /* A plugin file as the engine lists it (GET /api/plugins {id, enabled, summary}); its summary is what the owner was
      shown when it was inspected, null before. */
   if (k === "plugins") return plugins.map((p) => ({ id: p.id, name: p.summary?.name || p.id, sub: p.summary?.description ?? "", tools: (p.summary?.tools ?? []).map((x) => x.name ?? x), on: p.enabled === true, shelf: !!p.fromShelf }));
@@ -86,7 +88,8 @@ function trunksTab() {
   /* Pass 18: with no Trunks yet, the list is a welcome with one button that makes the first. */
   const top = E.trunks.length ? `<div class="acts" data-css="margin:6px 0 4px"><button class="btn pri" type="button" data-act="chat" data-id="new">${ic('plus', 's')}${t("studio.tab.trunk")}</button>
     <button class="btn" type="button" data-act="grp-new">${ic('room', 's')}${t("window.places.customize.a-new-room")}</button></div>${rows}` : E.trunksRead ? empty18("customize:trunks") : "";
-  return `<div class="rows">${top}
+  const importFile = ownerHere() ? `<div class="acts"><button class="btn" type="button" data-act="trunk-import">${ic("doc", "s")}${esc(say("Import a Trunk file"))}</button></div>` : "";
+  return `<div class="rows">${top}${importFile}
     <div class="sec"><h2>${t("window.places.customize.start-from-a-job")}</h2><div class="grid2">${jobs}</div></div></div>`;
 }
 
@@ -141,7 +144,17 @@ function detailActs(k, x) {
   // One of your own servers at a web address can be signed in to (POST /api/mcp/signin): the engine gives back the
   // server's sign-in page to open in your browser, keeps the keys in the locker and connects the server again.
   const signIn = k === "mcp" && x.own?.transport === "http" ? `<button class="btn sm" type="button" data-act="mcp-signin" data-id="${esc(x.id)}" data-url="${esc(x.own.how)}">${t("accounts.action.sign-in")}</button>` : "";
-  return `<div class="acts" data-css="margin-top:16px">${signIn}${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm" type="button" data-act="${rm}" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button></div>`;
+  const timeout = k === "mcp" && x.own ? `<div class="sec"><label class="fld"><span>Call timeout (seconds without progress)</span><input class="inp" id="tool-call-timeout" type="number" min="1" max="3600" step="1" value="${esc(x.own.callTimeoutSeconds ?? 30)}" ${x.on || x.own.waiting ? "disabled" : ""}></label><p class="hint">Progress extends the wait, up to one hour. Switch the server off before changing this setting.</p><button class="btn sm" type="button" data-act="tool-timeout" data-id="${esc(x.id)}" ${x.on || x.own.waiting ? "disabled" : ""}>Save timeout</button></div>` : "";
+  return `${timeout}<div class="acts" data-css="margin-top:16px">${signIn}${test}<button class="btn sm" type="button" data-act="tool-upd">${t("action.check-for-updates")}</button><span class="grow"></span><button class="btn ghost sm" type="button" data-act="${rm}" data-k="${k}" data-id="${esc(x.id)}">${t("accounts.action.remove")}</button></div>`;
+}
+
+async function saveServerTimeout(el) {
+  try {
+    const seconds = Number(document.querySelector("#tool-call-timeout")?.value);
+    toast((await api(`mcp/servers/${encodeURIComponent(el.dataset.id)}/timeout`, { seconds })).said);
+    await reloadTools();
+    renderNow();
+  } catch (error) { toast(error.message); }
 }
 /* Which Trunks may use a server or a skill is drawn from each Trunk's own lists (servers by id, skills by name), and stays
    greyed: adding a server to a Trunk widens what it can reach. */
@@ -474,7 +487,8 @@ export function init() {
   initPluginLifecycle();
   markLive(pluginInsideLive);
   initPluginInside(reloadShown);
-  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "mcp-signin", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
+  markLive(["sw:ch-q", "ptab", "t9-kind", "t9-sel", "tool-rm", "tool-retry", "tool-timeout", "sw:tool-call-timeout", "mcp-signin", "ch-fam", "rev", "sugg15", "pat15", "sw:tool9g", "sw:ctx9"]);
+  on("tool-timeout", (el) => saveServerTimeout(el));
   on("tool-retry", (el) => retryServer(el));
   on("mcp-signin", (el) => signInServer(el));
   document.addEventListener("change", (e) => { if (e.target.dataset?.sw === "tool9g") switchServer(e.target); });

@@ -6,6 +6,7 @@ import { ReactionAnswers } from "./reaction-answers.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
 import { signalMarkdown } from "./chat-markdown.js";
+import { signalMonospace } from "./signal-format.js";
 
 /**
  * Signal, through the `signal-cli` program the owner installed themselves. Signal has no bot API:
@@ -251,13 +252,12 @@ export class SignalAdapter implements ChannelAdapter {
     // CHAT-116: a reply quotes the person's own message (signal-cli's quoteTimestamp and quoteAuthor).
     const author = replyToMessageId ? this.authors.get(replyToMessageId) : undefined;
     const quote = author ? { quoteTimestamp: Number(replyToMessageId), quoteAuthor: author } : {};
-    // UP-CHAT-011: Markdown shown as Signal's own bold, italic, strikethrough and monospace, unless the owner chose plain words.
-    const read = format?.plain ? { text, textStyle: [] } : signalMarkdown(text);
+    // UP-CHAT-011: Markdown shown as Signal's own bold, italic, strikethrough and monospace. The owner's plain words and
+    // code spans the caller marked (an approval's command) go through signalMonospace (src/channels/signal-format.ts).
+    const read = format?.plain || format?.spans?.length ? signalMonospace(text, format) : signalMarkdown(text);
     const message = read.text.slice(0, this.maxTextLength);
-    const styles = read.textStyle.filter((style) => { const [start, length] = style.split(":").map(Number); return start! + length! <= message.length; });
-    // As Hermes Agent sends them to signal-cli (gateway/platforms/signal.py): one style as `textStyle`, several as `textStyles`.
-    const styled = styles.length === 1 ? { textStyle: styles[0] } : styles.length ? { textStyles: styles } : {};
-    return this.request("send", { ...this.target(chatId), message, ...styled, ...quote });
+    const textStyle = read.textStyle.filter((style) => { const [start, length] = style.split(":").map(Number); return start! + length! <= message.length; });
+    return this.request("send", { ...this.target(chatId), message, ...(textStyle.length ? { textStyle } : {}), ...quote });
   }
   /** CHAT-109: Signal's typing indicator (it lasts about 15 seconds; the live status asks again while the task works). */
   async sendTyping(chatId: string): Promise<void> {

@@ -132,7 +132,7 @@ test("Email, for real: a local GreenMail SMTP and IMAP server", { skip: state.se
   const empty = ["STORE 1:* +FLAGS (\\Deleted)", "EXPUNGE"];
   await imapBodies(imap, bot, "branchpw", empty);
   await imapBodies(imap, person, "sampw", empty);
-  await connect(context.app, { type: "email", id: "email", address: bot, pollSeconds: 5, authservId: "greenmail.test",
+  await connect(context.app, { type: "email", id: "email", address: bot, pollSeconds: 5, trustedAuthservIds: ["greenmail.test"],
     imap: { host: imap.host, port: imap.port, user: bot, tls: false }, smtp: { host: smtp.host, port: smtp.port, user: bot, tls: false },
     activation: "mention", pairing: true, allowlist: [] }, { EMAIL_PASSWORD: "branchpw" });
   let mail = "";

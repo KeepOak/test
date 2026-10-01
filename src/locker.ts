@@ -2,6 +2,8 @@ import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import type { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
+import { healthChanged } from "./health-changes.js";
+import { assertHealthCurrent } from "./health-check.js";
 
 /**
  * The locker holds project-scoped secrets. Values are encrypted at rest (AES-256-GCM) with a key
@@ -48,9 +50,11 @@ export class Locker {
     const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", await this.keys.key(), iv);
     const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]), tag = cipher.getAuthTag();
     const createdAt = new Date().toISOString();
+    assertHealthCurrent();
     this.db.prepare(`INSERT INTO locker VALUES(?,?,?,?,?,?,?) ON CONFLICT(owner,project,name)
       DO UPDATE SET iv=excluded.iv,tag=excluded.tag,ciphertext=excluded.ciphertext,created_at=excluded.created_at`)
       .run(owner, project, name, iv, tag, ciphertext, createdAt);
+    healthChanged(this.db, { kind: "credential", owner, project, id: name });
     return { project, name, createdAt };
   }
   /**
@@ -93,10 +97,14 @@ export class Locker {
     return !!this.db.prepare("SELECT 1 AS found FROM locker WHERE owner=? AND project=? AND name=?").get(owner, project, name);
   }
   remove(owner: string, project: string, name: string): boolean {
-    return this.db.prepare("DELETE FROM locker WHERE owner=? AND project=? AND name=?").run(owner, project, name).changes > 0;
+    const removed = this.db.prepare("DELETE FROM locker WHERE owner=? AND project=? AND name=?").run(owner, project, name).changes > 0;
+    if (removed) healthChanged(this.db, { kind: "credential", owner, project, id: name });
+    return removed;
   }
   removeProject(owner: string, project: string): number {
-    return Number(this.db.prepare("DELETE FROM locker WHERE owner=? AND project=?").run(owner, project).changes);
+    const removed = Number(this.db.prepare("DELETE FROM locker WHERE owner=? AND project=?").run(owner, project).changes);
+    if (removed) healthChanged(this.db, { kind: "credential", owner, project, id: "*" });
+    return removed;
   }
   /** Values for the named secrets of one project, for injection only. Any name outside that project is refused. */
   async resolve(owner: string, project: string, names: string[]): Promise<Record<string, string>> {

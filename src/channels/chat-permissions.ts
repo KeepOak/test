@@ -113,6 +113,17 @@ const namesOnePerson = (rule: ChatPermissionRule): boolean => rule.channel !== "
 export const ChatPermissionSettingsSchema = z.object({
   extras: z.boolean().default(false),
   rules: z.array(ChatPermissionRuleSchema).max(50).default([]),
+  /**
+   * owner-dm-full: "Your own chats have your full access". On by default. The owner's own verified direct chat (an
+   * account they named as theirs, one to one, on an app whose servers vouch for the sender: `ownerDmHere`) is the
+   * owner, so its task runs as a task the owner starts in the window: every permission, the owner's Access level, no
+   * chat-only refusals. This follows OpenClaw's sandbox mode "non-main" (`shouldSandboxSession` in
+   * src/agents/sandbox/runtime-status.ts, with the DM "main" session key in src/routing/session-key.ts): the owner's
+   * direct chat is the main session with the full toolset on the host, and every other session is held back. Hermes
+   * Agent's gateway does the same for its allowed users (`_is_user_authorized` in gateway/authz_mixin.py). Both MIT.
+   * Groups, other people and any message the app cannot vouch for keep the short list whatever this says.
+   */
+  ownerChats: z.boolean().default(true),
 }).strict();
 export type ChatPermissionSettings = z.infer<typeof ChatPermissionSettingsSchema>;
 
@@ -130,7 +141,8 @@ export function saveChatPermissionSettings(store: Store, owner: string, input: u
   // reset. A household person signed in on this computer is not the owner, and a line of theirs
   // would hand a chat something the owner never agreed to.
   store.profiles.requireOwner("What a chat may do beyond talking");
-  const change = z.object({ extras: z.boolean().optional(), rules: z.array(ChatPermissionRuleSchema).max(50).optional() })
+  const change = z.object({ extras: z.boolean().optional(), rules: z.array(ChatPermissionRuleSchema).max(50).optional(),
+    ownerChats: z.boolean().optional() })
     .strict().parse(input ?? {});
   const next = ChatPermissionSettingsSchema.parse({ ...readChatPermissionSettings(store, owner), ...change });
   store.save("settings", owner, settingsKey, next);
@@ -139,10 +151,10 @@ export function saveChatPermissionSettings(store: Store, owner: string, input: u
   const answering = next.rules.filter((rule) => rule.approvals).length;
   audit(store, owner, {
     action: "policy.changed", actor: owner, subject: "what a chat message's task may use",
-    reason: next.extras
+    reason: (next.ownerChats ? "" : "the owner's own chats are held to it too; ") + (next.extras
       ? `${next.rules.length} line(s) on top of the ${chatSafePermissions.length} a chat always has`
         + `; ${answering} of them may answer yes from the chat`
-      : "the short list only",
+      : "the short list only"),
     outcome: "saved",
   });
   return next;

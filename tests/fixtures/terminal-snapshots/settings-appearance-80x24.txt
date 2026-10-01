@@ -1,5 +1,5 @@
  ♣ Branch Agent · Settings › Appearance                 ● Offline demonstration
-  1  2 2  3  4  5  6                                       Ctrl+K Find anything
+  1  2 2  3  4  5  6  7                                    Ctrl+K Find anything
  Settings › Appearance  (3/19)
  < People   Notifications >
    APPEARANCE

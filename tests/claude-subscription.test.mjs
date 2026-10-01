@@ -13,7 +13,11 @@ import { ClaudeSubscriptionProvider } from "../dist/providers/claude-subscriptio
 import { connectNative } from "../dist/providers/claude-subscription-admission.js";
 import { withAccountCall } from "../dist/accounts/context.js";
 import { nativeToolName, nativeToolPrefix } from "../dist/providers/claude-subscription-history.js";
+import { closeNativeSubscriptions } from "../dist/providers/claude-subscription-continuation.js";
 import { discardTemp } from "./temp-dir.mjs";
+
+// A finished turn keeps its native transport for the next one; each test closes what it kept.
+test.afterEach(() => closeNativeSubscriptions());
 
 const tool = { name: "files.read", description: "Read a Branch file", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } };
 const account = { owner: "local", sessionId: "fixture", runId: "fixture" };
@@ -55,9 +59,10 @@ async function fixture(t, { mode = "normal", reply = events(), hold = false, sta
   t.after(async () => { server.closeAllConnections(); await new Promise((go) => server.close(go)); await discardTemp(root); });
   const connect = (headers, payload, query, signal) => fetch(`http://127.0.0.1:${server.address().port}/v1/messages${query}`, { method: "POST", headers, body: payload, signal });
   const start = (_command, args, invocation) => {
-    launches.push({ args, env: invocation.env, cwd: invocation.cwd });
-    return spawn(process.execPath, [resolve("tests/fixtures/claude-subscription-native.mjs"), ...args], { ...invocation,
+    const child = spawn(process.execPath, [resolve("tests/fixtures/claude-subscription-native.mjs"), ...args], { ...invocation,
       env: { ...invocation.env, BRANCH_NATIVE_FIXTURE_MODE: mode, BRANCH_NATIVE_FIXTURE_PIDS: join(root, "pids.json"), BRANCH_NATIVE_FIXTURE_INERT: join(root, "inert.json") } });
+    launches.push({ args, env: invocation.env, cwd: invocation.cwd, child });
+    return child;
   };
   const provider = new ClaudeSubscriptionProvider({ owner: "local", timeoutMs: 5000, ...options }, { spawn: start, connect });
   return { provider, seen, launches, root, disconnected: () => disconnected };
@@ -86,7 +91,10 @@ test("native protocol preserves full canonical history, tool results, schemas an
   assert.equal(f.launches[0].args[f.launches[0].args.indexOf("--tools") + 1], "");
   assert.ok(f.launches[0].args.includes("dontAsk") && f.launches[0].args.includes("--strict-mcp-config"));
   assert.ok(rates.includes("rate_limit_event") && !rates.includes("Ready"));
-  await assert.rejects(stat(f.launches[0].cwd), /ENOENT/);
+  // The finished transport is kept for the conversation's next turn; closing it erases its private files.
+  await stat(f.launches[0].cwd);
+  closeNativeSubscriptions();
+  await until(() => stat(f.launches[0].cwd).then(() => false, () => true));
 });
 
 test("one upstream admission survives denied native retry without permitting a second generation", async (t) => {
@@ -239,7 +247,8 @@ test("selfdev/prompt-cache: every round of one conversation runs in the same pri
   const folders = f.launches.map((launch) => launch.cwd);
   assert.equal(folders[0], folders[1], "the same conversation, the same folder");
   assert.notEqual(folders[2], folders[0], "another conversation, another folder");
-  for (const folder of folders) await assert.rejects(stat(folder), /ENOENT/);
+  closeNativeSubscriptions(); // the last transport is kept for a next turn until Branch closes it
+  for (const folder of folders) await until(() => stat(folder).then(() => false, () => true));
   // Two rounds of one conversation at once never share a folder.
   const both = await Promise.all([scope(() => f.provider.complete(request(later))), scope(() => f.provider.complete(request(later)))]);
   assert.equal(both.length, 2);
@@ -247,4 +256,63 @@ test("selfdev/prompt-cache: every round of one conversation runs in the same pri
   // The relay marks the history the next round sends again: the answer before the newest turn.
   const marked = f.seen[1].body.messages.findLast((message) => message.role === "assistant");
   assert.deepEqual(marked.content.at(-1).cache_control, { type: "ephemeral", ttl: "1h" });
+});
+
+/* SELF-090: a Claude Code conversation keeps one native transport across Branch's turns. Only an exact continuation of the
+   last request and its answer reuses it; each turn arms the relay once, with its own marker; an idle request, a request
+   for another turn, or a second generation in one turn never reaches the service. */
+const gone = (folder) => stat(folder).then(() => false, () => true);
+const answered = [{ role: "assistant", content: "Ready☘", toolCalls: [{ id: "call-fixture", name: "files.read", arguments: '{"path":"note.txt"}' }] },
+  { role: "tool", toolCallId: "call-fixture", content: "the note" }];
+
+test("SELF-090 the next turn of the same conversation continues one native transport, with Branch's own history", async (t) => {
+  const f = await fixture(t);
+  const first = [{ role: "system", content: "Owner's instructions" }, { role: "user", content: "Read the file" }];
+  await scope(() => f.provider.complete(request(first)));
+  const second = await scope(() => f.provider.complete(request([...first, ...answered])));
+  assert.equal(second.toolCalls.length, 1);
+  assert.equal(f.launches.length, 1, "no second Claude Code process");
+  assert.equal(f.seen.length, 2, "one generation per turn");
+  const sent = JSON.stringify(f.seen[1].body.messages);
+  assert.match(sent, /the note/, "the tool's real result is in the forwarded history");
+  assert.doesNotMatch(sent, /BRANCH_TRANSPORT_TURN_/, "the turn marker never reaches the model");
+  // Between turns the relay is disarmed: a request from the idle native process is refused and never forwarded.
+  const idle = await fetch(`${f.launches[0].env.ANTHROPIC_BASE_URL}/v1/messages`, { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ stream: true, messages: [{ role: "user", content: "again" }] }) });
+  assert.equal(idle.status, 400);
+  assert.equal(f.seen.length, 2);
+  // Another conversation, or an edited history, never continues it.
+  await scope(() => f.provider.complete(request(first)), { ...account, sessionId: "another" });
+  await scope(() => f.provider.complete(request([...first, { ...answered[0], content: "edited" }, answered[1]])));
+  assert.equal(f.launches.length, 3);
+});
+
+test("SELF-090 a native request without this turn's marker is refused before the service", async (t) => {
+  const f = await fixture(t, { mode: "no-marker" });
+  await assert.rejects(scope(() => f.provider.complete(request())), /complete response/);
+  assert.equal(f.seen.length, 0, "nothing reached the service");
+  await until(() => gone(f.launches[0].cwd));
+});
+
+test("SELF-090 a Claude Code that ends after its one result falls back to a fresh transport", async (t) => {
+  const f = await fixture(t, { mode: "once" });
+  const first = [{ role: "user", content: "Read the file" }];
+  await scope(() => f.provider.complete(request(first)));
+  const ended = f.launches[0].child;
+  await until(() => ended.exitCode !== null || ended.signalCode !== null);
+  const next = await scope(() => f.provider.complete(request([...first, ...answered])));
+  assert.equal(next.toolCalls.length, 1);
+  assert.equal(f.launches.length, 2);
+  assert.equal(f.seen.length, 2);
+  await until(() => gone(f.launches[0].cwd));
+});
+
+test("SELF-090 a Claude Code that ends just after its result, before the next turn sees it gone, answers on a fresh transport", async (t) => {
+  const f = await fixture(t, { mode: "exit-soon" });
+  const first = [{ role: "user", content: "Read the file" }];
+  await scope(() => f.provider.complete(request(first)));
+  const next = await scope(() => f.provider.complete(request([...first, ...answered])));
+  assert.equal(next.toolCalls.length, 1);
+  assert.equal(f.launches.length, 2, "the ended session was replaced once");
+  assert.equal(f.seen.length, 2, "and nothing was generated twice");
 });

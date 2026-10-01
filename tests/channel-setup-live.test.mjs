@@ -44,7 +44,7 @@ const sample = {
   corpId: "wwabcdefghij12", agentId: "1000002",
 };
 const special = { "msteams-bot": { appId: "12345678-1234-1234-1234-123456789012" }, "wechat-mp": { appId: "wxabcdefghij123456" },
-  mumble: { server: "mumble.example.org" } };
+  mumble: { server: "mumble.example.org" }, "whatsapp-web": { server: "http://127.0.0.1:3000" } };
 
 test("every chat app's panel makes an entry the connections file itself accepts, so none needs a line written by hand", async () => {
   let checked = 0;
@@ -66,7 +66,7 @@ test("every chat app's panel makes an entry the connections file itself accepts,
     }
     checked++;
   }
-  assert.equal(checked, 55, "every app but the Telegram card");
+  assert.equal(checked, 56, "every app but the Telegram card");
 });
 
 test("an entry holds only what the recipe templates: a request cannot add an address or a key of its own", () => {

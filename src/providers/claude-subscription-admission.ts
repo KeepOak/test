@@ -5,6 +5,8 @@ import { Readable } from "node:stream";
 import type { Completion, CompletionRequest } from "../contracts.js";
 import { NativeCapture } from "./claude-subscription-capture.js";
 import { maximumNativeRequestBytes, type NativeInventory } from "./claude-subscription-history.js";
+import { canonicalNativePayload } from "./claude-subscription-continuation.js";
+import { currentAccountCall, withAccountCall, type AccountCall } from "../accounts/context.js";
 
 export type NativeConnector = (headers: Record<string, string>, payload: Buffer, query: string, signal: AbortSignal) => Promise<Response>;
 /** Production has one fixed first-party origin, verified by Node TLS; no environment endpoint or redirect applies. */
@@ -70,9 +72,9 @@ export function cacheHistory(payload: Buffer): Buffer {
   target.content = blocks;
   return Buffer.from(JSON.stringify(body), "utf8");
 }
-/** Exactly one Messages generation. Native authentication is forwarded in memory and never logged or saved. */
+/** Exactly one Messages generation per armed Branch turn. Idle and native tool-loop requests are refused. */
 export class NativeAdmission {
-  readonly capture: NativeCapture;
+  capture: NativeCapture;
   readonly prefix = "/admit/" + randomBytes(32).toString("hex");
   url = "";
   used = false;
@@ -86,13 +88,16 @@ export class NativeAdmission {
   error: unknown = null;
   private readonly server: Server;
   private readonly active = new Set<Promise<void>>();
+  private armed = true;
+  private call: AccountCall | undefined = currentAccountCall();
   /** `activity` is told when the request arrives, when the service answers and of every streamed chunk (the idle deadline). */
-  constructor(private readonly request: CompletionRequest, inventory: NativeInventory,
-    private readonly authorize: () => void, private readonly connect: NativeConnector = connectNative,
-    private readonly activity: () => void = () => {}) {
+  constructor(private request: CompletionRequest, private inventory: NativeInventory,
+    private authorize: () => void, private readonly connect: NativeConnector = connectNative, private marker = "",
+    private activity: () => void = () => {}) {
     this.capture = new NativeCapture(inventory, request);
     this.server = createServer((incoming, response) => {
-      const work = this.receive(incoming, response).catch((error: unknown) => {
+      const receive = () => this.receive(incoming, response);
+      const work = (this.call ? withAccountCall(this.call, receive) : receive()).catch((error: unknown) => {
         this.failure = "Native admission or response failed"; this.error = error;
         if (!response.headersSent) refuse(response, 502); else response.destroy();
       }).finally(() => this.active.delete(work));
@@ -100,6 +105,17 @@ export class NativeAdmission {
     });
     this.server.headersTimeout = 10000;
     this.server.requestTimeout = 180000;
+  }
+  arm(request: CompletionRequest, inventory: NativeInventory, authorize: () => void, marker: string, activity: () => void = () => {}): void {
+    if (this.armed || this.active.size) throw new Error("Claude subscription previous turn is not settled");
+    this.request = request; this.inventory = inventory; this.authorize = authorize; this.marker = marker; this.activity = activity;
+    this.call = currentAccountCall(); this.capture = new NativeCapture(inventory, request);
+    this.used = false; this.denied = 0; this.status = null; this.resetsAt = null;
+    this.completion = null; this.failure = null; this.error = null; this.armed = true;
+  }
+  async disarm(): Promise<void> {
+    this.armed = false;
+    await Promise.allSettled([...this.active]);
   }
   async listen(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
@@ -114,11 +130,13 @@ export class NativeAdmission {
     const path = new URL(incoming.url ?? "/", "http://127.0.0.1");
     if (incoming.method !== "POST" || path.pathname !== this.prefix + "/v1/messages" || incoming.headers.origin || incoming.headers["content-encoding"])
       return refuse(response, 404);
-    if (this.used || this.request.signal.aborted) { this.denied++; return refuse(response, 400); }
+    if (!this.armed || this.used || this.request.signal.aborted) { this.denied++; return refuse(response, 400); }
     this.authorize(); this.request.signal.throwIfAborted(); this.used = true;
     const body = await boundedBody(incoming, this.request.signal);
     this.authorize(); this.request.signal.throwIfAborted(); this.activity();
-    const upstream = await this.connect(forwardHeaders(incoming), cacheHistory(body), path.search, this.request.signal);
+    const canonical = this.marker ? canonicalNativePayload(body, this.request, this.inventory, this.marker) : body;
+    const upstream = await this.connect(forwardHeaders(incoming), cacheHistory(canonical), path.search, this.request.signal);
+    try { this.authorize(); this.request.signal.throwIfAborted(); } catch (error) { await upstream.body?.cancel(); throw error; }
     this.status = upstream.status; this.activity();
     // selfdev: when a plan limit says when it resets (Unix seconds), the refusal can say so too.
     const reset = Number(upstream.headers.get("anthropic-ratelimit-unified-reset"));
@@ -132,7 +150,7 @@ export class NativeAdmission {
     const reader = upstream.body.getReader();
     try {
       while (true) {
-        this.request.signal.throwIfAborted(); const part = await reader.read();
+        this.request.signal.throwIfAborted(); const part = await reader.read(); this.authorize();
         if (part.done) break;
         this.activity(); this.capture.feed(part.value); response.write(part.value);
       }

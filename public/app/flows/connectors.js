@@ -7,10 +7,8 @@
    - "Test it" stays greyed: trying a server starts the typed program (POST /api/mcp/try) without the approval gate.
    - A command-line tool: the tools the engine found on this computer (GET /api/clis), each allowed through POST
      /api/clis by its name, or one added by its full address (Enter in the path box).
-   - A skill from a file is real: the SKILL.md is read here and sent to POST /api/skills/install. The skill library and
-     GitHub stay greyed: no library address ships with the engine (a registry is a JSON index the owner names, POST
-     /api/registry/browse {url}), and the engine installs no skill from a repository. Writing one with Branch is another
-     area's.
+   - A file's SKILL.md goes to POST /api/skills/install. GitHub skill-github.js inspects one pinned public tree and
+     installs only the owner's exact approved preview, switched off. The skill library still needs a registry address.
    - Another agent with an A2A card: its address goes to POST /api/agents/remote {cardUrl}; the engine reads its card
      (refusing a private or local address unless the owner allowed those) and keeps it. Branch on another computer is
      pairing (POST /api/agents/pair), held back for the security review; an agent on a KeepOak computer needs keepoak.com,
@@ -20,6 +18,7 @@ import { $, esc, renderNow, paint } from "../core/dom.js";
 import { openDlg, closeDlg, closePop, toast, ic } from "../core/ui.js";
 import { refresh } from "../core/state.js";
 import { api } from "../core/api.js";
+import { initGitHubSkills } from "./skill-github.js";
 import { on } from "../core/actions.js";
 import { markLive, greyOut } from "../core/features.js";
 import { logo } from "../core/logos.js";
@@ -69,7 +68,7 @@ function ownServer(entry = null) {
   const reach = entry?.command ? entry.command.join(" ") : entry?.address ?? "";
   openDlg({ title: t("window.flows.conn.own-mcp"),
     body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><div class="fld"><span>${t("window.flows.conn.secrets")}</span><div id="mcp-vars">${secretRow()}</div><button class="btn sm ghost" type="button" data-act="mcp-var-add">${t("window.flows.conn.secret-add")}</button><p class="hint" data-css="margin:0">${t("window.flows.conn.secrets-hint")}</p></div><p class="hint" id="mcp-asks" data-css="margin:0" ${entry && web ? "hidden" : ""}>${t("window.flows.conn.asks-before-it-starts")}</p><div id="mcp-test"></div>`,
-    foot: `<button class="btn" type="button" data-act="mcp-test">${t("window.flows.conn.test")}</button><button class="btn pri" type="button" data-act="mcp-save">${t("window.flows.conn.add-server")}</button>` });
+    foot: `<label class="fld"><span>Call timeout (seconds without progress)</span><input class="inp" id="mcp-timeout" type="number" min="1" max="3600" step="1" value="30"></label><button class="btn" type="button" data-act="mcp-test">${t("window.flows.conn.test")}</button><button class="btn pri" type="button" data-act="mcp-save">${t("window.flows.conn.add-server")}</button>` });
 }
 /* One secret the server is given: its name, and its value, which goes to the locker and is never shown again.
    Asking for values rather than variable names follows Cline's marketplace install.env (Apache-2.0; THIRD_PARTY_NOTICES.md). */
@@ -101,7 +100,8 @@ async function saveServer() {
   const name = ($("#mcp-name")?.value ?? "").trim();
   try {
     const { names, values } = typedSecrets();
-    const added = await api("mcp/servers", { name, server: typedServer(names), values, ...(CAT.entry ? { catalogue: CAT.entry.id } : {}) });
+    const callTimeoutSeconds = Number($("#mcp-timeout")?.value);
+    const added = await api("mcp/servers", { name, server: typedServer(names), values, callTimeoutSeconds, ...(CAT.entry ? { catalogue: CAT.entry.id } : {}) });
     closeDlg();
     showTool("mcp", added.server.id);
     await reloadTools();
@@ -188,7 +188,8 @@ const ADD = { mcp: connectorCatalogue, skills: addSkill, clis: addCliDialog, age
 const entryOf = (id) => CAT.list.flatMap((g) => g.connectors).find((c) => c.id === id) ?? null;
 
 export function init() {
-  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "mcp-var-add", "sw:mcp-var-name", "sw:mcp-var-value", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
+  initGitHubSkills();
+  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "mcp-var-add", "sw:mcp-var-name", "sw:mcp-var-value", "sw:mcp-timeout", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
   on("ag-add", () => agentCard());
   on("ag-go", () => addAgent());
   /* A plugin has no add form the engine backs yet: the button opens that kind in Customize. */

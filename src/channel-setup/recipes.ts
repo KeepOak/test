@@ -102,6 +102,10 @@ export const RecipeSchema = z.object({
   pairing: words.optional(),
   /** Group chats: when it answers there, and what the app itself needs for it to see every message. */
   groups: words.optional(),
+  /** A risk said plainly before anything is set up (a personal number through an unofficial client can be banned). */
+  warning: words.optional(),
+  /** "bridge": the setup links an account by the QR code a bridge on this computer makes (GET /api/channel-setup/<id>/link). */
+  link: z.literal("bridge").optional(),
   sources: z.array(https).max(10),
 }).strict()
   .refine((recipe) => Boolean(recipe.app) !== Boolean(recipe.noApp), "A recipe has an app or says why there is none")

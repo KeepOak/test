@@ -20,7 +20,7 @@ export class NativeProcess {
   private stopping: Promise<void> | null = null;
   private readonly rates: string[] = [];
   /** `activity` is told of every native event, so the caller's idle deadline starts again while output flows. */
-  constructor(invocation: NativeInvocation, start: NativeSpawn = spawn, private readonly activity: () => void = () => {}) {
+  constructor(invocation: NativeInvocation, start: NativeSpawn = spawn, private activity: () => void = () => {}) {
     if (start === spawn) assertRealAgentAllowed(invocation.command, invocation.env);
     const call = startCall(invocation.command, invocation.args, invocation.env);
     this.child = start(call.command, call.args, { env: invocation.env, cwd: invocation.cwd, shell: false, windowsHide: true, detached: true });
@@ -69,6 +69,13 @@ export class NativeProcess {
       error ? reject(new Error("Claude subscription could not replay its history")) : resolve()));
   }
   rateEvents(): string { return this.rates.join("\n"); }
+  isClosed(): boolean { return this.ended; }
+  /** A kept session's next turn: `activity` is that turn's idle deadline. */
+  beginTurn(activity?: () => void): void {
+    if (this.ended || this.waiter || this.stopping) throw new Error("Claude subscription native session is not available");
+    this.lineBytes = 0; this.rates.length = 0;
+    if (activity) this.activity = activity;
+  }
   stop(): Promise<void> { return this.stopping ??= this.stopTree(); }
   private async stopTree(): Promise<void> {
     const pid = this.child.pid;

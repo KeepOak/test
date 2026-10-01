@@ -424,8 +424,11 @@ test("branch acp-serve speaks the protocol on standard input and output", async 
 // ----------------------------------------- a task that cannot start does not take the app down
 
 test("a streamed task that never starts says so and leaves the app standing", async (t) => {
-  const { app, provider, server, headers, shareA2a } = await fixture(t);
+  const { app, provider, server, headers, rpc, shareA2a } = await fixture(t);
   await shareA2a();
+  // RES-231: only a conversation this caller's own A2A task began may be carried on, so the seed is such a task.
+  const seeded = await rpc("tasks/send", { id: "seed-1", message: { role: "user", parts: [{ type: "text", text: "seed" }] } });
+  const seed = { sessionId: seeded.body.result.sessionId };
   let release = () => {};
   const held = new Promise((resolve) => { release = resolve; });
   provider.complete = async (request) => {
@@ -434,9 +437,6 @@ test("a streamed task that never starts says so and leaves the app standing", as
     return { content: "late", toolCalls: [] };
   };
   // A conversation that is already busy: a second task on it cannot be created at all.
-  // mac7/residuals: an agent carries on only a conversation begun over A2A.
-  const seed = app.store.createRun(app.runtime.owner, "seed", undefined, false, "a2a");
-  app.store.finish(seed.id, "completed", "seeded");
   const busy = app.runtime.run({ prompt: "keep this conversation busy", sessionId: seed.sessionId }).catch(() => undefined);
   for (let i = 0; i < 200; i++) {
     if (app.store.runs(app.runtime.owner).some((run) => run.sessionId === seed.sessionId && run.status === "running")) break;
@@ -523,4 +523,25 @@ test("an A2A task belongs to the key that started it: another caller can neither
   assert.match(steal.body.error.message, /already in use/, "nor can it take the id over");
   assert.ok((await rpc("tasks/get", { id: "shared-id" }, as(ada))).body.result, "the first caller's task is still there");
   void provider;
+});
+
+test("RES-231: a finished task is found again after a restart, and one cut off by it reports failed and is not run again", async (t) => {
+  const { app, rpc, shareA2a } = await fixture(t);
+  await shareA2a();
+  const sent = await rpc("tasks/send", { id: "kept-1", message: { role: "user", parts: [{ type: "text", text: "count the files" }] } });
+  assert.equal(sent.body.result.status.state, "completed");
+  // A task whose run was still going when the engine stopped.
+  const cut = app.store.createRun(app.runtime.owner, "cut off", undefined, false, "a2a");
+  const saved = app.store.get("settings", app.runtime.owner, "a2a-task-index").data;
+  app.store.save("settings", app.runtime.owner, "a2a-task-index", { tasks: [...saved.tasks,
+    { id: "cut-1", runId: cut.id, sessionId: cut.sessionId, agent: "Ada", createdAt: new Date().toISOString(), caller: "owner" }] });
+  // The engine again: a fresh A2A server reads what the last one kept.
+  const again = new app.a2a.constructor(app.store, app.runtime, app.registry, app.mcpServer, app.a2a.version);
+  const found = again.get({ id: "kept-1" });
+  assert.equal(found.status.state, "completed", "the answer is still there after a restart");
+  assert.equal(found.artifacts[0].parts[0].text, sent.body.result.artifacts[0].parts[0].text);
+  const stopped = again.get({ id: "cut-1" });
+  assert.equal(stopped.status.state, "failed", "a task the restart cut off says so");
+  assert.match(stopped.status.message.parts[0].text, /stopped before it finished/);
+  assert.equal(app.store.run(cut.id).status, "running", "and it is not run again");
 });

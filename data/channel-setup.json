@@ -2765,6 +2765,58 @@
    "sources": [
     "https://developer.work.weixin.qq.com/document/path/90665"
    ]
+  },
+  {
+   "id": "whatsapp-web",
+   "name": "WhatsApp (personal number)",
+   "what": "Message Branch from WhatsApp on a personal number, through a bridge you run on this computer.",
+   "family": "parity",
+   "turnOn": "switch",
+   "app": {
+    "name": "WhatsApp",
+    "download": "https://www.whatsapp.com/download",
+    "brew": "whatsapp",
+    "macApp": "WhatsApp.app"
+   },
+   "stores": {
+    "ios": "https://apps.apple.com/app/id310633997",
+    "android": "https://play.google.com/store/apps/details?id=com.whatsapp"
+   },
+   "noCreate": "There is no bot to make: the bridge signs in to WhatsApp as a linked device of the number you choose, by a code you scan.",
+   "steps": [
+    "Install Docker (Docker Desktop on Windows and Mac needs administrator rights and a restart; on Linux use your package manager).",
+    "Run the WAHA bridge on this computer: docker run -d --restart unless-stopped -p 127.0.0.1:3000:3000 -e WAHA_API_KEY=a-long-random-key --name waha devlikeapro/waha",
+    "Type its address (http://127.0.0.1:3000) and paste the same API key here.",
+    "Then scan the code Branch shows with WhatsApp, Settings, Linked devices, on the phone with the number you chose."
+   ],
+   "fields": [
+    {
+     "name": "server",
+     "what": "The bridge's address on this computer, for example http://127.0.0.1:3000",
+     "kind": "text",
+     "pattern": "^https?://(127\\.0\\.0\\.1|localhost|\\[::1\\])(:\\d{1,5})?/?$"
+    }
+   ],
+   "paste": [
+    {
+     "secret": "WAHA_API_KEY",
+     "what": "The API key you gave the bridge (WAHA_API_KEY)"
+    }
+   ],
+   "noCheck": "The bridge is checked when Branch links the number: it has to be running on this computer and accept the key.",
+   "entry": {
+    "type": "whatsapp-web",
+    "id": "whatsapp-web",
+    "server": "{{server}}"
+   },
+   "pairing": "Once linked, anybody who messages that number gets a six-digit code; approve it under Customize, Chat apps.",
+   "warning": "This drives a personal WhatsApp number through an unofficial client, which WhatsApp's terms do not allow, so the number can be banned. Use a spare number you can lose. The official WhatsApp Business Cloud API (the other WhatsApp card) has no such risk.",
+   "link": "bridge",
+   "sources": [
+    "https://waha.devlike.pro/docs/how-to/sessions/",
+    "https://github.com/devlikeapro/waha",
+    "https://faq.whatsapp.com/1317564962315842"
+   ]
   }
  ]
 }

@@ -70,8 +70,7 @@ export interface GateAnswer { reply: string | null }
 export function platformGate(store: Store, owner: string, message: InboundMessage): GateAnswer | null {
   if (reachMode(store, owner, "platform-pause") === "off") return null;
   const s = platformSettings(store, owner);
-  // A sender the chat app could not confirm (an unauthenticated mail) is never the owner, whatever address it shows.
-  const command = !message.unverifiedSender && /^\/platform(?:@[\w.-]+)?(?:\s+(pause|resume|status))?(?:\s+([a-z0-9._-]{1,64}))?\s*$/i.exec(message.text.trim());
+  const command = /^\/platform(?:@[\w.-]+)?(?:\s+(pause|resume|status))?(?:\s+([a-z0-9._-]{1,64}))?\s*$/i.exec(message.text.trim());
   // mac7/reach-leftovers: a message fetched after a restart (src/channels/catch-up.ts) is old news.
   // It is let go in silence, exactly as a stranger's caught-up message is, so a `/platform pause`
   // sent while Branch was closed cannot pause a chat app hours later. Pausing itself still applies

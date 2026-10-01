@@ -15,7 +15,7 @@ import { pcmAsWav, soundType } from "./voice-note.js";
  * name "windows" because that is what saved settings say, but it means the system voice: Windows'
  * own voices, `say` on a Mac, and `espeak-ng` on Linux when it is installed.
  */
-export type TtsRoute = "openai" | "gemini" | "windows";
+export type TtsRoute = "openai" | "gemini" | "windows" | "piper";
 
 export interface SpokenAudio {
   bytes: Uint8Array;
@@ -37,7 +37,7 @@ export const ttsPricesPerThousand: Record<string, number> = {
 
 /** What reading a piece of text aloud probably costs. An unlisted model reports no amount. */
 export function estimateSpeechCost(model: string, characters: number, route: TtsRoute): AudioCostEstimate {
-  if (route === "windows")
+  if (route === "windows" || route === "piper")
     return { amount: 0, currency: "USD", confidence: "free", note: "this used a voice already on your computer, so nothing was charged" };
   const each = ttsPricesPerThousand[model] ?? ttsPricesPerThousand[model.toLowerCase()];
   if (each === undefined)
@@ -195,6 +195,7 @@ export class Speech {
     route: { kind: TtsRoute; provider?: AudioProvider | null },
     options: { keepOnThisComputer?: boolean; signal?: AbortSignal; voiceNote?: boolean } = {},
   ): Promise<SpokenAudio> {
+    if (route.kind === "piper") throw new Error("The installed Piper voice is handled by the owner's voice service.");
     if (options.keepOnThisComputer && route.kind !== "windows")
       throw new Error(
         "You asked for audio to stay on this computer, so nothing was sent away. Choose the voice that comes with your computer under Settings → Voice, or turn that setting off.",

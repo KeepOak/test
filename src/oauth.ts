@@ -1,3 +1,4 @@
+import { assertHealthCurrent, currentHealthCheck, healthSignal } from "./health-check.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -148,13 +149,16 @@ export class OAuthConnections {
   private async token(provider: OAuthProvider, body: URLSearchParams, heldRefresh: string | null = null): Promise<OAuthTokens> {
     const target = new URL(provider.tokenUrl);
     await this.policy.assertAllowed(target, "sign-in address");
+    assertHealthCurrent();
     if (provider.clientSecret) body.set("client_secret", provider.clientSecret);
     const response = await this.fetchImpl(target, { method: "POST", redirect: "error",
       headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
-      body: body.toString(), signal: AbortSignal.timeout(20000) });
+      body: body.toString(), signal: healthSignal(AbortSignal.timeout(20000))! });
+    assertHealthCurrent();
     if (!response.ok) throw new Error(`The sign-in service answered ${response.status}`);
     const read = readTokens(await response.json());
     const tokens = { ...read, refreshToken: read.refreshToken ?? heldRefresh };
+    assertHealthCurrent();
     await this.save(provider, tokens);
     return tokens;
   }
@@ -162,12 +166,16 @@ export class OAuthConnections {
   private async save(provider: OAuthProvider, tokens: OAuthTokens): Promise<void> {
     this.secrets.scrubber.remember(oauthSecretName(provider.id), tokens.accessToken);
     if (tokens.refreshToken) this.secrets.scrubber.remember(`${oauthSecretName(provider.id)}_REFRESH`, tokens.refreshToken);
-    await this.secrets.put(this.owner, "default", oauthSecretName(provider.id), JSON.stringify(tokens));
+    const write = () => this.secrets.put(this.owner, "default", oauthSecretName(provider.id), JSON.stringify(tokens));
+    const check = currentHealthCheck();
+    if (check) await check.writeOwnCredential(this.owner, "default", oauthSecretName(provider.id), write);
+    else await write();
   }
   /** The saved tokens for a connection, or null when it has never been signed in. */
   async saved(id: string): Promise<OAuthTokens | null> {
     const name = oauthSecretName(id);
     const values = await this.secrets.resolve(this.owner, "default", [name], { purpose: `sign-in ${id}` }).catch(() => null);
+    assertHealthCurrent();
     if (!values?.[name]) return null;
     const saved = StoredTokensSchema.safeParse(JSON.parse(values[name]) as unknown);
     if (!saved.success) return null;

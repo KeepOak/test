@@ -6,7 +6,8 @@ import type { ToolLister } from "../preset-moves.js";
 /**
  * Q50: a settings request in the owner's own words ("turn the wake word on", "switch off the
  * board") is matched against the catalogue before anything is planned. When the words fit more
- * than one setting, or none, the answer is one question for the owner and no plan at all. When they
+ * than one setting, the answer is one question for the owner and no plan at all; when they fit none, they
+ * were not a settings request, and the model answers the owner itself (see noMatchNote). When they
  * fit exactly one, the answer is the exact before and after `changesFor` works out, with anything
  * already as asked left out.
  */
@@ -131,9 +132,8 @@ function listed(names: string[]): string {
   return quoted.length < 2 ? quoted.join("") : `${quoted.slice(0, -1).join(", ")} or ${quoted[quoted.length - 1]}`;
 }
 
-/** One question for the owner, naming what the words could mean. */
-export function questionFor(request: string, found: readonly Candidate[]): string {
-  if (!found.length) return `I could not find a setting that matches "${request.slice(0, 80)}". Which setting do you mean?`;
+/** One question for the owner, naming the settings the words could mean (two or more). */
+export function questionFor(found: readonly Candidate[]): string {
   const shown = found.slice(0, 5).map(nameOf);
   if (found.length > shown.length) return `That could be ${found.length} settings, such as ${listed(shown)}. Which one do you mean?`;
   return `That could be more than one setting. Do you mean ${listed(shown)}?`;
@@ -165,15 +165,26 @@ function factsWords(field: FieldSpec): string {
   return ` It can be from ${range.min} to ${range.max}${words}.${field.note ? ` ${field.note}` : ""}`;
 }
 type Preview = { setting: string; name: string; label: string; from: Value; to: Value; lessCareful: boolean; looser?: string; pinned: boolean };
+type MissingCapability = { tool: "seasons.request_setting"; request: string; value?: Value; note: string };
 export type Clarified =
-  | { status: "ask"; question: string; choices: Choice[]; planned: false;
-      missingCapability?: { tool: "seasons.request_setting"; request: string; note: string } }
+  | { status: "ask"; question: string; choices: Choice[]; planned: false }
+  | { status: "no-match"; note: string; choices: []; planned: false; missingCapability?: MissingCapability }
   | { status: "ready"; setting: string; preview: Preview[]; useTool: "settings.change" | "settings.loosen" }
   | { status: "unchanged"; setting: string; note: string; refused: string[] };
 
 /**
- * What a request in the owner's words comes to: one question when it fits several settings or none
- * (nothing is planned then), otherwise the exact change for the one setting it fits.
+ * Words that name no setting are not a settings request: most often they are the owner talking (a question, a complaint,
+ * or two messages run together), and a canned "Which setting do you mean?" put to them in reply is not an answer. So no
+ * match hands the turn back to the model, as Codex CLI, Claude Code and OpenClaw hand any line that is not an explicit
+ * command to the agent, and never becomes a question for the owner.
+ */
+const noMatchNote = "These words name none of Branch's settings, so nothing was matched or planned. Do not ask the owner which setting they mean "
+  + "because of this: answer their message yourself. If they did ask to change a setting, look it up with settings.list (search one or two "
+  + "words) and use its id with settings.change or settings.loosen.";
+
+/**
+ * What a request in the owner's words comes to: one question when it fits several settings, no match when it
+ * fits none (nothing is planned either way), otherwise the exact change for the one setting it fits.
  */
 export function clarifyRequest(store: Store, owner: string, input: { request: string; value?: Value | undefined }, tools?: ToolLister): Clarified {
   const asked = input.value ?? spokenValue(input.request);
@@ -181,9 +192,11 @@ export function clarifyRequest(store: Store, owner: string, input: { request: st
   const choices = (list: readonly Candidate[]): Choice[] => list.slice(0, 20)
     .map((one) => ({ setting: idOf(one), name: nameOf(one), value: currentValue(store, owner, one.spec, one.field), ...numberFacts(one.field) }));
   if (negated(input.request)) return { status: "ask", question: negatedQuestion(store, owner, found), choices: choices(found), planned: false };
-  if (found.length !== 1) return { status: "ask", question: questionFor(input.request, found), choices: choices(found), planned: false,
-    ...(!found.length && namingWords(input.request).length ? { missingCapability: { tool: "seasons.request_setting" as const, request: input.request,
-      note: "If the owner asked to add this missing setting, preserve their task with this tool. A failed name match alone does not authorize building it; check settings.list first." } } : {}) };
+  if (!found.length) return { status: "no-match", note: noMatchNote, choices: [], planned: false,
+    ...(namingWords(input.request).length && tools?.inventory().some((tool) => tool.name === "seasons.request_setting") ? { missingCapability: { tool: "seasons.request_setting" as const, request: input.request,
+      ...(asked !== undefined ? { value: asked } : {}),
+      note: "If the owner explicitly asked to add this missing setting, check settings.list first, then call this tool with request, the desired value and the original task. Preserve any supplied value, including false or zero. If no value was supplied, obtain it before filing the request. A failed name match alone does not authorize building it." } } : {}) };
+  if (found.length !== 1) return { status: "ask", question: questionFor(found), choices: choices(found), planned: false };
   const [only] = found as [Candidate];
   const setting = idOf(only), now = currentValue(store, owner, only.spec, only.field);
   if (asked === undefined)

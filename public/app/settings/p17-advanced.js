@@ -3,13 +3,13 @@
    Read links you paste is POST /api/web-pages { mode } (web.page and web.crawl); Smart home is
    POST /api/personal/switch { part: "home-control", mode }; GitLab is POST /api/gitlab { mode }, with its connection
    (a token kept in the locker) in the row under it (settings/gitlab.js). Deep research, exact document edits and tables
-   from spreadsheets have no switch of their own in the engine, so those stay greyed.
+   from spreadsheets have no switch of their own in the engine, so they are words (rows15.js fact15).
    The Memory and Health rows have no readout in the window yet (greyed). */
 import { render } from "../core/dom.js";
 import { api } from "../core/api.js";
 import { markLive } from "../core/features.js";
 import { toast } from "../core/ui.js";
-import { id15, sw15 } from "./rows15.js";
+import { id15, sw15, fact15 } from "./rows15.js";
 import { demos17, demo17, sec17 } from "./rows17.js";
 import { t } from "../../i18n.js";
 import { G, gitlabRow, initGitlab, loadGitlab } from "./gitlab.js";
@@ -36,9 +36,9 @@ export function sections17(lv) {
   if (lv < 1) return "";
   let html = sec17(t("window.settings.p17-advanced.what-it-can-do"),
     sw("Read links you paste", "Opens the page and reads it, including PDFs and videos with captions.")
-    + sw("Deep research reports", "Many searches, then a brief with numbered sources.")
-    + sw("Edit documents exactly", "Word, Excel and PowerPoint changes that leave everything else as it was.")
-    + sw("Tables and charts from spreadsheets", "Read-only questions over CSV and Excel files, answered with a chart.")
+    + fact15("Deep research reports", "f15-deep-research-reports")
+    + fact15("Edit documents exactly", "f15-edit-documents-exactly")
+    + fact15("Tables and charts from spreadsheets", "f15-tables-and-charts-from-spreadsheets")
     + sw("GitLab", "Issues and merge requests, like the GitHub connection.") + gitlabRow()
     + sw("Smart home", "Lights, heating and sensors through Home Assistant.")
     + demo17("claims"), t("window.settings.p17-advanced.model-tools-each-one-is-used"));

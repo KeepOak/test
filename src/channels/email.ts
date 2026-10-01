@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js";
 import { ImapClient, sendMail, type MailFile, type MailMessage, type MailServer } from "./mail-client.js";
-import { checkSender } from "./mail-auth.js";
+import { authenticatedSender } from "./mail-auth.js";
 
 /**
  * Email as a chat channel: the assistant checks the inbox every so often, answers each unread
@@ -21,11 +21,10 @@ export interface EmailOptions {
   pollMs?: number;
   /** Most messages to answer in one look, so a full inbox cannot flood the assistant. */
   batch?: number;
-  /**
-   * The name the owner's own mail server writes at the start of its Authentication-Results header (for Gmail,
-   * mx.google.com). When set, only that server's verdict is read; otherwise the top header's server is trusted.
-   */
-  authservId?: string;
+  /** Require receiving-server DMARC or aligned SPF/DKIM results before routing a sender; default true. */
+  requireAuthenticatedSender?: boolean;
+  /** Exact authserv-ids the receiving mailbox stamps; only the first header is considered. */
+  trustedAuthservIds?: string[];
 }
 /** What is needed to answer a message, kept out of the delivery ledger because ids are long. */
 interface Thread { address: string; messageId: string; references: string; subject: string }
@@ -89,15 +88,13 @@ export class EmailAdapter implements ChannelAdapter {
   private inbound(mail: MailMessage): InboundMessage | null {
     const files = mail.attachments ?? [];
     if (!mail.from || (!mail.text && !files.length) || mail.from === this.options.address.toLowerCase()) return null;
+    if (this.options.requireAuthenticatedSender !== false
+      && !authenticatedSender(mail.from, mail.authenticationResults, this.options.trustedAuthservIds)) return null;
     const chatId = handle(mail.from, "who");
     const messageId = handle(mail.messageId || `<${mail.seq}@branch>`, "msg");
-    // From: is written by the sender. Only the receiving server's Authentication-Results can say it is true; without a
-    // pass for the From domain the mail is from a stranger, whatever address it shows (src/channels/mail-auth.ts).
-    const verified = checkSender(mail.authResults ?? [], mail.from, this.options.authservId).authenticated;
-    this.remember(chatId, messageId, mail, verified);
+    this.remember(chatId, messageId, mail);
     return {
       channel: this.id, chatId, chatKind: "direct", senderId: chatId, senderName: mail.fromName || mail.from,
-      ...(verified ? {} : { unverifiedSender: true }),
       // Quoted history below the reply marker is not part of the new question.
       text: mail.text.split(/\n>*\s*On .+ wrote:\n/)[0]!.trim() || mail.text,
       addressed: true, messageId,
@@ -109,11 +106,10 @@ export class EmailAdapter implements ChannelAdapter {
     };
   }
   /** Keeps the details a reply needs, bounded so a busy inbox cannot grow this without limit. */
-  private remember(chatId: string, messageId: string, mail: MailMessage, verified: boolean): void {
+  private remember(chatId: string, messageId: string, mail: MailMessage): void {
     const references = `${mail.references} ${mail.messageId}`.trim();
     this.threads.set(messageId, { address: mail.from, messageId: mail.messageId, references, subject: mail.subject });
-    // An unverified mail may be answered in its own thread, but cannot move the person's ongoing thread onto it.
-    if (verified || !this.threads.has(chatId)) this.threads.set(chatId, { address: mail.from, messageId: mail.messageId, references, subject: mail.subject });
+    this.threads.set(chatId, { address: mail.from, messageId: mail.messageId, references, subject: mail.subject });
     while (this.threads.size > 400) this.threads.delete(this.threads.keys().next().value!);
   }
   async send(chatId: string, text: string, replyToMessageId?: string): Promise<string | undefined> {

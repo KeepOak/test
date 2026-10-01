@@ -133,6 +133,9 @@ export const thisComputerSettings: readonly string[] = [
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
   // no backup carries, so the account stays with it.
   "gitlab-account",
+  // SELF-021: which GitHub account the device sign-in connected and the locker name of its token; the token itself is in
+  // the locker, which no backup carries, so the account stays with it.
+  "github.device.account",
   // NAS 49b183b's unchecked class: this computer's OS sandbox, whether its emergency stop is pressed (letting it go
   // needs the authenticator code, which a replacing restore would skip), and which tools need that code.
   "os-sandbox", "safety-emergency-stop", "safety-code-approvals-setup",
@@ -154,7 +157,7 @@ export const thisComputerSettings: readonly string[] = [
   // NAS dd7589d: running code names its Python program in full, the same class. And the records Branch writes about
   // its own state here, which the catalogue never touches either: the switch migration and which chat service is
   // being turned away (a file must never say a service is fine while it is refused).
-  "code-run", "feature-switches-migration", "webhook-waits",
+  "code-run", "feature-switches-migration", "policy-commands-allow-migration", "webhook-waits",
   // NAS 360099c: a program on this disk and its arguments, which the decision judge starts as they are, and the folder
   // the vector store makes its database in. Both only mean something on this computer.
   "jev-decisions", "vector-store",
@@ -197,7 +200,18 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   "memory-snapshot:",
   // The programs each Trunk has opened on this computer (src/desktop-app-ask.ts): the record stands in for the owner's
   // yes to opening them again, so a file must never write one.
-  "desktop-apps-used:"];
+  "desktop-apps-used:",
+  // RES-408: the last check of a personal sign-in (src/personal/signin.ts): this computer's own recent result, gone in
+  // 15 minutes; a file putting one in place would show a connection as working that was never checked here.
+  "personal-connection-health:",
+  // CHAT-081: a /topic request's outcome, kept so an uncertain Telegram write is never sent twice; this computer's chat record.
+  "topic-request:",
+  // CHAT-082: a chat's idle and age limits, set from the owner's own direct chat; this computer's chat record.
+  "chat-session-lifecycle:",
+  // CHAT-202: a chat's reply tone, chosen from the owner's own direct chat; this computer's chat record.
+  "chat-personality:",
+  // CHAT-041: how much of each step one chat is shown (/verbose), set from that chat here.
+  "chat-steps-detail:"];
 /** The restore's own list of rows waiting for the owner's yes (src/restore-held.ts): about this computer, so it stays too. */
 export const restoreHeldKey = "restore-held";
 /**
@@ -259,7 +273,9 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   "knowledge", "live-scoring", "local-models", "mcp-connections", "mcp-sharing", "media", "memory-consolidation",
   "memory-retrieval", "metering", "model-profiles", "models", "orchestration", "page-notes", "page-notes:list",
   "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults", "codex-models",
-  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages"];
+  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages",
+  // wire-greyed: where web searches go and the name of the secret sent with them.
+  "web-search"];
 /** One row per automatic job: a loop, a heartbeat, a standing order or a procedure runs its words by itself (as a schedule does, Q168 C). */
 const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "autonomy-loop:", "autonomy-heartbeat:", "autonomy-order:", "autonomy-procedure:",
   // NAS f30facf: each outside service the assistant may call, by its address.
@@ -270,6 +286,8 @@ const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "auto
   // Q230: a chat made known for sends (and #588, which Trunk a chat, group or topic reaches: `channel-route:`), a plan the next message carries on, a project's every-turn instructions and
   // branch, a registry address, a conversation's connection, and a skill's trial, origin and package.
   "channel-session:", "channel-route:", "plan:", "project:", "registry-index:", "session-model:", "skill-candidate:", "skill-draft:",
+  // CHAT-096: a chat's /voice choice; "always" speaks every reply there, which a paid speech service charges for.
+  "channel-voice:",
   "skill-origin:", "skill-package:",
   // #890: an API skill learned from a browser recording names an outside address and the request it sends.
   "captured-api-skill:",

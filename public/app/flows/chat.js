@@ -4,8 +4,8 @@
    live only in this module until they are sent, are never drawn back, and are cleared at once. */
 
 import { $, esc } from "../core/dom.js";
-import { openDlg, closeDlg, toast, ic } from "../core/ui.js";
-import { S, E, refresh } from "../core/state.js";
+import { openDlg, closeDlg, dialog, toast, ic } from "../core/ui.js";
+import { S, E, refresh, ownerHere, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -15,6 +15,9 @@ import { t } from "../../i18n.js";
 import { manage17d, fixNote17d } from "./chatapps17d.js"; // pass 17 part D §8
 
 let vals = {};
+let wizardRequest = 0;
+/* Dialogs the owner closed (the close button or Escape): a wizard still being read must not open after one. */
+let dialogsClosed = 0;
 /* owner-dm-signin: the App lock PIN typed to name the sender as the owner's own; sent once with the approval, then cleared. */
 let pin = "";
 /* Apps whose servers vouch for who sent each message (src/channels/owner-commands.ts vouchedSenderKinds), as far as the
@@ -22,14 +25,14 @@ let pin = "";
 const VOUCHED = ["telegram", "discord", "slack"];
 const FAMILY = { core: "window.flows.chw.popular", chat: "window.flows.chw.work-chat" };
 /* The steps are named in English in the code (BODIES, the checks below); these are the words each one shows. */
-const STEP_WORD = { Create: "action.create", Paste: "window.flows.chw.paste", Check: "safety.scan.run", Pair: "pair.step.pair", Save: "action.save" };
+const STEP_WORD = { Create: "action.create", Paste: "window.flows.chw.paste", Check: "safety.scan.run", Link: "window.flows.chw.link", Pair: "pair.step.pair", Save: "action.save" };
 
 const inputs = (c) => [...(c.fields ?? []).map((f) => ({ key: f.name, what: f.what, optional: f.optional, secret: false })),
   ...(c.paste ?? []).map((f) => ({ key: f.secret, what: f.what, optional: f.optional, secret: true }))];
 const filled = (c) => inputs(c).every((f) => f.optional || (vals[f.key] ?? "").trim());
 
 function stepsOf(c) {
-  return [c.create?.url || c.steps?.length || c.create?.how ? "Create" : null, inputs(c).length ? "Paste" : null, c.hasCheck || c.noCheck ? "Check" : null, c.pairing ? "Pair" : null, "Save"].filter(Boolean);
+  return [c.create?.url || c.steps?.length || c.create?.how ? "Create" : null, inputs(c).length ? "Paste" : null, c.hasCheck || c.noCheck ? "Check" : null, c.link === "bridge" ? "Link" : null, c.pairing ? "Pair" : null, "Save"].filter(Boolean);
 }
 
 function create(c) {
@@ -84,42 +87,76 @@ function whoAnswers() {
 
 function save(c, w) {
   const who = whoAnswers();
-  const may = [t("window.flows.chw.only-me"), t("window.flows.chw.approved"), t("window.flows.chw.workspace")].map((l, i) => `<button type="button" aria-pressed="${i === 0}" data-act="chw-may">${l}</button>`).join("");
-  /* Telegram always keeps forum topics apart (src/channels/telegram.ts topicAddress) and always passes photos and files on
-     to the task; the engine has no switch for either, so both are drawn on and greyed. */
-  const tg = c.id === "telegram" ? `<div class="tg15"><div class="ctl"><b>${t("window.flows.chw.topics")}</b><input class="sw" type="checkbox" id="tg-topics15" checked aria-label="${t("window.flows.chw.topics")}" data-sw="set"><small>${t("window.flows.chw.topics-hint")}</small></div><div class="ctl"><b>${t("window.flows.chw.media")}</b><input class="sw" type="checkbox" id="tg-media15" checked aria-label="${t("window.flows.chw.media")}" data-sw="set"><small>${t("window.flows.chw.media-hint")}</small></div></div>` : ""; // state: both are how the Telegram adapter always works
+  const choice = w.dmPolicyChoices?.find((one) => one.channel === (w.result?.channel ?? w.channelId));
+  const may = ["owner", "approved"].map((value) => `<button type="button" data-act="chw-may" data-v="${value}" aria-pressed="${choice?.policy === value}" ${!choice || w.maySaving || !ownerHere() || (value === "owner" && !choice.ownerEligible) ? "disabled" : ""}>${t(value === "owner" ? "window.flows.chw.only-me" : "window.flows.chw.approved")}</button>`).join("")
+    + `<button type="button" disabled aria-pressed="false">${t("window.flows.chw.workspace")}</button>`;
+  /* Telegram keeps topics apart. Media intake uses the owner's existing channels/intake endpoint. */
+  const tg = c.id === "telegram" ? `<div class="tg15"><div class="ctl"><b>${t("window.flows.chw.topics")}</b><input class="sw" type="checkbox" id="tg-topics15" checked aria-label="${t("window.flows.chw.topics")}" data-sw="set"><small>${t("window.flows.chw.topics-hint")}</small></div><div class="ctl"><b>${t("window.flows.chw.media")}</b><input class="sw" type="checkbox" id="tg-media15" ${w?.intake?.telegramMedia !== false ? "checked" : ""} aria-label="${t("window.flows.chw.media")}" data-sw="tg-media"><small>${t("window.flows.chw.media-hint")}</small></div></div>` : ""; // topic separation remains fixed
   return `<div class="chw-ok12">${ic("check", "s")}<span><b>${t("window.flows.chw.ready", { name: esc(c.name) })}</b><small>${t("window.flows.chw.choose")}</small></span></div>
     <div class="fld"><span>${t("window.flows.chw.who-answers", { name: esc(c.name) })}</span><span class="seg">${who}</span></div>
-    <div class="ctl"><b>${t("window.flows.chw.who-may")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.chw.who-may")}">${may}</span></span><small>${t("window.flows.chw.no-answer")}</small></div>${c.groups ? `<div class="status chgroups"><div><b>${t("window.p17d.groups")}</b><p>${esc(c.groups)}</p></div></div>` : ""}${tg}${w?.result ? liveLine(c, w.result) : ""}${w?.connected ? manage17d(c, w.health) : ""}${c.setUpHere ? `<div class="acts"><button class="btn ghost sm" type="button" data-act="chw-remove">${t("window.flows.chw.remove", { name: esc(c.name) })}</button></div>` : ""}`; // pass 17 part D §8: the app's own page
+    <div class="ctl"><b>${t("window.flows.chw.who-may")}</b><span class="right"><span class="seg" role="group" aria-label="${t("window.flows.chw.who-may")}">${may}</span></span><small>${t("window.flows.chw.dm-policy-hint")}</small></div>${c.groups ? `<div class="status chgroups"><div><b>${t("window.p17d.groups")}</b><p>${esc(c.groups)}</p></div></div>` : ""}${tg}${w?.result ? liveLine(c, w.result) : ""}${w?.connected ? manage17d(c, w.health) : ""}${c.setUpHere ? `<div class="acts"><button class="btn ghost sm" type="button" data-act="chw-remove">${t("window.flows.chw.remove", { name: esc(c.name) })}</button></div>` : ""}`; // pass 17 part D §8: the app's own page
 }
 
-const BODIES = { Create: create, Paste: paste, Check: check, Pair: pair, Save: save };
+/* The Link step for an app linked through a bridge on this computer (WhatsApp with a personal number): the code the
+   bridge makes, polled every few seconds from POST /api/channel-setup/<id>/link while this step is open. */
+function link(c, w) {
+  const l = w.link;
+  if (w.error) return `<div class="status" role="alert"><span class="sdot bad"></span><div><p>${esc(w.error)}</p></div></div>`;
+  if (l?.state === "linked") return `<div class="chw-ok12" role="status">${ic("check", "s")}<span><b>${t("window.flows.chw.link-done", { number: esc(l.name || l.number || "") })}</b></span></div>`;
+  if (l?.state === "scan") return `<div class="chw-create12"><div><p>${t("window.flows.chw.link-scan")}</p></div><div class="chw-qr12">${l.qr ? qr(l.qr, 200) : l.image ? `<img src="data:image/png;base64,${esc(l.image)}" width="200" height="200" alt="${t("window.core.qr.qr-code")}">` : ""}</div></div>`;
+  return `<div class="chw-ok12 run12"><span class="spin12"></span><span><b>${t("window.flows.chw.link-starting")}</b></span></div>`;
+}
+let linking = null;
+async function pollLink(w) {
+  clearTimeout(linking);
+  if (S.chw !== w || stepsOf(w.recipe)[w.step] !== "Link") return;
+  try { w.link = await api(`channel-setup/${encodeURIComponent(w.id)}/link`, {}); w.error = ""; }
+  catch (error) { w.error = error.message; }
+  if (S.chw !== w || stepsOf(w.recipe)[w.step] !== "Link") return;
+  draw();
+  if (w.link?.state !== "linked") linking = setTimeout(() => pollLink(w), 4000);
+}
+
+const BODIES = { Create: create, Paste: paste, Check: check, Link: link, Pair: pair, Save: save };
 
 function draw() {
   const w = S.chw, c = w?.recipe;
   if (!c) return;
   const steps = stepsOf(c), cur = steps[Math.min(w.step, steps.length - 1)];
   const dots = `<div class="chw-steps12">${steps.map((s, i) => `<span class="${i < w.step ? "done" : i === w.step ? "now" : ""}"><em>${i < w.step ? "✓" : i + 1}</em>${t(STEP_WORD[s])}</span>`).join("")}</div>`;
-  const canNext = !c.unavailableReason && (cur === "Paste" ? filled(c) : cur === "Check" ? !!w.result || (!c.hasCheck && !w.error) : cur === "Pair" ? /^\d{6}$/.test(w.code) : true);
+  const canNext = !c.unavailableReason && (cur === "Paste" ? filled(c) : cur === "Check" ? !!w.result || (!c.hasCheck && !w.error) : cur === "Link" ? w.link?.state === "linked" : cur === "Pair" ? /^\d{6}$/.test(w.code) : true);
   const back = w.step ? `<button class="btn ghost" type="button" data-act="chw-back">${t("action.back")}</button>` : `<button class="btn ghost" type="button" data-act="dlg-close">${t("first-run-steps.restore-no")}</button>`;
   const next = cur === "Save" ? `<button class="btn pri" type="button" data-act="chw-save">${t("action.save")}</button>` : `<button class="btn pri" type="button" data-act="chw-next" ${canNext ? "" : "disabled"}>${cur === "Pair" ? t("action.approve") : t("window.flows.chw.continue")}</button>`;
   const head = `<div class="chw-head12">${logo(c.id, c.name, 40)}<span><b>${esc(c.name)}</b><small>${t(FAMILY[c.family] ?? "window.flows.chw.more-apps")}${c.app?.name ? " · " + esc(c.app.name) : ""}</small></span></div>`;
+  const warning = c.warning ? `<div class="status" role="alert"><span class="sdot bad"></span><div><p>${esc(c.warning)}</p></div></div>` : "";
   const prerequisites = `<p class="hint">${esc(c.prerequisites ?? "")}</p>${c.unavailableReason ? `<p role="alert">${esc(c.unavailableReason)}</p>` : ""}`;
-  openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${prerequisites}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
+  w.dialog = openDlg({ title: w.connected ? t("window.flows.chw.manage", { name: c.name }) : t("window.flows.chw.set-up", { name: c.name }), wide: true, body: `${head}${warning}${prerequisites}${dots}<div class="chw-body12">${BODIES[cur](c, w)}</div>`, foot: back + next });
   if (cur === "Pair") setTimeout(() => $('.code12 input[value=""]')?.focus(), 30);
 }
 
+/* The window is not behind the App lock. */
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
+
+/* The wizard opens only for what asked for it: the newest open, by the same person, on the same page, with the window
+   unlocked and no dialog opened, closed or replaced since. Checked after every read, so a late setup or health answer
+   never shows over newer work or the lock. */
 export async function openChatWizard(id, at = null) {
+  const profile = activeId(), view = S.view, request = ++wizardRequest, opened = dialog(), closed = dialogsClosed;
+  const opening = () => request === wizardRequest && ownerHere() && activeId() === profile && unlocked() && S.view === view
+    && dialog() === opened && dialogsClosed === closed;
+  if (!opening()) return;
   vals = {};
   let recipe, live;
   try {
     [recipe, live] = await Promise.all([api(`channel-setup/${encodeURIComponent(id)}`), api("channels").catch(() => ({}))]);
-  } catch (error) { toast(error.message); return; }
+  } catch (error) { if (opening()) toast(error.message); return; }
+  if (!opening()) return;
   const here = (live.channels ?? []).find((c) => c.id === id || c.kind === id), connected = !!here;
   const ownerNamed = live.ownerNamed !== false, pinSet = !ownerNamed && (await api("lock").catch(() => ({}))).pinSet === true;
+  if (!opening()) return;
   // pass 17 part D §8: "Paste a new token" opens a connected app at Paste, saying why.
   const step = at ? Math.max(0, stepsOf(recipe).indexOf(at)) : connected ? stepsOf(recipe).length - 1 : 0;
-  S.chw = { id, recipe, connected, health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
+  S.chw = { id, recipe, intake: live.intake ?? {}, connected, profile, view, channelId: here?.id, dmPolicyChoices: live.dmPolicyChoices ?? [], health: here?.health ?? null, fixing: connected && at === "Paste", step, result: null, error: "", code: "", ownerNamed, pinSet, mine: false };
   draw();
 }
 
@@ -158,37 +195,100 @@ async function next() {
   const w = S.chw, steps = stepsOf(w.recipe), cur = steps[w.step];
   if (w.recipe.unavailableReason) { toast(w.recipe.unavailableReason); return; }
   if (cur === "Pair" && !(await approve(w))) return;
+  if (S.chw !== w) return;
   w.step = Math.min(w.step + 1, steps.length - 1);
   if (steps[w.step] === "Check") { w.result = null; w.error = ""; draw(); await runCheck(w); return; }
+  if (steps[w.step] === "Link") { w.link = null; w.error = ""; draw(); await pollLink(w); return; }
+  if (steps[w.step] === "Save" && !(await loadDmPolicies(w))) return;
   draw();
+}
+
+/* The open wizard is still the one on screen: same person and page, window unlocked, its own dialog still open. */
+function currentWizard(w, dialog) {
+  return S.chw === w && ownerHere() && activeId() === w.profile && unlocked() && S.view === w.view && w.dialog === dialog && dialog?.isConnected;
+}
+
+async function loadDmPolicies(w) {
+  const dialog = w.dialog;
+  try {
+    const live = await api("channels");
+    if (!currentWizard(w, dialog)) return false;
+    w.dmPolicyChoices = live.dmPolicyChoices ?? [];
+    return true;
+  } catch (error) { if (currentWizard(w, dialog)) toast(error.message); return false; }
+}
+
+async function saveDmPolicy(el) {
+  const w = S.chw, channel = w?.result?.channel ?? w?.channelId;
+  if (!w || !channel || !currentWizard(w, w.dialog) || w.maySaving || !["owner", "approved"].includes(el.dataset.v)) return;
+  w.maySaving = true;
+  draw();
+  const dialog = w.dialog;
+  try {
+    const { intake } = await api("channels/intake", { dmPolicies: { [channel]: el.dataset.v } });
+    if (!currentWizard(w, dialog)) return;
+    const choice = w.dmPolicyChoices.find((one) => one.channel === channel);
+    if (choice) choice.policy = intake.dmPolicies[channel] ?? "approved";
+  } catch (error) { if (currentWizard(w, dialog)) toast(error.message); }
+  finally {
+    w.maySaving = false;
+    if (currentWizard(w, dialog)) draw();
+  }
+}
+
+/* Closes the wizard, and answers a check that holds while nothing newer happened since: the same person on the same
+   page, unlocked, no newer wizard started and no dialog opened or closed. What follows the page's refresh (the toast)
+   shows only then, so it never lands behind the lock, on another page or profile, or over newer work. */
+function closeWizard(w) {
+  S.chw = null;
+  vals = {};
+  closeDlg();
+  const profile = w.profile, view = S.view, request = wizardRequest, closed = dialogsClosed;
+  return () => ownerHere() && activeId() === profile && unlocked() && S.view === view && wizardRequest === request
+    && dialogsClosed === closed && !dialog();
 }
 
 /* The toast says what really happened: connected, listening for an app that posts to Branch, or saved but not connected. */
 async function finish() {
-  const name = S.chw.recipe.name, r = S.chw.result;
-  S.chw = null;
-  vals = {};
-  closeDlg();
+  const w = S.chw;
+  if (!w) return;
+  const name = w.recipe.name, r = w.result, still = closeWizard(w);
   await refresh().catch(() => {});
-  toast(r?.connected === false ? t("window.flows.chw.saved-not-connected", { name }) : r?.address ? t("window.flows.chw.listening", { name }) : t("window.flows.chw.connected", { name }));
+  if (still()) toast(r?.connected === false ? t("window.flows.chw.saved-not-connected", { name }) : r?.address ? t("window.flows.chw.listening", { name }) : t("window.flows.chw.connected", { name }));
 }
 
 /* Disconnects an app set up here (DELETE /api/channel-setup/<id>); what was pasted stays in the locker. */
 async function remove() {
-  const w = S.chw;
-  if (!w) return;
+  const w = S.chw, dialog = w?.dialog;
+  if (!w || !currentWizard(w, dialog)) return;
   try { await api(`channel-setup/${encodeURIComponent(w.id)}`, undefined, "DELETE"); }
-  catch (error) { toast(error.message); return; }
-  S.chw = null;
-  vals = {};
-  closeDlg();
+  catch (error) { if (currentWizard(w, dialog)) toast(error.message); return; }
+  // The app is disconnected either way; only the wizard that asked is closed, never a newer one or one behind the lock.
+  if (!currentWizard(w, dialog)) return;
+  const still = closeWizard(w);
   await refresh().catch(() => {});
-  toast(t("window.flows.chw.removed", { name: w.recipe.name }));
+  if (still()) toast(t("window.flows.chw.removed", { name: w.recipe.name }));
+}
+
+/* The switch saves at once. Its answer is drawn, or its error shown, only on the wizard that asked: the same person on the
+   same page, unlocked, with the same dialog still open. */
+async function saveMedia(el, w) {
+  const before = w.intake?.telegramMedia !== false, profile = activeId(), view = S.view, opened = dialog();
+  const still = () => S.chw === w && ownerHere() && activeId() === profile && S.view === view && dialog() === opened
+    && !document.getElementById("app")?.classList.contains("locked-b17");
+  el.disabled = true;
+  try {
+    const saved = await api("channels/intake", { telegramMedia: el.checked });
+    if (still()) w.intake = saved.intake ?? w.intake;
+  } catch (error) { el.checked = before; if (still()) toast(error.message); }
+  finally { el.disabled = false; }
+  if (still()) draw();
 }
 
 function onInput(e) {
   const el = e.target, w = S.chw;
   if (!w) return;
+  if (el.dataset.sw === "tg-media") { void saveMedia(el, w); return; }
   if (el.dataset.chf) {
     vals[el.dataset.chf] = el.value;
     const btn = $('.dlg [data-act="chw-next"]');
@@ -207,10 +307,11 @@ function onInput(e) {
 }
 
 export function init() {
-  markLive(["sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove"]); // the eye shows only what the owner just pasted, never a saved secret
+  markLive(["sw:tg-media15", "sw:chf", "sw:code", "sw:chw-mine", "sw:chw-pin", "ch-open", "chw-next", "chw-back", "chw-save", "chf-eye", "revfix17d", "chw-remove", "chw-may"]); // the eye shows only what the owner just pasted, never a saved secret
   on("ch-open", (el) => openChatWizard(el.dataset.v));
   on("revfix17d", () => openChatWizard(S.chw?.id ?? "telegram", "Paste")); // pass 17 part D §8: the app whose page this is
   on("chw-remove", () => remove());
+  on("chw-may", (el) => saveDmPolicy(el));
   on("chw-next", () => next());
   on("chw-back", () => { const w = S.chw; vals = {}; w.ask = (w.ask ?? 0) + 1; w.step = Math.max(0, w.step - 1); w.error = ""; w.result = null; draw(); });
   on("chw-save", () => finish());
@@ -224,5 +325,6 @@ export function init() {
     S.chw.code = digits;
     draw();
   });
-  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) { vals = {}; pin = ""; S.chw = null; } }, true);
+  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) { vals = {}; pin = ""; S.chw = null; dialogsClosed += 1; } }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && dialog()) dialogsClosed += 1; }, true); // main.js closes it on Escape
 }

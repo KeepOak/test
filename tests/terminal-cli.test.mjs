@@ -73,7 +73,7 @@ test("every row of the Hermes and OpenClaw table names a Branch command that exi
 
 test("bare branch opens the designed view in a terminal and leaves cleanly on Ctrl+D", async (t) => {
   const env = await workspace(t);
-  const child = spawn(process.execPath, ["dist/cli.js"], { env: { ...env, FORCE_TTY: "1", COLUMNS: "90", LINES: "26", COLORTERM: "truecolor" } });
+  const child = spawn(process.execPath, ["dist/cli.js"], { env: { ...env, FORCE_TTY: "1", COLUMNS: "100", LINES: "26", COLORTERM: "truecolor" } });
   let raw = "";
   child.stdout.on("data", (chunk) => { raw += chunk; });
   child.stderr.on("data", (chunk) => { raw += chunk; });

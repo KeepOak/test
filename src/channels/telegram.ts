@@ -1,12 +1,14 @@
 import { calledByName, type GroupReading } from "./addressing.js";
 import { z } from "zod";
 import { telegramMarkdown } from "./chat-markdown.js";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
+import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile, SendGate } from "./router.js"; // R17-C: OutgoingFile
 import { telegramEntities } from "./progress-render.js";
 import { isOggOpus } from "../voice-note.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
+import { telegramForwardContext, telegramPollContent, telegramStickerContent, telegramStickerSchema } from "./telegram-content.js";
+import { telegramLocationSchema, telegramLocationText, telegramVenueSchema } from "./telegram-location.js";
 
 /**
  * Telegram Bot API adapter using long polling. Text and media messages are delivered; a message is
@@ -46,8 +48,11 @@ const voiceSchema = z.object({
 }).passthrough();
 const mediaSchema = voiceSchema.extend({ file_unique_id: z.string().optional(), file_name: z.string().optional() });
 const messageSchema = z.object({
+  location: telegramLocationSchema.optional(),
+  venue: telegramVenueSchema.optional(),
   photo: z.array(mediaSchema).optional(),
   document: mediaSchema.optional(),
+  sticker: telegramStickerSchema.optional(),
   video: mediaSchema.optional(),
   message_id: z.number(),
   message_thread_id: z.number().int().positive().optional(),
@@ -200,17 +205,44 @@ export class TelegramAdapter implements ChannelAdapter {
   async setPresence(words: string): Promise<void> {
     await this.call("setMyShortDescription", { short_description: words.slice(0, 120) });
   }
-  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat): Promise<string | undefined> {
+  /** Hermes run_topics.py (MIT): require getMe's actual private-topic flag and sanitize the title. */
+  async createDirectTopic(address: string, title: string): Promise<string> {
+    const target = telegramTarget(address);
+    if (!Number.isSafeInteger(target.chat_id) || target.chat_id <= 0) throw new Error("Create a topic in your Telegram direct chat.");
+    const chat = z.object({ type: z.string() }).passthrough().parse(await this.call("getChat", { chat_id: target.chat_id }));
+    if (chat.type !== "private") throw new Error("Only private Telegram topics can be created from this command.");
+    const me = z.object({ has_topics_enabled: z.boolean().optional() }).passthrough().parse(await this.call("getMe", {}));
+    if (me.has_topics_enabled !== true) throw new Error("Enable forum topic mode for this bot in BotFather, then send /topic <name> again.");
+    const cleaned = title.replace(/\s+/g, " ").trim();
+    const characters = Array.from(cleaned);
+    if (!characters.length) throw new Error("Give the topic a name.");
+    const name = characters.length <= 120 ? cleaned : characters.slice(0, 117).join("").trimEnd() + "...";
+    const result = z.object({ message_thread_id: z.number().int().positive() }).passthrough()
+      .parse(await this.call("createForumTopic", { chat_id: target.chat_id, name }));
+    return topicAddress(target.chat_id, result.message_thread_id);
+  }
+  async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat, gate?: SendGate): Promise<string | undefined> {
     const body: Record<string, unknown> = { ...telegramTarget(chatId), ...rich(text, format),
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
     };
-    const result = await this.call("sendMessage", body).catch((error: unknown) => {
+    const result = await this.call("sendMessage", body, false, false, gate).catch((error: unknown) => {
       if (!entitiesRefused(error, body)) throw error;
       const { entities: _dropped, ...plain } = body;
-      return this.call("sendMessage", { ...plain, text });
+      return this.call("sendMessage", { ...plain, text }, false, false, gate);
     });
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
     return parsed.success ? String(parsed.data.message_id) : undefined;
+  }
+  /**
+   * Hermes Agent's private-chat send_draft contract (MIT), adapted to Branch's topic handles and plain preview.
+   * Reusing the nonzero id animates the preview; it has no message id and never replaces the final sendMessage.
+   */
+  async sendDraft(chatId: string, draftId: number, text: string, gate?: SendGate): Promise<void> {
+    const target = telegramTarget(chatId);
+    if (!Number.isSafeInteger(target.chat_id) || target.chat_id <= 0 || !Number.isSafeInteger(draftId) || draftId <= 0)
+      throw new Error("Telegram drafts require a private chat and a positive draft id");
+    const result = await this.call("sendMessageDraft", { ...target, draft_id: draftId, text: text.slice(0, 3500) }, false, false, gate);
+    if (result !== true) throw new Error("Telegram refused the draft preview");
   }
   /** UP-CHAT-005: a spoken reply is made as OGG/Opus for this app, so it shows as a voice bubble (see `sendVoice`). */
   readonly voiceNoteType = "audio/ogg";
@@ -432,13 +464,13 @@ export class TelegramAdapter implements ChannelAdapter {
       chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), reaction: [{ type: "emoji", emoji }],
     });
   }
-  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat, gate?: SendGate): Promise<void> {
     try {
       const body: Record<string, unknown> = { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), ...rich(text, { spans: format?.spans, plain: format?.plain }) };
-      await this.call("editMessageText", body).catch((error: unknown) => {
+      await this.call("editMessageText", body, false, false, gate).catch((error: unknown) => {
         if (!entitiesRefused(error, body)) throw error;
         const { entities: _dropped, ...plain } = body;
-        return this.call("editMessageText", { ...plain, text });
+        return this.call("editMessageText", { ...plain, text }, false, false, gate);
       });
     } catch (error) {
       // Sending the same words again is refused with this; the message already says them.
@@ -446,14 +478,17 @@ export class TelegramAdapter implements ChannelAdapter {
     }
   }
   /** Removes a message the bot sent (Telegram allows it for 48 hours; an older one stays). */
-  async deleteMessage(chatId: string, messageId: string): Promise<void> {
+  async deleteMessage(chatId: string, messageId: string, gate?: SendGate): Promise<void> {
     if (!/^\d+$/.test(messageId)) throw new Error("Telegram: that is not a message this bot sent");
-    await this.call("deleteMessage", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId) });
+    await this.call("deleteMessage", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId) }, false, false, gate);
   }
   private inbound(message: z.infer<typeof messageSchema>): InboundMessage | null {
     const spoken = message.voice ?? message.audio;
-    const media = message.document ?? message.video ?? message.photo?.at(-1);
-    const written = message.text ?? (spoken || media ? message.caption ?? "" : undefined);
+    const sticker = message.sticker && !message.sticker.is_animated && !message.sticker.is_video ? message.sticker : undefined;
+    const media = message.document ?? message.video ?? message.photo?.at(-1) ?? sticker;
+    const extra = [telegramPollContent(message.poll), telegramStickerContent(message.sticker)].filter(Boolean).join("\n");
+    const location = telegramLocationText(message);
+    const written = message.text ?? location ?? (spoken || media || extra ? message.caption ?? "" : undefined);
     if (written === undefined || !message.from || message.from.is_bot) return null;
     const mention = this.username ? `@${this.username.toLowerCase()}` : null;
     const mentioned = !!mention && (message.entities ?? []).some((entity) =>
@@ -467,12 +502,13 @@ export class TelegramAdapter implements ChannelAdapter {
       channel: this.id, chatId: topicAddress(message.chat.id, message.message_thread_id), chatKind: direct ? "direct" : "group",
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
-      text, addressed: direct || mentioned || replyToBot || named || (!!spoken && direct), messageId: String(message.message_id),
+      text: [telegramForwardContext(message.forward_origin), text, extra].filter(Boolean).join("\n"),
+      addressed: direct || mentioned || replyToBot || named || (!!spoken && direct), messageId: String(message.message_id),
       ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
-        name: message.document?.file_name ?? message.video?.file_name ?? `photo-${message.message_id}.jpg`,
+        name: message.document?.file_name ?? message.video?.file_name ?? (sticker ? `sticker-${message.message_id}.webp` : `photo-${message.message_id}.jpg`),
         sourceId: media.file_unique_id ?? media.file_id,
-        mediaType: message.document?.mime_type ?? message.video?.mime_type ?? "image/jpeg",
+        mediaType: message.document?.mime_type ?? message.video?.mime_type ?? (sticker ? "image/webp" : "image/jpeg"),
         kind: message.document ? "document" as const : message.video ? "video" as const : "picture" as const,
         ...(media.file_size !== undefined ? { size: media.file_size } : {}),
         bytes: () => this.downloadAttachment(media.file_id, media.file_size),
@@ -528,9 +564,13 @@ export class TelegramAdapter implements ChannelAdapter {
     for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
     return bytes;
   }
-  private async call(method: string, body: unknown, longPoll = false, stoppable = longPoll): Promise<unknown> {
+  /** One Bot API request. A `gate` (an owner's own-message edit or delete) is checked last before sending, and its
+      signal aborts the request, including while the address is still being checked. */
+  private async call(method: string, body: unknown, longPoll = false, stoppable = longPoll, gate?: SendGate): Promise<unknown> {
     const timeout = AbortSignal.timeout(longPoll ? (this.pollTimeout + 10) * 1000 : 20000);
-    const signal = stoppable ? AbortSignal.any([this.stopping.signal, timeout]) : timeout;
+    const signals = [timeout, ...(stoppable ? [this.stopping.signal] : []), ...(gate ? [gate.signal] : [])];
+    const signal = signals.length > 1 ? AbortSignal.any(signals) : timeout;
+    gate?.check();
     const response = await this.fetch(`${this.base}/${method}`, {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal,
     });
