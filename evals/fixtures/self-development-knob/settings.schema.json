@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "showTimestamp": { "type": "boolean", "default": true }
+  },
+  "required": ["showTimestamp"]
+}

@@ -10,6 +10,8 @@ import { $, esc, renderNow } from "../core/dom.js";
 import { ic, openPop, closePop, mi, toast } from "../core/ui.js";
 import { S, E, refresh, defaultTrunk } from "../core/state.js";
 import { api } from "../core/api.js";
+import { sessionPrincipal } from "../core/session-pages.js";
+import { newConversationBinding } from "./chat.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { plusMore } from "./media.js";
@@ -117,18 +119,27 @@ async function chooseWho(el) {
     if (!trunkId || Q.temporary || Q.choosing || (E.trunkModes?.trunks ?? "on") === "off"
         || (E.trunkModes?.conversations ?? "off") === "off") return;
     if (!(E.trunks ?? []).some(tr => tr.id === trunkId && !tr.hidden)) return;
+    const view = S.view, box = $("#prompt"), principal = sessionPrincipal(E.profiles);
+    const binding = newConversationBinding(), home = E.defaultTrunkId;
+    const stillHere = () => !S.chat && S.view === view && $("#prompt") === box && !Q.temporary
+      && S.signedIn && !$("#app")?.classList.contains("locked-b17")
+      && sessionPrincipal(E.profiles) === principal && newConversationBinding() === binding
+      && E.defaultTrunkId === home && el.dataset.v === trunkId
+      && (E.trunkModes?.trunks ?? "on") !== "off" && (E.trunkModes?.conversations ?? "off") !== "off"
+      && (E.trunks ?? []).some(tr => tr.id === trunkId && !tr.hidden);
+    if (!stillHere()) return;
     Q.choosing = true;
-    const view = S.view, box = $("#prompt");
     try {
       const { openConversation } = await import("./chat.js");
+      if (!stillHere()) return;
       const created = await api("trunks/conversations", { trunkId });
       // A send or navigation while the request ran owns the current screen. Never replace it.
-      if (S.chat || S.view !== view || $("#prompt") !== box || Q.temporary) return;
+      if (!stillHere()) return;
       S.drafts[created.sessionId] = box?.value ?? S.drafts.new ?? "";
       delete S.drafts.new;
       await openConversation(created.sessionId);
       await refresh().catch(error => toast(error.message));
-    } catch (error) { toast(error.message); }
+    } catch (error) { if (stillHere()) toast(error.message); }
     finally { Q.choosing = false; }
     return;
   }

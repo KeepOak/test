@@ -3,7 +3,7 @@ import { z } from "zod";
 import { EditedWords } from "./edited-words.js";
 import { fenced } from "./progress-render.js";
 import type { MessageFormat } from "./router.js";
-import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile } from "./router.js"; // R17-C: OutgoingFile
+import type { ChannelAdapter, ChannelHealth, InboundMessage, OutgoingFile, SendGate } from "./router.js"; // R17-C: OutgoingFile
 import { connectWebSocket, reconnectDelay, type WebSocketConnect, type WebSocketConnection } from "./ws-client.js";
 
 /**
@@ -412,19 +412,25 @@ export class DiscordAdapter implements ChannelAdapter {
     if (previous && previous !== emoji) await this.rest("DELETE", `${message}/${encodeURIComponent(previous)}/@me`).catch(() => undefined);
     await this.rest("PUT", `${message}/${encodeURIComponent(emoji)}/@me`);
   }
-  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat): Promise<void> {
+  async edit(chatId: string, messageId: string, text: string, format?: MessageFormat, gate?: SendGate): Promise<void> {
     await this.rest("PATCH", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`,
-      { content: this.content(text, format) });
+      { content: this.content(text, format) }, gate);
   }
-  async deleteMessage(chatId: string, messageId: string): Promise<void> {
-    await this.rest("DELETE", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`);
+  async deleteMessage(chatId: string, messageId: string, gate?: SendGate): Promise<void> {
+    await this.rest("DELETE", `/channels/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(messageId)}`, undefined, gate);
   }
-  /** One small call for the live status; a rate limit is noted and reported as a failure. */
-  private async rest(method: string, path: string, body?: unknown): Promise<void> {
+  /**
+   * One small call for the live status; a rate limit is noted and reported as a failure. A `gate` (an owner's own-message
+   * edit or delete) is checked last before sending, and its signal aborts the request, including while the address is
+   * still being checked.
+   */
+  private async rest(method: string, path: string, body?: unknown, gate?: SendGate): Promise<void> {
     // Discord's own wait, carried on the error so the live status waits it out rather than counting it as a failure.
     if (this.readyAt > Date.now()) throw Object.assign(new Error("Discord asked us to slow down"), { retryAfter: (this.readyAt - Date.now()) / 1000 });
+    const timeout = AbortSignal.timeout(20000), signal = gate ? AbortSignal.any([timeout, gate.signal]) : timeout;
+    gate?.check();
     const response = await this.fetch(`${this.base}${path}`, {
-      method, signal: AbortSignal.timeout(20000),
+      method, signal,
       headers: { ...this.headers(), ...(body === undefined ? {} : { "content-type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });

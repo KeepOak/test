@@ -11,6 +11,7 @@ import { assertRealAgentAllowed } from "./real-agent-guard.js"; // owner-dm-sign
 import { codexDefaultModel, codexVerified, codexModelsFor, type CodexModels, type CodexProbe, type CodexTry } from "../codex-models.js";
 import { closeWarmCodex, startCodexAppServer, warmCodexTurn, type StartAppServer } from "../asks/codex-app-server.js";
 import { claudeSubscriptionModels } from "./claude-models.js";
+import { closeNativeSubscriptions } from "./claude-subscription-continuation.js";
 
 /**
  * Batch 20 (wave 8): using a coding assistant already installed on this computer as a model.
@@ -334,6 +335,7 @@ function prepareSpare(key: string, row: CliAgentRow, env: NodeJS.ProcessEnv): vo
 }
 /** Stops every program started ahead of time (Branch closing). */
 export function closeSpareAgents(): void {
+  closeNativeSubscriptions();
   closeWarmCodex(); // QA 2026-09-28: the warm Codex app-servers too
   for (const [key, spare] of spares) { clearTimeout(spare.timer); spare.child.kill(); spares.delete(key); }
 }
