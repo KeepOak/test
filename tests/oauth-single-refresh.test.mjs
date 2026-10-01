@@ -91,6 +91,7 @@ const changes = {
   "client": { clientId: "client-2" },
   "tenant": { tokenUrl: "https://login.example/tenant-b/token", authorizeUrl: "https://login.example/tenant-b/authorize" },
   "token address": { tokenUrl: "https://other.example/token" },
+  "resource (extra only)": { extra: { resource: "https://api.other.example" } },
 };
 for (const [what, change] of Object.entries(changes)) {
   test(`a call with a different ${what} never shares the renewal under way`, async () => {
