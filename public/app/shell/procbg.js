@@ -11,20 +11,33 @@ export const DRAWN = ["grove", "oak3d", "rings"];
 let stop = null, parked = null;
 export function stopDrawn() { if (stop) { stop(); stop = null; } parked = null; }
 
-/* A frame at most `fps` times a second while the window is shown and awake; resting, the loop parks and onRest wakes it. */
+/* Decorative scenery holds its last frame behind setup/dialogs. A timer wakes each drawing, rather than a RAF on
+   every display frame: even skipped RAF callbacks can keep Chromium's glass compositor busy. */
 function loop(fn, fps) {
-  let raf = 0, last = 0, on = true;
-  const tick = (t) => {
+  let raf = 0, timer = 0, on = true;
+  const blocked = () => document.hidden || windowRest() !== "awake" ||
+    !!document.querySelector("#app > .scrim, #app > .ob9");
+  const clear = () => { cancelAnimationFrame(raf); clearTimeout(timer); raf = timer = 0; };
+  const start = () => {
     if (!on) return;
-    if (windowRest() !== "awake") { parked = start; return; }
-    raf = requestAnimationFrame(tick);
-    if (document.hidden || t - last < 1000 / fps) return;
-    last = t;
-    fn(t);
+    if (blocked()) { clear(); parked = start; return; }
+    if (!raf && !timer) raf = requestAnimationFrame(tick);
   };
-  const start = () => { raf = requestAnimationFrame(tick); };
+  const tick = (t) => {
+    raf = 0;
+    if (!on || blocked()) { if (on) parked = start; return; }
+    fn(t);
+    timer = setTimeout(() => { timer = 0; start(); }, Math.max(0, t + 1000 / fps - performance.now()));
+  };
+  // Both overlays are direct app children; observing this boundary avoids watching every changing face or message.
+  const observer = new MutationObserver(start), app = document.getElementById("app");
+  if (app) observer.observe(app, { childList: true });
+  document.addEventListener("visibilitychange", start);
   start();
-  return () => { on = false; cancelAnimationFrame(raf); };
+  return () => {
+    on = false; clear(); observer.disconnect(); document.removeEventListener("visibilitychange", start);
+    if (parked === start) parked = null;
+  };
 }
 onRest(() => { if (parked && windowRest() === "awake") { const go = parked; parked = null; go(); } });
 

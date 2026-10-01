@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 /**
  * mac1/processes: holding programs to limits and ending them cleanly on macOS and Linux, with the
  * Windows side unchanged. Pure logic takes `platform` as a parameter so all three are checked on
@@ -25,7 +26,7 @@ import { sandboxShape, sandboxChoices } from "../dist/sandbox.js";
 
 const posix = process.platform !== "win32";
 const limits = { maxMemoryMb: 1024, maxCpuSeconds: 60 };
-const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; } };
+const alive = (pid) => processRunning(pid, () => { try { process.kill(pid, 0); return true; } catch (error) { if (error.code === "ESRCH") return false; throw error; } });
 async function gone(pid, ms = 5000) {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) { if (!alive(pid)) return true; await delay(25); }

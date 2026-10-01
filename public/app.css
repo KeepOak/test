@@ -2042,7 +2042,7 @@ video.pose11{background:transparent}
 .spin12{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--fill-2);border-top-color:var(--accent);animation:spin 1s linear infinite;grid-row:span 2}
 .lm-grid12{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
 .lm12{border:1px solid var(--line);border-radius:16px;padding:14px;background:var(--raise);display:grid;gap:8px;align-content:start}
-.lm12.fit-no{opacity:.7}
+/* Keep unfit model details readable; the warning pill and disabled Install convey the limit. */
 .lm-h12{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.lm-h12 b{font-size:15px}.lm-h12 .pill{margin-left:auto}
 .lm12 p{margin:0;font-size:13px;color:var(--ink-2)}
 .lm-tags12{display:flex;gap:4px;flex-wrap:wrap}

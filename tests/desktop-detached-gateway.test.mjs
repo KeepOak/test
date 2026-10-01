@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -93,8 +94,8 @@ test("closing and reopening a shell joins the same detached broker and keeps its
   closing.push(first.close()); firstItem.closing = true;
   // A busy computer can take a while to end the shell's processes; the broker's proof is what must not change.
   const until = Date.now() + 45000;
-  while (Date.now() < until) { try { process.kill(firstPid, 0); } catch { break; } await new Promise((resolve) => setTimeout(resolve, 30)); }
-  assert.throws(() => process.kill(firstPid, 0), "the actual first shell exited");
+  while (Date.now() < until) { if (!processRunning(firstPid)) break; await new Promise((resolve) => setTimeout(resolve, 30)); }
+  assert.equal(processRunning(firstPid), false, "the actual first shell exited");
   assert.equal(await proveOnce(presence.url, token, 5000), boot, "shell close leaves the gateway proof unchanged");
   const second = await _electron.launch(options), secondItem = { electron: second, closing: false }; shells.push(secondItem);
   reportEarlyExit(second, "reopened joined shell", () => secondItem.closing);
@@ -133,8 +134,8 @@ test("the owner's OFF from a joined shell stops the broker and the shell starts 
   const off = await response.json();
   assert.equal(off.mode, "off"); assert.equal(off.stopsWhenOff, true); assert.match(off.note, /stop after this response/);
   const until = Date.now() + 30000;
-  while (Date.now() < until) { try { process.kill(presence.pid, 0); } catch { break; } await new Promise((resolve) => setTimeout(resolve, 50)); }
-  assert.throws(() => process.kill(presence.pid, 0), "the broker stopped after the owner's OFF");
+  while (Date.now() < until) { if (!processRunning(presence.pid)) break; await new Promise((resolve) => setTimeout(resolve, 50)); }
+  assert.equal(processRunning(presence.pid), false, "the broker stopped after the owner's OFF");
   const gone = await shell.evaluate(async () => {
     const stop = Date.now() + 15000;
     while (!globalThis.branchJoinedGoneForTests && Date.now() < stop) await new Promise((resolve) => setTimeout(resolve, 100));
