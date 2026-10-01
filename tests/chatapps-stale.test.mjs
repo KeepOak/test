@@ -67,6 +67,7 @@ async function loaded(w) {
   w.page.revokedPrompts();
   await w.answer("channels", telegram);
   await w.answer("channel-setup", { channels: [] });
+  await w.answer("channels/routes", null); // #588: the routing card reads its routes with the page
   for (let i = 0; i < 20; i++) await Promise.resolve();
 }
 const offButton = () => ({ dataset: { v: "telegram" }, isConnected: true });
@@ -80,6 +81,7 @@ test("with nothing changed, the page is drawn and Turn Telegram off shows its no
   await w.answer("POST never-break/telegram", { note: "Telegram is off", receipt: "r1" });
   await w.answer("channels", telegram);
   await w.answer("channel-setup", { channels: [] });
+  await w.answer("channels/routes", null); // #588: the routing card reads its routes with the page
   await off;
   assert.deepEqual(w.ca.toasts, ["Telegram is off"]);
 });
@@ -114,6 +116,7 @@ for (const [what, change] of LATE) {
     change(w.ca);
     await w.answer("channels", telegram);
     await w.answer("channel-setup", { channels: [] });
+    await w.answer("channels/routes", null); // #588: the routing card reads its routes with the page
     await off;
     assert.deepEqual(w.ca.toasts, []);
   });
