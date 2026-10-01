@@ -19,7 +19,8 @@
  */
 import { api } from "../core/api.js";
 import { esc, renderNow } from "../core/dom.js";
-import { S, activeId, ownerHere } from "../core/state.js";
+import { S, E, activeId, ownerHere } from "../core/state.js";
+import { sessionAuthority } from "../core/session-pages.js";
 import { conversationWho } from "../chat/chat.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
@@ -35,6 +36,11 @@ const number = (n) => Number(n).toLocaleString();
 const used = (view) => view.reported ?? view.estimated;
 const percent = (view) => Math.max(0, Math.min(100, Math.round(used(view) / view.limit * 100)));
 let key = "";
+/* Sticky owner authority (core/session-pages.js), so a profile switch away and back or a lock and unlock is never
+   missed between renders: the open panel's spans its read and the choice, and the choice's own spans its confirmation,
+   the live read and the write. */
+let panel = null, proposal = null;
+const authorityNow = () => sessionAuthority(E.profiles, document.getElementById("app"));
 
 async function refresh(sid) {
   if (loading) return;
@@ -70,6 +76,7 @@ async function show(el) {
   const sid = current, token = generation;
   if (!sid || !same(sid, token)) return;
   if (el.getAttribute("aria-expanded") === "true") { closePop(); return; }
+  panel?.close(); panel = authorityNow();
   openPop(el, body(state), { role: "dialog", label: "Model context" });
   const pop = document.querySelector("#app > .pop");
   if (pop) pop.dataset.contextAudit = String(token);
@@ -87,27 +94,27 @@ function propose(el) {
   const sid = current, token = generation, view = state;
   if (el.dataset.request !== view?.requestId) { closePop(); toast("The model request changed. Refresh the context audit."); return; }
   const item = view?.items?.find((entry) => entry.callId === el.dataset.call);
-  if (!sid || !same(sid, token) || !view?.available || !item?.removable) return;
+  if (!sid || !same(sid, token) || !panel?.current(E.profiles) || !view?.available || !item?.removable) return;
   closePop();
   openDlg({ title: item.excluded ? "Put this result back in context?" : "Leave this result out of future context?",
     body: `<p>${esc(item.name)} · call ${esc(item.callId)}</p><p>Only future model requests change. The current in-flight request, stored conversation and original tool receipt stay intact. Policy, system instructions, approvals and audit evidence stay protected.</p>`,
     foot: `<button class="btn" type="button" data-act="dlg-close">Cancel</button><button class="btn pri" type="button" data-act="context-confirm">${item.excluded ? "Put back" : "Leave out"}</button>` });
-  proposal = { sid, token, view, item, node: dialog() };
+  proposal?.authority.close();
+  proposal = { sid, token, view, item, node: dialog(), authority: authorityNow() };
 }
-let proposal = null;
 async function confirm(el) {
-  const p = proposal;
-  if (!p || dialog() !== p.node || !same(p.sid, p.token)) return;
+  const p = proposal, owned = () => p.authority.current(E.profiles);
+  if (!p || dialog() !== p.node || !same(p.sid, p.token) || !owned()) return;
   el.disabled = true;
   try {
     const live = await api(endpoint(p.sid), undefined, undefined, AbortSignal.timeout(5000));
-    if (dialog() !== p.node || !same(p.sid, p.token)) return;
+    if (dialog() !== p.node || !same(p.sid, p.token) || !owned()) return;
     if (!live.available || live.requestId !== p.view.requestId || live.runId !== p.view.runId) throw new Error("The model request changed. Refresh and choose the result again.");
     const next = await api(endpoint(p.sid), { runId: live.runId, requestId: live.requestId, callId: p.item.callId,
       out: !p.item.excluded, confirmed: true });
-    if (dialog() !== p.node || !same(p.sid, p.token)) return;
-    state = next; proposal = null; closeDlg(); renderNow(); toast("Future context updated; original receipt retained.");
-  } catch (why) { if (dialog() === p.node && same(p.sid, p.token)) { el.disabled = false; toast(why.message); } }
+    if (dialog() !== p.node || !same(p.sid, p.token) || !owned()) return;
+    state = next; proposal = null; p.authority.close(); closeDlg(); renderNow(); toast("Future context updated; original receipt retained.");
+  } catch (why) { if (dialog() === p.node && same(p.sid, p.token) && owned()) { el.disabled = false; toast(why.message); } }
 }
 on("context-audit", show); on("context-propose", propose); on("context-confirm", confirm);
 on("context-refresh", async () => {

@@ -4,6 +4,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ContextAudit } from "../dist/context-audit.js";
 import { contextAuditApi } from "../dist/context-audit-api.js";
+import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 
 function store(runId, sessionId) {
   const rows = new Map(), events = [];
@@ -69,3 +71,52 @@ test("a lock or profile switch while the exclusion body arrives revokes the writ
   assert.equal(w.changes.length, 1, "an undisturbed write still applies");
   assert.equal(w.listening(), 0);
 });
+
+// Review 5925628748 (branch-coord#1): the window's own confirmation must not POST an old proposal after a profile switch
+// away and back, or a lock and unlock, while its live read is outstanding, even though nothing re-rendered meanwhile.
+const strip = (source) => source.replace(/^import .*;\r?\n/gm, "").replace(/export /g, "");
+const [panelSource, pagesSource] = await Promise.all(["shell/context-audit.js", "core/session-pages.js"]
+  .map((name) => readFile(new URL(`../public/app/${name}`, import.meta.url), "utf8")));
+function windowFixture() {
+  const sid = run.sessionId, view = { available: true, runId: run.id, requestId: "33333333-3333-4333-8333-333333333333",
+    model: "m", limit: 1000, estimated: 10, reported: null, categories: [], definitions: [], totalDefinitions: 0,
+    items: [{ callId: "c1", name: "files.read", tokens: 5, removable: true, excluded: false }], totalItems: 1, compactions: 0, at: new Date().toISOString() };
+  const lockRecords = [], posts = [], actions = {}, app = { locked: false, classList: { contains: () => app.locked } };
+  let dlg = null, held = null;
+  const MutationObserver = class { observe() {} takeRecords() { return lockRecords.splice(0); } disconnect() {} };
+  const pages = { MutationObserver, addEventListener() {} };
+  runInNewContext(`${strip(pagesSource)}
+globalThis.pages = { sessionAuthority, resetSessionPages };`, pages);
+  const E = { profiles: { active: null, isOwner: true } }, S = { signedIn: true, view: "chat" };
+  const context = { S, E, MutationObserver, sessionAuthority: pages.pages.sessionAuthority,
+    activeId: () => E.profiles?.active?.id ?? null, ownerHere: () => E.profiles?.isOwner === true,
+    conversationWho: () => ({ sessionId: sid }), esc: (v) => String(v ?? ""), renderNow() {}, markLive() {},
+    on: (name, fn) => { actions[name] = fn; }, openPop() {}, closePop() {}, toast() {},
+    openDlg: () => { dlg = {}; }, closeDlg: () => { dlg = null; }, dialog: () => dlg,
+    document: { getElementById: () => app, querySelector: () => null }, AbortSignal,
+    api: async (_path, body) => { if (body) { posts.push(body); return view; } return held ? held.promise : view; } };
+  runInNewContext(`${strip(panelSource)}
+globalThis.meter = contextMeter;`, context);
+  pages.pages.resetSessionPages(E.profiles);
+  return { E, S, app, lockRecords, posts, actions, view, sid, context, reset: (p) => pages.pages.resetSessionPages(p),
+    hold() { let resolve; held = { promise: new Promise((done) => { resolve = done; }) }; held.resolve = () => resolve(view); return held; } };
+}
+const roundtrips = {
+  none: () => {},
+  "profile away and back": (f) => { const owner = f.E.profiles; f.E.profiles = { active: { id: "sam" }, isOwner: false }; f.reset(f.E.profiles); f.E.profiles = owner; f.reset(owner); },
+  "lock and unlock": (f) => { f.lockRecords.push({ oldValue: "locked-b17" }); f.app.locked = false; },
+  // Every view change redraws the status bar (shell.js drawAll), so leaving the chat and coming back moves the meter on.
+  "view away and back": (f) => { f.S.view = "settings"; f.context.meter(f.sid); f.S.view = "chat"; f.context.meter(f.sid); },
+};
+for (const [name, change] of Object.entries(roundtrips)) {
+  test(`context audit window: ${name} during the confirmation's live read ${name === "none" ? "still writes" : "refuses the write"}`, async () => {
+    const f = windowFixture();
+    f.context.meter(f.sid);
+    await new Promise((resolve) => setImmediate(resolve));
+    await f.actions["context-audit"]({ getAttribute: () => "false" });
+    f.actions["context-propose"]({ dataset: { request: f.view.requestId, call: "c1" } });
+    const read = f.hold(), pending = f.actions["context-confirm"]({ disabled: false });
+    change(f); read.resolve(); await pending;
+    assert.equal(f.posts.length, name === "none" ? 1 : 0);
+  });
+}
