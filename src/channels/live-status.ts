@@ -81,6 +81,8 @@ export interface LiveTarget {
   adopt?: () => Promise<string | null>;
   /** Checked before every call to the app, so Lockdown or quiet hours starting mid-task stop the status too. */
   allowed?: () => boolean;
+  /** The live task's signal, read when a reply operation begins. */
+  signal?: () => AbortSignal | null;
   /**
    * A group, where other people read along: the steps are shown as kinds and counts ("Reading 2 files"), never by
    * their labels, which name files, pages and commands.

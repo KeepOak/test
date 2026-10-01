@@ -19,7 +19,7 @@ import { discardTemp } from "./temp-dir.mjs";
 
 const stubs = {
   "app/core/dom.js": "export const esc = (s) => String(s ?? \"\"); export const renderNow = () => { globalThis.__lb.renders += 1; };",
-  "app/core/state.js": "export const S = globalThis.__lb.S; export const E = globalThis.__lb.E; export const refresh = async () => {}; export const level = () => 0;",
+  "app/core/state.js": "export const S = globalThis.__lb.S; export const E = globalThis.__lb.E; export const refresh = async () => {}; export const level = () => 0; export const activeId = () => E.profiles?.active?.id ?? null;",
   "app/core/ui.js": `export const ic = () => ""; export const mi = () => ""; export const toast = (m) => globalThis.__lb.toasts.push(m);
     export const openPop = () => {}; export const closePop = () => {}; export const dialog = () => globalThis.__lb.dlg;
     export const openDlg = (o) => { globalThis.__lb.dlg = { title: o.title }; return globalThis.__lb.dlg; };
@@ -47,7 +47,8 @@ const doc = (name) => ({ id: `id-${name}`, name, updatedAt: "2026-09-30T10:00:00
 async function libraryPage(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-library-docs-"));
   for (const dir of ["app/places", "app/core", "app/chat"]) await mkdir(join(root, dir), { recursive: true });
-  await writeFile(join(root, "app", "places", "library.js"), await readFile(new URL("../public/app/places/library.js", import.meta.url)));
+  for (const name of ["library.js", "library-made.js"])
+    await writeFile(join(root, "app", "places", name), await readFile(new URL(`../public/app/places/${name}`, import.meta.url)));
   /* The window's own sessionPrincipal, taken from core/session-pages.js (the rest of that module needs a real window). */
   const pages = await readFile(new URL("../public/app/core/session-pages.js", import.meta.url), "utf8");
   const principal = /^export const sessionPrincipal = .*$/m.exec(pages)?.[0];

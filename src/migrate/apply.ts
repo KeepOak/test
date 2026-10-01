@@ -75,12 +75,15 @@ function memoryRecords(item: FoundItem, source: MoveInSource, payload: Extract<P
 }
 
 async function bringOne(
-  store: Store, owner: string, source: MoveInSource, item: FoundItem, contextFiles?: ContextFileSink,
+  store: Store, owner: string, source: MoveInSource, item: FoundItem, contextFiles?: ContextFileSink, assertAuthority: () => void = () => undefined,
 ): Promise<string> {
+  assertAuthority();
   const payload = await item.load();
+  assertAuthority();
   if ((payload.kind === "memory" || payload.kind === "instructions") && payload.contextFile && contextFiles) {
     const target = await contextFiles({ name: payload.contextFile, home: contextFileHome(payload.contextFile), text: payload.text, source,
       ...(payload.kind === "memory" ? { about: payload.about, ...(payload.project ? { project: payload.project } : {}) } : {}) });
+    assertAuthority();
     if (target !== null) return target;
   }
   switch (payload.kind) {
@@ -120,8 +123,9 @@ function bringProject(store: Store, owner: string, payload: Extract<Payload, { k
 
 export async function bringOver(
   store: Store, owner: string, source: MoveInSource, scan: ScanResult, keys: string[], lockerNames: Set<string>,
-  contextFiles?: ContextFileSink,
+  contextFiles?: ContextFileSink, assertAuthority: () => void = () => undefined,
 ): Promise<Receipt> {
+  assertAuthority();
   const wanted = new Set(keys), record = movedIn(store, owner, source);
   const receipt: Receipt = { brought: [], skipped: [], keys: [] };
   const needed = new Set<string>();
@@ -131,11 +135,15 @@ export async function bringOver(
     if (item.key in record) { receipt.skipped.push({ key: item.key, title: item.title, reason: "It was brought over before." }); continue; }
     if (item.blocked) { receipt.skipped.push({ key: item.key, title: item.title, reason: item.detail }); continue; }
     try {
-      const target = await bringOne(store, owner, source, item, contextFiles);
-      rememberMoved(store, owner, source, [{ key: item.key, kind: item.kind, title: item.title, target }]);
+      assertAuthority();
+      const target = await bringOne(store, owner, source, item, contextFiles, assertAuthority);
+      assertAuthority();
+      rememberMoved(store, owner, source, [{ key: item.key, kind: item.kind, title: item.title, target,
+        ...(item.provenance ? { provenance: item.provenance } : {}) }]);
       receipt.brought.push({ key: item.key, title: item.title, kind: item.kind, target });
       for (const name of item.needsKeys) needed.add(name);
     } catch (error) {
+      assertAuthority();
       receipt.skipped.push({ key: item.key, title: item.title, reason: (error as Error).message.slice(0, 300) });
     }
   }

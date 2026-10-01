@@ -2,8 +2,8 @@
    - A conversation, With people: each person on this computer and each group, No / May read it / May also write in it,
      read from the owner's sign-in card (GET /api/people/settings shares, groups) and changed as Team › Shared changes it
      (places/team-tabs.js relate: POST /api/people/shares, or the exact tuple through /api/people/shares/remove).
-   - A copy, Carry on elsewhere and Hand off stay greyed: a copy link and a carry-on key are secrets handed out (held for
-     the security review), and the engine has no hand-off of a conversation to a chat app, the terminal or an agent.
+   - Hand off uses the gated /handoff command: one explicitly selected Telegram owner DM, a terminal command, or a
+     named assistant's reported response. A copy and Carry on elsewhere retain their own controls.
    - A Trunk, As a file: the engine's own file of it (GET /api/trunks/<id>/export: who it is, never its conversations,
      memory, keys or reach; src/trunks/share.ts), saved as <name>.branch-trunk. With people stays greyed (the engine shares
      conversations only, src/people/groups.ts TupleSchema) and With the team needs keepoak.com, which the engine does not reach. */
@@ -24,7 +24,7 @@ const TABS = {
   conv: [["people", "window.flows.share.with-people"], ["copy", "window.flows.share.a-copy"], ["carry", "window.flows.share.carry-on"], ["handoff", "window.flows.share.hand-off"]],
   trunk: [["people", "window.flows.share.with-people"], ["file", "window.flows.share.as-a-file"], ["team", "window.flows.share.with-the-team"]],
 };
-const SH = { kind: "conv", id: null, tab: "people", card: null };
+const SH = { kind: "conv", id: null, tab: "people", card: null, targets: [], agent: "", result: "" };
 const trunkOf = (sid) => E.trunks.find((tr) => tr.chatSessionId === sid);
 const convName = (sid) => {
   const tr = trunkOf(sid), s = E.sessions.find((x) => (x.sessionId ?? x.id) === sid);
@@ -47,8 +47,8 @@ function body(name) {
   if (tab === "copy") return `<p data-css="margin:0">${t("window.flows.share.copy-what")}</p>${ctlSeg(t("window.flows.share.link-works-for"), t("window.flows.share.link-network"), [t("window.flows.share.hour"), t("window.flows.share.day"), t("window.flows.share.week")])}${soonBtn("share-link", t("window.flows.share.make-link"))}`;
   if (tab === "carry") return `<p data-css="margin:0">${t("window.flows.share.carry-what")}</p>${ctlSeg(t("window.flows.share.key-lasts"), t("window.flows.share.then-stops"), [t("window.flows.share.quarter"), t("window.flows.share.hour"), t("window.flows.share.day")])}${soonBtn("share-key", t("window.flows.share.make-key"))}`;
   if (tab === "handoff") {
-    const to = [["telegram", t("window.flows.share.telegram")], ["term", t("window.flows.share.terminal")]];
-    return `<div class="provs">${to.map(([i, l]) => `<button class="prov" type="button" data-act="share-handoff" data-v="${i}">${i === "telegram" ? logo(i, l, 28) : `<span class="ico-tile">${ic(i, "s")}</span>`}<b>${esc(l)}</b><small>/handoff</small></button>`).join("")}</div>`;
+    const chats = SH.targets.map((chat, index) => `<button class="prov" type="button" data-act="share-handoff" data-v="chat" data-d="${index}">${logo("telegram", "Telegram", 28)}<b>${esc(chat.title)}</b><small>${esc(chat.channel)} · ${esc(chat.chatId)}</small></button>`).join("");
+    return `<p class="hint">${esc(t("window.flows.share.handoff-exact"))}</p><div class="provs">${chats || `<p class="empty">${esc(t("window.flows.share.handoff-none"))}</p>`}<button class="prov" type="button" data-act="share-handoff" data-v="terminal"><span class="ico-tile">${ic("term", "s")}</span><b>${esc(t("window.flows.share.terminal"))}</b><small>${esc(t("window.flows.share.handoff-command"))}</small></button></div><label class="fld"><span>${esc(t("window.flows.share.handoff-agent"))}</span><input class="inp" data-sw="share-assistant" value="${esc(SH.agent)}" maxlength="200"></label><button class="btn" type="button" data-act="share-handoff" data-v="assistant">${esc(t("window.flows.share.hand-off"))}</button>${SH.result ? `<pre class="code">${esc(SH.result)}</pre>` : ""}`;
   }
   if (tab === "file") return `<p data-css="margin:0">${esc(t("window.flows.share.file-what", { name }))}</p><div class="acts"><button class="btn pri sm" type="button" data-act="share-file">${t("window.flows.share.save-file")}</button></div>`;
   return `<p data-css="margin:0">${esc(t("window.flows.share.team-what", { name }))}</p>${soonBtn("share-team", t("window.flows.share.share-team"))}`;
@@ -61,13 +61,55 @@ function draw() {
     foot: `<button class="btn pri" type="button" data-act="dlg-close">${t("first-run-steps.done")}</button>` });
 }
 
+/* The window is not behind the App lock. */
+const unlocked = () => !document.getElementById("app")?.classList.contains("locked-b17");
+/* Share opens asked, and dialogs the owner closed (close button or Escape): a Share still being read must not open after
+   a newer one, or over a dialog opened or closed meanwhile. */
+let shareRequest = 0, dialogsClosed = 0;
+
 async function open(kind) {
   closePop();
+  if (!ownerHere() || !unlocked()) return;
+  const profile = activeId(), source = S.chat, view = S.view, opened = dialog(), closed = dialogsClosed, request = ++shareRequest;
   const tr = kind === "trunk" ? trunkOf(S.chat) : null;
   if (!S.chat || (kind === "trunk" && !tr)) return;
-  Object.assign(SH, { kind, id: tr ? tr.id : S.chat, tab: "people", card: null });
-  try { SH.card = await api("people/settings"); } catch (error) { toast(error.message); return; }
+  const id = tr ? tr.id : source;
+  const still = () => request === shareRequest && ownerHere() && activeId() === profile && unlocked() && S.view === view
+    && S.chat === source && SH.id === id && dialog() === opened && dialogsClosed === closed;
+  Object.assign(SH, { kind, id, tab: "people", card: null, targets: [], agent: "", result: "" });
+  try {
+    const [card, chats] = await Promise.all([api("people/settings"), kind === "conv" ? api("channels") : Promise.resolve({})]);
+    if (!still()) return;
+    SH.card = card;
+    SH.targets = Array.isArray(chats.handoffTargets) ? chats.handoffTargets : [];
+  } catch (error) { if (still()) toast(error.message); return; }
   draw();
+}
+
+let handingOff = false;
+async function handoff(el) {
+  if (!ownerHere() || handingOff || SH.kind !== "conv" || SH.tab !== "handoff" || !SH.id) return;
+  const source = SH.id, profile = activeId(), opened = dialog();
+  const current = () => ownerHere() && activeId() === profile && unlocked() && dialog() === opened && opened?.isConnected
+    && S.chat === source && SH.kind === "conv" && SH.id === source && SH.tab === "handoff";
+  const to = el.dataset.v;
+  let line = "";
+  if (to === "chat") {
+    const chat = SH.targets[Number(el.dataset.d)];
+    if (!chat) return;
+    line = "/handoff chat " + [chat.channel, chat.chatId, chat.sessionId, chat.updatedAt].map(encodeURIComponent).join(" ");
+  } else if (to === "terminal") line = "/handoff terminal";
+  else if (to === "assistant" && SH.agent.trim()) line = `/handoff assistant ${SH.agent.trim().replace(/\s+/g, " ")}`;
+  if (!line || !current()) return;
+  handingOff = true;
+  el.disabled = true;
+  try {
+    const done = await api("commands/run", { surface: "window", line, sessionId: source });
+    if (!current()) return;
+    SH.result = done?.handled ? String(done.text ?? "") : t("window.flows.share.handoff-unavailable");
+    draw();
+  } catch (error) { if (current()) toast(error.message); }
+  finally { handingOff = false; if (el.isConnected) el.disabled = false; }
 }
 
 async function setRelation(el) {
@@ -100,6 +142,14 @@ async function saveFile(el) {
 }
 
 export function init() {
+  document.addEventListener("click", (e) => { if (e.target.closest?.('[data-act="dlg-close"]')) dialogsClosed += 1; }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && dialog()) dialogsClosed += 1; }, true); // main.js closes it on Escape
+  markLive(["share-handoff", "sw:share-assistant"]);
+  on("share-handoff", handoff);
+  document.addEventListener("input", (event) => {
+    if (event.target.dataset?.sw === "share-assistant" && ownerHere() && SH.kind === "conv" && SH.tab === "handoff")
+      SH.agent = event.target.value.slice(0, 200);
+  });
   /* protectWindow permits app-origin blob downloads through ownDownload; other desktop downloads stay refused. */
   markLive(["share10", "share-tab", "share-rel", "share-file"]);
   on("share10", (el) => open(el.dataset.k === "trunk" ? "trunk" : "conv"));

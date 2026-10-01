@@ -514,6 +514,8 @@ The free fallback reads a public results page rather than an interface meant for
 
 `searchEndpoint` still sets the address the free fallback uses, so anything already set up keeps working.
 
+The window can pick the service too, under Settings › Advanced › Web search (`GET`/`POST /api/web-search`, owner only). Once the owner picks one there, that pick wins over the launch settings file; until then the file decides. Without a `keySecret`, a paid service looks for its usual secret name (`BRAVE_SEARCH_KEY`, `TAVILY_API_KEY`, `EXA_API_KEY` or `SERPER_API_KEY`), and the row says whether that secret is saved.
+
 ### Pinned skills and memory retention
 
 Above the composer, **Pinned skill** keeps one enabled skill's full instructions in every turn of that conversation until unpinned (`GET|POST /api/sessions/:id/skill`). `POST /api/memory/hygiene {olderThanDays, action: "preview"|"archive"|"purge"}` reports or removes facts not updated within the period; archived facts are listed by `GET /api/memory/archive` and restored with `POST /api/memory/archive/:id/restore`.
@@ -1304,6 +1306,18 @@ is established merely by saving this configuration.
 ### Sending without being asked
 
 Two tools send on the assistant's own initiative rather than answering somebody. `channels.broadcast` sends one message to several linked chats at once — leave the list empty to reach every chat that has talked to the assistant — and `channels.digest` sends the morning brief as it stands right now to one chat on any connected service. Both go through the same waiting line every reply uses, so quiet hours, splitting and retries apply unchanged: during quiet hours the message is written down and sent when they end. Both are the owner's alone: somebody else using this computer under their own profile is refused, because the chats belong to the owner. Neither is available to a task started from a chat message, so somebody you have paired cannot make the assistant write to everyone else.
+
+### Correcting or removing Branch's own messages
+
+From your own task in the app, ask Branch to correct or remove an earlier message it sent. `channels.own_messages`
+lists up to 50 retained own text deliveries in one exact channel and chat, including message IDs and edit/delete
+availability. `channels.edit_message` replaces one recorded message's text; `channels.delete_message` removes it.
+They require `channels.send` and the owner's profile, and refuse tasks from chat apps, schedules, triggers,
+short-lived keys or borrowed conversations. Edits pass the outbound secret and safety checks and must fit in one
+message. Actions pause while Branch is locked, paused, in Lockdown or in quiet hours. Service failures and time
+limits are reported, and success is recorded only after the service accepts the action. The original send and its
+stable deduplication key remain, so deletion does not resend the message after reconnect. Sent deliveries are kept
+for seven days; unknown, expired, already deleted or other people's message IDs are refused.
 
 ### Who may change the chat apps
 
@@ -2583,7 +2597,8 @@ them on a task in a suite file as `"scorers": [...]`:
 `exact` (the answer, once case, spacing and trailing punctuation are taken off), `contains`,
 `regex`, `json-schema`, `numeric` (with a tolerance), `url` (a pattern the address must match),
 `file-exists` and `file-contains` (inside the workspace), `tool-called` (optionally `withArgs`, so
-you can say a tool must have been used with particular arguments), `budget` (`maxSteps`, `maxMs`,
+you can say a tool must have been used with particular arguments), `helper-runs` (`min`, `max`,
+`completed`, `output`: the helpers the engine actually recorded for the task), `budget` (`maxSteps`, `maxMs`,
 `maxTokens`, `maxDollars` — the rounds, time, tokens and money a task may use), `finished` (did it
 actually do the work, or did it say it could not — the completion checks you already use, plus the
 phrases an answer uses when it has quietly given up), `f1`, `passage`, `html`, `trajectory`, and
@@ -8778,7 +8793,7 @@ wait at once.
 | Suggested automations | Automations → Scheduled | A catalogue of 13 blueprints with checked blanks, and up to five suggestions worked out from what Branch remembers and what is connected, without asking a model (`automation.ideas`, `automation.propose`, `/suggestions`, `/blueprint`) |
 | Standing orders | Automations → Scheduled | A named programme: what it may do, when it starts, what needs a yes, when to stop and ask. A reply starting `ESCALATE:` pauses it and asks you (`orders.list`, `orders.propose`) |
 | Repeating in a conversation | Automations → Scheduled | `/loop every 10m <what> [--times n] [--until …]` (1 minute apart at least, 10 turns unless said, 100 at most, stops on `LOOP_COMPLETE`) and `/heartbeat every 30m <what>` (5 minutes apart at least, adds a note only with news). Owner only |
-| Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; `/handoff <chat app>` points a chat that has talked to Branch at this conversation, and `/handoff terminal` or `assistant <name>` uses Interop's hand-on, behind its own switch |
+| Sub-goals, background tasks, handing on | The message box | `/subgoal` adds to the conversation's goal (the judge sees them); `/bg` runs a task in its own conversation, three at most; Conversation → Share → Hand off selects an exact available Telegram owner DM and rechecks both conversation pointers before linking. The chooser considers the latest 50 Telegram chats and their latest 20 runs. Busy tasks, waiting questions, changed destinations and unavailable chats are refused. `/handoff terminal` shows the attach command to run; `/handoff assistant <name>` reports the remote assistant's returned state and answer, behind Interop's own switch. A chat app name alone does not choose a destination. |
 | Procedures that start themselves | Automations → Procedures | Steps that start on a clock, after one of your tasks, or by hand; each asks before every step, before it starts (the default), or runs on its own. A step marked `confirm` always asks; an "on its own" procedure under 50% after four runs goes back to asking (`procedures.auto.list`, `procedures.auto.propose`, `procedures.auto.suggest_change`, which the owner answers in the flow editor) |
 | What skills need | Customize → Skills | Programs, keys and systems a skill declares in its `metadata` (`requires-bins`, `requires-any-bins`, `requires-keys`, `os`, `install-brew`/`-apt`/`-winget`/`-npm`/`-pip`, or OpenClaw's `openclaw` block), and whether this computer has them (`skills.readiness`). Programs are looked for on `PATH` without running anything; install lines are only shown |
 | "From now on" instructions | Settings → Assistant | "From now on, …" in one of your messages is kept, after one yes, as a standing instruction for the assistant, every specialist, or one specialist (`instructions.list`, `instructions.propose`) |
@@ -10893,6 +10908,13 @@ The Gardener extends this record with the following settings when its feature is
 | `indexBudget` | `400` | 50–4,000 tokens: cap on adopted skills' combined index context. |
 | `maxSkillChars` | `2400` | 400–8,000 characters: longer skill drafts are discarded. |
 
+
+### Thirty-day usage insights
+
+`/insights` reports completed-task tokens, estimated cost, unknown prices, recorded failures, top models and task sources for the last thirty days. It works in the window, phone, terminal, dashboard and supported chat commands, without invoking a model. In chat or with a restricted key, it reports only the current conversation. With the owner key on other surfaces, it reports the owner's conversations; `/insights conversation` narrows it, and `/insights all` explicitly requests the owner aggregate. Household profiles cannot request the owner's aggregate. Costs are estimates rather than bills, and running tasks are excluded.
+
+
+`/history` also works in the window and phone conversation composer. It reads the current conversation only, shows the last twenty user/assistant turns with bounded previews, and scrubs known secrets. Household profiles can read their own current conversation; unknown or another person's conversation is refused. It does not invoke a model and can be used while a task runs.
 
 ### Price-drop watches
 

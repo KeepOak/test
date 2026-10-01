@@ -3,11 +3,12 @@
    /api/flows-boards, /api/prompts. Switches and buttons wired to real routes. */
 
 import { $, esc, renderNow } from "../core/dom.js";
-import { S, E, refresh, ownerHere } from "../core/state.js";
+import { S, E, refresh, ownerHere, activeId } from "../core/state.js";
 import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { initRecipeRun, recipeRunLive } from "./recipe-run.js";
+import { flowHistoryButton, initFlowHistory } from "./flow-history.js";
 import { graphEditorButton, initGraphEditor } from "../flows/graph-editor.js";
 import { api } from "../core/api.js";
 import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
@@ -24,6 +25,16 @@ let heartbeat = null;
 let board = null;
 let boardProblem = "";
 let prompts = null;
+let scheduleGateway = { scope: null, supervised: null, at: 0 };
+let gatewayRead = 0;
+function scheduleGatewayWarning(schedules) {
+  if (!ownerHere() || !schedules.some((schedule) => ["pending", "running"].includes(schedule.data?.status))) return "";
+  const known = scheduleGateway.scope === activeId() && Date.now() - scheduleGateway.at < 30000;
+  const supervised = known ? scheduleGateway.supervised : null;
+  if (supervised === true) return "";
+  const key = supervised === false ? "unwatched" : "unknown";
+  return `<p class="hint" role="status">${esc(t(`window.schedule-gateway.${key}`))}</p>`;
+}
 /* stress test B006: whether procedures that start themselves are switched on (GET /api/autonomy modes.procedures); a
    trigger is kept as one, so while it is off the Triggers tab says so with its switch. */
 let proceduresMode = null;
@@ -175,6 +186,7 @@ export function draw() {
     <div class="tabs" role="tablist"><button class="tab" role="tab" type="button" aria-selected="${tab === 'scheduled' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="scheduled">${t("place.automations.scheduled")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'procedures' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="procedures">${t("nav.procedures")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'triggers' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="triggers">${t("asks.board.triggers")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'checkins' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="checkins">${t("window.places.automations.check-ins")}</button><button class="tab" role="tab" type="button" aria-selected="${tab === 'board' ? 'true' : 'false'}" data-act="ptab" data-place="automations" data-v="board">${t("window.places.automations.board")}</button></div>`;
 
   if (tab === "scheduled") {
+    html += scheduleGatewayWarning(schedules);
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.work-a-trunk-does-on-a")}</p>
     <form class="nl" data-form="nl"><input class="inp" id="nl-in"${nlValue()} placeholder="${esc(t("window.places.automations.describe-it-every-weekday-at-8"))}" aria-label="${t("window.places.automations.describe-a-new-automation")}"><button class="btn pri" type="submit" data-act="nl-add"${boxEmpty()}>${t("asks.runtimes.add")}</button></form>${propCard()}
     ${schedules.length ? `<div class="rows" data-css="margin-top:8px">${schedules.map(scheduleRow).join('')}</div>` : empty18("automations:scheduled")}
@@ -183,7 +195,7 @@ export function draw() {
     markLive(schedules.map((_, i) => `sw:auto-scheduled-${i}`));
   } else if (tab === "procedures") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.saved-step-by-step-routines-including")}</p>
-    <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : `disabled data-tip="${esc(t("window.switch-on.needs-trunk"))}"`}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button>${graphEditorButton()}</div>
+    <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : `disabled data-tip="${esc(t("window.switch-on.needs-trunk"))}"`}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button>${flowHistoryButton()}${graphEditorButton()}</div>
     <div class="rows" data-css="margin-top:8px">${autoProcedures.map(autoRow).join('')}${procedures.map(procedureRow).join('')}</div>
   <div class="sec"><h2>${t("prompts.card.title")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.automations.things-you-ask-for-often-each")}</p>${promptsOff() ? offTile("prompts", t("window.switch-on.off", { label: t("prompts.card.title") })) : ""}<div class="rows">${(prompts?.prompts ?? []).map(promptRow).join('')}</div><div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="prompt-new"${promptsOff() ? ` disabled data-tip="${esc(t("window.switch-on.off", { label: t("prompts.card.title") }))}"` : ""}>${ic('plus', 's')}${t("window.places.automations.new-prompt")}</button></div></div>`;
 
@@ -209,7 +221,15 @@ export async function after() {
   if (p17.error) toast(p17.error.message);
   if (p17.changed) renderNow();
 
-  if (tab === "checkins") {
+  if (tab === "scheduled" && ownerHere() && (E.state?.schedules ?? []).some((schedule) => ["pending", "running"].includes(schedule.data?.status))) {
+    const scope = activeId(), request = ++gatewayRead;
+    const view = await api("never-break").catch(() => null);
+    if (request !== gatewayRead || !ownerHere() || activeId() !== scope || (S.tabs.automations || "scheduled") !== "scheduled") return;
+    const supervised = typeof view?.underGateway === "boolean" ? view.underGateway : null;
+    const changed = scheduleGateway.scope !== scope || scheduleGateway.supervised !== supervised || Date.now() - scheduleGateway.at >= 30000;
+    scheduleGateway = { scope, supervised, at: Date.now() };
+    if (changed) renderNow();
+  } else if (tab === "checkins") {
     const fresh = await api("heartbeat").catch(() => null);
     if (fresh && JSON.stringify(fresh) !== JSON.stringify(heartbeat)) {
       heartbeat = fresh;
@@ -306,6 +326,7 @@ async function removeLine(text) {
 }
 
 export function init() {
+  initFlowHistory();
   initGraphEditor();
   initAutomations17();
   initSwitchOn();

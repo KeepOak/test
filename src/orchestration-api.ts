@@ -46,9 +46,26 @@ export async function orchestrationApi(
   }
   // Wave 8: the to-do list, and "Save as report" in its three forms.
   if (path.startsWith("/api/todos")) {
-    const answered = await todosApi(app.todos, owner, request, path, () => readBody(request),
-      (todo) => remindAbout(app.scheduler, app.runtime.context({}), todo));
-    return answered ?? notFound();
+    const scope = app.store.profiles.scope();
+    let revoked = request.aborted;
+    const revoke = () => { revoked = true; };
+    const stopProfile = app.store.profiles.onSwitched(revoke);
+    const stopLock = app.sessionLock.onLocked(revoke);
+    request.on("aborted", revoke);
+    const current = () => {
+      if (revoked || request.aborted || app.sessionLock.locked() || app.store.profiles.scope() !== scope)
+        throw new OrchestrationApiError(403, "The to-do request's original owner context is no longer available. Try again after unlocking Branch.");
+      app.store.profiles.requireOwner("The to-do list");
+    };
+    try {
+      current();
+      const answered = await todosApi(app.todos, owner, request, path, () => readBody(request),
+        (todo) => remindAbout(app.scheduler, app.runtime.context({}), todo), current);
+      current();
+      return answered ?? notFound();
+    } finally {
+      stopProfile(); stopLock(); request.off("aborted", revoke);
+    }
   }
   if (path.startsWith("/api/reports")) {
     const answered = await reportsApi(app.store, owner, request, path, () => readBody(request, 512_000));

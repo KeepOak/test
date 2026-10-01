@@ -67,9 +67,12 @@ export class WebAccess {
    * fallback and a SearXNG of the owner's own work, which is what an unconfigured Branch does.
    */
   searchKey: ((name: string) => Promise<string>) | undefined;
+  /** The owner's pick from the window (src/web-search-choice.ts); null leaves the launch settings file's choice. */
+  searchChoice: (() => z.infer<typeof SearchBackendSchema> | null) | undefined;
   async search(query: string, limit = 5): Promise<SearchResult[]> {
-    const chosen = this.config.search;
-    const key = chosen.keySecret && this.searchKey ? await this.searchKey(chosen.keySecret) : "";
+    const chosen = this.searchChoice?.() ?? this.config.search;
+    // A key that is not saved yet reads as none, so the refusal below names the secret to save.
+    const key = chosen.keySecret && this.searchKey ? await this.searchKey(chosen.keySecret).catch(() => "") : "";
     if (chosen.backend !== "duckduckgo" && chosen.backend !== "searxng" && !key)
       throw new Error(`Searching with ${chosen.backend} needs its key. Save a secret called ${chosen.keySecret ?? "the service's key"} first, or choose the free search in Settings.`);
     const request = requestFor(chosen, query, limit, key, this.config.searchEndpoint);
