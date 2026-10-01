@@ -8,7 +8,8 @@ import { on, run } from "../core/actions.js";
 import { ic, av, mi, openPop, closePop, openDlg, toast } from "../core/ui.js";
 import { greyOut, markLive } from "../core/features.js";
 import { stillOutOfSight } from "../core/still.js";
-import { head as chatHead, openConversation, startFresh, addDockItem } from "../chat/chat.js";
+import { head as chatHead, openConversation, startFresh, addDockItem, conversationWho } from "../chat/chat.js";
+import { contextMeter } from "./context-audit.js";
 import { groups, lineOf, currentOf, freshIn, linePinned, lastAt, sid as idOf } from "../chat/trunkline.js"; // trunk-one-row
 import { statusItems } from "../chat/messages.js";
 import { initExtras, gatewayOn, readGateway } from "./extras.js";
@@ -200,6 +201,7 @@ function status() {
   return `<button class="sb" type="button" data-act="machines"><span class="dot ${link.up ? "" : "off"}"></span><span class="sbt18c">${link.up ? t("layout.connected") : t("window.shell.shell.not-connected")}</span><span class="where18c"> · ${esc(machineName() || t("window.shell.shell.this-computer"))}</span></button>
     ${hidden("gateway") ? "" : `<button class="sb" type="button" data-act="gwpop" data-hide="gateway" data-tip="${t("window.shell.shell.the-gateway-keeps-branch-running-in")}"><span class="dot${link.up && gatewayOn() ? "" : " off"}"></span><span class="sbt18c">${!link.up || gatewayOn() == null ? t("window.settings.gateway.gateway") : gatewayOn() ? t("window.shell.shell.gateway-on") : t("window.shell.shell.gateway-off")}</span></button>`}
     ${statusItems()}
+    ${contextMeter(conversationWho().sessionId)}
     ${updateItem()}
     <button class="sb tasks10" type="button" data-act="tasks10" data-tip="${t("window.shell.shell.what-is-running-in-the-background")}"><i class="${working() ? "lit10" : ""}"></i>${working()} ${t("window.shell.shell.running")}</button>${pausedChip()}
     ${petHTML("status")}

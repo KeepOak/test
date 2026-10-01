@@ -1,0 +1,9 @@
+.context-audit{width:min(420px,calc(100vw - 40px));max-height:65vh;overflow:auto;padding:12px}
+.context-audit ul{padding:0;list-style:none;display:flex;flex-direction:column;gap:8px}
+.context-audit li{display:flex;align-items:center;justify-content:space-between;gap:12px;overflow-wrap:anywhere}
+.context-audit h4{margin:16px 0 8px}
+.context-audit p{margin:8px 0}
+/* The status bar has no room for the word below 1100px (the meter and its figure stay, as .sbt18c does at 760px), and none
+   for the item at all below 880px, as the version goes at phone width. */
+@media (max-width:1100px){.statusbar .sb[data-act="context-audit"] .sbt18c{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}}
+@media (max-width:880px){.statusbar .sb[data-act="context-audit"]{display:none}}
