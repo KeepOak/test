@@ -12,10 +12,12 @@ export class ChannelRouteError extends Error {}
 const prefix = "channel-route:";
 const routeKey = (channel: string, scope: string): string => `channel-route:${channel}:${scope}`;
 
-/** Only addresses whose adapter defines a thread suffix have a parent; Matrix's host colon is not one. */
+/**
+ * Only addresses whose adapter defines a thread suffix have a parent; Matrix's host colon is not one. A Slack chat is its
+ * whole channel or DM (src/channels/slack.ts keeps a thread's ts in the message id), so Slack has no thread scope.
+ */
 export function parentScope(kind: string, scope: string): string | null {
   if (kind === "telegram" && /^-?\d+:\d+$/.test(scope)) return scope.split(":")[0]!;
-  if (kind === "slack" && /^[CGD][A-Z0-9]+:\d+\.\d+$/i.test(scope)) return scope.split(":")[0]!;
   return null;
 }
 export function channelRoutes(store: Pick<Store, "list">, owner: string): ChannelRoute[] {
@@ -61,6 +63,7 @@ export function saveChannelRoute(deps: RoutingDeps, input: unknown, actor: strin
   const route = ChannelRouteSchema.parse(input), { store, owner } = deps;
   const kind = deps.kindOf(route.channel);
   if (!kind) throw new ChannelRouteError("Connect that chat app before choosing who answers there.");
+  if (kind === "slack" && route.scope.includes(":")) throw new ChannelRouteError("On Slack, choose who answers for a whole Slack channel or direct chat, not one thread.");
   if (route.trunkId && route.trunkId !== "default") deps.requireTrunk(route.channel, route.trunkId);
   store.atomically(() => {
     const chats = store.list("settings", owner).flatMap(record => {

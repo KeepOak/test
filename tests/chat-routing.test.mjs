@@ -4,6 +4,7 @@ import { fixture, on, setupTrunk } from "./trunks-helpers.mjs";
 import { parentScope, bindingFor, channelRoutes, ChannelRouteSchema } from "../dist/channels/routes.js";
 import { chatThread } from "../dist/channels/threads.js";
 import { startServer } from "../dist/server.js";
+import { SlackAdapter } from "../dist/channels/slack.js";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 let serial = 0;
@@ -47,14 +48,37 @@ test("routing prefers exact chat, supported parent, whole app and then default",
 test("only adapter-defined thread addresses have parents; another app stays separate", async t => {
   const { app, ada, bo, route } = await setup(t);
   assert.equal(parentScope("telegram", "-10:7"), "-10");
-  assert.equal(parentScope("slack", "C1:123.456"), "C1");
+  assert.equal(parentScope("slack", "C1:123.456"), null);
   assert.equal(parentScope("matrix", "!room:server.example"), null);
   assert.equal(parentScope("discord", "123:456"), null);
   route("C1", bo.id, "slack");
-  assert.equal(app.channels.chatTrunk("slack", "C1:123.456"), bo.id);
+  assert.equal(app.channels.chatTrunk("slack", "C1"), bo.id);
   assert.equal(app.channels.chatTrunk("matrix", "C1:123.456"), ada.id);
   route("!room", bo.id, "matrix");
   assert.equal(app.channels.chatTrunk("matrix", "!room:server.example"), ada.id);
+});
+// Review r4125983486: a Slack chat is its channel (or DM); a thread in it is the same chat, so a route names the channel.
+test("Slack routes name the channel or DM: a thread reply is the same chat and a thread-shaped route is refused", async t => {
+  const { app, bo, route } = await setup(t);
+  const slack = new SlackAdapter({ id: "slack", token: "xoxb-1", appToken: "xapp-1" });
+  const top = slack.inbound({ type: "message", channel: "D1", channel_type: "im", user: "U1", text: "hi", ts: "1.1" });
+  const reply = slack.inbound({ type: "message", channel: "D1", channel_type: "im", user: "U1", text: "more", ts: "1.2", thread_ts: "1.1" });
+  assert.deepEqual([top.chatId, reply.chatId], ["D1", "D1"]);
+  assert.throws(() => route("D1:1.1", bo.id, "slack"), /whole Slack channel/);
+  assert.deepEqual(channelRoutes(app.store, app.runtime.owner), []);
+  route("D1", bo.id, "slack"); assert.equal(app.channels.chatTrunk("slack", reply.chatId), bo.id);
+});
+// Review r4125983476: with Trunks off, a saved route starts nothing new as that Trunk and no Trunk can be chosen.
+test("with Trunks switched off, saved routes start no Trunk and routing offers none", async t => {
+  const { app, bo, route, say, sent } = await setup(t);
+  route("*", bo.id);
+  app.trunks.setMode("trunks", { mode: "off" });
+  assert.equal(app.channels.chatTrunk("chat", "fresh"), null);
+  assert.deepEqual(app.channels.routing().trunks, []);
+  assert.throws(() => route("dm", bo.id), /existing Trunk/);
+  await say("/trunk Bo"); assert.doesNotMatch(sent.at(-1).text, /Saved who answers/);
+  await say("/trunk"); assert.doesNotMatch(sent.at(-1).text, /Bo \(@/);
+  assert.notEqual((await say("hello", { chatId: "fresh" })).trunkId, bo.id);
 });
 test("changing a route starts a fresh thread and retains its earlier conversation", async t => {
   const { app, bo, route, say } = await setup(t);
