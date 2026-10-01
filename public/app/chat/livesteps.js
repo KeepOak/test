@@ -14,6 +14,7 @@ import { streamOnce } from "../core/api.js";
 import { on } from "../core/actions.js";
 import { t, language, formatNumber } from "../../i18n.js";
 import { liveHead } from "../places/inboxwork.js"; // long-work: time so far and Pause
+import { selectionHeld, privateContext, refreshScrollFollow } from "./scroll-follow.js";
 
 const SHOWN = 8;
 const pause = (ms) => new Promise((done) => setTimeout(done, ms));
@@ -28,20 +29,21 @@ const OPENED = new Set();
  * when the first steps have no block to go in yet.
  */
 export function liveFollower({ block, scroll, onAsk = () => {}, onGone = () => {}, onShow = onGone }) {
-  const L = { runId: null, snap: null, ctl: null, all: false, frame: 0, block, scroll, onAsk, onGone, onShow };
+  const L = { runId: null, snap: null, ctl: null, scope: null, all: false, frame: 0, block, scroll, onAsk, onGone, onShow, stop: () => {} };
   FOLLOWERS.set(block, L);
   const me = {
     follow(runId) {
       if (!runId || L.runId === runId) return;
       me.stop();
       L.runId = runId;
+      L.scope = privateContext();
       L.ctl = new AbortController();
       follow(L, runId, L.ctl.signal);
     },
     stop() {
       L.ctl?.abort();
       if (L.frame) cancelAnimationFrame(L.frame);
-      Object.assign(L, { runId: null, snap: null, ctl: null, all: false, frame: 0 });
+      Object.assign(L, { runId: null, snap: null, ctl: null, scope: null, all: false, frame: 0 });
     },
     shown: () => Boolean(L.snap?.steps?.length),
     block: () => `<div class="steps live-steps" id="${esc(L.block)}" aria-live="polite">${lines(L)}</div>`,
@@ -49,6 +51,7 @@ export function liveFollower({ block, scroll, onAsk = () => {}, onGone = () => {
     set(hooks) { Object.assign(L, hooks); },
     forget() { me.stop(); FOLLOWERS.delete(L.block); },
   };
+  L.stop = me.stop;
   return me;
 }
 const MAIN = liveFollower({ block: "live-steps", scroll: "#scroll" });
@@ -94,13 +97,17 @@ function take(L, snap) {
 function draw(L) {
   L.frame = 0;
   const block = document.getElementById(L.block);
+  // Another person's window now: this task's steps are not drawn for them.
+  if (L.scope !== privateContext()) { L.stop(); block?.replaceChildren(); L.onGone(); return; }
   // The first steps have no block to go in yet: the view is drawn again with it, rather than waiting for something
   // else to redraw (on a slow machine nothing may, and the steps never showed).
   if (!block) { if (L.snap?.steps?.length) L.onShow(); return; }
   const box = block.closest(L.scroll) ?? $(L.scroll);
-  const atEnd = box && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+  if (selectionHeld(block)) return;
+  const atEnd = box && !selectionHeld(box) && box.scrollHeight - box.scrollTop - box.clientHeight < 40;
   block.innerHTML = lines(L);
   if (atEnd) box.scrollTop = box.scrollHeight;
+  refreshScrollFollow();
 }
 export function stopLive() {
   MAIN.stop();

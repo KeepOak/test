@@ -10,6 +10,7 @@ import { createBranch } from "../dist/index.js";
 import { NetworkPolicy, httpTwin } from "../dist/network-policy.js";
 import { acceptKey, frame, readFrame, binaryFrame, serveRunSocket } from "../dist/ws.js";
 import { OpenAiRealtimeSession } from "../dist/realtime-openai.js";
+import { ChatGPTRealtimeSession } from "../dist/realtime-chatgpt.js";
 import { GeminiLiveSession } from "../dist/realtime-gemini.js";
 import { LiveConversations, livePlanFor, liveServiceOf } from "../dist/realtime-voice.js";
 import { audioFrame, readAudioFrame, parseCommand, liveHooks, socketOutput } from "../dist/realtime-socket.js";
@@ -230,8 +231,8 @@ test("the OpenAI shape: which voice, sound up, an answer back, and cutting in", 
 
   session.interrupt();
   await settle();
-  assert.equal(service.of("response.cancel").length, 1, "cutting in cancels the answer");
-  assert.equal(service.of("input_audio_buffer.clear").length, 1, "and throws away what was heard");
+  assert.equal(service.of("response.cancel").length, 0, "an answer that is already done has nothing to cancel");
+  assert.equal(service.of("input_audio_buffer.clear").length, 0, "and what the person is saying is kept");
   session.close();
 });
 
@@ -921,4 +922,32 @@ test("a picture shown while talking goes down the same connection, in each servi
   const frame = await until(() => gemini.received.find((m) => m.realtimeInput?.video), "the Gemini video frame");
   assert.deepEqual(frame.realtimeInput.video, { mimeType: "image/jpeg", data: png });
   two.close();
+});
+
+test("a live connection stopped while its address was checked never dials, so no sign-in header is sent", async (t) => {
+  const service = await fakeSocketService(t);
+  const port = new URL(service.endpoint).port;
+  const policy = new NetworkPolicy({ allowPrivateAddresses: true, allowedHosts: ["127.0.0.1"] });
+  const written = [];
+  policy.watchSockets = (record, outcome) => written.push(outcome);
+  await assert.rejects(policy.connect(`ws://127.0.0.1:${port}/live`, {
+    headers: { authorization: "Bearer never-sent" }, proceed: () => false }), /stopped before it opened/);
+  assert.equal(service.opened.length, 0, "nothing reached the service");
+  assert.equal(policy.openSockets(), 0);
+  assert.deepEqual(written, ["refused"]);
+});
+
+test("the ChatGPT live session tells the dial it has ended, before and after End", () => {
+  const signal = new AbortController();
+  const session = new ChatGPTRealtimeSession(new NetworkPolicy({}), { instructions: "", voice: "cove" },
+    { token: "t", accountId: "a", offer: "v=0", runId: "r", signal: signal.signal, fetch: async () => { throw new Error("unused"); } });
+  const { connect } = session.address();
+  assert.equal(typeof connect.proceed, "function", "the dial asks the session at the last moment");
+  assert.equal(connect.proceed(), true);
+  session.close();
+  assert.equal(connect.proceed(), false, "after End no socket is made");
+  const locked = new ChatGPTRealtimeSession(new NetworkPolicy({}), { instructions: "", voice: "cove" },
+    { token: "t", accountId: "a", offer: "v=0", runId: "r", signal: signal.signal, fetch: async () => { throw new Error("unused"); } });
+  signal.abort();
+  assert.equal(locked.address().connect.proceed(), false, "a stopped call (App lock, End) makes none either");
 });

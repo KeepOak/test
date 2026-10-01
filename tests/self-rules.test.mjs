@@ -8,7 +8,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createBranch } from "../dist/index.js";
-import { readPolicy } from "../dist/policy.js";
+import { readPolicy, savePolicy } from "../dist/policy.js";
 import { changeSelfRule, selfRulesView, SelfRuleRefusal } from "../dist/self-rules.js";
 import { dashboardApi, registerRestartTool } from "../dist/dashboard-api.js";
 import { restartPlan } from "../dist/dashboard-summary.js";
@@ -121,4 +121,43 @@ test("working on its own code goes live the moment GitHub is connected, with no 
   assert.ok(names.includes("git.push"), "connecting GitHub turns sending on");
   assert.ok(names.includes("branch.prepare_source_change"), "and with it, working on its own code");
   assert.deepEqual(selfRulesView(store, owner, names).selfDev, { on: true, available: true });
+});
+
+test("SELF-063 letting ordinary settings changes through is refused without the owner's confirmation, even when a broad yes already allows them", async (t) => {
+  const { app, owner, store } = await fixture(t);
+  const names = app.registry.names();
+  const as = () => {
+    const run = store.createRun(owner, "change a setting");
+    store.event(run.id, "run.started", { source: "owner" });
+    return app.runtime.context({ runId: run.id, source: "owner" });
+  };
+  const change = { changes: [{ setting: "fly-core.mode", value: "on" }] };
+  // A broad "allow everything" is not the explicit switch: an ordinary change still asks first.
+  savePolicy(store, owner, { preset: "custom", rules: [{ tool: "*", match: "*", decision: "allow" }] });
+  assert.equal(selfRulesView(store, owner, names).ownSettings, "ask");
+  assert.equal(app.runtime.checkPolicy("settings.change", change, as(), "fp-broad").decision, "ask");
+  // "allowed" without confirmLoosening is refused with the loosening words, and nothing is written.
+  const before = JSON.stringify(readPolicy(store, owner));
+  assert.throws(() => changeSelfRule(store, owner, { control: "ownSettings", value: "allowed" }, false, app.registry, names),
+    (error) => error instanceof SelfRuleRefusal && /ordinary settings changes no longer ask first/.test(error.message));
+  assert.equal(JSON.stringify(readPolicy(store, owner)), before, "a refused change changes nothing");
+  assert.equal(app.runtime.checkPolicy("settings.change", change, as(), "fp-refused").decision, "ask");
+  // With the owner's yes it is kept as one explicit rule, and only then does an ordinary change go through unasked.
+  assert.equal(changeSelfRule(store, owner, { control: "ownSettings", value: "allowed" }, true, app.registry, names).ownSettings, "allowed");
+  assert.ok(readPolicy(store, owner).rules.some((rule) => rule.tool === "settings.change" && rule.match === "*" && rule.decision === "allow"));
+  assert.equal(app.runtime.checkPolicy("settings.change", change, as(), "fp-allowed").decision, "allow");
+  assert.equal(app.runtime.checkPolicy("settings.loosen", change, as(), "fp-loosen").decision, "ask", "a less careful change still asks every time");
+});
+
+test("SELF-063 the window's route refuses \"allowed\" without confirmLoosening on a fresh install", async (t) => {
+  const { app, root } = await fixture(t);
+  const server = await startServer(app, { dataDir: join(root, "data"), port: 0, host: "127.0.0.1" });
+  t.after(() => server.close());
+  const call = (body) => fetch(new URL("/api/self-rules", server.url), { method: body ? "POST" : "GET",
+    headers: { authorization: `Bearer ${server.token}`, "content-type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const refused = await call({ control: "ownSettings", value: "allowed" });
+  assert.equal(refused.status, 409);
+  assert.match((await refused.json()).error, /less careful/);
+  assert.equal((await (await call()).json()).ownSettings, "ask");
+  assert.equal((await (await call({ control: "ownSettings", value: "allowed", confirmLoosening: true })).json()).ownSettings, "allowed");
 });

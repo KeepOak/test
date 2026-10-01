@@ -16,6 +16,7 @@ import { nextCronOccurrence, nextWallOccurrence, validCron } from "./recurrence.
 import { underProject } from "./project-scope.js"; // dogfood-ux-3
 import { defaultProjectId } from "./projects.js"; // dogfood-ux-3
 import { conversationRateRefusal } from "./knobs/apply.js";
+import { ScheduleDashboardSchema, recordScheduledDashboard, scheduledDashboardPrompt } from "./scheduled-dashboards.js";
 
 const timezone = z.string().min(1).max(64).refine((zone) => {
   try { new Intl.DateTimeFormat("en-US", { timeZone: zone }); return true; } catch { return false; }
@@ -31,6 +32,8 @@ export const ScheduleSchema = z
     dueAt: z.iso.datetime(),
     /** reminder: a note in Activity; task: run the assistant; check: run it and hand it the previous result; evaluation: run a test suite. */
     kind: z.enum(["reminder", "task", "check", "evaluation"]),
+    /** Optional local dashboard projection of this task's structured output. */
+    dashboard: ScheduleDashboardSchema.optional(),
     /** Which evaluation suite to run, for an `evaluation` schedule. */
     suite: z.string().min(1).max(64).optional(),
     /** The model choice the evaluation should use; the one in use otherwise. */
@@ -70,6 +73,7 @@ export const ScheduleSchema = z
   .refine((value) => !value.monthDay || value.dailyAt, "A monthly recurrence needs a daily time")
   .refine((value) => !(value.weekdays && value.monthDay), "Choose either weekdays or a day of the month")
   .refine((value) => value.kind !== "evaluation" || !!value.suite, "An evaluation schedule needs the name of a suite")
+  .refine((value) => !value.dashboard || value.kind === "task" || value.kind === "check", "Only a task or check can write a dashboard")
   .refine((value) => !value.gate || value.kind === "task" || value.kind === "check", "Only a task or a check can have a check script");
 export type DeliveryHandler = (channel: string, chatId: string, text: string, key: string) => Promise<{ messageId?: string | undefined; queued?: number }>;
 export interface HistoryEntry { runId: string | null; status: string; startedAt: string; finishedAt?: string; trigger: string }
@@ -224,6 +228,7 @@ export class Scheduler {
     // A check script is a program on this computer: it waits for the owner's own yes, whoever asked.
     return this.store.save("schedules", context.owner, randomUUID(), {
       ...rest,
+      ...(definition.dashboard && !definition.notify ? { notify: "changes" } : {}),
       dueAt: new Date(definition.dueAt).toISOString(),
       permissions,
       // Dogfood: a list the caller named is theirs to keep; one worked out from the words is marked so it stays least.
@@ -347,8 +352,15 @@ export class Scheduler {
     const claimed = this.store.claimScheduleTrigger(owner, id, new Date().toISOString(), slot);
     if (!claimed) return this.refusedTrigger(owner, id, slot);
     const { statusBeforeTrigger, ...data } = claimed.data;
+    // An explicit retry of an interrupted turn must not put it back into the stuck state afterwards.
+    const wasInterrupted = statusBeforeTrigger === "interrupted";
+    const repeats = repeating(data);
+    let restored = wasInterrupted ? repeats ? "pending" : "failed" : String(statusBeforeTrigger);
+    let dueAt = data.dueAt;
+    if (wasInterrupted && repeats) try { dueAt = nextTurn(data, new Date()); }
+    catch { restored = "failed"; }
     const slots = (Array.isArray(data.triggerSlots) ? data.triggerSlots as TriggerSlot[] : []).slice(-(triggerSlotLimit - 1));
-    const record = { ...claimed, data: { ...data, status: String(statusBeforeTrigger),
+    const record = { ...claimed, data: { ...data, status: restored, dueAt,
       ...(slot ? { triggerSlots: [...slots, { slot, runId: null, at: new Date().toISOString() }] } : {}) } };
     const run = await this.execute(record, new Date(), trigger, payload, false);
     if (slot && run) this.noteSlotRun(owner, id, slot, run.id);
@@ -411,7 +423,7 @@ export class Scheduler {
       // QA retest 2026-09-28 (m5): a plain schedule's turns go on in one conversation of its own, not a new one each time.
       const thread = !route && !madeBy ? this.threadFor(data) : undefined;
       const work = async (): Promise<Run> => data.kind === "reminder" ? this.remind(record) : data.kind === "evaluation" ? await this.evaluateSuite(record) : await this.runtime.run({
-        prompt: this.promptFor(data, payload) + gatePrompt(found), permissions: this.reachOf(data) as string[], ...(thread ? { sessionId: thread } : {}),
+        prompt: this.promptFor(data, payload) + gatePrompt(found) + scheduledDashboardPrompt(data), permissions: this.reachOf(data) as string[], ...(thread ? { sessionId: thread } : {}),
         source: data.fromChat === true ? "channel" : outsideSources.has(String(data.madeFrom)) ? data.madeFrom as OutsideSource : "schedule", ...route?.options,
         // A schedule a Trunk made is built as that Trunk's task, as its routines are: its instructions and
         // memory scope, and its permissions as they are now, never more than the schedule was given.
@@ -425,7 +437,8 @@ export class Scheduler {
       Object.assign(entry, { runId: run.id, status: run.status, finishedAt: new Date().toISOString() });
       route?.finished(run); // R17-A (Trunks)
       this.runtime.notifyEvent("schedule.fired", { scheduleId: record.id, runId: run.id, status: run.status, trigger });
-      const delivery = await this.deliverResult(data, run, madeBy);
+      const dashboardChanged = recordScheduledDashboard(this.store, record.owner, record.id, data, run, saidNothingNew(run.output));
+      const delivery = dashboardChanged === false && data.notify !== "always" ? null : await this.deliverResult(data, run, madeBy);
       const kept = run.status === "completed" && !saidNothingNew(run.output);
       this.store.save("schedules", record.owner, record.id, {
         ...data, runId: run.id, runCount: Number(data.runCount ?? 0) + 1, history: [...history, entry],
@@ -580,7 +593,9 @@ export class Scheduler {
       throw new Error("Permission denied: schedules.manage");
     const record = this.store.get("schedules", context.owner, id);
     if (!record || !this.visibleTo(context, record)) return { id, removed: false };
-    return { id, removed: this.store.delete("schedules", context.owner, id) };
+    const removed = this.store.delete("schedules", context.owner, id);
+    if (removed) this.store.delete("governance", context.owner, `scheduled-dashboard:${id}`);
+    return { id, removed };
   }
   /** The schedules the caller may see: all of them for the owner, and only its own for a Trunk. */
   list(context: ToolContext): SavedRecord[] {
