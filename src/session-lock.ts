@@ -75,6 +75,8 @@ interface PinRow { salt: string; pin_hash: Uint8Array; wrong: number; wait_until
 export class SessionLock {
   private lastActive: number;
   private lockedAt: number | null = null;
+  /** Goes up on every lock and every unlock, so a holder can tell the app was locked in between (see `generation`). */
+  private changes = 0;
   /** Whether a PIN is set, read once and kept up to date here: every open stream asks it often. */
   private hasPin = false;
   /** Overridden in tests so a wait can be stepped over without sleeping. */
@@ -133,6 +135,7 @@ export class SessionLock {
   /** Locks, and with a PIN set writes the lock down so a restart keeps it (Q040). */
   private markLocked(): void {
     this.lockedAt = this.now();
+    this.changes++;
     if (this.hasPin) this.store.sqlite.prepare("UPDATE app_lock_pin SET locked_at=? WHERE owner=?").run(this.lockedAt, this.owner);
   }
   /**
@@ -153,6 +156,9 @@ export class SessionLock {
       this.checkPin(pin);
     }
     const wasLocked = this.lockedAt !== null;
+    // A quiet period that ran out with nobody looking was still a lock: it counts, as well as this unlock.
+    if (!wasLocked && this.idleLapsed()) this.changes++;
+    this.changes++;
     this.lockedAt = null;
     if (this.hasPin) this.store.sqlite.prepare("UPDATE app_lock_pin SET locked_at=NULL WHERE owner=?").run(this.owner);
     this.lastActive = this.now();
@@ -161,9 +167,14 @@ export class SessionLock {
   }
   locked(): boolean {
     if (this.lockedAt !== null) return true;
-    const { idleMinutes } = this.settings();
-    if (idleMinutes > 0 && this.now() - this.lastActive >= idleMinutes * 60_000) { this.markLocked(); this.notifyLocked(); }
+    if (this.idleLapsed()) { this.markLocked(); this.notifyLocked(); }
     return this.lockedAt !== null;
+  }
+  /** Changes whenever the app locks or unlocks, an unnoticed quiet-period lock included. */
+  generation(): number { return this.changes; }
+  private idleLapsed(): boolean {
+    const { idleMinutes } = this.settings();
+    return idleMinutes > 0 && this.now() - this.lastActive >= idleMinutes * 60_000;
   }
   state(): SessionLockState {
     const locked = this.locked(), { idleMinutes, lockOnOpen, secretsWhileLocked } = this.settings();

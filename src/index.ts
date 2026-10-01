@@ -965,6 +965,7 @@ export async function createBranch(options: {
   });
   const channels = new ChannelRouter(store, runtime);
   channels.appLocked = () => sessionLock.locked();
+  channels.appLockGeneration = () => sessionLock.generation();
   const priorToolGuard = registry.beforeTool;
   /** RES-253: the owner marked this Trunk "sandboxed" (Trunk › Reach), so its commands are walled like an outsider's. */
   const trunkSandboxed = (id: string | undefined): boolean =>

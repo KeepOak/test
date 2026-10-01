@@ -10,7 +10,8 @@ import { carryable } from "../carry-on.js"; // QA R1 follow-up
 /** One question a task is waiting on, as the runtime lists them. */
 type WaitingQuestion = ReturnType<Runtime["waitingApprovals"]>[number];
 import type { PolicyRemember } from "../policy.js";
-import { Deliveries } from "./deliveries.js";
+import { Deliveries, type DeliveryAuthority } from "./deliveries.js";
+import { watchHealthChanges } from "../health-changes.js";
 import { OwnMessagesSchema, OwnMessageSchema, type OwnMessageTarget } from "./message-actions.js";
 import { runOrigin, startedWithShortLivedKey } from "../key-context.js";
 import type { ToolContext } from "../contracts.js";
@@ -32,6 +33,7 @@ import { approveInWindow, chatMayApprove, chatPermissionsOf as chatPermissionsAl
   readChatPermissionSettings as chatPermissionSettings,
   saveChatPermissionSettings, type ChatPermissionSettings } from "./chat-permissions.js";
 import { commandMode } from "../commands/settings.js";
+import { inlineShortcuts, type AuthoredCommandText } from "./inline-shortcuts.js";
 import { savedLine } from "../commands/saved.js";
 import { chatCommandSpec, chatCommandsFor, parseChatCommand, runChatCommand, usageFooter, usageShown, type ChatCommand, type ChatTurn } from "./chat-commands.js";
 import { chatAppName } from "../environment.js";
@@ -73,6 +75,8 @@ export interface InboundMessage {
   senderId: string;
   senderName: string;
   text: string;
+  /** Adapter-vouched original human text and native quote/code/link spans. Absent for forwards, buttons or unknown provenance. */
+  authoredCommandText?: AuthoredCommandText;
   addressed: boolean;
   messageId: string;
   /** The message a reaction goes on, where it differs from `messageId` (a Slack thread reply). */
@@ -502,6 +506,8 @@ export class ChannelRouter {
   miniAppUrl: ((runId: string) => string | null) | undefined;
   /** Whether Branch is locked (the App lock). `createBranch` connects it; commands from a chat stop while it is. */
   appLocked: () => boolean = () => false;
+  /** Changes on every App lock and unlock, so a check taken earlier can tell a lock came and went. `createBranch` connects it. */
+  appLockGeneration: () => number = () => 0;
   /**
    * Hides key-shaped values and known secrets in what the live status shows (step labels, streamed
    * text). `createBranch` connects the leak guard; on its own this changes nothing.
@@ -700,7 +706,7 @@ export class ChannelRouter {
   flush(): Promise<void> {
     return (this.flushing = this.flushing.then(async () => {
       for (const [id, { adapter }] of this.adapters)
-        await this.deliveries.flush(id, (chatId, text, replyTo) => adapter.send(chatId, text, replyTo))
+        await this.deliveries.flush(id, (chatId, text, replyTo, gate) => adapter.send(chatId, text, replyTo, undefined, gate))
           .catch((error: unknown) => diagnose("channels", "warn", `Messages waiting for ${adapter.kind} could not be sent: ${error instanceof Error ? error.message : String(error)}`)); // mac7/diagnostics
     }));
   }
@@ -790,16 +796,23 @@ export class ChannelRouter {
    * Queues text for a chat and sends it if the channel is up. The key makes a repeat call a no-op,
    * so a task finished while the channel was down is delivered once, in order, after reconnect.
    */
-  async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
-    // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
-    const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
-    if (!home) throw new Error(noHome);
-    ({ channel, chatId } = home);
-    const target = this.adapters.get(channel);
-    if (!target) throw new Error(`Channel ${channel} is not connected`);
-    const checked = await this.outboundGuard(text);
-    if (checked.blocked) throw new Error(checked.reason ?? "The message was held back before it was sent");
-    this.deliveries.enqueue(channel, chatId, checked.text, key, replyTo, target.adapter.maxTextLength);
+  async deliver(channel: string, chatId: string, text: string, key = `delivery:${Date.now()}:${randomInt(1e9)}`, replyTo?: string,
+    authority?: DeliveryAuthority): Promise<{ messageId?: string | undefined; queued: number; sent: boolean }> {
+    let queued = false;
+    try {
+      // CHAT-190: "home" is the chat the owner chose with /sethome, read now, so moving home moves every result sent there.
+      const home = resolveHome(this.store, this.runtime.owner, channel, chatId);
+      if (!home) throw new Error(noHome);
+      ({ channel, chatId } = home);
+      const target = this.adapters.get(channel);
+      if (!target) throw new Error(`Channel ${channel} is not connected`);
+      const checked = await this.outboundGuard(text);
+      if (checked.blocked) throw new Error(checked.reason ?? "The message was held back before it was sent");
+      // An `authority` is checked again after the outgoing check, then goes with the message to the adapter's last step.
+      if (authority && !authority.allowed()) throw new Error("The chat may no longer be answered");
+      this.deliveries.enqueue(channel, chatId, checked.text, key, replyTo, target.adapter.maxTextLength, authority);
+      queued = true; // the queue owns the authority from here
+    } finally { if (!queued) authority?.release(); }
     await this.flush();
     const now = this.deliveries.list().filter((d) => d.key === key);
     const first = now.find((d) => d.seq === 0);
@@ -1163,6 +1176,8 @@ export class ChannelRouter {
   }
 
   private async answer(message: InboundMessage): Promise<Outcome> {
+    const inline = await this.inlineCommands(message);
+    if (inline) return inline;
     // Telegram sends /start when somebody opens the bot: a welcome, answered here without asking the model.
     if (startCommand.test(message.text.trim()) && !message.voice) return this.welcome(message);
     // ---- bucket 12: one of the owner's saved commands becomes the message it stands for ----
@@ -1227,6 +1242,60 @@ export class ChannelRouter {
     const turn = this.turns.get(chatKey(message));
     if (turn) return this.joinTurn(turn, message);
     return this.startTurn([message.edited ? editedAsNew(message) : message]);
+  }
+  /** Read-only shortcuts run before saved-command expansion, approvals, task queues and models. */
+  private async inlineCommands(message: InboundMessage): Promise<Outcome | null> {
+    if (!message.authoredCommandText || message.voice || message.attachments?.length || message.caughtUp || message.edited
+      || message.chatKind !== "direct" || this.appLocked()) return null;
+    const turn = this.turns.get(chatKey(message));
+    if (turn && turn.messages[0]?.senderId !== message.senderId) return null;
+    const picked = inlineShortcuts(message.authoredCommandText, message.text); if (!picked) return null;
+    // Reuse exact standalone availability; no new command or tool permission is granted.
+    if (picked.names.some(name => !this.commandIn({ ...message, text: `/${name}` }))) return null;
+    const { authoredCommandText: _authored, ...original } = message;
+    const remaining = { ...original, text: picked.remainder };
+    // The owner may pause this chat app while a shortcut's answer is on its way: nothing more goes out then.
+    const paused = () => !!(platformGate(this.store, this.runtime.owner, message) ?? homeGate(this.store, this.runtime.owner, message));
+    const attached = this.adapters.get(message.channel), lockGeneration = this.appLockGeneration();
+    const allowedNow = (name: string) => this.adapters.get(message.channel) === attached && this.appLockGeneration() === lockGeneration
+      && !paused() && !this.appLocked()
+      && this.senderAllowed(message.channel, message.senderId) && !!this.commandIn({ ...message, text: `/${name}` });
+    // One authority for the whole message, watched until its shortcuts are settled: once it is revoked, no later shortcut
+    // or remainder goes out, even when the answer before it already reached the chat.
+    const whole = this.answerAuthority(message.channel, () => picked.names.every(allowedNow));
+    const allowed = (name: string) => whole.allowed() && allowedNow(name);
+    try {
+      for (const name of picked.names) {
+        if (!allowed(name)) return "ignored";
+        // Each answer goes out under an authority taken now; the channel in its key keeps two apps' answers apart.
+        const authority = this.answerAuthority(message.channel, () => allowed(name));
+        if (await this.command(message, { name, argument: "" }, `inline-${name}:${message.channel}`, authority) === "ignored"
+          || !whole.allowed()) return "ignored";
+      }
+      if (!remaining.text.trim()) return "replied";
+      if (!whole.allowed()) return "ignored";
+    } finally { whole.release(); }
+    // A remainder such as "yes", "/stop" or a saved alias is task prose, never another control path.
+    const current = this.turns.get(chatKey(message));
+    return current ? this.joinTurn(current, remaining) : this.startTurn([remaining]);
+  }
+  /**
+   * CHAT-210: the authority one shortcut answer goes out under. Any revocation after it is taken is final, even one undone
+   * before the next look: settings changes (pause, the sender list, pairing, the chat switches) are checked as they are
+   * written, the App lock, Lockdown, a profile switch or a disconnect abort it through stopMessageSends, and a lock nobody
+   * noticed until the unlock still changes the lock generation the caller's check compares. It is per
+   * answer, so one chat app's pause never refuses another's.
+   */
+  private answerAuthority(channel: string, current: () => boolean): DeliveryAuthority {
+    const sending = new AbortController();
+    this.messageSends.set(sending, channel);
+    const revoke = () => { if (!sending.signal.aborted && !current()) sending.abort(new Error("The chat may no longer be answered")); };
+    const unwatch = this.store.sqlite
+      ? watchHealthChanges(this.store.sqlite, (change) => { if (change.kind === "setting" && change.owner === this.runtime.owner) revoke(); })
+      : () => undefined;
+    const allowed = () => { revoke(); return !sending.signal.aborted; };
+    return { allowed, gate: { signal: sending.signal, check: () => { if (!allowed()) throw sending.signal.reason; } },
+      release: () => { unwatch(); this.messageSends.delete(sending); } };
   }
   /**
    * The answer to /start: who is answering, where, and how to talk to it, in one short message. Hermes Agent takes
@@ -1450,7 +1519,7 @@ export class ChannelRouter {
     await say(adapter?.sendButtons ? now.words : `${now.words} Send /update install to install it now.`);
     return "replied";
   }
-  private async command(message: InboundMessage, command: ChatCommand): Promise<Outcome> {
+  private async command(message: InboundMessage, command: ChatCommand, deliveryKind = "command", authority?: DeliveryAuthority): Promise<Outcome> {
     const { channel, chatId } = message;
     if (command.name === "update") return this.updateCommand(message, command.argument);
     // A chat's steps level lasts beyond the conversation and can show more (files, commands), so, as /session and
@@ -1517,9 +1586,11 @@ export class ChannelRouter {
     });
     let reply: string;
     try { reply = asks ? await this.withSlot(work) : await work(); }
+    catch (error) { authority?.release(); throw error; }
     finally { if (named) this.trunkCommands.delete(chatKey(message)); }
-    await this.deliver(channel, chatId, reply, `command:${chatId}:${message.messageId}`, this.quoteFor(message)).catch(() => undefined);
-    return "replied";
+    await this.deliver(channel, chatId, reply, `${deliveryKind}:${chatId}:${message.messageId}`, this.quoteFor(message), authority).catch(() => undefined);
+    // An answer whose authority was revoked on its way, even after it reached the chat, does not count as a reply.
+    return authority && !authority.allowed() ? "ignored" : "replied";
   }
   /** What the owner-DM commands can reach: the whole app's command host, set by createBranch. Without it they are not read. */
   ownerDmHost: (() => CommandHost) | null = null;
