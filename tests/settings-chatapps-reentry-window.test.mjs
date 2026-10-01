@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { settingsWindow, openSettingsPage } from "./settings-window.mjs";
+import { waitInPage } from "./wait-in-page.mjs";
 
 test("the real Settings gear refreshes Chat apps after leaving for Customize", { timeout: 60000 }, async (t) => {
   let connected = false, reads = 0;
@@ -15,7 +16,7 @@ test("the real Settings gear refreshes Chat apps after leaving for Customize", {
   await openSettingsPage(page, "chatapps");
   await page.locator(".ca17d .empty").waitFor();
   await page.locator('[data-act="ptab"][data-place="customize"][data-v="channels"]').click();
-  await page.waitForFunction(async () => (await import("/app/core/state.js")).S.view === "customize");
+  await waitInPage(page, async () => (await import("/app/core/state.js")).S.view === "customize");
   connected = true; // isolated endpoint receipt, not a real Telegram sign-in or request
   const before = reads;
   await page.getByRole("button", { name: "Settings", exact: true }).first().click();
@@ -23,7 +24,7 @@ test("the real Settings gear refreshes Chat apps after leaving for Customize", {
   assert.ok(reads > before, "gear reentry made a fresh channel read without clicking the sidebar page");
   assert.equal(await page.locator(".ca17d .empty").count(), 0);
   await page.locator('[data-act="ptab"][data-place="customize"][data-v="channels"]').click();
-  await page.waitForFunction(async () => (await import("/app/core/state.js")).S.view === "customize");
+  await waitInPage(page, async () => (await import("/app/core/state.js")).S.view === "customize");
   connected = false;
   await page.getByRole("button", { name: "Settings", exact: true }).first().click();
   await page.locator(".ca17d .empty").waitFor();
