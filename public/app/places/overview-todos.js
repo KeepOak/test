@@ -2,41 +2,49 @@
 import { E, S, ownerHere } from "../core/state.js";
 import { sessionPrincipal } from "../core/session-pages.js";
 import { api, token } from "../core/api.js";
-import { esc, renderNow } from "../core/dom.js";
+import { esc, renderNow, afterDraw } from "../core/dom.js";
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
-import { openDlg, closeDlg, dialog, toast } from "../core/ui.js";
+import { openDlg, closeDlg, dialog, toast, dialogRevision } from "../core/ui.js";
 import { lockdownOn } from "../chat/approvals.js";
 import { t, language } from "../../i18n.js";
 
 const T = { who: null, rows: null, snapshot: null, error: null, serial: 0, loading: false, busy: new Set(), removal: null, dialogWho: null };
-const who = () => JSON.stringify([sessionPrincipal(E.profiles), S.signedIn, token.get()]);
-const current = (identity) => ownerHere() && identity === who();
+const unlocked = () => !E.state?.lock?.locked && !document.getElementById("app")?.classList.contains("locked-b17");
+const available = () => S.signedIn === true && ownerHere() && unlocked() && S.view === "overview";
+const who = () => JSON.stringify([sessionPrincipal(E.profiles), S.signedIn, token.get(), S.view, S.chat, S.setPage]);
+let lockObserver = null;
+const invalidateLock = records => {
+  if (records.some(record => /(?:^|\s)locked-b17(?:\s|$)/.test(record.oldValue ?? "")) || !unlocked()) {
+    T.who = null; scoped();
+  }
+};
+const current = identity => { invalidateLock(lockObserver?.takeRecords() ?? []); return available() && identity === who(); };
 const writable = () => current(T.who) && !lockdownOn();
 const text = (key, values) => t(`window.places.owner-todos.${key}`, values);
 function scoped() {
   const identity = who();
-  if (!ownerHere() || T.who !== identity) {
-    Object.assign(T, { who: identity, rows: null, snapshot: null, error: null, loading: false, busy: new Set(), removal: null });
+  if (!available() || T.who !== identity) {
+    Object.assign(T, { who: identity, rows: null, snapshot: null, error: null, loading: false, busy: new Set(), removal: null, dialogWho: null });
     ++T.serial;
   }
-  return ownerHere();
+  return available();
 }
 export async function loadOwnerTodos(force = false) {
   if (!scoped() || (!force && (T.loading || T.snapshot === E.state))) return false;
-  const identity = T.who, serial = ++T.serial;
+  const identity = T.who, serial = ++T.serial, revision = dialogRevision();
   T.snapshot = E.state; T.loading = true;
   try {
     const result = await api("todos");
-    if (!current(identity) || serial !== T.serial) return false;
+    if (!current(identity) || serial !== T.serial || revision !== dialogRevision()) return false;
     const changed = JSON.stringify(T.rows) !== JSON.stringify(result.todos) || T.error !== null;
     T.rows = result.todos ?? []; T.error = null;
     return changed;
   } catch (error) {
-    if (!current(identity) || serial !== T.serial) return false;
+    if (!current(identity) || serial !== T.serial || revision !== dialogRevision()) return false;
     T.error = error.message;
     return true;
-  } finally { if (serial === T.serial) T.loading = false; }
+  } finally { if (serial === T.serial) { T.loading = false; if (!current(identity) || revision !== dialogRevision()) T.snapshot = null; } }
 }
 const moment = (value) => {
   const date = new Date(value);
@@ -57,7 +65,9 @@ function showList() {
   if (!scoped()) return;
   T.dialogWho = T.who;
   const items = T.rows ?? [], open = items.filter((item) => !item.done), done = items.filter((item) => item.done);
-  openDlg({ title: text("title"), body: `${T.error ? `<p role="status">${esc(T.error)}</p>` : ""}<p class="hint">${esc(text("list-note"))}</p>${open.length ? open.map((item) => row(item, true)).join("") : `<p>${esc(text("empty"))}</p>${done.length ? `<details><summary>${esc(text("completed", { count: done.length }))}</summary>${done.map((item) => row(item, true)).join("")}</details>` : ""}`,
+  const openRows = open.length ? open.map((item) => row(item, true)).join("") : `<p>${esc(text("empty"))}</p>`;
+  const doneRows = done.length ? `<details><summary>${esc(text("completed", { count: done.length }))}</summary>${done.map((item) => row(item, true)).join("")}</details>` : "";
+  openDlg({ title: text("title"), body: `${T.error ? `<p role="status">${esc(T.error)}</p>` : ""}<p class="hint">${esc(text("list-note"))}</p>${openRows}${doneRows}`,
     foot: `<button class="btn ghost" type="button" data-act="dlg-close">${t("delight.ach.close")}</button>` });
 }
 function addDialog() {
@@ -68,15 +78,16 @@ function addDialog() {
 }
 async function change(key, path, body, method, done) {
   if (!writable() || T.busy.has(key)) return;
-  const identity = T.who;
-  T.busy.add(key); ++T.serial; T.loading = false;
+  const identity = T.who, busy = T.busy, serial = ++T.serial, revision = dialogRevision();
+  const fresh = () => writable() && current(identity) && T.serial === serial && T.busy === busy && dialogRevision() === revision;
+  busy.add(key); T.loading = false;
   try {
     await api(path, body, method);
-    if (!current(identity)) return;
+    if (!fresh()) return;
     done?.();
     await loadOwnerTodos(true);
-  } catch (error) { if (current(identity)) toast(error.message); }
-  finally { T.busy.delete(key); if (current(identity)) renderNow(); }
+  } catch (error) { if (fresh()) toast(error.message); }
+  finally { busy.delete(key); if (current(identity) && T.busy === busy) renderNow(); }
 }
 async function save(el) {
   if (!current(T.dialogWho) || !el.isConnected || el.closest(".scrim") !== dialog()) return;
@@ -85,9 +96,10 @@ async function save(el) {
   if (!words) return;
   const when = due ? new Date(due) : null;
   if (when && !Number.isFinite(when.getTime())) return;
+  const identity = T.who, ownDialog = dialog(), revision = dialogRevision();
   el.disabled = true;
   try { await change("add", "todos", { text: words, ...(when ? { dueAt: when.toISOString() } : {}) }, undefined, () => { if (el.isConnected) closeDlg(); }); }
-  finally { if (el.isConnected) el.disabled = false; }
+  finally { if (current(identity) && dialog() === ownDialog && revision === dialogRevision() && el.isConnected) el.disabled = false; }
 }
 function removeDialog(el) {
   if (!writable()) return;
@@ -99,6 +111,12 @@ function removeDialog(el) {
 let started = false;
 export function initOwnerTodos() {
   if (started) return; started = true;
+  afterDraw(() => scoped());
+  const app = document.getElementById("app");
+  if (app) {
+    lockObserver = new MutationObserver(invalidateLock);
+    lockObserver.observe(app, { attributes: true, attributeFilter: ["class"], attributeOldValue: true });
+  }
   on("owner-todo-add", () => addDialog());
   on("owner-todo-list", () => showList());
   on("owner-todo-save", (el) => save(el));
@@ -110,10 +128,10 @@ export function initOwnerTodos() {
   on("owner-todo-remove", (el) => removeDialog(el));
   on("owner-todo-confirm", async (el) => {
     if (!current(T.dialogWho) || !el.isConnected || el.closest(".scrim") !== dialog() || !T.removal) return;
-    const id = T.removal;
+    const id = T.removal, identity = T.who, ownDialog = dialog(), revision = dialogRevision();
     el.disabled = true;
     try { await change(id, `todos/${encodeURIComponent(id)}`, undefined, "DELETE", () => { if (el.isConnected) closeDlg(); if (T.removal === id) T.removal = null; }); }
-    finally { if (el.isConnected) el.disabled = false; }
+    finally { if (current(identity) && dialog() === ownDialog && revision === dialogRevision() && el.isConnected) el.disabled = false; }
   });
   markLive(["owner-todo-add", "owner-todo-list", "owner-todo-save", "owner-todo-done", "owner-todo-remove", "owner-todo-confirm"]);
 }

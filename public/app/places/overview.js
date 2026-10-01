@@ -26,6 +26,7 @@ import { keepLines, loadKeep, initKeep } from "../flows/keep18.js"; // Keep it r
 import { nameField } from "../flows/profile.js"; // the owner's name, asked here now that setup is three steps
 import { ownerTodosTile, loadOwnerTodos, initOwnerTodos } from "./overview-todos.js";
 import { restoredTile, loadRestored, initRestored } from "./restored484.js"; // #484: Trunks a restore brought back cut down
+import { recapTile, loadRecap, initRecap } from "./weekly-recap.js";
 
 let lastHealthCheck = 0;
 let cachedHealth = null;
@@ -191,7 +192,7 @@ export function draw() {
     ${recBar()}${updateCard()}
     <h1>${t("strip.menu.overview")}</h1><p class="lede">${t("window.places.overview.whats-happening-across-your-trunks-at")} <button class="link15 wc-go" type="button" data-act="whatcan">${t("window.what.title")}</button></p>
     ${finishTile()}${restoredTile()}<section class="tile ovs-status">${nowPart()}${healthPart()}</section>
-    <div class="ovs-cols"><div class="ovs-col">${ownerTodosTile()}${recentTile()}${milestonesTile()}</div><div class="ovs-col">${spendTile()}${controlsTile()}${usersTile()}</div></div>
+    <div class="ovs-cols"><div class="ovs-col">${ownerTodosTile()}${recapTile()}${recentTile()}${milestonesTile()}</div><div class="ovs-col">${spendTile()}${controlsTile()}${usersTile()}</div></div>
   </div></div></main>`;
 }
 
@@ -202,6 +203,7 @@ export function init() {
   initKeep();
   initRestored();
   initOwnerTodos();
+  initRecap();
 }
 
 export async function after() {
@@ -232,6 +234,7 @@ export async function after() {
   // Keep it running's lines in "Finish setting up", read while that card is shown
   if (finishShown() && await loadKeep()) needsRender = true;
   if (await loadRestored()) needsRender = true; // #484
+  if (await loadRecap()) needsRender = true;
 
   if (await loadOwnerTodos()) needsRender = true;
   if (needsRender) renderNow();
