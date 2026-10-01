@@ -25,7 +25,9 @@ export async function applyGatewayLive(appRoot: string, hooks: LiveHooks, args: 
 }
 
 export function gatewayLiveRequest(outcome: Exclude<LiveOutcome, { tier: "shell" | "none" }>): z.infer<typeof GatewayLiveSchema> {
-  return GatewayLiveSchema.parse({ tier: outcome.tier, version: outcome.version, commit: outcome.manifest.commit, digest: outcome.digest, changed: outcome.changed });
+  // Files that never run (docs, tests: part null) are not the broker's to apply; sent along, they failed the whole update.
+  const changed = outcome.changed.filter((file) => file.part !== null);
+  return GatewayLiveSchema.parse({ tier: outcome.tier, version: outcome.version, commit: outcome.manifest.commit, digest: outcome.digest, changed });
 }
 
 /** Every renderer operation is awaited by the broker; loss/refusal defers adoption and retains the old build. */
@@ -37,12 +39,30 @@ export async function tellGatewayWindow(control: Pick<DesktopControlHost, "curre
   } catch (error) { throw new WindowUpdateDeferred(error instanceof Error ? error.message : String(error)); }
 }
 
-/** One adoption owns one renderer acknowledgment chain, even if a successor shell connects meanwhile. */
+/** The broker's own tell: an adoption begun with no shell joined has no window to tell (the next one opens on it). */
+export async function tellAdoptionWindow(control: AdoptionControl, update: WindowUpdate): Promise<void> {
+  if (!control.windowless?.()) await tellGatewayWindow(control, update);
+}
+/** After a failed adoption: the shell that was joined puts its previous window back; with none joined there is none. */
+export async function recoverAdoptionWindow(control: AdoptionControl): Promise<void> {
+  if (control.windowless?.()) return;
+  const shell = control.current();
+  if (!shell || await shell.call("window-recover", undefined, 30000) !== true) throw new Error("The previous window did not restore and draw.");
+}
+
+/** The broker's view of its shell during an adoption: `windowless` when no shell was joined as the adoption began. */
+export type AdoptionControl = Pick<DesktopControlHost, "current"> & { windowless?: () => boolean };
+
+/**
+ * One adoption owns one renderer acknowledgment chain, even if a successor shell connects meanwhile. An adoption that
+ * began with no shell joined (the gateway updating itself with no window) has no renderer to acknowledge it: the next
+ * window opens on the files served then. A shell that was there and refused or left still fails it.
+ */
 export function gatewayApplyOwner(control: Pick<DesktopControlHost, "current">): {
-  control: Pick<DesktopControlHost, "current">; apply<T>(action: () => Promise<T>): Promise<T>;
+  control: AdoptionControl; apply<T>(action: () => Promise<T>): Promise<T>;
 } {
   let busy = false, recipient: ReturnType<DesktopControlHost["current"]> = null;
-  return { control: { current: () => busy ? recipient : control.current() }, apply: async (action) => {
+  return { control: { current: () => busy ? recipient : control.current(), windowless: () => busy && recipient === null }, apply: async (action) => {
     if (busy) throw new WindowUpdateDeferred("A checked update is already being applied.");
     busy = true; recipient = control.current();
     try { return await action(); } finally { busy = false; recipient = null; }

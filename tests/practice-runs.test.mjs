@@ -74,7 +74,8 @@ test("an interrupted practice task remains practice after resume while new pract
   } });
   const old = app.store.createRun(app.runtime.owner, "propose a file");
   app.store.message(old.sessionId, { role: "user", content: old.prompt });
-  app.store.event(old.id, "run.started", { source: "owner", dryRun: true });
+  app.store.event(old.id, "run.started", { source: "owner", dryRun: true, permissions: [app.registry.permissionOf("files.write")],
+    deadlineMs: 30_000, depth: 0, delegates: false, ownCopy: false });
   app.store.finish(old.id, "interrupted", "Paused before the proposal.");
   savePracticeRuns(app.store, app.runtime.owner, { enabled: false });
   const resumed = await app.runtime.resume(old.id);

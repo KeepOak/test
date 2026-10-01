@@ -69,7 +69,7 @@ test("a planned task makes a numbered plan and works through the steps in order,
     if (/^Step 1 of 3/.test(user)) return say("I gathered the numbers.");
     if (/^Step 2 of 3/.test(user)) return say("Added them.");
     if (/^Step 3 of 3/.test(user)) return say("Note written.");
-    if (/Every step of the plan is done/.test(user)) return say("All three steps are done and the total is 42.");
+    if (/Every (?:recorded )?step of the plan is done/.test(user)) return say("All three steps are done and the total is 42.");
     return say("unexpected");
   });
   const run = await app.runtime.run({ prompt: "gather the numbers, then add them up, and then write the note", plan: true });
@@ -109,7 +109,7 @@ test("with plan approval on, the task stops with its plan, the owner can edit it
   const { app, api } = await served(t, ({ system, user }) => {
     if (/You are planning a task/.test(system)) return say('{"steps":[{"title":"Draft it"},{"title":"Send it"}]}');
     if (/^Step 1 of 1/.test(user)) return say("Drafted, nothing sent.");
-    if (/Every step of the plan is done/.test(user)) return say("The draft is ready and nothing was sent.");
+    if (/Every (?:recorded )?step of the plan is done/.test(user)) return say("The draft is ready and nothing was sent.");
     return say("unexpected");
   });
   assert.deepEqual(await api("orchestration", { planApproval: true, autoPlan: true }), {

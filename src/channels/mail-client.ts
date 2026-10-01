@@ -2,6 +2,7 @@ import { connect as netConnect, type Socket } from "node:net";
 import { connect as tlsConnect, type TLSSocket } from "node:tls";
 import { randomUUID } from "node:crypto";
 import { mimeParts, textOf } from "../personal/mime.js";
+import { assertHealthCurrent, currentHealthCheck } from "../health-check.js";
 
 /**
  * Just enough IMAP and SMTP, over Node's own TLS, to read new mail and answer it: no library, no
@@ -34,6 +35,8 @@ export interface MailMessage {
   messageId: string;
   references: string;
   text: string;
+  /** First Authentication-Results header, in receiving-server order; later copies are untrusted. */
+  authenticationResults?: string;
   /** Files attached to the message, at most `maxMailFiles` of them, already decoded. */
   attachments?: MailFile[];
 }
@@ -88,15 +91,23 @@ class LineSocket {
  * that swallows the connection would hold up every later look at the inbox for good.
  */
 async function open(server: MailServer, secure: boolean): Promise<LineSocket> {
+  assertHealthCurrent();
+  const check = currentHealthCheck();
   const socket = secure
     ? tlsConnect({ host: server.host, port: server.port, servername: server.host, rejectUnauthorized: server.rejectUnauthorized ?? true })
     : netConnect({ host: server.host, port: server.port });
   await new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => { socket.destroy(); reject(new Error(`${server.host} did not answer in time`)); }, server.timeoutMs ?? 20000);
-    socket.once(secure ? "secureConnect" : "connect", () => { clearTimeout(timer); resolve(); });
-    socket.once("error", (error: Error) => { clearTimeout(timer); socket.destroy(); reject(error); });
+    const cancel = () => { release(); reject(check!.signal.reason); socket.destroy(); };
+    const timer = setTimeout(() => { release(); reject(new Error(`${server.host} did not answer in time`)); socket.destroy(); }, server.timeoutMs ?? 20000);
+    const release = () => { clearTimeout(timer); check?.signal.removeEventListener("abort", cancel); };
+    check?.signal.addEventListener("abort", cancel, { once: true });
+    socket.once(secure ? "secureConnect" : "connect", () => { release(); resolve(); });
+    socket.once("error", (error: Error) => { release(); socket.destroy(); reject(error); });
+    socket.once("close", () => { release(); reject(new Error("The mail server closed before connecting")); });
+    if (check?.signal.aborted) cancel();
   });
-  return new LineSocket(socket);
+  const opened = new LineSocket(socket);
+  try { assertHealthCurrent(); return opened; } catch (error) { opened.close(); throw error; }
 }
 
 /**
@@ -122,12 +133,19 @@ export class ImapClient {
   private socket: LineSocket | undefined;
   private counter = 0;
   constructor(private readonly server: MailServer) {}
+  /** Cancels only this check-owned conversation, without waiting for a server reply. */
+  abort(): void { this.socket?.close(); this.socket = undefined; }
   private get timeout(): number { return this.server.timeoutMs ?? 20000; }
-  async connect(): Promise<void> {
+  async connect(readOnly = false): Promise<void> {
+    assertHealthCurrent();
     this.socket = await open(this.server, this.server.tls !== false);
     await this.socket.until((text) => (text.includes("\r\n") ? text.indexOf("\r\n") + 2 : null), this.timeout);
+    assertHealthCurrent();
     await this.command(`LOGIN ${quote(this.server.user)} ${quote(this.server.password)}`);
-    await this.command("SELECT INBOX");
+    const mailbox = await this.command(readOnly ? "EXAMINE INBOX" : "SELECT INBOX");
+    // RFC 9051 §6.3.3: EXAMINE returns metadata and must confirm a read-only mailbox.
+    if (readOnly && !/^b\d+ OK \[READ-ONLY\]/im.test(mailbox))
+      throw new Error("The mail server did not confirm a read-only inbox.");
   }
   /** Reads every unread message, marks each read, and returns what was found. */
   async unread(limit = 10): Promise<MailMessage[]> {
@@ -185,10 +203,12 @@ export class ImapClient {
     this.socket = undefined;
   }
   private async command(text: string): Promise<string> {
+    if (text !== "LOGOUT") assertHealthCurrent();
     if (!this.socket) throw new Error("The mail connection is not open");
     const tag = `b${++this.counter}`;
     this.socket.send(`${tag} ${text}`);
     const answer = await this.socket.until((buffer) => taggedEnd(buffer, tag), this.timeout);
+    if (text !== "LOGOUT") assertHealthCurrent();
     const status = new RegExp(`^${tag} (OK|NO|BAD)(.*)$`, "m").exec(answer);
     // The command name is kept out of the error so a password never reaches a log.
     if (!status || status[1] !== "OK") throw new Error(`The mail server refused ${text.split(" ")[0]}:${(status?.[2] ?? "").slice(0, 120)}`);
@@ -198,6 +218,24 @@ export class ImapClient {
 /** A literal as read off the socket (one character per byte) back to the UTF-8 text it carries. */
 const fromBytes = (bytes: string) => Buffer.from(bytes, "latin1").toString("utf8");
 const quote = (value: string) => `"${value.replace(/([\\"])/g, "\\$1")}"`;
+
+/** Preserve duplicate-header order and unfold continuation lines before interpreting any identity. */
+function mailHeaders(raw: string): Map<string, string[]> {
+  const fields = new Map<string, string[]>();
+  let current: string[] | undefined;
+  for (const line of raw.split(/\r?\n/)) {
+    if (!line) break;
+    if (/^[ \t]/.test(line) && current) { current[current.length - 1] += ` ${line.trim()}`; continue; }
+    const field = /^([a-zA-Z0-9-]+):[ \t]*(.*)$/.exec(line);
+    current = undefined;
+    if (!field) continue;
+    const name = field[1]!.toLowerCase();
+    current = fields.get(name) ?? [];
+    current.push(field[2]!.trim());
+    fields.set(name, current);
+  }
+  return fields;
+}
 
 /**
  * Splits one FETCH answer into the headers we thread on and the plain text body. Each part is found by its name: a
@@ -215,9 +253,13 @@ export function parseFetched(seq: number, raw: string): MailMessage {
   }
   const headers = literals.HEADER ?? "";
   const body = literals.TEXT ?? "";
-  const header = (name: string) => new RegExp(`^${name}:[ \\t]*([\\s\\S]*?)(?=\\r\\n[^ \\t]|$)`, "im").exec(headers)?.[1]?.replace(/\r\n[ \t]+/g, " ").trim() ?? "";
+  const fields = mailHeaders(headers);
+  const header = (name: string) => fields.get(name.toLowerCase())?.[0] ?? "";
   const from = header("From");
-  const address = /<([^>]+)>/.exec(from)?.[1] ?? from.split(/\s+/).pop() ?? "";
+  const candidate = /^(?:[^<>]*)<([^<>\s]+)>\s*$/.exec(from)?.[1] ?? from.trim();
+  // Ambiguous senders cannot become a paired identity. Full RFC mailbox syntax is deliberately not guessed.
+  const address = (from.length <= 2048 && fields.get("from")?.length === 1 && /^[^\s<>(),;"@]+@[^\s<>(),;"@]+$/.test(candidate)
+    && (from.match(/@/g)?.length === 1)) ? candidate : "";
   // The body is read with the message's own headers, so a formatted, encoded or multipart message gives its words and its files.
   const parts = mimeParts(`${headers.split(/\r?\n\r?\n/)[0]}\r\n\r\n${body}`);
   const attachments = parts.filter((part) => part.filename || part.disposition === "attachment").slice(0, maxMailFiles)
@@ -226,6 +268,7 @@ export function parseFetched(seq: number, raw: string): MailMessage {
     seq, from: address.toLowerCase(), fromName: from.replace(/<[^>]*>/, "").replace(/"/g, "").trim() || address,
     subject: header("Subject"), messageId: header("Message-ID"), references: header("References"),
     text: textOf(parts).replace(/\r\n/g, "\n").trim(),
+    authenticationResults: header("Authentication-Results"),
     ...(attachments.length ? { attachments } : {}),
   };
 }

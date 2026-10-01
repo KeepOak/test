@@ -2,8 +2,8 @@
    Branch": each check the engine ran, in its own words, with what it repaired or how to put it right; Restart the
    engine (POST /api/dashboard/restart) is live. "Updating itself" is the engine's update setting
    (POST /api/comfort { card: "notify", values: { autoUpdate } }: install = Allowed, check = Ask me first, off = Never).
-   What it may change about itself and the gateway's timings are rules in the approval policy (a deny rule for
-   settings.* / gateway.propose); taking one back loosens approvals, so those show the engine's state and stay greyed.
+   What it may change about itself and the gateway's timings are editable approval rules; any loosening needs
+   confirmation. Its own settings may allow ordinary changes through one explicit settings.change rule.
    Every change is the settings history (GET /api/settings-kit/history); Roll back undoes one
    (POST /api/settings-kit/undo { record }), and the engine refuses one that would make Branch less careful.
    selfdev: what it may do about itself (its own settings, the gateway's timings, restarting its own engine, working on
@@ -19,6 +19,7 @@ import { toast, ic, openDlg, closeDlg, dialog } from "../../core/ui.js";
 import { seg15 } from "../rows15.js";
 import { self17 } from "../p17-more.js";
 import { agentComparisonSection, initAgentComparison } from "../agent-comparison.js";
+import { ciQueueSection, initCiQueue } from "../self-development-ci.js";
 import { level as level17 } from "../../core/state.js";
 import { t, language } from "../../../i18n.js";
 
@@ -82,6 +83,7 @@ async function doctor() {
 
 export function init() {
   initAgentComparison();
+  initCiQueue();
   loadData();
   on("doctor", () => doctor());
   on("self-rollback", (el) => rollBack(el.dataset.id));
@@ -145,7 +147,7 @@ function policySection() {
     ? `<input class=\"sw\" type=\"checkbox\" id=\"self-dev\" aria-label=\"${t("window.settings.self.work-on-its-own-code-in")}\" data-sw=\"set\"${dev.on ? " checked" : ""}>`
     : `<input class=\"sw\" type=\"checkbox\" id=\"self-dev-remote\" aria-label=\"${t("window.settings.self.work-on-its-own-code-in")}\" data-why=\"self-dev-remote\">`;
   return `<div class=\"sec\"><h2>${t("window.settings.self.what-branch-may-change-about-itself")}</h2>`
-    + seg15(t("window.settings.self.its-own-settings"), t("window.settings.self.it-shows-you-the-change-first"), [["ask", t("toolKinds.ask")], ["never", t("window.settings.advanced.never")]], own, "self-own", "f15-its-own-settings")
+    + seg15(t("window.settings.self.its-own-settings"), t("window.settings.permissions.ordinary-settings-scope"), [["allowed", t("window.settings.self.allowed")], ["ask", t("toolKinds.ask")], ["never", t("window.settings.advanced.never")]], own, "self-own", "f15-its-own-settings")
     + seg15(t("window.settings.self.loosening-what-it-may-do"), t("window.settings.self.asked-every-time-the-answer-is"), [["ask", t("window.settings.self.ask-every-time")]], loosen, "self-loosen", "f15-loosening-what-it-may-do")
     + seg15(t("window.settings.self.the-gateways-timings"), t("window.settings.self.it-can-suggest-you-decide"), [["suggest", t("window.settings.self.suggest")], ["never", t("window.settings.advanced.never")]], timings, "self-timings", "f15-the-gateway-s-timings")
     + seg15(t("window.settings.self.restarting-its-own-engine"), t("window.settings.self.when-its-stuck-safe-steps-carry"), [["allowed", t("window.settings.self.allowed")], ["ask", t("toolKinds.ask")]], restart, "self-restart", "f15-restarting-its-own-engine")
@@ -175,6 +177,7 @@ export function draw() {
   html += statusSection();
   html += policySection();
   html += agentComparisonSection();
+  html += ciQueueSection();
   html += neverDiesSection();
   html += timelineSection();
   return html + self17(level17());

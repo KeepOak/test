@@ -1,58 +1,143 @@
 import { execFile, spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
-import { win32 } from "node:path";
+import { mkdir, readdir, rename, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, win32 } from "node:path";
+import { fileURLToPath } from "node:url";
 import { portableFolder, portableMarker } from "../install/layout.js";
+import { linkOrCopy, runtimeFiles } from "./app-folders.js";
+import { removeTree } from "./remove-tree.js";
 
 /**
- * Starts the update hand-over script so that it outlives the app and stays invisible. A child started
- * with spawn dies with the app when the app runs inside a Windows job (launchers, test harnesses and
- * some shells put it in one), so the Task Scheduler runs it instead: a scheduled task is created, run at
- * once and deleted again; deleting the task does not stop the command it started. The task runs a tiny
- * Windows Script Host launcher so that no console window flashes while files are swapped. When the
- * scheduler is unavailable that same launcher is started directly, for the same reason: it is the only
- * shape measured to leave the screen alone.
+ * Starts the update hand-over so that it outlives the app and stays invisible, with no Windows Script Host (VBScript is
+ * on Microsoft's removal path, off by default from about 2027).
+ *
+ * The hand-over is run by a small runner: Electron's own stock program, hard linked with its files into a folder of its
+ * own beside the update's scratch files (never the program folder, so the runner holds nothing a swap has to move), with
+ * a few lines of app that run the job and end. Electron's program has no console, so nothing appears on screen. A batch
+ * script is started by it with `windowsHide` and not detached, which gives the script a console that has no window (a
+ * detached one gets none, and each tool the script starts would then open its own: CBQ-001). The runner waits for the
+ * script, because a child that is not detached ends with the program that started it.
+ *
+ * A child started with spawn dies with the app when the app runs inside a Windows job (launchers, test harnesses and some
+ * shells put it in one), so the Task Scheduler starts the runner: a task is created, run at once and deleted again;
+ * deleting the task does not stop what it started. When the scheduler is unavailable (or refuses: "Access is denied")
+ * the runner is started directly instead; it is a program with no console either way.
+ *
+ * The runner's program is named apart from Branch's (`runnerProgramName`), so a look for Branch's processes by name (the
+ * swap's wait for the old version to close, the uninstaller) never waits for, or ends, the hand-over itself.
  */
 export type Exec = (file: string, args: string[], options: { windowsHide: boolean; timeout: number }, callback: (error: Error | null) => void) => unknown;
 export type Spawn = (command: string, args: string[], options: Record<string, unknown>) => { unref(): void };
-export type Write = (file: string, content: string) => void;
 
-/** Windows Script Host text that runs any command with window style 0 (hidden) and does not wait. */
-export function hiddenRunner(command: string): string {
-  return `CreateObject("WScript.Shell").Run "${command.replace(/"/g, '""')}", 0, False\r\n`;
-}
-/** The launcher text: runs the script through cmd with window style 0 (hidden) and does not wait. */
-export function hiddenLauncher(script: string, pid: number): string {
-  return hiddenRunner(`cmd.exe /d /c ""${script}" ${pid}"`);
+export const runnerProgramName = "Branch Agent Update.exe";
+/** What a runner does: run a batch script hidden and wait for it, or run a plan with a module of the running version. */
+export type HandOverJob =
+  | { kind: "script"; script: string; pid: number; log: string }
+  | { kind: "module"; module: string; plan: string; log: string };
+
+/** A `.json` hand-over is a versioned switch plan (version-switch.ts); anything else is a batch script. */
+export function jobFor(script: string, pid: number): HandOverJob {
+  const log = win32.join(win32.dirname(script), "hand-over-runner.log");
+  if (script.toLowerCase().endsWith(".json"))
+    return { kind: "module", module: fileURLToPath(new URL("./version-switch.js", import.meta.url)), plan: script, log };
+  return { kind: "script", script, pid, log };
 }
 
-export async function launchHandOver(script: string, pid: number, deps: { exec?: Exec; spawn?: Spawn; write?: Write; systemRoot?: string; platform?: NodeJS.Platform } = {}): Promise<"task" | "spawn"> {
+/** The runner's app: plain CommonJS that reads `job.json` beside it, does it, and ends with its exit code. */
+export function runnerMain(): string {
+  return String.raw`"use strict";
+const { app } = require("electron");
+const { spawn } = require("node:child_process");
+const { appendFileSync, readFileSync } = require("node:fs");
+const { join } = require("node:path");
+const { pathToFileURL } = require("node:url");
+app.setPath("userData", join(__dirname, "profile"));
+app.disableHardwareAcceleration();
+app.on("window-all-closed", () => undefined);
+const job = JSON.parse(readFileSync(join(__dirname, "job.json"), "utf8"));
+const note = (line) => { try { appendFileSync(job.log, "[" + new Date().toISOString() + "] " + line + "\r\n"); } catch {} };
+const end = (code) => { note("the hand-over ended with code " + code); app.exit(typeof code === "number" ? code : 1); };
+note("hand-over runner started (" + job.kind + ")");
+if (job.kind === "script") {
+  const cmd = join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe");
+  const child = spawn(cmd, ["/d", "/c", '""' + job.script + '" ' + job.pid + '"'],
+    { windowsHide: true, windowsVerbatimArguments: true, stdio: "ignore" });
+  child.on("error", (error) => { note("the script could not start: " + error.message); end(1); });
+  child.on("exit", (code) => end(code === null ? 1 : code));
+} else {
+  import(pathToFileURL(job.module).href).then((mod) => mod.runSwitchPlan(job.plan))
+    .then(end, (error) => { note("the switch stopped: " + ((error && error.stack) || error)); end(1); });
+}
+`;
+}
+
+/**
+ * Runner folders nothing runs from any more, removed. Only one made over half an hour ago: a runner lives a few minutes
+ * at most, and one just made may not have been started yet (the scheduler can take a while on a busy computer), so it is
+ * never taken from under it. One still running cannot be renamed, so it is kept too.
+ */
+async function tidyRunners(scratch: string, now = Date.now()): Promise<void> {
+  for (const name of await readdir(scratch).catch(() => [])) {
+    if (!/^hand-over-[0-9a-f]{8}(\.trash)?$/.test(name)) continue;
+    const from = join(scratch, name), aside = name.endsWith(".trash") ? from : `${from}.trash`;
+    const made = await stat(from).then((found) => found.mtimeMs, () => now);
+    if (now - made < 30 * 60_000) continue;
+    try { if (aside !== from) await rename(from, aside); } catch { continue; }
+    await removeTree(aside).catch(() => undefined);
+  }
+}
+
+/**
+ * Lays out a runner beside the scratch files: Electron's runtime from `runtime` (a program folder of Branch), hard linked
+ * (a copy only across drives), its program under the runner's own name, and the runner's app and job. Answers the
+ * runner's program. Throws when `runtime` is not an Electron program folder.
+ */
+export async function prepareRunner(job: HandOverJob, scratch: string, runtime: string, executableName: string): Promise<string> {
+  const files = await runtimeFiles(runtime);
+  if (!files.includes(executableName) || !files.includes("resources.pak"))
+    throw new Error(`${runtime} holds no Branch program to run the update with, so the update was not started.`);
+  await tidyRunners(scratch);
+  const folder = join(scratch, `hand-over-${Math.floor(Math.random() * 0xffffffff).toString(16).padStart(8, "0")}`);
+  for (const name of files)
+    await linkOrCopy(join(runtime, ...name.split("/")), join(folder, ...(name === executableName ? [runnerProgramName] : name.split("/"))));
+  const app = join(folder, "resources", "app");
+  await mkdir(app, { recursive: true });
+  await writeFile(join(app, "package.json"), `${JSON.stringify({ name: "branch-agent-hand-over", private: true, main: "runner.js" }, null, 2)}\n`);
+  await writeFile(join(app, "runner.js"), runnerMain());
+  await writeFile(join(app, "job.json"), JSON.stringify(job));
+  return join(folder, runnerProgramName);
+}
+
+export interface LaunchDeps {
+  exec?: Exec; spawn?: Spawn; systemRoot?: string; platform?: NodeJS.Platform;
+  /** The Electron program folder the runner is linked from, and its program's name (default: this process's own). */
+  runtime?: string; executableName?: string;
+  prepare?: typeof prepareRunner;
+  /** The environment the runner is started with when the scheduler is not used (tests keep theirs isolated). */
+  env?: NodeJS.ProcessEnv;
+}
+
+export async function launchHandOver(script: string, pid: number, deps: LaunchDeps = {}): Promise<"task" | "spawn"> {
   if ((deps.platform ?? process.platform) !== "win32") return launchPosixHandOver(script, pid, deps.spawn);
   const exec = deps.exec ?? (execFile as unknown as Exec), start = deps.spawn ?? (spawn as unknown as Spawn);
-  const write = deps.write ?? ((file: string, content: string) => writeFileSync(file, content, "utf8"));
-  const root = deps.systemRoot ?? process.env.SystemRoot ?? "C:\\Windows";
-  const schtasks = win32.join(root, "System32", "schtasks.exe"), wscript = win32.join(root, "System32", "wscript.exe");
-  const name = `BranchAgentUpdate-${pid}`, launcher = `${script}.launch.vbs`;
+  const schtasks = win32.join(deps.systemRoot ?? process.env.SystemRoot ?? "C:\\Windows", "System32", "schtasks.exe");
+  const program = await (deps.prepare ?? prepareRunner)(jobFor(script, pid), win32.dirname(script),
+    deps.runtime ?? dirname(process.execPath), deps.executableName ?? basename(process.execPath));
+  const name = `BranchAgentUpdate-${pid}`, command = `"${program}"`;
   const run = (args: string[]) => new Promise<void>((resolve, reject) =>
     exec(schtasks, args, { windowsHide: true, timeout: 15000 }, (error) => (error ? reject(error) : resolve())));
-  // Written before the scheduler is asked, because the fallback below needs it too.
-  write(launcher, hiddenLauncher(script, pid));
-  try {
-    await run(["/Create", "/F", "/TN", name, "/SC", "ONCE", "/ST", "00:00", "/TR", `"${wscript}" //B //Nologo "${launcher}"`]);
-    await run(["/Run", "/TN", name]);
-    await run(["/Delete", "/F", "/TN", name]).catch(() => undefined);
-    return "task";
-  } catch {
-    // CBQ-001: this used to start `cmd.exe` itself, with `windowsHide: true` and `detached: true`.
-    // Those two cannot both apply on Windows - a detached child is given no console to hide, so it
-    // opens its own - and a console window really appeared on the owner's screen every time the
-    // scheduler was unavailable. The flag was there and had no effect, which is why a test that read
-    // the flag passed while the window was on screen. The same hidden launcher the scheduler route
-    // uses is started instead: Windows Script Host is a windowless program, so there is nothing to
-    // open. Measured on Windows: the old line opens one console window, this one opens none, and the
-    // script runs either way.
-    start(wscript, ["//B", "//Nologo", launcher], { detached: true, stdio: "ignore", windowsHide: true }).unref();
-    return "spawn";
+  // The scheduler takes a command of at most 261 characters; a longer one is started directly.
+  if (command.length <= 261) {
+    try {
+      await run(["/Create", "/F", "/TN", name, "/SC", "ONCE", "/ST", "00:00", "/TR", command]);
+      await run(["/Run", "/TN", name]);
+      await run(["/Delete", "/F", "/TN", name]).catch(() => undefined);
+      return "task";
+    } catch { /* started directly below */ }
   }
+  const env = { ...(deps.env ?? process.env) };
+  delete env.ELECTRON_RUN_AS_NODE; // the runner is Electron itself, never Node
+  start(program, [], { detached: true, stdio: "ignore", windowsHide: true, env }).unref();
+  return "spawn";
 }
 
 // ------------------------------------------------------------------------------ macOS and Linux
@@ -269,5 +354,21 @@ export function windowsRollbackScript(plan: { install: string; exe: string; log:
     mirror(plan.install, failed, windowsKeepOut), mirror(previous, plan.install, windowsKeepOut), "if errorlevel 8 exit /b 1",
     `echo [%time%] previous version is back >>"${plan.log}"`,
     'if "%~2"=="stay" exit /b 0', `start "" "${plan.exe}"`, "exit /b 0", "",
+  ].join("\r\n");
+}
+
+/**
+ * Windows, versioned app folders: after going back (the pointer already names the version before), waits for the
+ * process given as `%1` to close, then starts that version. Nothing is moved or copied.
+ */
+export function windowsStartAfterScript(plan: { exe: string; log: string; words: string }): string {
+  const sys = "%SystemRoot%\\System32\\", text = (value: string) => value.replaceAll("%", "%%");
+  const log = `"${text(plan.log)}"`, exe = `"${text(plan.exe)}"`;
+  return [
+    "@echo off", "setlocal DisableDelayedExpansion", 'set "PID=%~1"', "set WAITED=0",
+    ":wait", `${sys}tasklist.exe /FI "PID eq %PID%" /NH /FO CSV 2>NUL | ${sys}find.exe ",""%PID%""," >NUL`,
+    `if not errorlevel 1 if %WAITED% lss 60 ( set /a WAITED+=1 & ${sys}ping.exe -n 2 127.0.0.1 >NUL & goto wait )`,
+    `echo [%date% %time%] ${text(plan.words)}; starting it >>${log}`,
+    `if exist ${exe} start "" ${exe}`, "exit /b 0", "",
   ].join("\r\n");
 }
