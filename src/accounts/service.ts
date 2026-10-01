@@ -395,16 +395,19 @@ export class AccountsService {
     if (listed && this.capReached(pool, listed)) throw new Error("This account has reached its spending cap.");
     const own = await this.providerFor(pool, found.kind, preset, account);
     guard();
-    if (this.pool(pool) && !this.usablePool(pool)?.accounts.some(one => one.id === account && !one.disabled))
-      throw new Error("This account was disabled or removed. Choose an enabled account.");
+    const still = this.usablePool(pool)?.accounts.find(one => one.id === account && !one.disabled);
+    if (this.pool(pool) && !still) throw new Error("This account was disabled or removed. Choose an enabled account.");
+    // Spend may have reached the cap (or the cap changed) while the connection was built.
+    if (still && this.capReached(pool, still)) throw new Error("This account has reached its spending cap.");
     const started = this.now();
     const completion = await (own ?? unwrapProvider(preset.provider)).complete({
       messages: [{ role: "user", content: "Reply with the single word OK." }], tools: [], maxTokens: 16,
       signal: AbortSignal.timeout(30000),
     });
+    // The provider answered, so its cost is this account's whatever is refused next: recorded before any refusal.
+    if (listed) this.record(pool, listed, preset.model, completion);
     guard();
     if (!completion.content.trim()) throw new Error("The model returned no greeting. Choose another model or retry.");
-    if (listed) this.record(pool, listed, preset.model, completion);
     return { ok: true, pool, account, accountLabel: listed?.label ?? "Primary account", presetId: preset.id, presetName: preset.name,
       model: preset.model, reply: completion.content.slice(0, 80), ms: this.now() - started };
   }

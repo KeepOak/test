@@ -156,9 +156,13 @@ const settled = () => { waiting = null; stopPolling(); };
 async function connected(pool, name) {
   if (pollDeadline !== null && Date.now() >= pollDeadline) throw new Error("This sign-in expired. Start it again.");
   settled();
+  /* Back, a new sign-in or a closed dialog while the list is read: that flow is no longer this one's to finish. */
+  const mine = ticket, current = () => mine === ticket && !!dialog();
   await loadAccounts();
+  if (!current()) return;
   Object.assign(W, { plan: null, code: null, check: null, line: null, pool, first: name, step: 3, error: "" });
   await refresh();
+  if (!current()) return;
   draw();
   document.dispatchEvent(new CustomEvent("model-account-connected", { detail: { pool, account: "primary" } }));
 }
