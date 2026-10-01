@@ -5,6 +5,9 @@ import { gateRefusal } from "../tool-gate.js";
 import type { Personal } from "./index.js";
 import { PersonalOffError, PersonalPartSchema, personalLabels, personalParts, requirePersonal, type PersonalPart } from "./settings.js";
 import { validationText } from "../request-errors.js";
+import { HealthCheck, HealthAuthorityError, withHealthCheck } from "../health-check.js";
+import type { SessionLock } from "../session-lock.js";
+import type { IncomingMessage } from "node:http";
 
 /**
  * The web side of R17-C: the owner's routes under /api/personal/. They sit behind the same key and
@@ -26,6 +29,8 @@ export interface PersonalHttpDeps {
   runtime: Runtime;
   method: string;
   readBody: () => Promise<unknown>;
+  sessionLock?: Pick<SessionLock, "locked" | "onLocked">;
+  request?: IncomingMessage;
 }
 
 const SwitchSchema = z.object({ part: PersonalPartSchema, mode: z.enum(["off", "when-needed", "on"]) }).strict();
@@ -41,7 +46,7 @@ async function settingsRoute(deps: PersonalHttpDeps, part: { settings(): unknown
   return { settings: deps.method === "POST" ? part.save(await deps.readBody()) : part.settings() };
 }
 
-const signInPath = /^\/api\/personal\/signin\/(google|microsoft|spotify)(?:\/(start|secret))?$/;
+const signInPath = /^\/api\/personal\/signin\/(google|microsoft|spotify)(?:\/(start|secret|test))?$/;
 type SignInName = "google" | "microsoft" | "spotify";
 const SecretValueSchema = z.object({ value: z.string().trim().min(1).max(4096) }).strict();
 /** Where the window saves a service's client secret: the locker name the sign-in then reads it by. */
@@ -67,6 +72,10 @@ async function signInRoute(deps: PersonalHttpDeps, path: string): Promise<unknow
   const signIn = deps.personal.signIns[service];
   if (match[2]) {
     if (deps.method !== "POST") return undefined;
+    if (match[2] === "test") {
+      z.object({}).strict().parse(await deps.readBody());
+      return { health: await signIn.test(), status: await signIn.status() };
+    }
     if (match[2] === "secret") return saveSignInSecret(deps, service);
     requirePersonal(deps.runtime.store, deps.runtime.owner, signIn.part);
     return signIn.start();
@@ -123,6 +132,14 @@ async function route(deps: PersonalHttpDeps, path: string): Promise<unknown> {
   const tool = toolRoutes[path];
   if (tool && post) return runPartTool(deps, tool[0], tool[1]);
   if (path.startsWith("/api/personal/signin/")) return signInRoute(deps, path);
+  if (path === "/api/personal/home/test" && post) {
+    z.object({}).strict().parse(await deps.readBody());
+    return { health: await personal.home.test() };
+  }
+  if (path === "/api/personal/mail/test" && post) {
+    z.object({}).strict().parse(await deps.readBody());
+    return { health: await personal.mail.test() };
+  }
   const parts: Record<string, { settings(): unknown; save(input: unknown): unknown }> = {
     "/api/personal/x": personal.x, "/api/personal/home": personal.home, "/api/personal/chat-files": personal.chatFiles,
     "/api/personal/mail": personal.mail, "/api/personal/brief": personal.brief,
@@ -135,12 +152,19 @@ async function route(deps: PersonalHttpDeps, path: string): Promise<unknown> {
 /** Answers one request under /api/personal/, or throws a PersonalHttpError with a status and a sentence. */
 export async function personalApi(deps: PersonalHttpDeps, path: string): Promise<unknown> {
   try {
-    const answer = await route(deps, path);
+    const health = deps.method === "POST" && /^\/api\/personal\/(?:home|mail|signin\/(?:google|microsoft|spotify))\/test$/.test(path);
+    const accountRead = deps.method === "GET" && /^\/api\/personal\/(?:home|mail|signin\/(?:google|microsoft|spotify))$/.test(path);
+    const refreshService = /^\/api\/personal\/signin\/(google|microsoft|spotify)\/test$/.exec(path)?.[1];
+    if (health && !deps.sessionLock) throw new HealthAuthorityError("An account check requires the original lock context.");
+    const answer = health || (accountRead && deps.sessionLock)
+      ? await withHealthCheck(new HealthCheck(deps.runtime.store, deps.runtime.owner, deps.sessionLock!, deps.request,
+        refreshService ? `OAUTH_PERSONAL_${refreshService.toUpperCase()}` : undefined), () => route(deps, path))
+      : await route(deps, path);
     if (answer === undefined) throw new PersonalHttpError(404, "Endpoint not found");
     return answer;
   } catch (error) {
     if (error instanceof PersonalHttpError) throw error;
-    const status = error instanceof PersonalOffError ? 409 : error instanceof ZodError ? 400
+    const status = error instanceof HealthAuthorityError ? 403 : error instanceof PersonalOffError ? 409 : error instanceof ZodError ? 400
       : /not found|no .* with that/i.test(errorText(error)) ? 404 : 400;
     const message = error instanceof ZodError ? validationText(error) : errorText(error);
     throw new PersonalHttpError(status, deps.runtime.hideSecrets(message));

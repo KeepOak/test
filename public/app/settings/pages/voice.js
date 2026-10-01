@@ -20,6 +20,7 @@ import { voice17 } from "../p17-more.js";
 import { fact15 } from "../rows15.js";
 import { t } from "../../../i18n.js";
 import { calls17d } from "../../chat/calls17d.js"; // pass 17 part D §2 (greyed)
+import { piperCard, initPiper } from "../piper.js";
 
 const V = { settings: null, comfort: null, dictation: null, dictationHow: "", wake: null, voices: [], brief: null };
 
@@ -105,7 +106,7 @@ function speakingBack() {
   const voices = [...V.voices.map((n) => [n, n, reads && s.voiceId === n]), ["off", t("accounts.switch.off"), !!V.settings && !reads]];
   const dict = !!V.dictation && V.dictation.mode !== "off";
   return `<div class="sec"><h2>${t("window.settings.voice.speaking-back")}</h2><div class="ctl"><b>${t("field.voice")}</b><span class="right"><span class="seg" role="group" aria-label="${t("field.voice")}">${voices.map(([v, l, p]) => `<button type="button" aria-pressed="${p}" data-act="v-voice" data-v="${esc(v)}">${esc(l)}</button>`).join("")}</span></span><small>${t("window.settings.voice.read-replies-out-loud-in-this")}</small></div>
-    ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), [t("window.settings.voice.the-microphone-button-turns-speech-into"), V.dictationHow].filter(Boolean).join(" "), dict)}</div>`;
+    ${ctl("v-dict", t("window.settings.voice.dictation-in-the-message-box"), [t("window.settings.voice.the-microphone-button-turns-speech-into"), V.dictationHow].filter(Boolean).join(" "), dict)}${piperCard(V.settings)}</div>`;
 }
 
 function listeningMore() {
@@ -141,6 +142,7 @@ export function draw() {
 
 export function init() {
   loadVoice();
+  initPiper(() => V.settings, (settings) => { V.settings = settings; });
   on("ptt-key", () => captureKey());
   on("aloud15", (el) => saveAloud(el.dataset.v));
   on("v-voice", (el) => saveVoice(el.dataset.v));
@@ -159,4 +161,4 @@ export function init() {
 
 export function load() { stopCapture(); return loadVoice(); }
 
-export const live = { "ptt-key": true, aloud15: true, "v-voice": true, "sw:v-dict": true, "sw:f15-wake-word": true, "sw:f15-silence": true, "sw:f15-spoken-morning-brief": true };
+export const live = { "piper-save": true, "ptt-key": true, aloud15: true, "v-voice": true, "sw:v-dict": true, "sw:f15-wake-word": true, "sw:f15-silence": true, "sw:f15-spoken-morning-brief": true };

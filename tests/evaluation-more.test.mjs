@@ -99,13 +99,14 @@ async function served(t, routes = passingRoutes()) {
   return { app, root, provider, api, server };
 }
 
-test("the six suites that ship are valid, load from disk, and pass on a scripted model", async (t) => {
+test("the seven suites that ship are valid, load from disk, and pass on a scripted model", async (t) => {
   const { app } = await fixture(t);
   const suites = builtInSuites();
-  assert.deepEqual(suites.map((suite) => suite.id).sort(), ["cost", "everyday", "reliability", "research", "safety", "tool-use"]);
+  assert.deepEqual(suites.map((suite) => suite.id).sort(), ["cost", "everyday", "helpers", "reliability", "research", "safety", "tool-use"]); // SELF-099 added helpers
   assert.ok(suites.every((suite) => suite.tasks.length >= 2 && suite.name && suite.source === "built-in"));
 
-  for (const suite of suites) {
+  // helpers needs a real background helper run, which a scripted model cannot finish on cue; see the SELF-099 test below.
+  for (const suite of suites.filter((one) => one.id !== "helpers")) {
     const result = await app.evaluationSuites.run({ suite: suite.id });
     const failed = result.tasks.filter((task) => !task.passed && !task.skipped);
     assert.deepEqual(failed.map((task) => [task.id, task.problem]), [], `${suite.id} should pass`);
@@ -122,6 +123,14 @@ test("the six suites that ship are valid, load from disk, and pass on a scripted
   // Nothing has a price on file for a made-up model, and nothing pretends it costs zero.
   assert.equal(tools[0].summary.dollars, null);
   assert.equal(tools[0].summary.costConfidence, "unknown");
+});
+
+test("SELF-099: the helpers suite fails an answer that only claims delegation, and passes a direct trivial answer", async (t) => {
+  const { app } = await fixture(t, [["6 multiplied by 7", [say("42")]], ["10 plus 11", [say("21")]]]);
+  const result = await app.evaluationSuites.run({ suite: "helpers" });
+  const byId = Object.fromEntries(result.tasks.map((task) => [task.id, task]));
+  assert.equal(byId["delegated-arithmetic"].passed, false, "the right number without a recorded helper proves nothing");
+  assert.equal(byId["no-helper-for-trivial-answer"].passed, true);
 });
 
 test("the safety suite fails when the page gives orders or the secret comes back out", async (t) => {

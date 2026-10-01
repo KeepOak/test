@@ -133,6 +133,9 @@ export const thisComputerSettings: readonly string[] = [
   // RES-719: which GitLab this computer is connected to and where its token sits; the token itself is in the locker, which
   // no backup carries, so the account stays with it.
   "gitlab-account",
+  // SELF-021: which GitHub account the device sign-in connected and the locker name of its token; the token itself is in
+  // the locker, which no backup carries, so the account stays with it.
+  "github.device.account",
   // NAS 49b183b's unchecked class: this computer's OS sandbox, whether its emergency stop is pressed (letting it go
   // needs the authenticator code, which a replacing restore would skip), and which tools need that code.
   "os-sandbox", "safety-emergency-stop", "safety-code-approvals-setup",
@@ -198,6 +201,9 @@ const thisComputerPrefixes: readonly string[] = ["safety-wasm-add-on:",
   // The programs each Trunk has opened on this computer (src/desktop-app-ask.ts): the record stands in for the owner's
   // yes to opening them again, so a file must never write one.
   "desktop-apps-used:",
+  // RES-408: the last check of a personal sign-in (src/personal/signin.ts): this computer's own recent result, gone in
+  // 15 minutes; a file putting one in place would show a connection as working that was never checked here.
+  "personal-connection-health:",
   // CHAT-081: a /topic request's outcome, kept so an uncertain Telegram write is never sent twice; this computer's chat record.
   "topic-request:",
   // CHAT-082: a chat's idle and age limits, set from the owner's own direct chat; this computer's chat record.
@@ -267,7 +273,9 @@ export const heldSettings: readonly string[] = ["accounts", "model-connections",
   "knowledge", "live-scoring", "local-models", "mcp-connections", "mcp-sharing", "media", "memory-consolidation",
   "memory-retrieval", "metering", "model-profiles", "models", "orchestration", "page-notes", "page-notes:list",
   "projects", "repository-context", "retention", "routing", "screen-watch", "second-opinion", "session-limits", "helper-defaults", "codex-models",
-  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages"];
+  "slack-automations", "tool-meaning-search", "troubleshoot", "trunk-routines", "update-keeper", "web-pages",
+  // wire-greyed: where web searches go and the name of the secret sent with them.
+  "web-search"];
 /** One row per automatic job: a loop, a heartbeat, a standing order or a procedure runs its words by itself (as a schedule does, Q168 C). */
 const heldPrefixes: readonly string[] = ["channel-pair:", "profile-role:", "autonomy-loop:", "autonomy-heartbeat:", "autonomy-order:", "autonomy-procedure:",
   // NAS f30facf: each outside service the assistant may call, by its address.
