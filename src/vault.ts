@@ -109,10 +109,14 @@ export class Secrets {
       project TEXT NOT NULL, name TEXT NOT NULL, purpose TEXT NOT NULL, used_at TEXT NOT NULL)`);
   }
 
-  /** Saves a secret for the first time, or replaces one without counting it as a replacement. */
-  async put(owner: string, project: string, name: string, value: string, options: unknown = {}): Promise<SecretEntry> {
+  /**
+   * Saves a secret for the first time, or replaces one without counting it as a replacement. With `expect`, only while
+   * the value held at the moment of writing is one it accepts (Locker.set; LockerConflict otherwise).
+   */
+  async put(owner: string, project: string, name: string, value: string, options: unknown = {},
+    expect?: (current: string | null) => boolean): Promise<SecretEntry> {
     const { expiresInDays } = SecretOptionsSchema.parse(options ?? {});
-    const saved = await this.locker.set(owner, project, name, value);
+    const saved = await this.locker.set(owner, project, name, value, expect);
     this.writeMeta(owner, project, name, null, expiresInDays ? new Date(Date.now() + expiresInDays * dayMs).toISOString() : null);
     return this.entry(owner, project, name, saved.createdAt);
   }

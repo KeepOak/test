@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { z } from "zod";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { Secrets } from "./vault.js";
+import { LockerConflict } from "./locker.js";
 
 /**
  * Signing in to an outside service the ordinary way: Branch Agent opens the service's own sign-in
@@ -29,6 +30,8 @@ export type OAuthProvider = z.infer<typeof OAuthProviderSchema>;
 export interface OAuthTokens {
   accessToken: string; refreshToken: string | null; tokenType: string;
   expiresAt: string | null; scope: string | null; obtainedAt: string;
+  /** Which settings (issuerOf) signed in or renewed this; absent on sign-ins saved before it was kept. */
+  issuer?: string | undefined;
 }
 export interface OAuthStart { id: string; url: string; redirectUri: string; expiresInMs: number }
 
@@ -62,6 +65,9 @@ function renewalKey(provider: OAuthProvider, tokens: OAuthTokens): string {
 }
 const sameCredential = (a: OAuthTokens, b: OAuthTokens): boolean =>
   a.refreshToken === b.refreshToken && a.accessToken === b.accessToken && a.obtainedAt === b.obtainedAt;
+/** The settings a sign-in belongs to: its connection, client and sign-in addresses (where a tenant lives). */
+const issuerOf = (provider: OAuthProvider): string => createHash("sha256")
+  .update(JSON.stringify([provider.id, provider.clientId, provider.authorizeUrl, provider.tokenUrl])).digest("hex").slice(0, 32);
 
 interface Flow {
   provider: OAuthProvider; verifier: string; state: string; redirectUri: string;
@@ -160,16 +166,17 @@ export class OAuthConnections {
     return this.token(flow.provider, body);
   }
   /**
-   * Swaps a refresh key for a fresh access key when the old one has run out. With `stillCurrent`, the answer is saved
-   * only while it still answers yes (the renewed sign-in was not replaced meanwhile); otherwise ReplacedSignIn.
+   * Swaps a refresh key for a fresh access key when the old one has run out. With `replacing`, the answer is saved only
+   * over that very sign-in, checked at the moment of writing (Locker.set); if it was replaced meanwhile, nothing is
+   * written and ReplacedSignIn.
    */
-  async refresh(provider: OAuthProvider, tokens: OAuthTokens, stillCurrent?: () => Promise<boolean>): Promise<OAuthTokens> {
+  async refresh(provider: OAuthProvider, tokens: OAuthTokens, replacing?: OAuthTokens): Promise<OAuthTokens> {
     if (!tokens.refreshToken) throw new Error(`${provider.label} did not give a way to renew the sign-in; sign in again`);
     const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokens.refreshToken, client_id: provider.clientId });
-    const fresh = await this.token(provider, body, stillCurrent);
+    const fresh = await this.token(provider, body, replacing);
     return { ...fresh, refreshToken: fresh.refreshToken ?? tokens.refreshToken };
   }
-  private async token(provider: OAuthProvider, body: URLSearchParams, stillCurrent?: () => Promise<boolean>): Promise<OAuthTokens> {
+  private async token(provider: OAuthProvider, body: URLSearchParams, replacing?: OAuthTokens): Promise<OAuthTokens> {
     const target = new URL(provider.tokenUrl);
     await this.policy.assertAllowed(target, "sign-in address");
     assertHealthCurrent();
@@ -181,48 +188,60 @@ export class OAuthConnections {
     if (!response.ok) throw new Error(`The sign-in service answered ${response.status}`);
     const tokens = readTokens(await response.json());
     assertHealthCurrent();
-    if (stillCurrent && !(await stillCurrent())) throw new ReplacedSignIn(`The sign-in to ${provider.label} was replaced while it was renewed`);
-    await this.save(provider, tokens);
+    await this.save(provider, tokens, replacing);
     return tokens;
   }
-  /** Tokens go straight into the locker, and the scrubber learns them so they cannot leak. */
-  private async save(provider: OAuthProvider, tokens: OAuthTokens): Promise<void> {
+  /**
+   * Tokens go straight into the locker with the settings that got them, and the scrubber learns them so they cannot
+   * leak. With `replacing`, only over that sign-in, compared in the locker's own write step.
+   */
+  private async save(provider: OAuthProvider, tokens: OAuthTokens, replacing?: OAuthTokens): Promise<void> {
     this.secrets.scrubber.remember(oauthSecretName(provider.id), tokens.accessToken);
     if (tokens.refreshToken) this.secrets.scrubber.remember(`${oauthSecretName(provider.id)}_REFRESH`, tokens.refreshToken);
-    const write = () => this.secrets.put(this.owner, "default", oauthSecretName(provider.id), JSON.stringify(tokens));
+    const expect = replacing
+      ? (current: string | null) => { const held = storedTokens(current); return !!held && sameCredential(held, replacing); }
+      : undefined;
+    const write = () => this.secrets.put(this.owner, "default", oauthSecretName(provider.id),
+      JSON.stringify({ ...tokens, issuer: issuerOf(provider) }), {}, expect);
     const check = currentHealthCheck();
-    if (check) await check.writeOwnCredential(this.owner, "default", oauthSecretName(provider.id), write);
-    else await write();
+    try {
+      if (check) await check.writeOwnCredential(this.owner, "default", oauthSecretName(provider.id), write);
+      else await write();
+    } catch (error) {
+      if (error instanceof LockerConflict) throw new ReplacedSignIn(`The sign-in to ${provider.label} was replaced while it was renewed`);
+      throw error;
+    }
   }
   /** The saved tokens for a connection, or null when it has never been signed in. */
   async saved(id: string): Promise<OAuthTokens | null> {
     const name = oauthSecretName(id);
     const values = await this.secrets.resolve(this.owner, "default", [name], { purpose: `sign-in ${id}` }).catch(() => null);
     assertHealthCurrent();
-    if (!values?.[name]) return null;
-    const saved = StoredTokensSchema.safeParse(JSON.parse(values[name]) as unknown);
-    if (!saved.success) return null;
-    this.secrets.scrubber.remember(name, saved.data.accessToken);
-    return saved.data;
+    const saved = storedTokens(values?.[name] ?? null);
+    if (!saved) return null;
+    this.secrets.scrubber.remember(name, saved.accessToken);
+    return saved;
   }
   /**
    * A usable access key, renewed first when the saved one has expired. Calls that find it expired at the same moment
    * share one renewal: a service that rotates refresh keys accepts each one only once, so a second renewal with the
    * same key would lose the sign-in. Adapted from LibreChat's in-flight refresh map (packages/api/src/mcp/oauth/tokens.ts,
    * MIT; see THIRD_PARTY_NOTICES.md). Only a call with the same sign-in (renewalKey) shares one. A renewal whose saved
-   * sign-in was replaced meanwhile saves nothing and hands nothing out; its callers read the new sign-in once more.
+   * sign-in was replaced meanwhile saves nothing and hands nothing out; its callers read the new sign-in once more. A
+   * sign-in got with other settings (another client, tenant or address) is never handed to these: sign in again.
    */
   async accessToken(provider: OAuthProvider): Promise<string> {
     for (let tries = 0; ; tries++) {
       const tokens = await this.saved(provider.id);
       if (!tokens) throw new Error(`Branch Agent is not signed in to ${provider.label} yet`);
+      if (tokens.issuer !== undefined && tokens.issuer !== issuerOf(provider))
+        throw new Error(`The sign-in to ${provider.label} was made with other settings; sign in again`);
       const expired = tokens.expiresAt !== null && Date.parse(tokens.expiresAt) - 30_000 <= Date.now();
       if (!expired) return tokens.accessToken;
       const key = renewalKey(provider, tokens);
       let renewal = this.renewals.get(key);
       if (!renewal) {
-        const stillCurrent = async () => { const now = await this.saved(provider.id); return now !== null && sameCredential(now, tokens); };
-        renewal = this.refresh(provider, tokens, stillCurrent).finally(() => this.renewals.delete(key));
+        renewal = this.refresh(provider, tokens, tokens).finally(() => this.renewals.delete(key));
         this.renewals.set(key, renewal);
       }
       try {
@@ -254,8 +273,16 @@ function listenOnLoopback(server: Server): Promise<number> {
 const StoredTokensSchema = z.object({
   accessToken: z.string().min(1).max(4000), refreshToken: z.string().max(4000).nullable().default(null),
   tokenType: z.string().max(40).default("Bearer"), expiresAt: z.string().nullable().default(null),
-  scope: z.string().max(1000).nullable().default(null), obtainedAt: z.string(),
+  scope: z.string().max(1000).nullable().default(null), obtainedAt: z.string(), issuer: z.string().max(64).optional(),
 }).strict();
+/** A saved sign-in's tokens, or null when there is none or it cannot be read. */
+function storedTokens(text: string | null): OAuthTokens | null {
+  if (!text) return null;
+  try {
+    const saved = StoredTokensSchema.safeParse(JSON.parse(text) as unknown);
+    return saved.success ? saved.data : null;
+  } catch { return null; }
+}
 function readTokens(body: unknown): OAuthTokens {
   const shape = z.object({
     access_token: z.string().min(1).max(4000), refresh_token: z.string().max(4000).optional(),

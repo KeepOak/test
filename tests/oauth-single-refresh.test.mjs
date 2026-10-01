@@ -2,13 +2,20 @@
 // that rotates refresh keys accepts each one only once.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { DatabaseSync } from "node:sqlite";
 import { OAuthConnections, oauthSecretName } from "../dist/oauth.js";
+import { Locker, LockerConflict } from "../dist/locker.js";
+import { Secrets } from "../dist/vault.js";
 
 function lockerWith(tokens) {
   const kept = new Map([[oauthSecretName("svc"), JSON.stringify(tokens)]]);
   return {
     scrubber: { remember() {} },
-    async put(_owner, _project, name, value) { kept.set(name, value); },
+    /* As the real locker: with `expect`, written only if it accepts the value held at that moment. */
+    async put(_owner, _project, name, value, _options, expect) {
+      if (expect && !expect(kept.get(name) ?? null)) throw new LockerConflict(`${name} changed`);
+      kept.set(name, value);
+    },
     async resolve(_owner, _project, names) { return Object.fromEntries(names.filter((n) => kept.has(n)).map((n) => [n, kept.get(n)])); },
     kept,
   };
@@ -75,7 +82,8 @@ const expired = (access, refresh) => ({ accessToken: access, refreshToken: refre
 const savedAccess = (locker) => JSON.parse(locker.kept.get(oauthSecretName("svc"))).accessToken;
 
 /* A caller whose sign-in differs in one way never joins the renewal under way: it renews with its own client, tenant or
-   address, gets that renewal's own answer, and the older renewal, answering last, is not written over it. */
+   address and gets that renewal's own answer. The older renewal, answering last, is not written over it, and its caller
+   is refused rather than handed the sign-in the other settings got. */
 const changes = {
   "client": { clientId: "client-2" },
   "tenant": { tokenUrl: "https://login.example/tenant-b/token", authorizeUrl: "https://login.example/tenant-b/authorize" },
@@ -98,8 +106,10 @@ for (const [what, change] of Object.entries(changes)) {
     service.posts[1].answer("for-second");
     assert.equal(await newer, "for-second", "the changed caller gets its own renewal's key");
     service.posts[0].answer("for-first");
-    await older;
+    await assert.rejects(older, /other settings; sign in again/, "the older caller never gets the other settings' key");
     assert.equal(savedAccess(locker), "for-second", "the older renewal is not written over the newer sign-in");
+    await assert.rejects(connections.accessToken(first), /other settings; sign in again/);
+    assert.equal(await connections.accessToken(second), "for-second");
   });
 }
 
@@ -133,4 +143,32 @@ test("a sign-in replaced while its renewal runs keeps the new sign-in: the renew
   assert.equal(await older, "signed-in-again", "the waiting caller gets the new sign-in, not the old renewal's key");
   assert.equal(savedAccess(locker), "signed-in-again", "the old renewal's answer is not written over the new sign-in");
   assert.equal(service.posts.length, 1);
+});
+
+/* The real locker and vault: the renewal's write waits for the locker key, and the sign-in is replaced in that wait. The
+   write compares in the same step as it writes, after the key, so the replacement survives. */
+test("a sign-in replaced while the renewal's write waits for the locker key survives that write", async () => {
+  let holdWrite = false, letWrite;
+  const keyBytes = Buffer.alloc(32, 7);
+  const keys = { async key() {
+    if (holdWrite && /Locker\.set/.test(new Error().stack ?? "")) { holdWrite = false; await new Promise((go) => { letWrite = go; }); }
+    return keyBytes;
+  } };
+  const db = new DatabaseSync(":memory:"), locker = new Locker(db, keys), secrets = new Secrets(db, locker);
+  const name = oauthSecretName("svc");
+  await secrets.put("owner", "default", name, JSON.stringify(expired("old", "refresh-1")));
+  const fetchImpl = async () => { holdWrite = true;
+    return new Response(JSON.stringify({ access_token: "from-old-renewal", refresh_token: "refresh-2", expires_in: 3600 }),
+      { status: 200, headers: { "content-type": "application/json" } }); };
+  const connections = new OAuthConnections("owner", secrets, policy, fetchImpl);
+  const waiting = connections.accessToken(provider);
+  for (const end = Date.now() + 2000; !letWrite && Date.now() < end;) await new Promise((r) => setTimeout(r, 5));
+  assert.ok(letWrite, "the renewal's write is waiting for the locker key");
+  const replacement = { ...expired("signed-in-again", "refresh-9"), expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
+  await secrets.put("owner", "default", name, JSON.stringify(replacement));
+  letWrite();
+  assert.equal(await waiting, "signed-in-again", "the waiting caller gets the new sign-in");
+  const kept = JSON.parse((await locker.resolve("owner", "default", [name]))[name]);
+  assert.equal(kept.accessToken, "signed-in-again", "the old renewal's key is not written over the new sign-in");
+  await assert.rejects(locker.set("owner", "default", name, "x", () => false), LockerConflict);
 });
