@@ -133,6 +133,10 @@ async function connect(t, fx) {
 
 test("a slow profile leaves the popup open and verified emails hydrate progressively", async (t) => {
   const fx = await fixture(t), page = await connect(t, fx), held = Promise.withResolvers(), began = Promise.withResolvers();
+  // The window's first glance started identity reads with the fixture's status stub; let them finish before the caches
+  // are cleared, or a read still on its way lands after the clear (or is joined instead of a fresh one) and the list can
+  // draw before the first verified email is known.
+  await fx.service.readIdentities(["cli-claude-code"]);
   fx.service.signIns.clear(); fx.service.identities.clear();
   fx.service.deps.statusRun = async (_row, _args, env) => {
     const i = fx.homes.indexOf(env.CLAUDE_CONFIG_DIR);
