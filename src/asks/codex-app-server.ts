@@ -413,7 +413,10 @@ export function warmCodexTurn(command: string, start: StartAppServer, request: C
   let byKey = warmCodex.get(start);
   if (!byKey) warmCodex.set(start, byKey = new Map());
   const env = thread.env ?? codexEnvironment();
-  const key = JSON.stringify([command, env.CODEX_HOME ?? "", thread.home ?? ""]), keys = byKey;
+  // A child retains its initial account and transport environment. Never borrow it after
+  // either the fallback account home or configured proxy/CA transport has changed.
+  const transport = Object.entries(codexTransportEnvironment(env)).sort(([a], [b]) => a.localeCompare(b));
+  const key = JSON.stringify([command, env.CODEX_HOME ?? "", env.HOME ?? "", env.USERPROFILE ?? "", thread.home ?? "", transport]), keys = byKey;
   let warm = keys.get(key);
   if (!warm) {
     const made: WarmCodex = new WarmCodex(command, env, start, version, () => { if (keys.get(key) === made) keys.delete(key); });

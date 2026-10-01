@@ -142,13 +142,14 @@ function checkCodexPolicy(args: readonly string[]): void {
 }
 /** Codex as a model: one-call model, read-only sandbox and no approval escalation, independent of saved defaults. */
 export function codexArgs(args: readonly string[], model: string, workDir: string | null = null): string[] {
-  const at = args.indexOf("exec");
-  if (at >= 0) checkCodexPolicy(args);
+  const at = args.findIndex((arg) => arg === "exec" || arg === "e");
+  checkCodexPolicy(args);
+  if (at < 0) throw new Error("Codex used as a model requires an exec invocation with read-only access and no approvals.");
   // QA 2026-09-28: Codex answering as a model works in Branch's own empty folder, which Branch made and nothing else
   // uses, so the git-repository trust check is skipped for that one folder only; any other folder keeps it.
   const where = workDir ? ["-C", workDir, "--skip-git-repo-check"] : [];
   const policy = ["-c", 'sandbox_mode="read-only"', "-c", 'approval_policy="never"'];
-  return at < 0 ? [...args] : [...args.slice(0, at + 1), "-c", `model=${model}`, ...policy, ...where, ...args.slice(at + 1)];
+  return [...args.slice(0, at), "exec", "-c", `model=${model}`, ...policy, ...where, ...args.slice(at + 1)];
 }
 /** Codex programs found to have no app-server this run; they answer through exec. */
 const noAppServer = new Set<string>();
@@ -528,7 +529,7 @@ export class CliAgentProvider implements Provider {
   }
   /** The model check (src/codex-models.ts): Codex's version, and one tiny call per model, read as accepted or refused. */
   probe(): CodexProbe {
-    const at = this.row.args.indexOf("exec"), limits = { timeoutMs: 90_000, maxOutputChars: 20_000 };
+    const at = this.row.args.findIndex((arg) => arg === "exec" || arg === "e"), limits = { timeoutMs: 90_000, maxOutputChars: 20_000 };
     const run = (row: CliAgentRow, prompt: string) => this.home
       ? this.spawnAgent(row, prompt, AbortSignal.timeout(limits.timeoutMs), limits, this.home)
       : this.spawnAgent(row, prompt, AbortSignal.timeout(limits.timeoutMs), limits);

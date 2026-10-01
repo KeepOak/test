@@ -178,3 +178,37 @@ test("exec-only completion and model probe both carry the fixed sandbox and appr
   }
   assert.equal(calls.length, 2);
 });
+
+test("exec alias is normalized and unsupported or conflicting model invocations cannot launch", async () => {
+  assert.deepEqual(codexArgs(["e", "--json", "-"], "fixture"), codexArgs(["exec", "--json", "-"], "fixture"));
+  for (const args of [["e", "--yolo", "-"], ["e", "--json", "--dangerously-bypass-approvals-and-sandbox", "-"],
+    ["e", "-c", 'approval_policy="on-request"', "-"], ["resume", "last"], ["--json", "-"]]) {
+    let starts = 0;
+    const provider = new CliAgentProvider({ ...row(), args }, {}, async () => { starts++; assert.fail("no child may start"); });
+    await assert.rejects(provider.complete(request()), /requires.*read-only access and no approvals/);
+    assert.equal(starts, 0);
+  }
+});
+
+test("warm children separate fallback homes and changed configured transport", async (t) => {
+  t.after(closeWarmCodex);
+  const fake = server();
+  const turn = (env) => warmCodexTurn("fixture", fake.start, request(), { home: "same-label", env }, 5000);
+  for (const home of ["HOME", "USERPROFILE"]) {
+    const before = fake.starts.length;
+    await turn({ [home]: "/isolated/a" });
+    await turn({ [home]: "/isolated/a" });
+    assert.equal(fake.starts.length, before + 1, "unchanged effective environment reuses its child");
+    await turn({ [home]: "/isolated/b" });
+    assert.equal(fake.starts.length, before + 2, `${home} change gets its own child`);
+  }
+  const base = { CODEX_HOME: "/isolated/explicit", HOME: "/isolated/a" };
+  await turn(base);
+  for (const env of [{ ...base, HOME: "/isolated/b" }, { ...base, HTTP_PROXY: "http://proxy.test:8080" },
+    { ...base, SSL_CERT_FILE: "/certs/new.pem" }, { ...base, NO_PROXY: "" }]) {
+    const before = fake.starts.length;
+    await turn(env);
+    assert.equal(fake.starts.length, before + 1, "changed account/transport starts with the actual new environment");
+    assert.deepEqual(fake.starts.at(-1).env, env);
+  }
+});

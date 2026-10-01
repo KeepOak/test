@@ -43,3 +43,5 @@ Validation results:
 - No full repository suite or live-account/inference test was run
 
 Native Windows pre-push validation (2026-10-01): TypeScript --noEmit and npm run build passed. The eight named mock fixture files passed 47 tests with one existing POSIX stand-in skip, 14.942 seconds. Windows process-environment fixtures use nonconflicting case aliases and assert every allowed value plus exclusions; the plain-object fixture still independently covers different uppercase/lowercase values. No real accounts or live inference used.
+
+Returning-review correction: official exec alias e is normalized before policy pinning; unsupported non-exec invocations and conflicting custom overrides refuse before launch. Warm child identity includes effective HOME/USERPROFILE and configured transport, so changed fallback account home, proxy, CA or explicit empty NO_PROXY cannot silently reuse the previous environment. Native validation after normal protected 0cf75d35d4374035a5910d0d97f650c6af71e272 integration: tsc --noEmit/build PASS; same eight mock files 49 PASS, one existing skip, 15.762 seconds. No live Codex request/account or credential read.
