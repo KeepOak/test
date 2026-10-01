@@ -94,12 +94,14 @@ import { SessionLock } from "./session-lock.js";
 import { Moderation } from "./moderation.js";
 import { PrivacyGuard } from "./privacy-guard.js";
 import { OAuthConnections } from "./oauth.js";
+import { forgetSignIn, signInProvider } from "./integrations/mcp-oauth.js";
 import { RunArtifacts } from "./artifacts.js";
 import { Attachments } from "./attachments.js";
 import { registerAttachmentTools } from "./attachment-tools.js";
 import { BrowserProfiles } from "./integrations/browser-profiles.js";
 import { ChannelRouter } from "./channels/router.js";
 import { linkChatThreads } from "./channels/threads.js"; // defaulttrunk
+import { bindingFor as channelBinding, dropTrunkRoutes } from "./channels/routes.js";
 import { ChannelConnectors, registerChannelTools } from "./channels/connectors.js";
 import { WebAccess, registerWeb } from "./integrations/web.js";
 import { Hooks } from "./hooks.js";
@@ -144,6 +146,9 @@ import type { LocalWhisper } from "./voice-whisper.js"; // RES-709
 import { wakeCaptureRunner, wakeRunner, wakeStreamRunner } from "./voice-wake-host.js"; // mac7/wake-mic
 // Bucket 17.
 import { MediaUnderstanding, registerMediaUnderstanding } from "./media-understand.js";
+import { locateProgram, mediaProgramsSettings } from "./media-programs.js";
+import { runProgram } from "./voice-stt.js";
+import { isOggOpus, spokenText, toOggOpus } from "./voice-note.js";
 import { SpeechEngineService } from "./speech-engine-service.js";
 import { registerTroubleshoot } from "./troubleshoot.js"; // w911 (A0374) hook.
 import { builtInSpeech } from "./speech-engines.js";
@@ -986,14 +991,23 @@ export async function createBranch(options: {
     return { ...(held ?? {}), writesConfinedTo: held?.writesConfinedTo ?? context.writesConfinedTo ?? context.workspace };
   };
   channels.transcribeVoice = async (clip) => (await voice.transcribe(runtime.owner, clip)).text;
-  channels.speakReply = async (text) => {
+  channels.speakReply = async (text, voiceNoteType) => {
     const settings = voice.settings(runtime.owner);
     // "Keep audio on this computer" wins over every other voice choice, including this one: a
     // spoken reply made here would still be uploaded to the chat app, and the Voice screen tells
     // the owner nothing containing sound leaves. The words are sent instead, as they always are.
     if (!settings.replyWithVoiceOnChannels || settings.keepAudioOnThisComputer) return null;
-    const spoken = await voice.speak(runtime.owner, { text: text.slice(0, 1500), voice: "", speed: 1 });
-    return { bytes: spoken.bytes, mediaType: spoken.mediaType };
+    // UP-CHAT-005: read as sentences (no Markdown), cut at the last whole sentence, and made into the app's voice-bubble
+    // sound with this computer's ffmpeg (the place set under Pictures and sound, or the search path). Without ffmpeg the
+    // sound goes as it is, and the app sends it as an audio file.
+    const words = spokenText(text, 1500);
+    if (!words) return null;
+    const note = voiceNoteType === "audio/ogg";
+    const spoken = await voice.speak(runtime.owner, { text: words, voice: "", speed: 1 }, { voiceNote: note });
+    if (!note) return { bytes: spoken.bytes, mediaType: spoken.mediaType };
+    const ffmpeg = isOggOpus(spoken.mediaType) ? null
+      : await locateProgram("ffmpeg", mediaProgramsSettings(store, runtime.owner)).catch(() => null);
+    return toOggOpus({ bytes: spoken.bytes, mediaType: spoken.mediaType }, ffmpeg, runProgram);
   };
   // Personal details and, when the owner switches it on, a content check, either side of the model.
   const moderation = new Moderation({}, web.policy, web.policy.guard(globalThis.fetch),
@@ -1559,6 +1573,12 @@ ${result.output || "(it said nothing)"}`;
   };
   channels.trunkIdReach = (channel, trunkId) => reachRefusal(channel, trunkId) ?? trunks.pause.refusal(trunkId, "it did not answer");
   channels.defaultTrunk = () => trunks.mode("trunks") === "off" ? null : trunks.defaultTrunk()?.id ?? null;
+  // With Trunks off, a saved route starts nothing new as its Trunk and no Trunk can be chosen; started threads keep theirs.
+  channels.bindingFor = (channel, chatId) => trunks.mode("trunks") === "off" ? null
+    : channelBinding(store, runtime.owner, channel, chatId, channels.adapter(channel)?.kind ?? "", channels.adapter(channel)?.routeParent?.(chatId) ?? null);
+  channels.routingTrunks = () => trunks.mode("trunks") === "off" ? [] : trunks.records.list().map(({ id, name, handle }) => ({ id, name, handle }));
+  const removedTrunk = trunks.onRemoved;
+  trunks.onRemoved = id => { removedTrunk?.(id); dropTrunkRoutes(store, runtime.owner, id); };
   channels.trunkOfConversation = (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null;
   trunks.afterSettle = () => { linkChatThreads(store, runtime.owner, (sessionId) => trunks.trunkForConversation(sessionId)?.trunkId ?? null); };
   // The migration, at every start (idempotent): conversations with no Trunk are put with one, chats' threads linked.
@@ -1700,11 +1720,15 @@ ${result.output || "(it said nothing)"}`;
     startupTimeoutMs: () => readComfort(store, runtime.owner, "mcp").startupTimeoutSeconds * 1000, // R17-S20
     // mac3/security-check: a server fetched from a package registry is looked up first.
     vetLaunch: (command: string, args: readonly string[]) => security.malware.vet(command, args),
+    secret: lockerSecret("MCP server"),
+    signIn: (id: string, url: string) => signInProvider(store, runtime.owner, id, url),
   };
   // eng-connectors: the owner's own servers (a command asks through the approval gate before it starts), the
   // command-line tools the owner allowed, and replies the owner flagged.
   const ownMcp = new OwnMcpServers({ store, owner: () => runtime.owner, registry, approvals: runtime.approvals, workspace: () => runtime.workspace,
-    policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args) });
+    policy: () => web.policy, host: () => mcpHost, vet: (command, args) => security.malware.vet(command, args),
+    saveSecret: async (name, value) => { await store.secrets.put(runtime.owner, "default", name, value); },
+    forgetSignIn: (id) => forgetSignIn(store, runtime.owner, id) });
   const budding = new Budding({ store, runtime, registry, gardener, scripts: safetyExtras.scripts, servers: ownMcp, sourceRequests, version });
   registerBudding(registry, budding);
   const sourcePublications = sourcePublicationQueue(pullRequestDeps);

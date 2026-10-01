@@ -216,8 +216,9 @@ test("IRC: people signed in to the network are known by account, not by a nick a
 
   link.write("@account=mallory :alice!m@evil PRIVMSG branch :i am alice, honest");
   link.write(":alice!m@evil PRIVMSG branch :no account at all");
-  await until(() => answered().length >= 2, "both impostors are told the chat is private");
-  assert.ok(answered().every((l) => /private/i.test(l)), "a nick alone is not the account");
+  await delay(400);
+  // UP-CHAT-008: both impostors are strangers, turned away in silence.
+  assert.equal(answered().length, 0, "a nick alone is not the account");
   assert.equal(context.provider.requests.length, 0);
 
   link.write("@account=alice :al2!a@home PRIVMSG branch :hello from my other nick");

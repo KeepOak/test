@@ -246,13 +246,12 @@ jobs:
           restore-keys: build-${{ runner.os }}-node${{ steps.node.outputs.node-version }}-
       - run: npm run build
       # What the downloads' own build used to check on every run, and takes seconds: the experiments' Python tests
-      # and one task end to end through the tests' scripted fixture, named explicitly (Branch never offers it).
+      # and one task end to end through the tests' scripted model, an OpenAI-shaped service the runner starts on this
+      # machine (tests/fixtures/fixture-model.mjs); Branch itself has no demo model.
       - if: matrix.lane == 'linux' && matrix.shard == 1
         run: python -m unittest discover -s experiments -p 'test_*.py'
       - if: matrix.lane == 'linux' && matrix.shard == 1
-        run: node dist/cli.js run "Write, read and verify the fixture file."
-        env:
-          BRANCH_PROVIDER: demo
+        run: node tests/fixtures/fixture-model-run.mjs run "Write, read and verify the fixture file."
       # A partial run's Linux shares split the plan's selection instead of the whole lane.
       - if: matrix.selected
         shell: bash

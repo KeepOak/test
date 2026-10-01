@@ -8,6 +8,7 @@ import type { Store } from "./store.js";
 import { voiceSettings, type AudioProvider, type VoiceSettings } from "./voice.js";
 import { LocalSpeechSchema, runProgram, Transcription, type AudioClip, type SttRoute, type TranscriptionResult } from "./voice-stt.js";
 import { LocalWhisper, type LocalWhisperFound, type WhisperChoice } from "./voice-whisper.js";
+import { spokenText } from "./voice-note.js";
 import { findPiper, LocalPiper } from "./voice-piper.js";
 import { Speech, SpeakRequestSchema, type ProgramLocator, type SpeakRequest, type SpokenAudio, type TtsRoute } from "./voice-tts.js";
 
@@ -175,18 +176,23 @@ export class VoiceService {
       ...(options.signal ? { signal: options.signal } : {}),
     });
   }
-  /** Reads text aloud, using the owner's chosen voice and speed. */
-  async speak(owner: string, input: SpeakRequest, options: { signal?: AbortSignal } = {}): Promise<SpokenAudio> {
+  /**
+   * Reads text aloud, using the owner's chosen voice and speed. UP-CHAT-005: the words are read as sentences, never as
+   * Markdown's marks, code blocks or links, whichever route reads them. `voiceNote` asks for OGG/Opus where a route makes it.
+   */
+  async speak(owner: string, input: SpeakRequest, options: { signal?: AbortSignal; voiceNote?: boolean } = {}): Promise<SpokenAudio> {
     const settings = this.settings(owner);
+    const text = spokenText(input.text);
+    if (!text) throw new Error("There are no words in that to read aloud.");
     // Bucket 17 hook: a chosen speech plug-in does the work instead.
-    const byEngine = await this.engines?.speak(owner, input.text, settings.keepAudioOnThisComputer, options.signal);
+    const byEngine = await this.engines?.speak(owner, text, settings.keepAudioOnThisComputer, options.signal);
     if (byEngine) return byEngine;
     const found = this.piper ? findPiper(settings) : null;
     const route = ttsRouteFor(settings, this.provider(owner), this.platform, !!found);
     if ((route.kind === "windows" || route.kind === "piper") && settings.systemVoice === "off")
       throw new Error(systemVoiceOffMessage(this.platform, settings.keepAudioOnThisComputer));
     const request: SpeakRequest = {
-      text: input.text,
+      text,
       voice: input.voice || (settings.voiceId === "default" ? "" : settings.voiceId),
       speed: input.speed ?? settings.speechRate,
       ...(input.model || settings.ttsModel ? { model: input.model || settings.ttsModel } : {}),
@@ -199,6 +205,7 @@ export class VoiceService {
     return this.speech.speak(request, { kind: route.kind, provider: route.provider }, {
       keepOnThisComputer: settings.keepAudioOnThisComputer,
       ...(options.signal ? { signal: options.signal } : {}),
+      ...(options.voiceNote ? { voiceNote: true } : {}),
     });
   }
 }

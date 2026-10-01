@@ -76,7 +76,7 @@ export function setupPanel(store: Pick<Store, "get">, owner: string, id: string,
     noCreate: recipe.noCreate ?? null, steps: recipe.steps ?? [],
     codes: { ios: qrFor(recipe.stores?.ios), android: qrFor(recipe.stores?.android), create: qrFor(create) ?? qrFor(plainLink(recipe)) },
     fields: recipe.fields, paste: recipe.paste.map(({ secret, what, optional }) => ({ secret, what, optional: optional === true })),
-    hasCheck: Boolean(recipe.check), noCheck: recipe.noCheck ?? null, pairing: recipe.pairing ?? null,
+    hasCheck: Boolean(recipe.check), noCheck: recipe.noCheck ?? null, pairing: recipe.pairing ?? null, groups: recipe.groups ?? null,
     warning: recipe.warning ?? null, link: recipe.link ?? null,
     saved: done[recipe.id] ?? null, setUpHere: savedEntries(store, owner)[recipe.id] !== undefined, sources: recipe.sources,
   };

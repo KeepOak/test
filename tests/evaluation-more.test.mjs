@@ -10,6 +10,7 @@ import { join, resolve } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
 import { createBranch, builtInSuites, readGrade, savePricingSettings } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const run = promisify(execFile);
 const say = (content) => () => ({ content, toolCalls: [] });
@@ -301,7 +302,7 @@ test("the command line prints a suite as a table and as JSON", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-eval-cli-"));
   t.after(async () => { await discardTemp(root); });
   const cli = resolve("dist/cli.js");
-  const env = { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data") };
+  const env = { ...process.env, ...(await fixtureModel()).env, BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data") };
 
   const table = await run(process.execPath, [cli, "eval", "--suite", "cost"], { env }).catch((error) => error);
   assert.match(table.stdout, /^task\tresult\tscore\tms\ttokens\twhy$/m);
@@ -320,11 +321,12 @@ test("the command line prints a suite as a table and as JSON", async (t) => {
 test("the command line compares one suite across two model choices", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-eval-cli-compare-"));
   t.after(async () => { await discardTemp(root); });
+  const { endpoint } = await fixtureModel();
   const env = {
-    ...process.env, BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data"),
+    ...process.env, BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data"), FIXTURE_KEY: "fixture-key",
     BRANCH_MODEL_PRESETS: JSON.stringify([
-      { id: "a", name: "Quick", provider: "demo", model: "gpt-4o-mini" },
-      { id: "b", name: "Careful", provider: "demo", model: "gpt-4o" },
+      { id: "a", name: "Quick", provider: "openai", endpoint, model: "gpt-4o-mini", apiKeyEnv: "FIXTURE_KEY" },
+      { id: "b", name: "Careful", provider: "openai", endpoint, model: "gpt-4o", apiKeyEnv: "FIXTURE_KEY" },
     ]),
   };
   const cli = resolve("dist/cli.js");

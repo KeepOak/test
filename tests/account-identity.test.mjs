@@ -61,7 +61,7 @@ async function fixture(t) {
 
 test("Claude official JSON is reduced to verified identity; false, malformed and oversized status never become signed in", () => {
   assert.deepEqual(claudeIdentity(JSON.stringify({ ...official, accessToken: secretSentinel, name: "Alex" })),
-    { signedIn: true, identity: { authMethod: "claude.ai", email: official.email, name: "Alex", organization: official.orgName, organizationId: official.orgId } });
+    { signedIn: true, identity: { authMethod: "claude.ai", email: official.email, name: "Alex", organization: official.orgName, organizationId: official.orgId, plan: "max" } });
   assert.deepEqual(claudeIdentity('{"loggedIn":false,"email":"stale@example.test"}'), { signedIn: false });
   for (const output of ["", "{}", "null", "[]", '{"loggedIn":"true"}', "x".repeat(32769)]) assert.equal(claudeIdentity(output), null);
   assert.deepEqual(claudeIdentity('{"loggedIn":true,"email":"bad","name":"bad\\nname"}'), { signedIn: true, identity: { authMethod: "unknown" } });

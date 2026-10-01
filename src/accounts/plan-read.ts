@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { chatgptAccountId, chatgptDefaults, type ChatGPTAuth } from "../chatgpt-auth.js";
 import type { PlanWindowSaid } from "../rate-limit-headers.js";
 import { startCall } from "../windows-command.js";
+import type { ClaudePickerRow } from "../providers/claude-models.js";
 
 /**
  * What a plan sign-in has left, read on request from the service itself, without sending a message (so nothing of the
@@ -59,7 +60,11 @@ export async function readChatGPTUsage(auth: ChatGPTAuth, fetchImpl: typeof fetc
 /* ---------- Claude Code ---------- */
 
 interface ClaudeLimit { utilization?: unknown; resets_at?: unknown }
-export interface ClaudeUsageAnswer { rateLimitsAvailable: boolean; rateLimits: Record<string, ClaudeLimit | null> | null }
+export interface ClaudeUsageAnswer {
+  rateLimitsAvailable: boolean; rateLimits: Record<string, ClaudeLimit | null> | null;
+  /** provider-audit: from the same run's `initialize` answer: the plan (`account.subscriptionType`) and the model picker. */
+  plan?: string | null; picker?: ClaudePickerRow[];
+}
 /** Runs the program with this environment and hands back its `get_usage` answer, or throws a sentence. */
 export type ClaudeUsageRead = (env: NodeJS.ProcessEnv) => Promise<ClaudeUsageAnswer>;
 
@@ -106,10 +111,32 @@ export function claudeUsageAnswer(line: string): ClaudeUsageAnswer | "refused" |
     rateLimits: limits && typeof limits === "object" ? limits as Record<string, ClaudeLimit | null> : null };
 }
 
+/**
+ * provider-audit: the `initialize` answer the program gives first: its account's plan (`account.subscriptionType`, as
+ * Hermes Agent's DirectSDK setup reads it) and its model picker (`models`). Null for any other line. Only the plan's
+ * name and each picker row's model and description are kept; the rest of the answer is dropped unread.
+ */
+export function claudeInitializeAnswer(line: string): { plan: string | null; picker: ClaudePickerRow[] } | null {
+  if (!line.includes("\"control_response\"") || !line.includes("\"branch-start\"")) return null;
+  let parsed: { type?: unknown; response?: { subtype?: unknown; request_id?: unknown; response?: Record<string, unknown> } };
+  try { parsed = JSON.parse(line); } catch { return null; }
+  if (parsed.type !== "control_response" || parsed.response?.request_id !== "branch-start" || parsed.response.subtype !== "success") return null;
+  const body = parsed.response.response ?? {};
+  const account = body.account && typeof body.account === "object" ? body.account as Record<string, unknown> : {};
+  const text = (value: unknown): string | undefined => typeof value === "string" && value.length <= 200 ? value : undefined;
+  const plan = text(account.subscriptionType) ?? null;
+  const picker = (Array.isArray(body.models) ? body.models : []).slice(0, 100).flatMap((row: unknown) => {
+    if (!row || typeof row !== "object") return [];
+    const one = row as Record<string, unknown>, value = text(one.value), resolvedModel = text(one.resolvedModel), description = text(one.description);
+    return [{ ...(value ? { value } : {}), ...(resolvedModel ? { resolvedModel } : {}), ...(description ? { description } : {}) }];
+  });
+  return { plan, picker };
+}
+
 export const runClaudeUsage: ClaudeUsageRead = (env) => new Promise((resolve, reject) => {
   const start = startCall("claude", [...claudeUsageArgs], env);
   const child = spawn(start.command, start.args, { stdio: ["pipe", "pipe", "ignore"], windowsHide: true, shell: false, env });
-  let done = false, partial = "";
+  let done = false, partial = "", started: ReturnType<typeof claudeInitializeAnswer> = null;
   const finish = (error: Error | null, answer?: ClaudeUsageAnswer): void => {
     if (done) return;
     done = true;
@@ -127,9 +154,10 @@ export const runClaudeUsage: ClaudeUsageRead = (env) => new Promise((resolve, re
     partial = lines.pop() ?? "";
     if (partial.length > 1_000_000) partial = ""; // one line that never ends is not an answer
     for (const line of lines) {
+      started ??= claudeInitializeAnswer(line);
       const answer = claudeUsageAnswer(line);
       if (answer === "refused") finish(new Error(claudeUnread("it refused the question")));
-      else if (answer) finish(null, answer);
+      else if (answer) finish(null, { ...answer, ...(started ?? {}) });
     }
   });
   child.stdin.on("error", () => undefined);

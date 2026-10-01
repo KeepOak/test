@@ -100,6 +100,8 @@ export const RecipeSchema = z.object({
   noCheck: words.optional(),
   entry: z.record(z.string(), z.unknown()).optional(),
   pairing: words.optional(),
+  /** Group chats: when it answers there, and what the app itself needs for it to see every message. */
+  groups: words.optional(),
   /** A risk said plainly before anything is set up (a personal number through an unofficial client can be banned). */
   warning: words.optional(),
   /** "bridge": the setup links an account by the QR code a bridge on this computer makes (GET /api/channel-setup/<id>/link). */

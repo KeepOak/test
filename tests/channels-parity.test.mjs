@@ -299,7 +299,7 @@ test("Twitch chat: IRC inside a WebSocket, with the token sent as PASS and user 
   assert.ok(link.received.includes(`PASS oauth:${TWITCH_TOKEN}`));
   assert.ok(link.received.includes("CAP REQ :twitch.tv/tags twitch.tv/commands"));
   const said = () => link.received.filter((l) => l.startsWith("PRIVMSG ")).map((l) => l.slice(l.indexOf(" :") + 2));
-  await pairingWalk(context, { label: "Twitch", sent: said, say: async (text) =>
+  await pairingWalk(context, { label: "Twitch", sent: said, group: true, say: async (text) =>
     link.send(`@badge-info=;display-name=Viewer;id=m-${Date.now()};user-id=12345 :viewer!viewer@viewer.tmi.twitch.tv PRIVMSG #somestreamer :@branchbot ${text}`) });
   const pending = context.app.channels.summary().approved;
   assert.ok(pending.some((person) => person.senderId === "twitch:12345"), "the Twitch user id, not the changeable name, is who was approved");

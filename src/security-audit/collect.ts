@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { readGatewayAuth, knownDevices } from "../remote/gateway-auth.js";
 import { sandboxBackendSettings } from "../sandbox-backends.js";
 import { traceExportSettings } from "../tracing-export.js";
+import { groupActivations } from "../channels/group-activation.js";
 import type { Store } from "../store.js";
 import type { NetworkPolicyConfig } from "../network-policy.js";
 import type { Policy } from "../policy.js";
@@ -134,6 +135,8 @@ function settingsFacts(app: SecurityApp, now: Date) {
     skills: app.store.skills.list(owner).map((skill) => ({ id: skill.id, name: skill.name, active: skill.activeVersion !== null, findings: skill.findings.length })),
     switches: securityCheckSettings(store, owner),
     sandboxImage: sandboxBackendSettings(store, owner).image,
+    alwaysGroups: groupActivations(store, owner).filter((group) => group.activation === "always")
+      .map(({ channel, title }) => ({ channel, title })),
   };
 }
 

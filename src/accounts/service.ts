@@ -15,7 +15,7 @@ import { buildConnection } from "../provider-factory.js";
 import { codexModelsFor } from "../codex-models.js";
 import { CliAgentProvider, accountHomeVariables, claudeDefaultEffort, claudeDefaultModel, rowFor, runCliAgent, strippedEnvironment, type SpawnAgent } from "../providers/cli-agent.js";
 import { ClaudeSubscriptionProvider, type ClaudeSubscriptionDependencies } from "../providers/claude-subscription.js";
-import { claudeCodePool, claudeSubscriptionPreset } from "../providers/claude-models.js";
+import { type ClaudePickerRow, claudeCodePool, claudeSubscriptionPreset, claudeSubscriptionWindow, longContextIncluded } from "../providers/claude-models.js";
 import { currentAccountCall, refuseSignInForTrunk, withAccountCall } from "./context.js";
 import type { Store } from "../store.js";
 import { ChatGPTAccounts } from "./chatgpt-accounts.js";
@@ -164,6 +164,11 @@ export class AccountsService {
     const asked = this.claudeReads.then(() => (this.deps.claudeUsage ?? runClaudeUsage)(env));
     this.claudeReads = asked.catch(() => undefined);
     const answer = await asked;
+    // provider-audit: the same run says the account's plan and model picker, which decide its 1M route.
+    if (answer.plan !== undefined || answer.picker) {
+      this.claudePlans.set(`${pool}/${account}`, { plan: answer.plan ?? null, picker: answer.picker ?? [] });
+      this.syncClaudeWindows();
+    }
     const said = claudeUsageWindows(answer, this.now());
     if (!said.length) throw new Error(claudeNoLimits);
     return said;
@@ -238,6 +243,25 @@ export class AccountsService {
       message: status.message, checkedAt: this.now() });
     if (status.signedIn && status.identity?.email) this.identities.set(key, status.identity.email);
     else this.identities.delete(key);
+    if (pool === claudeCodePool) this.syncClaudeWindows();
+  }
+  /** provider-audit: what each Claude account's `initialize` answer last said about its plan and model picker. */
+  private readonly claudePlans = new Map<string, { plan: string | null; picker: ClaudePickerRow[] }>();
+  /** Whether this Claude account's plan includes `model`'s 1M route: its `initialize` answer, else its `auth status`. */
+  private claudeLongContext(pool: string, account: string, model: string): boolean {
+    const read = this.claudePlans.get(`${pool}/${account}`);
+    return longContextIncluded(model, read?.plan ?? this.cachedSignIn(pool, account).identity?.plan, read?.picker ?? []);
+  }
+  /** A Claude preset budgets for 1M only when every account that can answer it has the 1M route included. */
+  private claudeWindow(model: string): number {
+    const listed = this.on() ? this.pool(claudeCodePool)?.accounts.filter((account) => !account.disabled).map((account) => account.id) ?? [] : [];
+    const answering = listed.length ? listed : [primaryAccount];
+    return claudeSubscriptionWindow(model, answering.every((account) => this.claudeLongContext(claudeCodePool, account, model)));
+  }
+  /** Registers a Claude preset again (through `wrap`) when what the plans say changes the window it budgets for. */
+  private syncClaudeWindows(): void {
+    for (const preset of [...this.deps.models.presets.values()])
+      if (claudeSubscriptionPreset(preset.id) && preset.contextWindow !== this.claudeWindow(preset.model)) this.deps.models.register(preset);
   }
   presentation(pool: string, account: Pick<Account, "id" | "label" | "disabled">, kind?: AccountKind) {
     if (!this.identityVisible()) return { ...accountPresentation(account.label), signedIn: null, duplicateOf: null,
@@ -294,6 +318,8 @@ export class AccountsService {
     // Branch's default, Opus 5.5 at medium; a model it names and an effort already set are left as they are.
     if (claude && preset.model === "claude") preset = { ...preset, model: claudeDefaultModel };
     if (preset.id === claudeCodePool && !preset.reasoning) preset = { ...preset, reasoning: claudeDefaultEffort };
+    // provider-audit: 200K, the window Claude Code keeps behind the relay, or 1M where every account's plan includes it.
+    if (claude) preset = { ...preset, contextWindow: this.claudeWindow(preset.model) };
     const original = claude ? this.programConnection(claudeCodePool, primaryAccount, preset.model) : unwrapProvider(preset.provider);
     // The program's first account is the connection itself: what it prints about its plan is that account's.
     if (claude && (original instanceof CliAgentProvider || original instanceof ClaudeSubscriptionProvider) && !original.onOutput)
@@ -451,7 +477,9 @@ export class AccountsService {
     return made;
   }
   private claudeConnection(pool: string, account: string, model: string): Provider {
-    const native = new ClaudeSubscriptionProvider({ owner: this.deps.owner, model: model === "claude" ? claudeDefaultModel : model,
+    const named = model === "claude" ? claudeDefaultModel : model;
+    const native = new ClaudeSubscriptionProvider({ owner: this.deps.owner, model: named,
+      longContext: () => this.claudeLongContext(pool, account, named),
       accountHome: { name: "CLAUDE_CONFIG_DIR", path: account === primaryAccount ? this.primaryClaudeHome : this.homeOf(pool, account) } }, this.deps.claudeSubscription);
     native.onOutput = (stdout) => this.notePlanWindows(pool, account, claudePlanWindows(stdout, this.now()));
     return new Proxy(native, { get: (target, property) => {

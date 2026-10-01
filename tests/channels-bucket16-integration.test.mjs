@@ -84,8 +84,9 @@ test("IRC: an account tag is only believed when the server agreed to send accoun
   const link = await until(() => server.connections[0], "a connection");
   await until(() => channel.health().state === "connected", "welcomed after the refusal");
   link.write("@account=alice :al2!a@home PRIVMSG branch :hello, trust my tag");
-  await until(() => link.lines.some((l) => l.startsWith("PRIVMSG al2 ")), "an answer");
-  assert.ok(link.lines.filter((l) => l.startsWith("PRIVMSG al2 ")).every((l) => /private/i.test(l)), "the tag was not believed");
+  await delay(400);
+  // UP-CHAT-008: the sender the tag did not vouch for is a stranger, turned away in silence.
+  assert.ok(!link.lines.some((l) => l.startsWith("PRIVMSG al2 ")), "the tag was not believed, and nothing was said");
   assert.equal(context.provider.requests.length, 0);
 });
 

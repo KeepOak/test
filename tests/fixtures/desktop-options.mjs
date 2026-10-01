@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fixtureModel } from "./fixture-model.mjs";
 
 /**
  * `hidden`: the window never shows on the screen of the computer running the tests (an owner's working desktop must
@@ -53,7 +54,7 @@ export async function desktopOptions({ hidden = !process.env.CI, gateway = false
       chromiumSandbox: true,
       env: {
         ...env,
-        BRANCH_PROVIDER: "demo",
+        ...(await fixtureModel()).env,
         BRANCH_DESKTOP_HOME: home,
         BRANCH_DATA_DIR: join(home, "state"),
         BRANCH_WORKSPACE: join(home, "workspace"),

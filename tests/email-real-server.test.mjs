@@ -42,12 +42,16 @@ async function smtpSend(raw) {
 
 test("email through a real mail server: two files and the words in, the reply and a file out in the same thread", { skip }, async (t) => {
   const { app, provider } = await fixture(t);
-  const adapter = new EmailAdapter({ id: "email-real", address: "bot@example.com", imap: server("bot", imapPort), smtp: server("bot", smtpPort), pollMs: 300 });
+  // GreenMail checks no senders, so the message carries the verdict a receiving server would stamp, and the adapter is
+  // told to trust that server's name (src/channels/mail-auth.ts).
+  const adapter = new EmailAdapter({ id: "email-real", address: "bot@example.com", imap: server("bot", imapPort), smtp: server("bot", smtpPort), pollMs: 300,
+    trustedAuthservIds: ["greenmail.test"] });
   await app.channels.attach(adapter, { activation: "always", pairing: false, allowlist: ["ann@example.com"] });
   t.after(() => adapter.stop());
 
   const messageId = `<real-${Date.now()}@example.com>`;
   await smtpSend([
+    "Authentication-Results: greenmail.test; dmarc=pass header.from=example.com",
     "From: Ann <ann@example.com>", "To: bot@example.com", "Subject: Two files", `Message-ID: ${messageId}`, "MIME-Version: 1.0",
     "Content-Type: multipart/mixed; boundary=\"outer\"", "",
     "--outer", "Content-Type: text/plain; charset=utf-8", "Content-Transfer-Encoding: quoted-printable", "",

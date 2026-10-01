@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { discardTemp } from "./temp-dir.mjs";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 test("CLI loads explicitly configured integrations before doctor", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-cli-"));
@@ -21,7 +22,7 @@ test("CLI loads explicitly configured integrations before doctor", async (t) => 
     {
       env: {
         ...process.env,
-        BRANCH_PROVIDER: "demo",
+        ...(await fixtureModel()).env,
         BRANCH_WORKSPACE: join(root, "workspace"),
         BRANCH_DATA_DIR: join(root, "data"),
         BRANCH_INTEGRATIONS: config,

@@ -24,6 +24,7 @@ const stubs = {
   "app/core/features.js": "export const markLive = () => {};",
   "app/settings/owner-commands.js": "export const initOwnerCommands = () => {}; export const ownerCommandCard = () => \"\";",
   "app/settings/chat-steps.js": "export const stepsCard = () => \"\"; export const initSteps = () => {};",
+  "app/settings/chat-routing.js": "export const routingCard = () => \"\"; export const initRouting = () => {};",
   "app/settings/rows15.js": "export const sw15 = () => \"\"; export const sec15 = () => \"\"; export const seg15 = () => \"\"; export const id15 = (s) => s;",
   "app/flows/chatapps17d.js": "export const nativeFormat = () => \"\"; export const pill17d = () => \"\"; export const stateOf = () => [];",
   "i18n.js": "export const t = (key) => key;",
@@ -56,6 +57,7 @@ for (const [what, change] of [["the App lock came on", (cc) => { cc.locked = tru
     apps.revokedPrompts();
     (await take("channels")).resolve({ channels: [] });
     (await take("channel-setup")).resolve({ channels: [] });
+    (await take("channels/routes")).resolve(null); // #588: the routing card reads its routes with the page
     const [formats, styles, access] = [await take("channels/formatting"), await take("channels/reply-style"), await take("miniapp/phone-access")];
     change(cc);
     formats.reject(new Error("formatting is not answering"));
@@ -75,6 +77,7 @@ test("with nothing changed, the page and its child readers keep their answers an
   apps.revokedPrompts();
   (await take("channels")).resolve({ channels: [] });
   (await take("channel-setup")).resolve({ channels: [] });
+  (await take("channels/routes")).resolve(null); // #588: the routing card reads its routes with the page
   (await take("channels/formatting")).resolve({ formats: { telegram: "plain" } });
   (await take("channels/reply-style")).resolve({ styles: { telegram: { quote: "first" } } });
   (await take("miniapp/phone-access")).resolve({ phoneAccess: { url: "https://phone.example", pinSet: true, on: ["x"] } });

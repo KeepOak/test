@@ -15,7 +15,7 @@ $RU = 'C:\ru'; $W = "$RU\w"; $Repo = 'stabrea/Branch-Agent'; $Asset = 'Branch-Ag
 $Install = "$W\Programs\Branch Agent"; $Exe = "$Install\Branch Agent.exe"
 $Data = "$W\userdata\state"; $Scratch = "$W\tmp\branch-agent-update"; $D = "$RU\driver\real-update-test.mjs"
 $Hive = 'HKCU\Software\BranchRealUpdateTest'
-$env:BRANCH_DESKTOP_HOME = "$W\userdata"; $env:BRANCH_PROVIDER = 'demo'
+$env:BRANCH_DESKTOP_HOME = "$W\userdata"
 $env:TEMP = "$W\tmp"; $env:TMP = "$W\tmp"; $env:APPDATA = "$W\AppData\Roaming"; $env:LOCALAPPDATA = "$W\AppData\Local"
 function Say($line) { Write-Output "== $line" }
 function Drive { & node.exe $D @args 2>&1 | Where-Object { $_ -notmatch ' MB of ' } | ForEach-Object { "$_" } }

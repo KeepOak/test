@@ -138,10 +138,15 @@ export class OAuthConnections {
   async refresh(provider: OAuthProvider, tokens: OAuthTokens): Promise<OAuthTokens> {
     if (!tokens.refreshToken) throw new Error(`${provider.label} did not give a way to renew the sign-in; sign in again`);
     const body = new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokens.refreshToken, client_id: provider.clientId });
-    const fresh = await this.token(provider, body);
-    return { ...fresh, refreshToken: fresh.refreshToken ?? tokens.refreshToken };
+    return this.token(provider, body, tokens.refreshToken);
   }
-  private async token(provider: OAuthProvider, body: URLSearchParams): Promise<OAuthTokens> {
+  /**
+   * provider-audit: Google sends a refresh token only with the first sign-in, never with a renewal, so the one held
+   * is kept unless the service sends a new one, and it is merged before the tokens are saved, not after (Gemini CLI
+   * `packages/core/src/code_assist/oauth-credential-storage.ts` merges the same way). Before, the renewal was saved
+   * without it and the second renewal found none.
+   */
+  private async token(provider: OAuthProvider, body: URLSearchParams, heldRefresh: string | null = null): Promise<OAuthTokens> {
     const target = new URL(provider.tokenUrl);
     await this.policy.assertAllowed(target, "sign-in address");
     assertHealthCurrent();
@@ -151,7 +156,8 @@ export class OAuthConnections {
       body: body.toString(), signal: healthSignal(AbortSignal.timeout(20000))! });
     assertHealthCurrent();
     if (!response.ok) throw new Error(`The sign-in service answered ${response.status}`);
-    const tokens = readTokens(await response.json());
+    const read = readTokens(await response.json());
+    const tokens = { ...read, refreshToken: read.refreshToken ?? heldRefresh };
     assertHealthCurrent();
     await this.save(provider, tokens);
     return tokens;

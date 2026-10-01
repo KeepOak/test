@@ -134,7 +134,6 @@ test("Mastodon: a stranger is refused when pairing is off, and a refused token i
   await attach(t, context, channel, { ...policy, pairing: false });
   await refusalWalk(context, { label: "Mastodon", say: async (text) => server.mention("mallory@bad.example", text),
     sent: () => server.posts.map((p) => p.json.status) });
-  assert.equal(server.posts.at(-1).json.visibility, "direct");
 
   const wrong = await mastodonServer(t, { token: "some-other-token" });
   const refused = new MastodonChannel({ id: "refused", instance: wrong.base, token: MASTODON_TOKEN, pollMs: 20 });

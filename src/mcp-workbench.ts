@@ -15,7 +15,7 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { audit } from "./audit.js";
 import type { Store } from "./store.js";
 import type { NetworkPolicy } from "./network-policy.js";
-import { makeTransport, McpTransportSchema, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { makeTransport, McpTransportSchema, withLockerSecrets, type McpTransportConfig, type SecretLookup } from "./integrations/mcp-config.js";
 
 export const TrySchema = z.object({
   server: McpTransportSchema,
@@ -53,10 +53,11 @@ const timeout = 20000;
  */
 export async function tryServer(
   store: Store, owner: string, input: unknown, env: NodeJS.ProcessEnv = process.env, policy?: NetworkPolicy,
+  secret?: SecretLookup,
 ): Promise<WorkbenchResult> {
   const parsed = TrySchema.parse(input);
   const where = label(parsed.server);
-  const { transport, secrets } = await makeTransport(parsed.server, env, policy);
+  const { transport, secrets } = await makeTransport(parsed.server, await withLockerSecrets(parsed.server, env, secret), policy);
   const client = new (await mcpClient())({ name: "branch-workbench", version: "1.0.0" });
   try {
     // SDK 1.x transport declarations disagree on optional sessionId under exact optional types.

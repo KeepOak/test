@@ -120,9 +120,10 @@ import { hiddenToolsText } from "./mcp-policy.js";
 import { listSnapshots } from "./mcp-snapshots.js";
 import { readLifecycleSettings, saveLifecycleSettings } from "./mcp-lifecycle.js";
 import { tryServer } from "./mcp-workbench.js";
+import { lockerSecret } from "./integrations/mcp-config.js";
 // mac3/security-check: the self-check card's routes.
 import { securityCheckApi } from "./security-audit/api.js";
-import { signIn as mcpSignIn } from "./integrations/mcp-oauth.js";
+import { McpSignInSchema, signIn as mcpSignIn } from "./integrations/mcp-oauth.js";
 import { AppResourceSchema, appHeaders, appPage, type AppResource } from "./mcp-apps.js";
 // mac2/fly-core-2: the learning core's owner routes.
 import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "./fly-core-api.js";
@@ -228,6 +229,7 @@ import {
 } from "./listen-address.js";
 import type { ProbeTailscale } from "./remote/tailscale.js";
 import { lockdownActive, onLockdownChange } from "./lockdown.js";
+import { ChannelRouteError } from "./channels/routes.js";
 import { handlesYourDataPath, resumeUnfinishedDeletes, yourDataApi } from "./your-data.js";
 import { helperParent, helperSteerRefusal, helperStopRefusal } from "./helper-control.js"; // DESIGN-DIRECTION PR 1
 import { parseModelCommand } from "./model-switch.js";
@@ -3272,6 +3274,13 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     return app.channels.approve(owner, code, { firstOwner: firstOwner === true });
   }
   if (request.method === "POST" && path === "/api/channels/link") return app.channels.link(owner, await readBody(request));
+  if (request.method === "GET" && path === "/api/channels/routes") return app.channels.routing();
+  if (request.method === "POST" && path === "/api/channels/routes") {
+    if (throughDoor(request)) throw new HttpError(403, "Choose who answers in Branch's window on this computer.");
+    if (app.sessionLock.locked() || lockdownActive(app.store, owner)) throw new HttpError(423, "Unlock Branch and leave Lockdown before changing who answers.");
+    try { return { route: app.channels.routeSettings(await readBody(request)) }; }
+    catch (error) { if (error instanceof ChannelRouteError) throw new HttpError(400, error.message); throw error; }
+  }
   // Wave mac2 (chat-live): the on / off / when-needed switches for typing, commands, steering and splitting.
   if (request.method === "POST" && path === "/api/channels/live") return { live: app.channels.setSwitches(await readBody(request)) };
   // Settings › Chat apps › Show steps in chats: detail, grouping, line length, commands, long lists, tidying up, apps
@@ -3310,6 +3319,11 @@ async function channelsApi(app: Branch, request: IncomingMessage, path: string):
     return app.channels.deliver(channel, chatId, "Test message from Branch Agent: this channel is connected and working.", `test:${Date.now()}`);
   }
   if (request.method === "POST" && path === "/api/channels/pairings/remove") return app.channels.remove(owner, await readBody(request));
+  // Group chats: when the assistant answers in one group (only when mentioned, or every message); null follows the app.
+  if (request.method === "POST" && path === "/api/channels/groups") {
+    try { return await app.channels.setGroup(await readBody(request)); }
+    catch (error) { throw new HttpError(400, errorText(error)); }
+  }
   // Batch 20 (wave 8): the address each chat service posts to, with its own unguessable word on the
   // end. Shown on the Connections card with a button that copies it, and rotatable.
   if (request.method === "GET" && path === "/api/channels/addresses") return channelAddresses(app, owner);
@@ -3680,11 +3694,18 @@ async function mcpModeApi(app: Branch, request: IncomingMessage, path: string): 
   }
   if (path === "/api/mcp/signin" && request.method === "POST") {
     app.store.profiles.requireOwner("Signing in to another AI tool's server");
-    // The address to open in the owner's own browser; the key lands in the locker, never here.
-    const started = await mcpSignIn(await readBody(request), {
-      store: app.store, owner: app.runtime.owner, connections: app.oauth, policy: app.web.policy,
+    // The address to open in the owner's own browser; the key lands in the locker, never here. Once it is saved, one of
+    // the owner's own servers with that name is connected again with it.
+    // Only one of the owner's own servers at a web address, at the address saved for it: keys are bound to that address.
+    const asked = McpSignInSchema.parse(await readBody(request));
+    const own = app.ownMcp.saved().find((entry) => entry.id === asked.id);
+    if (!own || own.server.transport !== "http") throw new HttpError(404, "There is no server of yours at a web address by that name.");
+    if (own.server.url !== asked.url) throw new HttpError(400, "That is not the address saved for this server.");
+    const started = await mcpSignIn(asked, {
+      store: app.store, owner: app.runtime.owner, policy: app.web.policy,
+      onSignedIn: (id) => void app.ownMcp.start(id).catch(() => undefined),
     });
-    return { url: started.url, redirectUri: started.redirectUri, expiresInMs: started.expiresInMs };
+    return { url: started.url, redirectUri: started.redirectUri, expiresInMs: started.expiresInMs, signedIn: started.signedIn };
   }
   if (path === "/api/mcp/try" && request.method === "POST") {
     // Trying a server starts a program on this computer, or reaches out to a web address, so it
@@ -3692,7 +3713,7 @@ async function mcpModeApi(app: Branch, request: IncomingMessage, path: string): 
     app.store.profiles.requireOwner("Trying another AI tool's server");
     const trying = await readBody(request, 65536);
     await vetTriedServer(app, trying); // mac3/security-check
-    return tryServer(app.store, app.runtime.owner, trying, process.env, app.web.policy);
+    return tryServer(app.store, app.runtime.owner, trying, process.env, app.web.policy, lockerSecret(app.store, () => app.runtime.owner));
   }
   // The pages outside servers offered during one conversation, newest first. The page itself
   // travels with the answer so the card can hand it straight back for a one-time address; it is
@@ -3814,14 +3835,22 @@ async function handleMcpRequest(
       const JsonRpcSchema = z
         .object({
           jsonrpc: z.literal("2.0"),
-          id: z.union([z.string(), z.number()]),
+          id: z.union([z.string(), z.number()]).optional(),
           method: z.string(),
           params: z.record(z.string(), z.unknown()).optional().default({}),
         })
         .strict();
-      const jsonRpcRequest = JsonRpcSchema.parse(body) as { jsonrpc: "2.0"; id: string | number; method: string; params?: Record<string, unknown> };
-      if (unknownSession && jsonRpcRequest.method !== "initialize")
+      const message = JsonRpcSchema.parse(body);
+      if (unknownSession && message.method !== "initialize")
         throw new HttpError(404, "That conversation is not open. Send initialize first.");
+      // A notification (no id) expects no answer; the spec's reply is 202 Accepted with no body, as
+      // the SDK's own server gives (https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/streamableHttp.ts#L893-L900, MIT).
+      if (message.id === undefined) {
+        response.writeHead(202);
+        response.end();
+        return true;
+      }
+      const jsonRpcRequest = { ...message, id: message.id };
       // A client that did not bring a conversation of its own is given one, named in the reply to
       // its first message, so everything it does afterwards is kept together.
       const opened = !sessionId && jsonRpcRequest.method === "initialize" ? mcp.getSession().id : undefined;

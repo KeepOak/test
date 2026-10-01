@@ -12,7 +12,7 @@ const install = join(stage, "install"), home = join(stage, "home"), port = 9391;
 await rm(home, { recursive: true, force: true }); await mkdir(home, { recursive: true });
 const version = async () => JSON.parse(await readFile(join(install, "resources/app/package.json"), "utf8")).version;
 const before = await version(); console.log("before:", before);
-const child = spawn(join(install, "Branch Agent.exe"), [`--remote-debugging-port=${port}`], { detached: true, stdio: "ignore", env: { ...process.env, BRANCH_DESKTOP_HOME: home, BRANCH_PROVIDER: "demo" } });
+const child = spawn(join(install, "Branch Agent.exe"), [`--remote-debugging-port=${port}`], { detached: true, stdio: "ignore", env: { ...process.env, BRANCH_DESKTOP_HOME: home } });
 child.unref();
 const pid = child.pid;
 console.log("launched pid", pid);

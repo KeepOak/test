@@ -39,7 +39,7 @@ async function boundedBody(request: IncomingMessage, signal: AbortSignal): Promi
   const chunks: Buffer[] = []; let size = 0;
   for await (const value of request) {
     signal.throwIfAborted(); const chunk = Buffer.from(value as Uint8Array); size += chunk.length;
-    if (size > maximumNativeRequestBytes) throw new Error("Claude subscription native request exceeds 8 MiB");
+    if (size > maximumNativeRequestBytes) throw new Error("Claude subscription native request exceeds 30 MiB");
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
@@ -90,8 +90,10 @@ export class NativeAdmission {
   private readonly active = new Set<Promise<void>>();
   private armed = true;
   private call: AccountCall | undefined = currentAccountCall();
+  /** `activity` is told when the request arrives, when the service answers and of every streamed chunk (the idle deadline). */
   constructor(private request: CompletionRequest, private inventory: NativeInventory,
-    private authorize: () => void, private readonly connect: NativeConnector = connectNative, private marker = "") {
+    private authorize: () => void, private readonly connect: NativeConnector = connectNative, private marker = "",
+    private activity: () => void = () => {}) {
     this.capture = new NativeCapture(inventory, request);
     this.server = createServer((incoming, response) => {
       const receive = () => this.receive(incoming, response);
@@ -104,9 +106,9 @@ export class NativeAdmission {
     this.server.headersTimeout = 10000;
     this.server.requestTimeout = 180000;
   }
-  arm(request: CompletionRequest, inventory: NativeInventory, authorize: () => void, marker: string): void {
+  arm(request: CompletionRequest, inventory: NativeInventory, authorize: () => void, marker: string, activity: () => void = () => {}): void {
     if (this.armed || this.active.size) throw new Error("Claude subscription previous turn is not settled");
-    this.request = request; this.inventory = inventory; this.authorize = authorize; this.marker = marker;
+    this.request = request; this.inventory = inventory; this.authorize = authorize; this.marker = marker; this.activity = activity;
     this.call = currentAccountCall(); this.capture = new NativeCapture(inventory, request);
     this.used = false; this.denied = 0; this.status = null; this.resetsAt = null;
     this.completion = null; this.failure = null; this.error = null; this.armed = true;
@@ -131,11 +133,11 @@ export class NativeAdmission {
     if (!this.armed || this.used || this.request.signal.aborted) { this.denied++; return refuse(response, 400); }
     this.authorize(); this.request.signal.throwIfAborted(); this.used = true;
     const body = await boundedBody(incoming, this.request.signal);
-    this.authorize(); this.request.signal.throwIfAborted();
+    this.authorize(); this.request.signal.throwIfAborted(); this.activity();
     const canonical = this.marker ? canonicalNativePayload(body, this.request, this.inventory, this.marker) : body;
     const upstream = await this.connect(forwardHeaders(incoming), cacheHistory(canonical), path.search, this.request.signal);
     try { this.authorize(); this.request.signal.throwIfAborted(); } catch (error) { await upstream.body?.cancel(); throw error; }
-    this.status = upstream.status;
+    this.status = upstream.status; this.activity();
     // selfdev: when a plan limit says when it resets (Unix seconds), the refusal can say so too.
     const reset = Number(upstream.headers.get("anthropic-ratelimit-unified-reset"));
     if (upstream.status === 429 && Number.isFinite(reset) && reset > 0) this.resetsAt = new Date(reset * 1000);
@@ -150,7 +152,7 @@ export class NativeAdmission {
       while (true) {
         this.request.signal.throwIfAborted(); const part = await reader.read(); this.authorize();
         if (part.done) break;
-        this.capture.feed(part.value); response.write(part.value);
+        this.activity(); this.capture.feed(part.value); response.write(part.value);
       }
       this.request.signal.throwIfAborted(); this.authorize();
       this.completion = this.capture.result(); response.end();

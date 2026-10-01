@@ -494,6 +494,23 @@ Piece 5 builds this. Its rules:
 - every action audited;
 - stand-in-desktop tests only.
 
+### Who answers each chat
+
+Settings → Chat apps → Who answers here chooses a Trunk for a whole app or one known chat. Resolution is exact chat,
+then its parent where the adapter defines one (Telegram topic or Slack thread), then the whole app, then the default
+Trunk. Matrix room host colons and Discord IDs are not guessed as parent addresses. An explicit default choice stops
+inheritance; removing the choice follows the app again.
+
+`/trunk` shows who answers. Only an explicitly named, currently paired owner account in a vouched direct chat can
+see the roster or change it using `/trunk <name|@handle>`, `/trunk default`, or `/trunk inherit`. The command works
+while program execution and command menus are off. Group, caught-up, unpaired, blocked, locked and unvouched messages
+cannot change routes. The owner account IDs come from the saved owner-chat account choices in Settings.
+
+Changing a route keeps earlier conversations and starts a fresh thread. Affected running chats must finish or stop
+first; their route changes roll back. Removed Trunk routes are cleaned up, including a removed Trunk's late-finishing
+task, so it cannot restore the old thread. Reach and pause restrictions remain enforced. Engine and headless window
+checks use stand-ins; no real chat accounts were exercised.
+
 ### Commands in the owner's paired DM
 
 Telegram and Discord now have a dedicated opt-in in Settings › Chat apps › Commands from your own chat. The owner

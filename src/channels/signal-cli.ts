@@ -5,6 +5,7 @@ import { z } from "zod";
 import { ReactionAnswers } from "./reaction-answers.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile } from "./router.js";
+import { signalMarkdown } from "./chat-markdown.js";
 import { signalMonospace } from "./signal-format.js";
 
 /**
@@ -39,6 +40,10 @@ const envelopeSchema = z.object({
     envelope: z.object({
       source: z.string().optional(), sourceName: z.string().optional(), timestamp: z.number().optional(),
       dataMessage: z.object({ message: z.string().optional(), groupInfo: z.object({ groupId: z.string().optional() }).passthrough().optional(),
+        /** Who a group message @mentions, by number or account id. */
+        mentions: z.array(z.object({ number: z.string().nullish(), uuid: z.string().nullish() }).passthrough()).optional(),
+        /** The message this one replies to, and who wrote it. */
+        quote: z.object({ author: z.string().nullish(), authorNumber: z.string().nullish() }).passthrough().optional(),
         reaction: z.object({ emoji: z.string().max(40).optional(), targetAuthor: z.string().optional(), targetAuthorNumber: z.string().optional(),
           targetSentTimestamp: z.number().optional(), isRemove: z.boolean().optional() }).passthrough().optional(),
       }).passthrough().optional(),
@@ -158,11 +163,16 @@ export class SignalAdapter implements ChannelAdapter {
       this.authors.set(String(envelope.timestamp), envelope.source);
       if (this.authors.size > 200) this.authors.delete(this.authors.keys().next().value!);
     }
+    // In a group: an @mention of the assistant's number, or a reply to one of its messages (Signal groups were never answered).
+    const me = this.options.account;
+    const mentioned = (envelope.dataMessage?.mentions ?? []).some((mention) => mention.number === me);
+    const quote = envelope.dataMessage?.quote;
+    const repliedTo = !!quote && (quote.authorNumber === me || quote.author === me);
     return {
       channel: this.id, chatId: group ?? envelope.source, chatKind: group ? "group" : "direct",
       ...(group ? { chatTitle: `group ${group.slice(0, 12)}` } : {}),
       senderId: envelope.source, senderName: envelope.sourceName ?? envelope.source,
-      text, addressed: !group, messageId: String(envelope.timestamp ?? Date.now()),
+      text, addressed: !group || mentioned || repliedTo, messageId: String(envelope.timestamp ?? Date.now()),
       ...this.filesOf(files, group ? { groupId: group } : { recipient: envelope.source }),
     };
   }
@@ -242,9 +252,12 @@ export class SignalAdapter implements ChannelAdapter {
     // CHAT-116: a reply quotes the person's own message (signal-cli's quoteTimestamp and quoteAuthor).
     const author = replyToMessageId ? this.authors.get(replyToMessageId) : undefined;
     const quote = author ? { quoteTimestamp: Number(replyToMessageId), quoteAuthor: author } : {};
-    const styled = signalMonospace(text.slice(0, this.maxTextLength), format);
-    return this.request("send", { ...this.target(chatId), message: styled.text,
-      ...(styled.textStyle.length ? { textStyle: styled.textStyle } : {}), ...quote });
+    // UP-CHAT-011: Markdown shown as Signal's own bold, italic, strikethrough and monospace. The owner's plain words and
+    // code spans the caller marked (an approval's command) go through signalMonospace (src/channels/signal-format.ts).
+    const read = format?.plain || format?.spans?.length ? signalMonospace(text, format) : signalMarkdown(text);
+    const message = read.text.slice(0, this.maxTextLength);
+    const textStyle = read.textStyle.filter((style) => { const [start, length] = style.split(":").map(Number); return start! + length! <= message.length; });
+    return this.request("send", { ...this.target(chatId), message, ...(textStyle.length ? { textStyle } : {}), ...quote });
   }
   /** CHAT-109: Signal's typing indicator (it lasts about 15 seconds; the live status asks again while the task works). */
   async sendTyping(chatId: string): Promise<void> {

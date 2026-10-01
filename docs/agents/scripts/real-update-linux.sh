@@ -12,7 +12,7 @@ set -u
 RU="${RU:-/tmp/ru}"
 REPO="${REPO:-stabrea/Branch-Agent}"
 ASSET=Branch-Agent-linux-x64.tar.gz
-export HOME="$RU/home" TMPDIR="$RU/tmp" DISPLAY="${RU_DISPLAY:-:77}" BRANCH_PROVIDER=demo
+export HOME="$RU/home" TMPDIR="$RU/tmp" DISPLAY="${RU_DISPLAY:-:77}"
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
 APP="$HOME/Applications/Branch-Agent-linux-x64"
 DATA="$HOME/.config/Branch Agent/state"

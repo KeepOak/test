@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { discardTemp } from "./temp-dir.mjs";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 /**
  * The background engine keeps working after whatever started it has gone.
@@ -50,7 +51,7 @@ test("the background engine keeps handling tasks after the launcher that started
 const child = spawn(process.execPath, [${JSON.stringify(join(process.cwd(), "dist", "cli.js"))}, "start"], {
   detached: true, stdio: "ignore",
   env: { ...process.env, BRANCH_DATA_DIR: ${JSON.stringify(dataDir)},
-    BRANCH_WORKSPACE: ${JSON.stringify(workspace)}, BRANCH_PORT: "0", BRANCH_PROVIDER: "demo" },
+    BRANCH_WORKSPACE: ${JSON.stringify(workspace)}, BRANCH_PORT: "0", ...${JSON.stringify((await fixtureModel()).env)} },
 });
 child.unref();
 process.exit(0);

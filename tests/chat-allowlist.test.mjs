@@ -191,7 +191,7 @@ test("putting the settings back turns the switch off and leaves the owner's own 
   applyChanges(store, owner, changes, { accept: changes.map((change) => change.id), confirmLoosening: true, why: "test" });
   const after = app.channels.permissionSettings();
   assert.equal(after.extras, false, "putting the settings back switches the extras off");
-  assert.deepEqual(after.rules, rules, "a preset or a settings file never throws the owner's own lines away");
+  assert.deepEqual(after.rules, rules.map((rule) => ({ ...rule, groupCommands: false })), "a preset or a settings file never throws the owner's own lines away");
   // And a file that tried to write a line is refused outright: the lines are not a settings field.
   const { refused } = changesFor(store, owner, [{ key: "chat-permissions", field: "rules", value: [{ allow: ["shell.execute"] }] }]);
   assert.equal(refused.length, 1, "a settings file cannot write a line");

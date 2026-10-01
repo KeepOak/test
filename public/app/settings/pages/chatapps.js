@@ -17,6 +17,7 @@ import { level, S, E, ownerHere, activeId } from "../../core/state.js";
 import { api } from "../../core/api.js";
 import { toast, openDlg } from "../../core/ui.js";
 import { ownerCommandCard, initOwnerCommands } from "../owner-commands.js";
+import { routingCard, initRouting } from "../chat-routing.js";
 import { stepsCard, initSteps } from "../chat-steps.js";
 import { phoneAccessCard, initPhoneAccess, loadPhoneAccess } from "../phone-access.js";
 import { logo } from "../../core/logos.js";
@@ -28,7 +29,7 @@ import { formatButtons, initFormatting, loadFormats } from "../chat-formatting.j
 import { initReplyStyle, loadReplyStyles, replyStyleRows } from "../chat-reply-style.js";
 import { t } from "../../../i18n.js";
 
-const A = { channels: null, apps: [], at: 0, intake: null, live: null, ownerCommands: null, ownerNamed: true, approved: [], steps: null, watchdogLog: [] };
+const A = { channels: null, apps: [], at: 0, intake: null, live: null, groups: [], reading: {}, ownerCommands: null, ownerNamed: true, approved: [], pending: [], chats: [], routing: null, steps: null, watchdogLog: [] };
 const STEPS = "Show steps in chats";
 /* owner-dm-full: the owner's own verified direct chat runs with the owner's full access (GET /api/channels
    `permissions.ownerChats`, saved with POST /api/channels/permissions { ownerChats }). On as Branch ships. */
@@ -47,15 +48,19 @@ async function loadApps() {
   if (!ownerHere() || !unlocked()) return; // the owner's chat apps: no page asks for them on a household person's profile
   const read = ++appsRead, current = () => read === appsRead && sameOwner(profile);
   A.at = Date.now();
-  const [live, setup] = await Promise.all(["channels", "channel-setup"].map((path) => api(path).catch((error) => { if (current()) toast(error.message); return null; })));
+  const [live, setup, routing] = await Promise.all(["channels", "channel-setup", "channels/routes"].map((path) => api(path).catch((error) => { if (current()) toast(error.message); return null; })));
   if (!current()) return;
   A.channels = live?.channels ?? A.channels; // a failed read is unknown, never evidence that no app is connected
   A.intake = live?.intake ?? null;
   A.watchdogLog = live?.watchdogLog ?? [];
   A.live = live?.live ?? null;
+  A.groups = live?.groups ?? [];
   A.ownerCommands = live?.ownerCommands ?? null;
   A.ownerNamed = live?.ownerNamed !== false; // owner-dm-signin: no chat account is marked as the owner's yet
   A.approved = live?.approved ?? [];
+  A.pending = live?.pending ?? [];
+  A.chats = live?.chats ?? [];
+  A.routing = routing;
   A.steps = live?.steps ?? null;
   A.permissions = live?.permissions ?? null;
   A.apps = setup?.channels ?? [];
@@ -73,10 +78,12 @@ export function draw() {
   let html = `<h1>${esc(t("dashboard.links.chats"))}</h1><p class="lede">${esc(t("window.p17d.chat-apps-lede"))}</p>
     <div class="rows ca17d">${A.channels === null ? "" : rows || `<p class="empty">${esc(t("window.p17d.no-chat-app"))}</p>`}</div>
     <div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="ptab" data-place="customize" data-v="channels">${esc(t("window.p17d.all-chat-apps", { count: A.apps.length }))}</button></div>`;
+  html += groupsSection();
+  html += waitingCard();
   if (A.live) html += `<div class="rows">${sw15(STEPS, "While a task works, one message in your direct chat lists each step, with commands and files as code. Groups get a short message.", A.live.steps !== "off")}</div>` + stepsCard(A, lv);
   if (E.profiles?.isOwner !== false && A.permissions)
     html += `<div class="rows">${sw15(OWN_FULL, OWN_FULL_SUB, A.permissions.ownerChats !== false)}</div>`;
-  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + phoneAccessCard();
+  if (E.profiles?.isOwner !== false) html += ownerCommandCard(A) + routingCard(A) + phoneAccessCard();
   // Replies in each connected app: quoting your message, and the reaction on it while Branch works.
   const kinds = [...new Set(on.map(kindOf))];
   const quotes = (id) => on.some((c) => kindOf(c) === id && c.replyQuotes === true); // an app whose replies can quote
@@ -96,6 +103,46 @@ async function showWatchdogLog() {
     return `<div class="prow"><span class="grow"><b>${esc(nameOf(row.kind))}</b><small>${esc(t(`window.p17d.watchdog-log-${outcome}`))}</small></span><time datetime="${esc(row.at)}">${esc(Number.isFinite(at.getTime()) ? at.toLocaleString() : "")}</time></div>`;
   }).join("");
   openDlg({ title: t("window.p17d.watchdog-log"), body: `<p class="hint">${esc(t("window.p17d.watchdog-log-hint"))}</p>${rows || `<p class="empty">${esc(t("window.p17d.watchdog-log-empty"))}</p>`}` });
+}
+
+/* Group chats: when the assistant answers in each group it has talked in (GET /api/channels `groups`), saved with
+   POST /api/channels/groups. "Every message" only reaches it where the app hands the bot every message; when the app
+   says it does not (Telegram's privacy mode), its own words say what to change, under the group. */
+const groupKey = (g) => `${g.channel}\u0000${g.chatId}`;
+function groupRow(g) {
+  const choice = (value, words) => `<button type="button" aria-pressed="${g.activation === value}" data-act="ca-group" data-ch="${esc(g.channel)}" data-id="${esc(g.chatId)}" data-v="${value}">${esc(words)}</button>`;
+  const fix = A.reading[groupKey(g)];
+  return `<div class="ctl"><b>${esc(g.title)} <small>${esc(nameOf(g.channel))}</small></b><span class="right"><span class="seg" role="group" aria-label="${esc(t("window.p17d.group-when", { title: g.title }))}">${choice("mention", t("window.p17d.group-mention"))}${choice("always", t("window.p17d.group-always"))}</span></span>${fix ? `<small role="alert">${esc(fix)}</small>` : ""}</div>`;
+}
+function groupsSection() {
+  if (A.channels === null) return "";
+  const rows = A.groups.map(groupRow).join("");
+  return sec15(t("window.p17d.groups"), `<p class="hint">${esc(t("window.p17d.groups-hint"))}</p>${rows || `<p class="empty">${esc(t("window.p17d.groups-none"))}</p>`}`);
+}
+async function saveGroup(el) {
+  const group = A.groups.find((g) => g.channel === el.dataset.ch && g.chatId === el.dataset.id);
+  try {
+    const answer = await api("channels/groups", { channel: el.dataset.ch, chatId: el.dataset.id, activation: el.dataset.v, ...(group ? { title: group.title } : {}) });
+    const key = `${el.dataset.ch}\u0000${el.dataset.id}`;
+    if (answer.reading?.everyMessage === false && answer.reading.fix) A.reading[key] = answer.reading.fix;
+    else delete A.reading[key];
+  } catch (error) { toast(error.message); }
+  await loadApps();
+}
+/**
+ * UP-CHAT-007: people waiting to be let in, with their codes. A code is sent only to a direct chat, so a request made in a
+ * group (and on apps whose every room is a group) is let in from here.
+ */
+function waitingCard() {
+  // A code works for an hour (router.ts pairingCodeMs); an older request is asked again by its sender's next message.
+  const fresh = A.pending.filter((p) => Date.now() - Date.parse(p.requestedAt ?? "") <= 60 * 60_000);
+  if (E.profiles?.isOwner === false || !fresh.length) return "";
+  const rows = fresh.map((p) => `<div class="prow"><span class="grow"><b>${esc(t("window.chat-waiting.row", { name: p.name || p.senderId, app: nameOf(p.channel), code: p.code }))}</b></span><button class="btn sm" type="button" data-act="chat-waiting-let-in" data-v="${esc(p.code)}">${esc(t("window.chat-waiting.let-in"))}</button></div>`).join("");
+  return `<div class="sec x15-sec"><h2>${esc(t("window.chat-waiting.title"))}</h2><p class="hint">${esc(t("window.chat-waiting.hint"))}</p><div class="rows">${rows}</div></div>`;
+}
+async function letIn(code) {
+  try { await api("channels/pairings/approve", { code }); } catch (error) { toast(error.message); }
+  await loadApps();
 }
 
 /* Each switch: the field it saves. */
@@ -185,9 +232,11 @@ export function init() {
   on("ca-watchdog-log", showWatchdogLog);
   initFormatting();
   initReplyStyle();
-  markLive(["sw:f15-show-steps-in-chats", "sw:" + id15(OWN_FULL), "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-watchdog-log", "revoff17d", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  markLive(["sw:f15-show-steps-in-chats", "sw:" + id15(OWN_FULL), "ca-split", "ca-reconnect", "sw:ca-stall17d", "ca-watchdog-log", "revoff17d", "ca-group", "chat-waiting-let-in", ...Object.keys(SW).map((id) => "sw:" + id)]);
+  on("ca-group", (el) => saveGroup(el));
   on("revoff17d", (el) => turnTelegramOff(el));
   on("ca-split", (el) => saveIntake({ splitWaitMs: Number(el.dataset.v) }));
+  on("chat-waiting-let-in", (el) => letIn(el.dataset.v));
   on("ca-reconnect", (el) => saveIntake({ reconnectMinutes: Number(el.dataset.v) }));
   document.addEventListener("change", (e) => {
     if (e.target.id === "f15-show-steps-in-chats") saveSteps(e.target.checked);
@@ -201,6 +250,7 @@ export function init() {
   });
   loadApps();
   initOwnerCommands(A, loadApps);
+  initRouting(A, loadApps);
   initSteps(loadApps);
   initPhoneAccess(loadApps);
 }

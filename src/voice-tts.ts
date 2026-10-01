@@ -6,6 +6,7 @@ import { z } from "zod";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { AudioProvider } from "./voice.js";
 import { geminiAuth, runProgram, type AudioCostEstimate } from "./voice-stt.js";
+import { pcmAsWav, soundType } from "./voice-note.js";
 
 /**
  * Reading text aloud. Three routes: an OpenAI-shaped `/audio/speech`, Gemini's own speech route,
@@ -186,12 +187,13 @@ export class Speech {
 
   /**
    * Reads text aloud into sound bytes. `keepOnThisComputer` refuses both cloud routes in plain
-   * words, so a tool call cannot quietly send the words away after the owner said not to.
+   * words, so a tool call cannot quietly send the words away after the owner said not to. `voiceNote` asks a route that
+   * can make OGG/Opus to make it (UP-CHAT-005), so a chat app shows a voice bubble without converting anything.
    */
   async speak(
     request: SpeakRequest,
     route: { kind: TtsRoute; provider?: AudioProvider | null },
-    options: { keepOnThisComputer?: boolean; signal?: AbortSignal } = {},
+    options: { keepOnThisComputer?: boolean; signal?: AbortSignal; voiceNote?: boolean } = {},
   ): Promise<SpokenAudio> {
     if (route.kind === "piper") throw new Error("The installed Piper voice is handled by the owner's voice service.");
     if (options.keepOnThisComputer && route.kind !== "windows")
@@ -201,10 +203,10 @@ export class Speech {
     if (route.kind === "windows")
       return this.platform === "win32" ? this.windows(request, options.signal) : this.systemVoice(request, options.signal);
     if (route.kind === "gemini") return this.gemini(request, route.provider ?? null, options.signal);
-    return this.openai(request, route.provider ?? null, options.signal);
+    return this.openai(request, route.provider ?? null, options.signal, options.voiceNote === true);
   }
 
-  private async openai(request: SpeakRequest, provider: AudioProvider | null, signal?: AbortSignal): Promise<SpokenAudio> {
+  private async openai(request: SpeakRequest, provider: AudioProvider | null, signal?: AbortSignal, opus = false): Promise<SpokenAudio> {
     if (!provider) throw new Error("Reading aloud through your provider needs a connection that offers it. Add one under Settings → Models.");
     const model = request.model || "tts-1";
     const voice = request.voice || "alloy";
@@ -212,11 +214,13 @@ export class Speech {
     const response = await this.fetch(url, {
       method: "POST", redirect: "error",
       headers: { authorization: `Bearer ${provider.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({ model, input: request.text, voice, speed: request.speed }),
+      // Hermes Agent tools/tts_tool.py asks for Opus the same way; the reply is then OGG-contained Opus.
+      body: JSON.stringify({ model, input: request.text, voice, speed: request.speed, ...(opus ? { response_format: "opus" } : {}) }),
       ...(signal ? { signal } : {}),
     });
     if (!response.ok) throw await failure(response);
-    return { bytes: new Uint8Array(await response.arrayBuffer()), mediaType: "audio/mpeg", route: "openai", voice,
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    return { bytes, mediaType: soundType(bytes, "audio/mpeg"), route: "openai", voice,
       cost: estimateSpeechCost(model, request.text.length, "openai") };
   }
 
@@ -240,8 +244,9 @@ export class Speech {
     const parsed = geminiSpeech.parse(await response.json());
     const part = (parsed.candidates[0]?.content?.parts ?? []).find((entry) => entry.inlineData?.data);
     if (!part?.inlineData?.data) throw new Error("The speech service answered without any sound in it");
-    return { bytes: new Uint8Array(Buffer.from(part.inlineData.data, "base64")),
-      mediaType: part.inlineData.mimeType || "audio/wav", route: "gemini", voice,
+    // UP-CHAT-005: Gemini's sound is raw PCM; with a WAV header around it, it plays in the window and in chat apps.
+    const sound = pcmAsWav(new Uint8Array(Buffer.from(part.inlineData.data, "base64")), part.inlineData.mimeType);
+    return { bytes: sound.bytes, mediaType: sound.mediaType, route: "gemini", voice,
       cost: estimateSpeechCost(model, request.text.length, "gemini") };
   }
 

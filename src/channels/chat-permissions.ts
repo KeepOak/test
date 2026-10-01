@@ -81,6 +81,12 @@ export const ChatPermissionRuleSchema = z.object({
    * for any run the owner did not start themselves.
    */
   approvals: z.boolean().default(false),
+  /**
+   * UP-CHAT-009: whether this person, on this app, may use a group's control commands as the owner does: switch its
+   * model, start its conversation afresh, fold it, or stop a task somebody else started. Off unless the owner turns it
+   * on, and only for one named person on one named app, like `approvals`.
+   */
+  groupCommands: z.boolean().default(false),
 }).strict()
   // Integration review (mac7/chat-approvals): the switch is one named person on one named app, so a
   // line written with "*" in either place never carries it. Both boxes in the card fall back to "*"
@@ -89,8 +95,12 @@ export const ChatPermissionRuleSchema = z.object({
   // a check that fails, because the settings are read back with `safeParse` and a refusal there
   // would silently throw away the owner's whole list. A wide line still adds what it allows; only
   // its yes is refused.
-  .transform((rule) => (rule.channel === "*" || rule.sender === "*" ? { ...rule, approvals: false } : rule));
+  .transform((rule) => (rule.channel === "*" || rule.sender === "*" ? { ...rule, approvals: false, groupCommands: false } : rule));
 export type ChatPermissionRule = z.infer<typeof ChatPermissionRuleSchema>;
+/** UP-CHAT-009: whether the owner named this person, on this app, as one who may use a group's control commands. */
+export function groupCommandsGranted(settings: ChatPermissionSettings, channel: string, sender: string): boolean {
+  return settings.rules.some((rule) => rule.groupCommands && rule.channel === channel && rule.sender === sender);
+}
 /** Whether this line is about one named person on one named app, which its yes needs and its grant does not. */
 const namesOnePerson = (rule: ChatPermissionRule): boolean => rule.channel !== "*" && rule.sender !== "*";
 

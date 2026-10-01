@@ -43,7 +43,8 @@ import { lockdownActive } from "./lockdown.js";
 import type { NetworkPolicy } from "./network-policy.js";
 import type { ToolRegistry } from "./registry.js";
 import type { Store } from "./store.js";
-import { makeTransport, McpTransportSchema, McpCallTimeoutSchema, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { credentialNames, makeTransport, McpTransportSchema, McpCallTimeoutSchema, reachFor, withLockerSecrets, type McpTransportConfig } from "./integrations/mcp-config.js";
+import { secretNameSchema } from "./locker.js";
 import { mcpToolName } from "./integrations/mcp.js";
 import { startMcp, type McpHost } from "./integrations/bootstrap.js";
 import { workspaceRefusal } from "./mcp-workspace-guard.js";
@@ -55,6 +56,12 @@ export const AddServerSchema = z.object({
   callTimeoutSeconds: McpCallTimeoutSchema.optional(),
   /** The catalogue entry the form was filled from, if it was. */
   catalogue: z.string().regex(/^[a-z0-9][a-z0-9-]{0,39}$/).optional(),
+  /**
+   * Values for the credentials the server needs, typed in the form. They go straight into the default project's
+   * locker under the same names and are never kept with the server, written down or sent back. An empty value keeps
+   * whatever is already saved under that name.
+   */
+  values: z.record(secretNameSchema, z.string().max(8192)).default({}),
 }).strict();
 
 export interface OwnServer {
@@ -89,6 +96,10 @@ const slug = (name: string): string => {
 export interface OwnServersDeps {
   store: Store; owner: () => string; registry: ToolRegistry; approvals: ApprovalGate; workspace: () => string;
   env?: NodeJS.ProcessEnv; policy: () => NetworkPolicy | undefined; host: () => McpHost | undefined;
+  /** Saves one value in the default project's locker (the form's credentials). */
+  saveSecret?: (name: string, value: string) => Promise<void>;
+  /** Forgets a removed server's sign-in, so a later server under the same name starts with none. */
+  forgetSignIn?: (id: string) => void;
   /** The malware check: throws a plain sentence for a package listed as harmful. */
   vet: (command: string, args: readonly string[]) => Promise<void>;
   /** How often a waiting question is looked at again; tests shorten it. */
@@ -193,6 +204,7 @@ export class OwnMcpServers {
     const servers = this.saved();
     if (servers.length >= maxServers) throw new Error(`Branch keeps at most ${maxServers} servers of your own. Remove one first.`);
     if (wanted.server.transport === "stdio") { this.guard(wanted.server); await this.deps.vet(wanted.server.command, wanted.server.args); }
+    await this.keepValues(wanted.server, wanted.values);
     const taken = new Set([...this.launchIds, ...servers.map((entry) => entry.id)]);
     let id = slug(wanted.name);
     for (let n = 2; taken.has(id); n++) id = `${slug(wanted.name)}-${n}`;
@@ -204,6 +216,16 @@ export class OwnMcpServers {
     if (entry.server.transport === "stdio") return { server: this.view(entry), said: `${entry.name} is added. It is off until you switch it on and say yes.` };
     await this.open(entry, true).catch(() => undefined);
     return { server: this.view(this.find(id)), said: this.problems.get(id) ?? `${entry.name} is added.` };
+  }
+
+  /** The form's credential values, into the locker; only for names this server's launch actually uses. */
+  private async keepValues(server: McpTransportConfig, values: Record<string, string>): Promise<void> {
+    const needed = new Set(credentialNames(server));
+    const typed = Object.entries(values).filter(([, value]) => value.length > 0);
+    const stray = typed.find(([name]) => !needed.has(name));
+    if (stray) throw new Error(`${stray[0]} is not one of the secrets this server is given.`);
+    if (typed.length && !this.deps.saveSecret) throw new Error("This launch cannot save secrets; set them as environment variables.");
+    for (const [name, value] of typed) await this.deps.saveSecret!(name, value);
   }
 
   /** Switching a server on. A command asks first, through the approval gate; a web address connects now. */
@@ -285,7 +307,9 @@ export class OwnMcpServers {
 
   /** Lists what a server offers now (after the yes), keeping only what the owner's settings do not refuse outright. */
   private async listTools(entry: OwnServer): Promise<{ tools: string[]; hidden: string[]; version: string }> {
-    const { transport } = await makeTransport(entry.server, this.env, this.deps.policy());
+    const env = await withLockerSecrets(entry.server, this.env, this.deps.host()?.secret);
+    const signIn = entry.server.transport === "http" ? this.deps.host()?.signIn?.(entry.id, entry.server.url) : undefined;
+    const { transport } = await makeTransport(entry.server, env, reachFor(this.deps.policy(), signIn));
     const client = new (await mcpClient())({ name: "branch", version: "0.1.0" });
     try {
       await client.connect(transport as Transport, { timeout: 20000 });
@@ -416,6 +440,7 @@ export class OwnMcpServers {
     await this.shut(id);
     this.problems.delete(id);
     this.save(this.saved().filter((item) => item.id !== id));
+    this.deps.forgetSignIn?.(id);
     this.record("Tool server removed:", `${entry.name}: ${how(entry.server)}`, "removed");
     return { removed: id, said: `${entry.name} is removed.` };
   }

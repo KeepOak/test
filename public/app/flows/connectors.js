@@ -67,15 +67,31 @@ function ownServer(entry = null) {
   const how = [t("window.flows.conn.command"), t("window.flows.conn.web")].map((o, i) => `<button type="button" data-act="mcp-how" data-v="${i ? "web" : "cmd"}" aria-pressed="${entry ? web === (i === 1) : i === 0}">${o}</button>`).join("");
   const reach = entry?.command ? entry.command.join(" ") : entry?.address ?? "";
   openDlg({ title: t("window.flows.conn.own-mcp"),
-    body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><label class="fld"><span>${t("window.flows.conn.secrets")}</span><input class="inp" id="mcp-secrets"></label><p class="hint" id="mcp-asks" data-css="margin:0" ${entry && web ? "hidden" : ""}>${t("window.flows.conn.asks-before-it-starts")}</p><div id="mcp-test"></div>`,
+    body: `<div class="fld"><span>${t("window.flows.conn.how")}</span><span class="seg">${how}</span></div><label class="fld"><span>${t("accounts.field.name")}</span><input class="inp" id="mcp-name" value="${esc(entry?.name ?? "")}"></label><label class="fld"><span>${t("window.flows.conn.cmd")}</span><input class="inp code6" id="mcp-cmd" data-css="height:34px" value="${esc(reach)}"></label><div class="fld"><span>${t("window.flows.conn.secrets")}</span><div id="mcp-vars">${secretRow()}</div><button class="btn sm ghost" type="button" data-act="mcp-var-add">${t("window.flows.conn.secret-add")}</button><p class="hint" data-css="margin:0">${t("window.flows.conn.secrets-hint")}</p></div><p class="hint" id="mcp-asks" data-css="margin:0" ${entry && web ? "hidden" : ""}>${t("window.flows.conn.asks-before-it-starts")}</p><div id="mcp-test"></div>`,
     foot: `<label class="fld"><span>Call timeout (seconds without progress)</span><input class="inp" id="mcp-timeout" type="number" min="1" max="3600" step="1" value="30"></label><button class="btn" type="button" data-act="mcp-test">${t("window.flows.conn.test")}</button><button class="btn pri" type="button" data-act="mcp-save">${t("window.flows.conn.add-server")}</button>` });
+}
+/* One secret the server is given: its name, and its value, which goes to the locker and is never shown again.
+   Asking for values rather than variable names follows Cline's marketplace install.env (Apache-2.0; THIRD_PARTY_NOTICES.md). */
+const secretRow = () => `<div class="prow" data-row="mcp-var"><input class="inp code6" data-sw="mcp-var-name" autocomplete="off" spellcheck="false" placeholder="${esc(t("window.flows.conn.secret-name"))}" aria-label="${esc(t("window.flows.conn.secret-name"))}"><input class="inp" type="password" data-sw="mcp-var-value" autocomplete="off" placeholder="${esc(t("window.flows.conn.secret-value"))}" aria-label="${esc(t("window.flows.conn.secret-value"))}"></div>`;
+function addSecretRow() {
+  const list = $("#mcp-vars");
+  if (!list || list.children.length >= 20) return;
+  list.insertAdjacentHTML("beforeend", secretRow());
+  greyOut(list.lastElementChild);
+}
+/* The names the server is given, and the values typed for those the locker can keep (upper-case names). */
+function typedSecrets() {
+  const rows = [...document.querySelectorAll('.dlg [data-row="mcp-var"]')];
+  const pairs = rows.map((row) => [row.querySelector('[data-sw="mcp-var-name"]')?.value.trim() ?? "", row.querySelector('[data-sw="mcp-var-value"]')?.value ?? ""]);
+  const named = pairs.filter(([name]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name));
+  const values = Object.fromEntries(named.filter(([name, value]) => value && /^[A-Z][A-Z0-9_]*$/.test(name)));
+  return { names: [...new Set(named.map(([name]) => name))], values };
 }
 /* Words on one line, a "quoted part" kept whole. */
 const words = (line) => [...line.matchAll(/"([^"]*)"|(\S+)/g)].map((m) => m[1] ?? m[2]);
-function typedServer() {
+function typedServer(secrets) {
   const web = document.querySelector('.dlg [data-act="mcp-how"][data-v="web"]')?.getAttribute("aria-pressed") === "true";
   const reach = ($("#mcp-cmd")?.value ?? "").trim();
-  const secrets = ($("#mcp-secrets")?.value ?? "").split(/[\s,]+/).filter((s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s));
   if (web) return { transport: "http", url: reach, ...(secrets[0] ? { bearerEnv: secrets[0] } : {}) };
   const [command = "", ...args] = words(reach);
   return { transport: "stdio", command, args, envKeys: secrets };
@@ -83,8 +99,9 @@ function typedServer() {
 async function saveServer() {
   const name = ($("#mcp-name")?.value ?? "").trim();
   try {
+    const { names, values } = typedSecrets();
     const callTimeoutSeconds = Number($("#mcp-timeout")?.value);
-    const added = await api("mcp/servers", { name, server: typedServer(), callTimeoutSeconds, ...(CAT.entry ? { catalogue: CAT.entry.id } : {}) });
+    const added = await api("mcp/servers", { name, server: typedServer(names), values, callTimeoutSeconds, ...(CAT.entry ? { catalogue: CAT.entry.id } : {}) });
     closeDlg();
     showTool("mcp", added.server.id);
     await reloadTools();
@@ -172,7 +189,7 @@ const entryOf = (id) => CAT.list.flatMap((g) => g.connectors).find((c) => c.id =
 
 export function init() {
   initGitHubSkills();
-  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "sw:mcp-secrets", "sw:mcp-timeout", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
+  markLive(["tool-add", "t9-own", "sk-src", "sw:sk-file", "mcp-cat", "sw:mcp-q", "mcp-add", "mcp-how", "mcp-save", "sw:mcp-name", "sw:mcp-cmd", "mcp-var-add", "sw:mcp-var-name", "sw:mcp-var-value", "sw:mcp-timeout", "cli-add", "sw:cli-path", "ag-add", "ag-go", "sw:ag-card"]);
   on("ag-add", () => agentCard());
   on("ag-go", () => addAgent());
   /* A plugin has no add form the engine backs yet: the button opens that kind in Customize. */
@@ -182,6 +199,7 @@ export function init() {
   on("mcp-add", (el) => ownServer(entryOf(el.dataset.v)));
   on("mcp-how", (el) => pickHow(el));
   on("mcp-save", () => saveServer());
+  on("mcp-var-add", () => addSecretRow());
   on("cli-add", (el) => allowCli({ name: el.dataset.v }, el));
   on("sk-src", () => $("#sk-file")?.click());
   document.addEventListener("change", (e) => { if (e.target.id === "sk-file") installFile(e.target.files?.[0]); });

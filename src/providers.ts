@@ -11,7 +11,7 @@ import type {
   ToolCall,
 } from "./contracts.js";
 import { anthropicBatchApi, openaiBatchApi } from "./provider-batch.js";
-import { DemoProvider, demoProviderName } from "./demo.js";
+import { demoProviderName } from "./demo.js";
 import { ProviderHttpError, rejectedHttpResponse } from "./provider-retry.js";
 import { anthropicUsage, AnthropicUsageSchema } from "./anthropic-usage.js";
 import { lookup } from "node:dns/promises";
@@ -657,15 +657,14 @@ export function restoreToolNames(completion: Completion, request: CompletionRequ
 }
 /**
  * The connection named by BRANCH_PROVIDER, or null when none is named: then no model is set up, and the model router
- * refuses every request in plain words until one is added (src/no-model.ts). "demo" is the scripted test fixture
- * (src/demo.ts); only a test names it, and nothing ever falls back to it.
+ * refuses every request in plain words until one is added (src/no-model.ts). There is no demo model: a test that starts
+ * Branch in another process names its own scripted service here like any other (tests/fixtures/fixture-model.mjs).
  */
 export function providerFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): Provider | null {
   const kind = env.BRANCH_PROVIDER;
   if (!kind) return null;
-  if (kind === "demo") return new DemoProvider();
   if (kind !== "openai" && kind !== "anthropic")
     throw new Error("BRANCH_PROVIDER must be openai or anthropic");
   const required = [
@@ -688,7 +687,7 @@ export function providerFromEnv(
 const presetEnvSchema = z.array(z.object({
   id: z.string().min(1).max(64),
   name: z.string().trim().min(1).max(80),
-  provider: z.enum(["demo", "openai", "anthropic"]),
+  provider: z.enum(["openai", "anthropic"]),
   endpoint: z.string().max(2048).optional(),
   model: z.string().max(256).optional(),
   apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
@@ -711,7 +710,7 @@ export function presetsFromEnv(env: NodeJS.ProcessEnv = process.env): ModelPrese
       BRANCH_PROVIDER: entry.provider, BRANCH_ENDPOINT: entry.endpoint, BRANCH_MODEL: entry.model,
       BRANCH_API_KEY: entry.apiKeyEnv ? env[entry.apiKeyEnv] : undefined,
     })!;
-    return { id: entry.id, name: entry.name, provider, model: entry.model ?? "demo",
+    return { id: entry.id, name: entry.name, provider, model: entry.model ?? "configured",
       ...(entry.reasoning ? { reasoning: entry.reasoning } : {}) };
   });
 }

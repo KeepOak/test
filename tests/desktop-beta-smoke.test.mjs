@@ -22,7 +22,7 @@ test("the new version's own app passes its try-out, on nothing of the owner's, a
   const app = resolve(fileURLToPath(new URL("..", import.meta.url)));
   const owners = join(root, "owners-data"), folder = join(root, "try-out");
   const failure = await runStagedSmoke({ executable: electron, args: [app] }, folder,
-    { ...process.env, BRANCH_DATA_DIR: owners, BRANCH_DESKTOP_HOME: join(root, "owners-home"), BRANCH_PROVIDER: "demo" }, 240000);
+    { ...process.env, BRANCH_DATA_DIR: owners, BRANCH_DESKTOP_HOME: join(root, "owners-home"), BRANCH_PROVIDER: "openai" }, 240000);
   assert.equal(failure, null);
   assert.equal(await exists(owners), false, "the owner's data folder was never opened");
   assert.equal(await exists(join(root, "owners-home")), false, "nor the owner's app folder");

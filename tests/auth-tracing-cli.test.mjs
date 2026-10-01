@@ -44,6 +44,7 @@ import {
   TraceExporter,
 } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const run = promisify(execFile);
 
@@ -230,7 +231,7 @@ test("T3 `branch trace` prints the trace number and whether it was sent anywhere
   const traceId = app.store.spans.forRun(task.id).find((span) => !span.parentSpanId).traceId;
   await app.close();
   const { stdout } = await run(process.execPath, ["dist/cli.js", "trace", task.id, "--json"], {
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: dataDir },
+    env: { ...process.env, ...(await fixtureModel()).env, BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: dataDir },
   });
   const report = JSON.parse(stdout);
   assert.equal(report.traceId, traceId);
@@ -440,11 +441,11 @@ test("S4 one list says who may message the assistant, and a block anywhere wins"
   const channel = fakeChannel();
   await app.channels.attach(channel.adapter, { activation: "always", pairing: true, allowlist: [] });
   await channel.receive(inbound("hello", "99"));
-  assert.equal(channel.sent.filter((one) => /private/i.test(one.text)).length, 1);
+  assert.equal(channel.sent.length, 0, "a blocked sender is told nothing (UP-CHAT-008)");
   await channel.receive(inbound("hello", "42"));
-  for (let i = 0; i < 200 && channel.sent.length < 2; i++) await delay(20);
-  assert.equal(channel.sent.length, 2);
-  assert.ok(!/private/i.test(channel.sent[1].text));
+  for (let i = 0; i < 200 && channel.sent.length < 1; i++) await delay(20);
+  assert.equal(channel.sent.length, 1);
+  assert.ok(!/private/i.test(channel.sent[0].text));
 });
 
 test("S5 the extra door's checks are a chain, and every step in it must pass", async (t) => {
@@ -487,7 +488,7 @@ test("C1 every command Branch knows has help of its own, and asking never does t
   const root = await mkdtemp(join(tmpdir(), "branch-help-"));
   t.after(() => discardTemp(root));
   const env = {
-    ...process.env, BRANCH_PROVIDER: "demo",
+    ...process.env, ...(await fixtureModel()).env,
     BRANCH_WORKSPACE: join(root, "workspace"), BRANCH_DATA_DIR: join(root, "data"),
   };
   assert.ok(cliCommands.length >= 25);

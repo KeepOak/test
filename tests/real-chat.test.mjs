@@ -106,7 +106,8 @@ async function smtpSend({ host, port }, from, to, subject, body) {
   await step(`MAIL FROM:<${from}>`, "250");
   await step(`RCPT TO:<${to}>`, "250");
   await step("DATA", "354");
-  await step(`From: ${from}\r\nTo: ${to}\r\nSubject: ${subject}\r\nMessage-ID: <${Date.now()}.${Math.random()}@person.localhost>\r\n`
+  // GreenMail checks no senders, so the mail carries the verdict a receiving server would stamp (src/channels/mail-auth.ts).
+  await step(`Authentication-Results: greenmail.test; dmarc=pass header.from=${from.split("@")[1]}\r\nFrom: ${from}\r\nTo: ${to}\r\nSubject: ${subject}\r\nMessage-ID: <${Date.now()}.${Math.random()}@person.localhost>\r\n`
     + `MIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n${body}\r\n.`, "250");
   socket.end("QUIT\r\n");
 }
@@ -131,7 +132,7 @@ test("Email, for real: a local GreenMail SMTP and IMAP server", { skip: state.se
   const empty = ["STORE 1:* +FLAGS (\\Deleted)", "EXPUNGE"];
   await imapBodies(imap, bot, "branchpw", empty);
   await imapBodies(imap, person, "sampw", empty);
-  await connect(context.app, { type: "email", id: "email", address: bot, pollSeconds: 5,
+  await connect(context.app, { type: "email", id: "email", address: bot, pollSeconds: 5, trustedAuthservIds: ["greenmail.test"],
     imap: { host: imap.host, port: imap.port, user: bot, tls: false }, smtp: { host: smtp.host, port: smtp.port, user: bot, tls: false },
     activation: "mention", pairing: true, allowlist: [] }, { EMAIL_PASSWORD: "branchpw" });
   let mail = "";

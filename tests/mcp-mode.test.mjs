@@ -7,7 +7,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { discardTemp } from "./temp-dir.mjs";
 import { z } from "zod";
-import { createBranch, McpConnections, savePolicy, sanitiseApp, appContentSecurityPolicy, signIn } from "../dist/index.js";
+import { createBranch, McpConnections, savePolicy, sanitiseApp, appContentSecurityPolicy } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 
 async function fixture(t) {
@@ -95,7 +95,7 @@ async function stream(url, token, sessionId, want, act) {
   return { got, sessionId: response.headers.get("mcp-session-id") };
 }
 
-test("C1: the modern transport gives a session, an event stream, and a plain error for a version it does not speak", async (t) => {
+test("C1: the modern transport gives a session, an event stream, and its newest version to a client asking for one it does not speak", async (t) => {
   const { url, token, sessionId, initialize } = await initialized(t);
   assert.ok(sessionId, "Branch names the conversation in the reply to the first message");
   assert.deepEqual(initialize.result.capabilities, {
@@ -115,9 +115,23 @@ test("C1: the modern transport gives a session, an event stream, and a plain err
     jsonrpc: "2.0", id: 3, method: "initialize",
     params: { protocolVersion: "1999-01-01", clientInfo: { name: "probe", version: "1.0.0" } },
   });
-  assert.equal(old.data.error.code, -32602);
-  assert.match(old.data.error.message, /does not speak MCP version "1999-01-01"/);
-  assert.ok(old.data.error.data.supported.includes("2025-06-18"));
+  // A version Branch does not speak is answered with its newest, not refused: the client decides.
+  assert.equal(old.data.error, undefined, JSON.stringify(old.data));
+  assert.equal(old.data.result.protocolVersion, "2025-11-25");
+  assert.equal(old.response.headers.get("mcp-protocol-version"), "2025-11-25");
+
+  const current = await rpc(url, token, {
+    jsonrpc: "2.0", id: 4, method: "initialize",
+    params: { protocolVersion: "2025-11-25", clientInfo: { name: "probe", version: "1.0.0" } },
+  });
+  assert.equal(current.data.result.protocolVersion, "2025-11-25", "the version the shipped MCP SDK sends is accepted");
+
+  const notified = await fetch(`${url}/mcp`, {
+    method: "POST",
+    headers: headers(url, token, { "content-type": "application/json", "mcp-session-id": sessionId }),
+    body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }),
+  });
+  assert.equal(notified.status, 202, "a notification is accepted with no reply");
 
   const plain = await fetch(`${url}/mcp`, { headers: headers(url, token) });
   assert.equal(plain.status, 405, "a GET that does not ask for a stream is still refused");
@@ -147,7 +161,7 @@ test("C1: a new skill's tools make Branch tell every connected client the list h
 
 test("C2: a finished task reaches whoever subscribed to it", async (t) => {
   const { url, token, sessionId } = await initialized(t);
-  await share(url, token, []);
+  await share(url, token, ["history.search"]);
   await rpc(url, token, { jsonrpc: "2.0", id: 2, method: "resources/subscribe", params: { uri: "runs://recent" } }, sessionId);
   const { got } = await stream(url, token, sessionId, 1, async () => {
     await rpc(url, token, {
@@ -157,6 +171,18 @@ test("C2: a finished task reaches whoever subscribed to it", async (t) => {
   const updated = got.find((message) => message.method === "notifications/resources/updated");
   assert.ok(updated, JSON.stringify(got));
   assert.equal(updated.params.uri, "runs://recent");
+});
+
+test("C2: a finished task is not announced to a connection the owner does not share task history with", async (t) => {
+  const { url, token, sessionId } = await initialized(t);
+  await share(url, token, ["files.read"]);
+  await rpc(url, token, { jsonrpc: "2.0", id: 2, method: "resources/subscribe", params: { uri: "runs://recent" } }, sessionId);
+  const { got } = await stream(url, token, sessionId, 1, async () => {
+    await rpc(url, token, {
+      jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "branch.ask", arguments: { prompt: "Say hello." } },
+    }, sessionId);
+  });
+  assert.ok(!got.some((message) => message.method === "notifications/resources/updated"), JSON.stringify(got));
 });
 
 test("C2: prompts carry their blanks, and a resource the settings refuse is invisible", async (t) => {
@@ -180,6 +206,7 @@ test("C2: prompts carry their blanks, and a resource the settings refuse is invi
   }, sessionId);
   assert.match(filled.data.result.messages[0].content.text, /Invoices/);
 
+  await share(url, token, ["memory.search"]);
   const before = await rpc(url, token, { jsonrpc: "2.0", id: 5, method: "resources/list", params: {} }, sessionId);
   assert.ok(before.data.result.resources.some((r) => r.uri === "memory://facts"));
 
@@ -291,87 +318,7 @@ test("C3: a dry run says what would happen and changes nothing", async (t) => {
   assert.equal(viaTool.data.result.structuredContent.tool, "files.write");
 });
 
-test("C4: Branch registers itself with a server that needs a sign-in, and the key never leaves the locker", async (t) => {
-  const { app, url, token } = await fixture(t);
-  const secret = "fixture-access-token-not-real";
-  const seen = [];
-  const auth = createServer(async (request, response) => {
-    seen.push(request.url);
-    if (request.url === "/.well-known/oauth-authorization-server") {
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({
-        issuer: `http://127.0.0.1:${port}`,
-        authorization_endpoint: `http://127.0.0.1:${port}/authorize`,
-        token_endpoint: `http://127.0.0.1:${port}/token`,
-        registration_endpoint: `http://127.0.0.1:${port}/register`,
-        code_challenge_methods_supported: ["S256"],
-      }));
-      return;
-    }
-    if (request.url === "/register") {
-      response.writeHead(201, { "content-type": "application/json" });
-      response.end(JSON.stringify({ client_id: "dynamically-registered", client_id_issued_at: 1 }));
-      return;
-    }
-    if (request.url === "/token") {
-      let raw = "";
-      for await (const chunk of request) raw += chunk;
-      assert.match(raw, /code_verifier=/, "the proof key is sent when the code is exchanged");
-      response.writeHead(200, { "content-type": "application/json" });
-      response.end(JSON.stringify({ access_token: secret, token_type: "Bearer", expires_in: 3600 }));
-      return;
-    }
-    response.writeHead(404);
-    response.end();
-  });
-  auth.listen(0, "127.0.0.1");
-  await once(auth, "listening");
-  const port = auth.address().port;
-  t.after(() => new Promise((resolve) => auth.close(resolve)));
-
-  const started = await signIn({ id: "fixture", url: `http://127.0.0.1:${port}/mcp` }, {
-    store: app.store, owner: app.runtime.owner, connections: app.oauth, policy: app.web.policy,
-  });
-  assert.equal(started.registered, "dynamically-registered");
-  assert.match(started.redirectUri, /^http:\/\/127\.0\.0\.1:\d+\/oauth\/callback$/);
-  const authorize = new URL(started.url);
-  assert.equal(authorize.searchParams.get("client_id"), "dynamically-registered");
-  assert.equal(authorize.searchParams.get("code_challenge_method"), "S256");
-  assert.ok((authorize.searchParams.get("code_challenge") ?? "").length >= 43);
-
-  const waiting = app.oauth.waitFor("mcp-fixture");
-  await fetch(`${started.redirectUri}?code=fixture-code&state=${encodeURIComponent(authorize.searchParams.get("state"))}`);
-  const tokens = await waiting;
-  assert.equal(tokens.accessToken, secret);
-  assert.ok(seen.includes("/register"), "it asked the server for an identity of its own");
-
-  // The second sign-in reuses the identity instead of registering again.
-  seen.length = 0;
-  await app.oauth.cancel("mcp-fixture");
-  const again = await signIn({ id: "fixture", url: `http://127.0.0.1:${port}/mcp` }, {
-    store: app.store, owner: app.runtime.owner, connections: app.oauth, policy: app.web.policy,
-  });
-  assert.equal(again.registered, "dynamically-registered");
-  assert.ok(!seen.includes("/register"));
-  await app.oauth.cancel("mcp-fixture");
-
-  // The same sign-in from the app's own route, so the path a person uses is the path that is tested.
-  const viaRoute = await api(url, token, "/api/mcp/signin", { id: "fixture", url: `http://127.0.0.1:${port}/mcp` });
-  assert.match(viaRoute.url, /code_challenge_method=S256/);
-  assert.ok(!JSON.stringify(viaRoute).includes(secret), "the route never carries the key");
-  await app.oauth.cancel("mcp-fixture");
-  await assert.rejects(
-    api(url, token, "/api/mcp/signin", { id: "nowhere", url: "http://127.0.0.1:1/mcp" }),
-    /does not publish how to sign in/,
-  );
-
-  const everything = JSON.stringify([
-    app.store.runs(app.runtime.owner).flatMap((run) => app.store.events(run.id)),
-    app.store.audit.list(app.runtime.owner),
-    app.store.get("settings", app.runtime.owner, "mcp-oauth:fixture"),
-  ]);
-  assert.ok(!everything.includes(secret), "no record anywhere holds the key itself");
-});
+// C4 (signing in to a server that needs it) is in tests/mcp-sign-in.test.mjs, through the MCP SDK the transport uses.
 
 test("C5: an outside server opens when a task needs it, closes when the task ends, and never goes over the cap", async (t) => {
   const { app } = await fixture(t);

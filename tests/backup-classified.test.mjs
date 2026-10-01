@@ -71,6 +71,7 @@ const reviewedComputedKeys = new Set([
   "src/channels/threads.ts: chatThreadKey", // defaulttrunk: channel-session:<channel>:<chat>, the same key the router always wrote
   "src/trunks/defaults.ts: restoredTrunksKey", // defaulttrunk: only read, the Trunks a restore still holds (restore-trunks-held)
   "src/channels/router.ts: key",
+  "src/channels/routes.ts: routeKey", // channel-route:<channel>:<scope>, held for the owner's yes
   "src/channels/webhook-address.ts: key",
   "src/coding/checklist.ts: key",
   "src/coding/settings.ts: codingKey",
@@ -187,7 +188,7 @@ test("every place that works out a settings key in code has been read", () => {
 test("a conversation's waiting line, a plan and a chat's link are never put in place from a file", () => {
   assert.equal(staysOnThisComputer("followups:any"), true);
   assert.equal(staysOnThisComputer("wakeup:any"), true, "a wake-up's words never arrive from a file either");
-  for (const id of ["plan:any", "channel-session:telegram:1", "project:any", "session-model:any", "slack-automations", "models"])
+  for (const id of ["plan:any", "channel-session:telegram:1", "channel-route:telegram:1", "project:any", "session-model:any", "slack-automations", "models"])
     assert.equal(heldForTheOwner(id) && !staysOnThisComputer(id), true, `${id} waits for the owner`);
 });
 

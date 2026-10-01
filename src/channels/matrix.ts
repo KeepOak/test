@@ -1,3 +1,4 @@
+import { calledByName, type GroupReading } from "./addressing.js";
 import { matrixPictureContent } from "./matrix-picture.js";
 import { createHash, randomUUID } from "node:crypto";
 import { attachmentKind, fetchCapped, voiceFileName } from "./media.js";
@@ -36,7 +37,10 @@ export interface MatrixOptions {
 }
 const eventSchema = z.object({
   type: z.string(), event_id: z.string().optional(), sender: z.string().optional(),
-  content: z.object({ msgtype: z.string().optional(), body: z.string().optional(),
+  content: z.object({ msgtype: z.string().optional(), body: z.string().optional(), formatted_body: z.string().optional(),
+    /** Intentional mentions (Matrix 1.7): the users a message is for. */
+    "m.mentions": z.object({ user_ids: z.array(z.string()).optional() }).passthrough().optional(),
+    "m.relates_to": z.object({ "m.in_reply_to": z.object({ event_id: z.string().optional() }).passthrough().optional() }).passthrough().optional(),
     /** A file's own address on the homeserver (mxc://server/id), and what it is. */
     url: z.string().max(500).optional(),
     info: z.object({ mimetype: z.string().max(100).optional(), size: z.number().optional(), duration: z.number().optional() }).passthrough().optional(),
@@ -49,6 +53,7 @@ const syncSchema = z.object({
     join: z.record(z.string(), z.object({
       timeline: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
       state: z.object({ events: z.array(eventSchema).default([]) }).passthrough().optional(),
+      /** How many have joined, when the server says: two is a direct chat with the assistant. */
       summary: z.object({ "m.joined_member_count": z.number().int().min(0).optional() }).passthrough().optional(),
     }).passthrough()).default({}),
   }).passthrough().optional(),
@@ -155,13 +160,18 @@ export class MatrixAdapter implements ChannelAdapter {
     this.since = body.next_batch;
     this.roomPrivacy(body);
     const messages: InboundMessage[] = [];
-    for (const [roomId, room] of Object.entries(body.rooms?.join ?? {}))
+    for (const [roomId, room] of Object.entries(body.rooms?.join ?? {})) {
       for (const event of room.timeline?.events ?? []) {
         if (event.type === "m.room.encrypted") { this.encryptedSeen++; continue; }
         const inbound = event.type === "m.reaction" ? this.answer(roomId, event) : this.inbound(roomId, event);
         // The first answer carries whatever was already there; answering it would reply to history.
         if (inbound && !first) messages.push(inbound);
       }
+    }
+    for (const [index, message] of messages.entries()) {
+      const target = this.replyTargets.get(message);
+      if (target && await this.repliedToMe(target)) messages[index] = { ...message, addressed: true };
+    }
     return messages;
   }
   /** Only this account's direct-room data plus a known two-member room can select the direct-chat path. */
@@ -251,13 +261,24 @@ export class MatrixAdapter implements ChannelAdapter {
       if (this.received.size > 200) this.received.delete(this.received.keys().next().value!);
     }
     const name = this.options.userId.split(":")[0]!.replace(/^@/, "");
-    return {
-      channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId,
+    // A direct room (directRoom: a known direct peer, two members, unencrypted) is a direct chat; elsewhere it is addressed.
+    const direct = this.directRoom(roomId);
+    const content = event.content ?? {};
+    const mentioned = text.includes(this.options.userId) || (content.formatted_body ?? "").includes(this.options.userId)
+      || (content["m.mentions"]?.user_ids ?? []).includes(this.options.userId);
+    const replyTo = content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
+    const repliedTo = !!replyTo && [...this.sent.values()].includes(replyTo);
+    const message: InboundMessage = {
+      channel: this.id, chatId, chatKind: direct ? "direct" : "group", chatTitle: roomId,
       senderId: handle(sender, "who"), senderName: sender, text,
-      addressed: text.includes(this.options.userId) || text.includes(name),
+      addressed: direct || mentioned || repliedTo || calledByName(text, [name]),
       messageId,
     };
+    if (replyTo && !message.addressed) this.replyTargets.set(message, { roomId, eventId: replyTo });
+    return message;
   }
+  /** An unencrypted room hands the assistant every message in it. */
+  async groupReading(): Promise<GroupReading> { return { everyMessage: true }; }
   /**
    * CHAT-105: a picture, video or file sent to the room comes in as the task's material, and an audio message as a voice
    * note to transcribe. Fetched only once the message is answered, from this homeserver's own authenticated media.
@@ -276,8 +297,10 @@ export class MatrixAdapter implements ChannelAdapter {
     const host = new RegExp(`^${new URL(this.base).hostname.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
     const bytes = () => fetchCapped(this.fetch, `${this.base}/_matrix/client/v1/media/download/${encodeURIComponent(mxc[1]!)}/${encodeURIComponent(mxc[2]!)}`,
       { headers: { authorization: `Bearer ${this.options.accessToken}` } }, host, content.msgtype === "m.audio" ? "voice note" : "file", content.info?.size ?? 0);
-    const base = { channel: this.id, chatId, chatKind: "group" as const, chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
-      text: "", addressed: false, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+    // #649: a room of two is a direct chat, so a file sent there is for the assistant; in a group it waits to be asked about.
+    const direct = this.directRoom(roomId);
+    const base = { channel: this.id, chatId, chatKind: direct ? "direct" as const : "group" as const, ...(direct ? {} : { chatTitle: roomId }),
+      senderId: handle(sender, "who"), senderName: sender, text: "", addressed: direct, messageId: handle(event.event_id ?? randomUUID(), "msg") };
     if (content.msgtype === "m.audio")
       return { ...base, voice: { mediaType, seconds: content.info?.duration !== undefined ? content.info.duration / 1000 : undefined, bytes } };
     return { ...base, attachments: [{ name: content.body || "file", sourceId: mxc[2]!, mediaType, kind: attachmentKind(mediaType),
@@ -348,6 +371,19 @@ export class MatrixAdapter implements ChannelAdapter {
   /** CHAT-094: a spoken reply, as an audio message clients show as a voice message. */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string): Promise<string | undefined> {
     return this.sendFile(chatId, { name: voiceFileName(mediaType), mediaType, bytes: audio, voice: true });
+  }
+  /** Replies to an event no longer in `sent` (sent before a restart, or older than the newest 200): asked about in `sync`. */
+  private readonly replyTargets = new WeakMap<InboundMessage, { roomId: string; eventId: string }>();
+  /** A reply to one of this account's own events is addressed; the server says who sent it. A failed lookup is not addressed. */
+  private async repliedToMe(target: { roomId: string; eventId: string }): Promise<boolean> {
+    const address = `${this.base}/_matrix/client/v3/rooms/${encodeURIComponent(target.roomId)}/event/${encodeURIComponent(target.eventId)}`;
+    try {
+      const response = await this.fetch(address, { headers: { authorization: `Bearer ${this.options.accessToken}` },
+        redirect: "error", signal: AbortSignal.timeout(10000) });
+      if (!response.ok) return false;
+      const parsed = z.object({ sender: z.string() }).passthrough().safeParse(await response.json());
+      return parsed.success && parsed.data.sender === this.options.userId;
+    } catch { return false; }
   }
   /** The events this adapter sent, by the short handle it gave them, so a message it sent can be edited (the newest 200). */
   private readonly sent = new Map<string, string>();
@@ -454,6 +490,11 @@ export class MatrixAdapter implements ChannelAdapter {
     if (!chatId) return null;
     return { channel: this.id, chatId, chatKind: this.directRoom(roomId) ? "direct" : "group", chatTitle: roomId, senderId: handle(sender, "who"), senderName: sender,
       text: value, addressed: true, messageId: handle(event.event_id ?? randomUUID(), "msg") };
+  }
+  /** #588: a thread's routes fall back to its room's (src/channels/routes.ts); null for a room or a thread not read since connecting. */
+  routeParent(chatId: string): string | null {
+    const roomId = chatId.startsWith("thread:") ? this.rooms.get(chatId) : undefined;
+    return roomId ? handle(roomId, "room") : null;
   }
   /** A thread is its own router conversation; room-only messages keep their existing address. */
   private chat(roomId: string, content?: Record<string, unknown>): string {

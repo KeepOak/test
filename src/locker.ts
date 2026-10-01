@@ -57,6 +57,38 @@ export class Locker {
     healthChanged(this.db, { kind: "credential", owner, project, id: name });
     return { project, name, createdAt };
   }
+  /**
+   * provider-audit: several secrets of one project written, and others removed, in one transaction: all of it or none.
+   * Every value is checked and sealed first; only then is the database touched, in one synchronous run, so a failure
+   * part way (a full project, a database error) never leaves some parts new and some old.
+   */
+  async setAll(owner: string, project: string, values: Record<string, string>, remove: readonly string[] = []): Promise<void> {
+    projectIdSchema.parse(project);
+    for (const [name, value] of Object.entries(values)) { secretNameSchema.parse(name); valueSchema.parse(value); }
+    for (const name of remove) secretNameSchema.parse(name);
+    const key = await this.keys.key(), createdAt = new Date().toISOString();
+    const sealed = Object.entries(values).map(([name, value]) => {
+      const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", key, iv);
+      const ciphertext = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
+      return { name, iv, tag: cipher.getAuthTag(), ciphertext };
+    });
+    const kept = new Set(this.names(owner, project).map((row) => row.name));
+    for (const name of remove) kept.delete(name);
+    for (const row of sealed) kept.add(row.name);
+    if (kept.size > 64) throw new Error("At most 64 secrets per project");
+    this.db.exec("SAVEPOINT locker_set_all");
+    try {
+      const upsert = this.db.prepare(`INSERT INTO locker VALUES(?,?,?,?,?,?,?) ON CONFLICT(owner,project,name)
+        DO UPDATE SET iv=excluded.iv,tag=excluded.tag,ciphertext=excluded.ciphertext,created_at=excluded.created_at`);
+      for (const row of sealed) upsert.run(owner, project, row.name, row.iv, row.tag, row.ciphertext, createdAt);
+      const drop = this.db.prepare("DELETE FROM locker WHERE owner=? AND project=? AND name=?");
+      for (const name of remove) drop.run(owner, project, name);
+      this.db.exec("RELEASE locker_set_all");
+    } catch (error) {
+      this.db.exec("ROLLBACK TO locker_set_all"); this.db.exec("RELEASE locker_set_all");
+      throw error;
+    }
+  }
   names(owner: string, project: string): { name: string; createdAt: string }[] {
     return this.db.prepare("SELECT name,created_at FROM locker WHERE owner=? AND project=? ORDER BY name").all(owner, project)
       .map((row) => ({ name: String(row.name), createdAt: String(row.created_at) }));

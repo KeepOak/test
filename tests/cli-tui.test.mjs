@@ -13,6 +13,7 @@ import {
 import { exitCodeFor, parseRunArgs } from "../dist/cli-run.js";
 import { resolveStyle, stripAnsi, wrap } from "../dist/terminal-style.js";
 import { killProcessGroup, killWindowsTree } from "../dist/integrations/shell-process.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const run = promisify(execFile);
 const clean = (text) => stripAnsi(text);
@@ -32,8 +33,8 @@ async function workspace(t) {
   });
   return {
     root,
-    // BRANCH_PROVIDER=demo names the scripted test fixture: without a model named, Branch has none and refuses every task.
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), NO_COLOR: undefined },
+    // The tests' scripted model (tests/fixtures/fixture-model.mjs): without a model named, Branch has none and refuses every task.
+    env: { ...process.env, ...(await fixtureModel()).env, BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), NO_COLOR: undefined },
   };
 }
 /**
@@ -119,6 +120,8 @@ test("the terminal view answers slash commands, streams a task and leaves on Ctr
   view.type("write the demo file\r");
   await view.until(/Writing branch-demo\.txt/);
   await view.until(/Demo fixture completed/);
+  // The answer streams in as it is written; the task is over once its totals are printed.
+  await view.until(/\[this answer:/);
   assert.match(view.text(), /ok Writing branch-demo\.txt/, "each step is one compact row");
   view.type("/history\r");
   await view.until(/you: write the demo file/);

@@ -1,7 +1,11 @@
 import { z } from "zod";
 
 /** Public identity fields only; status output, tokens and credential locations never travel to a screen. */
-export interface AccountIdentity { email?: string; name?: string; organization?: string; organizationId?: string; authMethod?: "claude.ai" | "api-key" | "unknown" }
+export interface AccountIdentity {
+  email?: string; name?: string; organization?: string; organizationId?: string; authMethod?: "claude.ai" | "api-key" | "unknown";
+  /** provider-audit: the subscription plan `auth status` names (`subscriptionType`, e.g. "max"), which decides 1M context. */
+  plan?: string;
+}
 export interface AccountSignIn { installed: boolean; signedIn: boolean | null; identity?: AccountIdentity; message: string; checkedAt: number }
 const email = z.string().max(320).email();
 const words = z.string().trim().min(1).max(160).regex(/^[^\x00-\x1f\x7f]+$/);
@@ -22,6 +26,8 @@ export function claudeIdentity(stdout: string): { signedIn: boolean; identity?: 
   if (organization) identity.organization = organization;
   const organizationId = words.safeParse(data.orgId).data;
   if (organizationId) identity.organizationId = organizationId;
+  const plan = words.safeParse(data.subscriptionType).data;
+  if (plan) identity.plan = plan;
   return { signedIn: true, ...(Object.keys(identity).length ? { identity } : {}) };
 }
 

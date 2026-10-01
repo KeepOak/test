@@ -7,20 +7,21 @@ import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { discardTemp } from "./temp-dir.mjs";
-import { createBranch } from "../dist/index.js";
+import { createBranch, savePolicy } from "../dist/index.js";
 import { startServer } from "../dist/server.js";
 import { householdRefusal } from "../dist/household-routes.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 
-/** Sharing is switched on (with no tools) unless `share` is false: while it is off the MCP door offers nothing at all. */
-async function fixture(t, { share = true } = {}) {
+/** Sharing is switched on (with `tools`, none by default) unless `share` is false: while it is off the MCP door offers nothing at all. */
+async function fixture(t, { share = true, tools = [] } = {}) {
   const root = await mkdtemp(join(tmpdir(), "branch-mcp-"));
   const app = await createBranch({
     workspace: join(root, "workspace"),
     dataDir: join(root, "data"),
   });
-  if (share) app.store.save("settings", app.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: [], a2a: false });
+  if (share) app.store.save("settings", app.runtime.owner, "mcp-sharing", { enabled: true, exposedTools: tools, a2a: false });
   const server = await startServer(app, {
     dataDir: join(root, "data"),
     port: 0,
@@ -134,7 +135,7 @@ test("MCP server returns error for unknown tool", async (t) => {
 });
 
 test("MCP resources/list returns available resources", async (t) => {
-  const { url, token } = await fixture(t);
+  const { url, token } = await fixture(t, { tools: ["memory.search", "files.list"] });
   const sessionId = "test-session-" + Math.random();
   await mcpRequest(url, token, {
     jsonrpc: "2.0",
@@ -158,7 +159,7 @@ test("MCP resources/list returns available resources", async (t) => {
 });
 
 test("MCP resources/read returns memory facts", async (t) => {
-  const { url, token } = await fixture(t);
+  const { url, token } = await fixture(t, { tools: ["memory.search"] });
   const sessionId = "test-session-" + Math.random();
   await mcpRequest(url, token, {
     jsonrpc: "2.0",
@@ -493,7 +494,7 @@ test("MCP holds a household profile off the owner's tools even where the rules a
 });
 
 test("MCP offers recent conversations and reads one as plain text", async (t) => {
-  const { app, url, token, sessionId } = await initialized(t);
+  const { app, url, token, sessionId } = await initialized(t, { tools: ["history.search"] });
   const run = await app.runtime.run({ prompt: "Remember that the kettle is broken." });
 
   const list = await mcpRequest(url, token, { jsonrpc: "2.0", id: 2, method: "resources/list", params: {} }, sessionId);
@@ -515,6 +516,28 @@ test("MCP offers recent conversations and reads one as plain text", async (t) =>
   assert.match(missing.error.data.details, /not found/);
 });
 
+test("MCP resources follow the shared tools: sharing one tool offers no other tool's resources", async (t) => {
+  const { app, url, token, sessionId } = await initialized(t, { tools: ["files.read"] });
+  const run = await app.runtime.run({ prompt: "Remember that the kettle is broken." });
+  const list = await mcpRequest(url, token, { jsonrpc: "2.0", id: 2, method: "resources/list", params: {} }, sessionId);
+  assert.deepEqual(list.result.resources.map((resource) => resource.uri), ["policy://hidden-tools"]);
+  for (const [id, uri] of [[3, "memory://facts"], [4, "workspace://files"], [5, "runs://recent"],
+    [6, `run://${run.id}`], [7, `conversation://${run.sessionId}`]]) {
+    const read = await mcpRequest(url, token, { jsonrpc: "2.0", id, method: "resources/read", params: { uri } }, sessionId);
+    assert.match(read.error?.data?.details ?? "", /Unknown resource/, uri);
+  }
+
+  // Shared, but the approval settings would ask first: a read has nowhere to wait, so it stays hidden.
+  await settings(url, token, { enabled: true, exposedTools: ["memory.search", "files.list"] });
+  savePolicy(app.store, app.runtime.owner, { rules: [{ tool: "memory.search", match: "*", decision: "ask" }] });
+  const shared = await mcpRequest(url, token, { jsonrpc: "2.0", id: 8, method: "resources/list", params: {} }, sessionId);
+  const uris = shared.result.resources.map((resource) => resource.uri);
+  assert.ok(uris.includes("workspace://files"), JSON.stringify(uris));
+  assert.ok(!uris.includes("memory://facts"), "an ask decision does not make a resource readable");
+  const facts = await mcpRequest(url, token, { jsonrpc: "2.0", id: 9, method: "resources/read", params: { uri: "memory://facts" } }, sessionId);
+  assert.match(facts.error?.data?.details ?? "", /Unknown resource/);
+});
+
 test("branch mcp-serve speaks JSON-RPC on standard input and output", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "branch-mcp-stdio-"));
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
@@ -525,7 +548,7 @@ test("branch mcp-serve speaks JSON-RPC on standard input and output", async (t) 
     cwd: projectRoot,
     env: {
       ...process.env,
-      BRANCH_PROVIDER: "demo",
+      ...(await fixtureModel()).env,
       BRANCH_DATA_DIR: join(root, "data"),
       BRANCH_WORKSPACE: join(root, "workspace"),
     },
@@ -541,7 +564,7 @@ test("branch mcp-serve speaks JSON-RPC on standard input and output", async (t) 
   const replies = collect(child, 3);
 
   const send = (message) => child.stdin.write(JSON.stringify(message) + "\n");
-  send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", clientInfo: { name: "stdio-test", version: "1.0.0" } } });
+  send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", clientInfo: { name: "stdio-test", version: "1.0.0" } } });
   send({ jsonrpc: "2.0", method: "notifications/initialized" });
   send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
   send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "branch.ask", arguments: { prompt: "Say hello" } } });
@@ -568,7 +591,7 @@ test("branch mcp-serve reports a line that is not JSON and keeps going", async (
   t.after(() => rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }));
   const child = spawn(process.execPath, ["dist/cli.js", "mcp-serve"], {
     cwd: projectRoot,
-    env: { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
+    env: { ...process.env, ...(await fixtureModel()).env, BRANCH_DATA_DIR: join(root, "data"), BRANCH_WORKSPACE: join(root, "workspace") },
     stdio: ["pipe", "pipe", "pipe"],
   });
   t.after(() => child.kill());

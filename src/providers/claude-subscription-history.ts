@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import type { CompletionRequest, Message, ToolDescription } from "../contracts.js";
 
 export const nativeToolPrefix = "mcp__branch__";
-export const maximumNativeRequestBytes = 8 * 1024 * 1024;
+/**
+ * provider-audit: room for a 1M-token conversation (about 4 MB of plain text, more with pictures and JSON escaping),
+ * kept under the 32 MB the Messages API accepts in one request.
+ */
+export const maximumNativeRequestBytes = 30 * 1024 * 1024;
 export interface NativeFrame { type: "user" | "assistant"; message: { role: "user" | "assistant"; content: Record<string, unknown>[] }; shouldQuery?: false }
 export interface NativeInventory { manifest: Record<string, unknown>[]; tools: Record<string, unknown>[]; names: Map<string, string> }
 export const nativeToolName = (name: string): string => "b_" + createHash("sha256").update(name).digest("hex").slice(0, 32);
@@ -27,7 +31,7 @@ export function nativeInventory(tools: ToolDescription[]): NativeInventory {
 export function boundedNativeJson(value: unknown): string {
   const json = JSON.stringify(value);
   if (Buffer.byteLength(json) > maximumNativeRequestBytes)
-    throw new Error("Claude subscription request exceeds 8 MiB; shorten the conversation or tool inventory");
+    throw new Error("Claude subscription request exceeds 30 MiB; shorten the conversation or tool inventory");
   return json;
 }
 function messageBlocks(message: Message): Record<string, unknown>[] {

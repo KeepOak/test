@@ -3,8 +3,9 @@ import type { Completion, CompletionRequest, Provider } from "./contracts.js";
 export const demoProviderName = "offline-demo-fixture";
 /**
  * A deterministic protocol fixture for tests. It does not interpret arbitrary requests. Branch never offers it and
- * never falls back to it: a test passes it in (`createBranch({ provider })`, `BRANCH_PROVIDER=demo`), or gets it as
- * createBranch's default only while running under Node's test runner (src/index.ts `testFixturePresets`).
+ * never falls back to it, and no setting names it (there is no `BRANCH_PROVIDER=demo`): a test passes it in
+ * (`createBranch({ provider })`), or gets it as createBranch's default only while running under Node's test runner
+ * (src/index.ts `testFixturePresets`). A test that starts Branch in another process uses tests/fixtures/fixture-model.mjs.
  */
 export class DemoProvider implements Provider {
   readonly name = demoProviderName;

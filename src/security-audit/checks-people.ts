@@ -71,10 +71,14 @@ export const channelChecks: SecurityCheck[] = [
   }),
   check("channels.always-listening", "channels", "info", "In group chats the assistant answers only when asked", (snapshot) => {
     const always = channels(snapshot).filter((channel) => channel.activation === "always");
-    return always.length ? {
-      detail: `On ${listed(always.map((channel) => channel.id))}, the assistant reads and answers every message, not only the ones that mention it.`,
-      advice: "Set activation to \"mention\" for group chats.",
-    } : null;
+    const groups = snapshot.alwaysGroups ?? [];
+    if (!always.length && !groups.length) return null;
+    const where = [...always.map((channel) => channel.id), ...groups.map((group) => `${group.title} (${group.channel})`)];
+    return {
+      detail: `On ${listed(where)}, the assistant reads and answers every message, not only the ones that mention it.`,
+      advice: groups.length ? "Set activation to \"mention\" for group chats, and set those groups back to answering when mentioned in Settings › Chat apps."
+        : "Set activation to \"mention\" for group chats.",
+    };
   }),
   check("channels.mail-in-clear", "channels", "warn", "Mail is fetched and sent over encrypted connections", (snapshot) => {
     const plain = channels(snapshot).filter((channel) => !channel.tls);

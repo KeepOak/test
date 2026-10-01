@@ -180,6 +180,7 @@ export const ROUTES = {
   "/api/channels/live": "owner POST",
   "/api/channels/intake": "owner POST", // Settings › Chat apps: what the Trunk sees, staying connected
   "/api/channels/steps": "owner POST", // Settings › Chat apps › Show steps in chats: the steps knobs
+  "/api/channels/routes": "owner POST", // Settings › Chat apps › Who answers here (src/channels/routes.ts)
   "/api/channels/owner-commands": "owner POST", // Settings › Chat apps: commands from the owner's own chat (window + PIN)
   "/api/channels/formatting": "owner POST", // Per-app native or plain outgoing text
   "/api/channels/reply-style": "owner POST", // Per-app quoting of the person's message and the reaction on it
@@ -188,6 +189,7 @@ export const ROUTES = {
   "/api/channels/pairings/remove": "owner POST",
   "/api/channels/parity": "owner POST",
   "/api/channels/permissions": "owner POST",
+  "/api/channels/groups": "owner POST", // group chats: when the assistant answers in each group
   "/api/channels/slack-automations": "secret-read",
   "/api/channels/slack-automations/run": "task POST",
   "/api/channels/test": "owner POST",

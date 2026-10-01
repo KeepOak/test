@@ -308,15 +308,31 @@ export class ChatGPTAuth {
     return this.refreshing;
   }
   private async refresh(): Promise<string> {
-    const current = this.tokens!;
+    const held = this.tokens!;
+    // provider-audit: a guarded reload first, as Codex does (login/src/auth/manager.rs `refresh_token`). Another holder
+    // of the same sign-in may have renewed it already; a refresh token works once, so renewing with the old one again
+    // would be refused as reused. What the vault holds now is used when it is newer and still good.
+    const stored = await this.vault.read().catch(() => undefined);
+    if (stored === null) { this.tokens = null; throw new Error("Sign in with ChatGPT first"); }
+    let current = held;
+    if (stored && stored.accessToken !== held.accessToken) {
+      this.tokens = stored;
+      if (chatgptAccountId(stored.accessToken) !== chatgptAccountId(held.accessToken))
+        throw new Error("The ChatGPT sign-in was changed to another account while it was being renewed. Try again.");
+      current = stored;
+      if (new Date(stored.expiresAt).getTime() - this.now() > chatgptDefaults.refreshSkewMs) return stored.accessToken;
+    }
     const tokens = await this.exchange({ grant_type: "refresh_token", refresh_token: current.refreshToken, client_id: this.clientId });
     await this.store({ ...tokens, refreshToken: tokens.refreshToken || current.refreshToken, idToken: tokens.idToken ?? current.idToken });
     return this.tokens!.accessToken;
   }
   private async exchange(form: Record<string, string>): Promise<ChatGPTTokens> {
     const response = await this.post(`${this.issuer}/oauth/token`, new URLSearchParams(form).toString(), "application/x-www-form-urlencoded");
-    if (response.status === 401 || response.status === 400) {
-      if (form.grant_type !== "refresh_token") throw new Error(deviceNotAccepted);
+    if (form.grant_type !== "refresh_token" && (response.status === 401 || response.status === 400)) throw new Error(deviceNotAccepted);
+    if (!response.ok && form.grant_type === "refresh_token") {
+      // provider-audit: only a refusal that says the sign-in itself is over ends it; any other (a busy service, a
+      // malformed request) keeps the saved sign-in to try again. Before, every 400 and 401 cleared it.
+      if (!refreshEnded(response.status, await response.text().catch(() => ""))) throw new Error(`ChatGPT could not renew its sign-in just now (HTTP ${response.status}). The sign-in is kept; try again.`);
       this.tokens = null; await this.vault.clear();
       throw new Error("ChatGPT sign-in is no longer valid. Sign in again.");
     }
@@ -361,6 +377,29 @@ export class ChatGPTAuth {
       signal: AbortSignal.timeout(15000),
     });
   }
+}
+/**
+ * Whether a refused refresh ends the sign-in for good, read as Codex reads it (login/src/auth/manager.rs
+ * `classify_refresh_token_failure`, Apache-2.0): a 401, a 400 whose code is `invalid_grant`, or any answer whose code
+ * says the refresh token expired, was already used or was revoked. The code is `error` (a string), `error.code`, or a
+ * top-level `code`.
+ */
+export function refreshEnded(status: number, body: string): boolean {
+  if (status === 401) return true;
+  const parsed = refusalBody(body);
+  const error = parsed?.error;
+  const raw = typeof error === "string" && error ? error
+    : error && typeof error === "object" && typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code
+      : typeof parsed?.code === "string" ? parsed.code : "";
+  const code = raw.toLowerCase();
+  if (status === 400 && code === "invalid_grant") return true;
+  return ["refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated"].includes(code);
+}
+function refusalBody(body: string): { error?: unknown; code?: unknown } | null {
+  try {
+    const value: unknown = JSON.parse(body);
+    return value && typeof value === "object" ? value as { error?: unknown; code?: unknown } : null;
+  } catch { return null; } // not JSON: no code
 }
 /*
  * What each way the device sign-in can fail says, with the one thing to do next. The window shows these as they are.

@@ -18,11 +18,21 @@ import { completed, protocolKey, statelessVersion, StatelessError } from './mcp-
 import { lockedDown } from './lockdown.js';
 
 /**
- * Protocol versions Branch understands, newest first. A client that asks for something else is told
- * plainly which ones work rather than being left to guess.
+ * Protocol versions Branch understands, newest first: the list the MCP SDK Branch ships
+ * (`SUPPORTED_PROTOCOL_VERSIONS` in @modelcontextprotocol/sdk 1.30.0 types.ts, MIT; see
+ * THIRD_PARTY_NOTICES.md). It is written out rather than imported so the engine does not load the
+ * SDK at start; a test keeps the two lists equal.
  */
-export const supportedProtocolVersions = ['2025-06-18', '2025-03-26', '2024-11-05'] as const;
+export const supportedProtocolVersions = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05', '2024-10-07'] as const;
 const PREFERRED_PROTOCOL_VERSION = supportedProtocolVersions[0];
+/**
+ * The version to answer with. A client asking for one Branch speaks gets it; any other is offered
+ * Branch's newest, and the client decides whether it can use that, as the spec's lifecycle says.
+ * Adapted from the SDK server's `_oninitialize` (@modelcontextprotocol/sdk 1.30.0
+ * dist/esm/server/index.js; upstream https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/server.ts#L898-L922, MIT).
+ */
+export const negotiatedProtocolVersion = (asked: string): string =>
+  (supportedProtocolVersions as readonly string[]).includes(asked) ? asked : PREFERRED_PROTOCOL_VERSION;
 const CONVERSATION_LIMIT = 20;
 const RUN_LIMIT = 20;
 const TRANSCRIPT_BYTES = 64 * 1024;
@@ -195,7 +205,7 @@ interface McpVerdict {
   tooMany: string;
 }
 
-/** A resource only shows up when the owner's approval settings would allow the matching tool. */
+/** A resource only shows up when the owner shares the matching tool and the approval settings allow it. */
 interface ResourceScope { uri: string; name: string; description: string; mimeType: string; tool: string; permission: string }
 const scopedResources: readonly ResourceScope[] = [
   { uri: 'memory://facts', name: 'Memory facts', description: 'What Branch remembers', mimeType: 'application/json',
@@ -310,10 +320,22 @@ export class McpServer {
       try { listener({ jsonrpc: '2.0', method, params }); } catch { /* a broken stream never breaks a call */ }
   }
 
-  /** Tells whoever asked to be told that a resource has new contents. */
+  /**
+   * Tells whoever asked to be told that a resource has new contents, while that resource is one the
+   * connection may read. Checked when the news goes out, so a change to what is shared counts at once.
+   */
   publishResourceUpdate(uri: string): void {
-    for (const session of this.sessions.values())
-      if (session.subscriptions.has(uri)) this.notifySession(session, 'notifications/resources/updated', { uri });
+    const subscribed = [...this.sessions.values()].filter((session) => session.subscriptions.has(uri));
+    if (!subscribed.length || !this.mayWatch(uri)) return;
+    for (const session of subscribed) this.notifySession(session, 'notifications/resources/updated', { uri });
+  }
+
+  /** Whether the resource at this address is one this connection may read right now. */
+  private mayWatch(uri: string): boolean {
+    if (uri === hiddenToolsUri) return true;
+    const scope = scopedResources.find((entry) => entry.uri === uri);
+    if (scope) return this.mayRead(scope);
+    return /^(?:runs?|conversation):\/\//.test(uri) && this.mayRead(historyScope);
   }
 
   /** What the owner is sharing right now; read fresh so a settings change takes effect at once. */
@@ -390,10 +412,7 @@ export class McpServer {
       if (result === undefined) return respond(undefined, { code: -32601, message: 'Method not found' });
       return respond(result);
     } catch (e) {
-      const unsupported = e instanceof UnsupportedProtocol;
-      return respond(undefined, unsupported
-        ? { code: -32602, message: e.message, data: { supported: [...supportedProtocolVersions] } }
-        : { code: -32603, message: 'Internal error', data: { details: errorText(e) } });
+      return respond(undefined, { code: -32603, message: 'Internal error', data: { details: errorText(e) } });
     }
   }
 
@@ -420,16 +439,15 @@ export class McpServer {
       protocolVersion: z.string(),
       capabilities: z.record(z.string(), z.unknown()).optional(),
       clientInfo: z.object({ name: z.string(), version: z.string() }),
+      _meta: z.record(z.string(), z.unknown()).optional(),
     }).strict();
     const parsed = InitializeSchema.parse(params);
-    if (!(supportedProtocolVersions as readonly string[]).includes(parsed.protocolVersion))
-      throw new UnsupportedProtocol(parsed.protocolVersion);
     session.clientName = parsed.clientInfo.name;
     session.clientVersion = parsed.clientInfo.version;
-    session.protocolVersion = parsed.protocolVersion;
+    session.protocolVersion = negotiatedProtocolVersion(parsed.protocolVersion);
     session.initialized = true;
     return {
-      protocolVersion: parsed.protocolVersion,
+      protocolVersion: session.protocolVersion,
       capabilities: {
         tools: { listChanged: true },
         resources: { subscribe: true, listChanged: true },
@@ -723,12 +741,17 @@ export class McpServer {
     };
   }
 
-  /** Whether the owner's settings would let this connection read a resource of that kind. */
+  /**
+   * Whether this connection may read a resource of that kind: only when the owner shares the
+   * matching tool and the approval settings let it run without asking. A read has no place to wait
+   * for the owner's yes, so "ask" does not count.
+   */
   private mayRead(scope: { tool: string; permission: string }): boolean {
+    if (!this.exposed().has(scope.tool)) return false;
     const policy = cappedPolicy(readPolicy(this.store, this.runtime.owner), 'mcp');
     const { decision } = evaluatePolicy(policy,
       { tool: scope.tool, target: '', readOnly: isReadOnlyPermission(scope.permission) });
-    return decision !== 'deny';
+    return decision === 'allow';
   }
 
   /** The approval settings as they are now, for a resource that has already been read, just before it is sent. */
@@ -889,12 +912,6 @@ function askPlan(args: Record<string, unknown>): DryRunPlan {
     wouldHappen: 'Branch would work out the steps itself and run them under your approval settings, stopping to ask you about anything that changes something.',
     dryRun: true,
   };
-}
-
-class UnsupportedProtocol extends Error {
-  constructor(asked: string) {
-    super(`Branch does not speak MCP version "${asked}". It speaks ${supportedProtocolVersions.join(', ')}.`);
-  }
 }
 
 /** A record without the tool list itself, which is far too long for a listing. */

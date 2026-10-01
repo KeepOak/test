@@ -76,7 +76,7 @@ test("a report missing a step is a failure, and a missing report says the try-ou
 });
 
 test("nothing of the running install reaches the try-out, and only `--branch-smoke=<report>` starts one", () => {
-  const env = smokeEnv({ PATH: "/bin", BRANCH_DATA_DIR: "/owner/data", BRANCH_PROVIDER: "demo", ELECTRON_RUN_AS_NODE: "1", NODE_OPTIONS: "--inspect", HOME: "/home/o" });
+  const env = smokeEnv({ PATH: "/bin", BRANCH_DATA_DIR: "/owner/data", BRANCH_PROVIDER: "openai", ELECTRON_RUN_AS_NODE: "1", NODE_OPTIONS: "--inspect", HOME: "/home/o" });
   assert.deepEqual(env, { PATH: "/bin", HOME: "/home/o" });
   assert.equal(smokeReportPath(["app", "--branch-smoke=/tmp/r.json"]), "/tmp/r.json");
   assert.equal(smokeReportPath(["app", "--branch-smoke="]), null);

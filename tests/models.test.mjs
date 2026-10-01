@@ -200,18 +200,19 @@ test("presets come from BRANCH_MODEL_PRESETS with keys read from named variables
   const presets = presetsFromEnv({
     BRANCH_MODEL_PRESETS: JSON.stringify([
       { id: "fast", name: "Fast", provider: "openai", endpoint: "https://api.example.com/v1", model: "small", apiKeyEnv: "FAST_KEY" },
-      { id: "demo", name: "Demo", provider: "demo" },
     ]),
     FAST_KEY: "secret",
   });
-  assert.deepEqual(presets.map((preset) => [preset.id, preset.provider.name, preset.model]),
-    [["fast", "openai-compatible", "small"], ["demo", "offline-demo-fixture", "demo"]]);
+  assert.deepEqual(presets.map((preset) => [preset.id, preset.provider.name, preset.model]), [["fast", "openai-compatible", "small"]]);
+  // provider-audit: there is no demo model; no setting can name one.
+  assert.throws(() => presetsFromEnv({ BRANCH_MODEL_PRESETS: JSON.stringify([{ id: "demo", name: "Demo", provider: "demo" }]) }));
+  assert.throws(() => presetsFromEnv({ BRANCH_PROVIDER: "demo" }), /BRANCH_PROVIDER must be openai or anthropic/);
   assert.throws(() => presetsFromEnv({ BRANCH_MODEL_PRESETS: "nope" }), /must be JSON/);
   assert.throws(() => presetsFromEnv({ BRANCH_MODEL_PRESETS: JSON.stringify([
     { id: "x", name: "X", provider: "openai", endpoint: "https://api.example.com/v1", model: "m", apiKeyEnv: "MISSING" }]) }),
     /BRANCH_API_KEY is required/);
-  const single = presetsFromEnv({ BRANCH_PROVIDER: "demo" });
-  assert.deepEqual(single.map((preset) => [preset.id, preset.name]), [["default", "Test fixture"]]);
+  const single = presetsFromEnv({ BRANCH_PROVIDER: "openai", BRANCH_ENDPOINT: "https://api.example.com/v1", BRANCH_MODEL: "m", BRANCH_API_KEY: "k" });
+  assert.deepEqual(single.map((preset) => [preset.id, preset.name]), [["default", "Default connection"]]);
   // With no model named there are no presets at all: nothing falls back to the fixture.
   assert.deepEqual(presetsFromEnv({}), []);
 });

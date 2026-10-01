@@ -12,13 +12,14 @@ import { PARITY, TERMINAL_ALIASES, TERMINAL_CLI_COMMANDS } from "../dist/termina
 import { terminalArgv } from "../dist/terminal-cli.js";
 import { allHomes } from "../dist/terminal-places.js";
 import { stripAnsi } from "../dist/terminal-style.js";
+import { fixtureModel } from "./fixtures/fixture-model.mjs";
 
 const run = promisify(execFile);
 async function workspace(t) {
   const root = await mkdtemp(join(tmpdir(), "branch-term-cli-"));
   t.after(() => discardTemp(root));
-  // BRANCH_PROVIDER=demo names the scripted test fixture: without a model named, Branch has none and refuses every task.
-  return { ...process.env, BRANCH_PROVIDER: "demo", BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), FORCE_TTY: "0", NO_COLOR: undefined, BRANCH_PORT: "0" };
+  // The tests' scripted model (tests/fixtures/fixture-model.mjs): without a model named, Branch has none and refuses every task.
+  return { ...process.env, ...(await fixtureModel()).env, BRANCH_WORKSPACE: join(root, "ws"), BRANCH_DATA_DIR: join(root, "data"), FORCE_TTY: "0", NO_COLOR: undefined, BRANCH_PORT: "0" };
 }
 
 test("with no model set up, branch run is refused in plain words and no model is listed", async (t) => {
@@ -133,7 +134,7 @@ test("theme, version, lockdown, permissions and model work from the command line
   assert.match((await branch(env, "lockdown", "off")).out, /^Lockdown is off\./);
   assert.match((await branch(env, "permissions", "read-only")).out, /When to check with me: Read only/);
   assert.match((await branch(env, "approvals")).out, /\* read-only/);
-  assert.match((await branch(env, "models")).out, /^\* default\tTest fixture/m);
+  assert.match((await branch(env, "models")).out, /^\* default\tDefault connection\tfixture/m);
   const wrong = await branch(env, "model", "use", "nope");
   assert.match(wrong.err, /no model called nope/);
 });
@@ -144,8 +145,11 @@ test("sessions, resume, tools, usage and the lists print what the window shows",
   assert.equal(task.code, 0, task.err);
   const sessions = await branch(env, "sessions");
   assert.match(sessions.out, /say hello/);
-  assert.match((await branch(env, "resume")).out, /you: say hello/, "without a terminal, resume prints the conversation");
-  assert.match((await branch(env, "sessions", "show", sessions.out.slice(0, 8))).out, /you: say hello/);
+  // A model's first answer ends setup, which opens the default Trunk's greeting conversation; that one is the newest,
+  // so this conversation is named by its number.
+  const said = sessions.out.split("\n").find((line) => line.includes("say hello")) ?? "";
+  assert.match((await branch(env, "resume", said.slice(0, 8))).out, /you: say hello/, "without a terminal, resume prints the conversation");
+  assert.match((await branch(env, "sessions", "show", said.slice(0, 8))).out, /you: say hello/);
   const tools = JSON.parse((await branch(env, "tools", "--json")).out);
   assert.ok(Object.values(tools.toolboxes).flat().includes("files.write"));
   assert.match((await branch(env, "usage")).out, /^Since \d{4}-\d\d-\d\d: \d+ tokens used, about \$\d+\.\d\d\./m);

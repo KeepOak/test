@@ -3467,6 +3467,10 @@ Copyright 2025 OpenAI
 
 The command names `branch` answers to beside its own (`config`, `skin`, `cron`, `pause`, `insights`, `checkpoints`, `kanban` and the rest, listed in `src/terminal-parity.ts` and `docs/configuration.md`) were chosen after reading the command lists of Hermes Agent (https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research) and OpenClaw (https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation). No code was taken from either; both are under the MIT licence, whose text is given under IronClaw above.
 
+### OpenClaw: edited chat messages are never commands (UP-CHAT-002), MIT
+
+`editedCommandShaped` and its check in `ChannelRouter.handle` (`src/channels/router.ts`) follow OpenClaw's `handleEditedMessage` in `extensions/telegram/src/bot-handlers.inbound-pipeline.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation): an edit is recorded, never dispatched as a command. The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### OpenClaw and Hermes Agent: the owner's own chat as the main session, MIT
 
 owner-dm-full (`ownerChats` in `src/channels/chat-permissions.ts`, `ownerFullFrom`/`ownerFullRun` in `src/channels/router.ts`, and the per-store check in `runOrigin`, `src/key-context.ts`) follows OpenClaw's sandbox mode "non-main" (`shouldSandboxSession` in `src/agents/sandbox/runtime-status.ts`, with the DM "main" session key in `src/routing/session-key.ts`, https://github.com/openclaw/openclaw, Copyright (c) 2026 OpenClaw Foundation): the owner's direct chat is the main session and runs with the full toolset on the host, while groups and other senders are held back. Hermes Agent's gateway does the same for its allowed users (`_is_user_authorized` in `gateway/authz_mixin.py`, https://github.com/NousResearch/hermes-agent, Copyright (c) 2025 Nous Research). The design was followed and the code written anew for Branch. Both are under the MIT licence, whose text is given under IronClaw above.
@@ -3600,7 +3604,6 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 ### OpenAI Codex usage-limit refusals, Apache-2.0
 
 How a ChatGPT sign-in's 429 is read in `src/provider-retry.ts` and `src/accounts/pool.ts` is adapted from Codex's `codex-rs/codex-api/src/api_bridge.rs` (https://github.com/openai/codex, commit 8bd5a136, Copyright 2025 OpenAI): only an `error.type` of `usage_limit_reached` is a plan limit, lasting until the body's `resets_at` (seconds since the epoch); `usage_not_included` means the plan does not include that use; any other 429 is a passing rate limit. The code was rewritten in TypeScript for Branch. Used under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
-
 ### PicoClaw, MIT
 
 `src/channels/deltachat.ts` follows the JSON-RPC call sequence and message fields in PicoClaw's `pkg/channels/deltachat` (https://github.com/sipeed/picoclaw). Used under the MIT licence:
@@ -3632,6 +3635,10 @@ Permission to use, copy, modify, and/or distribute this software for any purpose
 
 THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+### Hermes Agent: replies in each chat app's own formatting, and streamed replies that end cleanly (UP-CHAT-011, UP-CHAT-012), MIT
+
+`src/channels/chat-markdown.ts` adapts Hermes Agent's `gateway/platforms/signal_format.py` (`markdown_to_signal`) and `gateway/platforms/whatsapp_common.py` (`format_message`); the preview fence closing in `src/channels/reply-stream.ts` follows `gateway/stream_consumer_fences.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). The code was written for Branch in TypeScript. Used under the MIT licence, whose text is given under IronClaw above.
+
 ### OpenFang loop guard (idea only), MIT OR Apache-2.0
 
 The graduated warn / refuse / stop loop guard in `src/loop-guard.ts` — counting identical calls and identical results, noticing calls that go back and forth, and gentler limits for tools meant to be polled — is an idea from OpenFang's `crates/openfang-runtime/src/loop_guard.rs` (https://github.com/RightNow-AI/openfang, MIT OR Apache-2.0). It was written afresh; no code was copied.
@@ -3648,6 +3655,10 @@ Two parts of Branch are adapted from Aider (https://github.com/Aider-AI/aider, c
 - `src/ai-comments.ts` follows `aider/watch.py` and `aider/watch_prompts.py`: the comment pattern (a comment starting with "ai" or ending with "ai", "ai!" or "ai?") and what the resulting task asks for.
 
 Changes: rewritten in TypeScript for Branch; file access goes through Branch's workspace checks.
+
+### Hermes Agent and OpenClaw: spoken replies as voice notes (UP-CHAT-005), MIT
+
+`src/voice-note.ts` adapts Hermes Agent's `tools/tts_text_normalize.py` (`strip_nonspoken_blocks`, `strip_markdown_for_tts`, `smooth_whitespace_for_tts`) and `_wrap_pcm_as_wav` in `tools/tts_tool_delivery.py`, and the OpenAI `response_format: "opus"` request follows `tools/tts_tool.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). The Telegram `sendVoice` / `sendAudio` choice in `src/channels/telegram.ts` follows OpenClaw's `extensions/telegram/src/voice.ts` and `src/media/audio.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch in TypeScript. Used under the MIT licence, whose text is given under IronClaw above.
 
 ### Understand Anything (ideas only), MIT
 
@@ -3725,6 +3736,10 @@ Unless required by applicable law or agreed to in writing, software distributed 
 
 The second model that reviews tool calls in `src/approval-reviewer.ts` — deciding whether a tool that does not say only reads, and checking a risky call against the owner's own rules with its arguments treated as untrusted data — follows the ideas of Goose's `crates/goose/src/permission/permission_judge.rs` and `crates/goose/src/security/adversary_inspector.rs` (https://github.com/block/goose) and Codex's `codex-rs/core/src/guardian/` (https://github.com/openai/codex, Copyright 2025 OpenAI), both licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). It was written afresh; no code was copied.
 
+### Cline, Apache-2.0: asking for an MCP server's secret values
+
+The "Add your own MCP server" form (`secretRow` and `typedSecrets` in `public/app/flows/connectors.js`) asks for each secret's value, as Cline's marketplace install asks for each declared environment variable (`install.env`, https://github.com/cline/cline/blob/fef9de1665d098ef13327656669cc43783151e0b/apps/vscode/src/core/controller/marketplace/marketplace-helpers.ts#L69-L117). The code was written for Branch, which keeps the values in its locker (`withLockerSecrets` in `src/integrations/mcp-config.ts`). Cline is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
+
 ### Goose (Block, Inc.), Apache-2.0
 
 The malware check on add-ons in `src/security-audit/malware-check.ts` and the command-line reading in `src/security-audit/package-launch.ts` are adapted from Goose's `crates/goose/src/agents/extension_malware_check.rs` (https://github.com/block/goose): the OSV query and its pages, refusing only `MAL-` advisories, and finding the package an `npx` or `uvx` command would fetch. Changes: written in TypeScript, sent through Branch's network policy, `pipx run`, `bunx`, `pnpm dlx` and `uv tool run` added, and answers remembered for a while. Used under the Apache License, Version 2.0:
@@ -3734,6 +3749,13 @@ Copyright 2024 Block, Inc.
 Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except in compliance with the License. You may obtain a copy of the License at http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+
+### Hermes Agent and OpenClaw: group command access and pairing (UP-CHAT-007..010), MIT
+
+`groupCommandRefusal` in `src/channels/router.ts` and the `groupCommands` line in `src/channels/chat-permissions.ts` adapt Hermes Agent's `gateway/slash_access.py` (admins run every command, everybody else a small floor, failing closed); resetting the wrong-code count after an approval follows `gateway/pairing.py` (https://github.com/NousResearch/hermes-agent, commit a9a54245, Copyright (c) 2025 Nous Research). Answering a stranger only when a request is new, the cap of three waiting requests, no codes in groups and silent blocks follow OpenClaw's `src/pairing/pairing-store.ts` and `extensions/telegram/src/dm-access.ts` (https://github.com/openclaw/openclaw, commit 1794d8b4, Copyright (c) 2026 OpenClaw Foundation). The code was written for Branch. Used under the MIT licence, whose text is given under IronClaw above.
+### Gemini CLI (Google), Apache-2.0: signing in to an MCP server
+
+`LockerAuthProvider` and `signIn` in `src/integrations/mcp-oauth.ts` implement the MCP SDK's `OAuthClientProvider` (`@modelcontextprotocol/sdk` 1.30.0, MIT, notice above; https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/client/src/client/auth.ts#L246-L330) and follow Gemini CLI's MCP sign-in in starting the callback page first and registering with its real port (https://github.com/google-gemini/gemini-cli/blob/40d4dccfa9aec692b27798ca819b918609e2bc60/packages/core/src/mcp/oauth-provider.ts#L103-L130). The code was written for Branch, which keeps the identity and keys in its locker. Gemini CLI is licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0), distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND.
 
 ### Ollama, MIT
 
@@ -3850,6 +3872,25 @@ The files in `src/learning-more/` were written for Branch after reading these pr
 - `readback.ts` follows the ideas of ZeroClaw's Markdown memory (`crates/zeroclaw-memory/src/markdown.rs`, https://github.com/zeroclaw-labs/zeroclaw, commit 3df68fb, MIT or Apache-2.0) and nanobot's "dream" tidy template (`nanobot/templates/agent/dream.md`, https://github.com/HKUDS/nanobot, commit 2fb1659, MIT).
 
 The MIT licence text is given under IronClaw above. For the Apache-2.0 projects: licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0); you may not use these files except in compliance with the License, and they are distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+
+### MCP TypeScript SDK (Model Context Protocol), MIT
+
+The MCP server's version handshake (`negotiatedProtocolVersion` and `supportedProtocolVersions` in `src/mcp-server.ts`) follows `_oninitialize` in `@modelcontextprotocol/sdk` 1.30.0 (upstream `packages/server/src/server/server.ts`, https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/server.ts#L898-L922): a version it speaks is echoed, any other is answered with the newest, and the version list is the SDK's `SUPPORTED_PROTOCOL_VERSIONS`. The 202 answer to a notification on `/mcp` (`src/server.ts`) follows the SDK's Streamable HTTP server (https://github.com/modelcontextprotocol/typescript-sdk/blob/7f4c12a6ae6b8f22411f7772c88036e1c8055423/packages/server/src/server/streamableHttp.ts#L893-L900). Used under the MIT licence of `@modelcontextprotocol/sdk` 1.30.0, whose text is given above.
+### Hermes Agent Claude subscription DirectSDK plugin (Nous Research), MIT
+
+`src/providers/claude-subscription.ts` and its helpers (`claude-subscription-process.ts`, `claude-subscription-admission.ts`, `claude-subscription-history.ts`) follow the design of the Hermes Agent Claude subscription DirectSDK plugin (https://github.com/NousResearch/hermes-plugin-claude-subscription-directsdk, `directsdk.py` and `admission.py`): one inert native Claude Code process per generation, started with the same native flags, behind a loopback admission relay that allows exactly one upstream request; history replayed over stream-json with zero-turn acknowledgments; and an idle deadline that starts again on every native event (`directsdk.py` `receive`). Used under the MIT licence:
+
+Copyright (c) 2026 Nous Research and contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### Claude 1M context routes: Hermes Agent DirectSDK plugin (Nous Research) and OpenClaw, MIT
+
+The Claude subscription context windows in `src/providers/claude-models.ts` (200K behind a relay, 1M on the `[1m]` route of the known long-context models, none for Haiku) follow Hermes Agent's DirectSDK plugin `model_catalog.py` and `directsdk_setup.py` (reading the plan and model picker from Claude Code's `initialize` answer), under the MIT licence text given above for that plugin, and OpenClaw's `extensions/anthropic/cli-backend.ts` (https://github.com/openclaw/openclaw, MIT, Copyright (c) 2026 OpenClaw Foundation), which selects the 1M window with the same `[1m]` suffix.
 
 ### Helper lifecycle (ideas only), MIT and Apache-2.0
 
@@ -3978,6 +4019,9 @@ Source: https://github.com/NousResearch/hermes-agent/blob/7327624d3500d4bbc9ad58
 - `programStart` in `src/coding/hand-off.ts` starts an npm-installed Codex as its own program with the environment its npm launcher (`codex-cli/bin/codex.js`, commit d14143834) adds, as `codexBinary` in `src/asks/codex-app-server.ts` already did for the app-server.
 
 The Codex parts are used under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0); Codex's NOTICE is given under "OpenAI Codex CLI" above.
+### Codex (OpenAI) refresh-token handling and Gemini CLI (Google) credential merge, Apache-2.0
+
+When a ChatGPT sign-in cannot be renewed, `src/chatgpt-auth.ts` (`refreshEnded`, `ChatGPTAuth.refresh`) decides which refusals end it the way Codex's `codex-rs/login/src/auth/manager.rs` (`classify_refresh_token_failure`, `refresh_token`) does, and reads the saved sign-in again before renewing it (https://github.com/openai/codex). `OAuthConnections.token` in `src/oauth.ts` keeps the refresh token already held when a renewal sends none, as Gemini CLI's `packages/core/src/code_assist/oauth-credential-storage.ts` (`saveCredentials`) does (https://github.com/google-gemini/gemini-cli). Both projects are licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0). Copyright 2025 OpenAI; Copyright 2025 Google LLC.
 
 ## OpenClaw GitHub device flow
 

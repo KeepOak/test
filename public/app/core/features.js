@@ -171,6 +171,8 @@ export const FEATURES = {
   "mcp-add": "ready",
   "mcp-cat": "ready",
   "mcp-save": "ready",
+  "mcp-signin": "ready",
+  "mcp-var-add": "ready",
   "mcp-test": "ready",
   "mem": "ready",
   "memarch15": "ready",

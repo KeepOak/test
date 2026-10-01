@@ -2,6 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
+import { isIP } from "node:net";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import ts from "typescript";
@@ -92,7 +93,7 @@ function sockets(stage, readOnly = true) {
   };
   const exports = {};
   const sandbox = {
-    exports, Buffer, assertHealthCurrent, currentHealthCheck, tlsConnect: connect,
+    exports, Buffer, assertHealthCurrent, currentHealthCheck, tlsConnect: connect, isIP, // isIP: #928's tlsServerName
     netConnect() { throw new Error("health must use TLS"); },
     setTimeout(fn, ms) { const id = ++timerId; timers.set(id, { fn, at: clock + ms }); return id; },
     clearTimeout(id) { timers.delete(id); },

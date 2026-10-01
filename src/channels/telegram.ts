@@ -1,6 +1,9 @@
+import { calledByName, type GroupReading } from "./addressing.js";
 import { z } from "zod";
+import { telegramMarkdown } from "./chat-markdown.js";
 import type { ChannelAdapter, ChannelHealth, InboundMessage, MessageFormat, OutgoingFile, SendGate } from "./router.js"; // R17-C: OutgoingFile
 import { telegramEntities } from "./progress-render.js";
+import { isOggOpus } from "../voice-note.js";
 import { ArtifactTooLarge, maxArtifactBytes } from "../artifacts.js";
 import type { ChannelPosition } from "../never-break/channel-position.js";
 import { verifyInitData, type MiniAppUser } from "../miniapp/init-data.js";
@@ -34,7 +37,9 @@ export interface TelegramOptions {
 export const telegramBotId = (token: string): string => token.split(":")[0] ?? "";
 /** P17-D §8: what Settings › Chat apps and the Inbox show while Telegram refuses the bot token. */
 export const tokenRefused = "Telegram refused the bot token, so messages sent to the bot since then haven't reached Branch. It was probably revoked or replaced in BotFather: paste the new token to bring it back.";
-const userSchema = z.object({ id: z.number(), is_bot: z.boolean().optional(), first_name: z.string().optional(), username: z.string().optional() }).passthrough();
+const userSchema = z.object({ id: z.number(), is_bot: z.boolean().optional(), first_name: z.string().optional(), username: z.string().optional(),
+  /** getMe only: false while the bot's privacy mode is on, when a group hands it only mentions, replies and commands. */
+  can_read_all_group_messages: z.boolean().optional() }).passthrough();
 const voiceSchema = z.object({
   file_id: z.string().min(1).max(200),
   duration: z.number().nonnegative().optional(),
@@ -88,6 +93,18 @@ const formatted = (format?: MessageFormat) => ({
   ...(!format?.plain && format?.spans?.length ? { entities: telegramEntities(format.spans) } : {}),
   ...(format?.quiet ? { disable_notification: true } : {}),
 });
+/**
+ * UP-CHAT-011: words sent with no spans of their own (a reply, a command's answer) have their Markdown shown as Telegram
+ * entities (src/channels/chat-markdown.ts), unless the owner chose plain words for this app.
+ */
+const rich = (text: string, format?: MessageFormat): Record<string, unknown> => {
+  if (format?.plain || format?.spans?.length) return { text, ...formatted(format) };
+  const read = telegramMarkdown(text);
+  return { text: read.text, ...(read.entities.length ? { entities: read.entities } : {}), ...(format?.quiet ? { disable_notification: true } : {}) };
+};
+/** Telegram refused the styles themselves: the same words go again without them rather than not at all. */
+const entitiesRefused = (error: unknown, fields: Record<string, unknown>): boolean =>
+  !!fields.entities && /entit/i.test(error instanceof Error ? error.message : String(error));
 /** Topic addresses remain distinct in the router; Telegram receives the underlying chat and thread. */
 const topicAddress = (chatId: number, threadId?: number): string =>
   threadId === undefined ? String(chatId) : `${chatId}:${threadId}`;
@@ -152,6 +169,23 @@ export class TelegramAdapter implements ChannelAdapter {
   private async learnName(stoppable = false): Promise<void> {
     const me = userSchema.parse(await this.call("getMe", {}, false, stoppable));
     this.username = me.username ?? null;
+    this.me = { id: me.id, firstName: me.first_name ?? null, readsAll: me.can_read_all_group_messages ?? null };
+  }
+  /** The bot itself, from getMe: its id, the name people call it by, and whether privacy mode lets it read every group message. */
+  private me: { id: number; firstName: string | null; readsAll: boolean | null } | null = null;
+  /**
+   * Group chats: with privacy mode on (BotFather's default) a group hands the bot only messages that @mention it, reply to
+   * it or are commands, unless the bot is an admin there. Telegram's own answers decide it: getMe, then getChatMember.
+   */
+  async groupReading(chatId?: string): Promise<GroupReading> {
+    if (!this.me) await this.learnName();
+    if (this.me?.readsAll) return { everyMessage: true };
+    if (chatId && this.me) {
+      const member = z.object({ status: z.string() }).passthrough().safeParse(
+        await this.call("getChatMember", { chat_id: telegramTarget(chatId).chat_id, user_id: this.me.id }).catch(() => null));
+      if (member.success && ["administrator", "creator"].includes(member.data.status)) return { everyMessage: true };
+    }
+    return { everyMessage: false, fix: telegramPrivacyFix(this.username) };
   }
   async stop(): Promise<void> {
     this.stopping.abort();
@@ -188,10 +222,14 @@ export class TelegramAdapter implements ChannelAdapter {
     return topicAddress(target.chat_id, result.message_thread_id);
   }
   async send(chatId: string, text: string, replyToMessageId?: string, format?: MessageFormat, gate?: SendGate): Promise<string | undefined> {
-    const result = await this.call("sendMessage", {
-      ...telegramTarget(chatId), text, ...formatted(format),
+    const body: Record<string, unknown> = { ...telegramTarget(chatId), ...rich(text, format),
       ...(replyToMessageId && /^\d+$/.test(replyToMessageId) ? { reply_parameters: { message_id: Number(replyToMessageId), allow_sending_without_reply: true } } : {}),
-    }, false, false, gate);
+    };
+    const result = await this.call("sendMessage", body, false, false, gate).catch((error: unknown) => {
+      if (!entitiesRefused(error, body)) throw error;
+      const { entities: _dropped, ...plain } = body;
+      return this.call("sendMessage", { ...plain, text }, false, false, gate);
+    });
     const parsed = z.object({ message_id: z.number() }).passthrough().safeParse(result);
     return parsed.success ? String(parsed.data.message_id) : undefined;
   }
@@ -206,18 +244,28 @@ export class TelegramAdapter implements ChannelAdapter {
     const result = await this.call("sendMessageDraft", { ...target, draft_id: draftId, text: text.slice(0, 3500) }, false, false, gate);
     if (result !== true) throw new Error("Telegram refused the draft preview");
   }
-  /** Sends a spoken reply as a Telegram voice note. Telegram wants the file as a form upload. */
+  /** UP-CHAT-005: a spoken reply is made as OGG/Opus for this app, so it shows as a voice bubble (see `sendVoice`). */
+  readonly voiceNoteType = "audio/ogg";
+  /**
+   * Sends a spoken reply. OGG/Opus goes out with `sendVoice` and shows as a voice bubble; anything else (MP3 or WAV,
+   * when this computer could not convert it) goes out with `sendAudio` as an audio file, as OpenClaw's
+   * extensions/telegram/src/voice.ts `resolveTelegramVoiceSend` (MIT) falls back. Telegram wants the file as a form upload.
+   */
   async sendVoice(chatId: string, audio: Uint8Array, mediaType: string, replyToMessageId?: string): Promise<string | undefined> {
     const form = new FormData();
     const target = telegramTarget(chatId);
     form.append("chat_id", String(target.chat_id));
     if (target.message_thread_id !== undefined) form.append("message_thread_id", String(target.message_thread_id));
-    const extension = mediaType.includes("mpeg") ? "mp3" : mediaType.includes("wav") ? "wav" : "ogg";
-    form.append("audio", new Blob([new Uint8Array(audio)], { type: mediaType }), `reply.${extension}`);
-    if (replyToMessageId) form.append("reply_to_message_id", replyToMessageId);
-    const response = await this.fetch(`${this.base}/sendAudio`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
+    const bubble = isOggOpus(mediaType);
+    const method = bubble ? "sendVoice" : "sendAudio";
+    const extension = bubble ? "ogg" : mediaType.includes("wav") ? "wav" : "mp3";
+    form.append(bubble ? "voice" : "audio", new Blob([new Uint8Array(audio)], { type: mediaType }), `reply.${extension}`);
+    // A quoted message that was deleted meanwhile does not stop the reply (as `send` does).
+    if (replyToMessageId && /^\d+$/.test(replyToMessageId))
+      form.append("reply_parameters", JSON.stringify({ message_id: Number(replyToMessageId), allow_sending_without_reply: true }));
+    const response = await this.fetch(`${this.base}/${method}`, { method: "POST", body: form, signal: AbortSignal.timeout(60000) });
     const parsed = responseSchema.parse(await response.json());
-    if (!parsed.ok) throw new Error(`Telegram sendAudio failed: ${parsed.description ?? response.status}`);
+    if (!parsed.ok) throw new Error(`Telegram ${method} failed: ${parsed.description ?? response.status}`);
     const message = z.object({ message_id: z.number() }).passthrough().safeParse(parsed.result);
     return message.success ? String(message.data.message_id) : undefined;
   }
@@ -418,8 +466,12 @@ export class TelegramAdapter implements ChannelAdapter {
   }
   async edit(chatId: string, messageId: string, text: string, format?: MessageFormat, gate?: SendGate): Promise<void> {
     try {
-      await this.call("editMessageText", { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), text,
-        ...formatted({ spans: format?.spans }) }, false, false, gate);
+      const body: Record<string, unknown> = { chat_id: telegramTarget(chatId).chat_id, message_id: Number(messageId), ...rich(text, { spans: format?.spans, plain: format?.plain }) };
+      await this.call("editMessageText", body, false, false, gate).catch((error: unknown) => {
+        if (!entitiesRefused(error, body)) throw error;
+        const { entities: _dropped, ...plain } = body;
+        return this.call("editMessageText", { ...plain, text }, false, false, gate);
+      });
     } catch (error) {
       // Sending the same words again is refused with this; the message already says them.
       if (!/message is not modified/i.test(error instanceof Error ? error.message : "")) throw error;
@@ -443,13 +495,15 @@ export class TelegramAdapter implements ChannelAdapter {
       entity.type === "mention" && written.slice(entity.offset, entity.offset + entity.length).toLowerCase() === mention);
     const replyToBot = !!this.username && message.reply_to_message?.from?.username === this.username;
     const direct = message.chat.type === "private";
+    // Called by name ("Branch, …"). With privacy mode on Telegram only hands such a message over to an admin bot.
+    const named = !direct && calledByName(written, [this.username, this.me?.firstName]);
     const text = mention && mentioned ? written.replace(new RegExp(mention, "ig"), "").trim() : written;
     return {
       channel: this.id, chatId: topicAddress(message.chat.id, message.message_thread_id), chatKind: direct ? "direct" : "group",
       ...(message.chat.title ? { chatTitle: message.chat.title } : {}),
       senderId: String(message.from.id), senderName: message.from.username ?? message.from.first_name ?? String(message.from.id),
       text: [telegramForwardContext(message.forward_origin), text, extra].filter(Boolean).join("\n"),
-      addressed: direct || mentioned || replyToBot || (!!spoken && direct), messageId: String(message.message_id),
+      addressed: direct || mentioned || replyToBot || named || (!!spoken && direct), messageId: String(message.message_id),
       ...(message.media_group_id ? { groupId: message.media_group_id } : {}),
       ...(media ? { attachments: [{
         name: message.document?.file_name ?? message.video?.file_name ?? (sticker ? `sticker-${message.message_id}.webp` : `photo-${message.message_id}.jpg`),
@@ -525,6 +579,12 @@ export class TelegramAdapter implements ChannelAdapter {
       { status: response.status, ...(parsed.parameters?.retry_after ? { retryAfter: parsed.parameters.retry_after } : {}) });
     return parsed.result;
   }
+}
+
+/** What to change in Telegram so a bot reads every message in its groups, in plain words. */
+export function telegramPrivacyFix(username: string | null): string {
+  return `Telegram's privacy mode is on for ${username ? `@${username}` : "this bot"}, so in groups it only sees messages that mention it, reply to it or are commands. `
+    + "To answer every message, send /setprivacy to @BotFather, choose the bot and pick Disable, then remove the bot from the group and add it again; or make the bot an admin of the group.";
 }
 
 /** What Telegram shows as a photo: JPEG, PNG or WebP, up to its 10 MB photo limit. */
