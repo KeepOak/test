@@ -5,6 +5,8 @@
 // data folder. Ordinary files run BRANCH_TEST_CONCURRENCY's first number at a time (default 3), browser files its
 // second (default 1) beside them, and desktop-app files one at a time: three Electron windows at once on a
 // four-processor build machine once took over two minutes just to say "Connected". The longest files start first.
+// A file that measures how fast something answers (`alone` below) runs with nothing beside it in its share: its
+// budgets hold for one machine's own speed, and three neighbours at once made it three to four times slower.
 //
 // `--lane=linux|windows|macos` picks one system's part of the suite (see lanes() below): each file runs once, on
 // Linux, unless it holds tests only another system can run. `--shard=2/6` then runs the second of six shares of
@@ -26,6 +28,9 @@ import { fileURLToPath } from "node:url";
 
 const folders = ["tests", join("packages", "sdk", "test")];
 const desktop = (file) => /^tests[\\/]desktop[^\\/]*\.test\.mjs$/.test(file);
+/** Files timed against a budget, run with nothing else at the same time (#1199: owner-browser-speed's key and click
+    medians went from about 65 ms alone to 254-302 ms beside three other files, over its 250 ms budget). */
+export const alone = (file) => /^tests[\\/]owner-browser-speed\.test\.mjs$/.test(file);
 const browserImport = /^\s*(?:import\b[^\n]*from\s+["']playwright["']|(?:const|let|var)\b[^\n]*import\(["']playwright["']\))/m;
 const here = fileURLToPath(new URL(".", import.meta.url));
 const weightsFile = join(here, "..", "tests", "shard-weights.json");
@@ -228,21 +233,25 @@ export function runFile(file, { limit = 0, spawnTest = spawn, now = Date.now } =
 
 /**
  * Run files side by side: up to `limits[kind]` of each kind at once, the longest first. `kindOf` names a file's kind
- * (shared, browser or desktop). Resolves with every file's result in the order they finished.
+ * (shared, browser or desktop). A file `solo` names starts only when nothing runs, and nothing starts beside it.
+ * Resolves with every file's result in the order they finished.
  */
-export async function runPool(files, { kindOf, limits, cost = () => 0, runOne = runFile, onDone = () => {} }) {
+export async function runPool(files, { kindOf, limits, cost = () => 0, solo = () => false, runOne = runFile, onDone = () => {} }) {
   const waiting = [...files].sort((a, b) => cost(b) - cost(a));
   const running = new Map(Object.keys(limits).map((kind) => [kind, 0]));
   const results = [];
+  let soloRunning = false;
   await new Promise((allDone) => {
     const next = () => {
       if (!waiting.length && [...running.values()].every((count) => count === 0)) return allDone();
-      for (let index = 0; index < waiting.length; index++) {
-        const kind = kindOf(waiting[index]);
-        if (running.get(kind) >= limits[kind]) continue;
+      for (let index = 0; index < waiting.length && !soloRunning; index++) {
+        const kind = kindOf(waiting[index]), single = solo(waiting[index]);
+        if (running.get(kind) >= limits[kind] || (single && [...running.values()].some((count) => count > 0))) continue;
         const [file] = waiting.splice(index--, 1);
         running.set(kind, running.get(kind) + 1);
+        soloRunning = single;
         runOne(file).then((result) => {
+          if (single) soloRunning = false;
           running.set(kind, running.get(kind) - 1);
           results.push(result);
           onDone(result);
@@ -320,7 +329,7 @@ async function main() {
   const [shared, browser] = (process.env.BRANCH_TEST_CONCURRENCY ?? "3,1").split(",").map(Number);
   const limit = Number(process.env.BRANCH_TEST_FILE_TIMEOUT) || 0;
   const results = await runPool(files, {
-    kindOf: (file) => kind.get(file), limits: { shared: shared || 3, browser: browser || 1, desktop: 1 },
+    kindOf: (file) => kind.get(file), limits: { shared: shared || 3, browser: browser || 1, desktop: 1 }, solo: alone,
     cost: costOf(weights), runOne: (file) => runFile(file, { limit }), onDone: report,
   });
   let failed = results.filter((result) => testProcessStatus(result, [result.file], () => {}) !== 0);

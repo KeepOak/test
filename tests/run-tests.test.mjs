@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, RETRY_AT_MOST, retryFailed, runFile, runPool,
+import { alone, laneGroups, lanes, loadWeights, onlyGroups, onlyOn, parseFilesFrom, parseShard, RETRY_AT_MOST, retryFailed, runFile, runPool,
   shareFiles, shards, testGroups, testProcessStatus } from "../scripts/run-tests.mjs";
 import { mergeWeights, readTimings } from "../scripts/test-weights.mjs";
 import { FULL_MATRIX, planMatrix } from "../scripts/select-affected-tests.mjs";
@@ -199,6 +199,31 @@ test("files run side by side within each kind's limit, the longest first", async
   assert.deepEqual(most, { shared: 2, browser: 1, desktop: 1 });
   assert.deepEqual(started.slice(0, 4), ["b", "e", "c", "g"], "the longest of each kind starts first");
   assert.deepEqual(await runPool([], { kindOf: () => "shared", limits: { shared: 1 }, runOne: () => assert.fail("nothing to run") }), []);
+});
+
+test("a file timed against a budget runs with nothing beside it, and nothing starts while it runs (#1199)", async () => {
+  const kinds = { a: "shared", b: "shared", c: "shared", timed: "browser", d: "browser", e: "desktop" };
+  const cost = { a: 1, b: 9, c: 5, timed: 20, d: 2, e: 3 };
+  let running = 0;
+  const beside = [], log = [];
+  const runOne = async (file) => {
+    running++;
+    log.push(`start ${file}`);
+    if (file === "timed") beside.push(running - 1);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    if (file === "timed") beside.push(running - 1);
+    log.push(`end ${file}`);
+    running--;
+    return { file, status: 0 };
+  };
+  const results = await runPool(Object.keys(kinds), { kindOf: (file) => kinds[file], limits: { shared: 2, browser: 1, desktop: 1 },
+    cost: (file) => cost[file], solo: (file) => file === "timed", runOne });
+  assert.deepEqual(results.map((result) => result.file).sort(), Object.keys(kinds).sort());
+  assert.deepEqual(beside, [0, 0], "nothing ran beside it, at its start or its end");
+  const at = log.indexOf("start timed");
+  assert.equal(log[at + 1], "end timed", "nothing started while it ran");
+  // The real suite: owner-browser-speed is the one file timed against a budget.
+  assert.deepEqual(testGroups().browser.filter(alone).map((file) => file.replace(/\\/g, "/")), ["tests/owner-browser-speed.test.mjs"]);
 });
 
 test("a file that never exits is ended at its limit and named, and a passing file reports its seconds", async () => {
