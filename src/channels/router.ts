@@ -236,16 +236,16 @@ export interface ChannelAdapter {
   /** The largest file this app takes from a bot, in bytes. */
   readonly maxFileBytes?: number;
   /** Sends one file with an optional caption, and returns the id of the message it made. */
-  sendFile?(chatId: string, file: OutgoingFile, replyToMessageId?: string): Promise<string | undefined>;
+  sendFile?(chatId: string, file: OutgoingFile, replyToMessageId?: string, gate?: SendGate): Promise<string | undefined>;
   // ---- end R17-C ----
   // ---- A picture kept up to date in place (the live browser in a chat, SCREEN-103/104) -------------
   // Both or neither. A failure must throw. `buttons` go under the picture and come back as a press, like sendButtons'.
   /** Sends a picture (shown inline, not as a document) with its caption and buttons; returns its message id. */
   /** This adapter shows pictures without inline owner controls. */
   readonly pictureViewOnly?: boolean;
-  sendPicture?(chatId: string, file: OutgoingFile, buttons: ApprovalButton[], replyToMessageId?: string): Promise<string | undefined>;
+  sendPicture?(chatId: string, file: OutgoingFile, buttons: ApprovalButton[], replyToMessageId?: string, gate?: SendGate): Promise<string | undefined>;
   /** Replaces the picture, caption and buttons of a message `sendPicture` made. */
-  editPicture?(chatId: string, messageId: string, file: OutgoingFile, buttons: ApprovalButton[]): Promise<void>;
+  editPicture?(chatId: string, messageId: string, file: OutgoingFile, buttons: ApprovalButton[], gate?: SendGate): Promise<void>;
   /**
    * The Telegram Mini App's signed launch data, checked with this bot's own token (src/miniapp/init-data.ts): the user
    * who opened it. Throws when it was not made by this bot or is too old.
@@ -2121,8 +2121,28 @@ export class ChannelRouter {
       const words = this.hideLeaks(this.runtime.hideSecrets([seen.title.trim(), host].filter(Boolean).join(" · ")));
       return { bytes: seen.frame, caption: words ? `🌐 ${words}` : "" };
     } : undefined;
+    // A picture goes out only for the person, chat app connection, sender and task it was taken for, as a reply does
+    // (replyFor). Its request is registered with the own-message sends, so a person switch, Branch's lock, Lockdown or
+    // a disconnect aborts it on the way out, and the task's Stop does too.
+    const who = this.store.profiles.active()?.id ?? null;
+    const pictureAllowed = () => !turn?.dropped && this.adapters.get(message.channel)?.adapter === adapter
+      && (this.store.profiles.active()?.id ?? null) === who
+      && !lockedDown(this.store, this.runtime.owner) && this.liveOn()
+      && this.senderAllowed(message.channel, message.senderId)
+      && !["cancelled", "interrupted"].includes(this.store.run(runOf() ?? "")?.status ?? "");
+    const pictureSend = pictures ? async <T>(work: (gate: SendGate) => Promise<T>): Promise<T> => {
+      const sending = new AbortController(), runId = runOf(), task = runId ? this.runtime.activeRunSignal(runId) : null;
+      const signal = task ? AbortSignal.any([sending.signal, task]) : sending.signal;
+      this.messageSends.set(sending, message.channel);
+      try {
+        return await work({ signal, check: () => {
+          signal.throwIfAborted();
+          if (!pictureAllowed()) throw new Error("Live pictures are no longer allowed in this chat.");
+        } });
+      } finally { this.messageSends.delete(sending); }
+    } : undefined;
     return new LiveStatus({ adapter, chatId: message.chatId, messageId: message.messageId, reactTo: message.reactTo,
-      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress, react: this.style(message).react, picture, pictureButtons,
+      allowed: () => this.liveOn(), kindsOnly: message.chatKind === "group", progress, react: this.style(message).react, picture, pictureButtons, pictureSend,
       milestones: adapter.kind === "whatsapp" && message.chatKind === "direct" ? () => {
         const current = this.stepsDisplay(message.channel), toggles = this.switches();
         return this.senderAllowed(message.channel, message.senderId) && toggles.liveStatus !== "off" && toggles.steps !== "off"
