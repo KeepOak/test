@@ -9139,7 +9139,7 @@
   "window.settings.appearance.your-own": "Le vôtre",
   "window.settings.appearance.your-themes": "Vos thèmes",
   "window.settings.computer.a-github-action-and-a-gitlab": "Une GitHub Action et un composant GitLab.",
-  "window.settings.computer.a-plan-can-be-tried-compared": "Un plan peut être essayé, comparé et fusionné ; une conversation dérivée a sa propre copie.",
+  "window.settings.computer.a-plan-can-be-tried-compared": "Les assistants qui travaillent en parallèle ont chacun leur propre copie d’un projet Git, retirée quand ils ont fini. Une conversation dérivée n’a une copie que si les dérivations sont activées.",
   "window.settings.computer.a-right-click-in-chrome-or": "Un clic droit dans Chrome ou Edge envoie la page à un Trunk. S’active quand l’extension de navigateur est installée.",
   "window.settings.computer.a-sealed-box-keeps-scripts-away": "Une boîte scellée garde les scripts loin de vos fichiers, sauf si une tâche en a besoin.",
   "window.settings.computer.a-step-by-step-trace-you": "Une trace pas à pas que vous pouvez rejouer.",
