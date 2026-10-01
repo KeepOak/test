@@ -50,3 +50,87 @@ test("a renewal that fails is not kept: the next call tries again", async () => 
   assert.equal(await connections.accessToken(provider), "fresh");
   assert.equal(calls, 2);
 });
+
+/* The service answers each renewal only when the test says so; each POST is kept with its address and form. */
+function heldService() {
+  const posts = [];
+  const fetchImpl = async (url, init) => {
+    const form = new URLSearchParams(String(init.body));
+    let answer;
+    const answered = new Promise((done) => { answer = done; });
+    const post = { url: String(url), clientId: form.get("client_id"), refresh: form.get("refresh_token"), answer };
+    posts.push(post);
+    const access = await answered;
+    return new Response(JSON.stringify({ access_token: access, refresh_token: `${access}-refresh`, expires_in: 3600 }),
+      { status: 200, headers: { "content-type": "application/json" } });
+  };
+  /* Waits up to two seconds for the count, so a call that joined instead of renewing fails its test, never hangs it. */
+  const until = async (count) => {
+    for (const end = Date.now() + 2000; posts.length < count && Date.now() < end;) await new Promise((resolve) => setTimeout(resolve, 5));
+  };
+  return { posts, fetchImpl, until };
+}
+const expired = (access, refresh) => ({ accessToken: access, refreshToken: refresh, tokenType: "Bearer",
+  expiresAt: new Date(Date.now() - 1000).toISOString(), scope: null, obtainedAt: new Date().toISOString() });
+const savedAccess = (locker) => JSON.parse(locker.kept.get(oauthSecretName("svc"))).accessToken;
+
+/* A caller whose sign-in differs in one way never joins the renewal under way: it renews with its own client, tenant or
+   address, gets that renewal's own answer, and the older renewal, answering last, is not written over it. */
+const changes = {
+  "client": { clientId: "client-2" },
+  "tenant": { tokenUrl: "https://login.example/tenant-b/token", authorizeUrl: "https://login.example/tenant-b/authorize" },
+  "token address": { tokenUrl: "https://other.example/token" },
+};
+for (const [what, change] of Object.entries(changes)) {
+  test(`a call with a different ${what} never shares the renewal under way`, async () => {
+    const first = { ...provider, tokenUrl: "https://login.example/tenant-a/token", authorizeUrl: "https://login.example/tenant-a/authorize" };
+    const second = { ...first, ...change };
+    const locker = lockerWith(expired("old", "refresh-1"));
+    const service = heldService();
+    const connections = new OAuthConnections("owner", locker, policy, service.fetchImpl);
+    const older = connections.accessToken(first);
+    await service.until(1);
+    const newer = connections.accessToken(second);
+    await service.until(2);
+    assert.equal(service.posts.length, 2, "the changed sign-in renews on its own");
+    assert.equal(service.posts[1].url, second.tokenUrl);
+    assert.equal(service.posts[1].clientId, second.clientId);
+    service.posts[1].answer("for-second");
+    assert.equal(await newer, "for-second", "the changed caller gets its own renewal's key");
+    service.posts[0].answer("for-first");
+    await older;
+    assert.equal(savedAccess(locker), "for-second", "the older renewal is not written over the newer sign-in");
+  });
+}
+
+test("a replaced expired sign-in renews with its own refresh key, never the old one's", async () => {
+  const locker = lockerWith(expired("old", "refresh-1"));
+  const service = heldService();
+  const connections = new OAuthConnections("owner", locker, policy, service.fetchImpl);
+  const older = connections.accessToken(provider);
+  await service.until(1);
+  locker.kept.set(oauthSecretName("svc"), JSON.stringify(expired("replaced", "refresh-2")));
+  const newer = connections.accessToken(provider);
+  await service.until(2);
+  assert.deepEqual(service.posts.map((p) => p.refresh), ["refresh-1", "refresh-2"]);
+  service.posts[1].answer("for-replacement");
+  assert.equal(await newer, "for-replacement");
+  service.posts[0].answer("for-old");
+  assert.equal(await older, "for-replacement", "the old renewal's key is dropped; its caller reads the sign-in now saved");
+  assert.equal(savedAccess(locker), "for-replacement");
+});
+
+test("a sign-in replaced while its renewal runs keeps the new sign-in: the renewal's answer is neither saved nor handed out", async () => {
+  const locker = lockerWith(expired("old", "refresh-1"));
+  const service = heldService();
+  const connections = new OAuthConnections("owner", locker, policy, service.fetchImpl);
+  const older = connections.accessToken(provider);
+  await service.until(1);
+  const fresh = { ...expired("signed-in-again", "refresh-9"), expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
+  locker.kept.set(oauthSecretName("svc"), JSON.stringify(fresh));
+  assert.equal(await connections.accessToken(provider), "signed-in-again", "a call after the replacement gets the new sign-in at once");
+  service.posts[0].answer("from-old-renewal");
+  assert.equal(await older, "signed-in-again", "the waiting caller gets the new sign-in, not the old renewal's key");
+  assert.equal(savedAccess(locker), "signed-in-again", "the old renewal's answer is not written over the new sign-in");
+  assert.equal(service.posts.length, 1);
+});
