@@ -7,7 +7,7 @@
    the conversation is in the list and the Inbox's Finished. Each waits in one of the window's few long waits
    (core/inflight.js), shared with the panes. */
 
-import { S, E, refresh } from "../core/state.js";
+import { S, E, refresh, activeId } from "../core/state.js";
 import { api } from "../core/api.js";
 import { render, onRender } from "../core/dom.js";
 import { toast } from "../core/ui.js";
@@ -19,9 +19,11 @@ import { t } from "../../i18n.js";
 
 const LINES = { completed: null, needs_input: "window.chat.bgsend.waiting", failed: "window.chat.bgsend.failed", cancelled: "panels.state.stopped", interrupted: "panels.state.stopped", budget_exceeded: "window.chat.bgsend.failed" };
 const ENDED = new Set(["completed", "failed", "cancelled", "interrupted", "budget_exceeded"]);
+/* Each first task is kept with the person who started it (activeId at the press): its card names that person's prompt
+   and reply, so it is shown only while that person uses the window, and waits while someone else does. */
 const firstTasks = new Map();
-function finished(run, prompt) {
-  if (!ENDED.has(run?.status)) return false;
+function finished(run, prompt, profile) {
+  if (!ENDED.has(run?.status) || activeId() !== profile) return false;
   const title = E.sessions.find((s) => (s.sessionId ?? s.id) === run.sessionId)?.title || prompt;
   announce({ sessionId: run.sessionId, who: title, question: lineOf(run) });
   return true;
@@ -29,7 +31,7 @@ function finished(run, prompt) {
 onRender(() => {
   for (const [id, pending] of firstTasks) {
     const run = E.state?.runs?.find((r) => r.id === id);
-    if (finished(run, pending.prompt)) firstTasks.delete(id);
+    if (finished(run, pending.prompt, pending.profile)) firstTasks.delete(id);
   }
 });
 /* The card's words: the reply's opening words once it finished, else how it ended. */
@@ -53,13 +55,13 @@ export function roomAway() {
  */
 export function sendInBackground(prompt, fields = {}, settle = () => {}, draft = prompt) {
   if (!waitRoom()) { toast(t("window.chat.bgsend.full", { count: LONG_WAITS })); return false; }
-  const letGo = holdWait();
+  const letGo = holdWait(), profile = activeId();
   toast(t("window.chat.bgsend.started"));
   api("run", { prompt, ...fields })
     .then(async (run) => {
       settle(false);
       await refresh().catch(() => {}); // the new conversation's row, before the card names it
-      if (!finished(run, prompt) && run?.id && run?.sessionId) firstTasks.set(run.id, { prompt });
+      if (!finished(run, prompt, profile) && run?.id && run?.sessionId) firstTasks.set(run.id, { prompt, profile });
     }, (error) => {
       toast(error.message);
       /* Never started (the engine was away, or refused the message): the words go back in an empty new-conversation box. */

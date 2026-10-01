@@ -20,7 +20,7 @@ import { saveConversationModeSettings } from "../dist/conversation-mode.js";
 const asked = "Collect the weekly numbers in the background please";
 const reply = "The weekly numbers are ready.";
 
-async function fixture(t) {
+async function fixture(t, { steady = false } = {}) {
   let release;
   const gate = new Promise((done) => { release = done; });
   const root = await mkdtemp(join(tmpdir(), "branch-bgsend-"));
@@ -36,6 +36,13 @@ async function fixture(t) {
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { release(); await browser.close(); await server.close(); await app.close(); await discardTemp(root); });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, serviceWorkers: "block" });
+  /* A steady window hears of a switch of person late: it is hidden, so it asks who uses it only every ten seconds (main.js
+     watchPerson), and its event stream never opens, so no "profile" end makes it ask at once. A test can then switch the
+     person between two asks, without the reload that follows, as happens when an answer lands just before that reload. */
+  if (steady) {
+    await context.addInitScript(() => Object.defineProperty(document, "hidden", { configurable: true, get: () => true }));
+    await context.route("**/api/events/stream*", () => new Promise(() => {}));
+  }
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
@@ -120,5 +127,43 @@ test("Alt with Ctrl+Enter starts nothing in the background: the words stay for a
   await page.locator("#prompt").press("Enter");
   await page.locator("#conversation .b .txt").filter({ hasText: "Hello there." }).waitFor({ timeout: 60000 });
   assert.equal(app.store.runs(app.runtime.owner).filter((r) => r.prompt === "Say hello").length, 1, "one foreground task, none in the background");
+  assert.deepEqual(errors, []);
+});
+
+test("an owner's background task is never announced while a household person uses the window, and is once the owner is back", async (t) => {
+  const { app, page, errors, release } = await fixture(t, { steady: true });
+  const sam = app.store.profiles.create({ name: "Sam", pin: "2468" });
+  await page.evaluate(() => {
+    window.cardsShown = [];
+    new MutationObserver(() => { for (const card of document.querySelectorAll(".notif")) window.cardsShown.push(card.textContent); })
+      .observe(document.body, { childList: true, subtree: true });
+  });
+  /* The engine's answer is held here until the window's person has been switched to Sam. */
+  let answer;
+  const held = new Promise((done) => { answer = done; });
+  await page.route("**/api/run", async (route) => { const response = await route.fetch(); await held; await route.fulfill({ response }); });
+  await page.locator(".empty-chat").waitFor();
+  await page.locator("#prompt").fill(asked);
+  await page.locator("#prompt").press("Control+Enter");
+  await page.waitForFunction(() => document.getElementById("prompt")?.value === "");
+  release();
+  const run = await until(() => app.store.runs(app.runtime.owner).find((r) => r.prompt === asked && r.status === "completed"));
+  assert.ok(run, "the owner's task finished in the engine");
+
+  await page.waitForResponse((r) => r.url().endsWith("/api/profiles"), { timeout: 20000 }); // the window's own ask; the next is ten seconds off
+  app.store.profiles.switch({ profileId: sam.id, pin: "2468" });
+  answer();
+  const who = () => page.evaluate(() => import("/app/core/state.js").then((m) => m.activeId()));
+  assert.equal(await until(async () => (await who()) === sam.id, 5000), true, "the window reads Sam");
+  await page.waitForTimeout(700);
+  assert.doesNotMatch((await page.evaluate(() => window.cardsShown)).join(" "), /weekly numbers/i, "nothing of the owner's task is announced to Sam");
+
+  app.store.profiles.switch({ profileId: null });
+  await page.evaluate(async () => {
+    const [{ refresh }, { render }] = await Promise.all([import("/app/core/state.js"), import("/app/core/dom.js")]);
+    await refresh();
+    render();
+  });
+  await page.locator(".notif").filter({ hasText: /weekly numbers are ready/ }).waitFor({ timeout: 5000 });
   assert.deepEqual(errors, []);
 });
