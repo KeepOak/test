@@ -1,3 +1,4 @@
+import { assertHealthCurrent, healthSignal } from "./health-check.js";
 import { lookup } from "node:dns/promises";
 import { BlockList, isIP } from "node:net";
 import { z } from "zod";
@@ -280,7 +281,9 @@ export class NetworkPolicy {
       if (init?.redirect === "follow")
         throw new Error("A checked request does not follow a redirect by itself: each new address is checked first, so follow it by asking again");
       const judged = await policy.judge(url, "address");
-      const next: RequestInit = { ...init, redirect: init?.redirect ?? "error" };
+      assertHealthCurrent();
+      const signal = healthSignal(init?.signal);
+      const next: RequestInit = { ...init, redirect: init?.redirect ?? "error", ...(signal ? { signal } : {}) };
       if (!judged || proxyCarries(url)) return base(input, next);
       const pin: Pin = { host: url.hostname, addresses: judged, dial: policy.dial };
       const held: PinnedInit = { ...next, [pinnedTo]: pin };

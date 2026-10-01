@@ -1,4 +1,5 @@
 import { dirname } from "node:path";
+import { healthChanged } from "./health-changes.js";
 import { forgetTeamResults, markDeletedTurnParts } from "./team-tasks.js"; // Q61
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
@@ -1066,6 +1067,7 @@ export class Store {
         `INSERT INTO ${table} VALUES(?,?,?,?,?) ON CONFLICT(id,owner) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at`,
       )
       .run(id, owner, JSON.stringify(data), now, now);
+    if (table === "settings") healthChanged(this.db, { kind: "setting", owner, id });
     return this.get(table, owner, id)!;
   }
   get(table: RecordTable, owner: string, id: string): SavedRecord | undefined {
@@ -1092,11 +1094,13 @@ export class Store {
       const refusal = pinnedDeleteRefusal(this, this.profiles.ownerName, this.profiles.isOwner(), id);
       if (refusal) throw new PinnedSettingError(refusal);
     }
-    return (
+    const removed = (
       this.db
         .prepare(`DELETE FROM ${table} WHERE owner=? AND id=?`)
         .run(owner, id).changes > 0
     );
+    if (removed && table === "settings") healthChanged(this.db, { kind: "setting", owner, id });
+    return removed;
   }
   usageStore(): UsageStore { return new UsageStore(this.db); }
   /** The spans of running and finished tasks, beside the events. Created on first use. */
