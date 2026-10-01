@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join, posix } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openWall, type WallDeps } from '../sandbox-backends.js';
-import { bwrapMissing, namespacesOff } from '../sandbox-bwrap.js';
+import { accountHome, bwrapMissing, namespacesOff } from '../sandbox-bwrap.js';
 import { confinedWall } from './shell.js';
 import { pluginScratchWall } from '../plugin-scratch-wall.js';
 import { heldCover, venvPrograms, wslHeldPrograms, wslNoBubblewrap, wslNoNamespaces, wslNoNode, wslNoProgram, type WslHeldPlan } from './wsl-held.js';
@@ -77,6 +77,7 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   const chosen = await heldProgram(plan);
   if ('refusal' in chosen) { process.stderr.write(`${chosen.refusal}\n`); return 1; }
   const program = chosen.path;
+  const systemHome = accountHome();
   const temp = await mkdtemp(join(tmpdir(), 'branch-held-'));
   // Built from the plan alone: this process's own environment carries WSL's way back out to Windows.
   const env: NodeJS.ProcessEnv = { ...plan.env, PATH: linuxPath, HOME: homedir(), TMPDIR: temp, TMP: temp, TEMP: temp,
@@ -92,7 +93,7 @@ export async function runHeld(plan: WslHeldPlan, deps: WallDeps = {}): Promise<n
   // /var/run is a link to /run, so it is covered too. So no Windows drive, no WSL link back to
   // Windows, no per-user or system socket (dbus, snapd, the container daemon) and no other agent's
   // control socket or saved sign-in under the home is reachable from inside.
-  const { covered, restored, refusal } = await heldCover({ home: homedir(), programs: [program], args: plan.args, searchPath: linuxPath, workspace: plan.workspace });
+  const { covered, restored, refusal } = await heldCover({ home: homedir(), systemHome, programs: [program], args: plan.args, searchPath: linuxPath, workspace: plan.workspace });
   if (refusal) {
     await rm(temp, { recursive: true, force: true }).catch(() => undefined);
     process.stderr.write(`${refusal}\n`);

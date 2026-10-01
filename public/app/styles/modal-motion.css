@@ -1,0 +1,5 @@
+/* Keep the painted scenery in place while setup covers it or a modal takes focus. Pausing preserves the frame and
+   phase; dismissal resumes the same drift. Modal entrances, progress indicators and other useful motion stay live. */
+#app:has(> .scrim, > .ob9) #bgLayer .paint11 {
+  animation-play-state: paused;
+}

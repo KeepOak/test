@@ -1,3 +1,4 @@
+import { processRunning } from "./process-running.mjs";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, copyFile, readFile, writeFile, rm, symlink } from 'node:fs/promises';
@@ -30,9 +31,9 @@ async function waitForPids(path) {
   }
   assert.fail('Fixture process did not start');
 }
-function alive(pid) {
+function alive(pid) { return processRunning(pid, () => {
   try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; }
-}
+}); }
 async function gone(pid) {
   for (let attempt = 0; attempt < 200 && alive(pid); attempt++) await delay(10);
   assert.equal(alive(pid), false, `Fixture PID ${pid} survived`);

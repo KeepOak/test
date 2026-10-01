@@ -67,6 +67,7 @@ import { localRuntimes } from "./local-runtimes.js";
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
 import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { trunkActivity } from "./trunk-activity.js";
 import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
@@ -128,6 +129,7 @@ import { AppResourceSchema, appHeaders, appPage, type AppResource } from "./mcp-
 import { handlesLearningCorePath, learningCoreApi, LearningCoreApiError } from "./fly-core-api.js";
 // Wave 8: artifacts out of a reply, shown in the same locked-down frame an MCP app gets.
 import { conversationPathsApi, conversationPathsRoute, readMarksPath } from "./conversation-paths-api.js";
+import { contextAuditApi, contextAuditRoute } from "./context-audit-api.js";
 import { ArtifactPageSchema, ArtifactSaveSchema, artifactPageRoute, holdArtifactPage } from "./artifact-pages.js";
 import { readServingSettings, saveServingSettings } from "./mcp-server.js";
 import { validateStateless, statelessFailure, StatelessError } from "./mcp-stateless.js";
@@ -975,6 +977,7 @@ function state(app: Branch): unknown {
   const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
+    profileId: app.store.profiles.active()?.id ?? null,
     provider: app.runtime.provider.name,
     // No model set up: nothing is named as answering, and the window shows these words with the way to set one up.
     activeModel: app.runtime.models.configured ? app.runtime.models.plan(owner, "").choice : null,
@@ -991,6 +994,7 @@ function state(app: Branch): unknown {
     preferences: preferences(app.store, owner),
     runs: runs
       .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+        ...(run.status === "running" ? { activityState: trunkActivity(app.store.events(run.id)) } : {}),
         ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
@@ -1459,6 +1463,7 @@ async function api(
   }
   // Pass 17: named paths of a conversation, leaving a message out of context, and read marks.
   if (conversationPathsRoute.test(path) || path === readMarksPath) return conversationPathsApi(app, request, path, () => readBody(request));
+  if (contextAuditRoute.test(path)) return contextAuditApi(app, request, path, () => readBody(request));
   // Wave mac2 (goal-undo): working toward a goal in rounds, and going back to an earlier message.
   if (path === "/api/goals" || path === "/api/goal-undo/settings" || /^\/api\/sessions\/[a-f0-9-]{36}\/(goal|rewind|unrevert)$/.test(path))
     return goalUndoApi(app, request, path);

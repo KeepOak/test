@@ -642,8 +642,10 @@ export class BrowserSession {
   async keepRecording(): Promise<Buffer> {
     if (!this.recording) throw new Error('This task is not being recorded. Start a recording first.');
     const current = this.recording;
+    // Keep recording visible until tracing has stopped; a failed stop must not permit owner takeover.
+    const bytes = await current.stop();
     this.recording = undefined;
-    return current.stop();
+    return bytes;
   }
   /** True while a recording is being made, so the context pane can say so. */
   isRecording(): boolean { return !!this.recording; }
