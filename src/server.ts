@@ -307,6 +307,7 @@ import { panelsWork, panelsWorkPath } from "./panels-work.js"; // phase2/panels
 import { liveStage, liveStagePath } from "./live-stage.js"; // live-stage
 import { streamLiveStage } from "./live-stage-stream.js";
 import { streamLiveScreen, stopLiveScreen, liveScreenPath, LiveScreenRefusal, screenControl, screenTakeOverPath, screenHandBackPath } from "./live-screen.js"; // parity-b2
+import { phoneViewGrants, phoneViewFrame } from "./phone-view-grants.js";
 import { MiniAppDoor } from "./miniapp/door.js";
 import { PhoneAccess, type Runner as TailscaleRunner } from "./miniapp/phone-access.js";
 import { handlesMiniAppPath, MiniAppApi } from "./miniapp/api.js";
@@ -1069,6 +1070,22 @@ async function api(
   listen: ListenState,
   gatewayPower?: NeverBreakExtras["gatewayPower"],
 ): Promise<unknown> {
+  if (path === "/api/phone/view-grants" || path === "/api/phone/trunk-view") {
+    if (startedWithShortLivedKey()) throw new HttpError(403, "A short-lived key cannot manage or use phone view grants.");
+    const deps = { store: app.store, owner: app.runtime.owner, profiles: app.store.profiles,
+      browser: app.browser, desktop: app.desktop ?? null,
+      locked: () => app.sessionLock.refusal("GET", "/api/panels/screen"),
+      trunkOf: (id: string) => app.trunks.trunkForConversation(id)?.trunkId ?? null };
+    try {
+      if (path === "/api/phone/trunk-view") {
+        if (request.method !== "GET") throw new HttpError(405, "This view is read only.");
+        return await phoneViewFrame(deps, request, new URL(request.url ?? "/", "http://local").searchParams);
+      }
+      const phone = new GatewayAuth(app.store, app.runtime.owner).keyDevice(/^Bearer (\S+)$/.exec(String(request.headers.authorization ?? ""))?.[1] ?? "");
+      return phoneViewGrants(deps, throughDoor(request) || phone !== null, request.method ?? "GET",
+        request.method === "GET" ? undefined : await readBody(request));
+    } catch (error) { throw error instanceof HttpError ? error : new HttpError(403, "Phone view unavailable. Check the owner’s local view grant and screen policy."); }
+  }
   // Batch 19 (wave 6): the record of what it was allowed to do, approval kinds, ask-first,
   // the practice workspace, how passages are ordered, plugin model connections, issue context.
   if (handlesMiscPath(path))

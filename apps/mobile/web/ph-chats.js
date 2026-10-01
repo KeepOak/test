@@ -14,6 +14,12 @@ import { planShare } from "/rules.js";
 import { switchesNow } from "/ph-switches.js";
 
 const C = { results: null, searched: "", pending: "", draft: "", attach: [], timer: 0 };
+let phoneFrame = null;
+function phoneView() {
+  if (!trunkOf(P.chat)) return "";
+  const view = phoneFrame?.session === P.chat && phoneFrame.expiresAt > Date.now() ? phoneFrame : null;
+  return `<section><p>Read-only view requires the owner’s local, expiring grant.</p><button type="button" data-act="ph-view" data-v="browser">Refresh Trunk browser</button><button type="button" data-act="ph-view" data-v="computer">Refresh shared computer</button><button type="button" data-act="ph-view-close">Hide view</button>${view?.frame ? `<img src="${esc(view.frame)}" alt="Read-only ${esc(view.kind)} snapshot" style="max-width:100%"><p>Snapshot; refresh to see changes. No control permission.</p>` : ""}</section>`;
+}
 const waitingIn = (id) => asks().some((q) => q.sessionId === id);
 const runningIn = (id) => runs().some((r) => r.sessionId === id && r.status === "running");
 
@@ -70,7 +76,7 @@ export function drawChat() {
   const pending = C.pending ? `<div class="pmsg pme">${esc(C.pending)}</div><div class="pmsg sys"><i class="p-work8"></i></div>` : "";
   const attached = C.attach.length ? `<div class="p-attach">${C.attach.map((a) => `<span>${esc(a.name)}</span>`).join("")}</div>` : "";
   const composer = `<form class="p-comp" data-form="ph"><button type="button" class="p-plus" data-act="ph-sheet" data-v="plus" aria-label="${w("asks.runtimes.add", "Add")}">+</button><button type="button" class="p-plug9" aria-label="${w("safety.stop.tools", "Tools")}" ${soon}>${ic("plug", "s")}</button><input id="ph-in" value="${esc(C.draft)}" placeholder="${w("phone8.chat.message", "Message {name}", { name })}" autocomplete="off"><button type="button" class="p-mic8" data-act="voice" aria-label="${w("phone8.home.talk", "Talk")}" ${talk}>${ic("mic", "s")}</button><button type="submit" class="p-send" aria-label="${w("composer.send", "Send")}">${ic("up", "s")}</button></form>`;
-  return head + `<div class="p-msgs" data-bottom>${messages}${pending}</div>${attached}${modelPill()}${composer}`;
+  return head + `<div class="p-msgs" data-bottom>${messages}${pending}${phoneView()}</div>${attached}${modelPill()}${composer}`;
 }
 /** How much the conversation may do, read to show which is chosen (GET /api/conversation-mode). */
 async function loadMode(id) {
@@ -147,6 +153,17 @@ export async function attachFiles(list) {
   draw();
 }
 export function initChats() {
+  on("ph-view-close", () => { phoneFrame = null; draw(); });
+  on("ph-view", async el => {
+    const session = P.chat; phoneFrame = null; draw();
+    try {
+      const view = await get("/api/phone/trunk-view", `session=${encodeURIComponent(session)}&kind=${el.dataset.v}`);
+      if (P.chat !== session || document.hidden) return;
+      phoneFrame = { ...view, session }; draw();
+      setTimeout(() => { if (phoneFrame?.session === session) { phoneFrame = null; draw(); } }, Math.min(10000, Math.max(0, view.expiresAt - Date.now())));
+    } catch (error) { toast(error.message); }
+  });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) { phoneFrame = null; draw(); } });
   on("ph-cf", (el) => { P.chatF = el.dataset.v; draw(); });
   on("new", () => { P.chat = null; C.attach = []; go("chat"); });
   on("ph-sheet", (el) => { P.sheet = el.dataset.v || null; draw(); });
