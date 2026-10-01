@@ -3,6 +3,7 @@ import { realpath } from "node:fs/promises";
 import { resumeAuthority, type ResumeAuthority } from "./resume-authority.js";
 import { recordedRecoveryPerson } from "./never-break/recorded-person.js";
 import { randomUUID } from "node:crypto";
+import { ContextAudit } from "./context-audit.js";
 import { assertContinuitySession } from "./reach/continuity-store.js";
 import type { TasteLearning } from "./taste/learning.js";
 import { existsSync } from "node:fs";
@@ -708,6 +709,7 @@ export const mayGiveStandingYes = (store: Store): boolean => store.profiles.isOw
 const helperStartMs = 30_000;
 const helperNotStarted = "The background specialist did not start";
 export class Runtime {
+  readonly contextAudit = new ContextAudit();
   private readonly controllers = new Map<string, AbortController>();
   taste: TasteLearning | null = null;
   /** long-work: tasks the owner paused; each stops after the step it is on (or at once while it only waits). */
@@ -3897,7 +3899,7 @@ ${run.output.slice(0, 6000)}`;
     if (from < 1 || to - from < 2) return;
     const preset = this.sideJobPreset(this.owner, run.sessionId, route.candidates[route.index]!);
     const room = Math.max(2000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4);
-    const transcript = messages.slice(from, to).map(transcriptLine).join("\n");
+    const transcript = this.contextAudit.prepare(this.store, run, messages).slice(from, to).map(transcriptLine).join("\n");
     this.store.event(run.id, "context.folding_task", { messages: to - from });
     const summariser: Message[] = [
       { role: "system", content: taskFoldInstructions },
@@ -3939,7 +3941,7 @@ ${run.output.slice(0, 6000)}`;
     // dogfood D22: the summariser's own question fits the room of the model that answers it.
     const room = Math.max(2000, Math.min(60000, (this.contextWindowFor(preset) - answerReserve - 1000) * 4));
     const previous = messages.slice(1, split.from).filter((m) => m.role === "system").map((m) => m.content).join("\n");
-    const answer = await this.summariseRange(run, context, preset, previous, messages.slice(split.from, split.to).map(transcriptLine), room);
+    const answer = await this.summariseRange(run, context, preset, previous, this.contextAudit.prepare(this.store, run, messages).slice(split.from, split.to).map(transcriptLine), room);
     const reply = answer.slice(0, 6000);
     // long-work: what earlier folds kept is merged in, never left to the model to remember, and the record's own
     // files touched and open to-dos are added; a reply that is not the shape asked for is kept beside them. The whole
@@ -4259,6 +4261,10 @@ ${run.output.slice(0, 6000)}`;
     // mac7/lockdown-fix: no side job of a Trunk's goes through a sign-in either.
     if (context.trunkKeys && !trunkSignIns && isSignInConnection(preset)) throw new Error(trunkSignInRefusal);
     const tools = this.toolsFor(context);
+    const auditMain = context.depth === 0 && context.permissions.size > 0 && !shape
+      && !(unwrapProvider(preset.provider) instanceof CliAgentProvider); // Installed agents manage an unobservable internal context.
+    if (!auditMain && context.depth === 0 && context.permissions.size > 0 && !shape) this.contextAudit.clear(run.sessionId);
+    messages = this.contextAudit.prepare(this.store, run, messages);
     const input = estimateTokens({ messages, tools });
     if (input > this.contextWindowFor(preset, run.id)) throw new BudgetError(tooLong); // R17-S08, dogfood D22: this model's room
     // The same question asked twice. The kept answer is looked for before anything is charged or
@@ -4301,6 +4307,9 @@ ${run.output.slice(0, 6000)}`;
         // work: a chat app's task, another program's or a schedule's could otherwise do through it what Branch refuses it.
         // A shaped answer asked with no tools of Branch's (a decision) is words only, whoever asked it.
         ...(runOrigin(this.store, run.id).source === "owner" && !(shape && !context.permissions.size) ? {} : { programTools: false }) };
+      // The audit sees the final scrubbed/repaired copy actually passed to the provider, never lifetime usage.
+      const auditRequest = auditMain ? this.contextAudit.capture(this.store, run, request.messages, tools,
+        preset.model, this.contextWindowFor(preset, run.id)) : null;
       // mac6/accounts: the call carries its conversation, so a connection with several accounts can honour the one chosen for it.
       const raw = await withAccountCall({ owner: run.owner, sessionId: this.modelAccountSession(run.id), runId: run.id, note: (kind, data) => this.store.event(run.id, kind, data),
         ...(context.trunkKeys ? { trunk: { keys: context.trunkKeys, signIns: trunkSignIns } } : {}) }, async () => onTextDelta && !preset.provider.keepsOwnTime
@@ -4324,6 +4333,7 @@ ${run.output.slice(0, 6000)}`;
             .finally(() => { this.thinkingNow.delete(run.id); this.thoughtTicks++; })
           : await preset.provider.complete({ ...request, signal: context.signal }));
       const { output, reported } = this.recordCompletion(run, context, raw, input);
+      if (auditRequest) this.contextAudit.reported(run.sessionId, auditRequest, reported?.input);
       // R17-048 / R17-050: note the service's own count, and keep its cache warm if the owner asked.
       savings.afterRound(this, this.keepAlive, { run, owner: this.owner, preset, messages: request.messages, tools, estimatedInput: input, reported,
         mainRound: context.depth === 0 && context.permissions.size > 0 && !shape,
