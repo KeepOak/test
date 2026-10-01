@@ -636,6 +636,7 @@ export const ROUTES = {
   "/api/flows-boards/flows": "look",
   "/api/flows-boards/flows/:id/fork": "owner POST",
   "/api/flows-boards/flows/:id/steps": "look",
+  "/api/flows-boards/flows/[^/]+/steps": "look", // server snapshot scrub matcher; same owner-bound read
   "/api/flows-boards/installs": "look",
   "/api/flows-boards/installs/:id/approve": "owner POST",
   "/api/flows-boards/installs/:id/decline": "owner POST",

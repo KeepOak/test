@@ -8,6 +8,7 @@ import { ic, av, toast, openPop, closePop, openDlg, closeDlg } from "../core/ui.
 import { on } from "../core/actions.js";
 import { markLive } from "../core/features.js";
 import { initRecipeRun, recipeRunLive } from "./recipe-run.js";
+import { flowHistoryButton, initFlowHistory } from "./flow-history.js";
 import { graphEditorButton, initGraphEditor } from "../flows/graph-editor.js";
 import { api } from "../core/api.js";
 import { propCard, initScheduleCard, repeatWords } from "./schedule-card.js";
@@ -194,7 +195,7 @@ export function draw() {
     markLive(schedules.map((_, i) => `sw:auto-scheduled-${i}`));
   } else if (tab === "procedures") {
     html += `<p class="hint" data-css="margin:4px 0 8px">${t("window.places.automations.saved-step-by-step-routines-including")}</p>
-    <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : `disabled data-tip="${esc(t("window.switch-on.needs-trunk"))}"`}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button>${graphEditorButton()}</div>
+    <div class="acts" data-css="margin:6px 0"><button class="btn" type="button" data-act="teach-start" ${E.trunks.length ? "" : `disabled data-tip="${esc(t("window.switch-on.needs-trunk"))}"`}>${ic('play', 's')}${t("window.places.automations.show-a-trunk-how-once")}</button>${flowHistoryButton()}${graphEditorButton()}</div>
     <div class="rows" data-css="margin-top:8px">${autoProcedures.map(autoRow).join('')}${procedures.map(procedureRow).join('')}</div>
   <div class="sec"><h2>${t("prompts.card.title")}</h2><p class="hint" data-css="margin:0 0 8px">${t("window.places.automations.things-you-ask-for-often-each")}</p>${promptsOff() ? offTile("prompts", t("window.switch-on.off", { label: t("prompts.card.title") })) : ""}<div class="rows">${(prompts?.prompts ?? []).map(promptRow).join('')}</div><div class="acts" data-css="margin-top:10px"><button class="btn" type="button" data-act="prompt-new"${promptsOff() ? ` disabled data-tip="${esc(t("window.switch-on.off", { label: t("prompts.card.title") }))}"` : ""}>${ic('plus', 's')}${t("window.places.automations.new-prompt")}</button></div></div>`;
 
@@ -325,6 +326,7 @@ async function removeLine(text) {
 }
 
 export function init() {
+  initFlowHistory();
   initGraphEditor();
   initAutomations17();
   initSwitchOn();
