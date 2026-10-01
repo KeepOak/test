@@ -19,6 +19,7 @@ import { developer17 } from "../p17-more.js";
 import { level as level17 } from "../../core/state.js";
 import { initPlayground } from "../playground.js";
 import { initOpenApiPick } from "../openapi-pick.js";
+import { drawGitHubDevice, initGitHubDevice, loadGitHubDevice } from "../github-device.js";
 import { say } from "../../core/words.js";
 import { reason } from "../../core/why.js";
 import { t } from "../../../i18n.js";
@@ -85,10 +86,11 @@ export function draw() {
     + btn15(say("Find Branch on other computers nearby"), say("Tools and models on your network."), t("ov.open"), "addcomp", "f15-find-branch-on-other-computers-nearby")
     + sw("Is Branch keeping up", "Warns when the engine stalls for more than 5 seconds.")
     + fact15("Save task trajectories", "f15-save-task-trajectories"));
-  return html + developer17(level17());
+  return html + drawGitHubDevice() + developer17(level17());
 }
 
 async function loadAll() {
+  await loadGitHubDevice();
   const [ls, dbg, interop, counters, loop, comfort, tracing] = await Promise.all(
     ["developer/language-servers", "developer/debug-adapters", "interop", "usage/counters", "event-loop", "comfort", "tracing/settings"]
       .map((path) => api(path).catch((error) => { toast(error.message); return null; })));
@@ -105,6 +107,7 @@ export function init() {
   on("dv-status", (el) => setStatusLine(el.dataset.v));
   initPlayground();
   initOpenApiPick();
+  initGitHubDevice();
   markLive(["dv-copy", "dv-status", "sw:dv-ls", "sw:dv-dbg", "sw:f15-flow-search", "sw:f15-send-metrics-with-opentelemetry", "sw:f15-is-branch-keeping-up"]);
   document.addEventListener("change", async (e) => {
     const wire = WIRES[e.target.id];

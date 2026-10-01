@@ -7,7 +7,7 @@
      from GET /api/artifacts/file. Pictures are not a stream, so its chip says "Now", never "Live".
    - with nothing to show, one themed line sized to its words (never a blank page).
    - the steps are the task's plan (GET /api/runs/<id>/plan); showing the screen at an earlier step needs recorded frames
-     per step, which the engine does not keep, so those chips stay greyed.
+     per step. Masked frames observed while this window watches a working step can be replayed briefly from memory.
    - Stop is POST /api/runs/<id>/cancel. The dock's box steers a working task (POST /api/runs/<id>/steer) or, with none
      working, sends the conversation a message.
    - On the computer view, Take over and Hand back are the shared Linux desktop's (GET /api/linux-desktop,
@@ -37,7 +37,7 @@
    actions wait, and the view says "You're driving · <name> is paused" until Hand back (POST /api/panels/screen/hand-back).
    Both are the owner's alone, at this computer's own window; the engine refuses anyone else. */
 
-import { $, esc, applyCss, onRender, render } from "../core/dom.js";
+import { $, esc, applyCss, onRender, render, pressIn, whenReleased } from "../core/dom.js";
 import { ic, av, faceOf, toast, app, closePop } from "../core/ui.js";
 import { S, E, refresh, trunkIntro, ownName, chatFace } from "../core/state.js";
 import { api, token } from "../core/api.js";
@@ -54,7 +54,7 @@ import { watchScreen, screenFrame, screenRefusal, screenCursor, screenDriving, s
 import { resizerHTML } from "../shell/resize.js"; // the dock's edge: shell/resize.js drags it and keeps its width
 import { startWith, openConversation } from "./chat.js";
 
-const G = { kind: null, pip: null, dock: true, grid: false, sid: null, messages: [], plan: null, at: 0, desk: null, said: "", drawn: {} };
+const G = { kind: null, pip: null, dock: true, grid: false, sid: null, messages: [], plan: null, at: 0, desk: null, said: "", drawn: {}, replay: null, replayJob: 0 };
 const SHOT = new Map(); // picture path → its bytes as a blob: address ("" while loading or after the engine refused it)
 const CARD = { pic: "", deskFor: undefined, resumes: null }; // the card's picture, the conversation the desktop was read for, and the task its Carry on resumes
 const STOPPABLE = new Set(["running", "needs_input", "interrupted"]);
@@ -123,13 +123,13 @@ function shotUrl(path) {
 
 /* Branch's browser as the engine last saw it: its tabs, its address and the frame (painted in by paintFrames, so a new
    frame never redraws the view). */
-function liveWindow(view, src = "") {
+function liveWindow(view, src = "", replay = false) {
   const tabs = view.tabs.map((tab) => `<span class="${tab.active ? "on7" : ""}">${esc(tab.title || tab.url)}</span>`).join("");
   const bar = view.url ? `<div class="dk-url">${ic("lock", "s")}${esc(view.url)}</div>` : "";
   const unavailable = view.preview === "borrowed" || view.preview === "unavailable" || !view.frame;
   const words = view.preview === "borrowed" ? "borrowed-preview" : "preview-unavailable";
   const notice = unavailable ? `<div class="browser-status7" role="status"><b>${t("window.chat.stage.preview-unavailable-title")}</b><small>${t("window.chat.stage." + words)}</small></div>` : "";
-  const image = view.frame ? `<img class="shot7 live7-img"${src ? ` src="${esc(src)}"` : ""} alt="${esc(view.title)}">` : "";
+  const image = view.frame ? `<img class="shot7 ${replay ? "replay7-img" : "live7-img"}"${src ? ` src="${esc(src)}"` : ""} alt="${esc(view.title)}">` : "";
   return `<div class="desk7 brfull7 live7"><div class="dk-win br7"><div class="dk-tabs">${tabs}</div>${bar}${notice}${image}</div></div>`;
 }
 /* The screen: the live frame, else the picture as it was taken; "" when there is nothing to show. */
@@ -175,7 +175,14 @@ function placeCursor() {
 }
 /* Only the owner is drawn the browser of their own: its tabs, address bar and page to use. */
 const mine = () => E.profiles?.isOwner !== false;
+function replayWindow() {
+  const saved = G.replay, newest = live()?.browser?.runId ?? runsHere()[0]?.id;
+  const available = mine() && (live()?.replaySteps ?? []).some(step => step.step === saved?.step && step.runId === saved?.view.runId && step.planAt === saved?.planAt);
+  return available && saved.sid === S.chat && saved.view.runId === newest && saved.planAt === G.plan?.createdAt ? saved : null;
+}
 function screen(kind, small = false) {
+  const saved = kind === "browser" && !small ? replayWindow() : null;
+  if (saved) return liveWindow(saved.view, saved.view.frame, true);
   if (kind === "browser" && mine() && hasOwnerBrowser()) return small ? ownerBrowserPip() : ownerBrowserHTML();
   const view = kind === "browser" ? live()?.browser : null;
   // A task's own window while it is open; once it has closed, the owner's own browser, ready for an address.
@@ -216,7 +223,7 @@ const thisScreen = (kind) => kind === "computer" && holder() === "none" && onThi
 /* The browser's Take over: a task working in its own open window (its window becomes the owner's), else the kept
    browser's own Take over and Hand back. */
 function browserTake(run) {
-  if (!mine()) return "";
+  if (!mine() || replayWindow()) return "";
   const window = live()?.browser, adopt = !hasOwnerBrowser() && run && STOPPABLE.has(run.status) && window?.live && window.runId === run.id
     && window.preview !== "borrowed";
   return ownerBrowserButtons(adopt ? run.id : null, owner());
@@ -299,13 +306,15 @@ function gridHTML(st, steps) {
 
 function stageHTML(kind) {
   const steps = G.plan?.steps ?? [], scr = screen(kind), many = several(kind);
-  const chips = steps.map((s, i) => `<button type="button" class="st7-chip ${STEP[s.status] ?? ""}" data-act="stage-step" data-v="${i}"><em>${i + 1}</em>${esc(s.title)}</button>`).join("");
+  const saved = kind === "browser" ? replayWindow() : null;
+  const available = (live()?.replaySteps ?? []).filter(step => step.runId === G.plan?.runId && step.planAt === G.plan?.createdAt);
+  const chips = steps.map((s, i) => `<button type="button" class="st7-chip ${STEP[s.status] ?? ""}" data-act="stage-step" data-v="${i}" aria-pressed="${saved?.step === i}"${kind === "browser" && available.some(step => step.step === i) ? "" : " disabled"}><em>${i + 1}</em>${esc(s.title)}</button>`).join("");
   const liveNow = kind === "browser" && live()?.browser?.live && working();
   const over = kind === "browser" && mine() ? browserOverlay() : "";
-  const body = scr ? `<div class="st7-screen"><div class="st7-scale">${scr}</div>${caption(steps)}${over}</div>` : emptyHTML(kind);
+  const body = scr ? `<div class="st7-screen"><div class="st7-scale">${scr}</div>${saved ? `<div class="st7-replay-note" role="status">${esc(t("window.chat.stage.replay-at", { at: new Date(saved.view.at).toLocaleTimeString() }))}</div>` : caption(steps)}${saved ? "" : over}</div>` : emptyHTML(kind);
   const wrap = many && G.grid ? gridHTML(many, steps) : `<div class="st7-wrap">${body}</div>`;
   return `${top(kind, steps)}${kind === "browser" && scr ? browserNotice() : ""}${many ? compTabs(many, steps) : ""}<div class="st7-body ${G.dock ? "" : "nodock"}">${wrap}${G.dock ? dock(steps, kind) : ""}</div>
-    ${steps.length ? `<div class="st7-steps">${chips}<button type="button" class="st7-chip live7" data-act="stage-step" data-v="live">${liveNow ? `<i></i>${t("dashboard.live")}` : t("dashboard.area.now")}</button></div>` : ""}`;
+    ${steps.length ? `<div class="st7-steps">${chips}<button type="button" class="st7-chip live7" data-act="stage-step" data-v="live">${saved ? t("window.chat.stage.back-to-live") : liveNow ? `<i></i>${t("dashboard.live")}` : t("dashboard.area.now")}</button></div>` : ""}`;
 }
 
 /* A working task's page that waits for a person (a sign-in, a "prove you're a person" check): what it waits for, and on
@@ -455,7 +464,7 @@ function paintFrames() {
 
 /* Words typed in the dock's box and the address bar survive a redraw: their words, focus and caret are put back. The
    address bar otherwise shows the page's own address, so it keeps the owner's words only while they are typing. */
-const BOXES = ["#st-in", "#st-addr", "#ob7-keys"];
+const BOXES = ["#st-in", "#st-addr", "#ob7-keys", "#ob7-find"];
 function redraw(el, html) {
   const kept = BOXES.map((sel) => el.querySelector(sel)).map((box) => box && { value: box.value, focused: document.activeElement === box, start: box.selectionStart, end: box.selectionEnd });
   el.innerHTML = html;
@@ -468,12 +477,19 @@ function redraw(el, html) {
 }
 
 /* One region each for the full-size view and the small window, made once and removed when closed; drawn again only
-   when what it shows changed. */
+   when what it shows changed, and never under a press (core/dom.js pressIn): a view read landing between a press and its
+   click replaced the button or picture pressed, so the click was lost (a New tab or a click on the page did nothing). */
+let heldBack = false;
 function region(id, cls, show, html) {
   let el = document.getElementById(id);
   if (!show) { el?.remove(); G.drawn[id] = ""; return; }
   if (!el) { el = Object.assign(document.createElement("div"), { id, className: cls }); app()?.appendChild(el); G.drawn[id] = ""; }
   const next = html();
+  if (next !== G.drawn[id] && pressIn(el)) {
+    if (!heldBack) { heldBack = true; whenReleased(() => { heldBack = false; drawStage(); }); }
+    fit(el);
+    return;
+  }
   if (next !== G.drawn[id]) {
     // Restoring a textarea's value/focus cannot restore its native IME session. Frames still paint below.
     if (id === "stage7" && G.kind === "browser" && ownerBrowserComposing(S.chat)) { fit(el); return; }
@@ -508,7 +524,7 @@ export function drawStage() {
   if (going && mine()) void readWatch();
   watchLive(mine() && (browser || going) ? S.chat : null, onLive, browser);
   // The owner's own browser is read while its view shows it, full size or small.
-  watchOwnerBrowser(S.chat, here && browser && mine(), (redraw) => (redraw ? drawStage() : paintFrames()));
+  watchOwnerBrowser(S.chat, here && browser && mine() && !replayWindow(), (redraw) => (redraw ? drawStage() : paintFrames()));
   fitCards();
   if (here && (G.kind || G.pip)) load();
 }
@@ -584,6 +600,7 @@ export function openStage(kind) {
   G.kind = kind === "browser" ? "browser" : "computer";
   G.pip = null;
   G.grid = false;
+  G.replay = null; G.replayJob++;
   closePop();
   drawStage();
 }
@@ -603,9 +620,26 @@ async function watchRun(el) {
   openStage("browser");
 }
 
+async function replayStep(el) {
+  const job = ++G.replayJob;
+  if (el.dataset.v === "live") { G.replay = null; drawStage(); return; }
+  const sid = S.chat, step = Number(el.dataset.v), plan = G.plan;
+  if (G.kind !== "browser" || !plan || !Number.isInteger(step)) return;
+  const meta = (live()?.replaySteps ?? []).find(one => one.step === step && one.runId === plan.runId && one.planAt === plan.createdAt);
+  if (!meta) return;
+  try {
+    const query = new URLSearchParams({ session: sid, step: String(step), run: plan.runId, plan: plan.createdAt });
+    const answer = await api(`panels/live?${query}`);
+    if (job !== G.replayJob || S.chat !== sid || G.kind !== "browser") return;
+    if (!answer?.replay?.frame) { toast(t("window.chat.stage.replay-expired")); return; }
+    G.replay = { sid, step, planAt: plan.createdAt, view: answer.replay }; drawStage();
+  } catch (error) { if (job === G.replayJob && S.chat === sid) toast(error.message); }
+}
+
 export function initStage() {
-  markLive(["stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid", "sw:st-addr", "stage-take-control"]);
+  markLive(["stage-step", "stage", "stage-close", "stage-dock", "stage-pip", "pip-x", "stage-stop", "takeover", "handback", "run-watch", "sw:st-in", "comp-view", "comp-grid", "sw:st-addr", "stage-take-control"]);
   initOwnerBrowser();
+  on("stage-step", el => replayStep(el));
   // A computer's tab (or its cell in All screens) picks it for this conversation; All screens is the view's own layout.
   on("comp-view", async (el) => { if (await pickFor(S.chat, el.dataset.v)) { G.grid = false; G.at = 0; drawStage(); } });
   on("comp-grid", () => { G.grid = true; drawStage(); });

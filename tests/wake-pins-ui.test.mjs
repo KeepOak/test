@@ -70,7 +70,7 @@ test("U1 the wake word is under Settings, Voice, starts off, and switching it on
 test("U2 the pins card is under Settings, Permissions, starts empty, and its Pin a setting is greyed out", async (t) => {
   const { app, page, errors } = await fixture(t);
   await openSettingsPage(page, "permissions");
-  const card = page.locator(".set-col .sec", { hasText: "Pinned settings" });
+  const card = page.locator(".set-col .sec", { has: page.locator("h2", { hasText: /^Pinned settings$/ }) });
   await card.waitFor({ state: "visible" });
   assert.equal(await card.locator(".rows > *").count(), 0, "nothing is pinned yet");
   assert.equal(app.store.get("settings", "local", "settings-pins"), undefined);

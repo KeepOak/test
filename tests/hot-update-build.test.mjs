@@ -15,6 +15,7 @@ import { discardTemp } from "./temp-dir.mjs";
 import { buildLive } from "../dist/hot-update/live-build.js";
 import { betaLine } from "../dist/desktop/dev-build.js";
 import { verifyLive } from "../dist/hot-update/manifest.js";
+import { writeLiveState } from "../dist/hot-update/live-folder.js";
 
 const exec = promisify(execFile);
 const git = (cwd, ...args) => exec("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd }).then((out) => out.stdout.trim());
@@ -165,4 +166,25 @@ test("only the exact change on Beta's line, and only forward, is ever built", { 
   await assert.rejects(plan(t, repo, off), /is not on Beta's line of work/);
   // Going back: the running change is newer than the one asked for.
   await assert.rejects(plan(t, repo, repo.first, { running: onLine, packaged: onLine, engineAt: onLine, windowAt: onLine }), /would go back/);
+});
+
+test("PLAT-030: a window-only change after a live engine update reuses the running engine's checked build, with nothing compiled", { timeout: 180000 }, async (t) => {
+  const repo = await repository(t);
+  // The app's main-process entries, so the running engine's build holds everything a later check reads.
+  const packaged = await repo.change({ "src/desktop/preload.cts": "module.exports = {};\n",
+    "scripts/build-ts.mjs": files["scripts/build-ts.mjs"].replace('.replace(/\\.ts$/, ".js")', '.replace(/\\.cts$/, ".cjs").replace(/\\.ts$/, ".js")') });
+  const engine = await repo.change({ "src/runtime.ts": "export const run = 2;\n" });
+  const appRoot = await mkdtemp(join(tmpdir(), "branch-live-app-"));
+  t.after(() => discardTemp(appRoot));
+  const build = (commit, seen, at) => buildLive(runner(repo.origin, seen), { repo: REPO, buildDir: join(repo.root, "build"), commit, running: at.engine,
+    packaged, engineAt: at.engine, windowAt: at.engine, appRoot, onStage: () => undefined });
+  const live = await build(engine, [], { engine: packaged });
+  assert.equal(live.tier, "engine");
+  const inUse = { commit: engine, digest: live.digest, version: live.version, at: new Date().toISOString() };
+  await writeLiveState(appRoot, { engine: inUse, window: inUse, previous: null });
+  const next = await repo.change({ "public/app.css": "body{color:teal}\n" });
+  const seen = [];
+  const outcome = await build(next, seen, { engine });
+  assert.equal(outcome.tier, "window");
+  assert.ok(!seen.some((line) => /npm run build/.test(line)), "the engine already applied live is not compiled again");
 });

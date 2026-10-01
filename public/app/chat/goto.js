@@ -3,9 +3,9 @@
    window's, and a page or place the window does not have leaves the view where it is. */
 
 import { S } from "../core/state.js";
-import { hasPage } from "../settings/settings.js";
+import { hasPage, openPage } from "../settings/settings.js";
 
-const PLACES = ["inbox", "automations", "library", "customize", "overview", "team"];
+const PLACES = ["inbox", "automations", "library", "seasons", "customize", "overview", "team"];
 /* The engine's name → the window's, where they differ. */
 const PLACE_OF = { household: "team" };
 const TAB_OF = { customize: { skills: "tools", plugins: "tools", connections: "tools" }, overview: { here: "" } };
@@ -14,11 +14,12 @@ const PAGE_OF = { data: "usage", about: "updates" };
 /** Moves the window to the home the engine named. Returns false when the window has no such place. */
 export function goHome(home) {
   const [head, rest = ""] = String(home ?? "").split(":");
+  if (head === "library" && rest === "seasons") { S.view = "seasons"; return true; }
   if (head === "chat") { S.view = "chat"; return true; }
   if (head === "settings") {
     const page = PAGE_OF[rest] ?? rest;
     S.view = "settings";
-    if (hasPage(page)) S.setPage = page;
+    if (hasPage(page)) void openPage(page);
     return true;
   }
   const place = PLACE_OF[head] ?? head;

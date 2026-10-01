@@ -1,10 +1,11 @@
 import type { ProgramPresent, RecorderCommand } from "./mic-capture.js";
 import type { Store } from "./store.js";
 import {
-  cleanWords, dictationCapture, dictationEngine, dictationLockedRefusal, dictationRefusal,
+  cleanWords, dictationCapture, dictationEngine, dictationLockedRefusal, dictationOwnerOnlyRefusal, dictationRefusal,
   frameBytes, mostWords, RoomFloor, dictationSettings,
 } from "./voice-dictation.js";
 import { voiceSettings } from "./voice.js";
+import { DictationPreroll } from "./voice-dictation-preroll.js";
 
 /**
  * mac7/live-voice: the microphone open, and let go of again. This is the whole of the hard part.
@@ -43,7 +44,7 @@ export interface SpeechStream {
  */
 export type SpeechStreamRunner = (
   command: RecorderCommand,
-  onWords: (written: string) => void,
+  onWords: (written: string, final?: boolean) => void,
   /** Called once when it ends, with why it ended when Branch knows, or null when it simply stopped. */
   onEnded: (why: string | null) => void,
 ) => SpeechStream;
@@ -126,10 +127,12 @@ export function startDictation(deps: DictationDeps): LiveDictation {
   const platform = deps.platform ?? process.platform;
   const present = deps.present;
   const room = new RoomFloor();
+  const preroll = new DictationPreroll();
   let speech: SpeechStream | null = null;
   let recorder: { stop(): void } | null = null;
   let ticker: ReturnType<typeof setInterval> | null = null;
   let words = "";
+  let committedWords = "";
   let lastSpeechAt = 0;
   let startedAt = 0;
   let crashes = 0;
@@ -157,8 +160,10 @@ export function startDictation(deps: DictationDeps): LiveDictation {
     speech = null; recorder = null;
     if (ticker) { clearInterval(ticker); ticker = null; }
     recording?.stop();
+    if (settle) for (const frame of preroll.flush()) going.hear(frame);
     going.stop();
     room.forget();
+    preroll.forget();
     leftOver = new Uint8Array(0);
     if (settle) tell(true);
     words = ""; // nothing is kept past the phrase it belongs to
@@ -167,6 +172,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
   /** Why it must not be listening this moment, or null. Asked before every piece and on the tick. */
   const mustStop = (): string | null =>
     (deps.locked?.() ? dictationLockedRefusal : null)
+    ?? (!deps.store.profiles.isOwner() || deps.store.profiles.scope() !== deps.owner ? dictationOwnerOnlyRefusal : null)
     ?? dictationRefusal(deps.store, deps.owner, platform, present);
 
   const quietFor = (): number => dictationSettings(deps.store, deps.owner).silenceSeconds * 1000;
@@ -192,13 +198,16 @@ export function startDictation(deps: DictationDeps): LiveDictation {
     release(true);
   };
 
-  const heardWords = (written: string): void => {
+  const heardWords = (written: string, final = true): void => {
+    if (!speech) return;
+    try { if (mustStop()) { release(false); return; } } catch { release(false); return; }
     const clean = cleanWords(written);
     if (!clean) return;
     lastSpeechAt = now();
     // Replaced rather than grown past the cap: a program that will not stop writing is cut off
     // where it arrives, never queued and never allowed to grow without end.
-    words = `${words} ${clean}`.trim().slice(-mostWords);
+    words = `${committedWords} ${clean}`.trim().slice(-mostWords);
+    if (final) committedWords = words;
     tell(false);
   };
 
@@ -221,6 +230,7 @@ export function startDictation(deps: DictationDeps): LiveDictation {
       startedAt = now();
       lastSpeechAt = now();
       words = "";
+      committedWords = "";
       last = { words: "", settled: false };
       speech = deps.speech(engine.command, heardWords, ended);
       const capture = dictationCapture(engine, platform, present);
@@ -241,11 +251,11 @@ export function startDictation(deps: DictationDeps): LiveDictation {
       let at = 0;
       for (; at + frameBytes <= leftOver.length; at += frameBytes) {
         const frame = leftOver.subarray(at, at + frameBytes);
-        if (!room.speech(frame)) continue;
-        lastSpeechAt = now();
+        const speaking = room.speech(frame);
+        if (speaking) lastSpeechAt = now();
         // A program that is not keeping up is not waited for and its sound is not piled up behind
         // it: the piece is dropped where it arrives, which is what keeps this from growing.
-        speech.hear(frame);
+        for (const sound of preroll.push(frame, speaking)) speech.hear(sound);
       }
       leftOver = Uint8Array.from(leftOver.subarray(at));
       if (now() - lastSpeechAt >= quietFor()) release(true);

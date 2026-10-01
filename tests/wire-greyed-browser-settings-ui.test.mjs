@@ -49,6 +49,39 @@ test("the browser's switches and the sandbox's mode are live, save, and read bac
   assert.deepEqual(errors, []);
 });
 
+/* The page is shown only once its reads are back (settings.js waitFirst). Drawn before, every switch read off: on a
+   slow runner the first test above saw Ask before a site unticked after the reload although the engine kept it on
+   (Checks run 36817487706, line 44). The engine's answer is held back here so the gap is always there. */
+test("Computer & browser is shown with the engine's values, even when its read is slow", async (t) => {
+  const slow = (page) => page.route("**/api/comfort", async (route) => {
+    if (route.request().method() === "GET") await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  const { page, errors, call } = await settingsWindow(t, { name: "wire-browser-slow-read", route: slow });
+  await call("/api/comfort", { card: "browser", values: { askNewSites: true } });
+  assert.equal((await call("/api/comfort")).values.browser.askNewSites, true);
+  await openSettingsPage(page, "computer");
+  await setLevel(page, "advanced");
+  await page.locator("#b-new").waitFor();
+  assert.equal(await page.locator("#b-new").isChecked(), true, "Ask before a site shows the engine's value when first shown");
+  assert.deepEqual(errors, []);
+});
+
+/* The same page reached by a link's or a command's home (chat/goto.js) goes the page list's way, so it waits too. */
+test("Computer & browser opened by its home waits for the engine's values too", async (t) => {
+  const slow = (page) => page.route("**/api/comfort", async (route) => {
+    if (route.request().method() === "GET") await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+  const { page, errors, call, server } = await settingsWindow(t, { name: "wire-browser-slow-home", route: slow });
+  await call("/api/comfort", { card: "browser", values: { askNewSites: true } });
+  await page.goto(new URL("/#open=settings:computer", server.url).href);
+  await page.locator('[data-act="setpage"][data-v="computer"][aria-current="true"]').waitFor();
+  await page.locator("#b-new").waitFor();
+  assert.equal(await page.locator("#b-new").isChecked(), true, "Ask before a site shows the engine's value when first shown");
+  assert.deepEqual(errors, []);
+});
+
 test("Downloads may come from: Known sites and Ask each time are saved", async (t) => {
   const { page, errors, call } = await settingsWindow(t, { name: "wire-downloads-from" });
   await openSettingsPage(page, "permissions");
