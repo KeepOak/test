@@ -331,6 +331,12 @@ details[open]>summary .chev{transform:rotate(90deg)}
 .art details summary{font-size:12.5px;color:var(--ink-3);cursor:pointer;list-style:none;display:inline-flex;gap:6px;align-items:center}
 .art details summary::-webkit-details-marker{display:none}
 .art pre{margin:8px 0 0;font:12px/1.5 var(--mono);background:var(--fill);border-radius:10px;padding:10px 12px;overflow-x:auto;color:var(--ink-2)}
+.code-window14{margin:12px 0;max-width:100%;min-width:0;border:1px solid var(--line);border-radius:10px;overflow:hidden;background:var(--fill)}
+.code-window14-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 10px;border-bottom:1px solid var(--line)}
+.code-window14-head>span{min-width:0;overflow-wrap:anywhere;font:12px/1.4 var(--mono);color:var(--ink-3)}
+.code-window14-head>button{flex-shrink:0}
+.code-window14 pre{margin:0;padding:12px;overflow:auto;font:12px/1.6 var(--mono);color:var(--ink-2)}
+.code-window14 pre code{font:inherit;white-space:pre}
 
 /* composer */
 .dock{flex:none;padding:6px 24px 16px;position:relative}
@@ -2036,7 +2042,7 @@ video.pose11{background:transparent}
 .spin12{width:22px;height:22px;border-radius:50%;border:2.5px solid var(--fill-2);border-top-color:var(--accent);animation:spin 1s linear infinite;grid-row:span 2}
 .lm-grid12{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:10px}
 .lm12{border:1px solid var(--line);border-radius:16px;padding:14px;background:var(--raise);display:grid;gap:8px;align-content:start}
-.lm12.fit-no{opacity:.7}
+/* Keep unfit model details readable; the warning pill and disabled Install convey the limit. */
 .lm-h12{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.lm-h12 b{font-size:15px}.lm-h12 .pill{margin-left:auto}
 .lm12 p{margin:0;font-size:13px;color:var(--ink-2)}
 .lm-tags12{display:flex;gap:4px;flex-wrap:wrap}

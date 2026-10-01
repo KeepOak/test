@@ -1308,8 +1308,12 @@ export class Runtime {
     const lentTo = origin?.lentTo ?? null;
     if (!previous || !origin || (previous.owner !== this.owner && previous.owner !== lentTo)) throw new Error("Run not found");
     if (previous.status !== "interrupted") throw new Error("Only interrupted tasks can be continued");
-    if (!previous.project || !this.store.projects.list(previous.owner).some((project) => project.id === previous.project)
-      || this.store.sessionProject(previous.sessionId) !== previous.project)
+    const project = previous.project;
+    // Reassignment changes every task's owner. Validate both the original catalogue and
+    // the catalogue execute will use before lending can mutate that saved ownership.
+    if (!project || !this.store.projects.list(previous.owner).some((one) => one.id === project)
+      || !this.store.projects.list(this.owner).some((one) => one.id === project)
+      || this.store.sessionProject(previous.sessionId) !== project)
       throw new Error("The original task's project is missing or its conversation changed project. Reconcile it before continuing.");
     // A task from outside (a chat message, a trigger, a schedule, another program) carries on as it
     // started, with the same tools, never as the owner's own: execute reads that from the record
@@ -1332,7 +1336,7 @@ export class Runtime {
     };
     // bucket 19: a task a household person started carries on as that person, after a restart too.
     const person = origin.personProfileId;
-    return this.track(() => underProject(previous.project!, () => (person && !currentPerson() ? asPerson({ profileId: person, keyId: "resumed" }, go) : go())));
+    return this.track(() => underProject(project, () => (person && !currentPerson() ? asPerson({ profileId: person, keyId: "resumed" }, go) : go())));
   }
   /** A tool run outside a conversation; `options` says how it is gated (src/tool-gate.ts). */
   async executeTool(name: string, args: unknown, options: ToolGateOptions = {}): Promise<unknown> {

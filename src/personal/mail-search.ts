@@ -5,8 +5,10 @@ import { ImapClient, type MailMessage, type MailServer } from "../channels/mail-
 import type { WorkspaceFiles } from "../files.js";
 import type { ToolRegistry } from "../registry.js";
 import type { Store } from "../store.js";
+import type { ConnectionHealth } from "./probe.js";
 import { attachmentsOf, mimeParts, textOf } from "./mime.js";
 import { clip, outsideTextNote, partSettings, requirePersonal, savePartSettings, secretNameSchema } from "./settings.js";
+import { assertHealthCurrent, currentHealthCheck } from "../health-check.js";
 
 /**
  * R17-031: the email channel's inbox, searched and opened on request — who wrote, about what, since
@@ -64,7 +66,7 @@ export function safeFileName(name: string, index: number): string {
   return plain || `attachment-${index}`;
 }
 
-export type MailClient = Pick<ImapClient, "connect" | "close" | "searchUids" | "summary" | "whole">;
+export type MailClient = Pick<ImapClient, "connect" | "close" | "searchUids" | "summary" | "whole"> & Partial<Pick<ImapClient, "abort">>;
 export interface MailSearchDeps {
   store: Store;
   owner: string;
@@ -82,16 +84,37 @@ export class MailSearch {
   save(input: unknown) { return savePartSettings(this.deps.store, this.deps.owner, settingsKey, MailSearchSettingsSchema, input); }
 
   /** Opens the inbox, does one thing, and always closes it again. */
-  private async withInbox<T>(work: (client: MailClient) => Promise<T>): Promise<T> {
+  private async withInbox<T>(work: (client: MailClient) => Promise<T>, readOnly = false): Promise<T> {
+    assertHealthCurrent();
     requirePersonal(this.deps.store, this.deps.owner, "mail-search");
     const settings = this.settings();
     if (!settings.host || !settings.user) throw new Error("Give the mail server and the user name on the inbox card first.");
     await this.deps.assertHost(settings.host, settings.port);
-    const client = this.imap({ host: settings.host, port: settings.port, user: settings.user, password: await this.deps.secret(settings.passwordName) });
+    assertHealthCurrent();
+    const password = await this.deps.secret(settings.passwordName);
+    assertHealthCurrent();
+    const client = this.imap({ host: settings.host, port: settings.port, user: settings.user, password });
+    const check = currentHealthCheck();
+    const cancel = () => { if (client.abort) client.abort(); else void client.close().catch(() => undefined); };
+    check?.signal.addEventListener("abort", cancel, { once: true });
     try {
-      await client.connect();
-      return await work(client);
-    } finally { await client.close().catch(() => undefined); }
+      assertHealthCurrent();
+      await client.connect(readOnly);
+      assertHealthCurrent();
+      const result = await work(client);
+      assertHealthCurrent();
+      return result;
+    } finally { await client.close().catch(() => undefined); check?.signal.removeEventListener("abort", cancel); }
+  }
+
+  /** An authenticated EXAMINE reads inbox metadata only; no search, message fetch or flag writes. */
+  async test(): Promise<ConnectionHealth> {
+    requirePersonal(this.deps.store, this.deps.owner, "mail-search");
+    let ok = false, reason: string | null = null;
+    try { await this.withInbox(async () => { ok = true; }, true); }
+    catch { assertHealthCurrent(); reason = "Inbox access could not be verified. Check the mail server, network rules and saved credentials."; }
+    assertHealthCurrent();
+    return { checkedAt: new Date().toISOString(), ok, checks: [{ capability: "IMAP read-only inbox access", ok, reason }] };
   }
 
   async search(input: unknown) {

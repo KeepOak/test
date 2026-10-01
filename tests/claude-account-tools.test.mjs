@@ -318,3 +318,12 @@ test("models-ui: a specialist's saved Claude account answers its helpers through
   assert.ok(f.launches.slice(before).every((one) => one.env.CLAUDE_CONFIG_DIR === f.service.homeOf(pool, third)), "the saved account's own Claude folder");
   assert.equal(f.service.pool(pool).defaultAccount, "primary", "the owner's account order is untouched");
 });
+test("the window's model list names the account pool of every Claude variant, as the accounts service does (MODEL-135)", async (t) => {
+  const f = await fixture(t);
+  const listed = f.app.runtime.models.summary(f.app.runtime.owner).presets;
+  for (const id of [pool, `${pool}-sonnet`, `${pool}-haiku-4-5`]) {
+    const one = listed.find((preset) => preset.id === id);
+    assert.ok(one, `${id} is listed`);
+    assert.equal(one.accountPool, f.service.poolFor(f.app.runtime.models.presets.get(id)).pool, `${id} uses the Claude account pool`);
+  }
+});

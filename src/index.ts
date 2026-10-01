@@ -173,6 +173,7 @@ import { repositoryPath } from "./integrations/github.js";
 import { PluginEvaluations } from "./plugin-evaluations.js";
 import { createTasteLearning } from "./taste/integration.js";
 import { offerSelfDevelopment, type SelfDevelopmentDeps } from "./self-development.js";
+import { offerSourceContractRead } from "./self-development-read.js";
 import { offerSourceRequests, SourceChangeRequests } from "./self-development-requests.js";
 import { SelfDevelopmentMerges } from "./self-development-merge.js";
 import { offerContractTests } from "./self-development-tests.js";
@@ -802,6 +803,7 @@ export async function createBranch(options: {
     ownersDefaultTurn: (context) => runtime.ownersDefaultTurn(context),
   };
   offerSelfDevelopment(selfDevelopment);
+  offerSourceContractRead(selfDevelopment);
   // A change to Branch itself asked for from a chat: the chat only files it, and only the owner answers,
   // in the Branch app; a yes is prepared exactly as the owner's own (src/self-development-requests.ts).
   const sourceRequests = new SourceChangeRequests(selfDevelopment, () => sessionLock.locked());

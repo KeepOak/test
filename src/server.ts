@@ -67,6 +67,7 @@ import { localRuntimes } from "./local-runtimes.js";
 import { localKitFor } from "./local-kit.js";
 import { adaptApi, handlesAdaptPath } from "./adapt/api.js"; // mac7/adapt
 import { streamLiveSteps, streamOwnerEvents, streamRunEvents } from "./streams.js";
+import { trunkActivity } from "./trunk-activity.js";
 import { liveSteps, specialistName } from "./live-steps.js"; // live steps: watch Branch think and work
 // Web app (wave 6): "Look inside" a task, and "Try a tool" in the developer playground.
 import { inspectRun } from "./inspect.js";
@@ -974,6 +975,7 @@ function state(app: Branch): unknown {
   const titles = app.store.runTitles(runs); // DESIGN-DIRECTION PR 2: a room turn is listed by its room, never its framing
   return {
     collab: collabState(app),
+    profileId: app.store.profiles.active()?.id ?? null,
     provider: app.runtime.provider.name,
     // No model set up: nothing is named as answering, and the window shows these words with the way to set one up.
     activeModel: app.runtime.models.configured ? app.runtime.models.plan(owner, "").choice : null,
@@ -990,6 +992,7 @@ function state(app: Branch): unknown {
     preferences: preferences(app.store, owner),
     runs: runs
       .map((run) => ({ ...run, title: titles.get(run.id) ?? "", usage: app.store.usage(run.id), cost: runCost(app, run.id), model: modelUsed(app, run.id), changes: fileChanges(app, run.id),
+        ...(run.status === "running" ? { activityState: trunkActivity(app.store.events(run.id)) } : {}),
         ...(aside.has(run.id) ? { aside: true } : {}) })),
     models: app.runtime.models.summary(owner),
     memory: app.store.list("memory", scope),
@@ -1604,7 +1607,7 @@ async function api(
   // conversation. Its tools run as the owner, so it is the owner's alone (src/short-lived-keys.ts no
   // longer lets a key or a household person reach it).
   if (path === "/api/voice/live"
-    || path === "/api/voice/settings" || path === "/api/voice/plan" || path === "/api/voice/voices"
+    || path === "/api/voice/settings" || path === "/api/voice/plan" || path === "/api/voice/voices" || path === "/api/voice/piper/files"
       || path.startsWith("/api/models/profiles") || path === "/api/models/switch" || path === "/api/models/probe"
       || path === "/api/models/gemini-signin")
     return voiceApi(voiceDeps(app), request.method ?? "GET", path, () => readBody(request));
@@ -4566,7 +4569,7 @@ function widgetCors(app: Branch, request: IncomingMessage, response: ServerRespo
         if (handlesPersonalPath(path)) {
           app.store.profiles.requireOwner("Your personal connectors");
           const answer = await personalApi({ personal: app.personal, runtime: app.runtime, method: request.method ?? "GET",
-            readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
+            sessionLock: app.sessionLock, request, readBody: () => readBody(request, 4 * 1024 * 1024) }, path).catch((error: unknown) => {
             throw error instanceof PersonalHttpError ? new HttpError(error.status, error.message) : error;
           });
           send(response, 200, answer);
@@ -5541,6 +5544,7 @@ function voiceDeps(app: Branch) {
   return {
     store: app.store, models: app.runtime.models, owner: app.runtime.owner,
     voice: app.voice, policy: app.web.policy, fetch: app.web.policy.guard(globalThis.fetch),
+    localFilesRefusal: () => app.sessionLock.locked() ? "Unlock Branch before browsing installed Piper files." : null,
     // Wave 7: the Gemini card's "Sign in with Google" needs the workspace's OAuth connections.
     oauth: app.oauth,
     liveRefusal: (sessionId: string) => liveRefusalFor(app, sessionId), // phase2/rooms

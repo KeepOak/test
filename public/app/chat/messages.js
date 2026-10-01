@@ -129,9 +129,9 @@ const pinsPop = () => `<div class="ph">${t("window.chat.msg.pinned-here")}</div>
 /* A pin's row carries when its message was written, as the prototype's does. */
 const pinTime = (p) => { const at = sentAt((X.state().messages ?? []).find((m) => m.messageId === p.sourceId)); return at ? `<span class="mi-s">${esc(at)}</span>` : ""; };
 
-async function loadPins(id) {
-  const got = await api(`sessions/${id}/pins`).catch(report);
-  if (got && M.sid === id) M.pins = got.pins ?? [];
+async function loadPins(id, current = () => true) {
+  const got = await api(`sessions/${id}/pins`).catch(error => { if (current()) report(error); return null; });
+  if (current() && got && M.sid === id) M.pins = got.pins ?? [];
 }
 
 /* A pin is held against the message's lasting identity (sourceId); the engine takes and gives back its row id. */
@@ -443,9 +443,9 @@ export function queueRow() {
 const queuePop = () => `<div class="ph">${t("window.chat.msg.queue-title")}</div>${M.followUps.map((f, i) => `<div class="mi qrow15"><span class="q-n15">${i + 1}</span><input class="inp" value="${esc(f.prompt)}" data-sw="q15" data-q15="${esc(f.id)}" aria-label="${t("window.chat.msg.queued-n", { n: i + 1 })}"><button type="button" class="icon-btn" aria-label="${t("accounts.action.up")}" data-act="qup15" data-id="${esc(f.id)}" ${i ? "" : "disabled"}>${ic("up", "s")}</button><button type="button" class="icon-btn" aria-label="${t("accounts.action.remove")}" data-act="qrm15" data-id="${esc(f.id)}">${ic("x", "s")}</button></div>`).join("") || `<p class="hint" data-css="margin:6px 10px">${t("window.chat.msg.nothing-waiting")}</p>`}`;
 
 /* The every-few-seconds re-read stays quiet when it fails: the status bar already says the engine is not answering. */
-async function loadQueue(id, polling = false) {
-  const got = await api(`sessions/${id}/followups`).catch(polling ? () => null : report);
-  if (!got || M.sid !== id) return false;
+async function loadQueue(id, polling = false, current = () => true) {
+  const got = await api(`sessions/${id}/followups`).catch(error => { if (!polling && current()) report(error); return null; });
+  if (!current() || !got || M.sid !== id) return false;
   const before = JSON.stringify(M.followUps);
   M.followUps = got.followUps ?? [];
   return before !== JSON.stringify(M.followUps);
@@ -537,31 +537,32 @@ function spendPop() {
 
 /* A day's cost is known only when its tasks were priced; a day with only unpriced tasks has no amount. */
 const dayCost = (d) => (d.pricedRuns ? d.estimatedCost : d.runs ? null : 0);
-async function loadSpend() {
-  const got = await api("usage?range=7d&by=day").catch(report);
-  if (!got) return;
+async function loadSpend(current = () => true) {
+  const got = await api("usage?range=7d&by=day").catch(error => { if (current()) report(error); return null; });
+  if (!current() || !got) return;
   const days = got.data ?? [], today = new Date().toISOString().slice(0, 10);
   const day = days.find((d) => d.date === today);
   const costs = days.map(dayCost);
   M.spend = { today: day ? dayCost(day) : 0, week: costs.includes(null) && !costs.some((c) => c) ? null : costs.reduce((a, c) => a + (c ?? 0), 0) };
 }
 
-async function loadRoom(id) {
-  const got = await api(`sessions/${id}/context`).catch(report);
-  if (got && M.sid === id) M.room = got;
+async function loadRoom(id, current = () => true) {
+  const got = await api(`sessions/${id}/context`).catch(error => { if (current()) report(error); return null; });
+  if (current() && got && M.sid === id) M.room = got;
 }
 
 /* ---------- loading ---------- */
 /* Everything above for one conversation, read when it opens and after each message. */
 const drawn = () => JSON.stringify([M.sid, M.pins, M.followUps, M.room, M.spend]);
 /* The switch to another conversation is drawn by the caller's own redraw; this redraws again only if what it read differs. */
-export async function loadExtras(id) {
+export async function loadExtras(id, current = () => true) {
+  if (!current()) return;
   if (M.sid !== id) Object.assign(M, { sid: id, pins: [], followUps: [], room: null });
   const before = drawn();
-  const jobs = [loadSpend(), loadFlags()];
-  if (id) jobs.push(loadPins(id), loadQueue(id), loadRoom(id));
+  const jobs = [loadSpend(current), loadFlags(current)];
+  if (id) jobs.push(loadPins(id, current), loadQueue(id, false, current), loadRoom(id, current));
   await Promise.all(jobs);
-  if (drawn() !== before) render();
+  if (current() && drawn() !== before) render();
 }
 
 function openPrompts() {

@@ -1,4 +1,5 @@
 import { inflateSync } from "node:zlib";
+import { pdfEncoding, pdfGlyphText } from "./pdf-font-encodings.js";
 
 /**
  * Reading the words out of a PDF without asking anything else to help. A PDF is a bag of numbered
@@ -169,7 +170,7 @@ function pageContent(objects: Map<number, RawObject>, page: RawObject, limits: s
  * A page's fonts and, for each, the table that turns the numbers in a drawn string back into
  * letters. Only the tables written into the file itself are used; nothing is looked up elsewhere.
  */
-function pageFonts(objects: Map<number, RawObject>, page: RawObject, budget: Budget): Map<string, Map<number, string>> {
+function pageFonts(objects: Map<number, RawObject>, page: RawObject, budget: Budget, limits: string[]): Map<string, Map<number, string>> {
   const fonts = new Map<string, Map<number, string>>();
   const resources = resourceDictionary(objects, page);
   const fontBlock = dictValue(resources, "Font") ?? "";
@@ -179,9 +180,55 @@ function pageFonts(objects: Map<number, RawObject>, page: RawObject, budget: Bud
     if (!font) continue;
     const unicode = referenceNumber(dictValue(latin(font.body), "ToUnicode"));
     const source = unicode === null ? null : objects.get(unicode);
-    fonts.set(entry[1]!, source ? parseCmap(latin(unpack(source, budget).bytes ?? Buffer.alloc(0))) : new Map());
+    const unicodeMap = source ? parseCmap(latin(unpack(source, budget).bytes ?? Buffer.alloc(0))) : null;
+    const encoded = fontEncoding(objects, font, limits);
+    if (encoded && unicodeMap) for (const [code, text] of encoded) if (!unicodeMap.has(code)) unicodeMap.set(code, text);
+    fonts.set(entry[1]!, unicodeMap ?? encoded ?? new Map());
   }
   return fonts;
+}
+/** Simple font encodings stay byte-wide; a ToUnicode map always wins over a named glyph. */
+function fontEncoding(objects: Map<number, RawObject>, font: RawObject, limits: string[]): Map<number, string> | null {
+  const dictionary = latin(font.body);
+  if (dictValue(dictionary, "Subtype") === "/Type0") return null;
+  const raw = dictValue(dictionary, "Encoding");
+  if (!raw) return null;
+  const ref = referenceNumber(raw);
+  const encoding = (ref === null ? raw : latin(objects.get(ref)?.body ?? Buffer.alloc(0))).trim();
+  const base = encoding.startsWith("/") ? encoding.slice(1) : (dictValue(encoding, "BaseEncoding") ?? "/StandardEncoding").slice(1);
+  const names = pdfEncoding(base), map = parseCmap("1 begincodespacerange <00> <ff> endcodespacerange");
+  const note = (message: string) => { if (!limits.includes(message)) limits.push(message); };
+  if (!names) note("A PDF font uses an unsupported base encoding; unmapped characters could not be read.");
+  for (let code = 0; code < 256; code++) map.set(code, names?.[code] ? pdfGlyphText(names[code]!, base === "ZapfDingbatsEncoding") ?? "�" : "�");
+  const value = dictValue(encoding, "Differences");
+  if (value) applyDifferences(value, objects, map, base === "ZapfDingbatsEncoding", note);
+  return map;
+}
+/** Adapted PDF.js evaluator Differences iteration: numbers set a byte index; following names advance it. */
+function applyDifferences(value: string, objects: Map<number, RawObject>, map: Map<number, string>, dingbat: boolean, note: (message: string) => void): void {
+  const tokens = [...pdfTokens(value, 1024)];
+  if (tokens.length >= 1024) note("A PDF font Differences array exceeded the reader limit.");
+  let code = 0;
+  for (let at = 0; at < tokens.length; at++) {
+    let token = tokens[at]!;
+    const generation = tokens[at + 1], marker = tokens[at + 2];
+    if (token.kind === "number" && generation?.kind === "number" && marker?.kind === "op" && marker.text === "R") {
+      const object = objects.get(token.value);
+      const resolved = object ? [...pdfTokens(latin(object.body), 2)] : [];
+      if (resolved.length !== 1) { note("A PDF font has an invalid indirect Differences entry."); code = -1; at += 2; continue; }
+      token = resolved[0]!; at += 2;
+    }
+    if (token.kind === "number") {
+      code = Number.isInteger(token.value) && token.value >= 0 && token.value <= 255 ? token.value : -1;
+      if (code < 0) note("A PDF font Differences index is outside its byte range.");
+      continue;
+    }
+    if (token.kind !== "name" || code < 0 || code > 255) { note("A PDF font has an invalid Differences entry."); continue; }
+    const name = token.text.replace(/#([0-9a-f]{2})/gi, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)));
+    const text = pdfGlyphText(name, dingbat);
+    if (text === null) note("Some PDF font glyph names could not be converted to text.");
+    map.set(code++, text ?? "�");
+  }
 }
 function resourceDictionary(objects: Map<number, RawObject>, page: RawObject): string {
   const seen = new Set<number>();
@@ -432,7 +479,7 @@ export function pdfText(bytes: Buffer, deadline = Infinity): PdfText {
     // Checked before each page rather than only at the end, so a long file stops at the time it was
     // given and says which pages it got to instead of holding everything else up.
     if (Date.now() > deadline) { limits.push(readingStopped(index, found.length)); break; }
-    pages.push({ page: index + 1, text: readContent(pageContent(objects, page, limits, budget), pageFonts(objects, page, budget)) });
+    pages.push({ page: index + 1, text: readContent(pageContent(objects, page, limits, budget), pageFonts(objects, page, budget, limits)) });
   }
   return { pages, pictures: pages.length > 0 && pages.every((page) => !page.text.trim()), limits };
 }

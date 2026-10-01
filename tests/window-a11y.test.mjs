@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { chromium as _browserFile } from "playwright"; // a browser file, run one at a time (scripts/run-tests.mjs)
 import { newWindow, openPlace } from "./new-window-places.mjs";
-import { openSettingsPage, setLevel } from "./settings-window.mjs";
+import { openSettingsPage, setLevel, settingsWindow } from "./settings-window.mjs";
 
 void _browserFile;
 /* Given to the page through the test driver (the window's own rules allow no script it did not serve). */
@@ -97,5 +97,50 @@ test("the window's main places pass an automated accessibility check", { timeout
 
   const seen = [...new Set(found)];
   assert.deepEqual(seen, [], `${seen.length} accessibility violations:\n${seen.join("\n")}`);
+  assert.deepEqual(errors, []);
+});
+
+// A fixed low-memory response keeps this regression independent of the build machine's RAM.
+const LOW_MEMORY_MODELS = {
+  hardware: { totalMemoryBytes: 8 * 2 ** 30 },
+  ollama: { installed: false, models: [] },
+  oneClick: { runtimes: [], setups: [], offers: [{
+    id: "contrast-14b", name: "Local 14B", summary: "A local model with two sizes.", tools: true, params: "14B",
+    suggested: "large", variants: [
+      { quant: "large", label: "Large", downloadBytes: 9 * 2 ** 30, context: 4096, fit: "no",
+        note: "Won't fit: needs about 10.4 GB; this computer has 8.0 GB in all." },
+      { quant: "small", label: "Small", downloadBytes: 4 * 2 ** 30, context: 4096, fit: "well",
+        note: "Fits well: needs about 5.0 GB; this computer has 8.0 GB in all." },
+    ],
+  }] },
+};
+
+test("low-memory model warnings stay readable and only fitting sizes can be installed in both lights", { timeout: 120000 }, async (t) => {
+  const { page, errors } = await settingsWindow(t, { name: "unfit-a11y", route: async (page) => {
+    await page.addInitScript(COUNT);
+    await page.route("**/api/local-models", (route) => route.fulfill({ json: LOW_MEMORY_MODELS }));
+  } });
+  await openSettingsPage(page, "local");
+  const card = page.locator(".lm12").filter({ hasText: "Local 14B" });
+  await card.waitFor();
+  const found = [];
+  for (const light of ["initial", "flipped"]) {
+    await card.locator('[data-act="lm-v"][data-v="large"]').click();
+    assert.equal(await card.locator(".pill.no").innerText(), "Won't fit");
+    assert.equal(await card.locator(".pill.no").getAttribute("data-tip"), LOW_MEMORY_MODELS.oneClick.offers[0].variants[0].note);
+    assert.equal(await card.locator(".lm-tags12 .tag6").count(), 3);
+    assert.equal(await card.locator('[data-act="lm-get"]').isDisabled(), true, "an unfit size cannot be installed");
+    await check(page, `${light} · low-memory model`, found);
+    await card.locator('[data-act="lm-v"][data-v="small"]').click();
+    assert.equal(await card.locator(".pill.ok").innerText(), "Fits well");
+    assert.equal(await card.locator('[data-act="lm-get"]').isEnabled(), true, "a fitting size remains available");
+    await check(page, `${light} · fitting model`, found);
+    if (light === "initial") {
+      const was = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+      await page.locator('[data-act="theme-flip"]').first().click();
+      await page.waitForFunction((before) => getComputedStyle(document.body).backgroundColor !== before, was);
+    }
+  }
+  assert.deepEqual(found, [], found.join("\n"));
   assert.deepEqual(errors, []);
 });
